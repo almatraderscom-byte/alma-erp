@@ -403,11 +403,11 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
   background:#1A1A20;border:1px solid rgba(255,255,255,0.10);border-radius:22px;box-shadow:0 26px 74px rgba(0,0,0,.62);
   display:flex;flex-direction:column;overflow:hidden;animation:oh-cpop .2s ease}
 @keyframes oh-cpop{from{opacity:0;transform:scale(.93) translateY(12px)}to{opacity:1;transform:none}}
-.ohub-chatpanel .cp-head{display:flex;align-items:center;gap:11px;padding:13px 15px;border-bottom:1px solid rgba(255,255,255,0.07);background:#202027}
+.ohub-chatpanel .cp-head{position:relative;display:flex;align-items:center;gap:11px;padding:13px 15px;border-bottom:1px solid rgba(255,255,255,0.07);background:#202027}
 .ohub-chatpanel .cp-head .gav{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-size:17px;background:linear-gradient(135deg,#10b981,#059669);color:#fff}
 .ohub-chatpanel .cp-head .ttl{flex:1;min-width:0} .ohub-chatpanel .cp-head .ttl b{font-size:14.5px;font-weight:700} .ohub-chatpanel .cp-head .ttl span{display:block;font-size:11.5px;color:#22c55e}
 .ohub-chatpanel .cp-head .x{background:none;border:0;color:#AEB2C0;font-size:20px;cursor:pointer;padding:2px 6px}
-.ohub-chatpanel .cp-body{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scroll-behavior:smooth;padding:14px;display:flex;flex-direction:column;gap:13px}
+.ohub-chatpanel .cp-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:none;scroll-behavior:smooth;padding:14px;display:flex;flex-direction:column;gap:13px}
 .ohub-chatpanel .gm{display:flex;gap:9px;max-width:90%}
 .ohub-chatpanel .gm .av{width:27px;height:27px;font-size:11px;margin-top:2px;border-radius:50%;display:grid;place-items:center;color:#fff;flex-shrink:0;background:#3f3f46}
 .ohub-chatpanel .gm .av.e{background:linear-gradient(135deg,#6366f1,#8b5cf6)}
@@ -432,7 +432,27 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 .ohub-chatpanel .cp-foot input{flex:1;background:#121216;border:1px solid rgba(255,255,255,0.10);border-radius:9999px;padding:9px 14px;color:#F7F8FC;font-family:inherit;font-size:13px;outline:none}
 .ohub-chatpanel .cp-foot button{font-family:inherit;font-size:13px;font-weight:600;padding:9px 14px;border-radius:9999px;border:0;background:linear-gradient(135deg,#E07A5F,#C45A3C);color:#fff;cursor:pointer}
 .ohub-chatpanel .cp-foot button:disabled{opacity:.5;cursor:not-allowed}
-@media(max-width:480px){.ohub-chatpanel{right:14px;left:14px;bottom:calc(90px + var(--safe-bottom));width:auto}}
+/* Phone: a premium native-style bottom sheet (was a cramped floating box that
+   sat above the FAB and clipped). Full width, rounded top, grab-handle, slides
+   up from the bottom, composer rides above the home-indicator. */
+@media(max-width:560px){
+  .ohub-chatpanel{right:0;left:0;bottom:0;width:auto;max-width:none;height:90dvh;max-height:90dvh;
+    border-radius:24px 24px 0 0;border-bottom:0;box-shadow:0 -18px 60px rgba(0,0,0,.6);
+    animation:oh-sheet .28s cubic-bezier(.2,.8,.2,1)}
+  .ohub-chatpanel .cp-head{border-radius:24px 24px 0 0;padding-top:18px}
+  .ohub-chatpanel .cp-head:before{content:"";position:absolute;top:7px;left:50%;transform:translateX(-50%);
+    width:38px;height:4px;border-radius:9999px;background:rgba(255,255,255,0.22)}
+  /* lift the composer above the software keyboard (--kb-inset is driven app-wide
+     by GlobalKeyboardManager; falls back to 0 so nothing moves when closed). */
+  .ohub-chatpanel .cp-foot{padding-bottom:calc(10px + var(--safe-bottom) + var(--kb-inset,0px))}
+}
+@keyframes oh-sheet{from{transform:translateY(100%)}to{transform:none}}
+/* iOS: any input < 16px auto-zooms + jumps the page on focus. Pin every office
+   text field to 16px on phones so focusing a field feels native (no zoom). */
+@media(max-width:680px){
+  .ohub input,.ohub textarea,.ohub-chatpanel input,.ohub-chatpanel textarea,
+  .ohub-drawer input,.ohub .composer input,.ohub .due-edit input{font-size:16px}
+}
 
 /* notification dropdown (anchored to topbar bell) */
 .ohub-notif{position:fixed;z-index:82;top:var(--topbar-h);right:20px;width:330px;max-width:calc(100vw - 28px);
