@@ -225,7 +225,31 @@ body:has(.ohub){overflow:hidden;height:100%}
 .ohub .note{display:flex;gap:10px;background:rgba(224,122,95,.08);border:1px solid rgba(224,122,95,.2);border-radius:var(--r-md);padding:13px 15px;margin-top:18px;font-size:13px;color:var(--muted-hi)}
 .ohub .note .i{font-size:17px}
 .ohub .hidden{display:none!important}
+
+/* ── phone-only section switcher ──
+   On a narrow screen the 2-column grid stacks into one endless wall. We give the
+   owner a sticky segmented control to flip between "কাজ" and "টিম" and show only
+   the active pane. Desktop is untouched: the tab bar is display:none and both
+   panes always render, so the existing .grid2 layout is unchanged ≥ 680px. */
+.ohub .oh-tabs{display:none}
+.ohub .oh-tab-c{font-size:11px;font-weight:700;min-width:18px;height:18px;padding:0 5px;border-radius:9px;
+  display:inline-grid;place-items:center;background:rgba(255,255,255,0.10);color:var(--muted-hi)}
+
 @media(max-width:960px){.ohub .kpis{grid-template-columns:repeat(2,1fr)}.ohub .grid2{grid-template-columns:1fr}}
+@media(max-width:680px){
+  .ohub .oh-tabs{display:flex;gap:6px;position:sticky;top:0;z-index:25;margin:0 0 16px;padding:5px;
+    background:rgba(18,18,22,0.92);backdrop-filter:blur(12px) saturate(1.1);
+    border:1px solid var(--border-subtle);border-radius:var(--r-pill);box-shadow:var(--shadow)}
+  .ohub .oh-tab{flex:1;font-family:inherit;font-size:13.5px;font-weight:700;color:var(--muted);
+    display:inline-flex;align-items:center;justify-content:center;gap:7px;
+    padding:10px 12px;min-height:44px;border:0;background:transparent;border-radius:var(--r-pill);
+    cursor:pointer;transition:.18s}
+  .ohub .oh-tab.on{background:linear-gradient(135deg,var(--accent),var(--accent-dim));color:#fff;
+    box-shadow:0 3px 12px rgba(224,122,95,.4)}
+  .ohub .oh-tab.on .oh-tab-c{background:rgba(255,255,255,0.22);color:#fff}
+  .ohub .grid2.oh-paged.tab-work .pane-team{display:none}
+  .ohub .grid2.oh-paged.tab-team .pane-work{display:none}
+}
 @media(max-width:680px){
   .ohub .wrap{padding:18px 14px calc(100px + var(--safe-bottom))}
   .ohub .topbar{padding:11px 14px;padding-top:max(11px,var(--safe-top));gap:10px}

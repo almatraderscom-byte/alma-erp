@@ -142,6 +142,12 @@ export default function OwnerHub({
   const [threadTask, setThreadTask] = useState<HubTaskCard | null>(null)
   const [awardOpen, setAwardOpen] = useState(false)
   const [zoom, setZoom] = useState<string | null>(null)
+  // Phone-only view switch: on a narrow screen the 2-column grid stacks into one
+  // endless wall, so we let the owner flip between "কাজ" (approvals + active) and
+  // "টিম" (status + activity + performance). On desktop both panes always show
+  // (the tab bar + the per-pane hiding are CSS-gated to phones), so this state is
+  // a no-op there and the existing layout is untouched.
+  const [tab, setTab] = useState<'work' | 'team'>('work')
 
   const run = useCallback(
     async (key: string, body: ActionBody) => {
@@ -345,10 +351,32 @@ export default function OwnerHub({
         </div>
       )}
 
+      {/* phone-only section switcher (hidden on desktop via CSS) */}
+      <div className="oh-tabs" role="tablist" aria-label="অফিস হাব সেকশন">
+        <button
+          role="tab"
+          aria-selected={tab === 'work'}
+          className={`oh-tab${tab === 'work' ? ' on' : ''}`}
+          onClick={() => setTab('work')}
+        >
+          📋 কাজ
+          <span className="oh-tab-c">{bn(pendingApproval.length + selfInitiated.length + activeTasks.length)}</span>
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'team'}
+          className={`oh-tab${tab === 'team' ? ' on' : ''}`}
+          onClick={() => setTab('team')}
+        >
+          👥 টিম
+          <span className="oh-tab-c">{bn(team.length)}</span>
+        </button>
+      </div>
+
       {/* main grid */}
-      <div className="grid2">
+      <div className={`grid2 oh-paged tab-${tab}`}>
         {/* LEFT: pending approvals + active tasks */}
-        <div>
+        <div className="oh-pane pane-work">
           <div className="section-h">
             <h2>⏳ অনুমোদনের অপেক্ষায়</h2>
             <span className="count">{bn(pendingApproval.length + selfInitiated.length)}টি</span>
@@ -424,7 +452,7 @@ export default function OwnerHub({
         </div>
 
         {/* RIGHT: team status + activity + leaderboard */}
-        <div>
+        <div className="oh-pane pane-team">
           <div className="section-h">
             <h2>👥 টিম স্ট্যাটাস</h2>
           </div>
