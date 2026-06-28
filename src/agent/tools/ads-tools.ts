@@ -143,6 +143,95 @@ const duplicate_campaign: AgentTool = {
   },
 }
 
+// Soft cap (owner-set): above this daily budget the staged card shows a loud
+// warning, but the action is still allowed since it stays behind approval.
+const DAILY_BUDGET_SOFT_CAP_BDT = 500
+
+const launch_campaign: AgentTool = {
+  name: 'launch_campaign',
+  description:
+    'Launch a BRAND-NEW Meta Ads campaign for ALMA (Messenger/click-to-Messenger, COD funnel). ' +
+    'ALWAYS creates a confirm card — owner must approve. On approval the campaign, ad set, creative and ad ' +
+    'are ALL created PAUSED (nothing spends until the owner activates in Ads Manager). Requires ads_management scope. ' +
+    'Budget in whole BDT/day; above ৳500/day the card shows a big spend warning. Use for genuinely new campaigns — ' +
+    'to scale an existing winner use duplicate_campaign instead.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      name: { type: 'string', description: 'Campaign name (short, Bangla ok)' },
+      dailyBudget: { type: 'number', description: 'Daily budget in whole BDT' },
+      message: { type: 'string', description: 'Primary ad text in Bangla (the main copy)' },
+      headline: { type: 'string', description: 'Optional short headline under the image' },
+      imageUrl: { type: 'string', description: 'Optional public image URL for the creative' },
+      page: { type: 'string', description: "'lifestyle' (default) or 'onlineshop'" },
+      ageMin: { type: 'number' },
+      ageMax: { type: 'number' },
+      conversationId: { type: 'string' },
+    },
+    required: ['name', 'dailyBudget', 'message'],
+  },
+  handler: async (input) => {
+    const name = String(input.name ?? '').trim()
+    const message = String(input.message ?? '').trim()
+    const dailyBudget = Math.round(Number(input.dailyBudget))
+    if (!name) return { success: false, error: 'name is required' }
+    if (!message) return { success: false, error: 'message (primary ad text) is required' }
+    if (!Number.isFinite(dailyBudget) || dailyBudget <= 0) return { success: false, error: 'dailyBudget must be a positive number' }
+
+    const scope = await checkAdsManagementScope()
+    if (!scope.ok) return { success: false, error: scope.error }
+    if (!process.env.META_AD_ACCOUNT_ID) return { success: false, error: 'META_AD_ACCOUNT_ID সেট করা নেই' }
+
+    const page = String(input.page ?? 'lifestyle').trim().toLowerCase()
+    const headline = input.headline ? String(input.headline).trim() : undefined
+    const imageUrl = input.imageUrl ? String(input.imageUrl).trim() : undefined
+    const ageMin = input.ageMin != null ? Math.round(Number(input.ageMin)) : undefined
+    const ageMax = input.ageMax != null ? Math.round(Number(input.ageMax)) : undefined
+
+    const overCap = dailyBudget > DAILY_BUDGET_SOFT_CAP_BDT
+    const pageLabel = page === 'onlineshop' ? 'Alma Online Shop' : 'Alma Lifestyle'
+    const lines = [
+      '🚀 নতুন Meta Ads ক্যাম্পেইন চালু করবেন?',
+      '',
+      `পেজ: ${pageLabel}`,
+      `নাম: ${name}`,
+      `ধরন: Messenger (click-to-Messenger) — কাস্টমার সরাসরি inbox-এ আসবে`,
+      `দৈনিক বাজেট: ৳${dailyBudget.toLocaleString('bn-BD')}/দিন`,
+      `টার্গেট: বাংলাদেশ, বয়স ${ageMin ?? 18}-${ageMax ?? 45}`,
+      headline ? `হেডলাইন: ${headline}` : null,
+      '',
+      `কপি: ${message}`,
+      '',
+      overCap
+        ? `⚠️ সতর্কতা: দৈনিক বাজেট ৳${DAILY_BUDGET_SOFT_CAP_BDT}-এর বেশি (৳${dailyBudget.toLocaleString('bn-BD')})। খরচ বেশি হতে পারে — নিশ্চিত হয়ে Approve করুন।`
+        : null,
+      '✅ Approve করলে ক্যাম্পেইন + ad set + ad সব PAUSED অবস্থায় তৈরি হবে। কোনো টাকা খরচ হবে না — আপনি Ads Manager থেকে নিজে চালু করবেন।',
+    ].filter(Boolean)
+    const summary = lines.join('\n')
+
+    const action = await db.agentPendingAction.create({
+      data: {
+        conversationId: input.conversationId ? String(input.conversationId) : null,
+        type: 'launch_campaign',
+        payload: { name, dailyBudget, message, headline, imageUrl, page, ageMin, ageMax, overCap },
+        summary,
+        costEstimate: 0,
+        status: 'pending',
+      },
+    })
+
+    return {
+      success: true,
+      data: {
+        pendingActionId: action.id as string,
+        summary,
+        overCap,
+        message: 'Pending owner confirmation — কিছুই চালু হয়নি, সব approve-এর পেছনে।',
+      },
+    }
+  },
+}
+
 const recommend_ad_actions: AgentTool = {
   name: 'recommend_ad_actions',
   description:
@@ -211,13 +300,15 @@ export const ADS_TOOLS: AgentTool[] = [
   pause_campaign,
   update_campaign_budget,
   duplicate_campaign,
+  launch_campaign,
   recommend_ad_actions,
 ]
 
 export const ADS_ROLE_PROMPT = `
 ## META ADS (Advantage+ era)
 Read: recommend_ad_actions — ranked Bangla verdicts per campaign (scale/reduce/kill/duplicate/refresh_creative/hold). Never manual audience/bid micro-management.
-Write (confirm card ONLY): pause_campaign, update_campaign_budget (+20-30% max step), duplicate_campaign (PAUSED copy).
+Write (confirm card ONLY): pause_campaign, update_campaign_budget (+20-30% max step), duplicate_campaign (PAUSED copy), launch_campaign (brand-new Messenger/CTWA campaign — campaign+ad set+creative+ad all created PAUSED on approval, ৳500/day soft cap shows a spend warning above threshold).
 Creative fatigue → refresh_creative → make_ad_creatives (File 10) with angleHint.
+Scaling a proven winner → duplicate_campaign (copy existing). Net-new offer/angle with no existing campaign → launch_campaign.
 Low spend/impressions → hold. ROAS is directional for COD/Messenger — cross-check orders over time.
 `

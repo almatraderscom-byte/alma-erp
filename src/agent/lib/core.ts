@@ -90,7 +90,7 @@ export const MUTATING_TOOLS = new Set([
   'add_subscription', 'approve_and_dispatch_tasks', 'approve_pending_dispatch',
   'approve_pending_staff_message', 'approve_playbook', 'cancel_reminder',
   'confirm_oxylabs_spend', 'correct_and_redispatch_staff_tasks', 'create_order_draft',
-  'delete_finance_entry', 'delete_memory', 'duplicate_campaign', 'edit_finance_entry',
+  'delete_finance_entry', 'delete_memory', 'duplicate_campaign', 'launch_campaign', 'edit_finance_entry',
   'forget_reference', 'forget_rule', 'log_expense', 'log_expenses_batch',
   'log_ledger_entries_batch', 'log_ledger_entry', 'manage_competitor_watchlist',
   'manage_model_library', 'manage_work_todos', 'mark_salah', 'merge_into_proposal',

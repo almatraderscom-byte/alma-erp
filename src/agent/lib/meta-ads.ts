@@ -118,6 +118,134 @@ export async function duplicateCampaign(
   return { success: true, newCampaignId }
 }
 
+// Known ALMA Facebook page IDs (same as src/agent/lib/meta.ts page map).
+const PAGE_IDS: Record<string, string> = {
+  lifestyle: '1044848232034171',
+  onlineshop: '827260860637393',
+}
+
+function resolveAdPageId(page?: string): string {
+  const p = (page ?? 'lifestyle').toLowerCase()
+  return PAGE_IDS[p] ?? (/^\d{6,}$/.test(p) ? p : PAGE_IDS.lifestyle)
+}
+
+export interface LaunchCampaignSpec {
+  name: string
+  /** Whole BDT per day. Converted to paisa for Meta. */
+  dailyBudgetBdt: number
+  /** 'lifestyle' | 'onlineshop' | a raw numeric page id. Defaults lifestyle. */
+  page?: string
+  /** Primary ad text (Bangla). */
+  message: string
+  /** Optional short headline shown under the image. */
+  headline?: string
+  /** Public image URL for the creative (link_data.picture). Optional. */
+  imageUrl?: string
+  ageMin?: number
+  ageMax?: number
+}
+
+/**
+ * Launch a brand-new Messenger/CTWA (click-to-Messenger) campaign for ALMA's
+ * COD funnel. Creates campaign → ad set → ad creative → ad, EVERY object in
+ * PAUSED status so nothing can spend until the owner activates it in Ads
+ * Manager. Built for the Advantage+ era: minimal targeting (Bangladesh + age),
+ * Meta optimizes delivery. Returns the created object ids; on a mid-way failure
+ * it returns whatever was created (all PAUSED, so harmless) plus the error.
+ */
+export async function launchCampaign(
+  spec: LaunchCampaignSpec,
+): Promise<{ success: boolean; campaignId?: string; adSetId?: string; adId?: string; error?: string }> {
+  const scope = await checkAdsManagementScope()
+  if (!scope.ok) return { success: false, error: scope.error }
+
+  const accountId = process.env.META_AD_ACCOUNT_ID
+  if (!accountId) return { success: false, error: 'META_AD_ACCOUNT_ID সেট করা নেই' }
+
+  const token = adsToken()
+  const pageId = resolveAdPageId(spec.page)
+  const name = spec.name.trim() || 'ALMA নতুন ক্যাম্পেইন'
+  const message = spec.message.trim()
+  if (!message) return { success: false, error: 'Ad message (primary text) খালি' }
+  const budgetPaisa = Math.round(Math.max(1, spec.dailyBudgetBdt) * 100)
+  const ageMin = Math.min(65, Math.max(13, Math.round(spec.ageMin ?? 18)))
+  const ageMax = Math.min(65, Math.max(ageMin, Math.round(spec.ageMax ?? 45)))
+
+  const post = async (path: string, body: Record<string, unknown>) => {
+    const res = await resilientFetch(`${GRAPH_BASE}/${accountId}/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, access_token: token }),
+      timeoutMs: 45_000,
+      retries: 1,
+    })
+    const text = await res.text()
+    if (!res.ok) throw new Error(`${path} ${res.status}: ${text.slice(0, 240)}`)
+    return JSON.parse(text) as { id?: string }
+  }
+
+  let campaignId: string | undefined
+  let adSetId: string | undefined
+  let adId: string | undefined
+  try {
+    const campaign = await post('campaigns', {
+      name,
+      objective: 'OUTCOME_ENGAGEMENT',
+      status: 'PAUSED',
+      special_ad_categories: [],
+    })
+    campaignId = campaign.id
+    if (!campaignId) throw new Error('campaign id ফেরত আসেনি')
+
+    const adSet = await post('adsets', {
+      name: `${name} — Ad Set`,
+      campaign_id: campaignId,
+      daily_budget: budgetPaisa,
+      billing_event: 'IMPRESSIONS',
+      optimization_goal: 'CONVERSATIONS',
+      destination_type: 'MESSENGER',
+      promoted_object: { page_id: pageId },
+      targeting: { geo_locations: { countries: ['BD'] }, age_min: ageMin, age_max: ageMax },
+      status: 'PAUSED',
+    })
+    adSetId = adSet.id
+    if (!adSetId) throw new Error('ad set id ফেরত আসেনি')
+
+    const creative = await post('adcreatives', {
+      name: `${name} — Creative`,
+      object_story_spec: {
+        page_id: pageId,
+        link_data: {
+          message,
+          name: spec.headline?.trim() || undefined,
+          link: `https://m.me/${pageId}`,
+          picture: spec.imageUrl?.trim() || undefined,
+          call_to_action: { type: 'MESSAGE_PAGE', value: { app_destination: 'MESSENGER' } },
+        },
+      },
+    })
+    const creativeId = creative.id
+    if (!creativeId) throw new Error('creative id ফেরত আসেনি')
+
+    const ad = await post('ads', {
+      name: `${name} — Ad`,
+      adset_id: adSetId,
+      creative: { creative_id: creativeId },
+      status: 'PAUSED',
+    })
+    adId = ad.id
+    return { success: true, campaignId, adSetId, adId }
+  } catch (err) {
+    return {
+      success: false,
+      campaignId,
+      adSetId,
+      adId,
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
+}
+
 /** Duplicate top ad set within campaign (fresh ad set copy, PAUSED). */
 export async function duplicateTopAdSet(
   campaignId: string,

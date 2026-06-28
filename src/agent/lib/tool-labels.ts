@@ -31,6 +31,7 @@ export const TOOL_LABELS: Record<string, { label: string; icon: string; color: s
   get_salah_status: { label: 'নামাজের স্ট্যাটাস দেখছি', icon: '🕌', color: '#0ea5e9' },
   delegate_to_specialist: { label: 'সাব-এজেন্টকে কাজ দিচ্ছি', icon: '🤝', color: '#0ea5e9' },
   send_whatsapp: { label: 'WhatsApp মেসেজ পাঠাচ্ছি', icon: '💬', color: '#25D366' },
+  launch_campaign: { label: 'নতুন ক্যাম্পেইন তৈরি করছি', icon: '🚀', color: '#e1306c' },
 }
 
 /**

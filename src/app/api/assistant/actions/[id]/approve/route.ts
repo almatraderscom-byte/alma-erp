@@ -1027,6 +1027,63 @@ async function runApprove(
     }
   }
 
+  if (action.type === 'launch_campaign') {
+    const {
+      name, dailyBudget, message, headline, imageUrl, page, ageMin, ageMax,
+    } = payload as {
+      name: string; dailyBudget: number; message: string;
+      headline?: string; imageUrl?: string; page?: string; ageMin?: number; ageMax?: number
+    }
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        return Response.json({ error: 'already_resolved' }, { status: 409 })
+      }
+      const { launchCampaign } = await import('@/agent/lib/meta-ads')
+      const result = await launchCampaign({
+        name: String(name),
+        dailyBudgetBdt: Number(dailyBudget),
+        message: String(message),
+        headline: headline ? String(headline) : undefined,
+        imageUrl: imageUrl ? String(imageUrl) : undefined,
+        page: page ? String(page) : undefined,
+        ageMin: ageMin != null ? Number(ageMin) : undefined,
+        ageMax: ageMax != null ? Number(ageMax) : undefined,
+      })
+      if (!result.success) {
+        await db.agentPendingAction.update({
+          where: { id: actionId },
+          data: { status: 'failed', result: { error: result.error, campaignId: result.campaignId, adSetId: result.adSetId, adId: result.adId } },
+        })
+        return Response.json({ error: result.error }, { status: 502 })
+      }
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: {
+          status: 'executed',
+          resolvedAt: new Date(),
+          result: { campaignId: result.campaignId, adSetId: result.adSetId, adId: result.adId },
+        },
+      })
+      await appendConversationNote(
+        db,
+        action,
+        `✅ নতুন ক্যাম্পেইন তৈরি হয়েছে (সব PAUSED — কোনো টাকা খরচ হয়নি)।\nCampaign ID: ${result.campaignId}\nAd Set ID: ${result.adSetId}\nAd ID: ${result.adId}\nAds Manager-এ গিয়ে রিভিউ করে ACTIVE করলেই চালু হবে।`,
+      )
+      return Response.json({ success: true, campaignId: result.campaignId, adSetId: result.adSetId, adId: result.adId })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
   if (action.type === 'ads_creative_brief') {
     const claimed = await db.agentPendingAction.updateMany({
       where: { id: actionId, status: 'pending' },
