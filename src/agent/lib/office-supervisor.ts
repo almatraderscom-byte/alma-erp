@@ -77,10 +77,19 @@ const MAX_TASKS_PER_TICK = 14
 const MAX_LLM_CALLS_PER_TICK = 8
 const LLM_TIMEOUT_MS = 20_000
 
-const SUPERVISOR_SYSTEM =
-  'তুমি ALMA Lifestyle অফিসের সুপারভাইজার এজেন্ট। তুমি স্টাফদের কাজ তদারকি করো, যাচাই করো, ' +
-  'আর দরকার হলে ভদ্রভাবে আপডেট বা স্পষ্টতা চাও — সবসময় বাংলায়, ইসলামি সৌজন্য বজায় রেখে, স্টাফকে সম্মানের সাথে। ' +
-  'তুমি শুধু নির্দেশ অনুযায়ী JSON আউটপুট দেবে, কোনো অতিরিক্ত লেখা নয়।'
+function businessLabel(businessId: string): string {
+  if (businessId === 'ALMA_TRADING') return 'ALMA Trading'
+  if (businessId === 'CDIT') return 'CDIT'
+  return 'ALMA Lifestyle'
+}
+
+function supervisorSystem(businessId: string): string {
+  return (
+    `তুমি ${businessLabel(businessId)} অফিসের সুপারভাইজার এজেন্ট। তুমি স্টাফদের কাজ তদারকি করো, যাচাই করো, ` +
+    'আর দরকার হলে ভদ্রভাবে আপডেট বা স্পষ্টতা চাও — সবসময় বাংলায়, ইসলামি সৌজন্য বজায় রেখে, স্টাফকে সম্মানের সাথে। ' +
+    'তুমি শুধু নির্দেশ অনুযায়ী JSON আউটপুট দেবে, কোনো অতিরিক্ত লেখা নয়।'
+  )
+}
 
 export type SupervisorTickResult = {
   businessId: string
@@ -122,7 +131,7 @@ export function isWithinOfficeHours(now: Date = new Date()): boolean {
 
 // ── DeepSeek helper ──────────────────────────────────────────────────────────
 
-async function deepseekJson<T>(user: string, dedupKey: string): Promise<T | null> {
+async function deepseekJson<T>(user: string, dedupKey: string, businessId: string): Promise<T | null> {
   let model
   try {
     model = getModel(SUPERVISOR_MODEL_ID)
@@ -138,7 +147,7 @@ async function deepseekJson<T>(user: string, dedupKey: string): Promise<T | null
     const adapter = adapterFor(model.provider)
     for await (const ev of adapter.streamTurn({
       apiModel: model.apiModel,
-      system: SUPERVISOR_SYSTEM,
+      system: supervisorSystem(businessId),
       messages: [{ role: 'user', content: user }],
       tools: [],
       thinking: 'none',
@@ -523,6 +532,7 @@ async function verifySubmittedProof(
         `প্রমাণটি কি কাজটি সম্পন্ন হয়েছে তা নিশ্চিত করে? শুধু JSON দাও: ` +
         `{"verdict":"pass"|"fail"|"unsure","reason":"এক লাইনে বাংলা"}`,
       `supervisor_verify:${task.id}:${task.redoCount}`,
+      task.businessId,
     )
     if (!judged) {
       return handoffSubmitted(task, 'প্রমাণ যাচাই করা যায়নি', budget.autoAcceptNonCritical)
@@ -595,6 +605,7 @@ async function triageUnderstanding(
       `যদি স্পষ্ট হয় clear=true দাও। যদি অস্পষ্ট হয়, প্রমাণ হিসেবে কী দিতে হবে সেটা জানতে স্টাফকে একটি ছোট বাংলা প্রশ্ন দাও। ` +
       `শুধু JSON: {"clear":true|false,"question":"স্টাফকে প্রশ্ন (অস্পষ্ট হলে)"}`,
     `supervisor_triage:${task.id}:${task.supervisorClarifyCount}`,
+    task.businessId,
   )
 
   // On model failure, assume clear — never spam-clarify on uncertainty.
