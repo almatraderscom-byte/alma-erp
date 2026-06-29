@@ -234,6 +234,17 @@ export async function selectToolsAndGroupsForTurnAsync(
       // specialist (which the owner then approves). Reversible; flag-gated.
       assembled = assembled.filter((t) => !DELEGATION_FORCE_DENYLIST.has(t.name))
     }
+    // launch_campaign is the one growth-group tool the slim head must keep:
+    // launching a paid campaign requires staging an OWNER-FACING approval card,
+    // which only the head (stateful, owner channel) can surface — a stateless
+    // worker can't. So whichever head handles the turn (slim Sonnet included),
+    // give it this single tool to stage the PAUSED-campaign confirm card itself
+    // rather than uselessly delegating. Appended last so the cached prefix from
+    // the kept groups stays byte-stable; guarded against duplication.
+    if (!assembled.some((t) => t.name === 'launch_campaign')) {
+      const launchTool = (TOOL_GROUPS.growth ?? []).find((t) => t.name === 'launch_campaign')
+      if (launchTool) assembled = [...assembled, launchTool]
+    }
     return { tools: applyToolCacheControl(toolsToDefinitions(assembled)), groups }
   }
 
