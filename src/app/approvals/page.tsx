@@ -268,7 +268,7 @@ function ApprovalsPageInner() {
 
       {showIntegrity && (
         <motion.div variants={fadeUp}>
-        <Card className="border-amber-200 bg-amber-50 p-4">
+        <Card className="border-amber-500/35 bg-amber-500/10 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-black text-cream">Integrity Monitor</p>
@@ -340,7 +340,7 @@ function ApprovalsPageInner() {
 
         <Card className="min-w-0">
           {loading && !data ? <Skeleton className="h-96" /> : !approvals.length ? <Empty icon="◆" title="No approval requests" /> : (
-            <div className="overflow-x-auto min-w-0 max-w-full">
+            <div className="table-scroll min-w-0 max-w-full">
             <div className="min-w-[720px] divide-y divide-border">
               {approvals.map(row => {
                 const ui = getRowUi(row.id)

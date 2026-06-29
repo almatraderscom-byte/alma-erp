@@ -79,8 +79,22 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
     }
   }
 
+  // Keep the latest message in view. Jump instantly when the panel first opens,
+  // but glide smoothly for messages that arrive while it's already open — the
+  // .cp-body scroller carries scroll-behavior:smooth, so a single rAF lets the
+  // new bubble lay out before we animate to the bottom.
+  const wasOpen = useRef(false)
   useEffect(() => {
-    if (open && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    const el = scrollRef.current
+    if (!open || !el) {
+      wasOpen.current = open
+      return
+    }
+    const justOpened = !wasOpen.current
+    wasOpen.current = true
+    requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: justOpened ? 'auto' : 'smooth' })
+    })
   }, [open, feed.messages.length])
 
   useEffect(() => {

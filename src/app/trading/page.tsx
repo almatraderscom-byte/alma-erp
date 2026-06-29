@@ -112,9 +112,9 @@ export default function TradingDashboardPage() {
       <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-5">
       {data?.screenshotCompliance && (
         <motion.div variants={fadeUp}>
-        <Card className="rounded-2xl border-amber-200 bg-amber-50 p-4">
-          <p className="text-sm font-bold text-amber-700">Screenshot compliance</p>
-          <p className="mt-1 text-[11px] text-amber-600">
+        <Card className="rounded-2xl border tone-amber p-4">
+          <p className="text-sm font-bold">Screenshot compliance</p>
+          <p className="mt-1 text-[11px] opacity-80">
             {data.screenshotCompliance.completeCount} complete · {data.screenshotCompliance.dueCount} due · {data.screenshotCompliance.overdueCount} overdue
             {data.screenshotCompliance.pastCutoff ? ' · cutoff passed' : ` · cutoff ${data.screenshotCompliance.cutoffHourBd}:00 BD`}
           </p>
@@ -319,7 +319,7 @@ function AlertsPanel({
           <p className="text-sm font-bold text-cream">{isAdmin ? 'Action required' : 'Your tasks'}</p>
           <p className="text-[11px] text-muted">Tap Upload Now or Add Summary to fix alerts</p>
         </div>
-        <span className="rounded-full bg-red-50 px-2 py-1 text-[10px] font-bold text-red-500">{alerts.length}</span>
+        <span className="rounded-full tone-red px-2 py-1 text-[10px] font-bold">{alerts.length}</span>
       </div>
       {loading ? <div className="p-4"><Skeleton className="h-28" /></div> : !alerts.length ? (
         <Empty icon="✓" title="All clear — no pending tasks" />
@@ -358,7 +358,7 @@ function AccountPerformanceTable({ rows, loading }: { rows: TradingDashboardResp
         <p className="text-sm font-bold text-cream">Account Performance & Health</p>
       </div>
       {loading ? <div className="p-4"><Skeleton className="h-32" /></div> : !rows.length ? <Empty icon="◇" title="No account performance yet" /> : (
-        <div className="overflow-x-auto">
+        <div className="table-scroll">
           <div className="min-w-[1080px] divide-y divide-white/[0.06]">
             <div className="grid grid-cols-[1.4fr_0.9fr_0.8fr_0.8fr_0.6fr_0.7fr_0.7fr_0.8fr_0.9fr_0.8fr] gap-3 px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-muted">
               <span>Account</span><span>Balance</span><span>Daily P/L</span><span>Weekly P/L</span><span>ROI</span><span>Expense</span><span>Fees</span><span>Progress</span><span>Staff</span><span>Health</span>
@@ -385,7 +385,7 @@ function AccountPerformanceTable({ rows, loading }: { rows: TradingDashboardResp
 }
 
 function HealthBadge({ health }: { health: TradingDashboardResponse['accountPerformance'][number]['health'] }) {
-  const cls = health === 'PROFITABLE' ? 'border-green-200 bg-green-50 text-green-600' : health === 'STABLE' ? 'border-blue-200 bg-blue-50 text-blue-600' : health === 'RISK' ? 'border-yellow-200 bg-yellow-50 text-yellow-600' : 'border-red-200 bg-red-50 text-red-600'
+  const cls = health === 'PROFITABLE' ? 'tone-green' : health === 'STABLE' ? 'tone-blue' : health === 'RISK' ? 'tone-amber' : 'tone-red'
   return <span className={`h-fit rounded-full border px-2 py-1 text-[10px] font-bold ${cls}`}>{health}</span>
 }
 
@@ -419,10 +419,10 @@ function MiniOpsTrend({ rows }: { rows: TradingDashboardResponse['trend'] }) {
 }
 
 function alertTone(severity: TradingDashboardResponse['alerts'][number]['severity']) {
-  if (severity === 'CRITICAL') return 'border-red-200 bg-red-50 text-red-600'
-  if (severity === 'HIGH') return 'border-orange-200 bg-orange-50 text-orange-600'
-  if (severity === 'MEDIUM') return 'border-yellow-200 bg-yellow-50 text-yellow-600'
-  return 'border-blue-200 bg-blue-50 text-blue-600'
+  if (severity === 'CRITICAL') return 'tone-red'
+  if (severity === 'HIGH') return 'tone-orange'
+  if (severity === 'MEDIUM') return 'tone-amber'
+  return 'tone-blue'
 }
 
 function RecentCard({ title, empty, loading, children }: { title: string; empty: string; loading: boolean; children: React.ReactNode }) {

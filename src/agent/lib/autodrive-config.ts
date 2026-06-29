@@ -11,9 +11,10 @@
  *      cost caps, max attempts, batch size, and the completion-gate model. These
  *      are the dials the owner adjusts live once autodrive is on.
  *
- * Phase A note: even with the kill-switch ON, the driver only runs in SHADOW /
- * dry-run mode (it logs what it WOULD do and mutates nothing). Real step execution
- * + the completion gate arrive in Phase B/C.
+ * Live behaviour: with the kill-switch ON the driver actually advances plans —
+ * real step execution (Qwen head turn) + the completion gate + bounded auto-repair.
+ * Auto-repair (Phase C) is itself owner-tunable and defaults OFF, so by default a
+ * not-done verdict still escalates to the owner rather than re-planning unattended.
  *
  * Owner decision (recorded): the completion gate starts on DeepSeek under a tight
  * cap so we can watch its judgement cheaply, then move it to Claude if its done/
@@ -31,6 +32,13 @@ export const AUTODRIVE_GATE_MODEL_KEY = 'autodrive_gate_model'
 export const AUTODRIVE_DRIVER_MODEL_KEY = 'autodrive_driver_model'
 /** Backoff (minutes) between drive ticks of the SAME plan. */
 export const AUTODRIVE_BACKOFF_MIN_KEY = 'autodrive_backoff_min'
+/**
+ * Phase C auto-repair toggle. When ON, a not-done completion verdict appends ONE
+ * corrective step and keeps driving (bounded by MAX_AUTOREPAIR_STEPS + the cost/stall
+ * caps) instead of escalating on the first miss. Default OFF — the owner opts into the
+ * more-autonomous behaviour; until then the driver escalates a not-done plan as before.
+ */
+export const AUTODRIVE_AUTO_REPAIR_KEY = 'autodrive_auto_repair'
 
 // ── Defaults (conservative — tighten, never loosen, by default) ─────────────
 /** Whole-taka cap on TOTAL autodrive spend per day. 0 disables (= hard stop). */
@@ -105,6 +113,8 @@ export interface AutodriveConfig {
   gateModel: string
   driverModel: string
   backoffMin: number
+  /** Phase C: when true, a not-done verdict appends a corrective step and keeps driving (bounded). Default false. */
+  autoRepair: boolean
 }
 
 /**
@@ -138,6 +148,7 @@ export async function getAutodriveConfig(): Promise<AutodriveConfig> {
           AUTODRIVE_GATE_MODEL_KEY,
           AUTODRIVE_DRIVER_MODEL_KEY,
           AUTODRIVE_BACKOFF_MIN_KEY,
+          AUTODRIVE_AUTO_REPAIR_KEY,
         ],
       },
     },
@@ -156,6 +167,7 @@ export async function getAutodriveConfig(): Promise<AutodriveConfig> {
     gateModel: gateModel && gateModel.length > 0 ? gateModel : DEFAULT_AUTODRIVE_GATE_MODEL,
     driverModel: driverModel && driverModel.length > 0 ? driverModel : DEFAULT_AUTODRIVE_DRIVER_MODEL,
     backoffMin: parseIntSetting(byKey.get(AUTODRIVE_BACKOFF_MIN_KEY), DEFAULT_AUTODRIVE_BACKOFF_MIN, 1, 1440),
+    autoRepair: byKey.get(AUTODRIVE_AUTO_REPAIR_KEY)?.trim() === 'true',
   }
 }
 

@@ -619,9 +619,9 @@ function AttendanceCard({
 
       <AttendanceSubsectionBoundary name="Error banner">
         {attendanceError && (
-          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+          <div className="mt-4 rounded-xl border tone-red p-3 text-xs">
             <p className="font-bold">{attendanceErrorLabel(attendanceError.code)}</p>
-            <p className="mt-1 text-red-600">{attendanceError.message}</p>
+            <p className="mt-1">{attendanceError.message}</p>
             {attendanceError.retryable && (
               <Button size="xs" variant="secondary" className="mt-3" onClick={onRefresh}>
                 Retry attendance
@@ -633,7 +633,7 @@ function AttendanceCard({
 
       <AttendanceSubsectionBoundary name="Daily stats">
         {loading ? <Skeleton className="mt-4 h-28 w-full" /> : !empLinked ? (
-          <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-600">Ask an admin to link your HR employee ID before using attendance.</p>
+          <p className="mt-4 rounded-xl border tone-amber p-3 text-xs">Ask an admin to link your HR employee ID before using attendance.</p>
         ) : (
           <div className="mt-4 grid md:grid-cols-5 gap-2 text-[11px]">
             <WalletStat label="Check in" value={formatAttendanceTime(today?.checkInAt)} />
@@ -647,8 +647,8 @@ function AttendanceCard({
 
       <AttendanceSubsectionBoundary name="Verification banner">
         {selfieActionRequired && (
-          <div className="mt-4 rounded-2xl border-2 border-amber-300 bg-amber-50 p-4 shadow-lg shadow-amber-500/10">
-            <p className="text-sm font-black text-amber-800">Verification required</p>
+          <div className="mt-4 rounded-2xl border-2 tone-amber p-4 shadow-lg shadow-amber-500/10">
+            <p className="text-sm font-black">Verification required</p>
             <p className="mt-1 text-xs text-amber-600">
               Admin requested a quick face photo. Your check-in is saved — complete verification now.
             </p>
@@ -663,7 +663,7 @@ function AttendanceCard({
         )}
 
         {today?.trustStatus && today.trustStatus !== 'TRUSTED' && !selfieActionRequired && (
-          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-700">
+          <div className="mt-4 rounded-2xl border tone-amber p-3 text-[11px]">
             <p className="font-bold">Attendance marked for review</p>
             <p className="mt-1 text-amber-600">{securityReasons.map(labelSecurityReason).join(', ') || 'Additional verification may be requested.'}</p>
             {selfieSubmitted && (

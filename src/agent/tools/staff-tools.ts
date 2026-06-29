@@ -24,6 +24,7 @@ import {
   buildApproveResultBangla,
   formatTasksGroupedByStaff,
   makeDispatchSafeDetail,
+  buildStaffFriendlyDetail,
 } from '@/agent/lib/staff-task-format'
 import { enforceIslamicGreeting } from '@/agent/lib/islamic-greeting'
 import { prepareStaffOutboundMessage } from '@/agent/lib/alma-team-voice'
@@ -1817,6 +1818,9 @@ async function buildStaffTaskExplanation(opts: {
     `- কোন অ্যাপ/টুল দিয়ে করবে স্পষ্ট বলো (এই কাজে: ${toolHint})।`,
     '- জটিল শব্দ নয়, ইংরেজি কম। শেষে proof/Done-এর কথা মনে করিয়ে দাও।',
     '- কোনো হারাম পণ্য/ছবির ইঙ্গিত নয়। শুধু কাজের ধাপ লেখো, ভূমিকা বা অভিবাদন নয়।',
+    opts.productRef
+      ? `- প্রোডাক্ট কোড হুবহু "${opts.productRef}" লিখবে। কখনো নিজে থেকে অন্য কোনো নম্বর/কোড বানাবে না বা বদলাবে না।`
+      : '',
   ]
     .filter(Boolean)
     .join('\n')
@@ -1830,12 +1834,47 @@ async function buildStaffTaskExplanation(opts: {
   })
   // Keep it to at most 4 non-empty lines so the office view (buildStaffFriendlyDetail)
   // renders it verbatim instead of falling back to a template.
-  return text
+  const cleaned = text
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean)
     .slice(0, 4)
     .join('\n')
+
+  // Bug guard: a cheap model sometimes substitutes a DIFFERENT product code in the
+  // free-text explanation than the one the task is actually for — which confuses
+  // staff. When the task has a code-like productRef, refuse to trust an explanation
+  // that doesn't even mention it (the tell-tale sign the model invented another code)
+  // and fall back to the deterministic template, which only ever uses the real
+  // productRef. Correctness of the code beats a prettier sentence.
+  if (productCodeMismatch(opts.productRef, cleaned)) {
+    return buildStaffFriendlyDetail({
+      title: opts.title,
+      type: opts.type,
+      productRef: opts.productRef,
+      detail: null,
+    })
+  }
+  return cleaned
+}
+
+/** A short, mostly-numeric SKU/code (e.g. "133", "A12") — not a full product name. */
+function isProductCode(ref: string | null | undefined): ref is string {
+  const r = (ref ?? '').trim()
+  return r.length > 0 && r.length <= 8 && /\d/.test(r) && /^[A-Za-z0-9-]+$/.test(r)
+}
+
+/**
+ * True when the task has a code-like productRef but the generated explanation does
+ * NOT contain that exact code — the signal that the model wrote a different/invented
+ * product code. (Names, prices like "৳500", and Bengali numerals don't trigger this:
+ * we only act on code-like ASCII refs and require the literal code to be present.)
+ */
+export function productCodeMismatch(productRef: string | null | undefined, text: string): boolean {
+  if (!isProductCode(productRef)) return false
+  // Word-boundary match so "133" isn't satisfied by "1337" or a price.
+  const re = new RegExp(`(^|[^A-Za-z0-9])${productRef.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z0-9]|$)`)
+  return !re.test(text)
 }
 
 const explain_staff_task_bangla: AgentTool = {

@@ -54,6 +54,11 @@ html.agent-route .agent-main-height,
 html.agent-route .overflow-y-auto {
   overflow-x: hidden;
   overscroll-behavior-x: none;
+  /* iOS momentum: without this, agent-page scrollers (costs, staff-monitor,
+     trading-staff, creative-studio panels) feel stuck/stuttery in WKWebView —
+     the first drag scrolls, then it locks. Scoped to agent routes, applies to
+     every vertical scroll area in one place. */
+  -webkit-overflow-scrolling: touch;
 }
 
 /* PERMANENT iOS FIX (part 3) — the actual recurring "zoom-out after chatting" bug.

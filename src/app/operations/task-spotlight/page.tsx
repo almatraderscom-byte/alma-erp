@@ -244,7 +244,7 @@ export default function TaskSpotlightAdminPage() {
                       <div>
                         <p className="font-bold text-cream">{t.title}</p>
                         <p className="text-[11px] text-muted mt-1">
-                          <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold mr-2 ${t.priority === 'CRITICAL' ? 'bg-red-50 text-red-600' : t.priority === 'HIGH' ? 'bg-amber-50 text-amber-600' : 'bg-white/[0.06] text-muted-hi'}`}>{t.priority}</span>
+                          <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold mr-2 ${t.priority === 'CRITICAL' ? 'tone-red' : t.priority === 'HIGH' ? 'tone-amber' : 'bg-white/[0.06] text-muted-hi'}`}>{t.priority}</span>
                           {t.status} · {t.stats.completionRate}% complete ({t.stats.completed}/{t.stats.assigned})
                         </p>
                       </div>

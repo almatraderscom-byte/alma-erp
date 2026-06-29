@@ -147,7 +147,7 @@ export default function TradingHrPage() {
                       <p className="text-xs font-bold text-cream">{alert.title}</p>
                       <p className="mt-1 text-[11px] text-muted">{alert.message}</p>
                     </div>
-                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-600">{alert.severity}</span>
+                    <span className="rounded-full border tone-amber px-2 py-1 text-[10px] font-bold">{alert.severity}</span>
                   </div>
                 </div>
               ))}

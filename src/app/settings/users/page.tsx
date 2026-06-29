@@ -35,14 +35,14 @@ type RowUser = {
 function RoleBadge({ role }: { role: UserRole }) {
   const tone =
     role === 'SUPER_ADMIN'
-      ? 'bg-purple-50 text-purple-600 border-purple-200'
+      ? 'tone-purple'
       : role === 'ADMIN'
         ? 'bg-gold/10 text-gold-dim border-gold/30'
         : role === 'HR'
-          ? 'bg-sky-50 text-sky-600 border-sky-200'
+          ? 'tone-cyan'
           : role === 'STAFF'
             ? 'bg-white/[0.06] text-muted-hi border-border'
-            : 'bg-emerald-50 text-emerald-600 border-emerald-200'
+            : 'tone-green'
   return (
     <span className={`inline-flex text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${tone}`}>
       {role.replace(/_/g, ' ')}

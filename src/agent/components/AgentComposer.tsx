@@ -21,6 +21,8 @@ interface AgentComposerProps {
   activeModelId?: string
   onModelChange?: (modelId: string) => void
   onVoiceStart?: () => void
+  /** Pre-fills the input once (e.g. a staff quick-action deep-link). Not auto-sent. */
+  seedText?: string
 }
 
 export default function AgentComposer({
@@ -33,12 +35,27 @@ export default function AgentComposer({
   activeModelId,
   onModelChange,
   onVoiceStart,
+  seedText,
 }: AgentComposerProps) {
   const [text, setText] = useState('')
   const [files, setFiles] = useState<PendingFile[]>([])
   const [micLevel, setMicLevel] = useState(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const lastSeedRef = useRef<string | null>(null)
+
+  // A deep-link draft (staff quick-action) seeds the input once, focuses the
+  // cursor at the end, and lets the owner review/edit before sending.
+  useEffect(() => {
+    if (seedText && seedText !== lastSeedRef.current) {
+      lastSeedRef.current = seedText
+      setText(seedText)
+      requestAnimationFrame(() => {
+        const el = textareaRef.current
+        if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length) }
+      })
+    }
+  }, [seedText])
 
   // ChatGPT-style live dictation: tap mic → speak → transcript fills the input.
   const recorder = useVoiceRecorder({

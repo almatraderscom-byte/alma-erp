@@ -45,7 +45,7 @@ export function RouteTransitionLoader() {
             />
           </motion.div>
           <motion.div
-            className="pointer-events-none fixed inset-x-0 top-0 z-[95] hidden h-[100dvh] items-center justify-center bg-white/72 backdrop-blur-[2px] md:flex"
+            className="pointer-events-none fixed inset-x-0 top-0 z-[95] hidden h-[100dvh] items-center justify-center bg-card/80 backdrop-blur-[2px] md:flex"
             initial={reduceMotion ? { opacity: 0 } : { opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}

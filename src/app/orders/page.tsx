@@ -41,7 +41,7 @@ const STATUSES: OrderStatus[] = ['Pending','Confirmed','Packed','Shipped','Deliv
 
 function orderRowAccentClass(status: string, selected: boolean) {
   const key = status.trim().toUpperCase().replace(/\s+/g, '_')
-  const base = selected ? 'bg-gold/5' : 'hover:bg-white/[0.02]'
+  const base = selected ? 'bg-gold/10' : 'hover:bg-gold/[0.05]'
   if (key === 'RETURNED_PAID') return `${base} border-l-2 border-l-amber-400/80 bg-amber-400/[0.04]`
   if (key === 'RETURNED_UNPAID' || key === 'RETURNED') return `${base} border-l-2 border-l-red-500/80 bg-red-500/[0.05]`
   return `${base}`
@@ -436,7 +436,7 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
             <div className="bg-card rounded-xl p-3 text-center">
               <p className="text-[10px] text-muted mb-1">{profitDisplay.label}</p>
               <Money amount={profitDisplay.amount} className={`text-base font-bold ${profitDisplay.amountClass}`} />
-              <p className="text-[9px] text-muted mt-1 leading-tight">{profitDisplay.detail}</p>
+              <p className="text-[10px] text-muted mt-1 leading-tight">{profitDisplay.detail}</p>
             </div>
             <div className="bg-card rounded-xl p-3 text-center">
               <p className="text-[10px] text-muted mb-1">{profitDisplay.marginLabel}</p>
@@ -447,9 +447,7 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
           {restockStatusLabel && (
             <div
               className={`rounded-xl border px-4 py-2.5 text-xs ${
-                order.stockRestored
-                  ? 'border-green-400/20 bg-green-400/5 text-green-300'
-                  : 'border-amber-400/20 bg-amber-400/5 text-amber-300'
+                order.stockRestored ? 'tone-green' : 'tone-amber'
               }`}
             >
               {restockStatusLabel}
@@ -465,9 +463,9 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
                 <p className="text-[11px] text-muted font-mono">{order.phone}</p>
                 <p className="text-[11px] text-muted truncate">{order.address}</p>
               </div>
-              <a href={`https://wa.me/880${order.phone.slice(1)}`} target="_blank" rel="noreferrer"
-                className="w-8 h-8 rounded-xl bg-green-400/10 border border-green-400/20 flex items-center justify-center text-green-400 hover:bg-green-400/20 transition-colors text-sm shrink-0">
-                ⊞
+              <a href={`https://wa.me/880${order.phone.slice(1)}`} target="_blank" rel="noreferrer" aria-label="WhatsApp"
+                className="w-9 h-9 rounded-xl bg-green-500/15 border border-green-500/30 flex items-center justify-center hover:bg-green-500/25 transition-colors text-base shrink-0">
+                💬
               </a>
             </div>
           </div>
@@ -483,14 +481,14 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
               <StatRow label="Payment"  value={order.payment} />
               <StatRow label="Source"   value={order.source} />
               {order.handled_by && <StatRow label="Handled by" value={order.handled_by} />}
-              {order.notes && <StatRow label="Notes" value={order.notes} valueClass="text-amber-400" />}
+              {order.notes && <StatRow label="Notes" value={order.notes} valueClass="txt-warn" />}
             </div>
           </div>
 
           {order.sla_status && (
-            <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-amber-400/5 border border-amber-400/15">
-              <span className="text-amber-400 text-sm">⚡</span>
-              <span className="text-xs text-amber-300">{order.sla_status}</span>
+            <div className="flex items-center gap-3 px-4 py-3 rounded-xl border tone-amber">
+              <span className="text-sm">⚡</span>
+              <span className="text-xs font-semibold">{order.sla_status}</span>
             </div>
           )}
 
@@ -516,7 +514,7 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
                   </div>
                   <div className="flex-1">
                     <p className={`text-xs font-semibold ${step.done || step.active ? 'text-cream' : 'text-muted-hi'}`}>{step.label}</p>
-                    {step.active && <p className="text-[10px] text-blue-400 mt-0.5">In progress</p>}
+                    {step.active && <p className="text-[10px] txt-info mt-0.5">In progress</p>}
                   </div>
                 </div>
               ))}
@@ -530,7 +528,7 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
                 <p className="font-mono text-xs text-gold-lt font-bold">{order.invoice_num}</p>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-xs text-green-400 font-semibold">✓ Generated</span>
+                <span className="text-xs txt-pos font-semibold">✓ Generated</span>
                 <Button size="xs" variant="secondary" onClick={openLinkedInvoice} disabled={invoiceLookupLoading}>
                   {invoiceLookupLoading ? 'Opening…' : 'Open'}
                 </Button>
@@ -831,7 +829,7 @@ function OrdersPageContent() {
       <PageEnter className="min-w-0 max-w-full space-y-4 px-3 py-4 pb-24 sm:px-6 md:pb-6">
 
         {error && (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-400/25 bg-red-400/10 px-4 py-3 text-sm text-red-300">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm tone-red">
             <span>{error}</span>
             <Button variant="ghost" size="xs" onClick={() => void refetch()}>Retry</Button>
           </div>
@@ -840,9 +838,9 @@ function OrdersPageContent() {
         <DateRangeFilter />
 
         <div className={KPI_AUTO_GRID}>
-          <KpiCard label="Orders" value={summary.total} valueKind="plain" loading={tableLoading} />
-          <KpiCard label="Revenue" value={summary.total_revenue} valueKind="currency" color="text-gold-lt" loading={tableLoading} />
-          <KpiCard label="Profit" value={summary.total_profit} valueKind="currency" color="text-green-400" loading={tableLoading} />
+          <KpiCard label="Orders" value={summary.total} valueKind="plain" loading={tableLoading} animate />
+          <KpiCard label="Revenue" value={summary.total_revenue} valueKind="currency" color="text-gold-lt" loading={tableLoading} animate />
+          <KpiCard label="Profit" value={summary.total_profit} valueKind="currency" color="txt-pos" loading={tableLoading} animate />
         </div>
 
         {/* Status pills — wrap so every filter shows at once (no horizontal scroll) */}
@@ -855,11 +853,11 @@ function OrdersPageContent() {
             onClick={() => setStatus(status === ALL_RETURNS_FILTER ? '' : ALL_RETURNS_FILTER)}
             className={`shrink-0 flex min-h-[44px] items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${
               status === ALL_RETURNS_FILTER
-                ? 'text-amber-300 bg-amber-400/10 border-amber-400/35'
+                ? 'tone-amber'
                 : 'border-border text-muted hover:text-muted'
             }`}
           >
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+            <span className={`w-1.5 h-1.5 rounded-full ${status === ALL_RETURNS_FILTER ? 'tone-dot' : 'bg-amber-400'}`} />
             All Returns <span className="opacity-70">{statusCounts[ALL_RETURNS_FILTER] ?? 0}</span>
           </button>
           {STATUSES.map(s => {
@@ -929,9 +927,9 @@ function OrdersPageContent() {
                         <td className="px-3 py-3.5"><StatusBadge status={o.status} /></td>
                         <td className="px-3 py-3.5">
                           <p className="text-muted">{o.courier || '—'}</p>
-                          {o.tracking_id && <p className="font-mono text-[9px] text-muted-hi">{o.tracking_id}</p>}
+                          {o.tracking_id && <p className="font-mono text-[11px] text-muted-hi">{o.tracking_id}</p>}
                         </td>
-                        <td className="px-3 py-3.5 whitespace-nowrap"><Money amount={o.profit ?? 0} className="font-bold text-green-400" /></td>
+                        <td className="px-3 py-3.5 whitespace-nowrap"><Money amount={o.profit ?? 0} className="font-bold txt-pos" /></td>
                       </tr>
                     ))}
                     {bottomSpacer > 0 && (
@@ -976,7 +974,10 @@ function OrdersPageContent() {
                   }`}>
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="min-w-0 flex-1">
-                        <span className="font-mono text-[11px] text-gold font-bold">{o.id}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-[11px] text-gold font-bold">{o.id}</span>
+                          <span className="text-[10px] text-muted whitespace-nowrap">{o.date}</span>
+                        </div>
                         <p className="truncate text-sm font-semibold text-cream mt-0.5">{o.customer}</p>
                         <p className="text-[11px] text-muted truncate">{o.product}</p>
                       </div>
@@ -988,7 +989,7 @@ function OrdersPageContent() {
                     <div className="flex items-center gap-2">
                       <PaymentTag method={o.payment} />
                       <span className="text-[10px] text-muted-hi">{o.courier || '—'}</span>
-                      <Money amount={o.profit ?? 0} className="ml-auto text-[11px] font-bold text-green-400" />
+                      <Money amount={o.profit ?? 0} className="ml-auto text-[11px] font-bold txt-pos" />
                     </div>
                   </Card>
                 </button>

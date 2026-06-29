@@ -171,10 +171,10 @@ export default function ExpensesPage() {
     >
       <motion.div variants={stagger} initial="hidden" animate="show" className="min-w-0 max-w-full space-y-6">
       <motion.div variants={fadeUp} className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <KpiCard label="Total expenses (range)" value={loading ? '—' : total} loading={loading} />
-        <KpiCard label="Ledger cash readout" value={loading ? '—' : Number(data?.cash_balance ?? 0)} loading={loading} />
-        <KpiCard label="Line items" value={loading ? '—' : expenses.length} loading={loading} />
-        <KpiCard label="Active categories" value={loading ? '—' : Object.keys(byCat).length} loading={loading} />
+        <KpiCard label="Total expenses (range)" value={loading ? '—' : total} loading={loading} animate />
+        <KpiCard label="Ledger cash readout" value={loading ? '—' : Number(data?.cash_balance ?? 0)} loading={loading} animate />
+        <KpiCard label="Line items" value={loading ? '—' : expenses.length} loading={loading} animate />
+        <KpiCard label="Active categories" value={loading ? '—' : Object.keys(byCat).length} loading={loading} animate />
       </motion.div>
 
       <motion.div variants={fadeUp} className="grid grid-cols-1 md:grid-cols-2 gap-4">

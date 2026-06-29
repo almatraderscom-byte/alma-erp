@@ -142,6 +142,12 @@ export default function OwnerHub({
   const [threadTask, setThreadTask] = useState<HubTaskCard | null>(null)
   const [awardOpen, setAwardOpen] = useState(false)
   const [zoom, setZoom] = useState<string | null>(null)
+  // Phone-only view switch: on a narrow screen the 2-column grid stacks into one
+  // endless wall, so we let the owner flip between "কাজ" (approvals + active) and
+  // "টিম" (status + activity + performance). On desktop both panes always show
+  // (the tab bar + the per-pane hiding are CSS-gated to phones), so this state is
+  // a no-op there and the existing layout is untouched.
+  const [tab, setTab] = useState<'work' | 'team'>('work')
 
   const run = useCallback(
     async (key: string, body: ActionBody) => {
@@ -345,10 +351,32 @@ export default function OwnerHub({
         </div>
       )}
 
+      {/* phone-only section switcher (hidden on desktop via CSS) */}
+      <div className="oh-tabs" role="tablist" aria-label="অফিস হাব সেকশন">
+        <button
+          role="tab"
+          aria-selected={tab === 'work'}
+          className={`oh-tab${tab === 'work' ? ' on' : ''}`}
+          onClick={() => setTab('work')}
+        >
+          📋 কাজ
+          <span className="oh-tab-c">{bn(pendingApproval.length + selfInitiated.length + activeTasks.length)}</span>
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'team'}
+          className={`oh-tab${tab === 'team' ? ' on' : ''}`}
+          onClick={() => setTab('team')}
+        >
+          👥 টিম
+          <span className="oh-tab-c">{bn(team.length)}</span>
+        </button>
+      </div>
+
       {/* main grid */}
-      <div className="grid2">
+      <div className={`grid2 oh-paged tab-${tab}`}>
         {/* LEFT: pending approvals + active tasks */}
-        <div>
+        <div className="oh-pane pane-work">
           <div className="section-h">
             <h2>⏳ অনুমোদনের অপেক্ষায়</h2>
             <span className="count">{bn(pendingApproval.length + selfInitiated.length)}টি</span>
@@ -392,39 +420,22 @@ export default function OwnerHub({
             </div>
           ) : (
             <div className="actcols">
-              {activeByStaff.map((g) => {
-                const img = imgByStaff.get(g.staffId) ?? null
-                return (
-                  <div className="actcol" key={g.staffId}>
-                    <div className="actcol-h">
-                      {img ? (
-                        <span className={`av img`} style={{ backgroundImage: `url(${img})` }} />
-                      ) : (
-                        <span className={`av ${avClass(g.staffId)}`}>{(g.staffName.trim()[0] || '?').toUpperCase()}</span>
-                      )}
-                      <span className="nm">{g.staffName}</span>
-                      <span className="count">{bn(g.tasks.length)}টি</span>
-                    </div>
-                    <div className="card">
-                      {g.tasks.map((t, i) => (
-                        <ActiveRow
-                          key={t.id}
-                          task={t}
-                          idx={i}
-                          busy={busy}
-                          onSetDue={(dueAt) => run(`due-${t.id}`, { action: 'set_due', taskId: t.id, dueAt })}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )
-              })}
+              {activeByStaff.map((g, gi) => (
+                <ActiveStaffGroup
+                  key={g.staffId}
+                  g={g}
+                  img={imgByStaff.get(g.staffId) ?? null}
+                  busy={busy}
+                  defaultOpen={gi === 0}
+                  onSetDue={(taskId, dueAt) => run(`due-${taskId}`, { action: 'set_due', taskId, dueAt })}
+                />
+              ))}
             </div>
           )}
         </div>
 
         {/* RIGHT: team status + activity + leaderboard */}
-        <div>
+        <div className="oh-pane pane-team">
           <div className="section-h">
             <h2>👥 টিম স্ট্যাটাস</h2>
           </div>
@@ -461,6 +472,7 @@ export default function OwnerHub({
               <LeadRow key={r.staffId} r={r} rank={i + 1} top={i === 0} winnerId={award?.staffId} />
             ))}
             <div
+              className="pick-foot"
               style={{
                 padding: '12px 16px',
                 borderTop: '1px solid var(--border-subtle)',
@@ -469,7 +481,7 @@ export default function OwnerHub({
                 gap: 10,
               }}
             >
-              <span style={{ fontSize: 12.5, color: 'var(--muted)', flex: 1 }}>
+              <span className="cap" style={{ fontSize: 12.5, color: 'var(--muted)', flex: 1 }}>
                 প্রতি শুক্রবার auto-নির্বাচন · আপনি চাইলে বদলাতে পারবেন
               </span>
               <button className="btn sm" onClick={() => setAwardOpen(true)}>
@@ -640,6 +652,49 @@ function PerfRow({ p, img }: { p: StaffPerformance; img: string | null }) {
       <span className={`num rate ${rateCls}`}>{rate == null ? '—' : `${bn(rate)}%`}</span>
       <span className={`num ${p.redo > 0 ? 'warn' : ''}`}>{bn(p.redo)}</span>
       <span className={`num ${p.escalated > 0 ? 'warn' : ''}`}>{bn(p.escalated)}</span>
+    </div>
+  )
+}
+
+// ── collapsible per-staff active-task group ─────────────────────────────────
+// Active tasks are reference (not action-needed), so on a phone the long stacked
+// list is the #1 scroll culprit. Each staff's tasks now collapse to a single
+// tappable header (first group open, rest collapsed) — far less scrolling.
+function ActiveStaffGroup({
+  g,
+  img,
+  busy,
+  defaultOpen,
+  onSetDue,
+}: {
+  g: { staffId: string; staffName: string; tasks: HubTaskCard[] }
+  img: string | null
+  busy: boolean
+  defaultOpen: boolean
+  onSetDue: (taskId: string, dueAt: string | null) => Promise<boolean>
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className={`actcol${open ? ' open' : ''}`}>
+      <button className="actcol-h" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        {img ? (
+          <span className="av img" style={{ backgroundImage: `url(${img})` }} />
+        ) : (
+          <span className={`av ${avClass(g.staffId)}`}>{(g.staffName.trim()[0] || '?').toUpperCase()}</span>
+        )}
+        <span className="nm">{g.staffName}</span>
+        <span className="count">{bn(g.tasks.length)}টি</span>
+        <span className="actcol-chev" aria-hidden>
+          ▸
+        </span>
+      </button>
+      {open && (
+        <div className="card">
+          {g.tasks.map((t, i) => (
+            <ActiveRow key={t.id} task={t} idx={i} busy={busy} onSetDue={(dueAt) => onSetDue(t.id, dueAt)} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

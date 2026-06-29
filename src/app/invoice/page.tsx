@@ -262,7 +262,7 @@ export default function InvoicePage() {
             <p className="text-[10px] text-muted mt-1">Delivered orders</p>
           </Card>
           <Card className="rounded-2xl border border-white/[0.06] p-4 text-center shadow-sm">
-            <p className="text-2xl font-bold text-emerald-600">{registry?.totals.count ?? 0}</p>
+            <p className="text-2xl font-bold txt-pos">{registry?.totals.count ?? 0}</p>
             <p className="text-[10px] text-muted mt-1">Invoiced</p>
           </Card>
           <Card className="rounded-2xl border border-white/[0.06] p-4 text-center shadow-sm">
@@ -313,7 +313,7 @@ export default function InvoicePage() {
         )}
 
         <motion.div variants={fadeUp}>
-          <p className="text-[10px] font-bold tracking-[0.12em] uppercase text-emerald-600 mb-2">Invoice Registry</p>
+          <p className="text-[10px] font-bold tracking-[0.12em] uppercase txt-pos mb-2">Invoice Registry</p>
           {registryLoading ? (
             <div className="space-y-2">{Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-24 rounded-2xl" />)}</div>
           ) : invoices.length > 0 ? (
@@ -325,9 +325,9 @@ export default function InvoicePage() {
                     <div className="flex flex-col md:flex-row md:items-center gap-3">
                       <button type="button" onClick={() => order ? openPreview(order, invoiceUrl(inv), inv) : openInvoice(inv)} className="flex-1 min-w-0 text-left">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <span className="font-mono text-[11px] text-emerald-600 font-bold">{inv.invoiceNumber}</span>
+                          <span className="font-mono text-[11px] txt-pos font-bold">{inv.invoiceNumber}</span>
                           <span className="font-mono text-[10px] text-[#E07A5F]">Order {inv.orderId}</span>
-                          <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${inv.paymentStatus === 'PAID' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : inv.paymentStatus === 'PARTIAL' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-border bg-white/[0.04] text-muted-hi'}`}>{inv.paymentStatus}</span>
+                          <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${inv.paymentStatus === 'PAID' ? 'tone-green' : inv.paymentStatus === 'PARTIAL' ? 'tone-amber' : 'border-border bg-white/[0.04] text-muted-hi'}`}>{inv.paymentStatus}</span>
                         </div>
                         <p className="text-sm font-semibold text-cream">{inv.customerName}</p>
                         <p className="text-[11px] text-muted">

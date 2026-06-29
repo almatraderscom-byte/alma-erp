@@ -8,11 +8,14 @@
  * are prefixed `oh-` to avoid collisions with ERP animations.
  */
 export const OFFICE_CSS = `
-/* While the office overlay is mounted it is the ONLY scroller: lock the page
-   behind it and kill the browser's native pull-to-refresh, so scrolling back
-   up inside the office never reloads the page. */
+/* While the office overlay is mounted it is the ONLY scroller. We FULLY pin the
+   document so the iOS WKWebView (Capacitor shell) can never rubber-band or
+   pull-to-refresh: <body> is itself position:fixed + unscrollable, leaving
+   .wrap as the single momentum scroller. This is the reliable native fix for
+   "scroll down → can't scroll back up → whole app reloads". */
 html,body{overscroll-behavior-y:none}
-body:has(.ohub){overflow:hidden;height:100%}
+html:has(.ohub){overflow:hidden}
+body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;overscroll-behavior:none}
 .ohub{
   --accent:#E07A5F; --accent-lt:#F4A28C; --accent-dim:#C45A3C;
   --bg-0:#121216; --bg-1:#1A1A20; --bg-2:#202027; --bg-3:#26262e;
@@ -26,8 +29,12 @@ body:has(.ohub){overflow:hidden;height:100%}
      single source of truth for the sticky topbar height so nothing overlaps it. */
   --safe-top:env(safe-area-inset-top,0px); --safe-bottom:env(safe-area-inset-bottom,0px);
   --topbar-h:calc(60px + var(--safe-top));
-  position:fixed; inset:0; z-index:70; overflow-y:auto; overflow-x:hidden;
-  overscroll-behavior:contain; -webkit-overflow-scrolling:touch;
+  /* The fixed shell is a flex COLUMN that itself NEVER scrolls (overflow:hidden).
+     A normal in-flow child (.wrap) is the only momentum scroller — a position:fixed
+     element that is also the scroller is the iOS WKWebView combo that locks up and
+     can't scroll back to the top. This split is the reliable native fix. */
+  position:fixed; inset:0; z-index:70; display:flex; flex-direction:column;
+  overflow:hidden; overscroll-behavior:none;
   font-family:var(--font); background:var(--bg-0); color:var(--ink);
   -webkit-font-smoothing:antialiased; line-height:1.5;
   background-image:
@@ -40,7 +47,7 @@ body:has(.ohub){overflow:hidden;height:100%}
 .ohub .num{font-variant-numeric:tabular-nums}
 
 /* ── top perspective switcher ── */
-.ohub .topbar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:14px;flex-wrap:nowrap;
+.ohub .topbar{flex:none;position:relative;z-index:40;display:flex;align-items:center;gap:14px;flex-wrap:nowrap;
   padding:14px 22px;padding-top:max(14px,var(--safe-top));min-height:var(--topbar-h);
   background:rgba(18,18,22,0.82);backdrop-filter:blur(18px) saturate(1.1);
   border-bottom:1px solid var(--border-subtle)}
@@ -55,8 +62,11 @@ body:has(.ohub){overflow:hidden;height:100%}
 .ohub .bell{position:relative;flex-shrink:0;width:40px;height:40px;border-radius:var(--r-pill);display:grid;place-items:center;font-size:17px;background:var(--bg-2);border:1px solid var(--border-subtle);color:var(--ink);cursor:pointer}
 .ohub .bell .bdot{position:absolute;top:-4px;right:-4px;min-width:19px;height:19px;border-radius:10px;background:var(--danger);color:#fff;font-size:10.5px;font-weight:700;display:grid;place-items:center;padding:0 5px;border:2px solid var(--bg-0)}
 
-.ohub .wrap{max-width:1280px;margin:0 auto;padding:26px 22px calc(100px + var(--safe-bottom))}
-.ohub .perspective{display:none}
+/* the ONLY scroller: an in-flow flex child, momentum + contained so iOS never
+   chains to the body or locks up. Content centering/padding lives on .perspective. */
+.ohub .wrap{flex:1;min-height:0;width:100%;max-width:100%;overflow-y:auto;overflow-x:hidden;
+  overscroll-behavior:none}
+.ohub .perspective{display:none;width:100%;max-width:1280px;margin:0 auto;padding:26px 22px calc(100px + var(--safe-bottom))}
 .ohub .perspective.show{display:block;animation:oh-fade .26s ease}
 @keyframes oh-fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
@@ -218,21 +228,123 @@ body:has(.ohub){overflow:hidden;height:100%}
 .ohub .note{display:flex;gap:10px;background:rgba(224,122,95,.08);border:1px solid rgba(224,122,95,.2);border-radius:var(--r-md);padding:13px 15px;margin-top:18px;font-size:13px;color:var(--muted-hi)}
 .ohub .note .i{font-size:17px}
 .ohub .hidden{display:none!important}
+
+/* ── phone-only section switcher ──
+   On a narrow screen the 2-column grid stacks into one endless wall. We give the
+   owner a sticky segmented control to flip between "কাজ" and "টিম" and show only
+   the active pane. Desktop is untouched: the tab bar is display:none and both
+   panes always render, so the existing .grid2 layout is unchanged ≥ 680px. */
+.ohub .oh-tabs{display:none}
+.ohub .oh-tab-c{font-size:11px;font-weight:700;min-width:18px;height:18px;padding:0 5px;border-radius:9px;
+  display:inline-grid;place-items:center;background:rgba(255,255,255,0.10);color:var(--muted-hi)}
+
 @media(max-width:960px){.ohub .kpis{grid-template-columns:repeat(2,1fr)}.ohub .grid2{grid-template-columns:1fr}}
 @media(max-width:680px){
-  .ohub .wrap{padding:18px 14px calc(100px + var(--safe-bottom))}
-  .ohub .topbar{padding:11px 14px;padding-top:max(11px,var(--safe-top));gap:10px}
+  .ohub .oh-tabs{display:flex;gap:6px;position:sticky;top:0;z-index:25;margin:0 0 16px;padding:5px;
+    background:rgba(18,18,22,0.92);backdrop-filter:blur(12px) saturate(1.1);
+    border:1px solid var(--border-subtle);border-radius:var(--r-pill);box-shadow:var(--shadow)}
+  .ohub .oh-tab{flex:1;font-family:inherit;font-size:13.5px;font-weight:700;color:var(--muted);
+    display:inline-flex;align-items:center;justify-content:center;gap:7px;
+    padding:10px 12px;min-height:44px;border:0;background:transparent;border-radius:var(--r-pill);
+    cursor:pointer;transition:.18s}
+  .ohub .oh-tab.on{background:linear-gradient(135deg,var(--accent),var(--accent-dim));color:#fff;
+    box-shadow:0 3px 12px rgba(224,122,95,.4)}
+  .ohub .oh-tab.on .oh-tab-c{background:rgba(255,255,255,0.22);color:#fff}
+  .ohub .grid2.oh-paged.tab-work .pane-team{display:none}
+  .ohub .grid2.oh-paged.tab-team .pane-work{display:none}
+}
+@media(max-width:680px){
+  /* Padding lives ONLY on .perspective (was also on .wrap → double inset + a
+     ~200px dead zone at the bottom). One source = tighter sides + a snug,
+     premium tail instead of an endless empty scroll. */
+  .ohub .wrap{padding:0}
+  .ohub .perspective{padding:14px 13px calc(78px + var(--safe-bottom))}
+  .ohub .topbar{padding:10px 13px;padding-top:max(10px,var(--safe-top));gap:10px}
   .ohub .brand small{display:none}
+  .ohub .brand .logo{width:28px;height:28px;font-size:15px}
+  .ohub .brand>span{font-size:15px}
   .ohub .seg button{padding:7px 12px;font-size:12.5px}
-  .ohub .phead h1{font-size:21px}
-  .ohub .kpi{padding:14px} .ohub .kpi .v{font-size:24px}
+  /* compact vertical rhythm — same hierarchy, much less scrolling */
+  .ohub .phead{margin-bottom:12px} .ohub .phead h1{font-size:18px} .ohub .phead p{font-size:12.5px}
+  .ohub .phead .kicker{font-size:10.5px}
+  .ohub .section-h{margin-bottom:9px} .ohub .section-h h2{font-size:14.5px}
+  .ohub .track,.ohub .props{margin-bottom:12px}
   .ohub .stage{gap:22px}
   .ohub .phone{width:100%;max-width:420px;height:auto;min-height:560px;border-radius:34px}
   .ohub .pscreen{padding:24px 14px 30px}
   .ohub .pnav{display:none}
-  .ohub .award{padding:18px} .ohub .award .inner{gap:16px} .ohub h2.aw{font-size:21px}
-  .ohub .photo{width:78px;height:78px;font-size:28px}
-  .ohub .award .stats{gap:14px}
+
+  /* KPIs → one slim stat strip (was a tall 2×2 block ≈ 200px → ≈ 78px) */
+  .ohub .kpis{grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:12px}
+  .ohub .kpi{padding:10px 6px;border-radius:14px;text-align:center}
+  .ohub .kpi .glow{display:none}
+  .ohub .kpi .ic{font-size:15px}
+  .ohub .kpi .v{font-size:18px;margin-top:2px}
+  .ohub .kpi .l{font-size:9.5px;margin-top:1px;line-height:1.2}
+
+  /* performer → a slim champion banner (was a ≈280px hero card → ≈96px) */
+  .ohub .hero-row{gap:10px;margin-bottom:12px}
+  .ohub .award{padding:12px 13px}
+  .ohub .award .confetti{display:none}
+  .ohub .award .inner{flex-wrap:nowrap;align-items:center;gap:12px}
+  .ohub .crownwrap{padding-top:0}
+  .ohub .photo{width:46px;height:46px;font-size:18px;box-shadow:0 0 0 3px rgba(255,200,90,.4)}
+  .ohub .crown{font-size:17px;top:-8px}
+  .ohub .award .meta{min-width:0;flex:1}
+  .ohub .award .tag{font-size:10px;padding:3px 9px}
+  .ohub h2.aw{font-size:15px;margin:5px 0 0}
+  .ohub .award .sub{display:none}
+  .ohub .award .stats{gap:12px;margin-top:7px}
+  .ohub .award .stats .s:nth-child(n+3){display:none}   /* keep the 2 key stats */
+  .ohub .award .stats .s b{font-size:14px}
+  .ohub .award .stats .s span{font-size:9.5px}
+  .ohub .ownerctl{top:8px;right:8px}
+  .ohub .ownerctl .btn{font-size:10px;padding:4px 8px}
+
+  /* motivation → a thin one-line strip (was a ≈140px card → ≈58px) */
+  .ohub .motiv{padding:11px 14px}
+  .ohub .motiv-glow{display:none}
+  .ohub .motiv-tag{font-size:10.5px}
+  .ohub .motiv-quote{font-size:13px;line-height:1.4}
+  .ohub .motiv-foot{font-size:10.5px}
+
+  /* repeating list rows — the real length driver. Tighten every item so a long
+     list (20 tasks, team, activity, leaderboard) takes far less vertical space. */
+  .ohub .appr{padding:11px 12px;gap:10px}
+  .ohub .appr .thumb,.ohub .thumb{width:46px;height:46px;border-radius:11px}
+  .ohub .appr h3{font-size:14px} .ohub .appr .meta{font-size:11.5px}
+  .ohub .appr .actions{gap:6px;margin-top:8px} .ohub .btn.sm{font-size:11.5px;padding:6px 10px}
+  .ohub .staff-row{padding:10px 12px;gap:10px}
+  .ohub .staff-row .name{font-size:13.5px} .ohub .staff-row .sub{font-size:11.5px}
+  .ohub .av.lg{width:34px;height:34px;font-size:13px}
+  .ohub .ev{padding:8px 12px;gap:10px} .ohub .ev .txt{font-size:12.5px} .ohub .ev .ic{width:24px;height:24px}
+  .ohub .lead{padding:10px 12px} .ohub .trow{padding:11px 14px}
+  .ohub .stask{padding:11px 12px;margin-bottom:9px} .ohub .stask h4{font-size:13.5px}
+}
+
+/* ════ horizontal-overflow guards ════
+   On a phone the dense rows (leaderboard, performance table, auto-select footer)
+   were wider than the viewport; .wrap clips overflow-x, so the right edge was
+   simply HIDDEN (scores, buttons, the last columns). These shrink-guards make
+   every row FIT the screen instead of being cut off. */
+.ohub .lead .info{min-width:0}
+.ohub .lead .nm{min-width:0}
+.ohub .lead .pick,.ohub .lead .score,.ohub .lead .rank,.ohub .lead .av{flex-shrink:0}
+@media(max-width:680px){
+  .ohub .lead{gap:10px;padding:12px 13px}
+  .ohub .lead .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* performance scorecard: shrinkable cells + tighter type so all 5 columns fit */
+  .ohub .perf-head,.ohub .perf-row{padding:9px 11px;gap:5px}
+  .ohub .perf-head{font-size:10px}
+  .ohub .perf-row{font-size:12.5px}
+  .ohub .perf-head span,.ohub .perf-row>span,.ohub .perf-row .who{min-width:0}
+  .ohub .perf-row .who{gap:7px}
+  .ohub .perf-row .who .av{width:26px;height:26px;font-size:11px;flex-shrink:0}
+  .ohub .perf-row .who .nm{font-size:12.5px}
+  /* auto-select footer (✋ আমি নির্বাচন করব) — let the caption shrink so the button stays on-screen */
+  .ohub .pick-foot{flex-wrap:wrap;gap:8px}
+  .ohub .pick-foot .cap{min-width:0;flex:1 1 100%}
+  .ohub .pick-foot .btn{flex-shrink:0}
 }
 
 /* ════ update tracking (no-response) ════ */
@@ -327,11 +439,11 @@ body:has(.ohub){overflow:hidden;height:100%}
   background:#1A1A20;border:1px solid rgba(255,255,255,0.10);border-radius:22px;box-shadow:0 26px 74px rgba(0,0,0,.62);
   display:flex;flex-direction:column;overflow:hidden;animation:oh-cpop .2s ease}
 @keyframes oh-cpop{from{opacity:0;transform:scale(.93) translateY(12px)}to{opacity:1;transform:none}}
-.ohub-chatpanel .cp-head{display:flex;align-items:center;gap:11px;padding:13px 15px;border-bottom:1px solid rgba(255,255,255,0.07);background:#202027}
+.ohub-chatpanel .cp-head{position:relative;display:flex;align-items:center;gap:11px;padding:13px 15px;border-bottom:1px solid rgba(255,255,255,0.07);background:#202027}
 .ohub-chatpanel .cp-head .gav{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-size:17px;background:linear-gradient(135deg,#10b981,#059669);color:#fff}
 .ohub-chatpanel .cp-head .ttl{flex:1;min-width:0} .ohub-chatpanel .cp-head .ttl b{font-size:14.5px;font-weight:700} .ohub-chatpanel .cp-head .ttl span{display:block;font-size:11.5px;color:#22c55e}
 .ohub-chatpanel .cp-head .x{background:none;border:0;color:#AEB2C0;font-size:20px;cursor:pointer;padding:2px 6px}
-.ohub-chatpanel .cp-body{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:13px}
+.ohub-chatpanel .cp-body{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:none;scroll-behavior:smooth;padding:14px;display:flex;flex-direction:column;gap:13px}
 .ohub-chatpanel .gm{display:flex;gap:9px;max-width:90%}
 .ohub-chatpanel .gm .av{width:27px;height:27px;font-size:11px;margin-top:2px;border-radius:50%;display:grid;place-items:center;color:#fff;flex-shrink:0;background:#3f3f46}
 .ohub-chatpanel .gm .av.e{background:linear-gradient(135deg,#6366f1,#8b5cf6)}
@@ -356,7 +468,27 @@ body:has(.ohub){overflow:hidden;height:100%}
 .ohub-chatpanel .cp-foot input{flex:1;background:#121216;border:1px solid rgba(255,255,255,0.10);border-radius:9999px;padding:9px 14px;color:#F7F8FC;font-family:inherit;font-size:13px;outline:none}
 .ohub-chatpanel .cp-foot button{font-family:inherit;font-size:13px;font-weight:600;padding:9px 14px;border-radius:9999px;border:0;background:linear-gradient(135deg,#E07A5F,#C45A3C);color:#fff;cursor:pointer}
 .ohub-chatpanel .cp-foot button:disabled{opacity:.5;cursor:not-allowed}
-@media(max-width:480px){.ohub-chatpanel{right:14px;left:14px;bottom:calc(90px + var(--safe-bottom));width:auto}}
+/* Phone: a premium native-style bottom sheet (was a cramped floating box that
+   sat above the FAB and clipped). Full width, rounded top, grab-handle, slides
+   up from the bottom, composer rides above the home-indicator. */
+@media(max-width:560px){
+  .ohub-chatpanel{right:0;left:0;bottom:0;width:auto;max-width:none;height:90dvh;max-height:90dvh;
+    border-radius:24px 24px 0 0;border-bottom:0;box-shadow:0 -18px 60px rgba(0,0,0,.6);
+    animation:oh-sheet .28s cubic-bezier(.2,.8,.2,1)}
+  .ohub-chatpanel .cp-head{border-radius:24px 24px 0 0;padding-top:18px}
+  .ohub-chatpanel .cp-head:before{content:"";position:absolute;top:7px;left:50%;transform:translateX(-50%);
+    width:38px;height:4px;border-radius:9999px;background:rgba(255,255,255,0.22)}
+  /* lift the composer above the software keyboard (--kb-inset is driven app-wide
+     by GlobalKeyboardManager; falls back to 0 so nothing moves when closed). */
+  .ohub-chatpanel .cp-foot{padding-bottom:calc(10px + var(--safe-bottom) + var(--kb-inset,0px))}
+}
+@keyframes oh-sheet{from{transform:translateY(100%)}to{transform:none}}
+/* iOS: any input < 16px auto-zooms + jumps the page on focus. Pin every office
+   text field to 16px on phones so focusing a field feels native (no zoom). */
+@media(max-width:680px){
+  .ohub input,.ohub textarea,.ohub-chatpanel input,.ohub-chatpanel textarea,
+  .ohub-drawer input,.ohub .composer input,.ohub .due-edit input{font-size:16px}
+}
 
 /* notification dropdown (anchored to topbar bell) */
 .ohub-notif{position:fixed;z-index:82;top:var(--topbar-h);right:20px;width:330px;max-width:calc(100vw - 28px);
@@ -365,7 +497,7 @@ body:has(.ohub){overflow:hidden;height:100%}
 .ohub-notif .nh{display:flex;align-items:center;justify-content:space-between;padding:12px 15px;border-bottom:1px solid rgba(255,255,255,0.07)}
 .ohub-notif .nh b{font-size:14px;font-weight:700}
 .ohub-notif .nh button{background:none;border:0;color:#7dd3fc;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit}
-.ohub-notif .nlist{max-height:60vh;overflow-y:auto}
+.ohub-notif .nlist{max-height:60vh;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
 .ohub-notif .ni{display:flex;gap:10px;width:100%;text-align:left;padding:11px 15px;border:0;border-bottom:1px solid rgba(255,255,255,0.05);background:transparent;color:inherit;cursor:pointer;font-family:inherit}
 .ohub-notif .ni.unread{background:rgba(56,189,248,.06)}
 .ohub-notif .ni .ic{font-size:16px;margin-top:1px}
@@ -394,7 +526,7 @@ body:has(.ohub){overflow:hidden;height:100%}
 .ohub-drawer .dh .ttl b{display:block;font-size:13px;font-weight:800;letter-spacing:.04em;color:#F4A28C}
 .ohub-drawer .dh .ttl span{display:block;font-size:10.5px;color:#AEB2C0;margin-top:1px}
 .ohub-drawer .dh .x{background:none;border:0;color:#AEB2C0;font-size:22px;cursor:pointer;padding:0 4px;line-height:1}
-.ohub-drawer .dnav{flex:1;overflow-y:auto;padding:10px 8px;display:flex;flex-direction:column;gap:2px}
+.ohub-drawer .dnav{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:10px 8px;display:flex;flex-direction:column;gap:2px}
 .ohub-drawer .dnav::-webkit-scrollbar{width:7px}
 .ohub-drawer .dnav::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:7px}
 .ohub-drawer .dl{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:12px;text-decoration:none;color:#D0D4E0;
@@ -407,7 +539,7 @@ body:has(.ohub){overflow:hidden;height:100%}
 
 /* ════ day-end history archive ════ */
 .ohub-hist-ov{position:fixed;inset:0;z-index:92;background:rgba(0,0,0,.6);backdrop-filter:blur(3px);
-  display:flex;justify-content:center;align-items:flex-start;padding:max(34px,var(--safe-top)) 16px calc(60px + var(--safe-bottom));overflow-y:auto;animation:oh-fade .2s ease;
+  display:flex;justify-content:center;align-items:flex-start;padding:max(34px,var(--safe-top)) 16px calc(60px + var(--safe-bottom));overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;animation:oh-fade .2s ease;
   font-family:'Hind Siliguri','Noto Sans Bengali',Inter,system-ui,sans-serif;color:#F7F8FC}
 .ohub-hist{width:100%;max-width:900px;background:#1A1A20;border:1px solid rgba(255,255,255,0.08);border-radius:22px;box-shadow:0 30px 80px rgba(0,0,0,.6);overflow:hidden}
 .ohub-hist .hh{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.07);background:#202027;position:sticky;top:0;z-index:2}
@@ -444,7 +576,6 @@ body:has(.ohub){overflow:hidden;height:100%}
 
 /* ════ responsive polish for staff phone view on real devices ════ */
 @media(max-width:680px){
-  .ohub .topbar{position:sticky}
   .ohub .grid2{gap:14px}
   .ohub .appr{padding:13px;gap:11px}
   .ohub .thumb{width:54px;height:54px}
@@ -486,11 +617,19 @@ body:has(.ohub){overflow:hidden;height:100%}
 @keyframes oh-motiv-shine{0%{background-position:0% 0}100%{background-position:300% 0}}
 
 /* ════ active tasks split into per-staff columns (req 1) ════ */
-.ohub .actcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.ohub .actcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;align-items:start}
 .ohub .actcol{min-width:0}
-.ohub .actcol-h{display:flex;align-items:center;gap:9px;padding:4px 4px 8px}
+/* collapsible header bar (a <button>): tap to expand/collapse a staff's tasks */
+.ohub .actcol-h{width:100%;display:flex;align-items:center;gap:9px;padding:11px 13px;
+  background:var(--bg-1);border:1px solid var(--border-subtle);border-radius:var(--r-md);
+  font-family:inherit;color:var(--ink);cursor:pointer;text-align:left;transition:.16s}
+.ohub .actcol-h:hover{border-color:var(--border-strong)}
+.ohub .actcol.open .actcol-h{border-radius:var(--r-md) var(--r-md) 0 0;border-bottom-color:transparent}
 .ohub .actcol-h .nm{font-size:13.5px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ohub .actcol-h .count{font-size:12px;color:var(--muted)}
+.ohub .actcol-chev{font-size:13px;color:var(--muted);transition:transform .18s;flex:none}
+.ohub .actcol.open .actcol-chev{transform:rotate(90deg)}
+.ohub .actcol.open .card{border-radius:0 0 var(--r-md) var(--r-md)}
 
 /* ════ proof thumbnail zoom + thread proof shot (req 2) ════ */
 .ohub .thumb.zoomable{cursor:zoom-in}
@@ -506,7 +645,7 @@ body:has(.ohub){overflow:hidden;height:100%}
   background:rgba(0,0,0,.5);color:#fff;font-size:20px;cursor:pointer;display:grid;place-items:center}
 
 /* ════ staff sticky performer + motivation hero (req 3 & 4) ════ */
-.ohub .staff-hero{position:sticky;top:var(--topbar-h);z-index:30;display:flex;gap:14px;align-items:stretch;margin-bottom:18px}
+.ohub .staff-hero{position:sticky;top:0;z-index:30;display:flex;gap:14px;align-items:stretch;margin-bottom:18px}
 .ohub .staff-hero .award-mini{flex:1 1 300px;margin-bottom:0}
 .ohub .staff-hero .award-mini.hero .inner{align-items:center}
 .ohub .staff-hero .award-mini.hero .photo{width:60px;height:60px}
@@ -581,4 +720,45 @@ body:has(.ohub){overflow:hidden;height:100%}
 .ohub .esc-toggle{display:flex;align-items:center;gap:9px;margin-bottom:12px;padding:9px 12px;border-radius:12px;
   background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.22);font-size:12.5px;font-weight:600;color:#fcd34d;cursor:pointer}
 .ohub .esc-toggle input{width:16px;height:16px;accent-color:#f59e0b;cursor:pointer;flex:none}
+
+/* ════ FINAL mobile compaction ════
+   MUST come last: the award/photo/motiv base rules are defined far below the
+   earlier @media block, and equal-specificity later-source rules win — so the
+   compaction has to be re-asserted here to actually take effect on phones.
+   Performer hero → slim champion banner; motivation → thin strip. */
+@media(max-width:680px){
+  .ohub .hero-row{gap:10px;margin-bottom:12px}
+  /* In a COLUMN the flex:2 1 360px / 1 1 250px basis was read as HEIGHT,
+     forcing the award >=360px and motivation >=250px tall (huge empty cards).
+     Size to content instead. Same fix for the staff sticky hero. */
+  .ohub .hero-row .award,.ohub .hero-row .motiv,
+  .ohub .staff-hero .award-mini,.ohub .staff-hero .motiv{flex:0 0 auto}
+  .ohub .award{padding:12px 13px;margin-bottom:0}
+  .ohub .award .confetti{display:none}
+  .ohub .award:after{display:none}                      /* drop the shimmer sweep on mobile */
+  .ohub .award .inner{flex-wrap:nowrap;align-items:center;gap:12px}
+  .ohub .crownwrap{padding-top:0}
+  .ohub .award .photo,.ohub .photo{width:46px;height:46px;font-size:18px;
+    box-shadow:0 0 0 3px rgba(255,200,90,.4),0 6px 16px rgba(170,115,20,.4)}
+  .ohub .crown{font-size:17px;top:-8px}
+  .ohub .award .meta{min-width:0;flex:1}
+  .ohub .award .tag{font-size:10px;padding:3px 9px}
+  .ohub h2.aw,.ohub .award h2.aw{font-size:15px;margin:5px 0 0}
+  .ohub .award .sub{display:none}
+  .ohub .award .stats{gap:12px;margin-top:7px}
+  .ohub .award .stats .s:nth-child(n+3){display:none}    /* keep the 2 key stats */
+  .ohub .award .stats .s b{font-size:14px}
+  .ohub .award .stats .s span{font-size:9.5px}
+  .ohub .ownerctl{top:8px;right:8px}
+  .ohub .ownerctl .btn{font-size:10px;padding:4px 8px}
+
+  .ohub .motiv{padding:11px 14px}
+  .ohub .motiv-glow{display:none}
+  .ohub .motiv-tag{font-size:10.5px}
+  .ohub .motiv-quote{font-size:13px;line-height:1.4}
+  .ohub .motiv-foot{font-size:10.5px}
+
+  /* staff sticky hero mirror — keep it equally slim */
+  .ohub .staff-hero .award-mini .photo{width:42px;height:42px}
+}
 `

@@ -167,6 +167,39 @@ export async function markStepFailed(stepId: string, error: string): Promise<voi
   })
 }
 
+/**
+ * toolName marker on steps the auto-repair driver appended (Phase C). Lets the
+ * driver count how many corrective rounds a plan has already had so it can cap
+ * them and never re-plan forever.
+ */
+export const AUTOREPAIR_TOOL = '__autorepair__'
+
+/** How many corrective steps the auto-repair driver has already appended to a plan. */
+export function countRepairSteps(plan: Pick<Plan, 'steps'>): number {
+  return plan.steps.filter((s) => s.toolName === AUTOREPAIR_TOOL).length
+}
+
+/**
+ * Append one corrective step to a plan (Phase C auto-repair). The new step is
+ * pending, depends on nothing (immediately ready), and is tagged AUTOREPAIR_TOOL so
+ * the driver can cap repair rounds. The executor runs it through the SAME audited
+ * head-turn path as any other step, so no new execution surface is introduced.
+ */
+export async function appendCorrectiveStep(planId: string, action: string): Promise<void> {
+  const agg = await db.agentPlanStep.aggregate({ where: { planId }, _max: { seq: true } })
+  const nextSeq = (agg?._max?.seq ?? 0) + 1
+  await db.agentPlanStep.create({
+    data: {
+      planId,
+      seq: nextSeq,
+      action,
+      toolName: AUTOREPAIR_TOOL,
+      dependsOn: [],
+      status: 'pending',
+    },
+  })
+}
+
 // ── Plan-Driver mutations (Phase B — autodrive lifecycle) ───────────────────
 
 /**
@@ -310,8 +343,8 @@ export function selfCheck(plan: Pick<Plan, 'steps'>): {
 
 /**
  * Load plans the driver may act on: non-terminal autodrive_state whose backoff
- * window (next_tick_at) has elapsed. Read-only — Phase A consumes this in shadow
- * mode (compute the next ready step, log what it WOULD do, mutate nothing).
+ * window (next_tick_at) has elapsed. The tick route hands each to drivePlan for one
+ * bounded advance.
  *
  * Ordered oldest-driven-first so no single plan can starve the others.
  */

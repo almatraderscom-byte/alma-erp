@@ -7,6 +7,7 @@ import { useBusiness } from '@/contexts/BusinessContext'
 import { isCapacitorNative } from '@/lib/capacitor-native'
 import {
   ensureNativeOneSignalInitialized,
+  listenForNativeNotificationClicks,
   nativePushAvailable,
   registerNativePushSubscription,
   requestNativePushPermission,
@@ -318,9 +319,11 @@ export function OneSignalPushManager() {
 
   useEffect(() => {
     if (!nativeApp || !appId) return
-    void ensureNativeOneSignalInitialized(appId).catch(error => {
-      console.warn('[native-push] init failed', error)
-    })
+    void ensureNativeOneSignalInitialized(appId)
+      .then(() => listenForNativeNotificationClicks())
+      .catch(error => {
+        console.warn('[native-push] init failed', error)
+      })
   }, [appId, nativeApp])
 
   useEffect(() => {

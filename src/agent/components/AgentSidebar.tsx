@@ -25,10 +25,10 @@ export interface Conversation {
 
 function businessBadgeStyle(businessId: string | null | undefined): { label: string; cls: string } | null {
   if (businessId === 'ALMA_TRADING') {
-    return { label: 'Trading', cls: 'bg-amber-100 text-amber-700 border-amber-200' }
+    return { label: 'Trading', cls: 'tone-amber' }
   }
   if (businessId === 'ALMA_LIFESTYLE') {
-    return { label: 'Lifestyle', cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' }
+    return { label: 'Lifestyle', cls: 'tone-green' }
   }
   return null
 }
@@ -183,7 +183,7 @@ export default function AgentSidebar({
           </a>
           <a
             href="/agent/trading-staff"
-            className="rounded-full border border-border-subtle bg-white/[0.04] px-2 py-0.5 text-[9px] text-muted transition-all hover:border-amber-300/40 hover:bg-amber-50 hover:text-amber-600"
+            className="rounded-full border border-border-subtle bg-white/[0.04] px-2 py-0.5 text-[9px] text-muted transition-all hover:border-amber-300/40 hover:bg-amber-500/10 hover:text-amber-400"
             title="Trading Staff"
           >
             ₿
@@ -209,12 +209,12 @@ export default function AgentSidebar({
             className={cn(
               'w-full rounded-xl border px-3 py-2.5 text-left text-xs font-semibold transition-all',
               personalActive
-                ? 'border-emerald-300 bg-emerald-50 text-emerald-700 shadow-sm'
-                : 'border-border-subtle bg-white/[0.04] text-cream hover:border-emerald-200 hover:bg-emerald-50/50',
+                ? 'tone-green shadow-sm'
+                : 'border-border-subtle bg-white/[0.04] text-cream hover:border-emerald-200 hover:bg-green-500/10',
             )}
           >
             🤲 ব্যক্তিগত
-            {personalActive && <span className="mt-0.5 block text-[10px] font-normal text-emerald-600">মোড সক্রিয়</span>}
+            {personalActive && <span className="mt-0.5 block text-[10px] font-normal">মোড সক্রিয়</span>}
           </button>
         </div>
       )}
@@ -428,7 +428,7 @@ export default function AgentSidebar({
                       </button>
                       <button
                         onClick={() => { setDeleteId(c.id); setMenuConvId(null) }}
-                        className="flex w-full items-center gap-2 px-3 py-2.5 text-xs text-red-500 hover:bg-red-50 rounded-b-xl"
+                        className="flex w-full items-center gap-2 px-3 py-2.5 text-xs text-red-500 hover:bg-red-500/10 rounded-b-xl"
                       >
                         🗑️ মুছুন
                       </button>
@@ -482,7 +482,7 @@ export default function AgentSidebar({
               <p className="mb-5 text-sm text-muted">এই কথোপকথন এবং সকল বার্তা স্থায়ীভাবে মুছে যাবে।</p>
               <div className="flex gap-3">
                 <button onClick={() => setDeleteId(null)} className="flex-1 rounded-xl border border-border-subtle bg-white/[0.04] py-2.5 text-sm text-muted-hi hover:text-cream">বাতিল</button>
-                <button onClick={() => deleteConv(deleteId)} className="flex-1 rounded-xl bg-red-50 border border-red-200 py-2.5 text-sm font-semibold text-red-500 hover:bg-red-100">মুছুন</button>
+                <button onClick={() => deleteConv(deleteId)} className="flex-1 rounded-xl tone-red border py-2.5 text-sm font-semibold hover:bg-red-500/20">মুছুন</button>
               </div>
             </motion.div>
           </motion.div>
@@ -691,9 +691,9 @@ function MemoryView() {
           >
             <div className="mb-1.5 flex items-center gap-2">
               <span className={cn('rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide',
-                m.scope === 'personal' ? 'bg-blue-100 text-blue-600' :
-                m.scope === 'business' ? 'bg-amber-100 text-amber-700' :
-                'bg-purple-100 text-purple-600'
+                m.scope === 'personal' ? 'tone-blue' :
+                m.scope === 'business' ? 'tone-amber' :
+                'tone-purple'
               )}>
                 {SCOPE_LABELS[m.scope] ?? m.scope}
               </span>
@@ -740,7 +740,7 @@ function MemoryView() {
               <p className="mb-5 text-sm text-muted">এই তথ্য স্থায়ীভাবে মুছে যাবে।</p>
               <div className="flex gap-3">
                 <button onClick={() => setDeleteMemId(null)} className="flex-1 rounded-xl border border-border-subtle bg-white/[0.04] py-2.5 text-sm text-muted-hi hover:text-cream">বাতিল</button>
-                <button onClick={() => deleteMem(deleteMemId)} className="flex-1 rounded-xl bg-red-50 border border-red-200 py-2.5 text-sm font-semibold text-red-500 hover:bg-red-100">মুছুন</button>
+                <button onClick={() => deleteMem(deleteMemId)} className="flex-1 rounded-xl tone-red border py-2.5 text-sm font-semibold hover:bg-red-500/20">মুছুন</button>
               </div>
             </motion.div>
           </motion.div>

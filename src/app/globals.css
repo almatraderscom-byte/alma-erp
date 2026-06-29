@@ -377,16 +377,66 @@ a,
   }
 }
 
-/* Shimmer loader */
+/* Shimmer loader — theme-aware so it reads on light cream AND dark cards. */
 .skeleton {
-  background: linear-gradient(90deg, #f0efec 25%, #e8e7e4 50%, #f0efec 75%);
+  background: linear-gradient(90deg, var(--skeleton-base) 25%, var(--skeleton-hi) 50%, var(--skeleton-base) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.8s ease-in-out infinite;
+}
+:root {
+  --skeleton-base: #f0efec;
+  --skeleton-hi: #e3e2de;
+}
+:root[data-theme='dark'] {
+  --skeleton-base: rgba(255, 255, 255, 0.05);
+  --skeleton-hi: rgba(255, 255, 255, 0.11);
 }
 @keyframes shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
+
+/* ── Semantic status tones (theme-aware) ───────────────────────────────────
+   Status / segment / risk / payment badges previously used raw Tailwind
+   bg-{c}-50 + text-{c}-700 + border-{c}-200, which have NO dark counterpart and
+   render as dark-ink-on-dark-card (near invisible) in dark mode. Each tone class
+   carries its own legible fg / bg / border in BOTH themes; a child `.tone-dot`
+   reads the inherited --tone-dot channel. Light = deep ink on a soft tint;
+   dark = bright ink on a translucent tint. One class set, both themes legible. */
+.tone-dot { background: var(--tone-dot, currentColor); }
+
+.tone-amber  { color:#b45309; background:#fffbeb; border-color:#fde68a; --tone-dot:#f59e0b; }
+.tone-purple { color:#7e22ce; background:#faf5ff; border-color:#e9d5ff; --tone-dot:#a855f7; }
+.tone-cyan   { color:#0e7490; background:#ecfeff; border-color:#a5f3fc; --tone-dot:#06b6d4; }
+.tone-blue   { color:#1d4ed8; background:#eff6ff; border-color:#bfdbfe; --tone-dot:#3b82f6; }
+.tone-green  { color:#15803d; background:#f0fdf4; border-color:#bbf7d0; --tone-dot:#22c55e; }
+.tone-red    { color:#b91c1c; background:#fef2f2; border-color:#fecaca; --tone-dot:#ef4444; }
+.tone-slate  { color:#334155; background:#f8fafc; border-color:#e2e8f0; --tone-dot:#94a3b8; }
+.tone-pink   { color:#be185d; background:#fdf2f8; border-color:#fbcfe8; --tone-dot:#ec4899; }
+.tone-orange { color:#c2410c; background:#fff7ed; border-color:#fed7aa; --tone-dot:#f97316; }
+.tone-gold   { color:var(--gold-active); background:var(--gold-muted); border-color:rgba(224,122,95,0.30); --tone-dot:var(--gold-primary); }
+
+:root[data-theme='dark'] .tone-amber  { color:#fcd34d; background:rgba(251,191,36,0.14); border-color:rgba(251,191,36,0.30); --tone-dot:#fbbf24; }
+:root[data-theme='dark'] .tone-purple { color:#d8b4fe; background:rgba(192,132,252,0.15); border-color:rgba(192,132,252,0.32); --tone-dot:#c084fc; }
+:root[data-theme='dark'] .tone-cyan   { color:#67e8f9; background:rgba(34,211,238,0.14); border-color:rgba(34,211,238,0.30); --tone-dot:#22d3ee; }
+:root[data-theme='dark'] .tone-blue   { color:#93c5fd; background:rgba(96,165,250,0.15); border-color:rgba(96,165,250,0.32); --tone-dot:#60a5fa; }
+:root[data-theme='dark'] .tone-green  { color:#86efac; background:rgba(74,222,128,0.14); border-color:rgba(74,222,128,0.30); --tone-dot:#4ade80; }
+:root[data-theme='dark'] .tone-red    { color:#fca5a5; background:rgba(248,113,113,0.15); border-color:rgba(248,113,113,0.32); --tone-dot:#f87171; }
+:root[data-theme='dark'] .tone-slate  { color:#cbd5e1; background:rgba(148,163,184,0.15); border-color:rgba(148,163,184,0.30); --tone-dot:#94a3b8; }
+:root[data-theme='dark'] .tone-pink   { color:#f9a8d4; background:rgba(244,114,182,0.15); border-color:rgba(244,114,182,0.32); --tone-dot:#f472b6; }
+:root[data-theme='dark'] .tone-orange { color:#fdba74; background:rgba(251,146,60,0.15); border-color:rgba(251,146,60,0.32); --tone-dot:#fb923c; }
+:root[data-theme='dark'] .tone-gold   { color:#F4A28C; background:var(--gold-muted); border-color:rgba(224,122,95,0.35); --tone-dot:var(--gold-primary); }
+
+/* Inline positive / negative number text — legible in BOTH themes (delta %,
+   trends). Deep ink on light, bright ink on dark. No background. */
+.txt-pos { color:#15803d; }
+.txt-neg { color:#b91c1c; }
+.txt-warn { color:#b45309; }
+.txt-info { color:#1d4ed8; }
+:root[data-theme='dark'] .txt-pos { color:#4ade80; }
+:root[data-theme='dark'] .txt-neg { color:#f87171; }
+:root[data-theme='dark'] .txt-warn { color:#fcd34d; }
+:root[data-theme='dark'] .txt-info { color:#93c5fd; }
 
 /* Gold border pulse (coral) */
 @keyframes goldPulse {

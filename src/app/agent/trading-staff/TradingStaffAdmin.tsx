@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
+import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
 
 interface User {
@@ -82,8 +83,9 @@ export default function TradingStaffAdmin() {
       const json = await res.json()
       if (!res.ok || json.error) throw new Error(json.error ?? 'save_failed')
       await load()
+      toast.success('সেভ হয়েছে')
     } catch (err) {
-      alert(`Save failed: ${err instanceof Error ? err.message : String(err)}`)
+      toast.error(`সেভ ব্যর্থ: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setSaving(null)
     }
