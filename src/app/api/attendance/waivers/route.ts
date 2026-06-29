@@ -81,9 +81,11 @@ export const POST = withApiRoute('attendance.waivers.create', async (req: NextRe
     },
   })
   if (!record) return apiFailure('not_found', 'Attendance record not found.', { status: 404 })
-  const penalty = Number(record.penaltyAmount || 0)
+  // Appealable penalty = late check-in penalty + owner-approved no-checkout fine
+  // (Step 2). The reversal is penalty-agnostic, so one appeal can cover both.
+  const penalty = Number(record.penaltyAmount || 0) + Number(record.noCheckoutFineAmount || 0)
   if (penalty <= 0) {
-    return apiFailure('invalid_request', 'This attendance record has no late penalty.', { status: 400 })
+    return apiFailure('invalid_request', 'এই উপস্থিতির রেকর্ডে কোনো জরিমানা নেই।', { status: 400 })
   }
 
   const requestType = parseRequestType(body.request_type)

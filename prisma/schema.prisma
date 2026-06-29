@@ -459,6 +459,11 @@ model AttendanceRecord {
   checkOutLongitude              Decimal?                       @db.Decimal(10, 7)
   checkOutLocationAccuracyM      Int?
   checkOutDistanceFromOfficeM    Int?
+  /// No-checkout fine (Step 2): owner-approved 500৳ penalty for a day the staff
+  /// checked in but never checked out. Posted only after owner APPROVES the
+  /// NO_CHECKOUT_FINE approval — never automatic.
+  noCheckoutFineAmount           Decimal?                       @db.Decimal(12, 2)
+  noCheckoutFineLedgerEntryId    String?
   trustStatus                    AttendanceTrustStatus          @default(TRUSTED)
   suspiciousReasons              String[]
   verificationRequired           Boolean                        @default(false)

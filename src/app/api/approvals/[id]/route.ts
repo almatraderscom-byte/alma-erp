@@ -40,6 +40,7 @@ import {
 } from '@/lib/payroll-wallet'
 import { processMealAllowanceApproval } from '@/lib/meal-allowance'
 import { processSalaryCorrectionApproval } from '@/lib/salary-correction'
+import { processNoCheckoutFine } from '@/lib/attendance-checkout-fine'
 
 type RouteContext = { params: { id: string } }
 
@@ -234,6 +235,24 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
       response = await processSalaryAdvance(req, approval.id, approval.entityId, body.action, token.sub, String(token.name || token.email || 'Super Admin'), body.note)
     } else if (approval.module === 'PAYROLL' && (approval.type === 'WALLET_WITHDRAWAL' || approval.type === 'WALLET_ADVANCE')) {
       response = await processWalletRequest(approval.id, approval.entityId, body.action, token.sub, body.note, body.approvedAmount, body.transactionId)
+    } else if (approval.module === APPROVAL_MODULES.PAYROLL && approval.type === APPROVAL_TYPES.NO_CHECKOUT_FINE) {
+      const result = await processNoCheckoutFine({
+        approvalId: approval.id,
+        attendanceRecordId: approval.entityId,
+        action: body.action,
+        actorUserId: token.sub,
+        note: body.note,
+      })
+      if ('error' in result) {
+        response = approvalErrorResponse(result.error, result.status, result.code)
+      } else {
+        response = apiDataSuccess({
+          approval: result.approval,
+          moduleResult: { fineAmount: result.fineAmount, ledgerEntryId: result.ledgerEntryId },
+          ...(result.rejected ? { rejected: true } : {}),
+          ...(result.alreadyApplied ? { alreadyApplied: true } : {}),
+        })
+      }
     } else if (approval.module === 'PAYROLL' && approval.type === APPROVAL_TYPES.MEAL_ALLOWANCE) {
       const moduleResult = await processMealAllowanceApproval(
         approval.id,
