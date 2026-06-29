@@ -724,6 +724,62 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
   background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.22);font-size:12.5px;font-weight:600;color:#fcd34d;cursor:pointer}
 .ohub .esc-toggle input{width:16px;height:16px;accent-color:#f59e0b;cursor:pointer;flex:none}
 
+/* ════════════════════════════════════════════════════════════════════════
+   MOTION LAYER — the "premium" feel. GPU-only transforms/opacity, all gated
+   behind prefers-reduced-motion so it never fights accessibility settings.
+   1) staggered entrance reveal  2) tactile press feedback  3) animated reveals.
+   ════════════════════════════════════════════════════════════════════════ */
+@keyframes oh-rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@keyframes oh-rise-sm{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes oh-pop{0%{opacity:0;transform:scale(.96)}100%{opacity:1;transform:scale(1)}}
+@keyframes oh-skel{0%{background-position:-180px 0}100%{background-position:180px 0}}
+
+@media (prefers-reduced-motion: no-preference){
+  /* entrance: the page block fades while its sections rise in sequence */
+  .ohub .perspective.show{animation:oh-fade .3s ease}
+  .ohub .perspective.show > *{animation:oh-rise .55s cubic-bezier(.22,1,.36,1) both}
+  .ohub .perspective.show > *:nth-child(1){animation-delay:.03s}
+  .ohub .perspective.show > *:nth-child(2){animation-delay:.08s}
+  .ohub .perspective.show > *:nth-child(3){animation-delay:.13s}
+  .ohub .perspective.show > *:nth-child(4){animation-delay:.18s}
+  .ohub .perspective.show > *:nth-child(5){animation-delay:.23s}
+  .ohub .perspective.show > *:nth-child(6){animation-delay:.28s}
+  .ohub .perspective.show > *:nth-child(n+7){animation-delay:.33s}
+  /* KPI tiles get a slightly springier individual reveal */
+  .ohub .kpis .kpi{animation:oh-pop .5s cubic-bezier(.22,1,.36,1) both}
+  .ohub .kpis .kpi:nth-child(2){animation-delay:.06s}
+  .ohub .kpis .kpi:nth-child(3){animation-delay:.12s}
+  .ohub .kpis .kpi:nth-child(4){animation-delay:.18s}
+  /* tab switch: the newly shown pane re-rises (display:none→block replays it) */
+  .ohub .oh-pane{animation:oh-rise .36s cubic-bezier(.22,1,.36,1) both}
+  /* collapsible staff group slides open */
+  .ohub .actcol.open > .card{animation:oh-rise-sm .28s ease both}
+  /* list rows + chat bubbles ease in */
+  .ohub .appr,.ohub .lead,.ohub .staff-row,.ohub .ev,.ohub .trow{animation:oh-rise-sm .4s ease both}
+  .ohub-chatpanel .gm{animation:oh-rise-sm .26s ease both}
+  /* the chevron + badges get smooth transitions (already declared elsewhere) */
+}
+
+/* Tactile press feedback — cheap, always on. Tapping anything springs slightly. */
+.ohub .card,.ohub .kpi,.ohub .appr,.ohub .lead,.ohub .stask,.ohub .staff-row,.ohub .actcol-h,
+.ohub .hday,.ohub .prow,.ohub .trow{transition:transform .16s cubic-bezier(.22,1,.36,1),border-color .16s ease,box-shadow .18s ease}
+.ohub .kpi:active,.ohub .appr:active,.ohub .stask:active,.ohub .actcol-h:active,.ohub .hday:active{transform:scale(.985)}
+.ohub .btn,.ohub .oh-tab,.ohub .lunch-btn,.ohub .tbtn,.ohub .chip,.ohub .selfbtn,
+.ohub-chatpanel .cp-foot button,.ohub-chatpanel .cp-attach,.ohub-chatpanel .gm.draft .dact button{
+  transition:transform .14s ease,filter .15s ease,background .18s ease,border-color .16s ease,box-shadow .18s ease}
+.ohub .btn:active,.ohub .oh-tab:active,.ohub .tbtn:active,.ohub .lunch-btn:active,.ohub .selfbtn:active,
+.ohub-chatpanel .cp-foot button:active,.ohub-chatpanel .cp-attach:active{transform:scale(.93)}
+.ohub .btn.primary:active{filter:brightness(.95)}
+/* gentle lift on real pointer devices (desktop) */
+@media(hover:hover){
+  .ohub .kpi:hover,.ohub .appr:hover,.ohub .stask:hover,.ohub .hday:hover{transform:translateY(-2px);box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  .ohub .lead:hover,.ohub .staff-row:hover{background:var(--bg-2)}
+}
+/* image thumbnails: subtle zoom on press/hover */
+.ohub .proof-shot img,.ohub-chatpanel .gm-img img{transition:transform .3s cubic-bezier(.22,1,.36,1)}
+.ohub .proof-shot:active img,.ohub-chatpanel .gm-img:active img{transform:scale(1.04)}
+@media(hover:hover){.ohub .proof-shot:hover img,.ohub-chatpanel .gm-img:hover img{transform:scale(1.04)}}
+
 /* ════ chat attachments + image composer (group chat) ════ */
 .ohub-chatpanel .gm-imgs{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-bottom:6px;max-width:240px}
 .ohub-chatpanel .gm-imgs.one{grid-template-columns:1fr;max-width:200px}
