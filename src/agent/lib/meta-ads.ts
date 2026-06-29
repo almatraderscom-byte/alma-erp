@@ -209,6 +209,12 @@ export async function launchCampaign(
       daily_budget: budgetPaisa,
       billing_event: 'IMPRESSIONS',
       optimization_goal: 'CONVERSATIONS',
+      // With an ad-set-level daily_budget Meta REQUIRES an explicit bid_strategy;
+      // omitting it makes Meta infer one that demands a bid cap, returning
+      // OAuthException code 100 / subcode 2490487 ("Bid amount or bid constraints
+      // required for bid strategy"). LOWEST_COST_WITHOUT_CAP = Highest-volume
+      // auto-bidding, which needs NO bid amount — Meta optimizes delivery itself.
+      bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
       destination_type: 'MESSENGER',
       promoted_object: { page_id: pageId },
       targeting: { geo_locations: { countries: ['BD'] }, age_min: ageMin, age_max: ageMax },
