@@ -3,6 +3,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { checkAdsManagementScope } from '@/agent/lib/meta-ads'
+import { listCustomAudiences } from '@/agent/lib/meta-audiences'
 import {
   analyzeAdCampaigns,
   createAdsOptimizerBatchCard,
@@ -166,6 +167,8 @@ const launch_campaign: AgentTool = {
       page: { type: 'string', description: "'lifestyle' (default) or 'onlineshop'" },
       ageMin: { type: 'number' },
       ageMax: { type: 'number' },
+      audienceId: { type: 'string', description: 'Optional custom/lookalike audience id to TARGET (retargeting or lookalike campaign). From list_audiences. Omit for broad Bangladesh prospecting.' },
+      excludeAudienceId: { type: 'string', description: 'Optional custom audience id to EXCLUDE (e.g. exclude existing engagers from a lookalike prospecting campaign).' },
       conversationId: { type: 'string' },
     },
     required: ['name', 'dailyBudget', 'message', 'imageUrl'],
@@ -188,9 +191,14 @@ const launch_campaign: AgentTool = {
     if (!imageUrl) return { success: false, error: 'ছবি ছাড়া Click-to-Messenger ক্যাম্পেইন চালু করা যায় না — একটি প্রোডাক্ট ছবির public URL (imageUrl) দিন।' }
     const ageMin = input.ageMin != null ? Math.round(Number(input.ageMin)) : undefined
     const ageMax = input.ageMax != null ? Math.round(Number(input.ageMax)) : undefined
+    const audienceId = input.audienceId ? String(input.audienceId).trim() : undefined
+    const excludeAudienceId = input.excludeAudienceId ? String(input.excludeAudienceId).trim() : undefined
 
     const overCap = dailyBudget > DAILY_BUDGET_SOFT_CAP_BDT
     const pageLabel = page === 'onlineshop' ? 'Alma Online Shop' : 'Alma Lifestyle'
+    const targetLine = audienceId
+      ? `টার্গেট: নির্দিষ্ট audience (${audienceId}) — retargeting/lookalike, বয়স ${ageMin ?? 18}-${ageMax ?? 45}`
+      : `টার্গেট: বাংলাদেশ, বয়স ${ageMin ?? 18}-${ageMax ?? 45}`
     const lines = [
       '🚀 নতুন Meta Ads ক্যাম্পেইন চালু করবেন?',
       '',
@@ -198,7 +206,8 @@ const launch_campaign: AgentTool = {
       `নাম: ${name}`,
       `ধরন: Messenger (click-to-Messenger) — কাস্টমার সরাসরি inbox-এ আসবে`,
       `দৈনিক বাজেট: ৳${dailyBudget.toLocaleString('bn-BD')}/দিন`,
-      `টার্গেট: বাংলাদেশ, বয়স ${ageMin ?? 18}-${ageMax ?? 45}`,
+      targetLine,
+      excludeAudienceId ? `বাদ: audience ${excludeAudienceId}` : null,
       headline ? `হেডলাইন: ${headline}` : null,
       '',
       `কপি: ${message}`,
@@ -214,7 +223,7 @@ const launch_campaign: AgentTool = {
       data: {
         conversationId: input.conversationId ? String(input.conversationId) : null,
         type: 'launch_campaign',
-        payload: { name, dailyBudget, message, headline, imageUrl, page, ageMin, ageMax, overCap },
+        payload: { name, dailyBudget, message, headline, imageUrl, page, ageMin, ageMax, audienceId, excludeAudienceId, overCap },
         summary,
         costEstimate: 0,
         status: 'pending',
@@ -313,12 +322,160 @@ const recommend_ad_actions: AgentTool = {
   },
 }
 
+const list_audiences: AgentTool = {
+  name: 'list_audiences',
+  description:
+    'READ-ONLY: list the ad account\'s existing Meta custom + lookalike audiences with approximate sizes and status. ' +
+    'Use before creating a retargeting/lookalike audience (avoid duplicates) and to pick a source audience id for a lookalike. ' +
+    'No confirm card — pure read.',
+  input_schema: { type: 'object' as const, properties: {} },
+  handler: async () => {
+    const result = await listCustomAudiences()
+    if (!result.success) return { success: false, error: result.error }
+    const audiences = result.audiences ?? []
+    const summary = audiences.length === 0
+      ? 'এই অ্যাড অ্যাকাউন্টে এখনো কোনো custom/lookalike audience তৈরি হয়নি।'
+      : audiences
+          .map((a) => {
+            const size = a.approxLower != null
+              ? `~${a.approxLower.toLocaleString('en-US')}${a.approxUpper != null ? `–${a.approxUpper.toLocaleString('en-US')}` : '+'}`
+              : 'size pending'
+            return `• ${a.name} [${a.subtype}] — ${size} জন (${a.deliveryStatus ?? a.operationStatus ?? 'status?'}) · id ${a.id}`
+          })
+          .join('\n')
+    return {
+      success: true,
+      data: { count: audiences.length, audiences, summary },
+    }
+  },
+}
+
+const create_retargeting_audience: AgentTool = {
+  name: 'create_retargeting_audience',
+  description:
+    'Create a WARM retargeting audience — people who engaged with the ALMA Facebook page (posts, ads, Messenger, CTA clicks) ' +
+    'over the last N days. ALWAYS creates a confirm card — owner must approve. Creating an audience does NOT spend money; ' +
+    'it only defines who a future campaign can target. Requires ads_management scope. ' +
+    'After approval, use launch_campaign with audienceId to actually run retargeting ads (still PAUSED).',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      name: { type: 'string', description: 'Audience name (short, e.g. "Page Engagers 365d")' },
+      page: { type: 'string', description: "'lifestyle' (default) or 'onlineshop'" },
+      retentionDays: { type: 'number', description: 'Look-back window in days (1-365, default 365 = widest warm pool)' },
+      conversationId: { type: 'string' },
+    },
+    required: ['name'],
+  },
+  handler: async (input) => {
+    const name = String(input.name ?? '').trim()
+    if (!name) return { success: false, error: 'name is required' }
+
+    const scope = await checkAdsManagementScope()
+    if (!scope.ok) return { success: false, error: scope.error }
+
+    const page = String(input.page ?? 'lifestyle').trim().toLowerCase()
+    const retentionDays = input.retentionDays != null
+      ? Math.min(365, Math.max(1, Math.round(Number(input.retentionDays))))
+      : 365
+    const pageLabel = page === 'onlineshop' ? 'Alma Online Shop' : 'Alma Lifestyle'
+
+    const summary = [
+      '🎯 রিটার্গেটিং Audience তৈরি করবেন?',
+      '',
+      `নাম: ${name}`,
+      `উৎস: ${pageLabel} পেজে যারা engage করেছে (পোস্ট/অ্যাড/Messenger/CTA)`,
+      `সময়সীমা: গত ${retentionDays} দিন`,
+      '',
+      '✅ Approve করলে শুধু audience তৈরি হবে — কোনো টাকা খরচ হবে না। পরে এটাকে target করে retargeting ad চালানো যাবে (সব PAUSED)।',
+    ].join('\n')
+
+    const action = await db.agentPendingAction.create({
+      data: {
+        conversationId: input.conversationId ? String(input.conversationId) : null,
+        type: 'create_retargeting_audience',
+        payload: { name, page, retentionDays },
+        summary,
+        costEstimate: 0,
+        status: 'pending',
+      },
+    })
+
+    return {
+      success: true,
+      data: { pendingActionId: action.id as string, summary, message: 'Pending owner confirmation — কোনো audience এখনো তৈরি হয়নি।' },
+    }
+  },
+}
+
+const create_lookalike_audience: AgentTool = {
+  name: 'create_lookalike_audience',
+  description:
+    'Create a LOOKALIKE audience — Meta finds NEW people in Bangladesh similar to a warm source audience. ' +
+    'First call list_audiences to get a valid sourceAudienceId (an engagement/custom audience with enough people; Meta needs ~100+). ' +
+    'ALWAYS creates a confirm card. Creating it does NOT spend money. Requires ads_management scope. ' +
+    'After approval, use launch_campaign with that lookalike audienceId to run prospecting ads (still PAUSED).',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      name: { type: 'string', description: 'Lookalike name (short, e.g. "LAL 1% BD — Page Engagers")' },
+      sourceAudienceId: { type: 'string', description: 'Source custom-audience id to model on (from list_audiences)' },
+      ratioPercent: { type: 'number', description: 'Lookalike size 1-20 (%). Smaller = tighter match. Default 1.' },
+      conversationId: { type: 'string' },
+    },
+    required: ['name', 'sourceAudienceId'],
+  },
+  handler: async (input) => {
+    const name = String(input.name ?? '').trim()
+    const sourceAudienceId = String(input.sourceAudienceId ?? '').trim()
+    if (!name) return { success: false, error: 'name is required' }
+    if (!sourceAudienceId) return { success: false, error: 'sourceAudienceId is required (call list_audiences first)' }
+
+    const scope = await checkAdsManagementScope()
+    if (!scope.ok) return { success: false, error: scope.error }
+
+    const ratioPercent = input.ratioPercent != null
+      ? Math.min(20, Math.max(1, Math.round(Number(input.ratioPercent))))
+      : 1
+    const ratio = ratioPercent / 100
+
+    const summary = [
+      '👥 Lookalike Audience তৈরি করবেন?',
+      '',
+      `নাম: ${name}`,
+      `উৎস audience id: ${sourceAudienceId}`,
+      `আকার: বাংলাদেশের জনসংখ্যার ${ratioPercent}% (similarity — ছোট মানে বেশি মিল)`,
+      '',
+      '✅ Approve করলে শুধু lookalike audience তৈরি হবে — কোনো টাকা খরচ হবে না। উৎসে যথেষ্ট মানুষ (~১০০+) না থাকলে Meta প্রত্যাখ্যান করতে পারে।',
+    ].join('\n')
+
+    const action = await db.agentPendingAction.create({
+      data: {
+        conversationId: input.conversationId ? String(input.conversationId) : null,
+        type: 'create_lookalike_audience',
+        payload: { name, sourceAudienceId, ratio, ratioPercent, country: 'BD' },
+        summary,
+        costEstimate: 0,
+        status: 'pending',
+      },
+    })
+
+    return {
+      success: true,
+      data: { pendingActionId: action.id as string, summary, message: 'Pending owner confirmation — কোনো audience এখনো তৈরি হয়নি।' },
+    }
+  },
+}
+
 export const ADS_TOOLS: AgentTool[] = [
   pause_campaign,
   update_campaign_budget,
   duplicate_campaign,
   launch_campaign,
   recommend_ad_actions,
+  list_audiences,
+  create_retargeting_audience,
+  create_lookalike_audience,
 ]
 
 export const ADS_ROLE_PROMPT = `
@@ -328,4 +485,10 @@ Write (confirm card ONLY): pause_campaign, update_campaign_budget (+20-30% max s
 Creative fatigue → refresh_creative → make_ad_creatives (File 10) with angleHint.
 Scaling a proven winner → duplicate_campaign (copy existing). Net-new offer/angle with no existing campaign → launch_campaign.
 Low spend/impressions → hold. ROAS is directional for COD/Messenger — cross-check orders over time.
+
+## RETARGETING + LOOKALIKE (audiences)
+Read: list_audiences — existing custom/lookalike audiences with sizes (run first to avoid duplicates + to get a source id).
+Write (confirm card ONLY): create_retargeting_audience (warm page/Messenger engagers, 1-365d window — no spend), create_lookalike_audience (NEW Bangladesh people similar to a warm source; needs a sourceAudienceId from list_audiences, source must have ~100+ people or Meta rejects).
+Run ads to an audience → launch_campaign with audienceId (retargeting/lookalike) — still created PAUSED. Use excludeAudienceId to keep a lookalike prospecting campaign off existing engagers.
+Warm retargeting usually beats cold prospecting for COD — suggest building a page-engager audience before scaling cold spend. Creating audiences never spends; only an ACTIVE campaign does.
 `
