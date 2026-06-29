@@ -569,6 +569,20 @@ export async function startDayShift(): Promise<{ ok: boolean; conversationId?: s
       console.warn('[day-shift] weekly report-card send failed:', err instanceof Error ? err.message : err)
     }
 
+    // Phase 1 — autonomy transparency digest. If the agent acted on its own since
+    // yesterday, deliver ONE "here's what I handled for you, undo any?" card so
+    // autonomy is never a black box. Idempotent (KV-deduped per Dhaka-day);
+    // silently skips when there's nothing autonomous to report (e.g. autonomy off).
+    try {
+      const { runAutonomyDigestSend } = await import('@/agent/lib/autonomy-ledger')
+      const r = await runAutonomyDigestSend()
+      if (r.sent) {
+        await appendShiftNarrative(conversationId, `🤖 আমি নিজে যা সামলেছি (${r.count ?? 0}টি) তার হিসাব পাঠালাম।`)
+      }
+    } catch (err) {
+      console.warn('[day-shift] autonomy digest send failed:', err instanceof Error ? err.message : err)
+    }
+
     // Point 2 — if yesterday's main office work (staff dispatch) didn't happen, ask the
     // reason first. Owner's reply (captured in core.ts) is saved + answered with a suggestion.
     try {
