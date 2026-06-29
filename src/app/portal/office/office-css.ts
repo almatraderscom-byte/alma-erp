@@ -842,6 +842,24 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 .ohub-chatpanel .cp-pimg.up{display:grid;place-items:center;font-size:11px;color:#AEB2C0;background:#121216}
 .ohub-chatpanel .cp-pimg button{position:absolute;top:1px;right:1px;width:18px;height:18px;border-radius:50%;border:0;
   background:rgba(0,0,0,.6);color:#fff;font-size:13px;line-height:1;cursor:pointer;display:grid;place-items:center}
+.ohub-chatpanel .cp-attach.on{background:linear-gradient(135deg,#E07A5F,#C45A3C);border-color:transparent;color:#fff}
+
+/* ════ "আজকের কাজ" picker — staff taps a task, agent auto-explains it ════ */
+.ohub-chatpanel .cp-tasks{padding:10px 12px 2px;background:#202027;border-top:1px solid rgba(255,255,255,0.07);
+  display:flex;flex-direction:column;gap:6px;max-height:42dvh;overflow-y:auto;overscroll-behavior:contain}
+.ohub-chatpanel .cp-tasks-h{font-size:11px;font-weight:700;color:#AEB2C0;letter-spacing:.01em;padding:0 2px 2px}
+.ohub-chatpanel .cp-tasks-e{font-size:12px;color:#AEB2C0;padding:6px 2px 10px}
+.ohub-chatpanel .cp-task{display:flex;align-items:center;gap:9px;width:100%;text-align:left;
+  background:#121216;border:1px solid rgba(255,255,255,0.10);border-radius:12px;padding:9px 10px;cursor:pointer;
+  font-family:inherit;color:#F7F8FC;transition:transform .12s,border-color .12s}
+.ohub-chatpanel .cp-task:active{transform:scale(.98)}
+.ohub-chatpanel .cp-task:disabled{opacity:.55;cursor:not-allowed}
+.ohub-chatpanel .cp-task-n{flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;
+  background:rgba(224,122,95,0.18);color:#E9A48F;font-size:11px;font-weight:700}
+.ohub-chatpanel .cp-task-t{flex:1;min-width:0;font-size:12.5px;line-height:1.45;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ohub-chatpanel .cp-task-q{flex:none;font-size:11px;font-weight:700;color:#fff;
+  background:linear-gradient(135deg,#E07A5F,#C45A3C);border-radius:9999px;padding:5px 10px}
 
 /* ════ staff multi-image proof picker ════ */
 .ohub .proof-thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}

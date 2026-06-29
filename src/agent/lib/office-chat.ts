@@ -218,6 +218,34 @@ export async function postGroupMessage(args: {
 }
 
 /**
+ * Post an agent task-explanation straight to the group (status='posted', no owner
+ * approval). Unlike `createAgentDraft`, this is the owner-blessed auto-explain
+ * path for the "আজকের কাজ" button: the staff asked the agent to clarify a task
+ * they were already assigned, so the reply needs no gate. Carries the task ref +
+ * the staff question it answers (replyToId) for threading.
+ */
+export async function postAgentTaskExplanation(args: {
+  businessId: string
+  body: string
+  replyToId?: string | null
+  taskRef?: string | null
+}): Promise<ChatMessage> {
+  const row = await prisma.officeGroupMessage.create({
+    data: {
+      authorType: 'agent',
+      body: args.body.trim(),
+      replyToId: args.replyToId ?? null,
+      taskRef: args.taskRef ?? null,
+      isAgentReply: true,
+      status: 'posted',
+      businessId: args.businessId,
+    },
+    select: ROW_SELECT,
+  })
+  return toChatMessage(row)
+}
+
+/**
  * Has the agent already taken its one shot at replying to this message? Enforces
  * the owner's "agent replies once" rule — counts ANY prior draft (pending,
  * posted, or even dismissed), so a dismissed draft is never silently re-drafted.
