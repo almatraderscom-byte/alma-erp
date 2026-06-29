@@ -60,14 +60,21 @@ export async function POST(req: NextRequest) {
   let testResult: Awaited<ReturnType<typeof runHeartbeatTick>> | null = null
 
   if (action === 'enable' || action === 'disable') {
-    await setHeartbeatSettings({ enabled: action === 'enable' })
+    // Manual on = on + self-managing; manual off = a real stop (clear autoArm too,
+    // so the agent won't immediately re-arm itself against the owner's explicit off).
+    await setHeartbeatSettings({ enabled: action === 'enable', autoArm: action === 'enable' })
   } else if (action === 'set_cap') {
     if (typeof body.dailyHeadWakeCap !== 'number') {
       return Response.json({ error: 'dailyHeadWakeCap_required' }, { status: 400 })
     }
     await setHeartbeatSettings({ dailyHeadWakeCap: body.dailyHeadWakeCap })
   } else if (action === 'test_now') {
+    // Forced tick: skips the enabled / office-hours / change / cap gates.
     testResult = await runHeartbeatTick({ force: true })
+  } else if (action === 'tick_now') {
+    // Natural tick: exactly what the cron runs (no force). Exercises self-arming —
+    // if the heartbeat is resting (off + autoArm) and work is pending, it arms itself.
+    testResult = await runHeartbeatTick({ force: false })
   } else {
     return Response.json({ error: 'unknown_action' }, { status: 400 })
   }
