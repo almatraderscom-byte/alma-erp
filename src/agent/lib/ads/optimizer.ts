@@ -42,6 +42,7 @@ export interface AdRecommendation {
     ctrToday: number
     ctrWeek: number
     dailyBudgetBdt: number
+    status: string
   }
 }
 
@@ -221,6 +222,7 @@ export async function analyzeAdCampaigns(): Promise<{
         ctrToday: m.ctrToday,
         ctrWeek: m.ctrWeek,
         dailyBudgetBdt: m.dailyBudgetBdt,
+        status: m.effectiveStatus,
       },
     }
   })
