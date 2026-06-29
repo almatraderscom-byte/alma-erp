@@ -19,7 +19,11 @@ import {
   setHeartbeatSettings,
 } from '@/agent/lib/heartbeat/heartbeat-settings'
 import { listHeartbeats, headWakesToday } from '@/agent/lib/heartbeat/heartbeat-log'
-import { runHeartbeatTick } from '@/agent/lib/heartbeat/brain'
+// NOTE: brain.ts is imported LAZILY inside the test_now handler (not at module top).
+// brain.ts pulls in the head runner (runOwnerTurn → core → the whole tool registry),
+// and this file is itself part of that registry — a static import here forms an import
+// cycle whose temporal-dead-zone only surfaces in a full `next build` (it broke the
+// /api/assistant/day-shift page-data collection). The lazy import breaks the cycle.
 
 const BN = '০১২৩৪৫৬৭৮৯'
 function bn(n: number | string): string {
@@ -110,6 +114,7 @@ const heartbeat_control: AgentTool = {
       }
 
       if (action === 'test_now') {
+        const { runHeartbeatTick } = await import('@/agent/lib/heartbeat/brain')
         const result = await runHeartbeatTick({ force: true })
         const tag = KIND_TAG[result.kind ?? 'idle'] ?? '•'
         const head = result.headWoke ? `head জেগেছে (খরচ ≈ $${result.costUsd.toFixed(4)})` : 'head জাগানোর দরকার পড়েনি'
