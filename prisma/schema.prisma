@@ -135,6 +135,20 @@ enum AttendanceExceptionStatus {
   CANCELLED
 }
 
+enum AttendanceLeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum AttendanceLeaveKind {
+  FULL_DAY
+  DATE_RANGE
+  HOURS
+  SHIFTED_START
+}
+
 enum PayrollAccrualRunStatus {
   RUNNING
   SUCCESS
@@ -589,6 +603,37 @@ model AttendanceException {
   @@index([businessId, attendanceDate])
   @@index([businessId, status, attendanceDate])
   @@index([businessId, employeeId, attendanceDate])
+}
+
+/// Attendance leave application (Step 4, ALMA_LIFESTYLE only). A staff applies
+/// for leave — a single day, a date range, a few hours, or a shifted start
+/// (e.g. begin 11:00 instead of 9:30) — and the owner approves (or grants
+/// directly). While an APPROVED leave covers a day, the checkout gates are
+/// waived and the late / no-checkout fines do not apply. HOURS / SHIFTED_START
+/// leaves waive the day's fines but do NOT excuse a missed checkout, so the
+/// no-checkout sweep still applies to them.
+model AttendanceLeave {
+  id            String                @id @default(cuid())
+  businessId    String
+  userId        String
+  employeeId    String
+  kind          AttendanceLeaveKind   @default(FULL_DAY)
+  startDate     DateTime
+  endDate       DateTime
+  startMinutes  Int?
+  endMinutes    Int?
+  status        AttendanceLeaveStatus @default(PENDING)
+  reason        String                @db.Text
+  grantedDirect Boolean               @default(false)
+  adminNote     String?               @db.Text
+  reviewedById  String?
+  reviewedAt    DateTime?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  @@index([businessId, userId, startDate])
+  @@index([businessId, status, startDate])
+  @@index([businessId, employeeId, startDate])
 }
 
 model PayrollAccrualRun {

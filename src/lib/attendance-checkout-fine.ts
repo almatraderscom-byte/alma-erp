@@ -11,6 +11,7 @@ import { APPROVAL_MODULES, APPROVAL_TYPES } from '@/lib/approval-types'
 import { notifyUser } from '@/lib/notifications'
 import { checkoutRulesEnabled, CHECKOUT_RULES_BUSINESS } from '@/lib/attendance-checkout-rules'
 import { hasApprovedException } from '@/lib/attendance-exception'
+import { leaveSkipsNoCheckoutFine } from '@/lib/attendance-leave'
 import { logEvent } from '@/lib/logger'
 
 /**
@@ -95,6 +96,14 @@ export async function sweepNoCheckoutFines(input?: { now?: Date }): Promise<NoCh
       // (whole-day waiver; an hour-window exception does not excuse a missed
       // checkout for the whole day, so it is intentionally not matched at 11PM).
       if (await hasApprovedException(record.userId, businessId, record.attendanceDate, now)) {
+        result.skipped += 1
+        continue
+      }
+
+      // Step 4 — skip staff on an owner-approved WHOLE-DAY/range leave (they were
+      // absent, so no checkout is expected). HOURS / SHIFTED_START leave still
+      // expects a checkout, so it is intentionally not skipped here.
+      if (await leaveSkipsNoCheckoutFine(record.userId, businessId, record.attendanceDate)) {
         result.skipped += 1
         continue
       }
