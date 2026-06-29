@@ -14,6 +14,8 @@ import {
   enrollPlanForAutodrive,
 } from '@/agent/lib/planner'
 import { isAutodriveEnabled } from '@/agent/lib/autodrive-config'
+import { scanSignalsToPlanDrive, selectDrivableSignals } from '@/agent/lib/plan-driver/signal-scan'
+import { buildOwnerBriefingData } from '@/agent/lib/owner-briefing-data'
 
 // Roles that run directly without an owner "transfer to worker?" card. Marketing
 // + content are owner-approved to flow straight to Qwen; their internal money/
@@ -324,4 +326,63 @@ const get_plan: AgentTool = {
   },
 }
 
-export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan]
+const scan_business_signals: AgentTool = {
+  name: 'scan_business_signals',
+  description:
+    'Proactively scan the business RIGHT NOW for urgent signals — urgent low stock / reorders, ' +
+    'high-severity order problems (stuck/pile-up/mismatch), customers whose 24h reply window is ' +
+    'closing, and repeat low-performing staff. Use this when the owner asks "কী কী জরুরি / কী দেখা দরকার / ' +
+    'নিজে থেকে কাজ ধরো" or wants a proactive sweep. When autodrive is ON, each NEW signal is pulled into ' +
+    'the autonomous Plan-Driver (deduped — never a duplicate of an already-active pursuit). When autodrive ' +
+    'is OFF this is a read-only preview of what WOULD be pursued. Owner-facing, surface the result in Bangla.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      business_id: {
+        type: 'string',
+        description: "Business scope: 'ALMA_LIFESTYLE' (default) or 'ALMA_TRADING'.",
+      },
+    },
+    required: [],
+  },
+  handler: async (input) => {
+    const businessId = (String(input.business_id ?? '').trim() || 'ALMA_LIFESTYLE') as AgentBusinessId
+    try {
+      // Autodrive ON → actually enroll the new signals (force past the throttle so a
+      // manual "scan now" is responsive; dedup still prevents duplicates).
+      if (isAutodriveEnabled()) {
+        const res = await scanSignalsToPlanDrive({ businessId, force: true })
+        return {
+          success: true,
+          data: {
+            autodrive: true,
+            scanned: res.scanned,
+            created: res.created,
+            message: res.created.length
+              ? `${res.created.length}টি নতুন জরুরি কাজ নিজে থেকে Plan-Driver-এ নিলাম — শেষ না হওয়া পর্যন্ত চেষ্টা করব।`
+              : 'এই মুহূর্তে নতুন জরুরি signal নেই যেটা এখনো ধরা হয়নি।',
+          },
+        }
+      }
+
+      // Autodrive OFF → read-only preview of what would be pursued.
+      const briefing = await buildOwnerBriefingData()
+      const signals = selectDrivableSignals(briefing)
+      return {
+        success: true,
+        data: {
+          autodrive: false,
+          previewOnly: true,
+          signals: signals.map((s) => ({ area: s.area, urgency: s.urgency, goal: s.goal })),
+          message: signals.length
+            ? `${signals.length}টি জরুরি signal পেয়েছি (নিচে)। Autodrive চালু থাকলে এগুলো নিজে থেকে follow-up-এ নিতাম।`
+            : 'এই মুহূর্তে জরুরি কোনো signal নেই।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: `Signal scan failed: ${err instanceof Error ? err.message : String(err)}` }
+    }
+  },
+}
+
+export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan, scan_business_signals]
