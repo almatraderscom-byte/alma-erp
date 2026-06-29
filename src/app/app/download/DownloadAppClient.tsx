@@ -1,6 +1,19 @@
 'use client'
 
 import { Button, Card } from '@/components/ui'
+import { isCapacitorNative } from '@/lib/app-update'
+
+/** Inside the Capacitor WebView a plain `<a download>` does nothing — the
+ *  Android WebView has no DownloadListener, so the APK response is silently
+ *  dropped. Hand the absolute URL to the SYSTEM browser instead (Capacitor
+ *  routes the '_system' target there); Chrome's download manager fetches the
+ *  APK and the user taps it to install. On web/desktop the normal anchor
+ *  download is kept. */
+function toAbsoluteApkUrl(apkUrl: string): string {
+  if (/^https?:\/\//i.test(apkUrl)) return apkUrl
+  if (typeof window === 'undefined') return apkUrl
+  return `${window.location.origin}${apkUrl.startsWith('/') ? '' : '/'}${apkUrl}`
+}
 
 const SAMSUNG_PUSH_STEPS = [
   'Settings → Apps → Alma ERP → Battery → Unrestricted',
@@ -35,7 +48,18 @@ export function DownloadAppClient({ apkUrl }: Props) {
         </div>
 
         <Card className="space-y-4 p-5">
-          <a href={apkUrl} download className="block">
+          <a
+            href={apkUrl}
+            download
+            className="block"
+            onClick={(e) => {
+              // Native app: WebView can't download — open APK in system browser.
+              if (isCapacitorNative()) {
+                e.preventDefault()
+                window.open(toAbsoluteApkUrl(apkUrl), '_system')
+              }
+            }}
+          >
             <Button variant="gold" className="w-full">
               Alma ERP APK ডাউনলোড করুন
             </Button>
