@@ -425,4 +425,45 @@ const check_owner_silence: AgentTool = {
   },
 }
 
-export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan, scan_business_signals, check_owner_silence]
+const check_quiet_hours: AgentTool = {
+  name: 'check_quiet_hours',
+  description:
+    'Read-only: check the quiet-hours / DND (Do-Not-Disturb) state RIGHT NOW. Shows whether DND is ' +
+    'enabled, the night window (Dhaka hours), whether we are inside quiet hours this moment, and how ' +
+    'many routine pings are HELD in the queue waiting for the morning digest. Use when the owner asks ' +
+    '"রাতে কি বিরক্ত করবে / DND চালু আছে কিনা / রাতে কী জমেছে / সকালে কী পাব". During quiet hours routine ' +
+    'tier-1/2 pings are held; tier-3 emergencies and salah reminders still pierce DND. Surfaces the ' +
+    'picture only — it never sends or flushes. Owner-facing, answer in Bangla.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {},
+    required: [],
+  },
+  handler: async () => {
+    try {
+      const { quietHoursStatus } = await import('@/agent/lib/quiet-hours')
+      const s = await quietHoursStatus()
+      const message = !s.enabled
+        ? 'DND বন্ধ — এই মুহূর্তে সব notification সরাসরি যাবে, রাতেও।'
+        : s.isQuietNow
+          ? `এখন quiet hours (${s.windowDhaka}) চলছে — routine ping জমা রাখছি (${s.heldCount}টি), সকালে এক brief-এ পাবেন। জরুরি (tier-3) ও সালাহ reminder এখনই যাবে।`
+          : `এখন quiet hours-এর বাইরে — সব notification সরাসরি যাচ্ছে। রাতের window: ${s.windowDhaka}। জমা আছে ${s.heldCount}টি।`
+      return {
+        success: true,
+        data: {
+          previewOnly: true,
+          enabled: s.enabled,
+          windowDhaka: s.windowDhaka,
+          isQuietNow: s.isQuietNow,
+          heldCount: s.heldCount,
+          heldPreview: s.heldPreview,
+          message,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: `Quiet-hours check failed: ${err instanceof Error ? err.message : String(err)}` }
+    }
+  },
+}
+
+export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan, scan_business_signals, check_owner_silence, check_quiet_hours]

@@ -55,7 +55,32 @@ export async function notifyOwner(opts: {
   title: string
   message: string
   category?: 'salah' | 'urgent' | 'task' | 'report'
+  /**
+   * Internal: skip the quiet-hours (DND) gate. Set only by the morning digest
+   * flush, which IS the delivery — it must never re-hold itself. Never set this
+   * for ordinary pushes.
+   */
+  _bypassQuietHours?: boolean
 }) {
+  // Feature C — quiet-hours / DND. During the owner's night window a routine push
+  // is HELD in a KV queue (delivered next morning as one digest) instead of sent.
+  // tier-3 emergencies + salah reminders pierce DND (handled inside the gate).
+  // Fail-OPEN: any glitch here falls through to a normal send.
+  if (!opts._bypassQuietHours) {
+    try {
+      const { maybeHoldForQuietHours } = await import('@/agent/lib/quiet-hours')
+      const held = await maybeHoldForQuietHours({
+        tier: opts.tier,
+        title: opts.title,
+        message: opts.message,
+        category: opts.category,
+      })
+      if (held) return { channels: ['held_for_morning'], statuses: { dnd: 'held' } }
+    } catch {
+      // fail-open: send normally
+    }
+  }
+
   const channels: string[] = ['ntfy_general']
   const statuses: Record<string, string> = {}
 
