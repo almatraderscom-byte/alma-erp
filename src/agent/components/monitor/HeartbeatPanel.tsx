@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 /** Mirrors the server shapes in src/agent/lib/heartbeat/. */
 interface HeartbeatSettings {
   enabled: boolean
+  autoArm: boolean
   dailyHeadWakeCap: number
   officeHoursOnly: boolean
 }
@@ -102,6 +103,7 @@ export default function HeartbeatPanel() {
   }
 
   const enabled = feed?.settings.enabled === true
+  const autoArm = feed?.settings.autoArm === true
 
   return (
     <div className="safe-x mx-auto w-full max-w-5xl px-4 pt-4 md:px-6">
@@ -110,16 +112,24 @@ export default function HeartbeatPanel() {
         <div className="flex items-center gap-2 px-4 pt-4">
           <span className="text-[15px]">💓</span>
           <h2 className="text-[15px] font-bold text-cream">হার্টবিট</h2>
-          <span
-            className={`ml-auto rounded-full border px-2 py-0.5 text-[10px] ${
-              enabled ? 'border-emerald-300/40 bg-emerald-400/10 text-emerald-300' : 'border-border-subtle bg-white/[0.02] text-muted'
-            }`}
-          >
-            {enabled ? '🟢 চালু' : '🔴 বন্ধ'}
-          </span>
+          <div className="ml-auto flex items-center gap-1.5">
+            {!enabled && autoArm && (
+              <span className="rounded-full border border-sky-300/40 bg-sky-400/10 px-2 py-0.5 text-[10px] text-sky-300">
+                🤖 নিজে চালু হবে
+              </span>
+            )}
+            <span
+              className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                enabled ? 'border-emerald-300/40 bg-emerald-400/10 text-emerald-300' : 'border-border-subtle bg-white/[0.02] text-muted'
+              }`}
+            >
+              {enabled ? '🟢 চালু' : '🔴 বন্ধ'}
+            </span>
+          </div>
         </div>
         <p className="px-4 pb-3 pt-1 text-[12px] leading-relaxed text-muted">
           এজেন্ট নিজে থেকে মাঝে মাঝে জেগে ব্যবসার অবস্থা দেখে — দরকার হলে নিজে ব্যবস্থা নেয় বা আপনাকে জানায়। নিচে কখন কী করল দেখুন।
+          {!enabled && autoArm && ' কাজ বাকি থাকলে এজেন্ট নিজেই হার্টবিট চালু করে নেবে।'}
         </p>
 
         {/* Controls */}

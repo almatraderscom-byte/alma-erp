@@ -50,7 +50,7 @@ import {
   type HeartbeatPulse,
   type HeartbeatEntry,
 } from './heartbeat-log'
-import { getHeartbeatSettings } from './heartbeat-settings'
+import { getHeartbeatSettings, setHeartbeatSettings } from './heartbeat-settings'
 
 const BUSINESS_ID = 'ALMA_LIFESTYLE'
 const HEARTBEAT_CONV_KEY_PREFIX = 'heartbeat_conv:'
@@ -309,8 +309,32 @@ export async function runHeartbeatTick(opts: { now?: Date; force?: boolean } = {
   if (!isAgentEnabled()) return quiet('agent_disabled')
 
   const settings = await getHeartbeatSettings()
-  if (!settings.enabled && !force) return quiet('disabled')
+
+  // Off-hours is a hard quiet bail for both the enabled and the self-arm paths
+  // (the cron only fires during office hours anyway; this guards manual/odd fires).
   if (settings.officeHoursOnly && !isWithinOfficeHours(now) && !force) return quiet('off_hours')
+
+  // SELF-ARMING ("ekdom tomar moto"): when the master switch is OFF, the agent
+  // decides for itself whether to wake. If the owner fully stopped it (autoArm off)
+  // we stay a no-op. Otherwise we take the cheap pulse and ARM ONLY when real work
+  // is pending — turning the master switch on ourselves and attending to it, exactly
+  // like Claude scheduling its own wake-up when work remains. Nothing pending ⇒ keep
+  // resting (near-free). `armedNow` lets this fresh wake bypass change-detection, so
+  // pending work that was already there still gets attended on the tick we arm.
+  let armedNow = false
+  if (!settings.enabled && !force) {
+    if (!settings.autoArm) return quiet('disabled')
+    const probe = await gatherPulse()
+    if (!pulseIsActionable(probe)) return quiet('resting')
+    await setHeartbeatSettings({ enabled: true })
+    await recordHeartbeat({
+      kind: 'idle',
+      pulse: probe,
+      headWoke: false,
+      summary: `🤖 কাজ বাকি দেখে নিজে থেকে হার্টবিট চালু করলাম — ${describePulse(probe)}`,
+    }).catch(() => {})
+    armedNow = true
+  }
 
   const pulse = await gatherPulse()
 
@@ -323,7 +347,9 @@ export async function runHeartbeatTick(opts: { now?: Date; force?: boolean } = {
     const wakes = await headWakesToday(now)
     const underCap = wakes < settings.dailyHeadWakeCap
 
-    const shouldWake = force || (changed && actionable && underCap)
+    // A fresh self-arm (armedNow) attends to the pending work even if the pulse
+    // looks "unchanged" vs the last tick — arming IS the signal that work is waiting.
+    const shouldWake = force || (actionable && underCap && (changed || armedNow))
 
     if (!shouldWake) {
       const reason = !actionable ? 'quiet' : !changed ? 'unchanged' : !underCap ? 'cap_reached' : 'quiet'
