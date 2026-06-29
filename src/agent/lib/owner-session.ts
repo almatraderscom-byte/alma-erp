@@ -1,19 +1,20 @@
 import { prisma } from '@/lib/prisma'
 
 /**
- * Unified owner "session" pointer — the ONE conversation the owner is currently
- * in, shared across every surface (web app + Telegram). Both surfaces read this
- * pointer so a message on Telegram and a message in the app land in the SAME
- * thread, and a refresh in the app resumes where the owner left off.
+ * Web/app owner "session" pointer — the ONE conversation the owner is currently
+ * in on the web app + native app. App and web share THIS pointer so a refresh (or
+ * switching surface between web and the iOS app) resumes the same thread.
  *
- * Stored in agent_kv_settings under `owner_telegram_state` (the key the Telegram
- * worker already maintained) so there is a single source of truth — no second
- * pointer to drift. Value shape: { conversationId, personalConversationId,
- * updatedAt }. `conversationId` = main business chat; `personalConversationId` =
- * personal/advisor chat.
+ * Deliberately SEPARATE from Telegram: Telegram keeps its own daily session under
+ * `owner_telegram_session` (worker-owned). The two channels never share a thread —
+ * a Telegram message must not bleed into the web/app session and vice versa.
+ *
+ * Stored in agent_kv_settings under `owner_web_state`. Value shape:
+ * { conversationId, personalConversationId, updatedAt }. `conversationId` = main
+ * business chat; `personalConversationId` = personal/advisor chat.
  */
 
-const KV_KEY = 'owner_telegram_state'
+const KV_KEY = 'owner_web_state'
 
 export type OwnerSessionPointer = {
   conversationId: string | null
