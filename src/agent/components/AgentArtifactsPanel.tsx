@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import AgentMarkdown from './AgentMarkdown'
+import { useSheetDragDismiss } from '@/hooks/useSheetDragDismiss'
 
 export interface Artifact {
   id: string
@@ -55,6 +56,7 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
   const active = artifacts.find((a) => a.id === activeId) ?? artifacts[artifacts.length - 1] ?? null
   const previewable = isPreviewable(active)
   const [mode, setMode] = useState<'preview' | 'code'>('preview')
+  const { motionProps: sheetDrag, startDrag } = useSheetDragDismiss(onClose)
 
   // Default to Preview whenever a renderable artifact becomes active.
   useEffect(() => {
@@ -176,8 +178,18 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
             <motion.div
               initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 28, stiffness: 280 }}
-              className="fixed inset-x-0 bottom-0 z-[60] max-h-[85dvh] rounded-t-2xl overflow-hidden pb-[env(safe-area-inset-bottom)]"
+              className="fixed inset-x-0 bottom-0 z-[60] max-h-[85dvh] rounded-t-2xl overflow-hidden pb-[env(safe-area-inset-bottom)] bg-card"
+              {...sheetDrag}
             >
+              {/* Grabber — drag down with your finger to dismiss (follows 1:1). */}
+              <div
+                onPointerDown={startDrag}
+                className="flex cursor-grab touch-none justify-center pb-1 pt-2.5 active:cursor-grabbing"
+                role="button"
+                aria-label="টেনে বন্ধ করুন"
+              >
+                <div className="h-1.5 w-12 rounded-full bg-white/20" />
+              </div>
               {panel}
             </motion.div>
           </>

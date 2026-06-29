@@ -18,6 +18,7 @@ import { safeFetchJson } from '@/lib/safe-fetch'
 import { useApprovalCount } from '@/contexts/ApprovalCountContext'
 import { AgentSidebarLink } from '@/components/layout/AgentAccess'
 import { ThemeToggle, ThemePanel } from '@/components/layout/ThemeToggle'
+import { useSheetDragDismiss } from '@/hooks/useSheetDragDismiss'
 
 function updateAppBadge(count: number) {
   const nav = navigator as Navigator & { setAppBadge?: (count?: number) => Promise<void>; clearAppBadge?: () => Promise<void> }
@@ -192,6 +193,7 @@ export function MobileNav() {
   const { business, businessId, allowedBusinessIds, setBusinessId } = useBusiness()
   const { role } = useActor()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const { motionProps: sheetDrag, startDrag } = useSheetDragDismiss(() => setDrawerOpen(false))
   const [unread, setUnread] = useState(0)
   const { count: approvalCount } = useApprovalCount()
   const nav = useMemo(() => filterNavByRole(getNavForBusiness(business.id), role, business.id), [business.id, role])
@@ -358,8 +360,17 @@ export function MobileNav() {
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'spring', stiffness: 360, damping: 34 }}
+              {...sheetDrag}
             >
-              <div className="mx-auto mt-3 h-1.5 w-12 rounded-full bg-border-strong" />
+              {/* Grabber — drag it down with your finger to dismiss (follows 1:1). */}
+              <div
+                onPointerDown={startDrag}
+                className="flex cursor-grab touch-none justify-center pb-1 pt-3 active:cursor-grabbing"
+                role="button"
+                aria-label="টেনে বন্ধ করুন"
+              >
+                <div className="h-1.5 w-12 rounded-full bg-border-strong" />
+              </div>
               <div className="border-b border-border-subtle px-5 pb-4 pt-4">
                 <div className="flex items-center justify-between gap-3">
                   <EmployeeAvatar
