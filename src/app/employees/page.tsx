@@ -11,6 +11,7 @@ import toast from 'react-hot-toast'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { displayBdPhone } from '@/lib/phone'
+import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
 const fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] } } }
 import type { UserRole } from '@prisma/client'
@@ -239,10 +240,6 @@ export default function EmployeesPage() {
     })
   }
 
-  function getInitials(name: string) {
-    return name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
-  }
-
   function getStatusColor(status: string) {
     if (status === 'Active') return 'tone-green'
     if (status === 'Inactive') return 'tone-red'
@@ -332,9 +329,12 @@ export default function EmployeesPage() {
                   <motion.div key={em.emp_id} variants={fadeUp}>
                     <Link href={`/employees/${encodeURIComponent(em.emp_id)}`}>
                       <Card interactive className="p-4 h-full flex flex-col items-center text-center hover:shadow-md transition-shadow">
-                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#E07A5F]/20 to-[#E07A5F]/5 border border-[#E07A5F]/20 flex items-center justify-center mb-3">
-                          <span className="text-sm font-bold text-[#E07A5F]">{getInitials(em.name)}</span>
-                        </div>
+                        <EmployeeAvatar
+                          userId={linkedUser?.id}
+                          name={em.name}
+                          size="lg"
+                          className="mb-3"
+                        />
                         <p className="text-sm font-semibold text-cream truncate w-full">{em.name}</p>
                         <span className="inline-block mt-1.5 text-[10px] font-medium px-2 py-0.5 rounded-full bg-white/[0.06] text-muted-hi">{em.role || 'Staff'}</span>
                         {em.phone && (
@@ -374,9 +374,7 @@ export default function EmployeesPage() {
                         <tr key={em.emp_id} className="hover:bg-white/[0.04]/80 transition-colors group">
                           <td className="py-3.5 px-5">
                             <div className="flex items-center gap-3">
-                              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#E07A5F]/15 to-[#E07A5F]/5 border border-[#E07A5F]/15 flex items-center justify-center shrink-0">
-                                <span className="text-xs font-bold text-[#E07A5F]">{getInitials(em.name)}</span>
-                              </div>
+                              <EmployeeAvatar userId={linkedUser?.id} name={em.name} size="sm" />
                               <div className="min-w-0">
                                 <p className="font-medium text-cream truncate">{em.name}</p>
                                 <p className="text-xs text-muted font-mono">{em.emp_id}</p>

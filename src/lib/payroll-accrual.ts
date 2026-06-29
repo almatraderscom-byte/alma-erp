@@ -133,6 +133,22 @@ export async function runPayrollAccrual({
         periodYm,
         entryId: entry.id,
       })
+      // Auto-recover any outstanding advance from this month's salary (best-effort: a
+      // recovery failure must never roll back the salary accrual — it simply carries to
+      // next month). The unique [employeeId, businessId, periodYm, type] index keeps it
+      // idempotent across re-runs.
+      try {
+        await recoverOutstandingAdvance({
+          employeeId: employee.emp_id,
+          userId: linked?.id || null,
+          businessId,
+          periodYm,
+          salary,
+          runById,
+        })
+      } catch (e) {
+        logEvent('warn', 'payroll_advance_recovery_failed', { businessId, periodYm, employeeId: employee.emp_id, ...errorMeta(e) })
+      }
       createdCount += 1
     } catch (e) {
       errors.push(`${employee.emp_id}: ${(e as Error).message}`)
@@ -181,6 +197,83 @@ export async function runPayrollAccrual({
     skippedCount,
     errors,
   }
+}
+
+/**
+ * Recover an outstanding advance from the freshly accrued salary.
+ * Recovers up to the salary amount this month; any remainder stays outstanding and is
+ * recovered from the following month's salary, until the advance is fully cleared.
+ */
+async function recoverOutstandingAdvance({
+  employeeId,
+  userId,
+  businessId,
+  periodYm,
+  salary,
+  runById,
+}: {
+  employeeId: string
+  userId: string | null
+  businessId: string
+  periodYm: string
+  salary: number
+  runById?: string
+}) {
+  const advanceEntries = await prisma.employeeLedgerEntry.findMany({
+    where: {
+      employeeId,
+      businessId,
+      isArchived: false,
+      type: { in: ['ADVANCE_DISBURSEMENT', 'ADVANCE_RECOVERY'] },
+    },
+    select: { type: true, amount: true },
+  })
+  let disbursed = 0
+  let recovered = 0
+  for (const e of advanceEntries) {
+    if (e.type === 'ADVANCE_DISBURSEMENT') disbursed += Number(e.amount || 0)
+    else recovered += Math.abs(Number(e.amount || 0))
+  }
+  const outstanding = Math.max(0, disbursed - recovered)
+  if (outstanding <= 0) return
+
+  const recoverNow = Math.min(outstanding, salary)
+  if (recoverNow <= 0) return
+
+  const remaining = outstanding - recoverNow
+  const entry = await prisma.employeeLedgerEntry.create({
+    data: {
+      employeeId,
+      userId,
+      businessId,
+      periodYm,
+      date: periodStart(periodYm),
+      type: 'ADVANCE_RECOVERY',
+      amount: moneyDecimal(recoverNow),
+      note:
+        remaining > 0
+          ? `অগ্রিম সমন্বয় — ${periodYm} মাসের বেতন থেকে ৳${recoverNow.toLocaleString('en-BD')} কাটা হলো (বাকি ৳${remaining.toLocaleString('en-BD')})`
+          : `অগ্রিম সমন্বয় — ${periodYm} মাসের বেতন থেকে ৳${recoverNow.toLocaleString('en-BD')} কাটা হলো (সম্পূর্ণ পরিশোধ)`,
+      createdById: runById || null,
+      source: 'advance_recovery',
+      sourceRef: `${businessId}:${employeeId}:${periodYm}`,
+    },
+  })
+  if (userId) {
+    await notifyUser({
+      userId,
+      businessId,
+      type: 'SALARY_ADDED',
+      priority: 'NORMAL',
+      title: 'অগ্রিম সমন্বয়',
+      message:
+        remaining > 0
+          ? `এই মাসের বেতন থেকে ৳${recoverNow.toLocaleString('en-BD')} অগ্রিম কাটা হলো। এখনো বাকি ৳${remaining.toLocaleString('en-BD')}।`
+          : `এই মাসের বেতন থেকে ৳${recoverNow.toLocaleString('en-BD')} অগ্রিম কাটা হলো। আপনার অগ্রিম সম্পূর্ণ পরিশোধ হয়েছে।`,
+      actionUrl: '/portal',
+    }).catch(() => {})
+  }
+  return entry
 }
 
 async function loadAccrualEmployees(businessId: string) {

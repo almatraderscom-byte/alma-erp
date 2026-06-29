@@ -3,6 +3,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
+import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { useHREmployees, useHRPayrollForEmployee, useHrAddPayroll } from '@/hooks/useHr'
 import {
   buildSalarySlipBreakdown,
@@ -517,10 +518,6 @@ export default function EmployeeDetailPage() {
     }
   }
 
-  function getInitials(name: string) {
-    return name.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
-  }
-
   if (listLoading) {
     return (
       <FinancePageChrome title="Employee" subtitle="Profile & payroll ledger">
@@ -549,9 +546,14 @@ export default function EmployeeDetailPage() {
       <motion.div {...MOTION.page}>
         <Card className="p-6 mb-5">
           <div className="flex flex-col sm:flex-row gap-5">
-            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#E07A5F]/20 to-[#E07A5F]/5 border-2 border-[#E07A5F]/20 flex items-center justify-center shrink-0">
-              <span className="text-xl font-bold text-[#E07A5F]">{getInitials(employee.name)}</span>
-            </div>
+            <EmployeeAvatar
+              userId={wallet?.user?.id}
+              name={employee.name}
+              imageUrl={wallet?.user?.profileImageUrl}
+              imageVersion={wallet?.user?.updatedAt}
+              size="xl"
+              className="shrink-0"
+            />
             <div className="flex-1 min-w-0">
               <div className="flex flex-wrap justify-between gap-3">
                 <div>
@@ -583,8 +585,8 @@ export default function EmployeeDetailPage() {
                 <p className="text-[10px] text-muted mt-0.5">Withdrawn</p>
               </div>
               <div className="text-center">
-                <p className="font-mono text-lg font-bold text-emerald-600">৳ {Number(wallet.summary.companyLiability).toLocaleString('en-BD')}</p>
-                <p className="text-[10px] text-muted mt-0.5">Held Balance</p>
+                <p className="font-mono text-lg font-bold text-emerald-600">৳ {Number(wallet.summary.currentBalance).toLocaleString('en-BD')}</p>
+                <p className="text-[10px] text-muted mt-0.5">Current Balance</p>
               </div>
             </div>
           )}

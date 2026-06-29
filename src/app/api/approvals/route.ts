@@ -83,7 +83,7 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
   const requesters = requesterIds.length
     ? await prisma.user.findMany({
         where: { id: { in: requesterIds } },
-        select: { id: true, name: true, email: true, role: true, profileImageUrl: true, updatedAt: true },
+        select: { id: true, name: true, email: true, role: true, profileImageUrl: true, updatedAt: true, employeeIdGas: true },
       })
     : []
   const requesterMap = new Map(requesters.map(user => [user.id, user]))
