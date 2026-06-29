@@ -177,6 +177,13 @@ function scoreProduct(
     tags?: string[]
   },
   today = new Date(),
+  /**
+   * Days since this product last RECEIVED A STAFF TASK (not an FB promotion). 999 = never
+   * in the recent window. This is the day-spread lever: without it a permanent bestseller
+   * (+100) wins every single day, so the plan fixates on one product (e.g. "133"). A strong
+   * but temporary cooldown rotates products day to day, then lets the bestseller return.
+   */
+  daysSinceTasked = 999,
 ) {
   const { sales30d = 0, stock = 0, lastPromotedAt } = product
   const daysSincePromo = lastPromotedAt
@@ -206,6 +213,20 @@ function scoreProduct(
     reasons.push('সম্প্রতি প্রমোট হয়েছে')
   }
 
+  // Day-spread cooldown: a product already tasked in the last few days is pushed down
+  // so the same bestseller doesn't dominate every day. -90 the very next day is enough
+  // to drop a +100 bestseller below a +60 good-seller; the penalty decays so the product
+  // returns after a short rotation instead of being benched forever.
+  if (daysSinceTasked <= 1) {
+    score -= 90
+    reasons.push('সম্প্রতি (১ দিন) টাস্ক দেওয়া হয়েছে — রোটেশন')
+  } else if (daysSinceTasked === 2) {
+    score -= 50
+    reasons.push('২ দিন আগে টাস্ক দেওয়া হয়েছে')
+  } else if (daysSinceTasked === 3) {
+    score -= 20
+  }
+
   if (stock > 20 && sales30d < 5) {
     score += Math.min(40, Math.floor(stock / 5))
     reasons.push(`স্টক প্রেশার: ${stock} স্টক, ${sales30d} বিক্রি`)
@@ -221,9 +242,14 @@ function scoreProduct(
   return { score, reasons, taskType }
 }
 
-function pickRotation(products: ScoredProduct[], today = new Date()) {
+function pickRotation(
+  products: ScoredProduct[],
+  today = new Date(),
+  /** productRef → days since it last received a staff task (for the cooldown). */
+  taskedDaysByRef?: Map<string, number>,
+) {
   const scored = products
-    .map((p) => ({ ...p, ...scoreProduct(p, today) }))
+    .map((p) => ({ ...p, ...scoreProduct(p, today, taskedDaysByRef?.get(p.productRef) ?? 999) }))
     .sort((a, b) => b.score - a.score)
 
   let picks = scored.filter((p) => p.stock > 0).slice(0, 4)
@@ -284,9 +310,15 @@ function buildTasksForStaff(
         source: 'pattern',
       })
     }
-    // Video reel task
+    // Video reel task — pick a DIFFERENT product than the ad/content tasks already
+    // got, so one product doesn't fill two task slots for the same staff in one day.
     if (staffHasSkill(profile, 'video_reel') && picks.length > 0) {
-      const reelPick = picks.find((p) => p.sales30d >= 5) ?? picks[0]
+      const usedRefs = new Set(tasks.map((t) => t.productRef).filter(Boolean) as string[])
+      const reelPick =
+        picks.find((p) => p.sales30d >= 5 && !usedRefs.has(p.productRef)) ??
+        picks.find((p) => !usedRefs.has(p.productRef)) ??
+        picks.find((p) => p.sales30d >= 5) ??
+        picks[0]
       tasks.push({
         staffId: staff.id,
         title: `${reelPick.name} — ৩০-সেকেন্ড ভিডিও রিল বানান`,
@@ -344,7 +376,12 @@ function buildTasksForStaff(
       }
     }
     if (staffHasSkill(profile, 'video_reel') && picks.length > 0) {
-      const reelPick = picks.find((p) => p.sales30d >= 3) ?? picks[0]
+      const usedRefs = new Set(tasks.map((t) => t.productRef).filter(Boolean) as string[])
+      const reelPick =
+        picks.find((p) => p.sales30d >= 3 && !usedRefs.has(p.productRef)) ??
+        picks.find((p) => !usedRefs.has(p.productRef)) ??
+        picks.find((p) => p.sales30d >= 3) ??
+        picks[0]
       tasks.push({
         staffId: staff.id,
         title: `${reelPick.name} — প্রোডাক্ট ভিডিও/রিল তৈরি`,
@@ -769,8 +806,9 @@ export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
 
   const yesterday = addDaysYmd(dateYmd, -1)
   const from30 = addDaysYmd(dateYmd, -30)
+  const from3 = addDaysYmd(dateYmd, -3)
 
-  const [carryRows, historyRows, inv, orders30, pendingRes, fbPosts] = await Promise.all([
+  const [carryRows, historyRows, inv, orders30, pendingRes, fbPosts, recentTaskedRows] = await Promise.all([
     db.agentStaffTask.findMany({
       where: {
         proposedFor: new Date(`${yesterday}T00:00:00+06:00`),
@@ -795,6 +833,16 @@ export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
     })(),
     listAgentOrders({ status: 'pending', limit: 100 }).catch(() => ({ orders: [], meta: { count: 0 } })),
     getRecentPosts({ pageId: resolvePageId('lifestyle'), limit: 8 }).catch(() => []),
+    // Last 3 days of assigned tasks (any status) → drives the day-spread cooldown so the
+    // plan rotates products instead of repeating the same bestseller every day.
+    db.agentStaffTask.findMany({
+      where: {
+        proposedFor: { gte: new Date(`${from3}T00:00:00+06:00`) },
+        businessId: 'ALMA_LIFESTYLE',
+        productRef: { not: null },
+      },
+      select: { productRef: true, proposedFor: true },
+    }).catch(() => [] as Array<{ productRef: string | null; proposedFor: Date }>),
   ])
 
   const metrics = aggregateDashboardMetrics(orders30)
@@ -840,7 +888,17 @@ export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
     }
   }
 
-  const picks = pickRotation(products)
+  // Days since each product last received a task → the cooldown input for pickRotation.
+  const todayMs = new Date(`${dateYmd}T00:00:00+06:00`).getTime()
+  const taskedDaysByRef = new Map<string, number>()
+  for (const row of recentTaskedRows) {
+    if (!row.productRef) continue
+    const days = Math.round((todayMs - new Date(row.proposedFor).getTime()) / 86_400_000)
+    const prev = taskedDaysByRef.get(row.productRef)
+    if (prev === undefined || days < prev) taskedDaysByRef.set(row.productRef, days)
+  }
+
+  const picks = pickRotation(products, new Date(todayMs), taskedDaysByRef)
   const pendingOrders = pendingRes.meta.count
 
   const patterns = await detectPatterns(dateYmd, staffList, inv, historyRows)
