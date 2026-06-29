@@ -420,33 +420,16 @@ export default function OwnerHub({
             </div>
           ) : (
             <div className="actcols">
-              {activeByStaff.map((g) => {
-                const img = imgByStaff.get(g.staffId) ?? null
-                return (
-                  <div className="actcol" key={g.staffId}>
-                    <div className="actcol-h">
-                      {img ? (
-                        <span className={`av img`} style={{ backgroundImage: `url(${img})` }} />
-                      ) : (
-                        <span className={`av ${avClass(g.staffId)}`}>{(g.staffName.trim()[0] || '?').toUpperCase()}</span>
-                      )}
-                      <span className="nm">{g.staffName}</span>
-                      <span className="count">{bn(g.tasks.length)}টি</span>
-                    </div>
-                    <div className="card">
-                      {g.tasks.map((t, i) => (
-                        <ActiveRow
-                          key={t.id}
-                          task={t}
-                          idx={i}
-                          busy={busy}
-                          onSetDue={(dueAt) => run(`due-${t.id}`, { action: 'set_due', taskId: t.id, dueAt })}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )
-              })}
+              {activeByStaff.map((g, gi) => (
+                <ActiveStaffGroup
+                  key={g.staffId}
+                  g={g}
+                  img={imgByStaff.get(g.staffId) ?? null}
+                  busy={busy}
+                  defaultOpen={gi === 0}
+                  onSetDue={(taskId, dueAt) => run(`due-${taskId}`, { action: 'set_due', taskId, dueAt })}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -669,6 +652,49 @@ function PerfRow({ p, img }: { p: StaffPerformance; img: string | null }) {
       <span className={`num rate ${rateCls}`}>{rate == null ? '—' : `${bn(rate)}%`}</span>
       <span className={`num ${p.redo > 0 ? 'warn' : ''}`}>{bn(p.redo)}</span>
       <span className={`num ${p.escalated > 0 ? 'warn' : ''}`}>{bn(p.escalated)}</span>
+    </div>
+  )
+}
+
+// ── collapsible per-staff active-task group ─────────────────────────────────
+// Active tasks are reference (not action-needed), so on a phone the long stacked
+// list is the #1 scroll culprit. Each staff's tasks now collapse to a single
+// tappable header (first group open, rest collapsed) — far less scrolling.
+function ActiveStaffGroup({
+  g,
+  img,
+  busy,
+  defaultOpen,
+  onSetDue,
+}: {
+  g: { staffId: string; staffName: string; tasks: HubTaskCard[] }
+  img: string | null
+  busy: boolean
+  defaultOpen: boolean
+  onSetDue: (taskId: string, dueAt: string | null) => Promise<boolean>
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className={`actcol${open ? ' open' : ''}`}>
+      <button className="actcol-h" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        {img ? (
+          <span className="av img" style={{ backgroundImage: `url(${img})` }} />
+        ) : (
+          <span className={`av ${avClass(g.staffId)}`}>{(g.staffName.trim()[0] || '?').toUpperCase()}</span>
+        )}
+        <span className="nm">{g.staffName}</span>
+        <span className="count">{bn(g.tasks.length)}টি</span>
+        <span className="actcol-chev" aria-hidden>
+          ▸
+        </span>
+      </button>
+      {open && (
+        <div className="card">
+          {g.tasks.map((t, i) => (
+            <ActiveRow key={t.id} task={t} idx={i} busy={busy} onSetDue={(dueAt) => onSetDue(t.id, dueAt)} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
