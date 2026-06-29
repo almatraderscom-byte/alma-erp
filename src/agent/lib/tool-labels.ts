@@ -32,6 +32,9 @@ export const TOOL_LABELS: Record<string, { label: string; icon: string; color: s
   delegate_to_specialist: { label: 'সাব-এজেন্টকে কাজ দিচ্ছি', icon: '🤝', color: '#0ea5e9' },
   send_whatsapp: { label: 'WhatsApp মেসেজ পাঠাচ্ছি', icon: '💬', color: '#25D366' },
   launch_campaign: { label: 'নতুন ক্যাম্পেইন তৈরি করছি', icon: '🚀', color: '#e1306c' },
+  list_audiences: { label: 'Audience তালিকা দেখছি', icon: '🎯', color: '#e1306c' },
+  create_retargeting_audience: { label: 'রিটার্গেটিং audience বানাচ্ছি', icon: '🎯', color: '#e1306c' },
+  create_lookalike_audience: { label: 'Lookalike audience বানাচ্ছি', icon: '👥', color: '#e1306c' },
 }
 
 /**
