@@ -24,6 +24,7 @@ import { getAutodriveConfig, getTodayAutodriveSpendTaka } from '@/agent/lib/auto
 import { loadDrivablePlans } from '@/agent/lib/planner'
 import { drivePlan } from '@/agent/lib/plan-driver/driver'
 import { promoteStuckTodosToPlanDrive } from '@/agent/lib/plan-driver/promote'
+import { scanSignalsToPlanDrive } from '@/agent/lib/plan-driver/signal-scan'
 
 export const runtime = 'nodejs'
 
@@ -83,6 +84,19 @@ export async function POST(req: NextRequest) {
     console.warn('[plan-driver] stuck-todo sweep failed:', err instanceof Error ? err.message : err)
   }
 
+  // Feature A: proactively scan the business (orders/stock/customers/staff) and pull
+  // any NEW urgent signal into the driver. Throttled internally (≈30 min) so the
+  // expensive ERP/Meta tour doesn't run every tick; deduped so a recurring issue
+  // never spawns a second plan. Newly created plans enroll with nextTickAt=now, so
+  // loadDrivablePlans below picks them up this same tick.
+  let signalScan = { scanned: 0, created: [] as Array<{ planId: string; goal: string; signalKey: string }> }
+  try {
+    const res = await scanSignalsToPlanDrive({})
+    signalScan = { scanned: res.scanned, created: res.created }
+  } catch (err) {
+    console.warn('[plan-driver] signal scan failed:', err instanceof Error ? err.message : err)
+  }
+
   const plans = await loadDrivablePlans({ limit: config.batchSize })
 
   const report: Array<{ planId: string; goal: string; outcome: string; detail: string; costTaka: number }> = []
@@ -116,6 +130,8 @@ export async function POST(req: NextRequest) {
     spentThisTickTaka: spentThisTick,
     dailyCapReached: false,
     promotedFromTodos: promotion.promoted.length,
+    signalsScanned: signalScan.scanned,
+    signalsCreated: signalScan.created.length,
     drivablePlans: plans.length,
     driven: report.length,
     report,
