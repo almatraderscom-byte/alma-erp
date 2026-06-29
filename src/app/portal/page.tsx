@@ -317,6 +317,13 @@ export default function EmployeePortalPage() {
       )}
     >
       <motion.div variants={stagger} initial="hidden" animate="show">
+      {!systemOwner && (
+        <AdvanceRecoveryNotice
+          wallet={wallet}
+          businessId={business.id}
+          onAck={() => void loadWallet()}
+        />
+      )}
       {profileIdentity && (
         <motion.div variants={fadeUp} className="mb-4 min-h-[208px]">
           {loadingMe && !me ? (
@@ -418,6 +425,7 @@ export default function EmployeePortalPage() {
           <WalletRequestCard
             businessId={business.id}
             empLinked={Boolean(empId)}
+            availableWithdrawable={Number(wallet?.summary?.availableWithdrawable ?? 0)}
             onSubmitted={() => {
               void loadWallet()
               void refetchProfile()
@@ -789,6 +797,65 @@ function stableSessionId() {
   return id
 }
 
+function AdvanceRecoveryNotice({
+  wallet,
+  businessId,
+  onAck,
+}: {
+  wallet: EmployeeWalletResponse | null
+  businessId: string
+  onAck: () => void
+}) {
+  const [dismissed, setDismissed] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const outstanding = Number(wallet?.summary?.outstandingAdvance ?? 0)
+
+  // Show only while an advance is still owed AND not yet acknowledged today.
+  if (outstanding <= 0) return null
+  if (wallet?.advanceNoticeAckedToday) return null
+  if (dismissed) return null
+
+  async function acknowledge() {
+    setBusy(true)
+    try {
+      const result = await safeFetchJsonWithToast('/api/payroll/wallet/advance-notice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: businessId }),
+      })
+      if (!result.ok) return
+      setDismissed(true)
+      onAck()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <motion.div variants={fadeUp} className="mb-4">
+      <div className="rounded-2xl border border-amber-500/45 bg-amber-500/12 p-4 shadow-[0_0_0_1px_rgba(245,158,11,0.08)]">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 text-xl leading-none">📩</span>
+          <div className="flex-1">
+            <p className="text-[11px] font-black uppercase tracking-[0.14em] text-amber-300">অগ্রিম বেতন নোটিশ</p>
+            <p className="mt-1.5 text-sm font-bold text-cream">
+              আপনি অগ্রিম (advance) বেতন নিয়েছেন — বাকি ৳{Math.round(outstanding).toLocaleString('en-BD')}।
+            </p>
+            <p className="mt-1 text-[12px] leading-relaxed text-amber-100/90">
+              এই টাকা আপনার পরের মাসের বেতন থেকে অটোমেটিক কেটে নেওয়া হবে। পুরোটা শোধ না হওয়া পর্যন্ত এই নোটিশ প্রতিদিন একবার দেখাবে।
+            </p>
+            <div className="mt-3">
+              <Button size="sm" variant="gold" onClick={() => void acknowledge()} disabled={busy}>
+                {busy ? 'অপেক্ষা করুন…' : 'বুঝেছি'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  )
+}
+
 function WalletOverviewCard({ loading, wallet }: { loading: boolean; wallet: EmployeeWalletResponse | null }) {
   const s = wallet?.summary
   return (
@@ -797,6 +864,13 @@ function WalletOverviewCard({ loading, wallet }: { loading: boolean; wallet: Emp
       {loading ? <Skeleton className="h-40 w-full" /> : !s ? (
         <Empty icon="◇" title="Wallet not active" desc="Link your HR employee ID to view salary balance." />
       ) : (
+        <>
+        {Number(s.outstandingAdvance) > 0 && (
+          <div className="mb-3 rounded-2xl border border-amber-500/40 bg-amber-500/10 p-3">
+            <p className="text-[9px] font-bold uppercase tracking-wider text-amber-300">বকেয়া অগ্রিম · পরের বেতন থেকে কাটা হবে</p>
+            <p className="mt-1 font-mono text-lg font-black text-amber-300">{money(s.outstandingAdvance)}</p>
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <WalletStat label="Current balance" value={money(s.currentBalance)} tone="text-green-400" />
           <WalletStat label="Withdrawable" value={money(s.availableWithdrawable)} tone="text-gold-lt" />
@@ -809,6 +883,7 @@ function WalletOverviewCard({ loading, wallet }: { loading: boolean; wallet: Emp
           <WalletStat label="Advances" value={money(s.totalAdvances)} tone="text-amber-600" />
           <WalletStat label="Withdrawals" value={money(s.totalWithdrawals)} tone="text-muted-hi" />
         </div>
+        </>
       )}
     </Card>
   )
@@ -928,10 +1003,12 @@ function MealAllowanceCard({
 function WalletRequestCard({
   businessId,
   empLinked,
+  availableWithdrawable,
   onSubmitted,
 }: {
   businessId: string
   empLinked: boolean
+  availableWithdrawable: number
   onSubmitted: () => void
 }) {
   const [amount, setAmount] = useState('')
@@ -945,6 +1022,12 @@ function WalletRequestCard({
     const r = reason.trim()
     if (!amt || amt <= 0 || !r) {
       toast.error('Amount and reason required')
+      return
+    }
+    if (type === 'WITHDRAWAL' && amt > availableWithdrawable) {
+      toast.error(
+        `আপনার ওয়ালেটে আছে ৳${Math.round(availableWithdrawable).toLocaleString('en-BD')} — এর বেশি টাকা তোলা যাবে না। বেশি দরকার হলে আগে অগ্রিম (advance) রিকোয়েস্ট পাঠান।`,
+      )
       return
     }
     setBusy(true)
@@ -983,6 +1066,9 @@ function WalletRequestCard({
         <label className="block space-y-1">
           <span className="text-muted">Amount (৳)</span>
           <Input value={amount} onChange={e => setAmount(e.target.value)} type="number" min={1} step="1" className="font-mono" disabled={!empLinked} />
+          {type === 'WITHDRAWAL' && (
+            <span className="block text-[10px] text-muted">তুলতে পারবেন সর্বোচ্চ ৳{Math.round(availableWithdrawable).toLocaleString('en-BD')}</span>
+          )}
         </label>
         <label className="block space-y-1">
           <span className="text-muted">Reason</span>

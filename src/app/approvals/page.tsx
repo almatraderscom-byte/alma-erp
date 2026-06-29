@@ -1,5 +1,6 @@
 'use client'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { ApprovalProcessingBanner, ApprovalRowProcessingBadge, approvalRowLockClass } from '@/components/approvals/ApprovalActionStatus'
@@ -37,7 +38,7 @@ type ApprovalRow = {
   createdAt: string
   approvedAt?: string | null
   rejectedAt?: string | null
-  requester?: { id: string; name: string; email?: string | null; role: string; profileImageUrl?: string | null } | null
+  requester?: { id: string; name: string; email?: string | null; role: string; profileImageUrl?: string | null; employeeIdGas?: string | null } | null
   businessName?: string
   entityLabel?: string
   executable?: boolean
@@ -361,18 +362,7 @@ function ApprovalsPageInner() {
                     <p className="mt-1 text-muted">{row.module.replace(/_/g, ' ')} · {row.businessName || row.businessId || 'Global'}</p>
                     <p className="mt-1 text-muted">{new Date(row.createdAt).toLocaleString()}</p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <EmployeeAvatar
-                      userId={row.requester?.id}
-                      name={row.requester?.name || row.requestedBy}
-                      imageUrl={row.requester?.profileImageUrl}
-                      size="sm"
-                    />
-                    <div>
-                      <p className="font-bold text-muted-hi">{row.requester?.name || row.requestedBy}</p>
-                      <p className="mt-1 text-muted">{row.requester?.role?.replace(/_/g, ' ') || 'Requester'}</p>
-                    </div>
-                  </div>
+                  <RequesterIdentity requester={row.requester} fallbackName={row.requestedBy} avatarSize="sm" />
                   <div>
                     {row.type === 'SALARY_CORRECTION' ? (
                       <SalaryCorrectionCard
@@ -470,17 +460,8 @@ function ApprovalsPageInner() {
               )}
             </div>
             <div className="mobile-modal-body px-5 pb-4">
-              <div className="flex items-center gap-3 rounded-2xl border border-border bg-white/[0.04] p-3">
-                <EmployeeAvatar
-                  userId={selected.requester?.id}
-                  name={selected.requester?.name || selected.requestedBy}
-                  imageUrl={selected.requester?.profileImageUrl}
-                  size="lg"
-                />
-                <div>
-                  <p className="text-sm font-bold text-cream">{selected.requester?.name || selected.requestedBy}</p>
-                  <p className="text-[11px] text-muted">{selected.requester?.role?.replace(/_/g, ' ') || 'Requester'}</p>
-                </div>
+              <div className="rounded-2xl border border-border bg-white/[0.04] p-3">
+                <RequesterIdentity requester={selected.requester} fallbackName={selected.requestedBy} avatarSize="lg" large />
               </div>
               <div className="mt-3 space-y-3 text-xs">
                 <Info label="Status" value={selected.status} />
@@ -655,6 +636,41 @@ function lastAuditSource(auditHistory: unknown): string | null {
   if (source === 'attendance') return 'Attendance'
   if (source === 'erp') return 'ERP'
   return source || null
+}
+
+function RequesterIdentity({
+  requester,
+  fallbackName,
+  avatarSize,
+  large,
+}: {
+  requester?: ApprovalRow['requester']
+  fallbackName: string
+  avatarSize: 'sm' | 'lg'
+  large?: boolean
+}) {
+  const name = requester?.name || fallbackName
+  const role = requester?.role?.replace(/_/g, ' ') || 'Requester'
+  const empId = requester?.employeeIdGas
+  const body = (
+    <div className="flex items-center gap-2">
+      <EmployeeAvatar userId={requester?.id} name={name} imageUrl={requester?.profileImageUrl} size={avatarSize} />
+      <div>
+        <p className={large ? 'text-sm font-bold text-cream' : 'font-bold text-muted-hi'}>{name}</p>
+        <p className={large ? 'text-[11px] text-muted' : 'mt-1 text-muted'}>{role}</p>
+      </div>
+    </div>
+  )
+  if (!empId) return body
+  return (
+    <Link
+      href={`/employees/${encodeURIComponent(empId)}`}
+      className="inline-flex rounded-xl transition-colors hover:bg-white/[0.04]"
+      title="View employee profile"
+    >
+      {body}
+    </Link>
+  )
 }
 
 function Info({ label, value }: { label: string; value: React.ReactNode }) {

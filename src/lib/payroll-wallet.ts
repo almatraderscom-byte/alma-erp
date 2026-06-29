@@ -35,6 +35,9 @@ export type WalletSummary = {
   totalWithdrawals: number
   totalPenalties: number
   totalAdjustments: number
+  totalAdvanceDisbursed: number
+  totalAdvanceRecovered: number
+  outstandingAdvance: number
   currentBalance: number
   companyLiability: number
   availableWithdrawable: number
@@ -58,6 +61,8 @@ export const WALLET_CREDIT_TYPES: EmployeeLedgerEntryType[] = [
   'REIMBURSEMENT',
   'MEAL_ALLOWANCE',
   'BONUS',
+  // Approved advance money credited into the wallet (raises the withdrawable balance).
+  'ADVANCE_DISBURSEMENT',
 ]
 
 export const WALLET_DEBIT_TYPES: EmployeeLedgerEntryType[] = [
@@ -65,6 +70,8 @@ export const WALLET_DEBIT_TYPES: EmployeeLedgerEntryType[] = [
   'WITHDRAWAL',
   'MEAL_DEDUCTION',
   'PENALTY',
+  // Auto-recovery of an outstanding advance from the next month's salary.
+  'ADVANCE_RECOVERY',
 ]
 
 export const WALLET_MANUAL_ENTRY_TYPES: EmployeeLedgerEntryType[] = [
@@ -142,6 +149,8 @@ export function computeWalletSummary(
   let totalWithdrawals = 0
   let totalPenalties = 0
   let totalAdjustments = 0
+  let totalAdvanceDisbursed = 0
+  let totalAdvanceRecovered = 0
   let thisMonthSalaryAdded = 0
 
   for (const e of entries) {
@@ -161,12 +170,18 @@ export function computeWalletSummary(
     else if (e.type === 'WITHDRAWAL') totalWithdrawals += Math.abs(amount)
     else if (e.type === 'PENALTY') totalPenalties += Math.abs(amount)
     else if (e.type === 'ADJUSTMENT') totalAdjustments += amount
+    else if (e.type === 'ADVANCE_DISBURSEMENT') totalAdvanceDisbursed += amount
+    else if (e.type === 'ADVANCE_RECOVERY') totalAdvanceRecovered += Math.abs(amount)
   }
 
   totalBonuses += totalEidBonuses + totalPerformanceBonuses
   const lifetimeEarned = totalAccrued + totalBonuses + totalCommissions + totalOvertime + totalReimbursements
   const lifetimeWithdrawn = totalAdvances + totalWithdrawals + totalPenalties + totalMealDeductions
-  const currentBalance = lifetimeEarned - lifetimeWithdrawn + totalAdjustments
+  // Advance disbursement is money credited into the wallet (raises the ceiling); recovery claws it
+  // back from later salary. Outstanding = what's still owed back to the company.
+  const outstandingAdvance = Math.max(0, totalAdvanceDisbursed - totalAdvanceRecovered)
+  const currentBalance =
+    lifetimeEarned + totalAdvanceDisbursed - lifetimeWithdrawn - totalAdvanceRecovered + totalAdjustments
 
   return {
     employeeId,
@@ -185,6 +200,9 @@ export function computeWalletSummary(
     totalWithdrawals,
     totalPenalties,
     totalAdjustments,
+    totalAdvanceDisbursed,
+    totalAdvanceRecovered,
+    outstandingAdvance,
     currentBalance,
     companyLiability: Math.max(0, currentBalance),
     availableWithdrawable: Math.max(0, currentBalance),
@@ -213,11 +231,13 @@ export function requestStatusFromApproval(
 }
 
 export function entryTypeForRequest(type: WalletRequestType): EmployeeLedgerEntryType {
-  return type === 'WITHDRAWAL' ? 'WITHDRAWAL' : 'ADVANCE'
+  // An approved advance credits the wallet (money IN, recovered later from salary);
+  // a withdrawal debits it (money OUT).
+  return type === 'WITHDRAWAL' ? 'WITHDRAWAL' : 'ADVANCE_DISBURSEMENT'
 }
 
 export function isDebitCompensationType(type: EmployeeLedgerEntryType): boolean {
-  return ['MEAL_DEDUCTION', 'PENALTY', 'ADVANCE', 'WITHDRAWAL'].includes(type)
+  return ['MEAL_DEDUCTION', 'PENALTY', 'ADVANCE', 'WITHDRAWAL', 'ADVANCE_RECOVERY'].includes(type)
 }
 
 export function compensationTitle(type: EmployeeLedgerEntryType): string {
@@ -230,6 +250,8 @@ export function compensationTitle(type: EmployeeLedgerEntryType): string {
   if (type === 'MEAL_DEDUCTION') return 'Meal deduction added'
   if (type === 'PENALTY') return 'Penalty added'
   if (type === 'WITHDRAWAL') return 'Payout processed'
+  if (type === 'ADVANCE_DISBURSEMENT') return 'Advance added to wallet'
+  if (type === 'ADVANCE_RECOVERY') return 'Advance recovered from salary'
   return 'Wallet ledger updated'
 }
 

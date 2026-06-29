@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { moneyDecimal } from '@/lib/payroll-wallet'
+import { moneyDecimal, computeWalletSummary } from '@/lib/payroll-wallet'
 import { sendPayrollAlert } from '@/lib/resend'
 import { createApprovalRequest, notifyApprovalSuperAdmins } from '@/lib/approvals'
 import { errorMeta, logEvent } from '@/lib/logger'
@@ -57,6 +57,26 @@ export const POST = withApiRoute('payroll.wallet.requests.create', async (req: N
   }
 
   const businessId = ctx.businessIds[0]
+
+  // Withdrawal can never exceed the staff member's available wallet balance.
+  // If they need more, they must request an ADVANCE first (which, once approved,
+  // tops up the wallet). Enforced here at the source so over-limit requests
+  // never reach the owner's approval queue.
+  if (type === 'WITHDRAWAL') {
+    const entries = await prisma.employeeLedgerEntry.findMany({
+      where: { employeeId, businessId, isArchived: false },
+    })
+    const available = computeWalletSummary(employeeId, businessId, entries).availableWithdrawable
+    if (amount > available) {
+      const fmt = (n: number) => `৳${Math.round(n).toLocaleString('en-BD')}`
+      return apiFailure(
+        'insufficient_balance',
+        `আপনার ওয়ালেটে আছে ${fmt(available)} — এর বেশি টাকা তোলা যাবে না। বেশি দরকার হলে আগে অগ্রিম (advance) রিকোয়েস্ট পাঠান।`,
+        { status: 400, extra: { availableWithdrawable: available } },
+      )
+    }
+  }
+
   let paymentMethodId: string | null = null
   let payoutSnapshot = null as ReturnType<typeof toPayoutSummary> | null
   const preferred = await getPrimaryPaymentMethod(ctx.userId, businessId)
