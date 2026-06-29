@@ -6,6 +6,7 @@ import Link from 'next/link'
 import type { StaffOfficeData, StaffTaskCard, TaskThread } from '@/agent/lib/office-hub'
 import type { Motivation } from '@/agent/lib/office-motivation'
 import Confetti from './confetti'
+import { todoState } from './todo-status'
 
 const BN = '০১২৩৪৫৬৭৮৯'
 function bn(n: number | string): string {
@@ -143,6 +144,8 @@ export default function StaffApp({
               আজ {bn(total)}টি কাজ · {bn(doneN)}টি সম্পন্ন, {bn(remaining)}টি বাকি
             </div>
 
+            <StaffTodo active={data.active} done={data.done} />
+
             {needUpdate.map((t) => (
               <UpdateAlert key={t.id} t={t} busy={busy} onSend={(text) => run(`upd-${t.id}`, { action: 'update', taskId: t.id, body: text })} />
             ))}
@@ -213,6 +216,46 @@ export default function StaffApp({
         </div>
       </div>
     </>
+  )
+}
+
+// ── at-a-glance todolist: today's tasks by status (done / pending / approval) ─
+function TodoRow({ t }: { t: StaffTaskCard }) {
+  const s = todoState(t)
+  return (
+    <div className={`todo-row${s.done ? ' is-done' : ''}`}>
+      <span className={`todo-ic ${s.key}`} aria-hidden>
+        {s.icon}
+      </span>
+      <span className="todo-t">{t.title}</span>
+      <span className={`badge ${s.badge}`}>{s.label}</span>
+    </div>
+  )
+}
+
+function StaffTodo({ active, done }: { active: StaffTaskCard[]; done: StaffTaskCard[] }) {
+  const total = active.length + done.length
+  if (total === 0) return null
+  const pct = Math.round((done.length / total) * 100)
+  return (
+    <div className="card todo" style={{ marginBottom: 16 }}>
+      <div className="todo-head">
+        <span className="lbl">📋 আজকের টুডু</span>
+        <div className="todo-prog">
+          <i style={{ width: `${pct}%` }} />
+        </div>
+        <span className="todo-frac">
+          {bn(done.length)}/{bn(total)}
+        </span>
+      </div>
+      {/* not-done first (active is already tracked-first sorted), then done */}
+      {active.map((t) => (
+        <TodoRow key={t.id} t={t} />
+      ))}
+      {done.map((t) => (
+        <TodoRow key={t.id} t={t} />
+      ))}
+    </div>
   )
 }
 

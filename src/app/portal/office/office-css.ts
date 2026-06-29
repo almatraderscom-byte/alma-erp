@@ -734,6 +734,36 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
    behind prefers-reduced-motion so it never fights accessibility settings.
    1) staggered entrance reveal  2) tactile press feedback  3) animated reveals.
    ════════════════════════════════════════════════════════════════════════ */
+/* ════ at-a-glance todolist (staff own tasks · owner per-staff) ════ */
+.ohub .todo-head{display:flex;align-items:center;gap:11px;padding:13px 15px;border-bottom:1px solid var(--border-subtle)}
+.ohub .todo-head .lbl{font-size:13px;font-weight:700;flex:none}
+.ohub .todo-prog{flex:1;height:7px;border-radius:9px;background:var(--bg-3);overflow:hidden;min-width:40px}
+.ohub .todo-prog i{display:block;height:100%;border-radius:9px;background:linear-gradient(90deg,var(--success),#86efac);transition:width .5s cubic-bezier(.22,1,.36,1)}
+.ohub .todo-frac{font-size:12.5px;font-weight:800;color:var(--muted-hi);flex:none;font-variant-numeric:tabular-nums}
+/* per-staff group header (owner view) */
+.ohub .todo-staff{display:flex;align-items:center;gap:10px;padding:12px 15px;border-top:1px solid var(--border-subtle);background:rgba(255,255,255,0.015)}
+.ohub .todo-staff:first-child{border-top:0}
+.ohub .todo-staff .nm{font-size:14px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* a task row */
+.ohub .todo-row{display:flex;align-items:center;gap:11px;padding:10px 15px;border-top:1px solid var(--border-subtle)}
+.ohub .todo-row:first-child{border-top:0}
+.ohub .todo-ic{width:23px;height:23px;border-radius:50%;display:grid;place-items:center;font-size:12px;line-height:1;flex:none;
+  border:1.5px solid var(--border-strong);color:var(--muted)}
+.ohub .todo-ic.done{background:var(--success);color:#06280f;border-color:transparent;font-weight:900}
+.ohub .todo-ic.approval{background:rgba(245,158,11,.18);color:#fcd34d;border-color:rgba(245,158,11,.45);font-size:11px}
+.ohub .todo-ic.redo{background:rgba(239,68,68,.16);color:#fca5a5;border-color:rgba(239,68,68,.45)}
+.ohub .todo-ic.carry{background:rgba(139,92,246,.16);color:#c4b5fd;border-color:rgba(139,92,246,.45)}
+.ohub .todo-ic.active{background:transparent}
+.ohub .todo-t{flex:1;min-width:0;font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ohub .todo-row.is-done .todo-t{color:var(--muted);text-decoration:line-through;text-decoration-color:rgba(255,255,255,.28)}
+.ohub .todo-row .badge{flex:none}
+.ohub .todo-empty{padding:16px 15px;font-size:13px;color:var(--muted)}
+@media(max-width:680px){
+  .ohub .todo-row,.ohub .todo-staff,.ohub .todo-head{padding-left:13px;padding-right:13px}
+  .ohub .todo-t{font-size:13px}
+  .ohub .todo-row .badge{font-size:10.5px;padding:2px 8px}
+}
+
 @keyframes oh-rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 @keyframes oh-rise-sm{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 @keyframes oh-pop{0%{opacity:0;transform:scale(.96)}100%{opacity:1;transform:scale(1)}}
