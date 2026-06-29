@@ -145,6 +145,8 @@ export async function POST(req: NextRequest) {
     // Live auto-send gate: confidence must meet threshold (shadow always drafts, never sends).
     let sendParts = result.parts
     let confidenceBlocked = false
+    let shadowDraftId: string | null = null
+    let heldForApproval = false
     if (!shadowOnly && effectiveMode === 'auto' && !result.handedOff) {
       const conf = scoreCsReplyConfidence({
         userText: userText.trim(),
@@ -165,10 +167,48 @@ export async function POST(req: NextRequest) {
           message: `Conv ${conv.id} · score ${conf.score.toFixed(2)}\nCustomer: "${userText.slice(0, 120)}"`,
           category: 'urgent',
         })
+      } else {
+        // Phase 2: layer the owner's UNIFIED autonomy policy on top of the
+        // confidence gate. This only ever tightens — when autonomy is OFF (the
+        // default) decideCsAutoSend returns 'send' and behaviour is unchanged.
+        const { decideCsAutoSend } = await import('@/agent/lib/cs/autonomy-bridge')
+        const gate = await decideCsAutoSend({
+          confidenceScore: conf.score,
+          confidenceEscalate: false,
+          summary: `কাস্টমারকে নিজে উত্তর দিয়েছি: "${userText.trim().slice(0, 60)}"`,
+        })
+        if (gate.action === 'hold') {
+          // Owner opted cs_reply into propose/ask → draft for approval, don't auto-send.
+          heldForApproval = true
+          sendParts = []
+          const text = result.parts.filter((p): p is { type: 'text'; text: string } => p.type === 'text').map((p) => p.text).join('\n\n')
+          const attachments = result.parts.filter((p): p is { type: 'image'; imageUrl: string } => p.type === 'image').map((p) => ({ imageUrl: p.imageUrl }))
+          const draft = await db.csShadowDraft.create({
+            data: { conversationId: conv.id, pageId: conv.pageId, psid: conv.psid, draftText: text, attachments, status: 'pending' },
+          })
+          shadowDraftId = draft.id
+          void notifyOwner({
+            tier: 1,
+            title: '🤖 CS উত্তর — অনুমোদন দরকার',
+            message: `Conv ${conv.id}\nকাস্টমার: "${userText.trim().slice(0, 100)}"\nখসড়া: "${text.slice(0, 160)}"\n${gate.reason}`,
+            category: 'task',
+          })
+        } else if (gate.action === 'send' && gate.record) {
+          // Policy-driven auto-send → log it so it surfaces in check_autonomy + the daily digest.
+          try {
+            const { recordAutonomousAction } = await import('@/agent/lib/autonomy-ledger')
+            await recordAutonomousAction({
+              category: 'cs_reply',
+              summary: `কাস্টমারকে নিজে উত্তর দিয়েছি: "${userText.trim().slice(0, 60)}"`,
+              mode: 'auto',
+            })
+          } catch (err) {
+            console.warn('[cs-run] autonomy ledger record failed:', err instanceof Error ? err.message : err)
+          }
+        }
       }
     }
 
-    let shadowDraftId: string | null = null
     if (shadowOnly && !result.handedOff) {
       const text = result.parts.filter((p): p is { type: 'text'; text: string } => p.type === 'text').map((p) => p.text).join('\n\n')
       const attachments = result.parts.filter((p): p is { type: 'image'; imageUrl: string } => p.type === 'image').map((p) => ({ imageUrl: p.imageUrl }))
@@ -183,7 +223,7 @@ export async function POST(req: NextRequest) {
         },
       })
       shadowDraftId = draft.id
-    } else if (!shadowOnly && !result.handedOff && !confidenceBlocked) {
+    } else if (!shadowOnly && !result.handedOff && !confidenceBlocked && !heldForApproval) {
       const { incrementCsReplyCount } = await import('@/agent/lib/cs/guards')
       await incrementCsReplyCount(conv.id)
     }
@@ -213,6 +253,7 @@ export async function POST(req: NextRequest) {
       shadowDraftId,
       handedOff: result.handedOff || confidenceBlocked,
       confidenceBlocked,
+      heldForApproval,
       costUsd: result.costUsd,
     })
   } catch (err) {
