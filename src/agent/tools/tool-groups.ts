@@ -36,6 +36,7 @@ import { LOCATION_TOOLS } from './location-tools'
 import { WORK_TODO_TOOLS } from './work-todo-tools'
 import { ORCHESTRATOR_TOOLS } from './orchestrator-tools'
 import { AUTONOMY_TOOLS } from './autonomy-tools'
+import { HEARTBEAT_TOOLS } from './heartbeat-tools'
 import { VISION_TOOLS } from './vision-tools'
 import { SIMULATE_TOOLS } from './simulate-tools'
 import { PERSONAL_SAFE_TOOLS } from './registry'
@@ -90,6 +91,10 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
     // Always-on so the owner can inspect or tune the agent's autonomy (and undo a
     // self-done action) from any chat without a keyword unlocking the group.
     ...AUTONOMY_TOOLS,
+    // Autonomous "idle heartbeat" control: heartbeat_control (status/enable/disable/
+    // test_now). Always-on so the owner can inspect or steer the self-waking head
+    // from any chat without a keyword unlocking the group.
+    ...HEARTBEAT_TOOLS,
     // Personal-life autonomy (Tier 1): bills/subscriptions, important dates, and the
     // one-shot personal morning briefing. Always-on so the owner can manage personal
     // life from any chat without a keyword unlocking the group.
