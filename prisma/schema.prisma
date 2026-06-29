@@ -128,6 +128,13 @@ enum AttendanceTrustStatus {
   REQUIRES_VERIFICATION
 }
 
+enum AttendanceExceptionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
 enum PayrollAccrualRunStatus {
   RUNNING
   SUCCESS
@@ -553,6 +560,35 @@ model AttendanceWaiverRequest {
   @@index([businessId, userId, createdAt])
   @@index([reviewedById])
   @@index([reversalLedgerEntryId])
+}
+
+/// Attendance exception / permission (Step 3, ALMA_LIFESTYLE only). A staff
+/// asks the owner — one click — to waive the day's attendance rules (early
+/// checkout, field work, late start, etc). Once the owner APPROVES, every
+/// checkout gate (time/location/task) and the no-checkout fine are skipped for
+/// that staff on that day. An optional hour window (startMinutes/endMinutes)
+/// narrows the waiver to part of the day; null = whole day.
+model AttendanceException {
+  id             String                    @id @default(cuid())
+  businessId     String
+  userId         String
+  employeeId     String
+  attendanceDate DateTime
+  status         AttendanceExceptionStatus @default(PENDING)
+  startMinutes   Int?
+  endMinutes     Int?
+  reason         String                    @db.Text
+  grantedDirect  Boolean                   @default(false)
+  adminNote      String?                   @db.Text
+  reviewedById   String?
+  reviewedAt     DateTime?
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+
+  @@unique([businessId, userId, attendanceDate])
+  @@index([businessId, attendanceDate])
+  @@index([businessId, status, attendanceDate])
+  @@index([businessId, employeeId, attendanceDate])
 }
 
 model PayrollAccrualRun {

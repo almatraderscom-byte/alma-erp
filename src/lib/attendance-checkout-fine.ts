@@ -10,6 +10,7 @@ import {
 import { APPROVAL_MODULES, APPROVAL_TYPES } from '@/lib/approval-types'
 import { notifyUser } from '@/lib/notifications'
 import { checkoutRulesEnabled, CHECKOUT_RULES_BUSINESS } from '@/lib/attendance-checkout-rules'
+import { hasApprovedException } from '@/lib/attendance-exception'
 import { logEvent } from '@/lib/logger'
 
 /**
@@ -90,6 +91,14 @@ export async function sweepNoCheckoutFines(input?: { now?: Date }): Promise<NoCh
 
   for (const record of records) {
     try {
+      // Step 3 — skip staff with an owner-approved exception covering this day
+      // (whole-day waiver; an hour-window exception does not excuse a missed
+      // checkout for the whole day, so it is intentionally not matched at 11PM).
+      if (await hasApprovedException(record.userId, businessId, record.attendanceDate, now)) {
+        result.skipped += 1
+        continue
+      }
+
       // Skip if a non-pending (already resolved) approval exists for this record.
       const resolved = await prisma.approvalRequest.findFirst({
         where: {

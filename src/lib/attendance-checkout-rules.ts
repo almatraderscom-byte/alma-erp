@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { officeHoursFor, officeLocationFor, distanceMeters, localMinutesFor } from '@/lib/attendance'
+import { hasApprovedException } from '@/lib/attendance-exception'
 
 /**
  * Step 1 of the attendance checkout-discipline feature (ALMA_LIFESTYLE only).
@@ -169,6 +170,11 @@ export async function runCheckoutGates(input: {
   location: CheckoutLocation
 }): Promise<CheckoutGateResult> {
   const now = input.now ?? new Date()
+  // Step 3 — an owner-approved exception waives ALL gates for this staff today
+  // (whole-day, or within the granted hour window).
+  if (await hasApprovedException(input.userId, input.businessId, input.attendanceDate, now)) {
+    return { ok: true }
+  }
   const timeGate = checkoutTimeGate(input.businessId, now)
   if (!timeGate.ok) return timeGate
   const locationGate = checkoutLocationGate(input.businessId, input.location)

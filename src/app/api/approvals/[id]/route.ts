@@ -41,6 +41,7 @@ import {
 import { processMealAllowanceApproval } from '@/lib/meal-allowance'
 import { processSalaryCorrectionApproval } from '@/lib/salary-correction'
 import { processNoCheckoutFine } from '@/lib/attendance-checkout-fine'
+import { processExceptionApproval } from '@/lib/attendance-exception'
 
 type RouteContext = { params: { id: string } }
 
@@ -251,6 +252,23 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
           moduleResult: { fineAmount: result.fineAmount, ledgerEntryId: result.ledgerEntryId },
           ...(result.rejected ? { rejected: true } : {}),
           ...(result.alreadyApplied ? { alreadyApplied: true } : {}),
+        })
+      }
+    } else if (approval.module === APPROVAL_MODULES.PAYROLL && approval.type === APPROVAL_TYPES.ATTENDANCE_EXCEPTION) {
+      const result = await processExceptionApproval({
+        approvalId: approval.id,
+        exceptionId: approval.entityId,
+        action: body.action,
+        actorUserId: token.sub,
+        note: body.note,
+      })
+      if ('error' in result) {
+        response = approvalErrorResponse(result.error, result.status, result.code)
+      } else {
+        response = apiDataSuccess({
+          approval: result.approval,
+          moduleResult: { exception: result.exception },
+          ...(result.rejected ? { rejected: true } : {}),
         })
       }
     } else if (approval.module === 'PAYROLL' && approval.type === APPROVAL_TYPES.MEAL_ALLOWANCE) {

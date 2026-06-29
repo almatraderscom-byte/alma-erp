@@ -531,10 +531,13 @@ function AttendanceCard({
   onEndWork?: () => void
 }) {
   const router = useRouter()
-  const [busy, setBusy] = useState<'out' | 'cancel' | null>(null)
+  const [busy, setBusy] = useState<'out' | 'cancel' | 'exception' | null>(null)
   const [appealOpen, setAppealOpen] = useState(false)
   const [verifyRecord, setVerifyRecord] = useState<AttendanceRecordDto | null>(null)
   const [faceCheckInOpen, setFaceCheckInOpen] = useState(false)
+  const [exceptionOpen, setExceptionOpen] = useState(false)
+  const [exceptionReason, setExceptionReason] = useState('')
+  const [exceptionStatus, setExceptionStatus] = useState<string | null>(null)
   const desk = useMemo(
     () => (attendance ? normalizeMyAttendancePayload(attendance) : null),
     [attendance],
@@ -576,6 +579,50 @@ function AttendanceCard({
       if (!result.ok) throw new Error(result.error.message)
       toast.success('Work ended')
       onEndWork?.()
+      onRefresh()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Step 3 — load today's exception status so the staff sees pending/approved.
+  useEffect(() => {
+    if (!empLinked || !businessId) return
+    let cancelled = false
+    void (async () => {
+      const result = await safeFetchJson(
+        `/api/attendance/exceptions?business_id=${encodeURIComponent(businessId)}`,
+      )
+      if (!cancelled && result.ok) {
+        const ex = (result.data as { exception?: { status?: string } | null })?.exception
+        setExceptionStatus(ex?.status ?? null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [empLinked, businessId, today?.checkInAt, today?.checkOutAt])
+
+  async function requestException() {
+    const reason = exceptionReason.trim()
+    if (reason.length < 3) {
+      toast.error('সংক্ষেপে কারণ লিখুন (অন্তত ৩ অক্ষর)।')
+      return
+    }
+    setBusy('exception')
+    try {
+      const result = await safeFetchJsonWithToast('/api/attendance/exceptions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: businessId, reason }),
+      })
+      if (!result.ok) throw new Error(result.error.message)
+      toast.success('অনুমতির অনুরোধ মালিকের কাছে পাঠানো হয়েছে।')
+      setExceptionStatus('PENDING')
+      setExceptionReason('')
+      setExceptionOpen(false)
       onRefresh()
     } catch (e) {
       toast.error((e as Error).message)
@@ -683,6 +730,68 @@ function AttendanceCard({
             )}
             {today.faceVerified && (
               <p className="mt-2 text-emerald-600">Face verified at check-in{today.faceVerifiedAt ? ` · ${formatAttendanceTime(today.faceVerifiedAt)}` : ''}</p>
+            )}
+          </div>
+        )}
+      </AttendanceSubsectionBoundary>
+
+      <AttendanceSubsectionBoundary name="Attendance exception">
+        {empLinked && today && !today.checkOutAt && (
+          <div className="mt-4 rounded-2xl border tone-amber p-3 text-[11px]">
+            {exceptionStatus === 'APPROVED' ? (
+              <p className="font-bold text-emerald-600">
+                ✅ আজকের জন্য মালিক অনুমতি দিয়েছেন — নিয়ম মওকুফ, এখন স্বাভাবিকভাবে চেক-আউট করতে পারবেন।
+              </p>
+            ) : exceptionStatus === 'PENDING' ? (
+              <p className="font-bold text-amber-600">
+                ⏳ আপনার অনুমতির অনুরোধ মালিকের অনুমোদনের অপেক্ষায় আছে।
+              </p>
+            ) : (
+              <>
+                <p className="font-bold">আগে বের হতে / মাঠের কাজ / দেরিতে আসা?</p>
+                <p className="mt-1 text-muted">
+                  নিয়ম (সময়, লোকেশন, কাজ, জরিমানা) মওকুফ চাইলে মালিকের কাছে অনুমতি চান। অনুমোদন পেলে আজকের জন্য নিয়ম প্রযোজ্য হবে না।
+                </p>
+                {exceptionOpen ? (
+                  <div className="mt-3 space-y-2">
+                    <textarea
+                      className="w-full rounded-lg border border-gold-dim/40 bg-white/80 p-2 text-xs text-cream"
+                      rows={3}
+                      placeholder="কারণ লিখুন (যেমন: মাঠে ডেলিভারিতে যাচ্ছি / জরুরি কাজ)"
+                      value={exceptionReason}
+                      onChange={e => setExceptionReason(e.target.value)}
+                      disabled={busy === 'exception'}
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        variant="gold"
+                        size="sm"
+                        disabled={busy === 'exception'}
+                        onClick={() => void requestException()}
+                      >
+                        {busy === 'exception' ? 'পাঠানো হচ্ছে...' : 'অনুমতি পাঠান'}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={busy === 'exception'}
+                        onClick={() => setExceptionOpen(false)}
+                      >
+                        বাতিল
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => setExceptionOpen(true)}
+                  >
+                    🙏 অনুমতি চাও
+                  </Button>
+                )}
+              </>
             )}
           </div>
         )}
