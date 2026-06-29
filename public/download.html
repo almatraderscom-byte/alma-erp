@@ -81,7 +81,35 @@
     </div>
 
     <p class="note">লোড হচ্ছে কিন্তু বাটন আসে না? এই page সরাসরি খুলুন — কোনো login লাগে না।</p>
-    <p class="alt">Direct link: <a href="/releases/alma-erp.apk">/releases/alma-erp.apk</a></p>
+    <p class="alt">Direct link: <a id="apk-direct" href="/releases/alma-erp.apk">/releases/alma-erp.apk</a></p>
   </div>
+
+  <script>
+    // Inside the Capacitor app the page runs in a WebView that has no
+    // DownloadListener, so a plain `<a download>` silently does nothing. Detect
+    // native and hand the absolute APK URL to the SYSTEM browser via
+    // window.open(_blank) — Capacitor routes that to an ACTION_VIEW intent, and
+    // the system browser's download manager fetches the APK for install. In a
+    // normal browser the native anchor download is left untouched.
+    (function () {
+      var APK = location.origin + '/releases/alma-erp.apk';
+      function isNativeApp() {
+        try {
+          return !!(window.Capacitor &&
+            typeof window.Capacitor.isNativePlatform === 'function' &&
+            window.Capacitor.isNativePlatform());
+        } catch (e) { return false; }
+      }
+      if (!isNativeApp()) return;
+      ['apk-btn', 'apk-direct'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('click', function (e) {
+          e.preventDefault();
+          window.open(APK, '_blank', 'noopener,noreferrer');
+        });
+      });
+    })();
+  </script>
 </body>
 </html>

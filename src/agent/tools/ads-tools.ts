@@ -162,13 +162,13 @@ const launch_campaign: AgentTool = {
       dailyBudget: { type: 'number', description: 'Daily budget in whole BDT' },
       message: { type: 'string', description: 'Primary ad text in Bangla (the main copy)' },
       headline: { type: 'string', description: 'Optional short headline under the image' },
-      imageUrl: { type: 'string', description: 'Optional public image URL for the creative' },
+      imageUrl: { type: 'string', description: 'REQUIRED public image URL for the creative — a click-to-Messenger ad cannot run without media' },
       page: { type: 'string', description: "'lifestyle' (default) or 'onlineshop'" },
       ageMin: { type: 'number' },
       ageMax: { type: 'number' },
       conversationId: { type: 'string' },
     },
-    required: ['name', 'dailyBudget', 'message'],
+    required: ['name', 'dailyBudget', 'message', 'imageUrl'],
   },
   handler: async (input) => {
     const name = String(input.name ?? '').trim()
@@ -185,6 +185,7 @@ const launch_campaign: AgentTool = {
     const page = String(input.page ?? 'lifestyle').trim().toLowerCase()
     const headline = input.headline ? String(input.headline).trim() : undefined
     const imageUrl = input.imageUrl ? String(input.imageUrl).trim() : undefined
+    if (!imageUrl) return { success: false, error: 'ছবি ছাড়া Click-to-Messenger ক্যাম্পেইন চালু করা যায় না — একটি প্রোডাক্ট ছবির public URL (imageUrl) দিন।' }
     const ageMin = input.ageMin != null ? Math.round(Number(input.ageMin)) : undefined
     const ageMax = input.ageMax != null ? Math.round(Number(input.ageMax)) : undefined
 
