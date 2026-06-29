@@ -217,7 +217,17 @@ export async function launchCampaign(
       bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
       destination_type: 'MESSENGER',
       promoted_object: { page_id: pageId },
-      targeting: { geo_locations: { countries: ['BD'] }, age_min: ageMin, age_max: ageMax },
+      targeting: {
+        geo_locations: { countries: ['BD'] },
+        age_min: ageMin,
+        age_max: ageMax,
+        // Advantage+ era: Meta REQUIRES an explicit Advantage Audience flag or the
+        // create 400s with OAuthException 100 / subcode 1870227 ("Advantage
+        // audience flag required"). 0 = OFF, so Meta honors exactly the targeting
+        // we specified (Bangladesh + the age range shown on the owner's confirm
+        // card) instead of expanding beyond it.
+        targeting_automation: { advantage_audience: 0 },
+      },
       status: 'PAUSED',
     })
     adSetId = adSet.id
