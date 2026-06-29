@@ -193,6 +193,12 @@ export async function launchCampaign(
       objective: 'OUTCOME_ENGAGEMENT',
       status: 'PAUSED',
       special_ad_categories: [],
+      // Budget lives at the ad-set level (daily_budget on the ad set below), not
+      // campaign-level CBO. Newer Graph API versions REQUIRE this field to be
+      // explicitly true/false on create — omitting it returns OAuthException
+      // code 100 / subcode 4834011 ("Must specify True or False in
+      // is_adset_budget_sharing_enabled field"). false = ad-set-level budgets.
+      is_adset_budget_sharing_enabled: false,
     })
     campaignId = campaign.id
     if (!campaignId) throw new Error('campaign id ফেরত আসেনি')
