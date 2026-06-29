@@ -8,14 +8,18 @@ import {
   notifyEarlyLeavePenalty,
   postEarlyLeavePenalty,
   workDurationMinutes,
+  normalizeClientMetadata,
+  officeLocationFor,
+  distanceMeters,
 } from '@/lib/attendance'
+import { checkoutRulesEnabled, runCheckoutGates } from '@/lib/attendance-checkout-rules'
 import { queueAttendanceCheckOutAlert } from '@/lib/telegram-notification/attendance-alerts'
 import { getTelegramOpsSetting } from '@/lib/telegram-notification/settings'
 import { archiveOpenAssignmentsOnCheckout } from '@/lib/operational-tasks'
 import { withApiRoute, apiDataSuccess, apiFailure, requireWalletContext, parseJsonBody } from '@/lib/core/safe-route-helpers'
 
 export const POST = withApiRoute('attendance.check_out', async (req: NextRequest) => {
-  const body = await parseJsonBody<{ business_id?: string }>(req)
+  const body = await parseJsonBody<{ business_id?: string; metadata?: unknown }>(req)
   const auth = await requireWalletContext(req, body.business_id)
   if (!auth.ok) return auth.response
   const { ctx } = auth
@@ -49,11 +53,41 @@ export const POST = withApiRoute('attendance.check_out', async (req: NextRequest
   }
 
   const now = new Date()
+  const businessId = ctx.businessIds[0]
+  const meta = normalizeClientMetadata(body.metadata)
+  const location = meta.location
+
+  // Checkout-discipline gates (Step 1) — time / location / 75%-task. Behind a
+  // kill-switch so production is untouched until the owner enables it. Returns
+  // a Bangla 403 with a machine-readable code on the first failed gate.
+  if (checkoutRulesEnabled(businessId)) {
+    const gate = await runCheckoutGates({
+      businessId,
+      userId: ctx.userId,
+      attendanceDate,
+      now,
+      location,
+    })
+    if (!gate.ok) {
+      return apiFailure('forbidden', gate.message, {
+        status: 403,
+        extra: { code: gate.code, ...('meta' in gate ? gate.meta : {}) },
+      })
+    }
+  }
+
+  // Persist the checkout GPS (audit trail for the geofence gate + appeals).
+  const office = officeLocationFor(businessId)
+  const checkOutDistanceFromOfficeM =
+    office && location?.latitude != null && location?.longitude != null
+      ? distanceMeters({ latitude: location.latitude, longitude: location.longitude }, office)
+      : null
+
   const totalWorkMinutes = workDurationMinutes(existing.checkInAt, now)
 
   // Early checkout penalty ONLY for ALMA_LIFESTYLE
-  const { earlyMinutes, earlyPenaltyAmount } = ctx.businessIds[0] === 'ALMA_LIFESTYLE'
-    ? calculateEarlyCheckoutPenalty(now, ctx.businessIds[0])
+  const { earlyMinutes, earlyPenaltyAmount } = businessId === 'ALMA_LIFESTYLE'
+    ? calculateEarlyCheckoutPenalty(now, businessId)
     : { earlyMinutes: 0, earlyPenaltyAmount: 0 }
   const finalStatus = earlyPenaltyAmount > 0 ? 'EARLY_LEAVE' : 'COMPLETED'
 
@@ -65,6 +99,10 @@ export const POST = withApiRoute('attendance.check_out', async (req: NextRequest
       status: finalStatus,
       earlyLeaveMinutes: earlyMinutes > 0 ? earlyMinutes : null,
       earlyLeavePenaltyAmount: earlyPenaltyAmount > 0 ? new Prisma.Decimal(earlyPenaltyAmount.toFixed(2)) : null,
+      checkOutLatitude: location?.latitude != null ? new Prisma.Decimal(location.latitude.toFixed(7)) : null,
+      checkOutLongitude: location?.longitude != null ? new Prisma.Decimal(location.longitude.toFixed(7)) : null,
+      checkOutLocationAccuracyM: location?.accuracy != null ? Math.round(location.accuracy) : null,
+      checkOutDistanceFromOfficeM,
     },
     include: { waiverRequests: true },
   })

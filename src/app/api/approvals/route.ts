@@ -231,6 +231,7 @@ function isExecutable(module: string, type: string) {
       'PENALTY_APPEAL',
       'MEAL_ALLOWANCE',
       APPROVAL_TYPES.SALARY_CORRECTION,
+      APPROVAL_TYPES.ATTENDANCE_LEAVE,
     ].includes(type))
   )
 }
