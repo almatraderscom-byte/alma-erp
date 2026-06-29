@@ -12,6 +12,7 @@ import { SALAH_TOOLS } from './salah-tools'
 import { FINANCE_TOOLS } from './finance-tools'
 import { OWNER_CUSTOMER_INTEL_TOOLS } from './cs-tools'
 import { CS_AUTONOMY_TOOLS } from './cs-autonomy-tools'
+import { ORDER_AUTONOMY_TOOLS } from './order-autonomy-tools'
 import { COST_TOOLS } from './cost-tools'
 import { REMINDER_TOOLS } from './reminder-tools'
 import { ASK_TOOLS } from './ask-tools'
@@ -424,6 +425,7 @@ export const TRADING_TOOLS: AgentTool[] = [
   ...ORCHESTRATOR_TOOLS,
   ...AUTONOMY_TOOLS,
   ...CS_AUTONOMY_TOOLS,
+  ...ORDER_AUTONOMY_TOOLS,
   ...BILLS_TOOLS,
   ...IMPORTANT_DATE_TOOLS,
   ...PERSONAL_BRIEFING_TOOLS,
@@ -476,6 +478,7 @@ export const TOOLS: AgentTool[] = [
   ...ORCHESTRATOR_TOOLS,
   ...AUTONOMY_TOOLS,
   ...CS_AUTONOMY_TOOLS,
+  ...ORDER_AUTONOMY_TOOLS,
   ...BILLS_TOOLS,
   ...IMPORTANT_DATE_TOOLS,
   ...PERSONAL_BRIEFING_TOOLS,
