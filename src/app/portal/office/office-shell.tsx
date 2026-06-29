@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import type { OwnerHubData, StaffOfficeData } from '@/agent/lib/office-hub'
 import type { Motivation } from '@/agent/lib/office-motivation'
@@ -29,6 +29,23 @@ export default function OfficeShell({
   const isOwner = self === 'owner'
   const [navOpen, setNavOpen] = useState(false)
   const [histOpen, setHistOpen] = useState(false)
+
+  // The app's GLOBAL MobilePullToRefresh listens on the ERP <main> scroll
+  // element. The office is a fixed overlay whose OWN scroller is `.wrap`, so
+  // <main>.scrollTop stays 0 — meaning every upward scroll inside the office
+  // (finger moving down) looked like "at the top, pulling to refresh" and the
+  // page reloaded mid-scroll. CSS overscroll-behavior can't stop a JS touch
+  // handler, so we stop the office's touch events from bubbling up to it. This
+  // does NOT affect native scrolling inside `.wrap`/the chat (that's handled by
+  // the browser regardless of JS event propagation) or the office's own taps.
+  useEffect(() => {
+    const ohub = document.querySelector('.ohub')
+    if (!ohub) return
+    const stop = (e: Event) => e.stopPropagation()
+    const evs: Array<keyof HTMLElementEventMap> = ['touchstart', 'touchmove', 'touchend', 'touchcancel']
+    evs.forEach((ev) => ohub.addEventListener(ev, stop))
+    return () => evs.forEach((ev) => ohub.removeEventListener(ev, stop))
+  }, [])
 
   return (
     <>

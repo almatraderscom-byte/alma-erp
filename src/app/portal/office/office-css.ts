@@ -359,6 +359,9 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 .ohub .trow .meta{font-size:12.5px;color:var(--muted);margin-top:3px}
 .ohub .trow .esc{font-size:12px;font-weight:600;color:#fca5a5;margin-top:6px;display:inline-flex;align-items:center;gap:6px}
 .ohub .trow .acts{display:flex;gap:7px;flex-shrink:0;flex-wrap:wrap;justify-content:flex-end}
+.ohub .track-more{width:100%;padding:11px 18px;background:rgba(245,158,11,.06);border:0;border-top:1px solid rgba(245,158,11,.16);
+  font-family:inherit;font-size:12.5px;font-weight:700;color:#fcd34d;cursor:pointer;text-align:center;transition:.16s}
+.ohub .track-more:hover{background:rgba(245,158,11,.12)}
 
 /* staff-side update alert */
 .ohub .alert{display:flex;flex-direction:column;gap:9px;border-radius:var(--r-md);padding:14px;margin-bottom:16px;
