@@ -56,7 +56,12 @@ export function DownloadAppClient({ apkUrl }: Props) {
               // Native app: WebView can't download — open APK in system browser.
               if (isCapacitorNative()) {
                 e.preventDefault()
-                window.open(toAbsoluteApkUrl(apkUrl), '_system')
+                // Capacitor routes '_blank' to onCreateWindow → ACTION_VIEW
+                // intent → system browser, whose download manager fetches the
+                // APK (same proven path as PdfPreviewModal). The Android
+                // WebView itself has no DownloadListener, so a plain anchor
+                // download silently fails inside the app.
+                window.open(toAbsoluteApkUrl(apkUrl), '_blank', 'noopener,noreferrer')
               }
             }}
           >
