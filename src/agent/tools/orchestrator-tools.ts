@@ -466,4 +466,40 @@ const check_quiet_hours: AgentTool = {
   },
 }
 
-export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan, scan_business_signals, check_owner_silence, check_quiet_hours]
+const get_action_cards: AgentTool = {
+  name: 'get_action_cards',
+  description:
+    'Read-only: turn the current business insights into owner-facing ONE-TAP ACTION CARDS. Each card pairs ' +
+    'a problem (low stock, stuck/piled-up pending orders, high cancel/return) with ONE recommended action ' +
+    'and the exact step the agent would run if you say "do it". Use when the owner asks "আজ কী করা দরকার / ' +
+    'এক্ষুনি কী অ্যাকশন নেব / suggestion গুলো action-এ নাও / কোনটা আগে করব". High-urgency cards come first. ' +
+    'This only PREVIEWS the cards — nothing executes until the owner picks one (e.g. "১ নম্বরটা করো"). ' +
+    'Owner-facing, answer in Bangla.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      limit: { type: 'number', description: 'Max cards to return (default 8)' },
+    },
+    required: [],
+  },
+  handler: async (input) => {
+    try {
+      const { getActionCards } = await import('@/agent/lib/action-cards')
+      const limit = typeof input.limit === 'number' && input.limit > 0 ? Math.floor(input.limit) : undefined
+      const res = await getActionCards({ limit })
+      return {
+        success: true,
+        data: {
+          previewOnly: true,
+          count: res.cards.length,
+          cards: res.cards,
+          message: res.summaryBangla,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: `Action-cards build failed: ${err instanceof Error ? err.message : String(err)}` }
+    }
+  },
+}
+
+export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan, scan_business_signals, check_owner_silence, check_quiet_hours, get_action_cards]
