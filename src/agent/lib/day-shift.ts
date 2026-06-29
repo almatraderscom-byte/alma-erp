@@ -542,6 +542,19 @@ export async function startDayShift(): Promise<{ ok: boolean; conversationId?: s
       )
     }
 
+    // Feature C — morning DND flush. Anything HELD overnight (routine pings that
+    // were queued so the owner could sleep) is now delivered as ONE consolidated
+    // digest, since it's daytime again. Best-effort; never blocks the shift start.
+    try {
+      const { flushQuietHoursQueue } = await import('@/agent/lib/quiet-hours')
+      const { flushed } = await flushQuietHoursQueue()
+      if (flushed > 0) {
+        await appendShiftNarrative(conversationId, `🌙 রাতে জমা রাখা ${flushed}টি আপডেট সকালের brief-এ পাঠালাম।`)
+      }
+    } catch (err) {
+      console.warn('[day-shift] quiet-hours morning flush failed:', err instanceof Error ? err.message : err)
+    }
+
     // Point 2 — if yesterday's main office work (staff dispatch) didn't happen, ask the
     // reason first. Owner's reply (captured in core.ts) is saved + answered with a suggestion.
     try {
