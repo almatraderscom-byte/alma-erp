@@ -41,8 +41,8 @@ export default function OfficeShell({
   useEffect(() => {
     const ohub = document.querySelector('.ohub')
     if (!ohub) return
-    const stop = (e: Event) => e.stopPropagation()
-    const evs: Array<keyof HTMLElementEventMap> = ['touchstart', 'touchmove', 'touchend', 'touchcancel']
+    const stop: EventListener = (e) => e.stopPropagation()
+    const evs = ['touchstart', 'touchmove', 'touchend', 'touchcancel']
     evs.forEach((ev) => ohub.addEventListener(ev, stop))
     return () => evs.forEach((ev) => ohub.removeEventListener(ev, stop))
   }, [])
