@@ -18,9 +18,11 @@
  * something actionable AND we're under the cap.
  *
  * Visibility: every tick — idle or active — appends to the heartbeat log (the UI
- * timeline). When the head DOES wake, it runs inside a per-day heartbeat
- * conversation, so its reasoning is a normal assistant message the owner can open
- * and read — the ScheduleWakeup-style "see what it did" the owner wanted.
+ * timeline). When the head DOES wake, the turn lands INLINE at the bottom of the
+ * owner's currently-open chat (his session pointer / most-recent main chat), so it
+ * surfaces in his running session like Claude Code's ScheduleWakeup — the app's
+ * message poll floats it in automatically. If he's mid-turn there (or no main chat
+ * exists) it falls back to a per-day heartbeat thread, so a tick is never lost.
  *
  * Everything is best-effort and fail-safe: a model/DB/network error records an
  * 'error' heartbeat and returns — it never throws into the cron.
@@ -31,6 +33,9 @@ import { captureAgentError } from '@/agent/lib/sentry'
 import { isWithinOfficeHours } from '@/agent/lib/office-supervisor'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
 import type { AgentEvent } from '@/agent/lib/core'
+import { getOwnerSessionPointer } from '@/agent/lib/owner-session'
+import { getLatestTurn } from '@/agent/lib/turn-status'
+import { HEARTBEAT_WAKE_SENTINEL } from './wake-marker'
 import {
   recordHeartbeat,
   lastHeartbeat,
@@ -126,7 +131,10 @@ async function getOrCreateHeartbeatConversation(date: string): Promise<string> {
 /** The self-check directive the head reacts to when it wakes. */
 function buildHeartbeatDirective(pulse: HeartbeatPulse): string {
   return (
-    '[স্বয়ংক্রিয় হার্টবিট — তুমি নিজে থেকে জেগেছ, Boss কিছু বলেননি]\n\n' +
+    // First line MUST start with HEARTBEAT_WAKE_SENTINEL — the chat keys the inline
+    // "ALMA নিজে থেকে জাগল" wake-up divider off it, so this directive never renders
+    // as a fake owner message in the owner's live chat.
+    `${HEARTBEAT_WAKE_SENTINEL} — তুমি নিজে থেকে জেগেছ, Boss কিছু বলেননি]\n\n` +
     'এই মুহূর্তে ব্যবসার অবস্থা একটু দেখে নাও। সংক্ষিপ্ত ইশারা:\n' +
     `• অনুমোদন-অপেক্ষমাণ কাজ: ${pulse.pendingApprovals}\n` +
     `• তোমার এসকেলেট-করা কাজ (Boss-এর নজরে): ${pulse.ownerEscalations}\n` +
@@ -138,6 +146,47 @@ function buildHeartbeatDirective(pulse: HeartbeatPulse): string {
   )
 }
 
+/**
+ * Where the wake-up turn should land. The owner asked for a "100% Claude Code
+ * ScheduleWakeup" feel: the wake-up should appear INLINE at the bottom of whatever
+ * chat he currently has open, not in a side thread. So we target the owner's active
+ * web/app conversation (his session pointer, else the most-recent main chat) — the
+ * app's 12s message poll then floats the turn into his open session automatically.
+ *
+ * Two guards keep this safe:
+ *   • If he is mid-turn in that chat (a turn is `running`), we must NOT inject — it
+ *     would interleave with his own conversation. We fall back to the per-day
+ *     heartbeat thread so the tick is never lost and never collides.
+ *   • Any lookup failure also falls back to the per-day heartbeat thread.
+ */
+async function resolveWakeConversation(now: Date): Promise<{ id: string; inOwnerChat: boolean }> {
+  try {
+    let convId = (await getOwnerSessionPointer()).conversationId
+    if (convId) {
+      const exists = await prisma.agentConversation.findFirst({
+        where: { id: convId, archived: false },
+        select: { id: true },
+      })
+      if (!exists) convId = null
+    }
+    if (!convId) {
+      const latest = await prisma.agentConversation.findFirst({
+        where: { archived: false, projectId: null, source: 'web' },
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true },
+      })
+      convId = latest?.id ?? null
+    }
+    if (convId) {
+      const turn = await getLatestTurn(convId)
+      if (turn?.status !== 'running') return { id: convId, inOwnerChat: true }
+    }
+  } catch {
+    /* fall through to the per-day heartbeat thread */
+  }
+  return { id: await getOrCreateHeartbeatConversation(ymdDhaka(now)), inOwnerChat: false }
+}
+
 // ── The tick ─────────────────────────────────────────────────────────────────
 
 async function wakeHead(
@@ -146,7 +195,7 @@ async function wakeHead(
 ): Promise<{ kind: 'active' | 'blocked' | 'error'; summary: string; costUsd: number; conversationId?: string }> {
   let conversationId: string
   try {
-    conversationId = await getOrCreateHeartbeatConversation(ymdDhaka(now))
+    conversationId = (await resolveWakeConversation(now)).id
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (prisma as any).agentMessage.create({
       data: { conversationId, role: 'user', content: [{ type: 'text', text: buildHeartbeatDirective(pulse) }] },

@@ -18,6 +18,27 @@ import type { PlanDrivePanelData, PlanDriveAction } from './monitor/PlanDriveTim
 import { AgentThinkingIndicator, ModelSpinner, type ModelVariant, type ThinkingMode } from './AgentThinkingIndicator'
 import { toolDisplay, toolDetail } from '@/agent/lib/tool-labels'
 import { agentReplyHaptic } from '@/agent/lib/haptics'
+import { isHeartbeatWakeText } from '@/agent/lib/heartbeat/wake-marker'
+
+/**
+ * Inline "ALMA woke on its own" divider — the Claude-Code ScheduleWakeup look.
+ * The autonomous heartbeat seeds a hidden directive (a user-role message) into the
+ * owner's open chat so the head has something to react to; we never want that to
+ * render as a fake owner pill, so it collapses to this small centered marker and
+ * the head's real turn renders normally right below it.
+ */
+function HeartbeatWakeDivider() {
+  return (
+    <div className="my-1 flex items-center justify-center gap-2.5">
+      <span className="h-px flex-1 bg-border-subtle" aria-hidden />
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-[#E07A5F]/25 bg-[#E07A5F]/[0.06] px-3 py-1 text-[11px] font-medium text-[#E07A5F]/90">
+        <span aria-hidden style={{ fontVariantEmoji: 'text' as const }}>💓</span>
+        ALMA নিজে থেকে জাগল
+      </span>
+      <span className="h-px flex-1 bg-border-subtle" aria-hidden />
+    </div>
+  )
+}
 
 /** Compact token formatter: 36100 → "36.1k", 681 → "681". */
 function fmtTok(n: number): string {
@@ -1033,7 +1054,11 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
               transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: 'easeOut', delay: index < 10 ? index * 0.02 : 0 }}
               className={msg.role === 'user' ? 'mb-6' : 'mb-8'}
             >
-              {msg.role === 'user' ? (
+              {msg.role === 'user' && isHeartbeatWakeText(msg.text) ? (
+                /* Autonomous heartbeat self-wake — render as an inline divider, NOT
+                   a fake owner message (the directive is the head's own cue). */
+                <HeartbeatWakeDivider />
+              ) : msg.role === 'user' ? (
                 /* User message — coral-tinted pill */
                 <div className="flex justify-end">
                   <div className="max-w-[85%] min-w-0">
