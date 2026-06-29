@@ -555,6 +555,20 @@ export async function startDayShift(): Promise<{ ok: boolean; conversationId?: s
       console.warn('[day-shift] quiet-hours morning flush failed:', err instanceof Error ? err.message : err)
     }
 
+    // Feature D — weekly staff report-card. On Monday morning (Dhaka) deliver ONE
+    // consolidated card for the week that just closed: team totals, the standout,
+    // the biggest improver, per-staff coaching, and who needs a word. Idempotent
+    // (KV-deduped per week); silently skips other days and zero-activity weeks.
+    try {
+      const { runWeeklyReportCardSend } = await import('@/agent/lib/weekly-report-card')
+      const r = await runWeeklyReportCardSend()
+      if (r.sent) {
+        await appendShiftNarrative(conversationId, `📊 সাপ্তাহিক স্টাফ রিপোর্ট-কার্ড (${r.staffCount ?? 0} জন) পাঠালাম।`)
+      }
+    } catch (err) {
+      console.warn('[day-shift] weekly report-card send failed:', err instanceof Error ? err.message : err)
+    }
+
     // Point 2 — if yesterday's main office work (staff dispatch) didn't happen, ask the
     // reason first. Owner's reply (captured in core.ts) is saved + answered with a suggestion.
     try {

@@ -2065,6 +2065,41 @@ const get_shift_handover: AgentTool = {
   },
 }
 
+/**
+ * Feature D — Weekly staff report-card. Read-only consolidated rollup for one
+ * Dhaka week (defaults to the just-finished week): team totals, the standout, the
+ * biggest improver, per-staff coaching lines, and who needs attention. This is the
+ * on-demand surface; the same card auto-delivers every Monday morning.
+ */
+const get_weekly_report_card: AgentTool = {
+  name: 'get_weekly_report_card',
+  description:
+    'Weekly staff report-card: a consolidated rollup for one Dhaka week — team totals (assigned/done/on-time), ' +
+    'the standout performer, the biggest week-over-week improver, a warm per-staff coaching line, and who needs ' +
+    'attention (rework/late/slipping). Read-only, no money, no task changes. Call when the owner asks for the ' +
+    'weekly team report, "এ সপ্তাহে দল কেমন করল", who improved/needs coaching, or a staff report-card. By default ' +
+    'reports the JUST-FINISHED week; pass `current: true` for the running week so far. Returns ready-to-show Bangla.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      current: { type: 'boolean', description: 'Report the running week so far instead of the just-finished week.' },
+      businessId: { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING'] },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const businessId = bizFrom(input)
+      const { buildWeeklyReportCard } = await import('@/agent/lib/weekly-report-card')
+      const { currentWeekStart } = await import('@/agent/lib/office-award')
+      const weekStart = input?.current === true ? currentWeekStart() : undefined
+      const card = await buildWeeklyReportCard({ businessId, weekStart })
+      return { success: true, data: { card, message: card.summaryBangla } }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 export const STAFF_TOOLS: AgentTool[] = [
   prepare_staff_task_proposal,
   get_all_staff,
@@ -2089,4 +2124,5 @@ export const STAFF_TOOLS: AgentTool[] = [
   update_staff_task_profile,
   explain_staff_task_bangla,
   get_shift_handover,
+  get_weekly_report_card,
 ]

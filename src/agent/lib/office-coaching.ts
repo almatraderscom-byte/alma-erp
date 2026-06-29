@@ -95,8 +95,11 @@ function classify(deltaScore: number): TrendDirection {
  * Per-staff week-over-week trend + a coaching line. Sorted by momentum
  * (biggest improvers first, then biggest slippers) so the owner sees movement.
  */
-export async function computeStaffTrend(businessId = 'ALMA_LIFESTYLE'): Promise<StaffTrend[]> {
-  const thisStart = currentWeekStart()
+export async function computeStaffTrend(
+  businessId = 'ALMA_LIFESTYLE',
+  weekStart: Date = currentWeekStart(),
+): Promise<StaffTrend[]> {
+  const thisStart = weekStart
   const lastStart = new Date(thisStart.getTime() - 7 * 24 * 60 * 60 * 1000)
 
   const [thisWeek, lastWeek] = await Promise.all([
