@@ -451,6 +451,11 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 .ohub-chatpanel .gm .av{width:27px;height:27px;font-size:11px;margin-top:2px;border-radius:50%;display:grid;place-items:center;color:#fff;flex-shrink:0;background:#3f3f46}
 .ohub-chatpanel .gm .av.e{background:linear-gradient(135deg,#6366f1,#8b5cf6)}
 .ohub-chatpanel .gm .av.o{background:linear-gradient(135deg,#E07A5F,#C45A3C)}
+/* staff/owner profile photo in chat — the .av.img cover rule lives under .ohub,
+   which does NOT match this separate .ohub-chatpanel root, so re-declare it here
+   (without this the photo rendered uncovered/oversized → looked broken). */
+.ohub-chatpanel .gm .av.img{background-size:cover;background-position:center;background-repeat:no-repeat;color:transparent;font-size:0}
+.ohub-chatpanel img{max-width:100%}
 .ohub-chatpanel .gm .nmt{font-size:11px;color:#AEB2C0;margin-bottom:3px;font-weight:600}
 .ohub-chatpanel .gm .gb{background:#202027;border:1px solid rgba(255,255,255,0.07);border-radius:4px 14px 14px 14px;padding:9px 12px;font-size:13px;color:#D0D4E0;white-space:pre-line}
 .ohub-chatpanel .gm.me{margin-left:auto;flex-direction:row-reverse}
@@ -734,31 +739,31 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 @keyframes oh-pop{0%{opacity:0;transform:scale(.96)}100%{opacity:1;transform:scale(1)}}
 @keyframes oh-skel{0%{background-position:-180px 0}100%{background-position:180px 0}}
 
-@media (prefers-reduced-motion: no-preference){
-  /* entrance: the page block fades while its sections rise in sequence */
-  .ohub .perspective.show{animation:oh-fade .3s ease}
-  .ohub .perspective.show > *{animation:oh-rise .55s cubic-bezier(.22,1,.36,1) both}
-  .ohub .perspective.show > *:nth-child(1){animation-delay:.03s}
-  .ohub .perspective.show > *:nth-child(2){animation-delay:.08s}
-  .ohub .perspective.show > *:nth-child(3){animation-delay:.13s}
-  .ohub .perspective.show > *:nth-child(4){animation-delay:.18s}
-  .ohub .perspective.show > *:nth-child(5){animation-delay:.23s}
-  .ohub .perspective.show > *:nth-child(6){animation-delay:.28s}
-  .ohub .perspective.show > *:nth-child(n+7){animation-delay:.33s}
-  /* KPI tiles get a slightly springier individual reveal */
-  .ohub .kpis .kpi{animation:oh-pop .5s cubic-bezier(.22,1,.36,1) both}
-  .ohub .kpis .kpi:nth-child(2){animation-delay:.06s}
-  .ohub .kpis .kpi:nth-child(3){animation-delay:.12s}
-  .ohub .kpis .kpi:nth-child(4){animation-delay:.18s}
-  /* tab switch: the newly shown pane re-rises (display:none→block replays it) */
-  .ohub .oh-pane{animation:oh-rise .36s cubic-bezier(.22,1,.36,1) both}
-  /* collapsible staff group slides open */
-  .ohub .actcol.open > .card{animation:oh-rise-sm .28s ease both}
-  /* list rows + chat bubbles ease in */
-  .ohub .appr,.ohub .lead,.ohub .staff-row,.ohub .ev,.ohub .trow{animation:oh-rise-sm .4s ease both}
-  .ohub-chatpanel .gm{animation:oh-rise-sm .26s ease both}
-  /* the chevron + badges get smooth transitions (already declared elsewhere) */
-}
+/* Motion is UNCONDITIONAL by owner request (his device's Reduce-Motion was
+   suppressing it). Pure transform/opacity, all self-completing (never leaves
+   content hidden), so it can't blank the screen. */
+/* entrance: the page block fades while its sections rise in sequence */
+.ohub .perspective.show{animation:oh-fade .3s ease}
+.ohub .perspective.show > *{animation:oh-rise .6s cubic-bezier(.22,1,.36,1) both}
+.ohub .perspective.show > *:nth-child(1){animation-delay:.04s}
+.ohub .perspective.show > *:nth-child(2){animation-delay:.10s}
+.ohub .perspective.show > *:nth-child(3){animation-delay:.16s}
+.ohub .perspective.show > *:nth-child(4){animation-delay:.22s}
+.ohub .perspective.show > *:nth-child(5){animation-delay:.28s}
+.ohub .perspective.show > *:nth-child(6){animation-delay:.34s}
+.ohub .perspective.show > *:nth-child(n+7){animation-delay:.40s}
+/* KPI tiles get a springier individual reveal */
+.ohub .kpis .kpi{animation:oh-pop .55s cubic-bezier(.34,1.56,.64,1) both}
+.ohub .kpis .kpi:nth-child(2){animation-delay:.07s}
+.ohub .kpis .kpi:nth-child(3){animation-delay:.14s}
+.ohub .kpis .kpi:nth-child(4){animation-delay:.21s}
+/* tab switch: the newly shown pane re-rises (display:none→block replays it) */
+.ohub .oh-pane{animation:oh-rise .38s cubic-bezier(.22,1,.36,1) both}
+/* collapsible staff group slides open */
+.ohub .actcol.open > .card{animation:oh-rise-sm .28s ease both}
+/* list rows + chat bubbles ease in */
+.ohub .appr,.ohub .lead,.ohub .staff-row,.ohub .ev,.ohub .trow{animation:oh-rise-sm .42s ease both}
+.ohub-chatpanel .gm{animation:oh-rise-sm .26s ease both}
 
 /* Tactile press feedback — cheap, always on. Tapping anything springs slightly. */
 .ohub .card,.ohub .kpi,.ohub .appr,.ohub .lead,.ohub .stask,.ohub .staff-row,.ohub .actcol-h,
