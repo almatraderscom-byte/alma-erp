@@ -264,26 +264,62 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
   .ohub .brand .logo{width:28px;height:28px;font-size:15px}
   .ohub .brand>span{font-size:15px}
   .ohub .seg button{padding:7px 12px;font-size:12.5px}
-  /* compact vertical rhythm — same hierarchy, less scrolling */
-  .ohub .phead{margin-bottom:14px} .ohub .phead h1{font-size:19px}
-  .ohub .phead .kicker{font-size:11px}
-  .ohub .kpis{gap:9px;margin-bottom:14px}
-  .ohub .kpi{padding:13px;border-radius:var(--r-md)} .ohub .kpi .v{font-size:21px} .ohub .kpi .ic{font-size:18px}
-  .ohub .kpi .l{font-size:12px}
-  .ohub .hero-row{gap:12px;margin-bottom:14px}
-  .ohub .track,.ohub .props{margin-bottom:14px}
-  .ohub .section-h{margin-bottom:10px} .ohub .section-h h2{font-size:15px}
+  /* compact vertical rhythm — same hierarchy, much less scrolling */
+  .ohub .phead{margin-bottom:12px} .ohub .phead h1{font-size:18px} .ohub .phead p{font-size:12.5px}
+  .ohub .phead .kicker{font-size:10.5px}
+  .ohub .section-h{margin-bottom:9px} .ohub .section-h h2{font-size:14.5px}
+  .ohub .track,.ohub .props{margin-bottom:12px}
   .ohub .stage{gap:22px}
   .ohub .phone{width:100%;max-width:420px;height:auto;min-height:560px;border-radius:34px}
   .ohub .pscreen{padding:24px 14px 30px}
   .ohub .pnav{display:none}
-  /* performer hero — trimmed so it doesn't eat half the first screen */
-  .ohub .award{padding:16px} .ohub .award .inner{gap:14px} .ohub h2.aw{font-size:19px}
-  .ohub .photo{width:64px;height:64px;font-size:24px}
-  .ohub .crown{font-size:24px}
-  .ohub .award .sub{font-size:12.5px}
-  .ohub .award .stats{gap:14px} .ohub .award .stats .s b{font-size:17px}
-  .ohub .motiv{padding:16px} .ohub .motiv-quote{font-size:15px}
+
+  /* KPIs → one slim stat strip (was a tall 2×2 block ≈ 200px → ≈ 78px) */
+  .ohub .kpis{grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:12px}
+  .ohub .kpi{padding:10px 6px;border-radius:14px;text-align:center}
+  .ohub .kpi .glow{display:none}
+  .ohub .kpi .ic{font-size:15px}
+  .ohub .kpi .v{font-size:18px;margin-top:2px}
+  .ohub .kpi .l{font-size:9.5px;margin-top:1px;line-height:1.2}
+
+  /* performer → a slim champion banner (was a ≈280px hero card → ≈96px) */
+  .ohub .hero-row{gap:10px;margin-bottom:12px}
+  .ohub .award{padding:12px 13px}
+  .ohub .award .confetti{display:none}
+  .ohub .award .inner{flex-wrap:nowrap;align-items:center;gap:12px}
+  .ohub .crownwrap{padding-top:0}
+  .ohub .photo{width:46px;height:46px;font-size:18px;box-shadow:0 0 0 3px rgba(255,200,90,.4)}
+  .ohub .crown{font-size:17px;top:-8px}
+  .ohub .award .meta{min-width:0;flex:1}
+  .ohub .award .tag{font-size:10px;padding:3px 9px}
+  .ohub h2.aw{font-size:15px;margin:5px 0 0}
+  .ohub .award .sub{display:none}
+  .ohub .award .stats{gap:12px;margin-top:7px}
+  .ohub .award .stats .s:nth-child(n+3){display:none}   /* keep the 2 key stats */
+  .ohub .award .stats .s b{font-size:14px}
+  .ohub .award .stats .s span{font-size:9.5px}
+  .ohub .ownerctl{top:8px;right:8px}
+  .ohub .ownerctl .btn{font-size:10px;padding:4px 8px}
+
+  /* motivation → a thin one-line strip (was a ≈140px card → ≈58px) */
+  .ohub .motiv{padding:11px 14px}
+  .ohub .motiv-glow{display:none}
+  .ohub .motiv-tag{font-size:10.5px}
+  .ohub .motiv-quote{font-size:13px;line-height:1.4}
+  .ohub .motiv-foot{font-size:10.5px}
+
+  /* repeating list rows — the real length driver. Tighten every item so a long
+     list (20 tasks, team, activity, leaderboard) takes far less vertical space. */
+  .ohub .appr{padding:11px 12px;gap:10px}
+  .ohub .appr .thumb,.ohub .thumb{width:46px;height:46px;border-radius:11px}
+  .ohub .appr h3{font-size:14px} .ohub .appr .meta{font-size:11.5px}
+  .ohub .appr .actions{gap:6px;margin-top:8px} .ohub .btn.sm{font-size:11.5px;padding:6px 10px}
+  .ohub .staff-row{padding:10px 12px;gap:10px}
+  .ohub .staff-row .name{font-size:13.5px} .ohub .staff-row .sub{font-size:11.5px}
+  .ohub .av.lg{width:34px;height:34px;font-size:13px}
+  .ohub .ev{padding:8px 12px;gap:10px} .ohub .ev .txt{font-size:12.5px} .ohub .ev .ic{width:24px;height:24px}
+  .ohub .lead{padding:10px 12px} .ohub .trow{padding:11px 14px}
+  .ohub .stask{padding:11px 12px;margin-bottom:9px} .ohub .stask h4{font-size:13.5px}
 }
 
 /* ════ horizontal-overflow guards ════
@@ -581,11 +617,19 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 @keyframes oh-motiv-shine{0%{background-position:0% 0}100%{background-position:300% 0}}
 
 /* ════ active tasks split into per-staff columns (req 1) ════ */
-.ohub .actcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.ohub .actcols{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;align-items:start}
 .ohub .actcol{min-width:0}
-.ohub .actcol-h{display:flex;align-items:center;gap:9px;padding:4px 4px 8px}
+/* collapsible header bar (a <button>): tap to expand/collapse a staff's tasks */
+.ohub .actcol-h{width:100%;display:flex;align-items:center;gap:9px;padding:11px 13px;
+  background:var(--bg-1);border:1px solid var(--border-subtle);border-radius:var(--r-md);
+  font-family:inherit;color:var(--ink);cursor:pointer;text-align:left;transition:.16s}
+.ohub .actcol-h:hover{border-color:var(--border-strong)}
+.ohub .actcol.open .actcol-h{border-radius:var(--r-md) var(--r-md) 0 0;border-bottom-color:transparent}
 .ohub .actcol-h .nm{font-size:13.5px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ohub .actcol-h .count{font-size:12px;color:var(--muted)}
+.ohub .actcol-chev{font-size:13px;color:var(--muted);transition:transform .18s;flex:none}
+.ohub .actcol.open .actcol-chev{transform:rotate(90deg)}
+.ohub .actcol.open .card{border-radius:0 0 var(--r-md) var(--r-md)}
 
 /* ════ proof thumbnail zoom + thread proof shot (req 2) ════ */
 .ohub .thumb.zoomable{cursor:zoom-in}
@@ -676,4 +720,45 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 .ohub .esc-toggle{display:flex;align-items:center;gap:9px;margin-bottom:12px;padding:9px 12px;border-radius:12px;
   background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.22);font-size:12.5px;font-weight:600;color:#fcd34d;cursor:pointer}
 .ohub .esc-toggle input{width:16px;height:16px;accent-color:#f59e0b;cursor:pointer;flex:none}
+
+/* ════ FINAL mobile compaction ════
+   MUST come last: the award/photo/motiv base rules are defined far below the
+   earlier @media block, and equal-specificity later-source rules win — so the
+   compaction has to be re-asserted here to actually take effect on phones.
+   Performer hero → slim champion banner; motivation → thin strip. */
+@media(max-width:680px){
+  .ohub .hero-row{gap:10px;margin-bottom:12px}
+  /* In a COLUMN the flex:2 1 360px / 1 1 250px basis was read as HEIGHT,
+     forcing the award >=360px and motivation >=250px tall (huge empty cards).
+     Size to content instead. Same fix for the staff sticky hero. */
+  .ohub .hero-row .award,.ohub .hero-row .motiv,
+  .ohub .staff-hero .award-mini,.ohub .staff-hero .motiv{flex:0 0 auto}
+  .ohub .award{padding:12px 13px;margin-bottom:0}
+  .ohub .award .confetti{display:none}
+  .ohub .award:after{display:none}                      /* drop the shimmer sweep on mobile */
+  .ohub .award .inner{flex-wrap:nowrap;align-items:center;gap:12px}
+  .ohub .crownwrap{padding-top:0}
+  .ohub .award .photo,.ohub .photo{width:46px;height:46px;font-size:18px;
+    box-shadow:0 0 0 3px rgba(255,200,90,.4),0 6px 16px rgba(170,115,20,.4)}
+  .ohub .crown{font-size:17px;top:-8px}
+  .ohub .award .meta{min-width:0;flex:1}
+  .ohub .award .tag{font-size:10px;padding:3px 9px}
+  .ohub h2.aw,.ohub .award h2.aw{font-size:15px;margin:5px 0 0}
+  .ohub .award .sub{display:none}
+  .ohub .award .stats{gap:12px;margin-top:7px}
+  .ohub .award .stats .s:nth-child(n+3){display:none}    /* keep the 2 key stats */
+  .ohub .award .stats .s b{font-size:14px}
+  .ohub .award .stats .s span{font-size:9.5px}
+  .ohub .ownerctl{top:8px;right:8px}
+  .ohub .ownerctl .btn{font-size:10px;padding:4px 8px}
+
+  .ohub .motiv{padding:11px 14px}
+  .ohub .motiv-glow{display:none}
+  .ohub .motiv-tag{font-size:10.5px}
+  .ohub .motiv-quote{font-size:13px;line-height:1.4}
+  .ohub .motiv-foot{font-size:10.5px}
+
+  /* staff sticky hero mirror — keep it equally slim */
+  .ohub .staff-hero .award-mini .photo{width:42px;height:42px}
+}
 `
