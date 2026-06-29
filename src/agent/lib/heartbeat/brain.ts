@@ -3,9 +3,14 @@
  *
  * This is the "idle heartbeat" the owner asked for: on a Vercel cron the agent
  * wakes ON ITS OWN, glances at the business, and — only when something is worth it
- * — wakes the HEAD (Claude) to proactively act or alert the owner, under the same
- * autonomy policy that governs every other self-action (so it never moves money or
- * does anything irreversible on its own; at most it proposes / files an approval).
+ * — wakes the HEAD to proactively act or alert the owner, under the same autonomy
+ * policy that governs every other self-action (so it never moves money or does
+ * anything irreversible on its own; at most it proposes / files an approval).
+ *
+ * By owner decision the self-wake head runs on the CHEAP model (DeepSeek), not
+ * Sonnet — a routine autonomous glance shouldn't pay Claude rates every tick (see
+ * heartbeatHeadModelId). A delegated finance/data-analysis sub-task is still
+ * hard-guarded to Claude, so money reasoning never drops to a cheap model.
  *
  * Cost discipline (the owner is cost-sensitive) — three gates, cheapest first:
  *   1. enabled + office-hours: a disabled or off-hours tick is a near-free no-op.
@@ -32,6 +37,7 @@ import { isAgentEnabled } from '@/agent/config'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { isWithinOfficeHours } from '@/agent/lib/office-supervisor'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
+import { getModel, isKnownModelId, DEFAULT_MODEL_ID } from '@/agent/lib/models/registry'
 import type { AgentEvent } from '@/agent/lib/core'
 import { getOwnerSessionPointer } from '@/agent/lib/owner-session'
 import { getLatestTurn } from '@/agent/lib/turn-status'
@@ -187,6 +193,27 @@ async function resolveWakeConversation(now: Date): Promise<{ id: string; inOwner
   return { id: await getOrCreateHeartbeatConversation(ymdDhaka(now)), inOwnerChat: false }
 }
 
+/**
+ * The model the heartbeat head runs on. By owner decision a self-wake runs on the
+ * CHEAP head (DeepSeek), not Sonnet — an autonomous "glance at the business" is
+ * routine and shouldn't pay Claude rates every tick. It is passed to runOwnerTurn
+ * as an EXPLICIT model id, so the head router runs exactly that model (tier
+ * 'explicit' → no triage, no premium-upgrade gate). Safety is unchanged: every
+ * mutating action still goes through the owner's approval cards (autonomy policy),
+ * and if the head delegates a finance/data-analysis sub-task that CRITICAL tier is
+ * still hard-guarded to Claude. Falls back to the default head only if the cheap
+ * model is misconfigured/unknown, so a tick never fails to wake. Owner-tunable via
+ * CHEAP_HEAD_MODEL_ID (no redeploy).
+ */
+function heartbeatHeadModelId(): string {
+  const cheapId = process.env.CHEAP_HEAD_MODEL_ID?.trim() || 'or-deepseek-v4-flash'
+  if (isKnownModelId(cheapId)) {
+    const m = getModel(cheapId)
+    if (m.provider !== 'anthropic' && m.supportsTools) return cheapId
+  }
+  return DEFAULT_MODEL_ID
+}
+
 // ── The tick ─────────────────────────────────────────────────────────────────
 
 async function wakeHead(
@@ -215,6 +242,9 @@ async function wakeHead(
     const stream: AsyncGenerator<AgentEvent> = runOwnerTurn(conversationId, {
       businessId: BUSINESS_ID,
       signal: controller.signal,
+      // Owner decision: the autonomous heartbeat thinks on the cheap head (DeepSeek),
+      // not Sonnet. Explicit id ⇒ head router runs exactly this model (no triage).
+      modelId: heartbeatHeadModelId(),
     })
     for await (const ev of stream) {
       switch (ev.type) {
