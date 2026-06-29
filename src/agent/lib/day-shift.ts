@@ -629,6 +629,17 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
     console.warn('[day-shift] pending followup tick failed:', err instanceof Error ? err.message : err)
   }
 
+  // Feature B — owner-silence escalation ladder. On top of the gentle Telegram nudge
+  // above, step UP the channel (loud ntfy-critical → call-worthy alert) the longer a
+  // critical approval stays unacknowledged, so nothing important quietly gets lost.
+  // Idempotent (escalates once per rung per pending-set); only notifies, never acts.
+  try {
+    const { runOwnerSilenceLadder } = await import('@/agent/lib/owner-silence-ladder')
+    await runOwnerSilenceLadder()
+  } catch (err) {
+    console.warn('[day-shift] owner-silence ladder failed:', err instanceof Error ? err.message : err)
+  }
+
   let state = await loadDayShiftState(date)
 
   if (state?.status === 'done') {

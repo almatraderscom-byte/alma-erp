@@ -385,4 +385,44 @@ const scan_business_signals: AgentTool = {
   },
 }
 
-export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan, scan_business_signals]
+const check_owner_silence: AgentTool = {
+  name: 'check_owner_silence',
+  description:
+    'Read-only: check the owner-silence escalation ladder RIGHT NOW. Shows every approval still ' +
+    'waiting on the owner, how long the oldest has been unacknowledged, and which rung of the ' +
+    'escalation ladder that puts us on (L0 normal reminder → L1 loud alert → L2 critical/call-worthy). ' +
+    'Use when the owner asks "কী কী আটকে আছে / কতক্ষণ ধরে / কোন কিছু হারিয়ে যাচ্ছে কিনা". Surfaces ' +
+    'the picture only — it never approves or escalates. Owner-facing, answer in Bangla.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {},
+    required: [],
+  },
+  handler: async () => {
+    try {
+      const { collectPendingItems } = await import('@/agent/lib/pending-followup')
+      const { computeSilenceEscalation } = await import('@/agent/lib/owner-silence-ladder')
+      const items = await collectPendingItems()
+      const esc = computeSilenceEscalation(items, Date.now())
+      return {
+        success: true,
+        data: {
+          previewOnly: true,
+          level: esc.level,
+          levelLabel: esc.levelLabel,
+          oldestAgeMin: esc.oldestAgeMin,
+          hasCritical: esc.hasCritical,
+          callWarranted: esc.callWarranted,
+          pending: items.map((i) => ({ label: i.label, ageMin: Math.max(0, Math.floor((Date.now() - i.createdAt.getTime()) / 60_000)) })),
+          message: items.length
+            ? `${items.length}টি বিষয় আপনার সিদ্ধান্তের অপেক্ষায় — সবচেয়ে পুরোনোটা ~${esc.oldestAgeMin} মিনিট ধরে। ladder এখন ${esc.levelLabel}।`
+            : 'এই মুহূর্তে আপনার সিদ্ধান্তের অপেক্ষায় কিছু আটকে নেই — সব পরিষ্কার।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: `Silence check failed: ${err instanceof Error ? err.message : String(err)}` }
+    }
+  },
+}
+
+export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan, scan_business_signals, check_owner_silence]
