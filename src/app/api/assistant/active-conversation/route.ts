@@ -1,9 +1,10 @@
 /**
- * GET  /api/assistant/active-conversation — the owner's current unified session
- *   pointer (the conversation shared across app + Telegram). Used by the web app
- *   on load to resume the same thread instead of starting blank.
+ * GET  /api/assistant/active-conversation — the owner's current web/app session
+ *   pointer (the conversation shared across web + native app, NOT Telegram). Used
+ *   by the web app on load to resume the same thread instead of starting blank.
  * POST /api/assistant/active-conversation — set the pointer (owner switched to /
- *   created a conversation in the app), so Telegram follows the same thread.
+ *   created a conversation in the app). Telegram has its own separate daily
+ *   session and is intentionally never followed here.
  */
 import { type NextRequest, NextResponse } from 'next/server'
 import { getToken } from 'next-auth/jwt'
@@ -23,13 +24,13 @@ async function ownerGuard(req: NextRequest) {
   return null
 }
 
-/** Latest real main chat (web/telegram, no project, not the office day-shift). */
+/** Latest real web/app main chat (no project, not Telegram, not the day-shift). */
 async function resolveDefaultMainConversation(): Promise<string | null> {
   const conv = await prisma.agentConversation.findFirst({
     where: {
       archived: false,
       projectId: null,
-      source: { in: ['web', 'telegram'] },
+      source: 'web',
     },
     orderBy: { updatedAt: 'desc' },
     select: { id: true },

@@ -179,9 +179,9 @@ async function handleOwnerText(ctx, text) {
   // Persist prayer confirmations immediately (before agent turn / scheduler race)
   await autoMarkSalahFromText(text)
 
-  // Unified session: refresh the pointer from KV first so a conversation the
-  // owner switched to (or started) in the web app becomes the SAME thread here,
-  // instead of Telegram staying on its own stale conversation id.
+  // Telegram-only session: refresh the Telegram pointer from KV (survives PM2
+  // restart). This is the Telegram channel's OWN daily session — deliberately
+  // isolated from the web/app thread, so messages never bleed across channels.
   await loadOwnerStateFromKv(supabase)
 
   // Use current conversation or get/create daily one
