@@ -236,8 +236,7 @@ function DockChip({ item, active }: { item: Dest; active: boolean }) {
   )
 }
 
-const ROT_BIG = 4
-const ROT_DOCK_MAX = 4
+const ROT_BIG = 5
 const ROT_DWELL = 3600
 
 function RotatingDockNav({ items, activeHref, trailing }: { items: Dest[]; activeHref: string; trailing: React.ReactNode }) {
@@ -262,8 +261,10 @@ function RotatingDockNav({ items, activeHref, trailing }: { items: Dest[]; activ
 
   const visN = Math.min(ROT_BIG, N)
   const barItems = Array.from({ length: visN }, (_, i) => items[(head + i) % N])
+  // Everything not currently on the bar lives in the dock (all of them, newest-departed first),
+  // so the "আগে দেখা" count matches what the owner actually finds when it opens.
   const dockItems = rotates
-    ? Array.from({ length: Math.min(ROT_DOCK_MAX, N - visN) }, (_, i) => items[(head - 1 - i + N) % N])
+    ? Array.from({ length: N - visN }, (_, i) => items[(head - 1 - i + N) % N])
     : []
 
   return (
@@ -277,7 +278,7 @@ function RotatingDockNav({ items, activeHref, trailing }: { items: Dest[]; activ
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 8 }}
-                className="absolute -top-[60px] left-0 flex items-center gap-1.5 rounded-2xl border border-border-subtle bg-card/85 px-2 py-1.5 shadow-lg shadow-black/10 backdrop-blur-2xl"
+                className="absolute bottom-[calc(100%+44px)] left-0 right-0 flex flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border-subtle bg-card/85 px-2.5 py-2.5 shadow-lg shadow-black/10 backdrop-blur-2xl"
               >
                 <AnimatePresence mode="popLayout">
                   {[...dockItems].reverse().map(it => (
