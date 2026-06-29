@@ -405,10 +405,65 @@ async function getRecentReels(pageId: string, limit = 15): Promise<FbPost[]> {
 }
 
 /**
+ * Resolve a Facebook share / fb.watch / pfbid short link to its canonical URL by
+ * following the HTTP redirect chain. Staff who tap FB's "Share → Copy link" button
+ * send opaque redirect tokens (facebook.com/share/p/<token>/, fb.watch/<token>) that
+ * contain NO numeric id — so they can't be verified directly. Facebook 30x-redirects
+ * those to the real permalink (…/posts/<id>, permalink.php?story_fbid=<id>&id=<page>,
+ * or a pfbid URL). We follow that redirect, return the final URL, and the caller
+ * re-parses it to get a verifiable id. Best-effort: returns null on any failure so
+ * the caller falls back to the existing recent-posts match.
+ */
+async function resolveFbShareLink(rawUrl: string): Promise<string | null> {
+  if (!/^https?:\/\//i.test(rawUrl)) return null
+  // A desktop UA avoids Facebook serving the mobile/login interstitial that hides
+  // the canonical redirect target.
+  const headers = {
+    'User-Agent':
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+  }
+  try {
+    // Prefer manual redirect so we read the Location header even when it points at a
+    // login/consent wall (the Location query-string still carries story_fbid / id).
+    const res = await fetch(rawUrl, {
+      method: 'GET',
+      redirect: 'manual',
+      headers,
+      signal: AbortSignal.timeout(12_000),
+    })
+    const loc = res.headers.get('location')
+    if (loc && loc !== rawUrl) {
+      // Login walls wrap the real URL inside ?next=<encoded>; unwrap when present.
+      try {
+        const locUrl = new URL(loc, rawUrl)
+        const next = locUrl.searchParams.get('next')
+        if (next && /facebook\.com|fb\.com/i.test(next)) return decodeURIComponent(next)
+      } catch {
+        /* fall through to raw location */
+      }
+      return loc
+    }
+    // No manual Location (some links 200 with a JS/meta redirect) → follow fully and
+    // read the final resolved URL.
+    const followed = await fetch(rawUrl, {
+      method: 'GET',
+      redirect: 'follow',
+      headers,
+      signal: AbortSignal.timeout(12_000),
+    })
+    if (followed.url && followed.url !== rawUrl) return followed.url
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Verify a staff-submitted Facebook post/reel link or id is GENUINELY live on our page.
  * Numeric ids are checked directly against the Graph API (strong, ground truth).
- * Opaque links (pfbid / share / fb.watch) are matched against the page's recent
- * posts + reels by permalink (weaker but still real — confirms it's our content).
+ * Opaque links (pfbid / share / fb.watch) are FIRST resolved through their redirect to
+ * the canonical URL (which carries a numeric id), then verified directly; only if that
+ * fails do we fall back to matching against the page's recent posts + reels.
  */
 export async function verifyLivePost(opts: {
   pageId: string
@@ -416,11 +471,25 @@ export async function verifyLivePost(opts: {
   recentHours?: number
 }): Promise<LivePostVerification> {
   const recentHours = opts.recentHours ?? 36
-  const parsed = parseFbPostRef(opts.ref)
+  let parsed = parseFbPostRef(opts.ref)
   const fail = (note: string): LivePostVerification => ({
     ok: false, found: false, isVideo: false, isReel: false, mediaType: null,
     permalinkUrl: null, createdTime: null, isRecent: false, matchedBy: 'none', note,
   })
+
+  // Opaque share / fb.watch / pfbid link → resolve its redirect to the canonical URL,
+  // which contains a numeric/story id we CAN verify. This is what makes a staff member's
+  // "Share → Copy link" work instead of always failing as "not on our page".
+  let resolvedPermalink: string | null = null
+  if ((parsed.kind === 'share' || parsed.kind === 'pfbid') && /^https?:\/\//i.test(parsed.raw)) {
+    const resolved = await resolveFbShareLink(parsed.raw)
+    if (resolved) {
+      resolvedPermalink = resolved
+      const reparsed = parseFbPostRef(resolved)
+      // Only upgrade when the resolved link gave us something verifiable.
+      if (reparsed.kind !== 'unknown') parsed = reparsed
+    }
+  }
 
   // Strong path: we have a numeric id → query Graph directly.
   if ((parsed.kind === 'numeric' || parsed.kind === 'video' || parsed.kind === 'reel') && parsed.id) {
@@ -433,51 +502,70 @@ export async function verifyLivePost(opts: {
       `${GRAPH_BASE}/${graphId}?fields=${encodeURIComponent(fields)}&access_token=${token}`,
       { timeoutMs: 15_000, retries: 1 },
     )
-    if (!res.ok) {
-      return fail(`Post id ${parsed.id} could not be fetched from our page (Graph ${res.status}). It may be deleted, on another page, or private.`)
+    const strongFailed = !res.ok
+    const data = strongFailed
+      ? ({} as Record<string, never>)
+      : ((await res.json()) as {
+          id?: string
+          permalink_url?: string
+          created_time?: string
+          status_type?: string
+          attachments?: { data?: Array<{ media_type?: string; type?: string }> }
+        })
+    // When we reached the strong path via a redirect-resolved opaque link and Graph
+    // could not confirm it, DON'T hard-fail — fall through to the recent-posts match
+    // below (it may still recognise our own permalink). Only a direct numeric id the
+    // staff typed should fail outright here.
+    if (!strongFailed && data.id) {
+      const att = data.attachments?.data?.[0]
+      const mediaType = att?.media_type ?? att?.type ?? (parsed.looksVideo ? 'video' : null)
+      const isVideo = parsed.kind === 'reel' || parsed.kind === 'video' ||
+        /video/i.test(mediaType ?? '') || data.status_type === 'added_video'
+      const isReel = parsed.kind === 'reel'
+      return {
+        ok: true,
+        found: true,
+        isVideo,
+        isReel,
+        mediaType,
+        permalinkUrl: data.permalink_url ?? null,
+        createdTime: data.created_time ?? null,
+        isRecent: withinHours(data.created_time, recentHours),
+        matchedBy: 'graph_id',
+        note: 'Verified live on our page via Graph API.',
+      }
     }
-    const data = (await res.json()) as {
-      id?: string
-      permalink_url?: string
-      created_time?: string
-      status_type?: string
-      attachments?: { data?: Array<{ media_type?: string; type?: string }> }
-    }
-    if (!data.id) return fail('Post not found on our page.')
-    const att = data.attachments?.data?.[0]
-    const mediaType = att?.media_type ?? att?.type ?? (parsed.looksVideo ? 'video' : null)
-    const isVideo = parsed.kind === 'reel' || parsed.kind === 'video' ||
-      /video/i.test(mediaType ?? '') || data.status_type === 'added_video'
-    const isReel = parsed.kind === 'reel'
-    return {
-      ok: true,
-      found: true,
-      isVideo,
-      isReel,
-      mediaType,
-      permalinkUrl: data.permalink_url ?? null,
-      createdTime: data.created_time ?? null,
-      isRecent: withinHours(data.created_time, recentHours),
-      matchedBy: 'graph_id',
-      note: 'Verified live on our page via Graph API.',
+    // Graph could not confirm. A directly-typed numeric id fails outright; a
+    // redirect-resolved opaque link falls through to the recent-posts match below.
+    if (!resolvedPermalink) {
+      return fail(
+        strongFailed
+          ? `Post id ${parsed.id} could not be fetched from our page (Graph ${res.status}). It may be deleted, on another page, or private.`
+          : 'Post not found on our page.',
+      )
     }
   }
 
-  // Weak path: opaque link (pfbid / share / fb.watch). Match against recent content.
+  // Weak path: opaque link (pfbid / share / fb.watch) we could not upgrade to a
+  // numeric id. Match against recent content — now also using the redirect-resolved
+  // canonical URL (and any pfbid token inside it), which textually overlaps the page's
+  // own permalink_url far more often than the raw share token does.
   const token = parsed.token ?? parsed.raw
+  const resolvedPfbid = resolvedPermalink?.match(/pfbid[\w]+/i)?.[0] ?? null
   const [posts, reels] = await Promise.all([
     getRecentPosts({ pageId: opts.pageId, limit: 25 }).catch(() => [] as FbPost[]),
     getRecentReels(opts.pageId, 25),
   ])
   const all = [...reels.map((r) => ({ ...r, _reel: true })), ...posts.map((p) => ({ ...p, _reel: false }))]
   const norm = (s: string) => s.toLowerCase()
+  const candidates = [token, parsed.raw, resolvedPermalink, resolvedPfbid].filter(Boolean) as string[]
   const match = all.find((p) => {
     const perma = p.permalink_url ? norm(p.permalink_url) : ''
-    return (
-      (perma && token && perma.includes(norm(token))) ||
-      (perma && perma.includes(norm(parsed.raw))) ||
-      (token && perma && norm(parsed.raw).includes(perma))
-    )
+    if (!perma) return false
+    return candidates.some((c) => {
+      const nc = norm(c)
+      return perma.includes(nc) || nc.includes(perma)
+    })
   })
   if (match) {
     return {

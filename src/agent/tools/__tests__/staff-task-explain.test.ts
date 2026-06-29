@@ -113,4 +113,59 @@ describe('explain_staff_task_bangla — folds explanation into task detail (no c
     expect(res.success).toBe(false)
     expect(mockPrisma.agentStaffTask.findUnique).not.toHaveBeenCalled()
   })
+
+  it('does NOT save a Gemini explanation that swaps in a WRONG product code', async () => {
+    // Bug: cheap model writes a different code (145) than the task's product (133),
+    // confusing staff. Guard must reject it and fall back to the template (which uses 133).
+    mockGemini.geminiGenerateText.mockResolvedValue(
+      'Canva খুলে square অ্যাড বানান।\nপ্রোডাক্ট কোড 145 এর জন্য ছবি দিন।\nExport করে Done দিন।',
+    )
+    mockPrisma.agentStaffTask.findUnique.mockResolvedValue({
+      ...baseTask,
+      type: 'ad_creative',
+      productRef: '133',
+    })
+
+    await explainHandler()({ taskId: 't1', businessId: 'ALMA_LIFESTYLE' })
+
+    const savedDetail: string = mockPrisma.agentStaffTask.update.mock.calls[0][0].data.detail
+    expect(savedDetail).toContain('133')
+    expect(savedDetail).not.toContain('145')
+  })
+
+  it('keeps a Gemini explanation that uses the CORRECT product code', async () => {
+    mockGemini.geminiGenerateText.mockResolvedValue(
+      'Canva খুলে square অ্যাড বানান।\nপ্রোডাক্ট 133 ভালো করে দেখান।\nExport করে Done দিন।',
+    )
+    mockPrisma.agentStaffTask.findUnique.mockResolvedValue({
+      ...baseTask,
+      type: 'ad_creative',
+      productRef: '133',
+    })
+
+    await explainHandler()({ taskId: 't1', businessId: 'ALMA_LIFESTYLE' })
+
+    const savedDetail: string = mockPrisma.agentStaffTask.update.mock.calls[0][0].data.detail
+    expect(savedDetail).toContain('133')
+    expect(savedDetail.toLowerCase()).toContain('canva')
+  })
+})
+
+describe('productCodeMismatch — code-integrity guard', () => {
+  it('flags when a code-like productRef is absent from the text', async () => {
+    const { productCodeMismatch } = await import('@/agent/tools/staff-tools')
+    expect(productCodeMismatch('133', 'প্রোডাক্ট 145 এর ছবি দিন')).toBe(true)
+  })
+  it('passes when the exact code is present', async () => {
+    const { productCodeMismatch } = await import('@/agent/tools/staff-tools')
+    expect(productCodeMismatch('133', 'প্রোডাক্ট 133 ভালো দেখান')).toBe(false)
+  })
+  it('ignores non-code product names (full names never trigger fallback)', async () => {
+    const { productCodeMismatch } = await import('@/agent/tools/staff-tools')
+    expect(productCodeMismatch('Premium Panjabi', 'একটা সুন্দর অ্যাড বানান')).toBe(false)
+  })
+  it('is not satisfied by a longer number containing the code', async () => {
+    const { productCodeMismatch } = await import('@/agent/tools/staff-tools')
+    expect(productCodeMismatch('133', 'সাইজ 1337 দেখান')).toBe(true)
+  })
 })
