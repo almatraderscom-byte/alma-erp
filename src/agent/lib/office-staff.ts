@@ -146,12 +146,22 @@ export async function staffMarkDone(taskId: string, staff: SessionStaff): Promis
 export async function staffSubmitProof(
   taskId: string,
   staff: SessionStaff,
-  args: { proofType?: ProofType; imageUrl?: string; text?: string },
+  args: { proofType?: ProofType; imageUrl?: string; imageUrls?: string[]; text?: string },
 ): Promise<StaffResult> {
   const task = await loadOwnedTask(taskId, staff)
   if (!task) return { ok: false, error: 'task_not_found', code: 404 }
 
-  const imageUrl = args.imageUrl?.trim()
+  // Accept up to 5 images. `imageUrls` is the new multi-image field; a lone
+  // `imageUrl` (older client) is folded in. `imageUrl` stays set to the FIRST
+  // image so existing single-image readers keep working.
+  const urls = [
+    ...(args.imageUrl ? [args.imageUrl] : []),
+    ...(Array.isArray(args.imageUrls) ? args.imageUrls : []),
+  ]
+    .map((u) => (typeof u === 'string' ? u.trim() : ''))
+    .filter((u) => /^https?:\/\//.test(u))
+    .slice(0, 5)
+  const imageUrl = urls[0]
   const text = args.text?.trim()
   if (!imageUrl && !text) return { ok: false, error: 'empty_proof', code: 400 }
 
@@ -160,12 +170,13 @@ export async function staffSubmitProof(
 
   // Auto-QC first: a high-confidence pass is auto-approved and never enters the
   // owner's queue; otherwise it stays pending for manual review. Best-effort —
-  // any QC failure simply falls back to manual review.
+  // any QC failure simply falls back to manual review. QC runs on the first image.
   const { autoAccept, qc } = await evaluateProofQc(imageUrl)
 
   const proofData = {
     ...((task.proofData as object) ?? {}),
     ...(imageUrl ? { imageUrl } : {}),
+    ...(urls.length > 0 ? { imageUrls: urls } : {}),
     ...(text ? { text } : {}),
     ...(qc ?? {}),
     submittedAt: now.toISOString(),
@@ -191,7 +202,7 @@ export async function staffSubmitProof(
     })
     if (text) {
       await tx.officeComment.create({
-        data: { taskId, authorType: 'staff', authorStaffId: staff.id, kind: 'submission', body: text, businessId: staff.businessId, seenByStaff: true, attachments: imageUrl ? [{ type: 'image', url: imageUrl }] : undefined },
+        data: { taskId, authorType: 'staff', authorStaffId: staff.id, kind: 'submission', body: text, businessId: staff.businessId, seenByStaff: true, attachments: urls.length > 0 ? urls.map((url) => ({ type: 'image', url })) : undefined },
       })
     }
     await logEvent(tx, { taskId, kind: 'submitted', summary: `${staff.name} প্রমাণ জমা দিয়েছেন 📷`, businessId: staff.businessId })

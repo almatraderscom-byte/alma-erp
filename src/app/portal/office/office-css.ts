@@ -724,6 +724,37 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
   background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.22);font-size:12.5px;font-weight:600;color:#fcd34d;cursor:pointer}
 .ohub .esc-toggle input{width:16px;height:16px;accent-color:#f59e0b;cursor:pointer;flex:none}
 
+/* ════ chat attachments + image composer (group chat) ════ */
+.ohub-chatpanel .gm-imgs{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-bottom:6px;max-width:240px}
+.ohub-chatpanel .gm-imgs.one{grid-template-columns:1fr;max-width:200px}
+.ohub-chatpanel .gm.me .gm-imgs{margin-left:auto}
+.ohub-chatpanel .gm-img{display:block;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,0.10)}
+.ohub-chatpanel .gm-img img{display:block;width:100%;height:96px;object-fit:cover}
+.ohub-chatpanel .gm-imgs.one .gm-img img{height:150px}
+.ohub-chatpanel .cp-attach{flex:none;width:38px;height:38px;border-radius:50%;border:1px solid rgba(255,255,255,0.10);
+  background:#121216;color:#F7F8FC;font-size:17px;cursor:pointer;display:grid;place-items:center}
+.ohub-chatpanel .cp-attach:disabled{opacity:.5;cursor:not-allowed}
+.ohub-chatpanel .cp-pending{display:flex;gap:7px;flex-wrap:wrap;padding:10px 12px 0;background:#202027}
+.ohub-chatpanel .cp-pimg{position:relative;width:52px;height:52px;border-radius:10px;overflow:hidden;border:1px solid rgba(255,255,255,0.12);flex:none}
+.ohub-chatpanel .cp-pimg img{width:100%;height:100%;object-fit:cover}
+.ohub-chatpanel .cp-pimg.up{display:grid;place-items:center;font-size:11px;color:#AEB2C0;background:#121216}
+.ohub-chatpanel .cp-pimg button{position:absolute;top:1px;right:1px;width:18px;height:18px;border-radius:50%;border:0;
+  background:rgba(0,0,0,.6);color:#fff;font-size:13px;line-height:1;cursor:pointer;display:grid;place-items:center}
+
+/* ════ staff multi-image proof picker ════ */
+.ohub .proof-thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.ohub .proof-thumb{position:relative;width:64px;height:64px;border-radius:10px;overflow:hidden;border:1px solid var(--border)}
+.ohub .proof-thumb img{width:100%;height:100%;object-fit:cover}
+.ohub .proof-thumb.up{display:grid;place-items:center;font-size:10.5px;color:var(--muted);background:var(--bg-2)}
+.ohub .proof-thumb-x{position:absolute;top:2px;right:2px;width:19px;height:19px;border-radius:50%;border:0;
+  background:rgba(0,0,0,.6);color:#fff;font-size:14px;line-height:1;cursor:pointer;display:grid;place-items:center}
+
+/* ════ owner thread: multi-image proof grid ════ */
+.ohub .proof-shots{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:14px 0}
+.ohub .proof-shots.one{grid-template-columns:1fr;max-width:340px}
+.ohub .proof-shots .proof-shot{margin:0;max-width:none}
+.ohub .proof-shots .proof-shot .proof-zoom{padding:3px 8px}
+
 /* ════ FINAL mobile compaction ════
    MUST come last: the award/photo/motiv base rules are defined far below the
    earlier @media block, and equal-specificity later-source rules win — so the

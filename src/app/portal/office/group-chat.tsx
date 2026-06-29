@@ -14,7 +14,12 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
   const [sending, setSending] = useState(false)
   const [lastSeen, setLastSeen] = useState<string | null>(null)
   const [actingId, setActingId] = useState<string | null>(null)
+  // Images attached to the message being composed (uploaded → signed URLs).
+  const [pendingImgs, setPendingImgs] = useState<{ id: string; preview: string; url: string }[]>([])
+  const [uploadingImgs, setUploadingImgs] = useState(0)
+  const fileRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const MAX_IMGS = 6
   // Staff message ids we've already asked the agent to draft a reply for, so the
   // poll loop never re-requests (the server also enforces "reply once").
   const requestedRef = useRef<Set<string>>(new Set())
@@ -111,18 +116,44 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
     }
   }
 
+  const pickImages = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    const room = MAX_IMGS - pendingImgs.length
+    const batch = Array.from(files).slice(0, Math.max(0, room))
+    if (batch.length === 0) return
+    setUploadingImgs((n) => n + batch.length)
+    await Promise.all(
+      batch.map(async (f) => {
+        const preview = URL.createObjectURL(f)
+        const fd = new FormData()
+        fd.append('file', f)
+        try {
+          const res = await fetch('/api/assistant/office/upload', { method: 'POST', body: fd })
+          const data = res.ok ? ((await res.json()) as { url?: string }) : null
+          if (data?.url) {
+            setPendingImgs((prev) => (prev.length >= MAX_IMGS ? prev : [...prev, { id: `${Date.now()}-${Math.random()}`, preview, url: data.url! }]))
+          }
+        } finally {
+          setUploadingImgs((n) => Math.max(0, n - 1))
+        }
+      }),
+    )
+  }
+
   const send = async () => {
     const text = draft.trim()
-    if (!text || sending) return
+    const attachments = pendingImgs.map((p) => ({ type: 'image', url: p.url }))
+    if ((!text && attachments.length === 0) || sending || uploadingImgs > 0) return
     setSending(true)
     try {
       const res = await fetch('/api/assistant/office/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: text }),
+        body: JSON.stringify({ body: text, attachments }),
       })
       if (res.ok) {
         setDraft('')
+        setPendingImgs([])
         await load()
       }
     } finally {
@@ -172,7 +203,37 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
               ),
             )}
           </div>
+          {(pendingImgs.length > 0 || uploadingImgs > 0) && (
+            <div className="cp-pending">
+              {pendingImgs.map((p) => (
+                <div className="cp-pimg" key={p.id}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={p.preview} alt="" />
+                  <button aria-label="মুছুন" onClick={() => setPendingImgs((prev) => prev.filter((x) => x.id !== p.id))}>×</button>
+                </div>
+              ))}
+              {Array.from({ length: uploadingImgs }).map((_, i) => (
+                <div className="cp-pimg up" key={`u${i}`}>…</div>
+              ))}
+            </div>
+          )}
           <div className="cp-foot">
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={(e) => { pickImages(e.target.files); e.target.value = '' }}
+            />
+            <button
+              className="cp-attach"
+              aria-label="ছবি যোগ করুন"
+              disabled={pendingImgs.length >= MAX_IMGS}
+              onClick={() => fileRef.current?.click()}
+            >
+              📷
+            </button>
             <input
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -184,7 +245,7 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
               }}
               placeholder="গ্রুপে মেসেজ লিখুন…"
             />
-            <button disabled={sending || !draft.trim()} onClick={send}>
+            <button disabled={sending || uploadingImgs > 0 || (!draft.trim() && pendingImgs.length === 0)} onClick={send}>
               পাঠান
             </button>
           </div>
@@ -203,13 +264,29 @@ function GroupMsg({ m, self }: { m: ChatMessage; self: 'owner' | 'staff' }) {
   const initial = isAgent ? '🤖' : isOwner ? 'M' : (m.authorName.trim()[0] || '?').toUpperCase()
   const avv = isAgent ? '' : isOwner ? 'o' : 'e'
   const name = isAgent ? 'Agent' : isOwner ? (mine ? 'আপনি (Boss)' : 'Boss') : m.authorName
+  const img = !isAgent ? m.authorImageUrl : null
+  const attachments = m.attachments ?? []
 
   return (
     <div className={cls}>
-      <span className={`av ${avv}`.trim()}>{initial}</span>
+      {img ? (
+        <span className={`av ${avv} img`.trim()} style={{ backgroundImage: `url(${img})` }} />
+      ) : (
+        <span className={`av ${avv}`.trim()}>{initial}</span>
+      )}
       <div>
         <div className="nmt">{name}</div>
-        <div className="gb">{m.body}</div>
+        {attachments.length > 0 && (
+          <div className={`gm-imgs${attachments.length === 1 ? ' one' : ''}`}>
+            {attachments.map((a, i) => (
+              <a key={i} href={a.url} target="_blank" rel="noreferrer" className="gm-img">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={a.url} alt="attachment" />
+              </a>
+            ))}
+          </div>
+        )}
+        {m.body.trim() && <div className="gb">{m.body}</div>}
       </div>
     </div>
   )

@@ -41,6 +41,7 @@ type StaffActionBody = {
   body?: string
   text?: string
   imageUrl?: string
+  imageUrls?: string[]
   title?: string
   detail?: string
 }
@@ -102,7 +103,7 @@ export default function StaffApp({
           busy={busy}
           onBack={() => setDetailId(null)}
           onDone={() => run(`done-${detailTask.id}`, { action: 'done', taskId: detailTask.id })}
-          onProof={(url, text) => run(`proof-${detailTask.id}`, { action: 'proof', taskId: detailTask.id, imageUrl: url, text })}
+          onProof={(urls, text) => run(`proof-${detailTask.id}`, { action: 'proof', taskId: detailTask.id, imageUrl: urls[0], imageUrls: urls, text })}
           onComment={(text) => run(`cmt-${detailTask.id}`, { action: 'comment', taskId: detailTask.id, body: text })}
         />
       </div>
@@ -481,18 +482,19 @@ function StaffDetail({
   busy: boolean
   onBack: () => void
   onDone: () => void
-  onProof: (url: string | undefined, text: string | undefined) => Promise<boolean>
+  onProof: (urls: string[], text: string | undefined) => Promise<boolean>
   onComment: (text: string) => void
 }) {
   const [thread, setThread] = useState<TaskThread | null>(null)
   const [loading, setLoading] = useState(true)
   const [draft, setDraft] = useState('')
-  const [preview, setPreview] = useState<string | null>(null)
-  const [uploading, setUploading] = useState(false)
-  const fileUrl = useRef<string | undefined>(undefined)
+  // Up to 5 proof images. Each carries a local preview + the uploaded signed URL.
+  const [shots, setShots] = useState<{ id: string; preview: string; url: string }[]>([])
+  const [uploadingCount, setUploadingCount] = useState(0)
   const camRef = useRef<HTMLInputElement>(null)
   const galRef = useRef<HTMLInputElement>(null)
   const reqId = useRef(0)
+  const MAX_SHOTS = 5
 
   useEffect(() => {
     const my = ++reqId.current
@@ -507,15 +509,25 @@ function StaffDetail({
       })
   }, [t.id, busy])
 
-  const onPick = async (f: File | null) => {
-    if (!f) return
-    setUploading(true)
-    setPreview(URL.createObjectURL(f))
-    const url = await uploadProof(f)
-    fileUrl.current = url ?? undefined
-    setUploading(false)
-    if (!url) setPreview(null)
+  // Upload one or more picked files (gallery allows multi-select), capped at MAX_SHOTS.
+  const onPick = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    const room = MAX_SHOTS - shots.length
+    const batch = Array.from(files).slice(0, Math.max(0, room))
+    if (batch.length === 0) return
+    setUploadingCount((n) => n + batch.length)
+    await Promise.all(
+      batch.map(async (f) => {
+        const preview = URL.createObjectURL(f)
+        const url = await uploadProof(f)
+        if (url) {
+          setShots((prev) => (prev.length >= MAX_SHOTS ? prev : [...prev, { id: `${Date.now()}-${Math.random()}`, preview, url }]))
+        }
+        setUploadingCount((n) => Math.max(0, n - 1))
+      }),
+    )
   }
+  const removeShot = (id: string) => setShots((prev) => prev.filter((s) => s.id !== id))
 
   const badge = STASK_BADGE[t.verificationStatus] ?? { cls: 'b-active', label: 'চলছে' }
   const isRedo = t.verificationStatus === 'redo_requested'
@@ -587,21 +599,32 @@ function StaffDetail({
             marginTop: 8,
           }}
         >
-          <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 10 }}>📎 রেজাল্ট জমা দিন</div>
-          <input ref={camRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => onPick(e.target.files?.[0] ?? null)} />
-          <input ref={galRef} type="file" accept="image/*" hidden onChange={(e) => onPick(e.target.files?.[0] ?? null)} />
+          <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 10 }}>
+            📎 রেজাল্ট জমা দিন <span style={{ color: 'var(--muted)', fontWeight: 500 }}>· {bn(shots.length)}/{bn(MAX_SHOTS)} ছবি</span>
+          </div>
+          <input ref={camRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { onPick(e.target.files); e.target.value = '' }} />
+          <input ref={galRef} type="file" accept="image/*" multiple hidden onChange={(e) => { onPick(e.target.files); e.target.value = '' }} />
           <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn" style={{ flex: 1, justifyContent: 'center' }} onClick={() => camRef.current?.click()}>
+            <button className="btn" style={{ flex: 1, justifyContent: 'center' }} disabled={shots.length >= MAX_SHOTS} onClick={() => camRef.current?.click()}>
               📷 ছবি তুলুন
             </button>
-            <button className="btn" style={{ flex: 1, justifyContent: 'center' }} onClick={() => galRef.current?.click()}>
-              🖼️ গ্যালারি
+            <button className="btn" style={{ flex: 1, justifyContent: 'center' }} disabled={shots.length >= MAX_SHOTS} onClick={() => galRef.current?.click()}>
+              🖼️ গ্যালারি (একাধিক)
             </button>
           </div>
-          {uploading && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 8 }}>আপলোড হচ্ছে…</div>}
-          {preview && !uploading && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={preview} alt="preview" style={{ marginTop: 8, height: 64, borderRadius: 8, objectFit: 'cover' }} />
+          {(shots.length > 0 || uploadingCount > 0) && (
+            <div className="proof-thumbs">
+              {shots.map((s) => (
+                <div className="proof-thumb" key={s.id}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={s.preview} alt="preview" />
+                  <button className="proof-thumb-x" aria-label="মুছুন" onClick={() => removeShot(s.id)}>×</button>
+                </div>
+              ))}
+              {Array.from({ length: uploadingCount }).map((_, i) => (
+                <div className="proof-thumb up" key={`u${i}`}>আপলোড…</div>
+              ))}
+            </div>
           )}
           <div
             className="ibox"
@@ -624,14 +647,13 @@ function StaffDetail({
             />
             <button
               className="btn primary sm"
-              disabled={busy || uploading || (!fileUrl.current && !draft.trim())}
+              disabled={busy || uploadingCount > 0 || (shots.length === 0 && !draft.trim())}
               onClick={async () => {
-                if (fileUrl.current || draft.trim()) {
-                  const ok = await onProof(fileUrl.current, draft.trim() || undefined)
+                if (shots.length > 0 || draft.trim()) {
+                  const ok = await onProof(shots.map((s) => s.url), draft.trim() || undefined)
                   if (ok) {
                     setDraft('')
-                    setPreview(null)
-                    fileUrl.current = undefined
+                    setShots([])
                   }
                 }
               }}

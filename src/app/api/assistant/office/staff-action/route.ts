@@ -48,6 +48,7 @@ export async function POST(req: NextRequest) {
     body?: string
     text?: string
     imageUrl?: string
+    imageUrls?: string[]
     title?: string
     detail?: string
     type?: string
@@ -72,7 +73,7 @@ export async function POST(req: NextRequest) {
     case 'done':
       return reply(await staffMarkDone(taskId, staff))
     case 'proof':
-      return reply(await staffSubmitProof(taskId, staff, { imageUrl: body.imageUrl, text: body.text }))
+      return reply(await staffSubmitProof(taskId, staff, { imageUrl: body.imageUrl, imageUrls: body.imageUrls, text: body.text }))
     case 'comment':
       return reply(await staffComment(taskId, staff, body.body ?? ''))
     case 'update':

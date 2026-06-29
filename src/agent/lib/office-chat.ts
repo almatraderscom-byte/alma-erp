@@ -13,18 +13,26 @@
  * itself lives in office-chat-agent.ts.
  */
 import { prisma } from '@/lib/prisma'
+import { userAvatarUrl } from '@/lib/user-display'
 
 export type ChatAuthor = 'owner' | 'staff' | 'agent'
 
 /** 'posted' = live for everyone · 'pending' = agent draft awaiting owner · 'dismissed' = rejected. */
 export type ChatStatus = 'posted' | 'pending' | 'dismissed'
 
+/** An image (or other file) attached to a group message. */
+export type ChatAttachment = { type: 'image'; url: string }
+
 export type ChatMessage = {
   id: string
   authorType: string
   authorStaffId: string | null
   authorName: string
+  /** Author's profile photo (staff/owner) for the chat avatar; null → initials. */
+  authorImageUrl: string | null
   body: string
+  /** Images attached to this message (empty when none). */
+  attachments: ChatAttachment[]
   taskRef: string | null
   isAgentReply: boolean
   /** Draft lifecycle — 'pending' rows are agent replies the owner must approve. */
@@ -32,6 +40,18 @@ export type ChatMessage = {
   /** Group message this is a reply to (set on agent drafts). */
   replyToId: string | null
   createdAt: string
+}
+
+/** Normalize the loose JSON `attachments` column into typed image attachments. */
+function parseAttachments(v: unknown): ChatAttachment[] {
+  if (!Array.isArray(v)) return []
+  const out: ChatAttachment[] = []
+  for (const a of v) {
+    if (a && typeof a === 'object' && typeof (a as { url?: unknown }).url === 'string') {
+      out.push({ type: 'image', url: (a as { url: string }).url })
+    }
+  }
+  return out
 }
 
 export type ChatFeed = {
@@ -55,7 +75,9 @@ export async function getGroupMessages(
       id: true,
       authorType: true,
       authorStaffId: true,
+      authorUserId: true,
       body: true,
+      attachments: true,
       taskRef: true,
       isAgentReply: true,
       status: true,
@@ -64,36 +86,63 @@ export async function getGroupMessages(
     },
   })
 
-  // Resolve staff names in one query.
+  // Resolve staff names + profile photos in one query (staff → linked user photo).
   const staffIds = [...new Set(rows.map((r) => r.authorStaffId).filter((v): v is string => Boolean(v)))]
-  const staffMap = new Map<string, string>()
+  const staffMap = new Map<string, { name: string; imageUrl: string | null }>()
   if (staffIds.length > 0) {
     const staff = await prisma.agentStaff.findMany({
       where: { id: { in: staffIds } },
-      select: { id: true, name: true },
+      select: { id: true, name: true, user: { select: { id: true, profileImageUrl: true, updatedAt: true } } },
     })
-    for (const s of staff) staffMap.set(s.id, s.name)
+    for (const s of staff) {
+      const u = s.user
+      staffMap.set(s.id, {
+        name: s.name,
+        imageUrl: u && u.profileImageUrl ? userAvatarUrl(u.id, u.updatedAt) : null,
+      })
+    }
+  }
+
+  // Owner photos (owner posts carry authorUserId).
+  const ownerIds = [...new Set(rows.filter((r) => r.authorType === 'owner').map((r) => r.authorUserId).filter((v): v is string => Boolean(v)))]
+  const ownerImg = new Map<string, string | null>()
+  if (ownerIds.length > 0) {
+    const users = await prisma.user.findMany({
+      where: { id: { in: ownerIds } },
+      select: { id: true, profileImageUrl: true, updatedAt: true },
+    })
+    for (const u of users) ownerImg.set(u.id, u.profileImageUrl ? userAvatarUrl(u.id, u.updatedAt) : null)
   }
 
   const messages: ChatMessage[] = rows
     .reverse() // oldest-first for display
-    .map((r) => ({
-      id: r.id,
-      authorType: r.authorType,
-      authorStaffId: r.authorStaffId,
-      authorName:
-        r.authorType === 'owner'
-          ? 'মালিক'
-          : r.authorType === 'agent'
-            ? 'এজেন্ট'
-            : (r.authorStaffId && staffMap.get(r.authorStaffId)) || 'স্টাফ',
-      body: r.body,
-      taskRef: r.taskRef,
-      isAgentReply: r.isAgentReply,
-      status: (r.status as ChatStatus) ?? 'posted',
-      replyToId: r.replyToId,
-      createdAt: r.createdAt.toISOString(),
-    }))
+    .map((r) => {
+      const staff = r.authorStaffId ? staffMap.get(r.authorStaffId) : undefined
+      return {
+        id: r.id,
+        authorType: r.authorType,
+        authorStaffId: r.authorStaffId,
+        authorName:
+          r.authorType === 'owner'
+            ? 'মালিক'
+            : r.authorType === 'agent'
+              ? 'এজেন্ট'
+              : staff?.name || 'স্টাফ',
+        authorImageUrl:
+          r.authorType === 'owner'
+            ? (r.authorUserId && ownerImg.get(r.authorUserId)) || null
+            : r.authorType === 'agent'
+              ? null
+              : staff?.imageUrl ?? null,
+        body: r.body,
+        attachments: parseAttachments(r.attachments),
+        taskRef: r.taskRef,
+        isAgentReply: r.isAgentReply,
+        status: (r.status as ChatStatus) ?? 'posted',
+        replyToId: r.replyToId,
+        createdAt: r.createdAt.toISOString(),
+      }
+    })
 
   return { businessId, messages }
 }
@@ -103,6 +152,7 @@ const ROW_SELECT = {
   authorType: true,
   authorStaffId: true,
   body: true,
+  attachments: true,
   taskRef: true,
   isAgentReply: true,
   status: true,
@@ -115,6 +165,7 @@ function toChatMessage(row: {
   authorType: string
   authorStaffId: string | null
   body: string
+  attachments: unknown
   taskRef: string | null
   isAgentReply: boolean
   status: string
@@ -126,7 +177,10 @@ function toChatMessage(row: {
     authorType: row.authorType,
     authorStaffId: row.authorStaffId,
     authorName: row.authorType === 'owner' ? 'মালিক' : row.authorType === 'agent' ? 'এজেন্ট' : 'স্টাফ',
+    // Resolved by getGroupMessages on the next feed load; transient post-return is fine.
+    authorImageUrl: null,
     body: row.body,
+    attachments: parseAttachments(row.attachments),
     taskRef: row.taskRef,
     isAgentReply: row.isAgentReply,
     status: (row.status as ChatStatus) ?? 'posted',
@@ -140,16 +194,19 @@ export async function postGroupMessage(args: {
   authorStaffId?: string | null
   authorUserId?: string | null
   body: string
+  attachments?: ChatAttachment[]
   taskRef?: string | null
   businessId: string
 }): Promise<ChatMessage> {
   const body = args.body.trim()
+  const attachments = (args.attachments ?? []).filter((a) => a && typeof a.url === 'string' && a.url.length > 0)
   const row = await prisma.officeGroupMessage.create({
     data: {
       authorType: args.authorType,
       authorStaffId: args.authorStaffId ?? null,
       authorUserId: args.authorUserId ?? null,
       body,
+      attachments: attachments.length > 0 ? attachments : undefined,
       taskRef: args.taskRef ?? null,
       isAgentReply: args.authorType === 'agent',
       status: 'posted',

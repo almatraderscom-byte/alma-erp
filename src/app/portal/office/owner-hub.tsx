@@ -70,6 +70,20 @@ function pickProofImage(data: Record<string, unknown> | null): string | null {
   }
   return null
 }
+/** All proof images (multi-image submissions store `imageUrls`); falls back to the single image. */
+function pickProofImages(data: Record<string, unknown> | null): string[] {
+  if (!data) return []
+  const arr = data['imageUrls']
+  const out: string[] = []
+  if (Array.isArray(arr)) {
+    for (const v of arr) if (typeof v === 'string' && /^https?:\/\//.test(v)) out.push(v)
+  }
+  if (out.length === 0) {
+    const one = pickProofImage(data)
+    if (one) out.push(one)
+  }
+  return out
+}
 function pickProofText(data: Record<string, unknown> | null): string | null {
   if (!data) return null
   for (const k of ['text', 'note', 'caption', 'evidence', 'link']) {
@@ -80,7 +94,7 @@ function pickProofText(data: Record<string, unknown> | null): string | null {
 }
 function proofCount(data: Record<string, unknown> | null): number {
   if (!data) return 0
-  for (const k of ['images', 'photos', 'attachments', 'files']) {
+  for (const k of ['imageUrls', 'images', 'photos', 'attachments', 'files']) {
     const v = data[k]
     if (Array.isArray(v)) return v.length
   }
@@ -1048,7 +1062,7 @@ function ThreadDetail({
   onComment: (body: string) => void
   onAlwaysEscalate: (on: boolean) => void
 }) {
-  const proofImg = pickProofImage(task.proofData)
+  const proofImgs = pickProofImages(task.proofData)
   const [thread, setThread] = useState<TaskThread | null>(null)
   const [loading, setLoading] = useState(true)
   const [draft, setDraft] = useState('')
@@ -1097,11 +1111,15 @@ function ThreadDetail({
           </div>
         )}
 
-        {proofImg && (
-          <div className="proof-shot" onClick={() => onZoom(proofImg)}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={proofImg} alt="জমা দেওয়া প্রমাণ" />
-            <span className="proof-zoom">🔍 বড় করে দেখুন</span>
+        {proofImgs.length > 0 && (
+          <div className={`proof-shots${proofImgs.length === 1 ? ' one' : ''}`}>
+            {proofImgs.map((src, i) => (
+              <div className="proof-shot" key={i} onClick={() => onZoom(src)}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={src} alt={`জমা দেওয়া প্রমাণ ${i + 1}`} />
+                <span className="proof-zoom">🔍</span>
+              </div>
+            ))}
           </div>
         )}
 
