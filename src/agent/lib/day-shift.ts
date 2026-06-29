@@ -597,6 +597,20 @@ export async function startDayShift(): Promise<{ ok: boolean; conversationId?: s
       console.warn('[day-shift] order lifecycle sweep failed:', err instanceof Error ? err.message : err)
     }
 
+    // Phase 4 — forward-looking cash-flow check. Gated by the master switch (no-op
+    // until the owner opts in). SAFE: never moves money — when a shortfall is
+    // projected it records the alert and notifies the owner so cash trouble is seen
+    // BEFORE it bites. Best-effort; never throws.
+    try {
+      const { runCashFlowSweep } = await import('@/agent/lib/finance/cashflow-forecast')
+      const r = await runCashFlowSweep()
+      if (r.alerted) {
+        await appendShiftNarrative(conversationId, `💸 নগদ-প্রবাহ সতর্কতা পাঠালাম (${r.shortfallDay} দিনে সম্ভাব্য ঘাটতি)।`)
+      }
+    } catch (err) {
+      console.warn('[day-shift] cash-flow sweep failed:', err instanceof Error ? err.message : err)
+    }
+
     // Point 2 — if yesterday's main office work (staff dispatch) didn't happen, ask the
     // reason first. Owner's reply (captured in core.ts) is saved + answered with a suggestion.
     try {
