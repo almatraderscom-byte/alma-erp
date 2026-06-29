@@ -7,6 +7,7 @@ import type { StaffOfficeData, StaffTaskCard, TaskThread } from '@/agent/lib/off
 import type { Motivation } from '@/agent/lib/office-motivation'
 import Confetti from './confetti'
 import { todoState } from './todo-status'
+import { OfficeTodoDock } from './office-todo-dock'
 
 const BN = '০১২৩৪৫৬৭৮৯'
 function bn(n: number | string): string {
@@ -118,6 +119,11 @@ export default function StaffApp({
 
   return (
     <>
+      {/* at-a-glance todolist DOCK — pinned to the top, collapsed by default */}
+      <OfficeTodoDock storageKey="oh_todo_staff" total={total} done={doneN} remaining={remaining}>
+        <StaffTodoBody active={data.active} done={data.done} />
+      </OfficeTodoDock>
+
       {/* sticky performer + daily motivation hero (requests 3 & 4) */}
       <div className="staff-hero">
         <PerformerHero data={data} />
@@ -143,8 +149,6 @@ export default function StaffApp({
             <div className="ssub">
               আজ {bn(total)}টি কাজ · {bn(doneN)}টি সম্পন্ন, {bn(remaining)}টি বাকি
             </div>
-
-            <StaffTodo active={data.active} done={data.done} />
 
             {needUpdate.map((t) => (
               <UpdateAlert key={t.id} t={t} busy={busy} onSend={(text) => run(`upd-${t.id}`, { action: 'update', taskId: t.id, body: text })} />
@@ -233,29 +237,17 @@ function TodoRow({ t }: { t: StaffTaskCard }) {
   )
 }
 
-function StaffTodo({ active, done }: { active: StaffTaskCard[]; done: StaffTaskCard[] }) {
-  const total = active.length + done.length
-  if (total === 0) return null
-  const pct = Math.round((done.length / total) * 100)
+// Body of the staff todo dock — not-done first (active is tracked-first sorted), then done.
+function StaffTodoBody({ active, done }: { active: StaffTaskCard[]; done: StaffTaskCard[] }) {
   return (
-    <div className="card todo" style={{ marginBottom: 16 }}>
-      <div className="todo-head">
-        <span className="lbl">📋 আজকের টুডু</span>
-        <div className="todo-prog">
-          <i style={{ width: `${pct}%` }} />
-        </div>
-        <span className="todo-frac">
-          {bn(done.length)}/{bn(total)}
-        </span>
-      </div>
-      {/* not-done first (active is already tracked-first sorted), then done */}
+    <>
       {active.map((t) => (
         <TodoRow key={t.id} t={t} />
       ))}
       {done.map((t) => (
         <TodoRow key={t.id} t={t} />
       ))}
-    </div>
+    </>
   )
 }
 

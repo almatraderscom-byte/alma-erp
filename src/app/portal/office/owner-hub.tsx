@@ -16,6 +16,7 @@ import type { ProposalCard } from '@/agent/lib/office-proposals'
 import type { Motivation } from '@/agent/lib/office-motivation'
 import Confetti from './confetti'
 import { todoState } from './todo-status'
+import { OfficeTodoDock } from './office-todo-dock'
 
 // ── small formatting helpers ────────────────────────────────────────────────
 const BN = '০১২৩৪৫৬৭৮৯'
@@ -236,6 +237,16 @@ export default function OwnerHub({
 
   return (
     <>
+      {/* at-a-glance todolist DOCK — pinned to the top, collapsed by default */}
+      <OfficeTodoDock
+        storageKey="oh_todo_owner"
+        total={todoTasks.length}
+        done={doneTodayTasks.length}
+        remaining={todoTasks.length - doneTodayTasks.length}
+      >
+        <OwnerTodo team={team} tasks={todoTasks} imgByStaff={imgByStaff} />
+      </OfficeTodoDock>
+
       {/* greeting */}
       <div className="phead">
         <div>
@@ -335,9 +346,6 @@ export default function OwnerHub({
           <div className="l">স্টাফ অনলাইন</div>
         </div>
       </div>
-
-      {/* at-a-glance todolist — every staff's today tasks by status */}
-      <OwnerTodo team={team} tasks={todoTasks} imgByStaff={imgByStaff} />
 
       {/* update tracking — show the 3 most recent; the rest collapse behind a
           toggle so this alert block can't dominate the page. */}
@@ -750,11 +758,7 @@ function OwnerTodo({
   }
   return (
     <>
-      <div className="section-h">
-        <h2>📋 টুডু — সবার আজকের কাজ</h2>
-      </div>
-      <div className="card todo" style={{ marginBottom: 20 }}>
-        {team.map((m) => {
+      {team.map((m) => {
           const list = (byStaff.get(m.staffId) ?? []).slice().sort((a, b) => todoState(a).rank - todoState(b).rank)
           const img = imgByStaff.get(m.staffId) ?? null
           const pct = m.totalToday > 0 ? Math.round((m.doneToday / m.totalToday) * 100) : 0
@@ -793,7 +797,6 @@ function OwnerTodo({
             </div>
           )
         })}
-      </div>
     </>
   )
 }

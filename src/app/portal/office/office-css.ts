@@ -240,7 +240,7 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 
 @media(max-width:960px){.ohub .kpis{grid-template-columns:repeat(2,1fr)}.ohub .grid2{grid-template-columns:1fr}}
 @media(max-width:680px){
-  .ohub .oh-tabs{display:flex;gap:6px;position:sticky;top:0;z-index:25;margin:0 0 16px;padding:5px;
+  .ohub .oh-tabs{display:flex;gap:6px;margin:0 0 16px;padding:5px;
     background:rgba(18,18,22,0.92);backdrop-filter:blur(12px) saturate(1.1);
     border:1px solid var(--border-subtle);border-radius:var(--r-pill);box-shadow:var(--shadow)}
   .ohub .oh-tab{flex:1;font-family:inherit;font-size:13.5px;font-weight:700;color:var(--muted);
@@ -734,15 +734,28 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
    behind prefers-reduced-motion so it never fights accessibility settings.
    1) staggered entrance reveal  2) tactile press feedback  3) animated reveals.
    ════════════════════════════════════════════════════════════════════════ */
-/* ════ at-a-glance todolist (staff own tasks · owner per-staff) ════ */
+/* ════ at-a-glance todolist DOCK — sticky to top, collapsible (agent-style) ════ */
+.ohub .todo-dock{position:sticky;top:0;z-index:36;margin:0 0 14px;border-radius:var(--r-lg);overflow:hidden;
+  background:rgba(20,20,26,0.94);backdrop-filter:blur(16px) saturate(1.1);
+  border:1px solid var(--border);box-shadow:0 10px 32px rgba(0,0,0,0.5)}
+.ohub .todo-dock-head{width:100%;display:flex;align-items:center;gap:10px;padding:12px 15px;min-height:46px;
+  background:transparent;border:0;color:var(--ink);font-family:inherit;cursor:pointer;text-align:left}
+.ohub .todo-dock-ic{font-size:16px;flex:none}
+.ohub .todo-dock-sum{flex:1;min-width:0;font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ohub .todo-dock-sum .muted{font-weight:500;color:var(--muted)}
+.ohub .todo-dock-chev{flex:none;font-size:18px;line-height:1;color:var(--muted);transition:transform .25s ease}
+.ohub .todo-dock.open .todo-dock-chev{transform:rotate(180deg)}
+.ohub .todo-dock-body{max-height:0;overflow:hidden;transition:max-height .32s cubic-bezier(.22,1,.36,1)}
+.ohub .todo-dock.open .todo-dock-body{max-height:min(66dvh,600px);overflow-y:auto;overscroll-behavior:contain}
+
+/* ════ todolist rows ════ */
 .ohub .todo-head{display:flex;align-items:center;gap:11px;padding:13px 15px;border-bottom:1px solid var(--border-subtle)}
 .ohub .todo-head .lbl{font-size:13px;font-weight:700;flex:none}
 .ohub .todo-prog{flex:1;height:7px;border-radius:9px;background:var(--bg-3);overflow:hidden;min-width:40px}
 .ohub .todo-prog i{display:block;height:100%;border-radius:9px;background:linear-gradient(90deg,var(--success),#86efac);transition:width .5s cubic-bezier(.22,1,.36,1)}
 .ohub .todo-frac{font-size:12.5px;font-weight:800;color:var(--muted-hi);flex:none;font-variant-numeric:tabular-nums}
 /* per-staff group header (owner view) */
-.ohub .todo-staff{display:flex;align-items:center;gap:10px;padding:12px 15px;border-top:1px solid var(--border-subtle);background:rgba(255,255,255,0.015)}
-.ohub .todo-staff:first-child{border-top:0}
+.ohub .todo-staff{display:flex;align-items:center;gap:10px;padding:12px 15px;border-top:1px solid var(--border-subtle);background:rgba(255,255,255,0.025)}
 .ohub .todo-staff .nm{font-size:14px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* a task row */
 .ohub .todo-row{display:flex;align-items:center;gap:11px;padding:10px 15px;border-top:1px solid var(--border-subtle)}
