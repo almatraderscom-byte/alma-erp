@@ -1,6 +1,18 @@
 'use client'
 
 import { Button, Card } from '@/components/ui'
+import { isCapacitorNative } from '@/lib/app-update'
+
+/** Inside the Capacitor WebView a plain `<a download>` does nothing — the
+ *  Android WebView has no DownloadListener, so the APK response is silently
+ *  dropped. Hand the URL to the SYSTEM browser via window.open('_blank') so
+ *  Chrome's download manager fetches the APK. CRITICAL: the URL must be on a
+ *  host that is NOT in Capacitor `allowNavigation` (alma-erp-six.vercel.app),
+ *  otherwise window.open keeps it inside the WebView and nothing downloads. We
+ *  serve an off-domain copy from Supabase public storage for exactly this. On
+ *  web/desktop the normal same-origin anchor download is kept. */
+const NATIVE_APK_URL =
+  'https://nrkuzcorcpcwrkckbeoq.supabase.co/storage/v1/object/public/app-releases/alma-erp.apk'
 
 const SAMSUNG_PUSH_STEPS = [
   'Settings → Apps → Alma ERP → Battery → Unrestricted',
@@ -35,7 +47,22 @@ export function DownloadAppClient({ apkUrl }: Props) {
         </div>
 
         <Card className="space-y-4 p-5">
-          <a href={apkUrl} download className="block">
+          <a
+            href={apkUrl}
+            download
+            className="block"
+            onClick={(e) => {
+              // Native app: WebView can't download — open APK in system browser.
+              if (isCapacitorNative()) {
+                e.preventDefault()
+                // Off-domain URL → Capacitor punts window.open('_blank') to the
+                // system browser (ACTION_VIEW intent), whose download manager
+                // fetches the APK. A same-domain URL would stay in the WebView
+                // and silently fail.
+                window.open(NATIVE_APK_URL, '_blank', 'noopener,noreferrer')
+              }
+            }}
+          >
             <Button variant="gold" className="w-full">
               Alma ERP APK ডাউনলোড করুন
             </Button>

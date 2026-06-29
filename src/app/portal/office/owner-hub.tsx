@@ -15,6 +15,8 @@ import type { StaffPerformance } from '@/agent/lib/office-performance'
 import type { ProposalCard } from '@/agent/lib/office-proposals'
 import type { Motivation } from '@/agent/lib/office-motivation'
 import Confetti from './confetti'
+import { todoState } from './todo-status'
+import { OfficeTodoDock } from './office-todo-dock'
 
 // ── small formatting helpers ────────────────────────────────────────────────
 const BN = '০১২৩৪৫৬৭৮৯'
@@ -175,11 +177,18 @@ export default function OwnerHub({
     [data.businessId, router],
   )
 
-  const { kpis, award, awardStats, overdueUpdates, pendingApproval, activeTasks, selfInitiated, activity, team, leaderboard, performance, proposals } = data
+  const { kpis, award, awardStats, overdueUpdates, pendingApproval, activeTasks, doneTodayTasks, selfInitiated, activity, team, leaderboard, performance, proposals } = data
   const busy = pending || busyId !== null
 
   // staffId → profile image map (from team rows) for avatars across the hub
   const imgByStaff = new Map<string, string | null>(team.map((m) => [m.staffId, m.imageUrl]))
+
+  // Every today task (not-done + awaiting-approval + done), deduped — feeds the
+  // owner's at-a-glance per-staff todolist.
+  const todoSeen = new Set<string>()
+  const todoTasks = [...pendingApproval, ...activeTasks, ...selfInitiated, ...doneTodayTasks].filter((t) =>
+    todoSeen.has(t.id) ? false : (todoSeen.add(t.id), true),
+  )
 
   // Group active tasks per staff so each staff member gets their own column.
   const activeByStaff = (() => {
@@ -228,6 +237,16 @@ export default function OwnerHub({
 
   return (
     <>
+      {/* at-a-glance todolist DOCK — pinned to the top, collapsed by default */}
+      <OfficeTodoDock
+        storageKey="oh_todo_owner"
+        total={todoTasks.length}
+        done={doneTodayTasks.length}
+        remaining={todoTasks.length - doneTodayTasks.length}
+      >
+        <OwnerTodo team={team} tasks={todoTasks} imgByStaff={imgByStaff} />
+      </OfficeTodoDock>
+
       {/* greeting */}
       <div className="phead">
         <div>
@@ -717,6 +736,68 @@ function ActiveStaffGroup({
         </div>
       )}
     </div>
+  )
+}
+
+// ── owner at-a-glance todolist: each staff's today tasks, grouped + by status ─
+function OwnerTodo({
+  team,
+  tasks,
+  imgByStaff,
+}: {
+  team: TeamMember[]
+  tasks: HubTaskCard[]
+  imgByStaff: Map<string, string | null>
+}) {
+  if (team.length === 0) return null
+  const byStaff = new Map<string, HubTaskCard[]>()
+  for (const t of tasks) {
+    const arr = byStaff.get(t.staffId)
+    if (arr) arr.push(t)
+    else byStaff.set(t.staffId, [t])
+  }
+  return (
+    <>
+      {team.map((m) => {
+          const list = (byStaff.get(m.staffId) ?? []).slice().sort((a, b) => todoState(a).rank - todoState(b).rank)
+          const img = imgByStaff.get(m.staffId) ?? null
+          const pct = m.totalToday > 0 ? Math.round((m.doneToday / m.totalToday) * 100) : 0
+          return (
+            <div key={m.staffId}>
+              <div className="todo-staff">
+                {img ? (
+                  <span className="av img" style={{ backgroundImage: `url(${img})` }} />
+                ) : (
+                  <span className={`av ${avClass(m.staffId)}`}>{m.initial}</span>
+                )}
+                <span className="nm">{m.name}</span>
+                <div className="todo-prog" style={{ maxWidth: 84 }}>
+                  <i style={{ width: `${pct}%` }} />
+                </div>
+                <span className="todo-frac">
+                  {bn(m.doneToday)}/{bn(m.totalToday)}
+                </span>
+              </div>
+              {list.length === 0 ? (
+                <div className="todo-empty">আজ কোনো কাজ নেই।</div>
+              ) : (
+                list.map((t) => {
+                  const s = todoState(t)
+                  return (
+                    <div key={t.id} className={`todo-row${s.done ? ' is-done' : ''}`}>
+                      <span className={`todo-ic ${s.key}`} aria-hidden>
+                        {s.icon}
+                      </span>
+                      <span className="todo-t">{t.title}</span>
+                      <span className={`badge ${s.badge}`}>{s.label}</span>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          )
+        })}
+    </>
   )
 }
 

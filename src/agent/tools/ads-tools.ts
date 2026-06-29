@@ -162,13 +162,13 @@ const launch_campaign: AgentTool = {
       dailyBudget: { type: 'number', description: 'Daily budget in whole BDT' },
       message: { type: 'string', description: 'Primary ad text in Bangla (the main copy)' },
       headline: { type: 'string', description: 'Optional short headline under the image' },
-      imageUrl: { type: 'string', description: 'Optional public image URL for the creative' },
+      imageUrl: { type: 'string', description: 'REQUIRED public image URL for the creative — a click-to-Messenger ad cannot run without media' },
       page: { type: 'string', description: "'lifestyle' (default) or 'onlineshop'" },
       ageMin: { type: 'number' },
       ageMax: { type: 'number' },
       conversationId: { type: 'string' },
     },
-    required: ['name', 'dailyBudget', 'message'],
+    required: ['name', 'dailyBudget', 'message', 'imageUrl'],
   },
   handler: async (input) => {
     const name = String(input.name ?? '').trim()
@@ -185,6 +185,7 @@ const launch_campaign: AgentTool = {
     const page = String(input.page ?? 'lifestyle').trim().toLowerCase()
     const headline = input.headline ? String(input.headline).trim() : undefined
     const imageUrl = input.imageUrl ? String(input.imageUrl).trim() : undefined
+    if (!imageUrl) return { success: false, error: 'ছবি ছাড়া Click-to-Messenger ক্যাম্পেইন চালু করা যায় না — একটি প্রোডাক্ট ছবির public URL (imageUrl) দিন।' }
     const ageMin = input.ageMin != null ? Math.round(Number(input.ageMin)) : undefined
     const ageMax = input.ageMax != null ? Math.round(Number(input.ageMax)) : undefined
 
@@ -268,11 +269,30 @@ const recommend_ad_actions: AgentTool = {
         batchGateId = batch?.gateId ?? null
       }
 
+      // NOTE: analyzeAdCampaigns() only ever returns ACTIVE (effective_status === 'ACTIVE')
+      // campaigns — paused/archived ones are filtered out upstream in
+      // fetchActiveCampaignMetrics(). So metrics.length === count of currently LIVE
+      // campaigns. The agent must never label these as paused.
+      const activeCampaignCount = metrics.length
+      const activeNames = metrics.map((m) => m.name)
+
+      let message: string
+      if (activeCampaignCount === 0) {
+        message =
+          'এই অ্যাড অ্যাকাউন্টে এই মুহূর্তে কোনো ACTIVE ক্যাম্পেইন চলছে না (সব paused/archived)।'
+      } else if (actionable.length > 0) {
+        message = `${activeCampaignCount}টি ACTIVE ক্যাম্পেইন চলছে — ${actionable.length}টিতে actionable rec; owner approve ছাড়া budget/spend change হবে না।`
+      } else {
+        message = `${activeCampaignCount}টি ACTIVE ক্যাম্পেইন চলছে, সবগুলো এখন hold — thin data বা middle performance; noise-এ action নয়।`
+      }
+
       return {
         success: true,
         data: {
           summary,
-          campaignCount: metrics.length,
+          campaignCount: activeCampaignCount,
+          activeCampaignCount,
+          activeCampaignNames: activeNames,
           actionableCount: actionable.length,
           recommendations: recommendations.map((r) => ({
             campaignId: r.campaignId,
@@ -284,10 +304,7 @@ const recommend_ad_actions: AgentTool = {
             metrics: r.metrics,
           })),
           batchPendingActionId: batchGateId,
-          message:
-            actionable.length > 0
-              ? `${actionable.length}টি actionable rec — owner approve ছাড়া budget/spend change হবে না।`
-              : 'সব ক্যাম্পেইন hold — thin data বা middle performance; noise-এ action নয়।',
+          message,
         },
       }
     } catch (err) {

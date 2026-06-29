@@ -47,6 +47,50 @@ export default function OfficeShell({
     return () => evs.forEach((ev) => ohub.removeEventListener(ev, stop))
   }, [])
 
+  // Scroll-triggered reveal: each section eases up as it scrolls into view (the
+  // "premium" motion). SAFETY: only BELOW-fold elements are hidden, a 2.5s
+  // fallback reveals everything no matter what, and any error reveals all — so
+  // content can never get stuck invisible.
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') return
+    const SEL =
+      '.ohub .perspective .card, .ohub .kpis, .ohub .hero-row, .ohub .award, .ohub .motiv, .ohub .track, .ohub .props, .ohub .section-h, .ohub .oh-tabs, .ohub .actcol, .ohub .note'
+    const revealAll = () => document.querySelectorAll('.ohub .oh-reveal').forEach((el) => el.classList.add('in'))
+    let io: IntersectionObserver | null = null
+    let setupT: ReturnType<typeof setTimeout> | undefined
+    let fallbackT: ReturnType<typeof setTimeout> | undefined
+    try {
+      io = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              e.target.classList.add('in')
+              io?.unobserve(e.target)
+            }
+          }
+        },
+        { threshold: 0.05, rootMargin: '0px 0px -5% 0px' },
+      )
+      setupT = setTimeout(() => {
+        const vh = window.innerHeight || 800
+        document.querySelectorAll<HTMLElement>(SEL).forEach((el) => {
+          if (el.classList.contains('oh-reveal')) return
+          el.classList.add('oh-reveal')
+          if (el.getBoundingClientRect().top < vh * 0.9) el.classList.add('in')
+          else io?.observe(el)
+        })
+        fallbackT = setTimeout(revealAll, 2500)
+      }, 60)
+    } catch {
+      revealAll()
+    }
+    return () => {
+      if (setupT) clearTimeout(setupT)
+      if (fallbackT) clearTimeout(fallbackT)
+      io?.disconnect()
+    }
+  }, [])
+
   return (
     <>
       <div className="topbar">

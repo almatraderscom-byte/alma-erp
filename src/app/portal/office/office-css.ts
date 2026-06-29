@@ -240,7 +240,7 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 
 @media(max-width:960px){.ohub .kpis{grid-template-columns:repeat(2,1fr)}.ohub .grid2{grid-template-columns:1fr}}
 @media(max-width:680px){
-  .ohub .oh-tabs{display:flex;gap:6px;position:sticky;top:0;z-index:25;margin:0 0 16px;padding:5px;
+  .ohub .oh-tabs{display:flex;gap:6px;margin:0 0 16px;padding:5px;
     background:rgba(18,18,22,0.92);backdrop-filter:blur(12px) saturate(1.1);
     border:1px solid var(--border-subtle);border-radius:var(--r-pill);box-shadow:var(--shadow)}
   .ohub .oh-tab{flex:1;font-family:inherit;font-size:13.5px;font-weight:700;color:var(--muted);
@@ -451,6 +451,11 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 .ohub-chatpanel .gm .av{width:27px;height:27px;font-size:11px;margin-top:2px;border-radius:50%;display:grid;place-items:center;color:#fff;flex-shrink:0;background:#3f3f46}
 .ohub-chatpanel .gm .av.e{background:linear-gradient(135deg,#6366f1,#8b5cf6)}
 .ohub-chatpanel .gm .av.o{background:linear-gradient(135deg,#E07A5F,#C45A3C)}
+/* staff/owner profile photo in chat — the .av.img cover rule lives under .ohub,
+   which does NOT match this separate .ohub-chatpanel root, so re-declare it here
+   (without this the photo rendered uncovered/oversized → looked broken). */
+.ohub-chatpanel .gm .av.img{background-size:cover;background-position:center;background-repeat:no-repeat;color:transparent;font-size:0}
+.ohub-chatpanel img{max-width:100%}
 .ohub-chatpanel .gm .nmt{font-size:11px;color:#AEB2C0;margin-bottom:3px;font-weight:600}
 .ohub-chatpanel .gm .gb{background:#202027;border:1px solid rgba(255,255,255,0.07);border-radius:4px 14px 14px 14px;padding:9px 12px;font-size:13px;color:#D0D4E0;white-space:pre-line}
 .ohub-chatpanel .gm.me{margin-left:auto;flex-direction:row-reverse}
@@ -729,36 +734,77 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
    behind prefers-reduced-motion so it never fights accessibility settings.
    1) staggered entrance reveal  2) tactile press feedback  3) animated reveals.
    ════════════════════════════════════════════════════════════════════════ */
+/* ════ at-a-glance todolist DOCK — sticky to top, collapsible (agent-style) ════ */
+.ohub .todo-dock{position:sticky;top:0;z-index:36;margin:0 0 14px;border-radius:var(--r-lg);overflow:hidden;
+  background:rgba(20,20,26,0.94);backdrop-filter:blur(16px) saturate(1.1);
+  border:1px solid var(--border);box-shadow:0 10px 32px rgba(0,0,0,0.5)}
+.ohub .todo-dock-head{width:100%;display:flex;align-items:center;gap:10px;padding:12px 15px;min-height:46px;
+  background:transparent;border:0;color:var(--ink);font-family:inherit;cursor:pointer;text-align:left}
+.ohub .todo-dock-ic{font-size:16px;flex:none}
+.ohub .todo-dock-sum{flex:1;min-width:0;font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ohub .todo-dock-sum .muted{font-weight:500;color:var(--muted)}
+.ohub .todo-dock-chev{flex:none;font-size:18px;line-height:1;color:var(--muted);transition:transform .25s ease}
+.ohub .todo-dock.open .todo-dock-chev{transform:rotate(180deg)}
+.ohub .todo-dock-body{max-height:0;overflow:hidden;transition:max-height .32s cubic-bezier(.22,1,.36,1)}
+.ohub .todo-dock.open .todo-dock-body{max-height:min(66dvh,600px);overflow-y:auto;overscroll-behavior:contain}
+
+/* ════ todolist rows ════ */
+.ohub .todo-head{display:flex;align-items:center;gap:11px;padding:13px 15px;border-bottom:1px solid var(--border-subtle)}
+.ohub .todo-head .lbl{font-size:13px;font-weight:700;flex:none}
+.ohub .todo-prog{flex:1;height:7px;border-radius:9px;background:var(--bg-3);overflow:hidden;min-width:40px}
+.ohub .todo-prog i{display:block;height:100%;border-radius:9px;background:linear-gradient(90deg,var(--success),#86efac);transition:width .5s cubic-bezier(.22,1,.36,1)}
+.ohub .todo-frac{font-size:12.5px;font-weight:800;color:var(--muted-hi);flex:none;font-variant-numeric:tabular-nums}
+/* per-staff group header (owner view) */
+.ohub .todo-staff{display:flex;align-items:center;gap:10px;padding:12px 15px;border-top:1px solid var(--border-subtle);background:rgba(255,255,255,0.025)}
+.ohub .todo-staff .nm{font-size:14px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* a task row */
+.ohub .todo-row{display:flex;align-items:center;gap:11px;padding:10px 15px;border-top:1px solid var(--border-subtle)}
+.ohub .todo-row:first-child{border-top:0}
+.ohub .todo-ic{width:23px;height:23px;border-radius:50%;display:grid;place-items:center;font-size:12px;line-height:1;flex:none;
+  border:1.5px solid var(--border-strong);color:var(--muted)}
+.ohub .todo-ic.done{background:var(--success);color:#06280f;border-color:transparent;font-weight:900}
+.ohub .todo-ic.approval{background:rgba(245,158,11,.18);color:#fcd34d;border-color:rgba(245,158,11,.45);font-size:11px}
+.ohub .todo-ic.redo{background:rgba(239,68,68,.16);color:#fca5a5;border-color:rgba(239,68,68,.45)}
+.ohub .todo-ic.carry{background:rgba(139,92,246,.16);color:#c4b5fd;border-color:rgba(139,92,246,.45)}
+.ohub .todo-ic.active{background:transparent}
+.ohub .todo-t{flex:1;min-width:0;font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ohub .todo-row.is-done .todo-t{color:var(--muted);text-decoration:line-through;text-decoration-color:rgba(255,255,255,.28)}
+.ohub .todo-row .badge{flex:none}
+.ohub .todo-empty{padding:16px 15px;font-size:13px;color:var(--muted)}
+@media(max-width:680px){
+  .ohub .todo-row,.ohub .todo-staff,.ohub .todo-head{padding-left:13px;padding-right:13px}
+  .ohub .todo-t{font-size:13px}
+  .ohub .todo-row .badge{font-size:10.5px;padding:2px 8px}
+}
+
 @keyframes oh-rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 @keyframes oh-rise-sm{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 @keyframes oh-pop{0%{opacity:0;transform:scale(.96)}100%{opacity:1;transform:scale(1)}}
 @keyframes oh-skel{0%{background-position:-180px 0}100%{background-position:180px 0}}
 
-@media (prefers-reduced-motion: no-preference){
-  /* entrance: the page block fades while its sections rise in sequence */
-  .ohub .perspective.show{animation:oh-fade .3s ease}
-  .ohub .perspective.show > *{animation:oh-rise .55s cubic-bezier(.22,1,.36,1) both}
-  .ohub .perspective.show > *:nth-child(1){animation-delay:.03s}
-  .ohub .perspective.show > *:nth-child(2){animation-delay:.08s}
-  .ohub .perspective.show > *:nth-child(3){animation-delay:.13s}
-  .ohub .perspective.show > *:nth-child(4){animation-delay:.18s}
-  .ohub .perspective.show > *:nth-child(5){animation-delay:.23s}
-  .ohub .perspective.show > *:nth-child(6){animation-delay:.28s}
-  .ohub .perspective.show > *:nth-child(n+7){animation-delay:.33s}
-  /* KPI tiles get a slightly springier individual reveal */
-  .ohub .kpis .kpi{animation:oh-pop .5s cubic-bezier(.22,1,.36,1) both}
-  .ohub .kpis .kpi:nth-child(2){animation-delay:.06s}
-  .ohub .kpis .kpi:nth-child(3){animation-delay:.12s}
-  .ohub .kpis .kpi:nth-child(4){animation-delay:.18s}
-  /* tab switch: the newly shown pane re-rises (display:none→block replays it) */
-  .ohub .oh-pane{animation:oh-rise .36s cubic-bezier(.22,1,.36,1) both}
-  /* collapsible staff group slides open */
-  .ohub .actcol.open > .card{animation:oh-rise-sm .28s ease both}
-  /* list rows + chat bubbles ease in */
-  .ohub .appr,.ohub .lead,.ohub .staff-row,.ohub .ev,.ohub .trow{animation:oh-rise-sm .4s ease both}
-  .ohub-chatpanel .gm{animation:oh-rise-sm .26s ease both}
-  /* the chevron + badges get smooth transitions (already declared elsewhere) */
-}
+/* Motion is UNCONDITIONAL by owner request (his device's Reduce-Motion was
+   suppressing it). Pure transform/opacity, all self-completing (never leaves
+   content hidden), so it can't blank the screen. */
+.ohub .perspective.show{animation:oh-fade .3s ease}
+/* SCROLL-TRIGGERED REVEAL (driven by IntersectionObserver in OfficeShell):
+   each section starts low+faded and eases up as it scrolls into view — the
+   noticeable "premium" motion. JS only ever hides BELOW-fold elements and has a
+   hard fallback that reveals everything, so nothing can stay invisible. */
+.ohub .oh-reveal{opacity:0;transform:translateY(26px)}
+.ohub .oh-reveal.in{opacity:1;transform:none;
+  transition:opacity .6s cubic-bezier(.22,1,.36,1),transform .6s cubic-bezier(.22,1,.36,1)}
+/* KPI tiles get a springier individual reveal */
+.ohub .kpis .kpi{animation:oh-pop .55s cubic-bezier(.34,1.56,.64,1) both}
+.ohub .kpis .kpi:nth-child(2){animation-delay:.07s}
+.ohub .kpis .kpi:nth-child(3){animation-delay:.14s}
+.ohub .kpis .kpi:nth-child(4){animation-delay:.21s}
+/* tab switch: the newly shown pane re-rises (display:none→block replays it) */
+.ohub .oh-pane{animation:oh-rise .38s cubic-bezier(.22,1,.36,1) both}
+/* collapsible staff group slides open */
+.ohub .actcol.open > .card{animation:oh-rise-sm .28s ease both}
+/* list rows + chat bubbles ease in */
+.ohub .appr,.ohub .lead,.ohub .staff-row,.ohub .ev,.ohub .trow{animation:oh-rise-sm .42s ease both}
+.ohub-chatpanel .gm{animation:oh-rise-sm .26s ease both}
 
 /* Tactile press feedback — cheap, always on. Tapping anything springs slightly. */
 .ohub .card,.ohub .kpi,.ohub .appr,.ohub .lead,.ohub .stask,.ohub .staff-row,.ohub .actcol-h,

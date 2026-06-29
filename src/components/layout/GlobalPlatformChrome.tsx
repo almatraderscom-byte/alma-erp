@@ -1,6 +1,7 @@
 'use client'
 
 import { DeveloperWatermark } from '@/components/layout/DeveloperWatermark'
+import { ForcedUpdateGate } from '@/components/layout/ForcedUpdateGate'
 import { PlatformDiagnostics } from '@/components/layout/PlatformDiagnostics'
 
 /**
@@ -12,6 +13,7 @@ export function GlobalPlatformChrome() {
     <>
       <DeveloperWatermark />
       <PlatformDiagnostics />
+      <ForcedUpdateGate />
     </>
   )
 }
