@@ -64,6 +64,10 @@
     {
       "path": "/api/assistant/internal/geo-monitor",
       "schedule": "*/10 3-14 * * *"
+    },
+    {
+      "path": "/api/assistant/internal/heartbeat-brain",
+      "schedule": "0 4,7,10,13 * * *"
     }
   ],
   "headers": [

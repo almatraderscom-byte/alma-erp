@@ -45,6 +45,7 @@ import { SIMULATE_TOOLS } from './simulate-tools'
 import { WORK_TODO_TOOLS } from './work-todo-tools'
 import { ORCHESTRATOR_TOOLS } from './orchestrator-tools'
 import { AUTONOMY_TOOLS } from './autonomy-tools'
+import { HEARTBEAT_TOOLS } from './heartbeat-tools'
 import { BILLS_TOOLS } from './bills-tools'
 import { IMPORTANT_DATE_TOOLS } from './important-dates-tools'
 import { PERSONAL_BRIEFING_TOOLS } from './personal-briefing-tools'
@@ -425,6 +426,7 @@ export const TRADING_TOOLS: AgentTool[] = [
   ...WORK_TODO_TOOLS,
   ...ORCHESTRATOR_TOOLS,
   ...AUTONOMY_TOOLS,
+  ...HEARTBEAT_TOOLS,
   ...CS_AUTONOMY_TOOLS,
   ...ORDER_AUTONOMY_TOOLS,
   ...FINANCE_AUTONOMY_TOOLS,
@@ -479,6 +481,7 @@ export const TOOLS: AgentTool[] = [
   ...WORK_TODO_TOOLS,
   ...ORCHESTRATOR_TOOLS,
   ...AUTONOMY_TOOLS,
+  ...HEARTBEAT_TOOLS,
   ...CS_AUTONOMY_TOOLS,
   ...ORDER_AUTONOMY_TOOLS,
   ...FINANCE_AUTONOMY_TOOLS,
