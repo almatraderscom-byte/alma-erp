@@ -671,7 +671,7 @@ function ActiveStaffGroup({
   img: string | null
   busy: boolean
   defaultOpen: boolean
-  onSetDue: (taskId: string, dueAt: string) => void
+  onSetDue: (taskId: string, dueAt: string | null) => Promise<boolean>
 }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
