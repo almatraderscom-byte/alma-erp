@@ -742,16 +742,14 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 /* Motion is UNCONDITIONAL by owner request (his device's Reduce-Motion was
    suppressing it). Pure transform/opacity, all self-completing (never leaves
    content hidden), so it can't blank the screen. */
-/* entrance: the page block fades while its sections rise in sequence */
 .ohub .perspective.show{animation:oh-fade .3s ease}
-.ohub .perspective.show > *{animation:oh-rise .6s cubic-bezier(.22,1,.36,1) both}
-.ohub .perspective.show > *:nth-child(1){animation-delay:.04s}
-.ohub .perspective.show > *:nth-child(2){animation-delay:.10s}
-.ohub .perspective.show > *:nth-child(3){animation-delay:.16s}
-.ohub .perspective.show > *:nth-child(4){animation-delay:.22s}
-.ohub .perspective.show > *:nth-child(5){animation-delay:.28s}
-.ohub .perspective.show > *:nth-child(6){animation-delay:.34s}
-.ohub .perspective.show > *:nth-child(n+7){animation-delay:.40s}
+/* SCROLL-TRIGGERED REVEAL (driven by IntersectionObserver in OfficeShell):
+   each section starts low+faded and eases up as it scrolls into view — the
+   noticeable "premium" motion. JS only ever hides BELOW-fold elements and has a
+   hard fallback that reveals everything, so nothing can stay invisible. */
+.ohub .oh-reveal{opacity:0;transform:translateY(26px)}
+.ohub .oh-reveal.in{opacity:1;transform:none;
+  transition:opacity .6s cubic-bezier(.22,1,.36,1),transform .6s cubic-bezier(.22,1,.36,1)}
 /* KPI tiles get a springier individual reveal */
 .ohub .kpis .kpi{animation:oh-pop .55s cubic-bezier(.34,1.56,.64,1) both}
 .ohub .kpis .kpi:nth-child(2){animation-delay:.07s}
