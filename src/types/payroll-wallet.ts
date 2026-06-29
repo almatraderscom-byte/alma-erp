@@ -17,6 +17,9 @@ export type WalletSummary = {
   totalWithdrawals: number
   totalPenalties: number
   totalAdjustments: number
+  totalAdvanceDisbursed: number
+  totalAdvanceRecovered: number
+  outstandingAdvance: number
   currentBalance: number
   companyLiability: number
   availableWithdrawable: number
@@ -89,7 +92,10 @@ export type WalletSummaryResponse = {
 export type EmployeeWalletResponse = {
   employeeId: string
   businessId: string
+  user?: { id: string; profileImageUrl: string | null; updatedAt: string | null } | null
   summary: WalletSummary
+  /** True if the staff already dismissed today's outstanding-advance notice (Asia/Dhaka day). */
+  advanceNoticeAckedToday?: boolean
   entries: WalletEntryDto[]
   requests: WalletRequestDto[]
 }

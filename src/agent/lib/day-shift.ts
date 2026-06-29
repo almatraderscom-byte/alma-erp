@@ -542,6 +542,33 @@ export async function startDayShift(): Promise<{ ok: boolean; conversationId?: s
       )
     }
 
+    // Feature C — morning DND flush. Anything HELD overnight (routine pings that
+    // were queued so the owner could sleep) is now delivered as ONE consolidated
+    // digest, since it's daytime again. Best-effort; never blocks the shift start.
+    try {
+      const { flushQuietHoursQueue } = await import('@/agent/lib/quiet-hours')
+      const { flushed } = await flushQuietHoursQueue()
+      if (flushed > 0) {
+        await appendShiftNarrative(conversationId, `🌙 রাতে জমা রাখা ${flushed}টি আপডেট সকালের brief-এ পাঠালাম।`)
+      }
+    } catch (err) {
+      console.warn('[day-shift] quiet-hours morning flush failed:', err instanceof Error ? err.message : err)
+    }
+
+    // Feature D — weekly staff report-card. On Monday morning (Dhaka) deliver ONE
+    // consolidated card for the week that just closed: team totals, the standout,
+    // the biggest improver, per-staff coaching, and who needs a word. Idempotent
+    // (KV-deduped per week); silently skips other days and zero-activity weeks.
+    try {
+      const { runWeeklyReportCardSend } = await import('@/agent/lib/weekly-report-card')
+      const r = await runWeeklyReportCardSend()
+      if (r.sent) {
+        await appendShiftNarrative(conversationId, `📊 সাপ্তাহিক স্টাফ রিপোর্ট-কার্ড (${r.staffCount ?? 0} জন) পাঠালাম।`)
+      }
+    } catch (err) {
+      console.warn('[day-shift] weekly report-card send failed:', err instanceof Error ? err.message : err)
+    }
+
     // Point 2 — if yesterday's main office work (staff dispatch) didn't happen, ask the
     // reason first. Owner's reply (captured in core.ts) is saved + answered with a suggestion.
     try {
@@ -627,6 +654,17 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
     await runPendingFollowupTick()
   } catch (err) {
     console.warn('[day-shift] pending followup tick failed:', err instanceof Error ? err.message : err)
+  }
+
+  // Feature B — owner-silence escalation ladder. On top of the gentle Telegram nudge
+  // above, step UP the channel (loud ntfy-critical → call-worthy alert) the longer a
+  // critical approval stays unacknowledged, so nothing important quietly gets lost.
+  // Idempotent (escalates once per rung per pending-set); only notifies, never acts.
+  try {
+    const { runOwnerSilenceLadder } = await import('@/agent/lib/owner-silence-ladder')
+    await runOwnerSilenceLadder()
+  } catch (err) {
+    console.warn('[day-shift] owner-silence ladder failed:', err instanceof Error ? err.message : err)
   }
 
   let state = await loadDayShiftState(date)

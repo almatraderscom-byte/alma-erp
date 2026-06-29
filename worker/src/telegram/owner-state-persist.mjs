@@ -1,9 +1,14 @@
 /**
  * Persist owner Telegram session to agent_kv_settings (survives PM2 restart).
+ *
+ * Telegram-only key, separate from the web/app pointer (`owner_web_state`). The
+ * two channels never share a conversation: a Telegram message stays on the
+ * Telegram daily session and never bleeds into the web/app thread, and vice
+ * versa. (Old shared key `owner_telegram_state` is retired.)
  */
 import { ownerState } from './owner-state.mjs'
 
-const KV_KEY = 'owner_telegram_state'
+const KV_KEY = 'owner_telegram_session'
 
 export async function loadOwnerStateFromKv(supabase) {
   if (!supabase) return

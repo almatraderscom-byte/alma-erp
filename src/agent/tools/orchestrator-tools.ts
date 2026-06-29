@@ -385,4 +385,121 @@ const scan_business_signals: AgentTool = {
   },
 }
 
-export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan, scan_business_signals]
+const check_owner_silence: AgentTool = {
+  name: 'check_owner_silence',
+  description:
+    'Read-only: check the owner-silence escalation ladder RIGHT NOW. Shows every approval still ' +
+    'waiting on the owner, how long the oldest has been unacknowledged, and which rung of the ' +
+    'escalation ladder that puts us on (L0 normal reminder → L1 loud alert → L2 critical/call-worthy). ' +
+    'Use when the owner asks "কী কী আটকে আছে / কতক্ষণ ধরে / কোন কিছু হারিয়ে যাচ্ছে কিনা". Surfaces ' +
+    'the picture only — it never approves or escalates. Owner-facing, answer in Bangla.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {},
+    required: [],
+  },
+  handler: async () => {
+    try {
+      const { collectPendingItems } = await import('@/agent/lib/pending-followup')
+      const { computeSilenceEscalation } = await import('@/agent/lib/owner-silence-ladder')
+      const items = await collectPendingItems()
+      const esc = computeSilenceEscalation(items, Date.now())
+      return {
+        success: true,
+        data: {
+          previewOnly: true,
+          level: esc.level,
+          levelLabel: esc.levelLabel,
+          oldestAgeMin: esc.oldestAgeMin,
+          hasCritical: esc.hasCritical,
+          callWarranted: esc.callWarranted,
+          pending: items.map((i) => ({ label: i.label, ageMin: Math.max(0, Math.floor((Date.now() - i.createdAt.getTime()) / 60_000)) })),
+          message: items.length
+            ? `${items.length}টি বিষয় আপনার সিদ্ধান্তের অপেক্ষায় — সবচেয়ে পুরোনোটা ~${esc.oldestAgeMin} মিনিট ধরে। ladder এখন ${esc.levelLabel}।`
+            : 'এই মুহূর্তে আপনার সিদ্ধান্তের অপেক্ষায় কিছু আটকে নেই — সব পরিষ্কার।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: `Silence check failed: ${err instanceof Error ? err.message : String(err)}` }
+    }
+  },
+}
+
+const check_quiet_hours: AgentTool = {
+  name: 'check_quiet_hours',
+  description:
+    'Read-only: check the quiet-hours / DND (Do-Not-Disturb) state RIGHT NOW. Shows whether DND is ' +
+    'enabled, the night window (Dhaka hours), whether we are inside quiet hours this moment, and how ' +
+    'many routine pings are HELD in the queue waiting for the morning digest. Use when the owner asks ' +
+    '"রাতে কি বিরক্ত করবে / DND চালু আছে কিনা / রাতে কী জমেছে / সকালে কী পাব". During quiet hours routine ' +
+    'tier-1/2 pings are held; tier-3 emergencies and salah reminders still pierce DND. Surfaces the ' +
+    'picture only — it never sends or flushes. Owner-facing, answer in Bangla.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {},
+    required: [],
+  },
+  handler: async () => {
+    try {
+      const { quietHoursStatus } = await import('@/agent/lib/quiet-hours')
+      const s = await quietHoursStatus()
+      const message = !s.enabled
+        ? 'DND বন্ধ — এই মুহূর্তে সব notification সরাসরি যাবে, রাতেও।'
+        : s.isQuietNow
+          ? `এখন quiet hours (${s.windowDhaka}) চলছে — routine ping জমা রাখছি (${s.heldCount}টি), সকালে এক brief-এ পাবেন। জরুরি (tier-3) ও সালাহ reminder এখনই যাবে।`
+          : `এখন quiet hours-এর বাইরে — সব notification সরাসরি যাচ্ছে। রাতের window: ${s.windowDhaka}। জমা আছে ${s.heldCount}টি।`
+      return {
+        success: true,
+        data: {
+          previewOnly: true,
+          enabled: s.enabled,
+          windowDhaka: s.windowDhaka,
+          isQuietNow: s.isQuietNow,
+          heldCount: s.heldCount,
+          heldPreview: s.heldPreview,
+          message,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: `Quiet-hours check failed: ${err instanceof Error ? err.message : String(err)}` }
+    }
+  },
+}
+
+const get_action_cards: AgentTool = {
+  name: 'get_action_cards',
+  description:
+    'Read-only: turn the current business insights into owner-facing ONE-TAP ACTION CARDS. Each card pairs ' +
+    'a problem (low stock, stuck/piled-up pending orders, high cancel/return) with ONE recommended action ' +
+    'and the exact step the agent would run if you say "do it". Use when the owner asks "আজ কী করা দরকার / ' +
+    'এক্ষুনি কী অ্যাকশন নেব / suggestion গুলো action-এ নাও / কোনটা আগে করব". High-urgency cards come first. ' +
+    'This only PREVIEWS the cards — nothing executes until the owner picks one (e.g. "১ নম্বরটা করো"). ' +
+    'Owner-facing, answer in Bangla.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      limit: { type: 'number', description: 'Max cards to return (default 8)' },
+    },
+    required: [],
+  },
+  handler: async (input) => {
+    try {
+      const { getActionCards } = await import('@/agent/lib/action-cards')
+      const limit = typeof input.limit === 'number' && input.limit > 0 ? Math.floor(input.limit) : undefined
+      const res = await getActionCards({ limit })
+      return {
+        success: true,
+        data: {
+          previewOnly: true,
+          count: res.cards.length,
+          cards: res.cards,
+          message: res.summaryBangla,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: `Action-cards build failed: ${err instanceof Error ? err.message : String(err)}` }
+    }
+  },
+}
+
+export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan, scan_business_signals, check_owner_silence, check_quiet_hours, get_action_cards]

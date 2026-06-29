@@ -10,7 +10,7 @@ import { assertModelOverrideNotAllowed } from '@/agent/lib/models/guard'
 import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, isSelectableModelId, isKnownModelId } from '@/agent/lib/models/registry'
 import { describeAttachments, hasVisualAttachment, buildVisionNoteBlock } from '@/agent/lib/attachment-vision'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
-import { getOwnerSessionPointer, setOwnerSessionConversation } from '@/agent/lib/owner-session'
+import { setOwnerSessionConversation } from '@/agent/lib/owner-session'
 import { embedMessageInBackground } from '@/agent/lib/message-recall'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
@@ -217,21 +217,15 @@ export async function POST(req: NextRequest) {
       convSource = conv.source ?? null
       convProjectId = conv.projectId ?? null
       if (isInternalCall && conv.source !== 'telegram') {
-        // Unified owner session: Telegram (an internal call) may write to the
-        // owner's shared session even when that conversation was created in the
-        // web app (source='web'), so both surfaces share ONE thread. It's still
-        // restricted to the owner's own active pointer — not any conversation.
-        const pointer = await getOwnerSessionPointer()
-        const isUnifiedOwnerConv =
-          conversationId === pointer.conversationId
-          || conversationId === pointer.personalConversationId
-        // A2: the VPS worker also runs owner web turns via the long-agent-task
-        // queue — allowed when it presents the turnId the enqueue route created
-        // (proves the owner authorized this specific turn).
+        // Channel isolation: a Telegram message must NEVER write into a web/app
+        // conversation — Telegram has its own separate daily session. The only
+        // internal call allowed to touch a non-telegram conversation is the VPS
+        // worker running an owner WEB turn via the long-agent-task queue, which
+        // proves authorization by presenting the turnId the enqueue route created.
         const workerTurnOk =
           typeof body.turnId === 'string'
           && (await isRunningTurnForConversation(body.turnId, conversationId))
-        if (!isUnifiedOwnerConv && !workerTurnOk) {
+        if (!workerTurnOk) {
           return Response.json({ error: 'forbidden_conversation' }, { status: 403 })
         }
       }
@@ -353,16 +347,20 @@ export async function POST(req: NextRequest) {
     }
     await touchConversationActivity(conversationId)
 
-    // Unified owner session: keep the shared pointer (read by the web app on load
-    // AND by the Telegram worker) aimed at the conversation the owner is actively
-    // using, so both surfaces stay on ONE thread. Personal chats update the
-    // personal pointer; main business chats (no project, web/telegram source)
-    // update the business pointer. Project/day-shift threads don't move it.
+    // Web/app session pointer: keep the owner_web_state pointer (read by the web
+    // app on load) aimed at the conversation the owner is actively using on
+    // web/app, so a refresh or surface switch resumes the same thread. Telegram is
+    // intentionally excluded — its daily session is owned by the worker under a
+    // separate key, so the two channels never share a thread. Personal chats
+    // update the personal pointer; main business chats (no project) update the
+    // business pointer. Project/day-shift/Telegram threads don't move it.
     try {
-      if (personalMode) {
-        await setOwnerSessionConversation({ conversationId, personalMode: true })
-      } else if (convProjectId == null && (convSource === 'web' || convSource === 'telegram')) {
-        await setOwnerSessionConversation({ conversationId, personalMode: false })
+      if (convSource === 'web') {
+        if (personalMode) {
+          await setOwnerSessionConversation({ conversationId, personalMode: true })
+        } else if (convProjectId == null) {
+          await setOwnerSessionConversation({ conversationId, personalMode: false })
+        }
       }
     } catch (err) {
       console.warn('[chat] owner-session pointer update failed:', err instanceof Error ? err.message : err)
