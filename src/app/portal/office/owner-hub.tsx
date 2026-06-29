@@ -148,6 +148,7 @@ export default function OwnerHub({
   // (the tab bar + the per-pane hiding are CSS-gated to phones), so this state is
   // a no-op there and the existing layout is untouched.
   const [tab, setTab] = useState<'work' | 'team'>('work')
+  const [trackOpen, setTrackOpen] = useState(false)
 
   const run = useCallback(
     async (key: string, body: ActionBody) => {
@@ -313,13 +314,14 @@ export default function OwnerHub({
         </div>
       </div>
 
-      {/* update tracking */}
+      {/* update tracking — show the 3 most recent; the rest collapse behind a
+          toggle so this alert block can't dominate the page. */}
       {overdueUpdates.length > 0 && (
         <div className="track">
           <div className="track-h">
             ⚠️ আপডেট ট্র্যাকিং — সাড়া পাওয়া যায়নি <span className="c">{bn(overdueUpdates.length)} জন</span>
           </div>
-          {overdueUpdates.map((u) => (
+          {(trackOpen ? overdueUpdates : overdueUpdates.slice(0, 3)).map((u) => (
             <OverdueRow
               key={u.id}
               u={u}
@@ -327,6 +329,11 @@ export default function OwnerHub({
               onRemind={() => run(`remind-${u.id}`, { action: 'request_update', taskId: u.id, note: u.note ?? undefined })}
             />
           ))}
+          {overdueUpdates.length > 3 && (
+            <button className="track-more" onClick={() => setTrackOpen((v) => !v)}>
+              {trackOpen ? '▲ গুটিয়ে নিন' : `▼ আরও ${bn(overdueUpdates.length - 3)} জন দেখুন`}
+            </button>
+          )}
         </div>
       )}
 
