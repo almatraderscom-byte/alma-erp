@@ -41,6 +41,7 @@ import { VISION_TOOLS } from './vision-tools'
 import { SIMULATE_TOOLS } from './simulate-tools'
 import { WORK_TODO_TOOLS } from './work-todo-tools'
 import { ORCHESTRATOR_TOOLS } from './orchestrator-tools'
+import { AUTONOMY_TOOLS } from './autonomy-tools'
 import { BILLS_TOOLS } from './bills-tools'
 import { IMPORTANT_DATE_TOOLS } from './important-dates-tools'
 import { PERSONAL_BRIEFING_TOOLS } from './personal-briefing-tools'
@@ -420,6 +421,7 @@ export const TRADING_TOOLS: AgentTool[] = [
   ...PLAYBOOK_TOOLS,
   ...WORK_TODO_TOOLS,
   ...ORCHESTRATOR_TOOLS,
+  ...AUTONOMY_TOOLS,
   ...BILLS_TOOLS,
   ...IMPORTANT_DATE_TOOLS,
   ...PERSONAL_BRIEFING_TOOLS,
@@ -470,6 +472,7 @@ export const TOOLS: AgentTool[] = [
   ...BRAND_TOOLS,
   ...WORK_TODO_TOOLS,
   ...ORCHESTRATOR_TOOLS,
+  ...AUTONOMY_TOOLS,
   ...BILLS_TOOLS,
   ...IMPORTANT_DATE_TOOLS,
   ...PERSONAL_BRIEFING_TOOLS,
