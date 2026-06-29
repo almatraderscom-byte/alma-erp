@@ -5,15 +5,14 @@ import { isCapacitorNative } from '@/lib/app-update'
 
 /** Inside the Capacitor WebView a plain `<a download>` does nothing — the
  *  Android WebView has no DownloadListener, so the APK response is silently
- *  dropped. Hand the absolute URL to the SYSTEM browser instead (Capacitor
- *  routes the '_system' target there); Chrome's download manager fetches the
- *  APK and the user taps it to install. On web/desktop the normal anchor
- *  download is kept. */
-function toAbsoluteApkUrl(apkUrl: string): string {
-  if (/^https?:\/\//i.test(apkUrl)) return apkUrl
-  if (typeof window === 'undefined') return apkUrl
-  return `${window.location.origin}${apkUrl.startsWith('/') ? '' : '/'}${apkUrl}`
-}
+ *  dropped. Hand the URL to the SYSTEM browser via window.open('_blank') so
+ *  Chrome's download manager fetches the APK. CRITICAL: the URL must be on a
+ *  host that is NOT in Capacitor `allowNavigation` (alma-erp-six.vercel.app),
+ *  otherwise window.open keeps it inside the WebView and nothing downloads. We
+ *  serve an off-domain copy from Supabase public storage for exactly this. On
+ *  web/desktop the normal same-origin anchor download is kept. */
+const NATIVE_APK_URL =
+  'https://nrkuzcorcpcwrkckbeoq.supabase.co/storage/v1/object/public/app-releases/alma-erp.apk'
 
 const SAMSUNG_PUSH_STEPS = [
   'Settings → Apps → Alma ERP → Battery → Unrestricted',
@@ -56,12 +55,11 @@ export function DownloadAppClient({ apkUrl }: Props) {
               // Native app: WebView can't download — open APK in system browser.
               if (isCapacitorNative()) {
                 e.preventDefault()
-                // Capacitor routes '_blank' to onCreateWindow → ACTION_VIEW
-                // intent → system browser, whose download manager fetches the
-                // APK (same proven path as PdfPreviewModal). The Android
-                // WebView itself has no DownloadListener, so a plain anchor
-                // download silently fails inside the app.
-                window.open(toAbsoluteApkUrl(apkUrl), '_blank', 'noopener,noreferrer')
+                // Off-domain URL → Capacitor punts window.open('_blank') to the
+                // system browser (ACTION_VIEW intent), whose download manager
+                // fetches the APK. A same-domain URL would stay in the WebView
+                // and silently fail.
+                window.open(NATIVE_APK_URL, '_blank', 'noopener,noreferrer')
               }
             }}
           >

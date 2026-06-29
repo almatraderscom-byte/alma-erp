@@ -269,11 +269,30 @@ const recommend_ad_actions: AgentTool = {
         batchGateId = batch?.gateId ?? null
       }
 
+      // NOTE: analyzeAdCampaigns() only ever returns ACTIVE (effective_status === 'ACTIVE')
+      // campaigns — paused/archived ones are filtered out upstream in
+      // fetchActiveCampaignMetrics(). So metrics.length === count of currently LIVE
+      // campaigns. The agent must never label these as paused.
+      const activeCampaignCount = metrics.length
+      const activeNames = metrics.map((m) => m.name)
+
+      let message: string
+      if (activeCampaignCount === 0) {
+        message =
+          'এই অ্যাড অ্যাকাউন্টে এই মুহূর্তে কোনো ACTIVE ক্যাম্পেইন চলছে না (সব paused/archived)।'
+      } else if (actionable.length > 0) {
+        message = `${activeCampaignCount}টি ACTIVE ক্যাম্পেইন চলছে — ${actionable.length}টিতে actionable rec; owner approve ছাড়া budget/spend change হবে না।`
+      } else {
+        message = `${activeCampaignCount}টি ACTIVE ক্যাম্পেইন চলছে, সবগুলো এখন hold — thin data বা middle performance; noise-এ action নয়।`
+      }
+
       return {
         success: true,
         data: {
           summary,
-          campaignCount: metrics.length,
+          campaignCount: activeCampaignCount,
+          activeCampaignCount,
+          activeCampaignNames: activeNames,
           actionableCount: actionable.length,
           recommendations: recommendations.map((r) => ({
             campaignId: r.campaignId,
@@ -285,10 +304,7 @@ const recommend_ad_actions: AgentTool = {
             metrics: r.metrics,
           })),
           batchPendingActionId: batchGateId,
-          message:
-            actionable.length > 0
-              ? `${actionable.length}টি actionable rec — owner approve ছাড়া budget/spend change হবে না।`
-              : 'সব ক্যাম্পেইন hold — thin data বা middle performance; noise-এ action নয়।',
+          message,
         },
       }
     } catch (err) {
