@@ -453,6 +453,12 @@ model AttendanceRecord {
   longitude                      Decimal?                       @db.Decimal(10, 7)
   locationAccuracyM              Int?
   distanceFromOfficeM            Int?
+  /// GPS captured at check-OUT (separate from check-in). Audit trail for the
+  /// checkout geofence gate so a fine appeal can verify where the staff was.
+  checkOutLatitude               Decimal?                       @db.Decimal(10, 7)
+  checkOutLongitude              Decimal?                       @db.Decimal(10, 7)
+  checkOutLocationAccuracyM      Int?
+  checkOutDistanceFromOfficeM    Int?
   trustStatus                    AttendanceTrustStatus          @default(TRUSTED)
   suspiciousReasons              String[]
   verificationRequired           Boolean                        @default(false)

@@ -564,10 +564,14 @@ function AttendanceCard({
   async function postCheckOut() {
     setBusy('out')
     try {
+      // Capture GPS so the server can enforce the office geofence on checkout
+      // (same as check-in). Failures fall back to null location; the server
+      // decides whether that blocks based on the active rules.
+      const metadata = await attendanceMetadata().catch(() => undefined)
       const result = await safeFetchJsonWithToast('/api/attendance/check-out', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ business_id: businessId }),
+        body: JSON.stringify({ business_id: businessId, metadata }),
       })
       if (!result.ok) throw new Error(result.error.message)
       toast.success('Work ended')
