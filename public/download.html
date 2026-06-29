@@ -87,12 +87,19 @@
   <script>
     // Inside the Capacitor app the page runs in a WebView that has no
     // DownloadListener, so a plain `<a download>` silently does nothing. Detect
-    // native and hand the absolute APK URL to the SYSTEM browser via
-    // window.open(_blank) — Capacitor routes that to an ACTION_VIEW intent, and
-    // the system browser's download manager fetches the APK for install. In a
-    // normal browser the native anchor download is left untouched.
+    // native and hand the APK URL to the SYSTEM browser via window.open(_blank)
+    // — Capacitor routes that to an ACTION_VIEW intent, and the system browser's
+    // download manager fetches the APK for install.
+    //
+    // CRITICAL: the APK URL here MUST be on a host that is NOT in the Capacitor
+    // `allowNavigation` list (capacitor.config.ts → alma-erp-six.vercel.app).
+    // window.open of an allow-listed (same-domain) URL is kept INSIDE the
+    // WebView, which cannot download it, so the page just sits there. We host a
+    // copy on Supabase public storage (off-domain) precisely so Capacitor punts
+    // it to the external browser. In a normal browser the native anchor download
+    // is left untouched.
     (function () {
-      var APK = location.origin + '/releases/alma-erp.apk';
+      var APK = 'https://nrkuzcorcpcwrkckbeoq.supabase.co/storage/v1/object/public/app-releases/alma-erp.apk';
       function isNativeApp() {
         try {
           return !!(window.Capacitor &&
