@@ -1,11 +1,18 @@
 /**
  * Phase 5 (autonomous heartbeat) — owner-tunable heartbeat behaviour (KV, no redeploy).
  *
- * KV key `heartbeat` holds JSON `{ enabled?, dailyHeadWakeCap?, officeHoursOnly? }`.
+ * KV key `heartbeat` holds JSON `{ enabled?, autoArm?, dailyHeadWakeCap?, officeHoursOnly? }`.
  *
  *   • enabled (DEFAULT false) — master toggle for the autonomous head heartbeat.
  *     OFF means the cron is a no-op: the head never self-wakes. Opt-in by design,
  *     so the owner switches it on deliberately (it costs a little each wake).
+ *   • autoArm (DEFAULT true) — the agent SELF-MANAGES the master toggle. When the
+ *     heartbeat is OFF but autoArm is on, each tick takes the cheap pulse and, if
+ *     real work is pending (approvals / escalations / open to-dos), the agent turns
+ *     ITSELF on and attends to it — exactly like Claude scheduling its own wake-up
+ *     when work remains. Nothing pending ⇒ it keeps resting (near-free). The owner
+ *     pressing "disable" clears this too (a manual stop is a real stop), so the
+ *     agent won't fight an explicit off.
  *   • dailyHeadWakeCap (DEFAULT 6) — hard ceiling on cost-bearing head wakes per
  *     Dhaka-day. Past the cap the tick still records a cheap "pulse" entry but
  *     won't wake the head. Keeps a noisy day from running up the bill.
@@ -21,12 +28,14 @@ export const HEARTBEAT_KV_KEY = 'heartbeat'
 
 export interface HeartbeatSettings {
   enabled: boolean
+  autoArm: boolean
   dailyHeadWakeCap: number
   officeHoursOnly: boolean
 }
 
 export const HEARTBEAT_DEFAULTS: HeartbeatSettings = {
   enabled: false,
+  autoArm: true,
   dailyHeadWakeCap: 6,
   officeHoursOnly: true,
 }
@@ -43,6 +52,7 @@ export async function getHeartbeatSettings(): Promise<HeartbeatSettings> {
     const parsed = JSON.parse(row.value) as Partial<HeartbeatSettings>
     return {
       enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : HEARTBEAT_DEFAULTS.enabled,
+      autoArm: typeof parsed.autoArm === 'boolean' ? parsed.autoArm : HEARTBEAT_DEFAULTS.autoArm,
       dailyHeadWakeCap: clampCap(parsed.dailyHeadWakeCap),
       officeHoursOnly:
         typeof parsed.officeHoursOnly === 'boolean' ? parsed.officeHoursOnly : HEARTBEAT_DEFAULTS.officeHoursOnly,
@@ -57,6 +67,7 @@ export async function setHeartbeatSettings(patch: Partial<HeartbeatSettings>): P
   const current = await getHeartbeatSettings()
   const next: HeartbeatSettings = {
     enabled: typeof patch.enabled === 'boolean' ? patch.enabled : current.enabled,
+    autoArm: typeof patch.autoArm === 'boolean' ? patch.autoArm : current.autoArm,
     dailyHeadWakeCap: patch.dailyHeadWakeCap != null ? clampCap(patch.dailyHeadWakeCap) : current.dailyHeadWakeCap,
     officeHoursOnly: typeof patch.officeHoursOnly === 'boolean' ? patch.officeHoursOnly : current.officeHoursOnly,
   }

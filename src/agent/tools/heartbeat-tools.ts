@@ -51,6 +51,9 @@ async function statusMessage(): Promise<string> {
   lines.push('💓 *এজেন্ট হার্টবিট*')
   lines.push('')
   lines.push(`• অবস্থা: ${settings.enabled ? '🟢 চালু' : '🔴 বন্ধ'}`)
+  lines.push(
+    `• নিজে থেকে চালু (auto-arm): ${settings.autoArm ? 'হ্যাঁ — কাজ বাকি থাকলে নিজেই জেগে ওঠে' : 'না'}`,
+  )
   lines.push(`• অফিস-টাইমে সীমাবদ্ধ: ${settings.officeHoursOnly ? 'হ্যাঁ' : 'না'}`)
   lines.push(`• দৈনিক head-জাগার সীমা: ${bn(settings.dailyHeadWakeCap)} (আজ জেগেছে ${bn(wakes)} বার)`)
   lines.push('')
@@ -90,7 +93,8 @@ const heartbeat_control: AgentTool = {
       const action = typeof input.action === 'string' ? input.action : 'status'
 
       if (action === 'enable' || action === 'disable') {
-        await setHeartbeatSettings({ enabled: action === 'enable' })
+        // Manual on = on + self-managing; manual off = a real stop (clear autoArm too).
+        await setHeartbeatSettings({ enabled: action === 'enable', autoArm: action === 'enable' })
         const msg = await statusMessage()
         return {
           success: true,
