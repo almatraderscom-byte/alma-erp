@@ -362,25 +362,37 @@ export function Spinner({ size = 'sm' }: { size?: 'sm' | 'md' | 'lg' }) {
 }
 
 // ── Empty State ───────────────────────────────────────────────────────────
+/** Crafted "empty inbox" line illustration — replaces the abstract glyphs that
+ *  read like missing icons. currentColor lets the accent chip tint it. */
+function EmptyIllustration() {
+  return (
+    <svg viewBox="0 0 48 48" fill="none" aria-hidden className="h-8 w-8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 19 L40 19 L40 36 Q40 39 37 39 L12 39 Q9 39 9 36 Z" stroke="currentColor" strokeWidth="2" opacity="0.75" />
+      <path d="M9 19 L14 10 Q15 8.5 17 8.5 L32 8.5 Q34 8.5 35 10 L40 19" stroke="currentColor" strokeWidth="2" opacity="0.4" />
+      <path d="M9 19 L18 19 L21 24 L27 24 L30 19 L40 19" stroke="currentColor" strokeWidth="2" opacity="0.75" />
+    </svg>
+  )
+}
+
 export function Empty({
-  icon,
   title,
   desc,
   action,
 }: {
-  icon: string
+  /** Optional legacy glyph — ignored in favour of the crafted illustration; kept for back-compat. */
+  icon?: string
   title: string
   desc?: string
   action?: React.ReactNode
 }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
-      {/* Soft accent-tinted chip so the glyph reads as intentional, not a missing icon. */}
+      {/* Crafted illustration in a soft accent-tinted chip — premium, consistent. */}
       <span
-        className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border text-3xl text-muted-hi/80 shadow-card"
+        className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border text-muted-hi/80 shadow-card"
         style={{ background: 'rgb(var(--c-accent) / 0.06)', borderColor: 'rgb(var(--c-accent) / 0.14)' }}
       >
-        {icon}
+        <EmptyIllustration />
       </span>
       <p className="mb-1 text-sm font-semibold text-muted-hi">{title}</p>
       {desc && <p className="text-[11px] text-muted max-w-[34ch]">{desc}</p>}
