@@ -111,6 +111,18 @@ export async function POST(
 
   const payload = action.payload as Record<string, unknown>
 
+  // Office-absence ❌ না: owner did NOT send anyone out → ask WHICH staffer is
+  // missing so the chosen one gets the camera frame + a nudge.
+  if (action.type === 'office_absence_confirm') {
+    const p = payload as { photoUrl?: string; deviceId?: string }
+    const { sendAbsenceStaffPicker } = await import('@/agent/lib/office-absence')
+    const res = await sendAbsenceStaffPicker({
+      photoUrl: String(p.photoUrl ?? ''),
+      deviceId: String(p.deviceId ?? ''),
+    })
+    return Response.json({ success: true, status: 'rejected', askedWhichStaff: res.ok })
+  }
+
   // Delegation rejected → the owner wants Sonnet to answer the task itself.
   if (action.type === 'delegation') {
     const task = String(payload.task ?? '').trim()

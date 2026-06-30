@@ -12,7 +12,16 @@ import { PENDING_ACTION_EXPIRY_MS } from '@/agent/lib/constants'
  * silently expiring cards the owner approved instantly (HTTP 410), so nothing got
  * dispatched.
  */
-const LIFECYCLE_BOUND_ACTION_TYPES = new Set<string>(['dispatch_staff_tasks'])
+const LIFECYCLE_BOUND_ACTION_TYPES = new Set<string>([
+  'dispatch_staff_tasks',
+  // Office-absence cards: the owner may answer minutes-to-an-hour later (he's away
+  // from the office), and the follow-up option cards are retired by being tapped /
+  // superseded — not by the 30-min transient clock. Expiring them mid-flow would
+  // strand the "did you send staff out?" question with a 410.
+  'office_absence_confirm',
+  'office_absence_snooze',
+  'office_absence_nudge',
+])
 
 export function isLifecycleBoundAction(type?: string | null): boolean {
   return !!type && LIFECYCLE_BOUND_ACTION_TYPES.has(type)
