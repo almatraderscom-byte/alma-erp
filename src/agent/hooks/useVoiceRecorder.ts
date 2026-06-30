@@ -41,6 +41,13 @@ export function useVoiceRecorder(opts: {
   onError?: (msg: string) => void
   onRecordingStart?: () => void
   onRecordingStop?: () => void
+  /** Auto-stop when the speaker goes quiet (Siri-style). Opt-in (default false) so the
+   *  existing manual tap-to-stop callers are unchanged. */
+  autoStop?: boolean
+  /** Silence (ms) after speech before auto-stopping. Default 1400. */
+  silenceMs?: number
+  /** Hard cap (ms) on a single utterance. Default 20000. */
+  maxMs?: number
 }) {
   const [recording, setRecording] = useState(false)
   const [recordSecs, setRecordSecs] = useState(0)
@@ -48,17 +55,29 @@ export function useVoiceRecorder(opts: {
 
   const mrRef = useRef<MediaRecorder | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Voice-activity-detection (auto-stop) — Web Audio analyser on the same mic stream.
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const rafRef = useRef<number | null>(null)
+  const vadRef = useRef<{ hasSpoken: boolean; silenceStart: number; startedAt: number }>({
+    hasSpoken: false, silenceStart: 0, startedAt: 0,
+  })
   const callbacksRef = useRef(opts)
   useEffect(() => { callbacksRef.current = opts }, [opts])
 
+  const teardownVad = useCallback(() => {
+    if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
+    if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); audioCtxRef.current = null }
+  }, [])
+
   const cleanup = useCallback(() => {
+    teardownVad()
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
     mrRef.current?.stream?.getTracks().forEach(t => t.stop())
     mrRef.current = null
     setStream(null)
     setRecording(false)
     setRecordSecs(0)
-  }, [])
+  }, [teardownVad])
 
   const start = useCallback(async () => {
     if (mrRef.current) return
@@ -81,6 +100,7 @@ export function useVoiceRecorder(opts: {
       const chunks: Blob[] = []
       mr.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
       mr.onstop = async () => {
+        teardownVad()
         ms.getTracks().forEach(t => t.stop())
         // Release the recorder ref so the NEXT start() isn't blocked by the
         // `if (mrRef.current) return` guard. Without this, a voice attempt that
@@ -122,6 +142,58 @@ export function useVoiceRecorder(opts: {
       setRecordSecs(0)
       callbacksRef.current.onRecordingStart?.()
       timerRef.current = setInterval(() => setRecordSecs(s => s + 1), 1000)
+
+      // ── Siri-style auto-stop: listen to the mic level and stop once the speaker
+      // has spoken and then gone quiet for `silenceMs` (or hits the hard cap). ──
+      if (callbacksRef.current.autoStop === true) {
+        try {
+          const AC: typeof AudioContext =
+            window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+          if (AC) {
+            const ctx = new AC()
+            audioCtxRef.current = ctx
+            if (ctx.state === 'suspended') void ctx.resume().catch(() => {})
+            const source = ctx.createMediaStreamSource(ms)
+            const analyser = ctx.createAnalyser()
+            analyser.fftSize = 512
+            source.connect(analyser)
+            const buf = new Uint8Array(analyser.fftSize)
+            const SPEECH = 0.045   // RMS above this = clearly speaking
+            const SILENCE = 0.025  // RMS below this = quiet
+            const silenceMs = callbacksRef.current.silenceMs ?? 1400
+            const maxMs = callbacksRef.current.maxMs ?? 20000
+            vadRef.current = { hasSpoken: false, silenceStart: 0, startedAt: performance.now() }
+
+            const tick = () => {
+              if (!audioCtxRef.current || mrRef.current?.state !== 'recording') return
+              analyser.getByteTimeDomainData(buf)
+              let sum = 0
+              for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v }
+              const rms = Math.sqrt(sum / buf.length)
+              const now = performance.now()
+              const vad = vadRef.current
+
+              if (rms > SPEECH) { vad.hasSpoken = true; vad.silenceStart = 0 }
+              else if (rms < SILENCE && vad.hasSpoken) {
+                if (!vad.silenceStart) vad.silenceStart = now
+                else if (now - vad.silenceStart >= silenceMs) {
+                  if (mrRef.current?.state === 'recording') mrRef.current.stop()
+                  return
+                }
+              } else if (vad.hasSpoken) {
+                vad.silenceStart = 0 // in-between level → treat as still talking
+              }
+
+              if (now - vad.startedAt >= maxMs) {
+                if (mrRef.current?.state === 'recording') mrRef.current.stop()
+                return
+              }
+              rafRef.current = requestAnimationFrame(tick)
+            }
+            rafRef.current = requestAnimationFrame(tick)
+          }
+        } catch { /* VAD is a nicety — fall back to manual tap-to-stop */ }
+      }
     } catch (err) {
       const name = err instanceof DOMException ? err.name : ''
       if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {

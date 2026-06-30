@@ -215,6 +215,7 @@ export default function StaffAssistant() {
     onError: () => flashError('শুনতে পারিনি — আবার চেষ্টা করুন।'),
     onRecordingStart: () => { setStatus('listening'); playChime(true); voiceHaptic(true) },
     onRecordingStop: () => { setStatus((s) => (s === 'listening' ? 'thinking' : s)); playChime(false); voiceHaptic(false) },
+    autoStop: true, // Siri-style: stop on its own when you finish speaking
   })
 
   const listening = status === 'listening'
@@ -377,7 +378,7 @@ function StatusBanner({ status, reply }: { status: Status; reply: string | null 
             <motion.span key={i} className="w-[3px] rounded-full bg-danger" animate={{ height: [6, 14, 6] }} transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.1 }} />
           ))}
         </span>
-        শুনছি… থামাতে আবার 🎤
+        শুনছি… কথা শেষ হলে নিজেই থামবে
       </div>
     )
   }
