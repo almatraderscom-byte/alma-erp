@@ -85,12 +85,14 @@ export async function POST(req: NextRequest) {
     `তারা শুধু এই পেজগুলোতে যেতে পারে:\n${routeLines}\n\n` +
     `নিয়ম:\n` +
     `- কর্মী কোথাও যেতে চাইলে উপরের লিস্ট থেকে সঠিক href দাও।\n` +
-    `- কোনো কাজ/অ্যাকশন (delete, approve, টাকা, edit) এই ধাপে কোরো না — দরকার হলে সংশ্লিষ্ট পেজে পাঠাও।\n` +
+    `- "নতুন অর্ডার / অর্ডার নাও" চাইলে এবং /orders লিস্টে থাকলে: {"navigate":"/orders?new=1","say":"নতুন অর্ডার ফর্ম খুলছি"}\n` +
+    `- কিছু খুঁজতে চাইলে (কাস্টমার/অর্ডার/প্রোডাক্ট) সংশ্লিষ্ট পেজে ?q= দিয়ে পাঠাও — যেমন {"navigate":"/orders?q=রহিম","say":"খুঁজছি"} বা {"navigate":"/crm?q=017xxxxxxxx"} বা {"navigate":"/inventory?q=শাড়ি"} — কিন্তু শুধু যদি সেই পেজ লিস্টে থাকে।\n` +
+    `- টাকা / delete / approve / status-change এই ধাপে নিজে কোরো না — সংশ্লিষ্ট পেজে পাঠাও।\n` +
     `- সাধারণ প্রশ্ন হলে ১ লাইনে বাংলায় উত্তর দাও।\n` +
     `- উত্তর শুধু JSON, কোনো ব্যাখ্যা/markdown নয়। হয়:\n` +
     `{"navigate":"/orders","say":"অর্ডার পেজে নিয়ে যাচ্ছি"}\n` +
     `অথবা: {"answer":"..."}\n` +
-    `navigate-এর href অবশ্যই উপরের লিস্টে থাকতে হবে।`
+    `navigate-এর base path (? এর আগের অংশ) অবশ্যই উপরের লিস্টে থাকতে হবে।`
 
   let parsed: ReturnType<typeof parseModelJson> = null
   try {
@@ -104,9 +106,14 @@ export async function POST(req: NextRequest) {
     return Response.json({ reply: 'বুঝতে পারিনি, Sir — আবার একটু সহজ করে বলবেন?' } satisfies NavResult)
   }
 
-  // Validate navigation against the role's allow-list — never trust the model blindly.
-  if (parsed.navigate && allowedHrefs.has(parsed.navigate)) {
-    return Response.json({ navigate: parsed.navigate, reply: parsed.say || 'নিয়ে যাচ্ছি…' } satisfies NavResult)
+  // Validate navigation against the role's allow-list — never trust the model
+  // blindly. Allow a query string (?new=1 / ?q=…) but validate the BASE path, so a
+  // staffer can still only be routed to a page their role can open.
+  if (parsed.navigate) {
+    const basePath = parsed.navigate.split('?')[0]
+    if (allowedHrefs.has(basePath)) {
+      return Response.json({ navigate: parsed.navigate, reply: parsed.say || 'নিয়ে যাচ্ছি…' } satisfies NavResult)
+    }
   }
   const answer = parsed.answer || parsed.say
   if (answer) return Response.json({ reply: answer } satisfies NavResult)

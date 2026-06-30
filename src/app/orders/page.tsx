@@ -747,10 +747,11 @@ function OrdersPageContent() {
   const [rowWindow, setRowWindow] = useState({ start: 0, end: ORDER_WINDOW_SIZE })
 
   useLayoutEffect(() => {
-    if (searchParams.get('new') === '1' && mdUp) {
-      setShowNew(true)
-      router.replace('/orders', { scroll: false })
-    }
+    const wantNew = searchParams.get('new') === '1' && mdUp
+    const q = searchParams.get('q') // staff-assistant "find …" deep link
+    if (wantNew) setShowNew(true)
+    if (q) setSearch(q)
+    if (wantNew || q) router.replace('/orders', { scroll: false })
   }, [searchParams, router, mdUp])
 
   const { orders: allOrders, loading, initialLoading, error, refetch, enabled } = useOrdersData()

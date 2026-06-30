@@ -41,6 +41,12 @@ export default function InventoryPage() {
   const deferredSearch = useDeferredValue(search)
   const [cat, setCat] = useState('')
   const [view, setView] = useState<'active' | 'archived' | 'low' | 'out'>('active')
+
+  // Staff-assistant "প্রোডাক্ট খুঁজে দাও" deep link (/inventory?q=…) → seed the search once.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get('q')
+    if (q) { setSearch(q); window.history.replaceState(null, '', '/inventory') }
+  }, [])
   const [isAddModalOpen, setIsAddModalOpen] = useState(false)
   const [archiveOverrides, setArchiveOverrides] = useState<Record<string, boolean>>({})
   const [pendingInventoryAction, setPendingInventoryAction] = useState<Record<string, string>>({})

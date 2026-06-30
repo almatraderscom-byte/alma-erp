@@ -1,5 +1,5 @@
 'use client'
-import { useDeferredValue, useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useSession } from 'next-auth/react'
 import toast from 'react-hot-toast'
@@ -25,6 +25,12 @@ export default function CrmPage() {
   const [risk, setRisk]     = useState('')
   const [selected, setSelected] = useState<Customer | null>(null)
   const [syncing, setSyncing] = useState(false)
+
+  // Staff-assistant "কাস্টমার খুঁজে দাও" deep link (/crm?q=…) → seed the search once.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get('q')
+    if (q) { setSearch(q); window.history.replaceState(null, '', '/crm') }
+  }, [])
 
   const { data: session } = useSession()
   const { businessId } = useBusiness()
