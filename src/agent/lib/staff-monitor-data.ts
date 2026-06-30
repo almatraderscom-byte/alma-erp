@@ -9,6 +9,7 @@ import { isEffectivelyDone } from '@/agent/lib/salah-resolve'
 import { HEARTBEAT_STALE_MS } from '@/agent/lib/constants'
 import { getGeoFenceMonitoringEnabled } from '@/agent/lib/geo-fence-settings'
 import { getResolvedDutyEnabledMap } from '@/agent/lib/duty-enabled'
+import { getActiveDrivingStaffIds } from '@/lib/driving-mode'
 import type {
   ActiveReminderRow,
   ActiveTodoRow,
@@ -601,11 +602,15 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
     }
   }
 
-  const checkedInStaffIds = await getCheckedInStaffIds([...staffMap.keys()], today)
+  const [checkedInStaffIds, drivingStaffIds] = await Promise.all([
+    getCheckedInStaffIds([...staffMap.keys()], today),
+    getActiveDrivingStaffIds('ALMA_LIFESTYLE').catch(() => new Set<string>()),
+  ])
   const staffSummaries = [...staffMap.values()].map((s) => ({
     ...s,
     completionPct: s.tasksTotal ? Math.round((s.tasksDone / s.tasksTotal) * 100) : 0,
     checkedIn: checkedInStaffIds.has(s.staffId),
+    driving: drivingStaffIds.has(s.staffId),
   }))
 
   const mismatches: StaffMonitorData['mismatches'] = []

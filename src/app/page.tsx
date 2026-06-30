@@ -13,6 +13,9 @@ import { ConnectionStatus } from '@/components/ui/ConnectionStatus'
 import { fmt, fmtNum, pct } from '@/lib/utils'
 import type { Order } from '@/types'
 import { useBusiness } from '@/contexts/BusinessContext'
+import { useActor } from '@/contexts/ActorContext'
+import type { AlmaRole } from '@/lib/roles'
+import Link from 'next/link'
 
 const TradingDashboard = dynamic(() => import('@/app/trading/page'), {
   ssr: false,
@@ -39,11 +42,86 @@ const fadeUp = {
 
 export default function DashboardPage() {
   const { businessId } = useBusiness()
+  const { role, actorName } = useActor()
+  // Owner/admin see the full business dashboard (revenue/profit/analytics).
+  // Everyone else gets a role-appropriate desk — and NEVER the business P&L, which
+  // STAFF/VIEWER used to see on '/'. (HR / trading-staff are already redirected off
+  // '/' by the role guard; this is the safety net + their landing if they reach it.)
+  const isOwnerView = role === 'SUPER_ADMIN' || role === 'ADMIN'
+  if (!isOwnerView) return <RoleDashboard role={role} name={actorName} />
   if (businessId === 'ALMA_TRADING') return <TradingDashboard />
   if (businessId === 'CREATIVE_DIGITAL_IT') {
     return <Skeleton className="m-4 h-40 md:m-8" />
   }
   return <LifestyleDashboard />
+}
+
+// ── Role-appropriate desk (non owner/admin) ──────────────────────────────────
+// Composition-only: a personalised greeting + big cards to exactly what this role
+// works with. No business revenue/profit anywhere. Live per-role summaries can be
+// layered on later; the win here is privacy + a focused home.
+type DeskCard = { href: string; icon: string; title: string; desc: string }
+
+const ROLE_DESK: Record<string, { intro: string; cards: DeskCard[] }> = {
+  STAFF: {
+    intro: 'আপনার কাজের ডেস্ক',
+    cards: [
+      { href: '/portal', icon: '🪪', title: 'আমার ডেস্ক', desc: 'আপনার অর্ডার, টার্গেট ও ওয়ালেট' },
+      { href: '/orders', icon: '📦', title: 'অর্ডার', desc: 'অর্ডার দেখুন ও তৈরি করুন' },
+      { href: '/invoice', icon: '🧾', title: 'ইনভয়েস', desc: 'ইনভয়েস তৈরি করুন' },
+    ],
+  },
+  HR: {
+    intro: 'HR ড্যাশবোর্ড',
+    cards: [
+      { href: '/attendance', icon: '⏱', title: 'হাজিরা', desc: 'আজকের উপস্থিতি' },
+      { href: '/payroll', icon: '💵', title: 'বেতন ও ওয়ালেট', desc: 'পেমেন্ট ও ওয়ালেট' },
+      { href: '/employees', icon: '👤', title: 'কর্মী', desc: 'কর্মী তালিকা' },
+      { href: '/portal', icon: '🪪', title: 'আমার ডেস্ক', desc: 'আপনার নিজের তথ্য' },
+    ],
+  },
+  VIEWER: {
+    intro: 'আপনার ভিউ',
+    cards: [
+      { href: '/orders', icon: '📦', title: 'অর্ডার', desc: 'অর্ডার দেখুন' },
+      { href: '/analytics', icon: '📈', title: 'অ্যানালিটিক্স', desc: 'রিপোর্ট ও ট্রেন্ড' },
+      { href: '/portal', icon: '🪪', title: 'আমার ডেস্ক', desc: 'আপনার নিজের তথ্য' },
+    ],
+  },
+}
+
+function RoleDashboard({ role, name }: { role: AlmaRole; name: string }) {
+  const desk = ROLE_DESK[role] ?? ROLE_DESK.STAFF
+  return (
+    <>
+      <PageHeader title="Dashboard" subtitle={desk.intro} />
+      <div className="p-4 md:p-8">
+        <motion.div variants={stagger} initial="hidden" animate="show" className="mx-auto max-w-3xl space-y-5">
+          <motion.div variants={fadeUp}>
+            <Card gold className="relative overflow-hidden p-5 sm:p-6">
+              <div className="pointer-events-none absolute -right-10 -top-12 h-40 w-40 rounded-full bg-gold/10 blur-3xl" />
+              <p className="text-[11px] font-black uppercase tracking-[0.18em] text-gold">স্বাগতম</p>
+              <h2 className="mt-1 text-xl font-black text-cream sm:text-2xl">{name}</h2>
+              <p className="mt-1.5 text-[12px] text-muted">{desk.intro} — যা দরকার, এক ট্যাপ দূরে।</p>
+            </Card>
+          </motion.div>
+          <motion.div variants={fadeUp} className="grid gap-3 sm:grid-cols-2">
+            {desk.cards.map(c => (
+              <Link key={c.href} prefetch href={c.href} className="block">
+                <Card interactive className="flex h-full items-center gap-4 p-4">
+                  <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-gold-dim/30 bg-gold/[0.06] text-2xl">{c.icon}</span>
+                  <span className="min-w-0">
+                    <span className="block text-sm font-bold text-cream">{c.title}</span>
+                    <span className="block text-[11px] leading-snug text-muted">{c.desc}</span>
+                  </span>
+                </Card>
+              </Link>
+            ))}
+          </motion.div>
+        </motion.div>
+      </div>
+    </>
+  )
 }
 
 function LifestyleDashboard() {

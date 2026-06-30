@@ -6,6 +6,7 @@ import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { DATE_PRESETS, type DatePreset } from '@/lib/order-analytics'
 import { useMdUp } from '@/hooks/useMdUp'
+import { useModalSheetDrag } from '@/hooks/useModalSheetDrag'
 import { cn } from '@/lib/utils'
 
 export function DateRangeFilter({ className }: { className?: string }) {
@@ -14,6 +15,7 @@ export function DateRangeFilter({ className }: { className?: string }) {
   const [sheetOpen, setSheetOpen] = useState(false)
   const [draftStart, setDraftStart] = useState(customStart)
   const [draftEnd, setDraftEnd] = useState(customEnd)
+  const { sheetRef, handleProps } = useModalSheetDrag(() => setSheetOpen(false))
 
   function selectPreset(id: DatePreset) {
     setPreset(id)
@@ -108,9 +110,9 @@ export function DateRangeFilter({ className }: { className?: string }) {
 
           {sheetOpen && (
             <MobileModalPortal open zIndex={200} onBackdropClick={() => setSheetOpen(false)} aria-label="Custom date range">
-              <Card className="mobile-modal-shell mobile-sheet mx-auto w-full max-w-lg rounded-t-[28px] border border-border bg-surface shadow-2xl sm:rounded-2xl">
-                <div className="mobile-modal-header px-5 pb-3 pt-4">
-                  <div className="mb-4 h-1 w-10 rounded-full bg-border mx-auto" />
+              <Card ref={sheetRef} className="mobile-modal-shell mobile-sheet mx-auto w-full max-w-lg rounded-t-[28px] border border-border bg-surface shadow-2xl sm:rounded-2xl">
+                <div {...handleProps} className="mobile-modal-header px-5 pb-3 pt-4">
+                  <div className="mb-4 h-1 w-10 rounded-full bg-border mx-auto sm:cursor-default" />
                   <p className="text-sm font-bold text-cream">Custom date range</p>
                 </div>
                 <div className="mobile-modal-body space-y-3 px-5 pb-4">

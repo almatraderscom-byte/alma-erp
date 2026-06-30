@@ -1,6 +1,6 @@
 'use client'
 import { motion, useReducedMotion, useSpring } from 'framer-motion'
-import { useEffect, useState } from 'react'
+import { forwardRef, useEffect, useState, type ReactNode } from 'react'
 import { BDT_SYMBOL, fmtNum } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 import { tapHaptic } from '@/lib/ui-haptics'
@@ -46,20 +46,16 @@ export function useCountUp(target: number, enabled: boolean): number {
 }
 
 // ── Card ─────────────────────────────────────────────────────────────────
-export function Card({
-  children,
-  className,
-  gold,
-  interactive,
-}: {
-  children: React.ReactNode
+export const Card = forwardRef<HTMLDivElement, {
+  children: ReactNode
   className?: string
   gold?: boolean
   /** Subtle hover lift — presentation only. */
   interactive?: boolean
-}) {
+}>(function Card({ children, className, gold, interactive }, ref) {
   return (
     <div
+      ref={ref}
       className={cn(
         'min-w-0 rounded-2xl border bg-card/80 shadow-card',
         gold ? 'border-gold/30' : 'border-border-subtle',
@@ -70,7 +66,7 @@ export function Card({
       {children}
     </div>
   )
-}
+})
 
 /** Auto-fit KPI row: ~5 on desktop, 2–3 on tablet, 1–2 on mobile. */
 export const KPI_AUTO_GRID =
@@ -80,7 +76,7 @@ export const KPI_AUTO_GRID =
 export function KpiCard({ label, value, sub, delta, color, loading, valueKind, animate }: {
   label: string
   value: string | number
-  sub?: string
+  sub?: ReactNode
   delta?: number
   color?: string
   loading?: boolean

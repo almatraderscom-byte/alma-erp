@@ -26,15 +26,28 @@ function updateAppBadge(count: number) {
   else void nav.clearAppBadge?.().catch(() => {})
 }
 
+const MotionLink = motion(Link)
+
 function NavItem({ href, icon, label, badge, collapsed }: { href: string; icon: string; label: string; badge: string | null; collapsed: boolean }) {
   const path = usePathname()
   const active = href === '/' || href === '/digital'
     ? path === href
     : path.startsWith(href)
   return (
-    <Link prefetch href={href} className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl mx-2 transition-all duration-200 ${active ? 'bg-gradient-to-r from-gold/25 via-gold/10 to-transparent border border-gold/40 shadow-[0_0_18px_rgba(224,122,95,0.32),inset_0_0_14px_rgba(224,122,95,0.10)]' : 'border border-transparent hover:bg-white/[0.05] hover:border-white/10 hover:shadow-[0_0_14px_rgba(255,255,255,0.04)]'}`}>
+    <MotionLink
+      prefetch
+      href={href}
+      whileHover={{ scale: 1.055 }}
+      whileTap={{ scale: 0.96 }}
+      transition={{ type: 'spring', stiffness: 460, damping: 22 }}
+      className={`group relative flex items-center gap-3 px-3 py-2.5 rounded-xl mx-2 will-change-transform transition-colors duration-200 ${active ? 'bg-gradient-to-r from-gold/25 via-gold/10 to-transparent border border-gold/40 shadow-[0_0_18px_rgba(224,122,95,0.32),inset_0_0_14px_rgba(224,122,95,0.10)]' : 'border border-transparent hover:bg-gold/[0.07] hover:border-gold/30 hover:shadow-[0_0_24px_rgba(224,122,95,0.20),inset_0_0_14px_rgba(224,122,95,0.06)]'}`}
+    >
+      {/* hover sweep — a soft coral sheen glides across on hover */}
+      {!active && (
+        <span aria-hidden className="pointer-events-none absolute inset-0 -translate-x-full rounded-xl bg-gradient-to-r from-transparent via-gold/15 to-transparent opacity-0 transition-all duration-500 ease-out group-hover:translate-x-full group-hover:opacity-100" />
+      )}
       {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-6 bg-gold rounded-r-full shadow-[0_0_10px_2px_rgba(224,122,95,0.7)]" />}
-      <span className={`relative text-base shrink-0 transition-all ${active ? 'text-gold drop-shadow-[0_0_6px_rgba(224,122,95,0.55)]' : 'text-muted group-hover:text-cream'}`}>
+      <span className={`relative text-base shrink-0 transition-transform duration-200 ease-out group-hover:scale-[1.32] group-hover:-translate-y-0.5 ${active ? 'text-gold drop-shadow-[0_0_6px_rgba(224,122,95,0.55)]' : 'text-muted group-hover:text-gold group-hover:drop-shadow-[0_0_9px_rgba(224,122,95,0.55)]'}`}>
         {icon}
         {badge && collapsed && (
           <span className="alert-pulse absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500 shadow-lg shadow-red-200/40" aria-hidden />
@@ -43,15 +56,15 @@ function NavItem({ href, icon, label, badge, collapsed }: { href: string; icon: 
       <AnimatePresence>
         {!collapsed && (
           <motion.span initial={{ opacity:0, width:0 }} animate={{ opacity:1, width:'auto' }} exit={{ opacity:0, width:0 }}
-            className={`text-sm font-medium whitespace-nowrap overflow-hidden transition-colors ${active ? 'text-gold font-semibold drop-shadow-[0_0_6px_rgba(224,122,95,0.4)]' : 'text-muted-hi group-hover:text-cream'}`}>
+            className={`relative text-sm font-medium whitespace-nowrap overflow-hidden transition-all duration-200 group-hover:translate-x-0.5 ${active ? 'text-gold font-semibold drop-shadow-[0_0_6px_rgba(224,122,95,0.4)]' : 'text-muted-hi group-hover:text-cream'}`}>
             {label}
           </motion.span>
         )}
       </AnimatePresence>
       {badge && !collapsed && (
-        <span className="alert-pulse ml-auto text-[10px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full">{badge}</span>
+        <span className="alert-pulse relative ml-auto text-[10px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full transition-transform duration-200 group-hover:scale-110">{badge}</span>
       )}
-    </Link>
+    </MotionLink>
   )
 }
 
@@ -72,7 +85,7 @@ export function Sidebar() {
     <motion.aside
       animate={{ width: collapsed ? 64 : 220 }}
       transition={{ duration: 0.25, ease: 'easeInOut' }}
-      className="hidden md:flex flex-col bg-card/55 backdrop-blur-2xl border-r border-border-subtle shrink-0 overflow-hidden"
+      className="hidden md:flex flex-col m-3 rounded-[24px] bg-gradient-to-b from-card/75 to-card/45 backdrop-blur-2xl border border-border-subtle shrink-0 overflow-hidden shadow-[0_30px_70px_-28px_rgba(0,0,0,0.7),0_0_0_1px_rgba(224,122,95,0.06),0_0_44px_-12px_rgba(224,122,95,0.20)]"
     >
       <motion.div layout className={`flex items-center px-4 py-5 border-b border-border-subtle gap-2 ${collapsed ? 'justify-center' : ''}`}>
         <div className={`flex items-center min-w-0 ${collapsed ? 'justify-center' : 'flex-1 gap-3'}`}>
@@ -112,11 +125,13 @@ export function Sidebar() {
         )}
         <UserAccountMenu collapsed={collapsed} />
         <ThemeToggle collapsed={collapsed} />
-        <button onClick={() => setCollapsed(c => !c)}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-border-subtle hover:bg-gold/[0.05] transition-colors text-muted hover:text-muted-hi">
-          <span className="text-sm">{collapsed ? '→' : '←'}</span>
+        <motion.button onClick={() => setCollapsed(c => !c)}
+          whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}
+          transition={{ type: 'spring', stiffness: 460, damping: 22 }}
+          className="group w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-border-subtle hover:border-gold/30 hover:bg-gold/[0.07] transition-colors text-muted hover:text-gold will-change-transform">
+          <span className="text-sm transition-transform duration-200 group-hover:scale-125">{collapsed ? '→' : '←'}</span>
           {!collapsed && <span className="text-[11px]">Collapse</span>}
-        </button>
+        </motion.button>
       </div>
     </motion.aside>
   )
@@ -244,7 +259,7 @@ const ROT_DWELL = 3600
 // Everything else (HR/finance details, settings, admin) lives in the Account drawer.
 // Matched by the nav label so it stays correct across all three businesses.
 const CORE_ROTATION_LABELS = new Set([
-  'Dashboard', 'Trading', 'Orders', 'CRM', 'Clients', 'Inventory',
+  'Dashboard', 'Briefing', 'Insights', 'Trading', 'Orders', 'CRM', 'Clients', 'Inventory',
   'Invoice', 'Invoices', 'Projects', 'Finance', 'Analytics', 'ALMA Agent',
 ])
 

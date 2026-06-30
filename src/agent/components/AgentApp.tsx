@@ -1176,7 +1176,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   }, [streaming, activeConvId, activeModelId, resyncActiveConversation])
 
   const handleVoiceMessage = useCallback(async (text: string): Promise<string | null> => {
-    const body: Record<string, unknown> = { message: text }
+    const body: Record<string, unknown> = { message: text, voice: true }
     if (activeConvId) body.conversationId = activeConvId
     else body.modelId = activeModelId // new conv: persist the owner's model choice
     const res = await fetch('/api/assistant/chat', {

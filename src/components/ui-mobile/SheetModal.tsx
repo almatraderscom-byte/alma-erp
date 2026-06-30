@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
+import { useModalSheetDrag } from '@/hooks/useModalSheetDrag'
 import { cn } from '@/lib/utils'
 
 /**
@@ -30,9 +31,11 @@ export function SheetModal({
   className?: string
   zIndex?: number
 }) {
+  const { sheetRef, handleProps } = useModalSheetDrag(onClose)
   return (
     <MobileModalPortal open={open} onBackdropClick={onClose} zIndex={zIndex} aria-label={typeof title === 'string' ? title : 'Dialog'}>
       <div
+        ref={sheetRef}
         className={cn(
           'mobile-modal-shell w-full bg-card',
           // Bottom sheet on phone, centered card from sm up.
@@ -40,8 +43,8 @@ export function SheetModal({
           className,
         )}
       >
-        {/* Grab handle (phone only) */}
-        <div className="mobile-modal-header flex flex-col items-center pt-2 sm:pt-0">
+        {/* Grab handle (phone only) — drag down to dismiss */}
+        <div {...handleProps} className="mobile-modal-header flex flex-col items-center pt-2 sm:pt-0">
           <span className="h-1 w-10 rounded-full bg-border-strong sm:hidden" aria-hidden />
           {title != null && (
             <div className="flex w-full items-center justify-between px-5 py-3">

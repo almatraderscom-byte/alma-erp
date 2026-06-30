@@ -7,6 +7,7 @@ import type { TradingAccount, TradingAccountInput, TradingCapitalEntryType, Trad
 import { EXPENSE_TYPES, n, signedClass } from '@/components/trading/trading-utils'
 import { tradingDrafts } from '@/lib/trading-drafts'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
+import { useModalSheetDrag } from '@/hooks/useModalSheetDrag'
 
 export function ModalFrame({
   title,
@@ -23,6 +24,7 @@ export function ModalFrame({
   children: ReactNode
   footer?: ReactNode
 }) {
+  const { sheetRef, handleProps } = useModalSheetDrag(onClose)
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -32,7 +34,10 @@ export function ModalFrame({
   if (!open) return null
   return (
     <MobileModalPortal open zIndex={10000} onBackdropClick={onClose} aria-label={title}>
-      <Card className="mobile-modal-shell relative w-full rounded-b-none border-gold/20 bg-card/85 shadow-2xl sm:max-w-xl sm:rounded-2xl">
+      <Card ref={sheetRef} className="mobile-modal-shell relative w-full rounded-b-none border-gold/20 bg-card/85 shadow-2xl sm:max-w-xl sm:rounded-2xl">
+        <div {...handleProps} className="flex justify-center pt-2 sm:hidden">
+          <span className="h-1 w-10 rounded-full bg-border-strong" />
+        </div>
         <div className="mobile-modal-header flex items-start justify-between gap-3 border-b border-white/[0.06] p-4 pb-3 sm:p-5 sm:pb-3">
           <div>
             <p className="text-sm font-bold text-cream">{title}</p>

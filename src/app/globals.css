@@ -511,14 +511,19 @@ a,
 /* AppToast (react-hot-toast renderer) — icon pop, check/✕ draw, loading spin.
    Keep additive: used only by .alma-toast in src/components/ui/AppToast.tsx. */
 
-/* Theme-aware toast surface (was hardcoded dark → unreadable in light mode). */
+/* Theme-aware toast surface. Keyed the SAME way as every other theme token in
+   this file: base :root = LIGHT (readable dark text on a cream surface), dark is
+   the explicit :root[data-theme='dark'] override. Previously the base was dark
+   and light was an html[data-theme='light'] override — so on any state where
+   data-theme wasn't exactly 'light' the toast fell back to the dark slab and the
+   message was unreadable in light mode. */
 .alma-toast {
-  --toast-bg: linear-gradient(180deg, rgba(28, 25, 38, 0.94) 0%, rgba(18, 16, 26, 0.94) 100%);
-  --toast-fg: #ece6da;
-}
-html[data-theme='light'] .alma-toast {
   --toast-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(247, 244, 238, 0.97) 100%);
   --toast-fg: #1f1d29;
+}
+:root[data-theme='dark'] .alma-toast {
+  --toast-bg: linear-gradient(180deg, rgba(28, 25, 38, 0.94) 0%, rgba(18, 16, 26, 0.94) 100%);
+  --toast-fg: #ece6da;
 }
 
 @keyframes alma-toast-pop {

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { tapHaptic, warningHaptic } from '@/lib/ui-haptics'
+import { useModalSheetDrag } from '@/hooks/useModalSheetDrag'
 
 /**
  * Themed confirm dialog — replaces the grey browser window.confirm() that breaks
@@ -71,6 +72,8 @@ export function ConfirmDialogHost() {
     setPending(null)
   }
 
+  const { sheetRef, handleProps } = useModalSheetDrag(() => close(false))
+
   return (
     <MobileModalPortal
       open={!!pending}
@@ -79,8 +82,11 @@ export function ConfirmDialogHost() {
       aria-label={pending?.title || 'Confirm'}
     >
       {pending && (
-        <div className="mobile-modal-shell mobile-sheet mx-auto w-full max-w-sm rounded-t-3xl border border-border-subtle bg-card p-5 sm:rounded-3xl">
-          <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-border-strong sm:hidden" />
+        <div ref={sheetRef} className="mobile-modal-shell mobile-sheet mx-auto w-full max-w-sm rounded-t-3xl border border-border-subtle bg-card p-5 sm:rounded-3xl">
+          {/* Grab zone — drag down to dismiss on phones (centered dialog on ≥sm). */}
+          <div {...handleProps} className="-mx-5 -mt-5 mb-1 flex justify-center px-5 pb-1 pt-3 sm:hidden">
+            <span className="h-1 w-10 rounded-full bg-border-strong" />
+          </div>
           {pending.title && <h2 className="mb-1.5 text-base font-bold text-cream">{pending.title}</h2>}
           <p className="whitespace-pre-line text-[13px] leading-relaxed text-muted-hi">{pending.message}</p>
           <div className="mt-5 flex gap-2">

@@ -31,6 +31,14 @@ export interface HeartbeatPulse {
   ownerEscalations: number
   /** Open owner to-dos (pending / in-progress). */
   openTodos: number
+  // ── Proactive anomaly signals (cheap DB-only; optional for back-compat with
+  //    older stored ticks that predate them). ──────────────────────────────────
+  /** Unresolved customer-service alerts (messenger) — customers waiting. */
+  csAlerts?: number
+  /** Pending staff money requests (wallet / advance) awaiting the owner's review. */
+  moneyRequests?: number
+  /** Pending agent approvals older than 2 days — at risk of silently expiring. */
+  agingApprovals?: number
 }
 
 export type HeartbeatKind =
@@ -64,7 +72,7 @@ function genId(): string {
 
 /** Stable string identity of a pulse — equal strings ⇒ "nothing changed". */
 export function pulseFingerprint(p: HeartbeatPulse): string {
-  return `${p.pendingApprovals}|${p.ownerEscalations}|${p.openTodos}`
+  return `${p.pendingApprovals}|${p.ownerEscalations}|${p.openTodos}|${p.csAlerts ?? 0}|${p.moneyRequests ?? 0}|${p.agingApprovals ?? 0}`
 }
 
 async function readLog(): Promise<HeartbeatEntry[]> {
