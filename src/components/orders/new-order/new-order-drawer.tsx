@@ -4,11 +4,13 @@ import { useRef } from 'react'
 import { Button, Spinner, Card } from '@/components/ui'
 import { Money } from '@/components/ui'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
+import { useModalSheetDrag } from '@/hooks/useModalSheetDrag'
 import { NewOrderFormFields } from './new-order-form-fields'
 import { useNewOrderForm } from './use-new-order-form'
 
 export function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const formRef = useRef<HTMLFormElement>(null)
+  const { sheetRef, handleProps } = useModalSheetDrag(onClose)
   const { form, errors, touched, loading, catalogLoading, set, setItem, addItem, removeItem, touch, handleSubmit, totals, stockItems } = useNewOrderForm(() => {
     onCreated()
     onClose()
@@ -23,8 +25,11 @@ export function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; on
       className="md:items-stretch md:justify-end md:p-0"
       aria-label="Create Order"
     >
-      <Card className="mobile-modal-shell w-full max-w-lg border-border shadow-2xl md:h-[100dvh] md:max-h-[100dvh] md:rounded-none md:rounded-l-2xl md:border-l md:border-y-0">
+      <Card ref={sheetRef} className="mobile-modal-shell w-full max-w-lg border-border shadow-2xl md:h-[100dvh] md:max-h-[100dvh] md:rounded-none md:rounded-l-2xl md:border-l md:border-y-0">
         <div className="mobile-modal-header border-b border-border bg-surface/95 backdrop-blur md:backdrop-blur-none">
+          <div {...handleProps} className="flex justify-center pt-2 sm:hidden">
+            <span className="h-1 w-10 rounded-full bg-border-strong" />
+          </div>
           <div className="flex items-center justify-between px-4 py-3 sm:px-5 sm:py-4">
             <div>
               <p className="text-[10px] font-bold tracking-[0.14em] uppercase text-gold mb-0.5">New Order</p>

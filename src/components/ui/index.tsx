@@ -46,20 +46,16 @@ export function useCountUp(target: number, enabled: boolean): number {
 }
 
 // ── Card ─────────────────────────────────────────────────────────────────
-export function Card({
-  children,
-  className,
-  gold,
-  interactive,
-}: {
+export const Card = React.forwardRef<HTMLDivElement, {
   children: React.ReactNode
   className?: string
   gold?: boolean
   /** Subtle hover lift — presentation only. */
   interactive?: boolean
-}) {
+}>(function Card({ children, className, gold, interactive }, ref) {
   return (
     <div
+      ref={ref}
       className={cn(
         'min-w-0 rounded-2xl border bg-card/80 shadow-card',
         gold ? 'border-gold/30' : 'border-border-subtle',
@@ -70,7 +66,7 @@ export function Card({
       {children}
     </div>
   )
-}
+})
 
 /** Auto-fit KPI row: ~5 on desktop, 2–3 on tablet, 1–2 on mobile. */
 export const KPI_AUTO_GRID =
