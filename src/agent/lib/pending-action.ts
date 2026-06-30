@@ -21,6 +21,7 @@ const LIFECYCLE_BOUND_ACTION_TYPES = new Set<string>([
   'office_absence_confirm',
   'office_absence_snooze',
   'office_absence_nudge',
+  'office_absence_nudge_send',
 ])
 
 export function isLifecycleBoundAction(type?: string | null): boolean {
