@@ -1,45 +1,34 @@
 /**
  * WhatsApp tap-button approvals (owner) — the WhatsApp counterpart of the Telegram
- * approve/reject inline buttons.
+ * inline approve/reject (and multi-step) buttons.
  *
- * Flow:
- *  1. When an approval card is sent (sendOwnerApprovalCard), we ALSO send the owner a
- *     WhatsApp quick-reply message (✅ অনুমোদন / ❌ বাতিল) and remember which
- *     AgentPendingAction it maps to (KV `wa_pending_approval`).
- *  2. When the owner taps a button, WhatsApp delivers an inbound with ButtonPayload
- *     ("approve"/"reject"); the Twilio webhook calls handleOwnerApprovalButton(), which
- *     looks up the remembered action id and drives the EXISTING approve/reject route
- *     (Bearer AGENT_INTERNAL_TOKEN) — no new approval logic, no money path changes.
+ * AUDIT result: every owner approval — single OR multi-step — rides the SAME
+ * `approve:<id>` / `reject:<id>` callback contract, where <id> is an AgentPendingAction.
+ * Multi-step (e.g. snooze 1/2/4h, pick-staffer) just makes each option its own pending
+ * action with its own `approve:<id>` button. So mirroring works by carrying the EXACT
+ * callback string as each WhatsApp button's payload:
+ *  - ≤3 options → interactive quick-reply buttons
+ *  - 4–10 options → an interactive list picker
+ * On tap, WhatsApp returns that payload (ButtonPayload / ListId); we parse
+ * `approve:<id>` | `reject:<id>` and drive the EXISTING approve/reject route via Bearer
+ * AGENT_INTERNAL_TOKEN — no new approval logic, no money-path change.
  *
- * Safe: a tap only ever resolves the single most-recent pending action we sent, the
- * route itself re-checks status==='pending', and everything is DORMANT until
- * OWNER_WHATSAPP_NUMBER + Twilio creds + AGENT_INTERNAL_TOKEN are set.
+ * Dormant until OWNER_WHATSAPP_NUMBER + Twilio creds (+ AGENT_INTERNAL_TOKEN for the
+ * actual approve call) are set. Within the 24h window these are free service messages.
  */
 import { prisma } from '@/lib/prisma'
-import { sendTwilioWaContent, createTwilioQuickReplyContent, sendTwilioWaText, twilioWaConfigured } from './twilio-wa'
+import {
+  sendTwilioWaContent,
+  createTwilioQuickReplyContent,
+  createTwilioListPickerContent,
+  sendTwilioWaText,
+  twilioWaConfigured,
+} from './twilio-wa'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
 
-const CONTENT_SID_KEY = 'wa_approval_content_sid'
-const PENDING_KEY = 'wa_pending_approval'
-const PENDING_TTL_MS = 60 * 60 * 1000 // 1h — approvals are short-lived
-
-async function kvGet(key: string): Promise<string | null> {
-  try {
-    const row = await db.agentKvSetting.findUnique({ where: { key }, select: { value: true } })
-    return row?.value ?? null
-  } catch {
-    return null
-  }
-}
-async function kvSet(key: string, value: string): Promise<void> {
-  try {
-    await db.agentKvSetting.upsert({ where: { key }, create: { key, value }, update: { value } })
-  } catch {
-    /* best-effort */
-  }
-}
+export type OwnerCardButton = { title: string; payload: string } // payload = "approve:<id>" | "reject:<id>" | …
 
 const last10 = (s: string) => String(s ?? '').replace(/\D/g, '').slice(-10)
 
@@ -47,96 +36,114 @@ function ownerWaConfigured(): boolean {
   return Boolean(process.env.OWNER_WHATSAPP_NUMBER) && twilioWaConfigured()
 }
 
-/** Lazily create + cache the quick-reply Content template; returns its ContentSid. */
-async function ensureApprovalContentSid(): Promise<string | null> {
-  const cached = await kvGet(CONTENT_SID_KEY)
-  if (cached) return cached
-  const res = await createTwilioQuickReplyContent({
-    friendlyName: 'alma_wa_approval',
-    buttons: [
-      { id: 'approve', title: '✅ অনুমোদন' },
-      { id: 'reject', title: '❌ বাতিল' },
-    ],
-  })
-  if (res.sid) {
-    await kvSet(CONTENT_SID_KEY, res.sid)
-    return res.sid
-  }
-  console.warn('[wa-approval] content create failed:', res.error)
-  return null
+/** WhatsApp button titles cap at 20 chars; keep it readable. */
+function clipTitle(s: string): string {
+  const t = String(s ?? '').trim()
+  return t.length <= 20 ? t : `${t.slice(0, 19)}…`
 }
 
 /**
- * Send the owner a WhatsApp tap-button approval mirroring a Telegram approval card.
- * Best-effort + dormant; remembers which pending action this maps to.
+ * Send the owner an interactive WhatsApp card (text + tap-buttons) whose buttons carry
+ * the given callback payloads. ≤3 → quick-reply, 4–10 → list picker, >10 → first 10.
+ * Best-effort + dormant. Returns a small result for diagnostics.
  */
+export async function sendOwnerWaButtons(
+  text: string,
+  buttons: OwnerCardButton[],
+): Promise<{ sent: boolean; reason?: string; sid?: string; error?: string }> {
+  if (!ownerWaConfigured()) return { sent: false, reason: 'OWNER_WHATSAPP_NUMBER or Twilio not configured' }
+  const to = process.env.OWNER_WHATSAPP_NUMBER as string
+  const opts = buttons.filter((b) => b && b.payload && b.title).slice(0, 10)
+  if (opts.length === 0) {
+    const res = await sendTwilioWaText({ to, body: text })
+    return { sent: !res.error, reason: 'no buttons → plain text', sid: res.sid, error: res.error }
+  }
+  try {
+    // Buttons carry dynamic ids, so the Content is created per-card (proven to send
+    // immediately within the 24h session window).
+    const made =
+      opts.length <= 3
+        ? await createTwilioQuickReplyContent({
+            friendlyName: `alma_wa_card_${Date.now()}`,
+            buttons: opts.map((b) => ({ id: b.payload, title: clipTitle(b.title) })),
+          })
+        : await createTwilioListPickerContent({
+            friendlyName: `alma_wa_list_${Date.now()}`,
+            buttonText: 'বেছে নিন',
+            items: opts.map((b) => ({ id: b.payload, item: clipTitle(b.title) })),
+          })
+    if (!made.sid) return { sent: false, reason: 'content_create_failed', error: made.error }
+    const res = await sendTwilioWaContent({ to, contentSid: made.sid, contentVariables: { '1': text.slice(0, 1500) } })
+    return { sent: !res.error, sid: res.sid, error: res.error }
+  } catch (err) {
+    return { sent: false, reason: 'exception', error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/** Convenience: a standard ✅/❌ approve-reject card for one pending action. */
 export async function sendOwnerWaApproval(summary: string, pendingActionId: string): Promise<void> {
   if (!ownerWaConfigured() || !pendingActionId) return
-  const to = process.env.OWNER_WHATSAPP_NUMBER as string
+  await sendOwnerWaButtons(`📋 অনুমোদন প্রয়োজন:\n${summary}`, [
+    { title: '✅ অনুমোদন', payload: `approve:${pendingActionId}` },
+    { title: '❌ বাতিল', payload: `reject:${pendingActionId}` },
+  ])
+}
+
+/**
+ * Mirror a Telegram inline-keyboard card to WhatsApp. Accepts the same
+ * `[{text, callback_data}]` rows the Telegram code already builds, so multi-step flows
+ * can call this with one line. Only `approve:`/`reject:` payloads are actionable on
+ * WhatsApp today (everything in the owner-approval system uses those).
+ */
+export async function mirrorOwnerKeyboardToWhatsApp(
+  text: string,
+  inlineKeyboard: Array<Array<{ text: string; callback_data: string }>>,
+): Promise<void> {
+  if (!ownerWaConfigured()) return
+  const flat = inlineKeyboard.flat().filter((b) => /^(approve|reject):/.test(b.callback_data ?? ''))
+  if (flat.length === 0) return
   try {
-    const contentSid = await ensureApprovalContentSid()
-    if (!contentSid) {
-      // Fallback: at least tell the owner on WhatsApp (no buttons available).
-      await sendTwilioWaText({ to, body: `📋 অনুমোদন প্রয়োজন:\n${summary}\n\n(Telegram-এ বাটন দিয়ে অনুমোদন করুন)` })
-      return
-    }
-    await kvSet(PENDING_KEY, JSON.stringify({ actionId: pendingActionId, at: new Date().toISOString() }))
-    await sendTwilioWaContent({
-      to,
-      contentSid,
-      contentVariables: { '1': `📋 অনুমোদন প্রয়োজন:\n${summary}`.slice(0, 1500) },
-    })
+    await sendOwnerWaButtons(text, flat.map((b) => ({ title: b.text, payload: b.callback_data })))
   } catch (err) {
-    console.warn('[wa-approval] send failed:', err instanceof Error ? err.message : err)
+    console.warn('[wa-approval] mirror failed:', err instanceof Error ? err.message : err)
   }
 }
 
 /**
- * Handle an inbound WhatsApp button tap. Returns true if it WAS an owner approval button
- * we acted on (so the webhook can skip normal ingest for it).
+ * Handle an inbound WhatsApp button/list tap. `payload` is the button id / list id we
+ * set (e.g. "approve:<id>"). Returns true if it was an owner approve/reject we acted on.
  */
-export async function handleOwnerApprovalButton(fromDigits: string, buttonPayload: string): Promise<boolean> {
-  const payload = String(buttonPayload ?? '').trim().toLowerCase()
-  if (payload !== 'approve' && payload !== 'reject') return false
+export async function handleOwnerApprovalButton(fromDigits: string, payload: string): Promise<boolean> {
+  const m = /^(approve|reject):(.+)$/.exec(String(payload ?? '').trim())
+  if (!m) return false
+  const verb = m[1]
+  const actionId = m[2]
 
   // Only the owner can drive approvals.
   const owner = process.env.OWNER_WHATSAPP_NUMBER
   if (!owner || last10(owner) !== last10(fromDigits)) return false
 
-  const raw = await kvGet(PENDING_KEY)
-  if (!raw) return false
-  let actionId = ''
-  let at = 0
-  try {
-    const p = JSON.parse(raw) as { actionId?: string; at?: string }
-    actionId = p.actionId ?? ''
-    at = p.at ? new Date(p.at).getTime() : 0
-  } catch {
-    return false
-  }
-  if (!actionId) return false
-  if (at && Date.now() - at > PENDING_TTL_MS) {
-    await kvSet(PENDING_KEY, '')
-    await sendOwnerWaNote('⌛ অনুমোদনের সময় শেষ হয়ে গেছে — অ্যাকশনটি আর নেই।')
+  // Safe no-op test payload from wa-selftest.
+  if (actionId === 'TEST-NO-OP') {
+    await sendOwnerWaNote(`✅ টেস্ট বাটন কাজ করছে (${verb}) — আসল কোনো অ্যাকশন বদলায়নি।`)
     return true
   }
 
   const base = (process.env.APP_URL ?? process.env.NEXTAUTH_URL ?? 'https://alma-erp-six.vercel.app').replace(/\/$/, '')
   const internal = process.env.AGENT_INTERNAL_TOKEN ?? ''
-  const route = payload === 'approve' ? 'approve' : 'reject'
   try {
-    const res = await fetch(`${base}/api/assistant/actions/${actionId}/${route}`, {
+    const res = await fetch(`${base}/api/assistant/actions/${actionId}/${verb}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${internal}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ source: 'whatsapp' }),
-      signal: AbortSignal.timeout(60_000),
+      signal: AbortSignal.timeout(90_000),
     })
-    await kvSet(PENDING_KEY, '') // consume it either way
     if (res.ok) {
-      await sendOwnerWaNote(payload === 'approve' ? '✅ অনুমোদিত হয়েছে।' : '❌ বাতিল করা হয়েছে।')
+      await sendOwnerWaNote(verb === 'approve' ? '✅ অনুমোদিত হয়েছে।' : '❌ বাতিল করা হয়েছে।')
     } else {
       const data = (await res.json().catch(() => ({}))) as { error?: string; status?: string }
-      await sendOwnerWaNote(`⚠️ করা গেল না: ${data.error ?? res.status}${data.status ? ` (${data.status})` : ''}`)
+      const why = data.status === 'approved' || data.status === 'executed' ? 'এটা আগেই অনুমোদিত হয়ে গেছে।' : (data.error ?? String(res.status))
+      await sendOwnerWaNote(`⚠️ ${why}`)
     }
   } catch (err) {
     await sendOwnerWaNote(`⚠️ অনুমোদন পাঠানো যায়নি: ${err instanceof Error ? err.message : String(err)}`)
@@ -144,19 +151,20 @@ export async function handleOwnerApprovalButton(fromDigits: string, buttonPayloa
   return true
 }
 
-/** Diagnostic: create/cache the content template and send the owner a test approval. */
-export async function testWaApproval(): Promise<{ contentSid?: string | null; sent?: unknown; reason?: string }> {
-  if (!ownerWaConfigured()) return { reason: 'OWNER_WHATSAPP_NUMBER or Twilio not configured' }
-  const contentSid = await ensureApprovalContentSid()
-  if (!contentSid) return { contentSid: null, reason: 'content template create failed (see logs)' }
-  const to = process.env.OWNER_WHATSAPP_NUMBER as string
-  await kvSet(PENDING_KEY, JSON.stringify({ actionId: 'TEST-NO-OP', at: new Date().toISOString() }))
-  const sent = await sendTwilioWaContent({
-    to,
-    contentSid,
-    contentVariables: { '1': '📋 টেস্ট অনুমোদন — বাটন কাজ করছে কিনা দেখতে নিচের ✅/❌ চাপুন।' },
-  })
-  return { contentSid, sent }
+/** Diagnostic: send the owner a test card with REAL distinct payloads (safe no-op). */
+export async function testWaApproval(kind: 'single' | 'multi' = 'single'): Promise<{ sent: boolean; reason?: string; sid?: string; error?: string }> {
+  if (!ownerWaConfigured()) return { sent: false, reason: 'OWNER_WHATSAPP_NUMBER or Twilio not configured' }
+  if (kind === 'multi') {
+    return sendOwnerWaButtons('📋 টেস্ট (মাল্টি-স্টেপ) — একটা অপশন চাপুন, কিছু বদলাবে না:', [
+      { title: '১ ঘণ্টা', payload: 'approve:TEST-NO-OP' },
+      { title: '২ ঘণ্টা', payload: 'approve:TEST-NO-OP' },
+      { title: '❌ বাতিল', payload: 'reject:TEST-NO-OP' },
+    ])
+  }
+  return sendOwnerWaButtons('📋 টেস্ট অনুমোদন — ✅/❌ চাপুন (নিরাপদ, কিছু বদলাবে না):', [
+    { title: '✅ অনুমোদন', payload: 'approve:TEST-NO-OP' },
+    { title: '❌ বাতিল', payload: 'reject:TEST-NO-OP' },
+  ])
 }
 
 /** Small confirmation back to the owner on WhatsApp (best-effort). */

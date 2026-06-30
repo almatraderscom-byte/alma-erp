@@ -40,10 +40,16 @@ export async function POST(req: NextRequest) {
   const body = params.Body ?? ''
   const name = params.ProfileName || undefined
 
-  // Owner tapped a WhatsApp approval button (✅/❌)? Twilio delivers the button's id in
-  // ButtonPayload. Drive the existing approve/reject route and stop — don't ingest it
-  // into the CS brain as a normal message.
-  const buttonPayload = params.ButtonPayload ?? ''
+  // Owner tapped a WhatsApp approval button (✅/❌) or picked a list item? Twilio delivers
+  // the chosen option's id in ButtonPayload (quick-reply) or ListId (list-picker). Drive
+  // the existing approve/reject route and stop — don't ingest it as a normal CS message.
+  const buttonPayload = params.ButtonPayload || params.ListId || params.ListItemId || ''
+  if (from && (buttonPayload || params.ButtonText || params.ListTitle)) {
+    console.log('[twilio-wa] interactive reply params:', JSON.stringify({
+      ButtonPayload: params.ButtonPayload, ButtonText: params.ButtonText,
+      ListId: params.ListId, ListTitle: params.ListTitle, Body: params.Body,
+    }))
+  }
   if (from && buttonPayload) {
     try {
       const handled = await handleOwnerApprovalButton(from, buttonPayload)

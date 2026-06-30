@@ -149,6 +149,51 @@ export async function createTwilioQuickReplyContent(input: {
   }
 }
 
+/**
+ * Create a list-picker Content template (for 4–10 options that won't fit quick-reply's
+ * 3-button cap). Body is {{1}}; each item carries its own id (the callback payload).
+ */
+export async function createTwilioListPickerContent(input: {
+  friendlyName: string
+  buttonText: string
+  items: Array<{ id: string; item: string; description?: string }>
+  language?: string
+}): Promise<{ sid?: string; error?: string }> {
+  if (!twilioWaConfigured()) return { error: 'Twilio WhatsApp not configured.' }
+  const sid = process.env.TWILIO_ACCOUNT_SID ?? ''
+  const token = process.env.TWILIO_AUTH_TOKEN ?? ''
+  const auth = Buffer.from(`${sid}:${token}`).toString('base64')
+  const payload = {
+    friendly_name: input.friendlyName,
+    language: input.language ?? 'bn',
+    variables: { '1': 'summary' },
+    types: {
+      'twilio/list-picker': {
+        body: '{{1}}',
+        button: input.buttonText.slice(0, 20),
+        items: input.items.slice(0, 10).map((it) => ({
+          id: it.id,
+          item: it.item.slice(0, 24),
+          description: (it.description ?? '').slice(0, 72),
+        })),
+      },
+    },
+  }
+  try {
+    const res = await fetch('https://content.twilio.com/v1/Content', {
+      method: 'POST',
+      headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(20_000),
+    })
+    const data = (await res.json().catch(() => ({}))) as { sid?: string; message?: string }
+    if (!res.ok) return { error: data.message ?? `Twilio Content HTTP ${res.status}` }
+    return { sid: data.sid }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 function escapeXml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
