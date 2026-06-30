@@ -270,9 +270,15 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
     prisma.agentStaffTask.findMany({
       // Owner review queue: proof awaiting review + anything the supervisor
       // couldn't auto-verify/understand and handed to the owner (the ~10%).
+      // `status: { not: 'done' }` on the whole query is essential: the agent's
+      // auto-verify sets verificationStatus='auto_verified' AND status='done'
+      // together, so without this guard an AI-approved DONE task would still
+      // match the review queue — double-counting it as both "pending" and
+      // "done" across the KPIs, approval list and todolist. Done = done.
       where: {
         businessId,
-        OR: [{ verificationStatus: { in: [...PENDING_REVIEW_VS] } }, { supervisorNeedsOwner: true, status: { not: 'done' } }],
+        status: { not: 'done' },
+        OR: [{ verificationStatus: { in: [...PENDING_REVIEW_VS] } }, { supervisorNeedsOwner: true }],
       },
       orderBy: { createdAt: 'asc' },
       select: CARD_SELECT,
