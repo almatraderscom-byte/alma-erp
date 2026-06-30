@@ -171,20 +171,30 @@ async function deductStockForItems(items: OrderItemInput[], db: DbClient = prism
   for (const item of items) {
     const stock = await findStockBySku(item.stock_sku, item.size, db)
     if (!stock) throw new Error(`Inventory not found: ${item.stock_sku}`)
-    const next = stock.currentStock - item.qty
-    if (next < 0) throw new Error(`Insufficient stock for ${item.stock_sku}`)
-    const available = Math.max(0, next - stock.reserved)
-    const buying = stock.buyingPrice ?? 0
-    await db.lifestyleStockItem.update({
-      where: { id: stock.id },
-      data: {
-        currentStock: next,
-        available,
-        sold: stock.sold + item.qty,
-        status: computeStockStatus(next, stock.reorderLevel),
-        stockValue: buying * next,
-      },
+    // Atomic, race-safe decrement. The conditional WHERE (currentStock >= qty)
+    // is re-checked at write time under a row lock, so two concurrent orders can
+    // never both read the same count and oversell — the loser's updateMany
+    // matches 0 rows and we reject it. (The plain read-modify-write this
+    // replaced could go negative or double-deduct under concurrency.)
+    const guarded = await db.lifestyleStockItem.updateMany({
+      where: { id: stock.id, currentStock: { gte: item.qty } },
+      data: { currentStock: { decrement: item.qty }, sold: { increment: item.qty } },
     })
+    if (guarded.count === 0) throw new Error(`Insufficient stock for ${item.stock_sku}`)
+    // Recompute derived display fields from the now-decremented (and locked) row.
+    const fresh = await db.lifestyleStockItem.findUnique({ where: { id: stock.id } })
+    if (fresh) {
+      const available = Math.max(0, fresh.currentStock - fresh.reserved)
+      const buying = fresh.buyingPrice ?? 0
+      await db.lifestyleStockItem.update({
+        where: { id: stock.id },
+        data: {
+          available,
+          status: computeStockStatus(fresh.currentStock, fresh.reorderLevel),
+          stockValue: buying * fresh.currentStock,
+        },
+      })
+    }
   }
 }
 
@@ -278,6 +288,37 @@ export async function createOrderInPostgres(body: Record<string, unknown>) {
   })
   const profit = estimatedProfit || money.profit
 
+  const customerName = String(body.customer ?? '').trim()
+  const phoneNumber = String(body.phone ?? '').trim()
+
+  // Idempotency guard against accidental double-submit (retry / double-tap).
+  // If an identical order for this customer+phone with the same quantity and
+  // sell price was created in the last 2 minutes, return that one instead of
+  // creating a duplicate and double-deducting stock. A manual order-entry flow
+  // never legitimately fires two byte-identical orders inside 120s.
+  const dupeSince = new Date(Date.now() - 120_000)
+  const existingDupe = await prisma.lifestyleOrder.findFirst({
+    where: {
+      businessId,
+      phone: phoneNumber,
+      customer: customerName,
+      qty: totalQty,
+      sellPrice: money.sellPrice,
+      createdAt: { gte: dupeSince },
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, profit: true },
+  })
+  if (existingDupe) {
+    return {
+      ok: true,
+      order_id: existingDupe.id,
+      profit: existingDupe.profit,
+      items_count: items.length || 1,
+      idempotent: true,
+    }
+  }
+
   const orderId = await nextOrderId()
   await prisma.$transaction(async (tx) => {
     if (items.length) await deductStockForItems(items, tx)
@@ -286,8 +327,8 @@ export async function createOrderInPostgres(body: Record<string, unknown>) {
         id: orderId,
         businessId,
         date: todayDate(),
-        customer: String(body.customer ?? '').trim(),
-        phone: String(body.phone ?? '').trim(),
+        customer: customerName,
+        phone: phoneNumber,
         address: String(body.address ?? ''),
         payment: String(body.payment ?? ''),
         source: String(body.source ?? ''),
