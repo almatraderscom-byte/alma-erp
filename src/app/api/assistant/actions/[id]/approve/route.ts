@@ -1461,6 +1461,77 @@ async function runApprove(
     })
   }
 
+  // Staff idle nudge: owner saw the camera alert and tapped Approve → forward the
+  // frame + a name-free gentle reminder to the office staff Telegram group. The
+  // target chat id comes from KV `idle_nudge_chat_id` (owner-settable, no redeploy)
+  // with an env fallback. No identity is ever attached — the reminder blames no one.
+  if (action.type === 'staff_idle_nudge') {
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count === 0) {
+      return Response.json({ error: 'already_resolved' }, { status: 409 })
+    }
+
+    const p = payload as { photoUrl?: string; message?: string; deviceId?: string }
+    const message = String(
+      p.message ??
+        'অফিসে কাজের সময় একটু মনোযোগ দিন — আজ অনেক কাজ বাকি। ধন্যবাদ 🙏',
+    )
+
+    const kv = await db.agentKvSetting
+      .findUnique({ where: { key: 'idle_nudge_chat_id' }, select: { value: true } })
+      .catch(() => null)
+    const groupChatId = (kv?.value ?? process.env.TELEGRAM_STAFF_GROUP_CHAT_ID ?? '').trim()
+
+    if (!groupChatId) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', resolvedAt: new Date(), result: { skipped: 'no_group_chat_id' } },
+      })
+      return Response.json({
+        success: true,
+        skipped: true,
+        message:
+          'অফিস স্টাফ গ্রুপের Telegram chat ID এখনো সেট করা নেই। একবার সেট করে দিন — সেটিংসে KV "idle_nudge_chat_id" = গ্রুপের chat id। তারপর থেকে Approve চাপলেই রিমাইন্ডার সরাসরি গ্রুপে চলে যাবে।',
+      })
+    }
+
+    const { sendTelegramPhoto, sendTelegramText } = await import('@/agent/lib/telegram-owner-notify')
+    let send = await sendTelegramPhoto(groupChatId, String(p.photoUrl ?? ''), message)
+
+    // The Imou snapshot URL expires (~1hr) — if it failed, grab a fresh frame.
+    if (!send.ok && p.deviceId) {
+      try {
+        const { captureImouSnapshot } = await import('@/agent/lib/imou-camera')
+        const fresh = await captureImouSnapshot(String(p.deviceId))
+        send = await sendTelegramPhoto(groupChatId, fresh.url, message)
+      } catch (err) {
+        console.warn('[approve] idle nudge fresh snapshot failed:', err instanceof Error ? err.message : err)
+      }
+    }
+    // Last resort: text-only so the reminder still lands.
+    if (!send.ok) {
+      send = await sendTelegramText(groupChatId, message)
+    }
+
+    if (!send.ok) {
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: send.error } },
+      })
+      return Response.json({ error: send.error ?? 'send_failed' }, { status: 502 })
+    }
+
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', resolvedAt: new Date(), result: { sentTo: groupChatId } },
+    })
+    await appendConversationNote(db, action, '✅ অফিস স্টাফ গ্রুপে (নাম ছাড়া) রিমাইন্ডার পাঠানো হয়েছে।')
+    return Response.json({ success: true, message: 'Reminder sent to office staff group.' })
+  }
+
   return Response.json({ error: 'unknown_action_type', type: action.type }, { status: 400 })
 }
 
