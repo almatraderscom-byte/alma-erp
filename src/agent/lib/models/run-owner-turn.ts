@@ -32,9 +32,10 @@ import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { isTurnCancelRequested } from '@/agent/lib/turn-status'
 import {
-  detectClaimViolations,
+  verifyClaimsAgainstLedger,
   buildVerificationReminder,
   MAX_VERIFY_RETRIES,
+  type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
 import { getModel, isKnownModelId } from '@/agent/lib/models/registry'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
@@ -412,8 +413,16 @@ async function* runAlternateProviderTurn(
 
       if (calls.length === 0 || signal?.aborted) {
         if (!signal?.aborted && verifyRetries < MAX_VERIFY_RETRIES && iterationText.trim()) {
-          const calledTools = toolRecords.map((r) => r.toolName)
-          const violations = detectClaimViolations(iterationText.trim(), calledTools)
+          // Build a ledger that carries each tool's success/error — not just its
+          // name — so the verifier catches "done!" claims made after a tool that
+          // actually FAILED (audit #6). The cheap-head path previously passed only
+          // names, so a failed write still looked like a satisfied claim.
+          const ledger: ToolLedgerEntry[] = toolRecords.map((r) => ({
+            toolName: r.toolName,
+            success: r.status === 'success',
+            error: r.error ?? undefined,
+          }))
+          const violations = verifyClaimsAgainstLedger(iterationText.trim(), ledger)
           if (violations.length > 0) {
             verifyRetries++
             yield {
