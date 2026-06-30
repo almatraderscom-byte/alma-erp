@@ -3,6 +3,7 @@
 import { motion, useInView, useReducedMotion, useSpring, type HTMLMotionProps, type Variants } from 'framer-motion'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
+import { tapHaptic } from '@/lib/ui-haptics'
 
 /**
  * Shared motion vocabulary for the whole app so every page feels alive and
@@ -62,12 +63,13 @@ export function Lift({ children, className, ...props }: { children: ReactNode; c
  * Press — tactile tap feedback for buttons/chips/icon controls. Dips slightly on
  * press, no hover lift (use <Lift> for cards). Reduced-motion safe via MotionConfig.
  */
-export function Press({ children, className, ...props }: { children: ReactNode; className?: string } & HTMLMotionProps<'button'>) {
+export function Press({ children, className, onPointerDown, ...props }: { children: ReactNode; className?: string } & HTMLMotionProps<'button'>) {
   return (
     <motion.button
       className={cn('will-change-transform', className)}
       whileTap={{ scale: 0.96 }}
       transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+      onPointerDown={(e) => { tapHaptic(); onPointerDown?.(e) }}
       {...props}
     >
       {children}

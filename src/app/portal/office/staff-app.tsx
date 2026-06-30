@@ -8,6 +8,7 @@ import type { Motivation } from '@/agent/lib/office-motivation'
 import Confetti from './confetti'
 import { todoState } from './todo-status'
 import { OfficeTodoDock } from './office-todo-dock'
+import { successHaptic } from '@/lib/ui-haptics'
 
 const BN = '০১২৩৪৫৬৭৮৯'
 function bn(n: number | string): string {
@@ -88,7 +89,10 @@ export default function StaffApp({
       setBusyId(key)
       const { ok } = await postStaff(body)
       setBusyId(null)
-      if (ok) startTransition(() => router.refresh())
+      if (ok) {
+        successHaptic()
+        startTransition(() => router.refresh())
+      }
       return ok
     },
     [router],

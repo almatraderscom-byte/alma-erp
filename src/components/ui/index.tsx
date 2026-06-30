@@ -3,6 +3,7 @@ import { motion, useReducedMotion, useSpring } from 'framer-motion'
 import { useEffect, useState } from 'react'
 import { BDT_SYMBOL, fmtNum } from '@/lib/currency'
 import { cn } from '@/lib/utils'
+import { tapHaptic } from '@/lib/ui-haptics'
 import { BdtText, Money } from '@/components/ui/Currency'
 import { ResponsiveKpiValue, type KpiValueKind } from '@/components/ui/ResponsiveKpiValue'
 import type { OrderStatus, CustomerSegment, RiskLevel } from '@/types'
@@ -280,7 +281,7 @@ export function Button({
   return (
     <button
       type={type}
-      onClick={onClick}
+      onClick={onClick ? () => { tapHaptic(); onClick() } : undefined}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       className={cn(base, sizes[size], variants[variant], className)}
