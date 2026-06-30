@@ -26,6 +26,7 @@ import { isSystemOwner } from '@/lib/roles'
 import { sendTwilioWaText, placeTwilioWaCall, getTwilioCallStatus, getTwilioCallError, getTwilioRecentInbound, twilioWaConfigured } from '@/agent/lib/wa/twilio-wa'
 import { mirrorOwnerNotifyToWhatsApp } from '@/agent/lib/telegram-owner-notify'
 import { testWaApproval } from '@/agent/lib/wa/wa-approval'
+import { sendOwnerWaVoice } from '@/agent/lib/wa/wa-voice'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -55,6 +56,15 @@ export async function GET(req: NextRequest) {
       ownerWhatsAppConfigured: Boolean(process.env.OWNER_WHATSAPP_NUMBER),
       whatsapp,
     })
+  }
+
+  // Test the WhatsApp voice note: speaks `voice` text (default a Bangla greeting).
+  const voice = (searchParams.get('voice') ?? '').trim()
+  if (voice) {
+    const text = voice === '1' ? 'আসসালামু আলাইকুম বস। এটি ALMA এজেন্টের একটি ভয়েস টেস্ট। WhatsApp-এ ভয়েস ঠিকভাবে আসছে।' : voice
+    const result = await sendOwnerWaVoice(text, Date.now(), '🎙️ ভয়েস টেস্ট')
+    console.log('[wa-selftest:voice]', JSON.stringify(result))
+    return Response.json({ ok: true, ...result })
   }
 
   // Diagnostic: ?approval=1 → create the quick-reply template + send the owner a test
