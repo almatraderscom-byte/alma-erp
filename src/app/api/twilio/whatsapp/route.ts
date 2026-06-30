@@ -13,6 +13,7 @@
 import { type NextRequest } from 'next/server'
 import { validateTwilioSignature } from '@/agent/lib/wa/twilio-wa'
 import { ingestWaInboundMessage } from '@/agent/lib/wa/wa-ingest'
+import { findUserIdByPhone, recordWaOptIn } from '@/agent/lib/wa/optin'
 
 export const runtime = 'nodejs'
 
@@ -50,6 +51,14 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       console.warn('[twilio-wa] inbound ingest failed:', err instanceof Error ? err.message : err)
     }
+
+    // Staff daily opt-in: if this sender is a known ERP user, their inbound message
+    // opens the 24h window — record it so the home-page gate can unlock them.
+    // Best-effort; never blocks the webhook.
+    try {
+      const uid = await findUserIdByPhone(from)
+      if (uid) await recordWaOptIn(uid)
+    } catch { /* opt-in recording is non-critical */ }
   }
 
   // Empty TwiML → 200, no synchronous auto-reply (the CS brain replies async).

@@ -17,6 +17,7 @@ import { useActor } from '@/contexts/ActorContext'
 import type { AlmaRole } from '@/lib/roles'
 import Link from 'next/link'
 import { StaffWhatsAppOptIn } from '@/components/portal/StaffWhatsAppOptIn'
+import { StaffWaGate } from '@/components/portal/StaffWaGate'
 
 const TradingDashboard = dynamic(() => import('@/app/trading/page'), {
   ssr: false,
@@ -96,6 +97,9 @@ function RoleDashboard({ role, name }: { role: AlmaRole; name: string }) {
   return (
     <>
       <PageHeader title="Dashboard" subtitle={desk.intro} />
+      {/* Step-2 gate (kill-switched + fail-open): locks the home to the WhatsApp
+          opt-in card until the staff member has messaged the business today. */}
+      <StaffWaGate name={name}>
       <div className="p-4 md:p-8">
         <motion.div variants={stagger} initial="hidden" animate="show" className="mx-auto max-w-3xl space-y-5">
           <motion.div variants={fadeUp}>
@@ -124,6 +128,7 @@ function RoleDashboard({ role, name }: { role: AlmaRole; name: string }) {
           </motion.div>
         </motion.div>
       </div>
+      </StaffWaGate>
     </>
   )
 }
