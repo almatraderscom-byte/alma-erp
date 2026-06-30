@@ -108,6 +108,17 @@ function csMessageText(content: unknown): string {
   return ''
 }
 
+/** Shape of one CsConversation row selected by get_wa_inbox (db is `prisma as any`). */
+type WaInboxRow = {
+  psid: string
+  customerName: string | null
+  mode: string
+  lastMessageAt: Date | null
+  lastCustomerMessageAt: Date | null
+  lastCsReplyAt: Date | null
+  messages: Array<{ role: string; content: unknown }>
+}
+
 /**
  * Read-only WhatsApp inbox — the messages staff/customers sent TO the business
  * WhatsApp number. Unlike Messenger (live Graph API), Twilio WhatsApp inbound is
@@ -127,7 +138,10 @@ const get_wa_inbox: AgentTool = {
   handler: async (input) => {
     try {
       const limit = Math.min(Math.max(Number(input.limit ?? 15), 1), 25)
-      const convs = await db.csConversation.findMany({
+      // `db` is `prisma as any`, so annotate the row shape explicitly — otherwise the
+      // map/filter callbacks below become implicit-any and fail `next build`'s strict
+      // type-check (this is what broke the production deploy).
+      const convs: WaInboxRow[] = await db.csConversation.findMany({
         where: { pageId: { startsWith: 'wa:' } },
         orderBy: { lastMessageAt: 'desc' },
         take: limit,
