@@ -12,7 +12,7 @@ import {
   officeLocationFor,
   distanceMeters,
 } from '@/lib/attendance'
-import { checkoutRulesEnabled, runCheckoutGates } from '@/lib/attendance-checkout-rules'
+import { checkoutRulesEnabled, checkoutTimeBlockEnabled, runCheckoutGates } from '@/lib/attendance-checkout-rules'
 import { queueAttendanceCheckOutAlert } from '@/lib/telegram-notification/attendance-alerts'
 import { getTelegramOpsSetting } from '@/lib/telegram-notification/settings'
 import { archiveOpenAssignmentsOnCheckout } from '@/lib/operational-tasks'
@@ -57,16 +57,21 @@ export const POST = withApiRoute('attendance.check_out', async (req: NextRequest
   const meta = normalizeClientMetadata(body.metadata)
   const location = meta.location
 
-  // Checkout-discipline gates (Step 1) — time / location / 75%-task. Behind a
-  // kill-switch so production is untouched until the owner enables it. Returns
-  // a Bangla 403 with a machine-readable code on the first failed gate.
-  if (checkoutRulesEnabled(businessId)) {
+  // Checkout-discipline gates. The 8 PM TIME block is ALWAYS on for
+  // ALMA_LIFESTYLE (Option A — server-side hard block, every platform incl.
+  // iPhone/Safari). The location + 75%-task gates stay behind the kill-switch
+  // (checkoutRulesEnabled) until the owner turns them on. Owner-approved
+  // exceptions/leave still waive everything. Returns a Bangla 403 with a
+  // machine-readable code on the first failed gate.
+  const enforceExtraGates = checkoutRulesEnabled(businessId)
+  if (checkoutTimeBlockEnabled(businessId) || enforceExtraGates) {
     const gate = await runCheckoutGates({
       businessId,
       userId: ctx.userId,
       attendanceDate,
       now,
       location,
+      enforceExtraGates,
     })
     if (!gate.ok) {
       return apiFailure('forbidden', gate.message, {
