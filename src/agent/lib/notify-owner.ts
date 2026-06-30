@@ -91,6 +91,25 @@ export async function notifyOwner(opts: {
     statuses.ntfy_general = `error: ${err instanceof Error ? err.message : String(err)}`
   }
 
+  // Phase C — native app push (Android). Additive + KV-gated (default OFF) + fail-open:
+  // when the owner has opted in, also light up his installed app via OneSignal (the
+  // same alias/channel the APK registered against). Never blocks ntfy/Telegram.
+  try {
+    const { pushNativeToOwner } = await import('@/agent/lib/native-owner-push')
+    const native = await pushNativeToOwner({
+      tier: opts.tier,
+      title: opts.title,
+      message: opts.message,
+      category: opts.category,
+    })
+    if (native.attempted) {
+      channels.push('native_push')
+      statuses.native_push = native.ok ? 'sent' : `error: ${native.reason ?? 'unknown'}`
+    }
+  } catch (err) {
+    statuses.native_push = `error: ${err instanceof Error ? err.message : String(err)}`
+  }
+
   if (opts.tier >= 2) {
     channels.push('ntfy_critical')
     try {
