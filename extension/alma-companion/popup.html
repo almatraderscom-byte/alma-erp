@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="bn">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root { --gold: #c9a84c; --bg: #14110b; --fg: #f3ead2; --muted: #9c917a; }
+      * { box-sizing: border-box; }
+      body { width: 320px; margin: 0; font-family: -apple-system, system-ui, sans-serif; background: var(--bg); color: var(--fg); }
+      header { display: flex; align-items: center; gap: 8px; padding: 14px 16px 8px; }
+      header .dot { width: 10px; height: 10px; border-radius: 50%; background: #555; }
+      header.on .dot { background: #2e7d32; }
+      header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+      .body { padding: 6px 16px 16px; }
+      .row { margin: 10px 0; }
+      label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+      input { width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid #3a331f; background: #1d190f; color: var(--fg); font-size: 14px; }
+      button { width: 100%; padding: 10px; border: 0; border-radius: 8px; background: var(--gold); color: #1a1505; font-weight: 700; font-size: 14px; cursor: pointer; }
+      button.ghost { background: transparent; color: var(--muted); border: 1px solid #3a331f; font-weight: 500; }
+      .status { font-size: 13px; line-height: 1.5; }
+      .status b { color: var(--gold); }
+      .err { color: #e57373; font-size: 12px; margin-top: 6px; min-height: 14px; }
+      .muted { color: var(--muted); font-size: 11px; line-height: 1.5; }
+      .switch { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      hr { border: 0; border-top: 1px solid #2a2415; margin: 14px 0; }
+    </style>
+  </head>
+  <body>
+    <header id="hdr"><span class="dot"></span><h1>ALMA Companion</h1></header>
+    <div class="body">
+      <!-- Unpaired view -->
+      <div id="pairView">
+        <p class="muted">আপনার এজেন্ট থেকে পাওয়া এক-বারের কোডটা বসান। তাহলে শুধু আপনার এজেন্ট এই ব্রাউজারটা চালাতে পারবে।</p>
+        <div class="row">
+          <label>সার্ভার (সাধারণত বদলাতে হয় না)</label>
+          <input id="baseUrl" value="https://alma-erp-six.vercel.app" />
+        </div>
+        <div class="row">
+          <label>এই ডিভাইসের নাম</label>
+          <input id="deviceName" value="My Mac Chrome" />
+        </div>
+        <div class="row">
+          <label>এক-বারের পেয়ারিং কোড</label>
+          <input id="code" placeholder="যেমন: 4F9K-2T" autocomplete="off" />
+        </div>
+        <button id="pairBtn">যুক্ত করুন</button>
+        <div class="err" id="pairErr"></div>
+      </div>
+
+      <!-- Paired view -->
+      <div id="liveView" style="display:none">
+        <div class="status" id="statusText"></div>
+        <hr />
+        <div class="row switch">
+          <span class="muted">এজেন্টকে কাজ করতে দিন</span>
+          <button id="toggleBtn" style="width:auto;padding:8px 14px">…</button>
+        </div>
+        <p class="muted" id="pauseHint"></p>
+        <hr />
+        <button class="ghost" id="unpairBtn">এই ব্রাউজার খুলে ফেলুন (unpair)</button>
+      </div>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>

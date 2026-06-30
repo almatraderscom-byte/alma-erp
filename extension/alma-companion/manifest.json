@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "ALMA Companion",
+  "version": "0.1.0",
+  "description": "Lets the ALMA agent work in your own Chrome — on your logged-in sessions — while you watch live. Owner-paired, default-off, every write action gated.",
+  "permissions": ["activeTab", "scripting", "tabs", "storage", "alarms"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "ALMA Companion",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
