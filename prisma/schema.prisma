@@ -34,6 +34,8 @@ model User {
   advanceRequests               SalaryAdvanceRequest[]
   mealAllowanceProfiles         MealAllowanceProfile[]
   mealAllowanceRequests         MealAllowanceRequest[]
+  drivingModeProfiles           DrivingModeProfile[]
+  drivingModeSessions           DrivingModeSession[]
   passwordResetTokens           PasswordResetToken[]
   assignedTradingAccounts       TradingAccount[]                 @relation("TradingAccountAssignedUser")
   tradingTrades                 TradingTrade[]                   @relation("TradingTradeUser")
@@ -402,6 +404,51 @@ model MealAllowanceRequest {
   @@index([businessId, status])
   @@index([userId, businessId])
   @@index([userId, businessId, allowanceDate])
+}
+
+/// Per-staff "Driving Mode" capability — owner enables it for a staff member,
+/// mirroring MealAllowanceProfile. When enabled, the staff can request driving
+/// mode from MyDesk; on approval the agent pauses their office follow-ups.
+model DrivingModeProfile {
+  id          String   @id @default(cuid())
+  userId      String
+  businessId  String
+  employeeId  String
+  enabled     Boolean  @default(false)
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, businessId])
+  @@index([businessId])
+}
+
+/// A driving-mode session. PENDING (awaiting owner approval) → ACTIVE (staff is
+/// out driving; office follow-ups paused) → ENDED (resumed) or REJECTED.
+model DrivingModeSession {
+  id              String    @id @default(cuid())
+  userId          String
+  businessId      String
+  employeeId      String
+  staffId         String?
+  status          String    @default("PENDING")
+  reason          String?   @db.Text
+  initiatedBy     String    @default("staff")
+  startedAt       DateTime  @default(now())
+  approvedAt      DateTime?
+  endedAt         DateTime?
+  endedBy         String?
+  approvalId      String?
+  reviewedById    String?
+  welcomeBackSent Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, businessId, status])
+  @@index([businessId, status])
+  @@index([staffId, status])
 }
 
 model AttendanceRecord {

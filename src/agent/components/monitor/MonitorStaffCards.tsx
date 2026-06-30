@@ -8,6 +8,8 @@ const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } }
 const slideUp = { hidden: { opacity: 0, y: 20 }, show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: 'easeOut' } } }
 
 function statusInfo(s: StaffSummary): { dot: string; glow: string; border: string; label: string } {
+  // Driving mode overrides everything — the staff is out, no dispatch/follow-up.
+  if (s.driving) return { dot: 'bg-sky-500', glow: 'shadow-[0_0_10px_rgba(14,165,233,0.5)]', border: 'border-sky-500/30', label: '🚗 Driving' }
   // A staff is only "active" once they have actually checked in today (attendance).
   // Before check-in we show them as awaiting — task time starts at check-in, not at dispatch.
   if (s.checkedIn === false) return { dot: 'bg-zinc-300', glow: '', border: 'border-border-subtle', label: 'Awaiting' }

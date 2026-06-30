@@ -40,6 +40,20 @@ type MealProfileRowState = {
   saving: boolean
 }
 
+type DrivingProfileRow = {
+  user: MealProfileUser
+  profile: { id: string; enabled: boolean } | null
+}
+
+type DrivingProfileRowState = {
+  userId: string
+  name: string
+  phone: string | null
+  employeeId: string
+  enabled: boolean
+  saving: boolean
+}
+
 const PAYROLL_COMPENSATION_TYPES = [
   { value: 'SALARY_ACCRUAL', label: '💰 Salary credit (manual)', kind: 'credit' as const },
   { value: 'COMMISSION', label: 'Commission earned', kind: 'credit' as const },
@@ -75,6 +89,8 @@ export default function PayrollPage() {
   const [compBusy, setCompBusy] = useState(false)
   const [mealRows, setMealRows] = useState<MealProfileRowState[]>([])
   const [mealLoading, setMealLoading] = useState(false)
+  const [drivingRows, setDrivingRows] = useState<DrivingProfileRowState[]>([])
+  const [drivingLoading, setDrivingLoading] = useState(false)
   const walletRequestId = useRef(0)
 
   const showApprovals = can(role, 'advanceApprove')
@@ -220,6 +236,69 @@ export default function PayrollPage() {
     } catch (e) {
       toast.error((e as Error).message || 'Could not save meal allowance')
       setMealRows(prev => prev.map(r => (r.userId === row.userId ? { ...r, saving: false } : r)))
+    }
+  }
+
+  const loadDrivingProfiles = useCallback(async () => {
+    if (!showApprovals) return
+    setDrivingLoading(true)
+    try {
+      const result = await safeFetchJsonWithToast<{ rows?: DrivingProfileRow[] }>(
+        `/api/payroll/driving-mode/profiles?business_id=${encodeURIComponent(business.id)}`,
+        { cache: 'no-store', toastOnError: false },
+      )
+      if (!result.ok) throw new Error(result.error.message)
+      const payload = unwrapApiData<{ rows?: DrivingProfileRow[] }>(result.data as Record<string, unknown>)
+      setDrivingRows(
+        (payload.rows ?? []).map(row => ({
+          userId: row.user.id,
+          name: row.user.name,
+          phone: row.user.phone,
+          employeeId: row.user.employeeIdGas || '',
+          enabled: row.profile?.enabled ?? false,
+          saving: false,
+        })),
+      )
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not load driving mode settings')
+      setDrivingRows([])
+    } finally {
+      setDrivingLoading(false)
+    }
+  }, [business.id, showApprovals])
+
+  useEffect(() => {
+    void loadDrivingProfiles()
+  }, [loadDrivingProfiles])
+
+  async function saveDrivingProfile(row: DrivingProfileRowState) {
+    if (row.saving) return
+    setDrivingRows(prev => prev.map(r => (r.userId === row.userId ? { ...r, saving: true } : r)))
+    try {
+      const result = await safeFetchJsonWithToast<{ profile?: { enabled: boolean } }>(
+        '/api/payroll/driving-mode/profiles',
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            business_id: business.id,
+            userId: row.userId,
+            employeeId: row.employeeId,
+            enabled: row.enabled,
+          }),
+        },
+      )
+      if (!result.ok) throw new Error(result.error.message)
+      const saved = unwrapApiData<{ profile?: { enabled: boolean } }>(result.data as Record<string, unknown>)
+      toast.success(`Driving mode ${row.enabled ? 'enabled' : 'disabled'} for ${row.name}`)
+      setDrivingRows(prev =>
+        prev.map(r =>
+          r.userId === row.userId ? { ...r, enabled: saved.profile?.enabled ?? row.enabled, saving: false } : r,
+        ),
+      )
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not save driving mode setting')
+      setDrivingRows(prev => prev.map(r => (r.userId === row.userId ? { ...r, saving: false } : r)))
     }
   }
 
@@ -670,6 +749,68 @@ export default function PayrollPage() {
                           variant="secondary"
                           disabled={row.saving || (row.enabled && (!row.amountBdt || Number(row.amountBdt) <= 0))}
                           onClick={() => void saveMealProfile(row)}
+                        >
+                          {row.saving ? 'Saving…' : 'Save'}
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )}
+
+      {showApprovals && (
+        <Card className="p-5">
+          <p className="text-sm font-bold text-cream">Driving Mode Settings</p>
+          <p className="mt-1 text-[11px] text-muted max-w-2xl">
+            Enable driving mode for staff who go on the road. Enabled staff can request driving mode from My Desk; once you approve, the agent pauses their office follow-ups until they return.
+          </p>
+          {drivingLoading ? (
+            <Skeleton className="h-40 mt-4" />
+          ) : !drivingRows.length ? (
+            <div className="mt-4">
+              <Empty icon="◷" title="No employees linked to this business yet." desc="Link staff with HR employee IDs and business access first." />
+            </div>
+          ) : (
+            <div className="overflow-x-auto min-w-0 max-w-full max-h-[420px] mt-4">
+              <table className="w-full min-w-[560px] text-left text-[11px]">
+                <thead className="sticky top-0 z-[1] bg-card/88 backdrop-blur-sm border-b border-white/[0.06] text-xs text-muted uppercase tracking-wider">
+                  <tr>
+                    <th className="py-3 pr-3 font-medium">Employee</th>
+                    <th className="py-3 pr-3 font-medium">Phone</th>
+                    <th className="py-3 pr-3 text-center font-medium">Enable</th>
+                    <th className="py-3 font-medium" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/[0.04]">
+                  {drivingRows.map(row => (
+                    <tr key={row.userId} className="hover:bg-white/[0.04]/50 transition-colors">
+                      <td className="py-3 pr-3">
+                        <span className="text-cream font-medium">{row.name}</span>
+                        <span className="block text-muted font-mono text-[10px]">{row.employeeId || '—'}</span>
+                      </td>
+                      <td className="py-3 pr-3 text-muted">{row.phone || '—'}</td>
+                      <td className="py-3 pr-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={row.enabled}
+                          onChange={e =>
+                            setDrivingRows(prev =>
+                              prev.map(r => (r.userId === row.userId ? { ...r, enabled: e.target.checked } : r)),
+                            )
+                          }
+                          className="h-4 w-4 rounded border-white/[0.1] accent-[#E07A5F]"
+                        />
+                      </td>
+                      <td className="py-3 text-right">
+                        <Button
+                          size="xs"
+                          variant="secondary"
+                          disabled={row.saving}
+                          onClick={() => void saveDrivingProfile(row)}
                         >
                           {row.saving ? 'Saving…' : 'Save'}
                         </Button>

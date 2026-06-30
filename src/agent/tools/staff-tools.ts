@@ -8,6 +8,7 @@
  * just get a Trading-only staff pool and Trading-only pending actions.
  */
 import { prisma } from '@/lib/prisma'
+import { getActiveDrivingStaffIds } from '@/lib/driving-mode'
 import { buildStaffTaskProposal, _resetProfileCache } from '@/agent/lib/staff-task-proposal'
 import { buildTradingTaskProposal } from '@/agent/lib/trading-task-proposal'
 import {
@@ -394,17 +395,20 @@ const get_staff_tasks: AgentTool = {
 const get_all_staff: AgentTool = {
   name: 'get_all_staff',
   description:
-    'Returns all active staff members scoped to the current business (ALMA_LIFESTYLE or ALMA_TRADING) with IDs + Telegram link status. Cross-business staff are NEVER returned.',
+    'Returns all active staff members scoped to the current business (ALMA_LIFESTYLE or ALMA_TRADING) with IDs + Telegram link status. Each row has a `driving` flag — true means the staff is in active driving mode and must NOT be dispatched tasks or followed up. Cross-business staff are NEVER returned.',
   input_schema: { type: 'object' as const, properties: {} },
   handler: async (input) => {
     try {
       const businessId = bizFrom(input)
-      const staff = await db.agentStaff.findMany({
-        where: { active: true, businessId },
-        select: { id: true, name: true, role: true, telegramChatId: true, businessId: true, userId: true },
-        orderBy: { name: 'asc' },
-      })
-      return { success: true, data: staff }
+      const [staff, drivingIds] = await Promise.all([
+        db.agentStaff.findMany({
+          where: { active: true, businessId },
+          select: { id: true, name: true, role: true, telegramChatId: true, businessId: true, userId: true },
+          orderBy: { name: 'asc' },
+        }),
+        getActiveDrivingStaffIds(businessId),
+      ])
+      return { success: true, data: staff.map((s: { id: string }) => ({ ...s, driving: drivingIds.has(s.id) })) }
     } catch (err) {
       return { success: false, error: String(err) }
     }

@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
+import { getActiveDrivingStaff } from '@/lib/driving-mode'
 
 const db = prisma as any
 
@@ -18,10 +19,11 @@ export interface BusinessContext {
 export async function buildBusinessContext(businessId: AgentBusinessId): Promise<string> {
   if (businessId !== 'ALMA_LIFESTYLE') return ''
 
-  const [staffProfiles, recentTasks, recentApprovals] = await Promise.all([
+  const [staffProfiles, recentTasks, recentApprovals, drivingNow] = await Promise.all([
     getStaffReality(),
     getRecentTaskPerformance(),
     getRecentApprovalPatterns(),
+    getDrivingNow(),
   ])
 
   return `
@@ -29,6 +31,7 @@ export async function buildBusinessContext(businessId: AgentBusinessId): Promise
 
 ### স্টাফ বাস্তবতা (গত ৩০ দিন)
 ${staffProfiles}
+${drivingNow}
 
 ### সাম্প্রতিক টাস্ক পারফরম্যান্স (৭ দিন)
 ${recentTasks}
@@ -74,6 +77,19 @@ async function getStaffReality(): Promise<string> {
   } catch (err) {
     console.warn('[business-brain] getStaffReality failed:', err instanceof Error ? err.message : err)
     return '(Staff data unavailable — basic skill level assume করুন)'
+  }
+}
+
+/** Staff currently in driving mode — the agent must NOT dispatch tasks or
+ *  follow up with them until they resume. Empty string when nobody is driving. */
+async function getDrivingNow(): Promise<string> {
+  try {
+    const driving = await getActiveDrivingStaff('ALMA_LIFESTYLE')
+    if (!driving.length) return ''
+    const names = driving.map((d) => `**${d.name}**`).join(', ')
+    return `\n### 🚗 এখন ড্রাইভিং মোডে\n${names} — এখন ড্রাইভিং করছে। এদের কোনো task dispatch বা follow-up করবেন না; ফিরে এলে নিজে থেকেই কাজ শুরু হবে।`
+  } catch {
+    return ''
   }
 }
 

@@ -200,6 +200,9 @@ export type StaffSummary = {
    *  Before check-in the monitor must not count/show them as active — task time
    *  starts at check-in, not at dispatch. */
   checkedIn?: boolean
+  /** True while the staff is in active driving mode — no task dispatch or
+   *  follow-up until they resume. Shown as a badge so the owner sees it. */
+  driving?: boolean
 }
 
 export type AgentDutyRow = {

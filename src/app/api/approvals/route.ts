@@ -194,6 +194,11 @@ function entityLabel(snapshot: unknown, fallback: string, type?: string) {
     const sign = delta >= 0 ? '+' : ''
     return `${empName} · ${sign}৳${Math.abs(delta).toLocaleString('en-BD')} salary correction`
   }
+  if (data.kind === 'driving_mode') {
+    const who = (typeof data.userName === 'string' && data.userName)
+      || (typeof data.employeeId === 'string' ? data.employeeId : fallback)
+    return `${who} · ড্রাইভিং মোড`
+  }
   const accountTitle = typeof data.accountTitle === 'string' ? data.accountTitle : null
   const employeeId = typeof data.employeeId === 'string' ? data.employeeId : null
   const employeeName = typeof data.employeeName === 'string' ? data.employeeName : null
@@ -230,6 +235,7 @@ function isExecutable(module: string, type: string) {
       'WALLET_WITHDRAWAL',
       'PENALTY_APPEAL',
       'MEAL_ALLOWANCE',
+      'DRIVING_MODE',
       APPROVAL_TYPES.SALARY_CORRECTION,
     ].includes(type))
   )

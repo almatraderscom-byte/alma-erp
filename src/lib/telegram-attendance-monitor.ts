@@ -15,6 +15,7 @@ import { getTelegramOpsSetting } from '@/lib/telegram-notification/settings'
 import { BUSINESS_LIST, type BusinessId } from '@/lib/businesses'
 import { logEvent } from '@/lib/logger'
 import { isStaffOnLeaveByUserName, dhakaDateYmd } from '@/lib/staff-leave'
+import { isStaffDriving } from '@/lib/driving-mode'
 
 export type AttendanceMonitorResult = {
   businessId: string
@@ -104,6 +105,17 @@ async function monitorBusiness(businessId: BusinessId): Promise<AttendanceMonito
         continue
       }
 
+      if (await isStaffDriving(emp.id)) {
+        absentBlocked += 1
+        logEvent('info', 'attendance.false_positive_blocked', {
+          businessId,
+          employeeId: emp.employeeIdGas,
+          reason: 'staff_driving',
+          phase: 'monitor_scan',
+        })
+        continue
+      }
+
       const presence = await employeePresentForAbsentMonitor({
         employeeId: emp.employeeIdGas,
         monitorBusinessId: businessId,
@@ -182,6 +194,7 @@ async function monitorBusiness(businessId: BusinessId): Promise<AttendanceMonito
     for (const rec of openRecords) {
       const emp = employees.find(e => e.employeeIdGas === rec.employeeId)
       if (!emp) continue
+      if (await isStaffDriving(emp.id)) continue
       await queueAttendanceNoCheckoutAlert({
         businessId,
         userId: emp.id,

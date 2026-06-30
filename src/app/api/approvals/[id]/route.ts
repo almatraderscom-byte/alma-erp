@@ -38,6 +38,7 @@ import {
   requestStatusFromApproval,
 } from '@/lib/payroll-wallet'
 import { processMealAllowanceApproval } from '@/lib/meal-allowance'
+import { processDrivingModeApproval } from '@/lib/driving-mode'
 import { processSalaryCorrectionApproval } from '@/lib/salary-correction'
 
 type RouteContext = { params: { id: string } }
@@ -234,6 +235,15 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
       response = await processWalletRequest(approval.id, approval.entityId, body.action, token.sub, body.note, body.approvedAmount)
     } else if (approval.module === 'PAYROLL' && approval.type === APPROVAL_TYPES.MEAL_ALLOWANCE) {
       const moduleResult = await processMealAllowanceApproval(
+        approval.id,
+        approval.entityId,
+        body.action,
+        token.sub,
+        body.note,
+      )
+      response = apiDataSuccess(moduleResult)
+    } else if (approval.module === 'PAYROLL' && approval.type === APPROVAL_TYPES.DRIVING_MODE) {
+      const moduleResult = await processDrivingModeApproval(
         approval.id,
         approval.entityId,
         body.action,

@@ -89,6 +89,14 @@ type MealEligibility = {
   reason: string
 }
 
+type DrivingStatus = {
+  enabled: boolean
+  activeSession: { id: string; startedAt: string } | null
+  pendingSession: { id: string } | null
+  canStart: boolean
+  reason: string
+}
+
 type AttendanceWaiverDto = {
   id: string
   status: string
@@ -115,6 +123,8 @@ export default function EmployeePortalPage() {
   const [walletLoading, setWalletLoading] = useState(true)
   const [mealEligibility, setMealEligibility] = useState<MealEligibility | null>(null)
   const [mealEligibilityLoading, setMealEligibilityLoading] = useState(true)
+  const [drivingStatus, setDrivingStatus] = useState<DrivingStatus | null>(null)
+  const [drivingLoading, setDrivingLoading] = useState(true)
 
   const attendanceEnabled = !systemOwner && Boolean(empId)
   const {
@@ -197,6 +207,31 @@ export default function EmployeePortalPage() {
   useEffect(() => {
     void loadMealEligibility()
   }, [loadMealEligibility])
+
+  const loadDrivingStatus = useCallback(async () => {
+    if (systemOwner) {
+      setDrivingStatus(null)
+      setDrivingLoading(false)
+      return
+    }
+    setDrivingLoading(true)
+    try {
+      const result = await safeFetchJson<DrivingStatus>(
+        `/api/payroll/driving-mode/status?business_id=${encodeURIComponent(business.id)}`,
+        { cache: 'no-store' },
+      )
+      if (!result.ok) throw new Error(result.error.message)
+      setDrivingStatus(result.data)
+    } catch {
+      setDrivingStatus(null)
+    } finally {
+      setDrivingLoading(false)
+    }
+  }, [business.id, systemOwner])
+
+  useEffect(() => {
+    void loadDrivingStatus()
+  }, [loadDrivingStatus])
 
   useEffect(() => {
     const refresh = () => {
@@ -432,6 +467,18 @@ export default function EmployeePortalPage() {
               loading={mealEligibilityLoading}
               eligibility={mealEligibility}
               onSubmitted={() => void loadMealEligibility()}
+            />
+          </div>
+        )}
+
+        {!systemOwner && drivingStatus?.enabled && (
+          <div className="min-h-[120px]">
+            <DrivingModeCard
+              businessId={business.id}
+              empLinked={Boolean(empId)}
+              loading={drivingLoading}
+              status={drivingStatus}
+              onChanged={() => void loadDrivingStatus()}
             />
           </div>
         )}
@@ -915,6 +962,120 @@ function MealAllowanceCard({
       ) : null}
       {!empLinked && canRequest && (
         <p className="text-[11px] text-amber-600">Ask an admin to link your HR employee ID before requesting meal allowance.</p>
+      )}
+    </Card>
+  )
+}
+
+function DrivingModeCard({
+  businessId,
+  empLinked,
+  loading,
+  status,
+  onChanged,
+}: {
+  businessId: string
+  empLinked: boolean
+  loading: boolean
+  status: DrivingStatus | null
+  onChanged: () => void
+}) {
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  if (loading) {
+    return (
+      <Card className="p-5 border-gold-dim/20">
+        <Skeleton className="h-24 w-full" />
+      </Card>
+    )
+  }
+
+  if (!status?.enabled) return null
+
+  const active = status.activeSession
+  const pending = status.pendingSession
+
+  async function start(e: React.FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      const result = await safeFetchJsonWithToast('/api/payroll/driving-mode/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: businessId, reason: reason.trim() }),
+      })
+      if (!result.ok) return
+      toast.success('Driving mode request sent for approval')
+      setReason('')
+      onChanged()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function end() {
+    setBusy(true)
+    try {
+      const result = await safeFetchJsonWithToast('/api/payroll/driving-mode/end', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: businessId }),
+      })
+      if (!result.ok) return
+      toast.success('Driving mode ended — welcome back')
+      onChanged()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Card className="p-5 space-y-4 border-gold-dim/20">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">🚗 Driving Mode</p>
+          {active ? (
+            <p className="mt-2 text-[11px] text-muted">You are on the road — office follow-ups are paused.</p>
+          ) : pending ? (
+            <p className="mt-2 text-[11px] text-muted">Driving mode request pending approval.</p>
+          ) : (
+            <p className="mt-2 text-[11px] text-muted">Going on the road? Start driving mode so the office pauses your follow-ups.</p>
+          )}
+        </div>
+        <span className="rounded-full border border-gold-dim/40 bg-gold/10 px-3 py-1 text-[11px] font-bold text-gold-lt">
+          {active ? 'DRIVING' : pending ? 'PENDING' : 'OFF'}
+        </span>
+      </div>
+
+      {active ? (
+        <Button variant="secondary" className="w-full justify-center" disabled={busy} onClick={() => void end()}>
+          {busy ? 'Ending…' : 'End driving — back to work'}
+        </Button>
+      ) : pending ? (
+        <p className="text-[11px] text-muted">{status.reason || 'Waiting for the owner to approve.'}</p>
+      ) : status.canStart ? (
+        <form onSubmit={start} className="space-y-3 text-[11px]">
+          <label className="block space-y-1">
+            <span className="text-muted">Reason (optional)</span>
+            <textarea
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              rows={2}
+              placeholder="e.g. Going for delivery / pickup"
+              disabled={!empLinked || busy}
+              className="w-full rounded-xl bg-card/85 border border-white/[0.08] px-3 py-2 text-cream text-sm resize-none disabled:opacity-40"
+            />
+          </label>
+          <Button variant="gold" type="submit" className="w-full justify-center" disabled={busy || !empLinked}>
+            {busy ? 'Submitting…' : 'Start driving mode'}
+          </Button>
+        </form>
+      ) : status.reason ? (
+        <p className="text-[11px] text-muted">{status.reason}</p>
+      ) : null}
+      {!empLinked && (
+        <p className="text-[11px] text-amber-600">Ask an admin to link your HR employee ID first.</p>
       )}
     </Card>
   )
