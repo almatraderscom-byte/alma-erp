@@ -234,7 +234,12 @@ export function TradingTelegramAdmin({
 
   async function bulkConfirm() {
     if (!selected.size) return
-    if (!window.confirm(`Post ${selected.size} draft(s) to the ledger? This updates balances and P/L.`)) return
+    if (!(await confirmDialog({
+      title: 'Post to ledger',
+      message: `Post ${selected.size} draft(s) to the ledger? This updates balances and P/L.`,
+      confirmLabel: 'Post to ledger',
+      danger: true,
+    }))) return
     setBusy(true)
     const res = await fetch('/api/trading/telegram/drafts/bulk', {
       method: 'POST',

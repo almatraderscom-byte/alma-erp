@@ -294,7 +294,12 @@ export default function EmployeeDetailPage() {
 
   async function reverseSalaryAccrual(entryId: string, amount: number) {
     if (!canReverseSalary || reversingEntryId) return
-    const ok = window.confirm(`Reverse full salary accrual of ${formatMoneyBDT(amount)}? This posts an equal ADJUSTMENT debit.`)
+    const ok = await confirmDialog({
+      title: 'Reverse salary accrual',
+      message: `Reverse full salary accrual of ${formatMoneyBDT(amount)}? This posts an equal ADJUSTMENT debit.`,
+      confirmLabel: 'Reverse',
+      danger: true,
+    })
     if (!ok) return
     setReversingEntryId(entryId)
     try {
