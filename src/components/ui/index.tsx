@@ -378,7 +378,7 @@ export function Empty({
       {/* Soft accent-tinted chip so the glyph reads as intentional, not a missing icon. */}
       <span
         className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border text-3xl text-muted-hi/80 shadow-card"
-        style={{ background: 'rgba(var(--c-accent), 0.06)', borderColor: 'rgba(var(--c-accent), 0.14)' }}
+        style={{ background: 'rgb(var(--c-accent) / 0.06)', borderColor: 'rgb(var(--c-accent) / 0.14)' }}
       >
         {icon}
       </span>

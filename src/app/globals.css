@@ -262,8 +262,8 @@ a,
   transform: translateY(-2px);
   /* Soft depth + a faint accent glow that follows the accent picker (--c-accent). */
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.05),
-    0 0 0 1px rgba(var(--c-accent), 0.10), inset 0 0 18px rgba(255, 255, 255, 0.02);
-  border-color: rgba(var(--c-accent), 0.22);
+    0 0 0 1px rgb(var(--c-accent) / 0.10), inset 0 0 18px rgba(255, 255, 255, 0.02);
+  border-color: rgb(var(--c-accent) / 0.22);
 }
 
 /* Bengali Taka (U+09F3) — symbol uses Bengali fonts first so Inter never renders a broken glyph */
