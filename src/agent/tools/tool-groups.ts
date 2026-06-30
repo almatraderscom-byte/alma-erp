@@ -33,6 +33,7 @@ import { REFERENCE_TOOLS } from './reference-tools'
 import { QC_TOOLS } from './qc-tools'
 import { COST_TOOLS } from './cost-tools'
 import { LOCATION_TOOLS } from './location-tools'
+import { CAMERA_TOOLS } from './camera-tools'
 import { WORK_TODO_TOOLS } from './work-todo-tools'
 import { ORCHESTRATOR_TOOLS } from './orchestrator-tools'
 import { AUTONOMY_TOOLS } from './autonomy-tools'
@@ -107,6 +108,10 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
     ...APPOINTMENT_TOOLS,
     ...HEALTH_TOOLS,
     ...DOCUMENT_TOOLS,
+    // Live office-camera snapshot (owner only). Always-on + tiny (one tool) so the
+    // owner can ask to see the office/staff from any chat without a keyword unlocking
+    // a group — reliability matters more than the few tokens it adds to the cache.
+    ...CAMERA_TOOLS,
   ],
   staff: [...STAFF_TOOLS, ...SETTINGS_TOOLS],
   erp: [...ERP_TOOLS, ...CONFIRM_TOOLS, ...LOCATION_TOOLS, ...ORDER_AUTONOMY_TOOLS],
