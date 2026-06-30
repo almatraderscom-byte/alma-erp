@@ -52,3 +52,20 @@ export function agentTickHaptic(webMs = 12): void {
   }
   webVibrate(webMs)
 }
+
+/**
+ * Voice-navigator cue so the owner can *feel* the mic turn on/off — the same
+ * confirmation Siri gives. `strong` (mic ON) fires a Medium impact / longer
+ * vibrate so it's unmistakable; the soft variant (mic OFF) is a light tick.
+ * Native-first like the others: the iPhone Taptic Engine fires on the native
+ * app even though iOS WKWebView ignores navigator.vibrate; web/Android fall
+ * back to the Web Vibration API.
+ */
+export function voiceHaptic(strong = false): void {
+  if (isNativePlatform()) {
+    Haptics.impact({ style: strong ? ImpactStyle.Medium : ImpactStyle.Light })
+      .catch(() => webVibrate(strong ? 26 : 12))
+    return
+  }
+  webVibrate(strong ? 26 : 12)
+}

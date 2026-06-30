@@ -82,6 +82,12 @@ export function useVoiceRecorder(opts: {
       mr.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data) }
       mr.onstop = async () => {
         ms.getTracks().forEach(t => t.stop())
+        // Release the recorder ref so the NEXT start() isn't blocked by the
+        // `if (mrRef.current) return` guard. Without this, a voice attempt that
+        // doesn't navigate away (e.g. the agent didn't understand) leaves the old
+        // inactive recorder pinned, and every later attempt silently no-ops until
+        // the user force-quits and reopens the app. (iOS, Android and web alike.)
+        mrRef.current = null
         setStream(null)
         if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
         setRecording(false)
@@ -90,7 +96,7 @@ export function useVoiceRecorder(opts: {
 
         // iOS/Safari record mp4/aac, not webm — use the negotiated type so the
         // transcription backend gets a correctly-labeled file.
-        const actualType = mrRef.current?.mimeType || mr.mimeType || mime || 'audio/webm'
+        const actualType = mr.mimeType || mime || 'audio/webm'
         const ext = extForMime(actualType)
         const blob = new Blob(chunks, { type: actualType })
         if (blob.size < 800) {

@@ -7,6 +7,7 @@ import { useBusiness } from '@/contexts/BusinessContext'
 import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
 import { fetchTtsAudio } from '@/agent/lib/voice-tts-client'
 import { VoiceNavGlow } from './voice/VoiceNavGlow'
+import { voiceHaptic } from '@/agent/lib/haptics'
 import { cn } from '@/lib/utils'
 
 /**
@@ -212,8 +213,8 @@ export default function StaffAssistant() {
   const recorder = useVoiceRecorder({
     onTranscribed: (text: string) => { void handle(text, true) },
     onError: () => flashError('শুনতে পারিনি — আবার চেষ্টা করুন।'),
-    onRecordingStart: () => { setStatus('listening'); playChime(true) },
-    onRecordingStop: () => { setStatus((s) => (s === 'listening' ? 'thinking' : s)); playChime(false) },
+    onRecordingStart: () => { setStatus('listening'); playChime(true); voiceHaptic(true) },
+    onRecordingStop: () => { setStatus((s) => (s === 'listening' ? 'thinking' : s)); playChime(false); voiceHaptic(false) },
   })
 
   const listening = status === 'listening'
