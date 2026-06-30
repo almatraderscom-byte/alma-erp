@@ -171,6 +171,14 @@ const csReplyQueue = new Queue('cs-reply', {
   defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 4000 } },
 })
 
+// Phase A: browser-agent tasks. The main worker only ENQUEUES here; the separate
+// alma-browser-worker PM2 process (Playwright) consumes this queue so its memory
+// footprint / crashes never take down the main worker.
+const browserTaskQueue = new Queue('browser-task', {
+  connection,
+  defaultJobOptions: { attempts: 1, removeOnComplete: 50, removeOnFail: 100 },
+})
+
 // ── Polling for new approved jobs ──────────────────────────────────────────
 
 async function pollPendingJobs() {
@@ -221,6 +229,10 @@ async function pollPendingJobs() {
           await callJobResult(job.id, 'failed', undefined, err.message)
           console.error(`[worker] outbound_call failed for action ${job.id}:`, err.message)
         }
+        handled = true
+      } else if (job.type === 'browser_action') {
+        await browserTaskQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        console.log(`[worker] enqueued browser task for action ${job.id}`)
         handled = true
       }
 

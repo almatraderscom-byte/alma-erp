@@ -55,6 +55,7 @@ import { HEALTH_TOOLS } from './health-tools'
 import { DOCUMENT_TOOLS } from './document-tools'
 import { GRAPH_TOOLS } from './graph-tools'
 import { OPEN_TASK_TOOLS } from './open-task-tools'
+import { BROWSER_TOOLS } from './browser-tools'
 
 export interface ToolResult {
   success: boolean
@@ -400,6 +401,7 @@ export const CORE_AGENT_TOOLS: AgentTool[] = [
   delete_memory,
   ...GRAPH_TOOLS,
   ...OPEN_TASK_TOOLS,
+  ...BROWSER_TOOLS,
 ]
 
 /** Lifestyle-only tools beyond CORE + base groups (not in TOOL_GROUPS.base). */
