@@ -19,6 +19,7 @@ import { REMINDER_TOOLS } from './reminder-tools'
 import { ASK_TOOLS } from './ask-tools'
 import { ADS_TOOLS } from './ads-tools'
 import { LOCATION_TOOLS } from './location-tools'
+import { CAMERA_TOOLS } from './camera-tools'
 import { CATALOG_TOOLS } from './catalog-tools'
 import { WEBSITE_TOOLS } from './website-tools'
 import { RESEARCH_TOOLS } from './research-tools'
@@ -458,6 +459,7 @@ export const TOOLS: AgentTool[] = [
   ...ADS_TOOLS,
   ...MARKETING_TOOLS,
   ...LOCATION_TOOLS,
+  ...CAMERA_TOOLS,
   ...CATALOG_TOOLS,
   ...WEBSITE_TOOLS,
   ...RESEARCH_TOOLS,

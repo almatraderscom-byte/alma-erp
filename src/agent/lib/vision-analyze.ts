@@ -5,7 +5,14 @@
 import { logCost } from '@/agent/lib/cost-events'
 import { agentStorageDownload } from '@/agent/lib/storage'
 
-const VISION_MODEL = 'gemini-2.5-flash'
+const DEFAULT_VISION_MODEL = 'gemini-2.5-flash'
+
+// Google Gemini API list prices (USD per 1M tokens), used for real cost logging.
+// Keep in sync with https://ai.google.dev/pricing. Falls back to Flash rates.
+const VISION_PRICES: Record<string, { in: number; out: number }> = {
+  'gemini-2.5-flash': { in: 0.3, out: 2.5 },
+  'gemini-2.5-pro': { in: 1.25, out: 10 },
+}
 
 interface GeminiVisionOpts {
   prompt: string
@@ -13,6 +20,8 @@ interface GeminiVisionOpts {
   mimeType: string
   costKind: string
   maxTokens?: number
+  /** Override the vision model, e.g. 'gemini-2.5-pro' for a high-accuracy confirm pass. */
+  model?: string
 }
 
 interface GeminiResponse {
@@ -24,7 +33,8 @@ export async function geminiVisionJson<T>(opts: GeminiVisionOpts): Promise<T> {
   const key = process.env.GEMINI_API_KEY
   if (!key) throw new Error('GEMINI_API_KEY not configured')
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${VISION_MODEL}:generateContent?key=${key}`
+  const model = opts.model ?? DEFAULT_VISION_MODEL
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -53,12 +63,14 @@ export async function geminiVisionJson<T>(opts: GeminiVisionOpts): Promise<T> {
 
   const tokensIn = data.usageMetadata?.promptTokenCount ?? 500
   const tokensOut = data.usageMetadata?.candidatesTokenCount ?? 200
+  const price = VISION_PRICES[model] ?? VISION_PRICES[DEFAULT_VISION_MODEL]!
+  const costUsd = (tokensIn / 1_000_000) * price.in + (tokensOut / 1_000_000) * price.out
   void logCost({
     provider: 'gemini',
     kind: opts.costKind as 'cs_vision',
-    units: { model: VISION_MODEL, tokens_in: tokensIn, tokens_out: tokensOut },
-    costUsd: 0.0001,
-    dedupKey: `vision:${opts.costKind}:${opts.imageBase64.slice(0, 24)}`,
+    units: { model, tokens_in: tokensIn, tokens_out: tokensOut },
+    costUsd,
+    dedupKey: `vision:${opts.costKind}:${model}:${opts.imageBase64.slice(0, 24)}`,
   })
 
   return JSON.parse(jsonMatch[0]) as T

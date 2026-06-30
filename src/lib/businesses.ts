@@ -84,6 +84,7 @@ const ALMA_NAV: NavItem[] = [
   { href: '/', icon: '🏠', label: 'Dashboard' },
   { href: '/briefing', icon: '☀️', label: 'Briefing' },
   { href: '/insights', icon: '🔮', label: 'Insights' },
+  { href: '/activity', icon: '🕓', label: 'Activity' },
   { href: '/approvals', icon: '✅', label: 'Approvals' },
   { href: '/portal', icon: '🪪', label: 'My desk' },
   OFFICE_NAV_ITEM,

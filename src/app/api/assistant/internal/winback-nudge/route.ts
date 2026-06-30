@@ -1,17 +1,17 @@
 /**
- * GET/POST /api/assistant/internal/run-strategist — Vercel daily cron.
- * Daily cross-domain strategy pass — owner-gated proposals only (proposes, never
- * auto-acts). Auth mirrors the other internal crons: Bearer CRON_SECRET (Vercel
- * cron fires GET) or AGENT_INTERNAL_TOKEN. Honors the AGENT_ENABLED kill switch.
+ * GET/POST /api/assistant/internal/winback-nudge — Vercel weekly cron.
+ * Win-back + content-refresh proposals (owner-gated; proposes only, never acts).
+ * Auth mirrors the other internal crons: Bearer CRON_SECRET (Vercel cron fires
+ * GET) or AGENT_INTERNAL_TOKEN. Honors the AGENT_ENABLED kill switch.
  */
 import { type NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { runDailyStrategist } from '@/lib/strategist-run'
+import { runWinbackContentNudge } from '@/lib/winback-run'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120
+export const maxDuration = 60
 
 function authorized(req: NextRequest): boolean {
   const auth = req.headers.get('authorization') ?? ''
@@ -36,10 +36,10 @@ async function handle(req: NextRequest) {
   }
 
   try {
-    const result = await runDailyStrategist()
-    return NextResponse.json(result)
+    const result = await runWinbackContentNudge()
+    return NextResponse.json({ ok: true, ...result })
   } catch (err) {
-    console.error('[run-strategist]', err)
+    console.error('[winback-nudge]', err)
     return NextResponse.json({ error: String(err) }, { status: 500 })
   }
 }
