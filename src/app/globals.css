@@ -262,8 +262,8 @@ a,
   transform: translateY(-2px);
   /* Soft depth + a faint accent glow that follows the accent picker (--c-accent). */
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.05),
-    0 0 0 1px rgba(var(--c-accent), 0.10), inset 0 0 18px rgba(255, 255, 255, 0.02);
-  border-color: rgba(var(--c-accent), 0.22);
+    0 0 0 1px rgb(var(--c-accent) / 0.10), inset 0 0 18px rgba(255, 255, 255, 0.02);
+  border-color: rgb(var(--c-accent) / 0.22);
 }
 
 /* Bengali Taka (U+09F3) — symbol uses Bengali fonts first so Inter never renders a broken glyph */
@@ -457,6 +457,17 @@ a,
 }
 .alert-pulse { animation: almaAlertPulse 2s ease-in-out infinite; }
 
+/* Page-enter fade — opacity only (never transform/size), re-triggered per route by
+   PageFade on the existing content element, so it can't affect any layout. */
+@keyframes almaPageEnter {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.alma-page-enter { animation: almaPageEnter 0.22s ease both; }
+@media (prefers-reduced-motion: reduce) {
+  .alma-page-enter { animation: none !important; }
+}
+
 /* Mobile safe areas */
 @supports (padding: max(0px)) {
   .safe-top    { padding-top:    max(0px, env(safe-area-inset-top)); }
@@ -499,6 +510,17 @@ a,
 
 /* AppToast (react-hot-toast renderer) — icon pop, check/✕ draw, loading spin.
    Keep additive: used only by .alma-toast in src/components/ui/AppToast.tsx. */
+
+/* Theme-aware toast surface (was hardcoded dark → unreadable in light mode). */
+.alma-toast {
+  --toast-bg: linear-gradient(180deg, rgba(28, 25, 38, 0.94) 0%, rgba(18, 16, 26, 0.94) 100%);
+  --toast-fg: #ece6da;
+}
+html[data-theme='light'] .alma-toast {
+  --toast-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(247, 244, 238, 0.97) 100%);
+  --toast-fg: #1f1d29;
+}
+
 @keyframes alma-toast-pop {
   0%   { transform: scale(0.4); opacity: 0; }
   60%  { transform: scale(1.12); opacity: 1; }

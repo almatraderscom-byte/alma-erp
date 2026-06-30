@@ -9,6 +9,7 @@ import { AppProviders } from '@/components/providers/AppProviders'
 import { ThemeProvider } from '@/components/providers/ThemeProvider'
 import { ACCENT_COOKIE, THEME_COOKIE, accentStyle, normalizeAccent, normalizeMode } from '@/lib/theme'
 import { AppToaster } from '@/components/ui/AppToaster'
+import { ConfirmDialogHost } from '@/components/ui/confirm-dialog'
 import { GlobalPlatformChrome } from '@/components/layout/GlobalPlatformChrome'
 import { AmbientBackground } from '@/components/ambient/AmbientBackground'
 import { GlobalKeyboardManager } from '@/components/ui-mobile/GlobalKeyboardManager'
@@ -42,7 +43,8 @@ export const metadata: Metadata = {
 }
 
 export const viewport: Viewport = {
-  themeColor: '#0c0b12',
+  // theme-color is set dynamically in <head> from the SSR theme cookie (below) so
+  // the browser/PWA chrome + Android status bar match light vs dark, not a fixed dark.
   width: 'device-width',
   initialScale: 1,
   /** Native Capacitor shell: lock zoom so touch never triggers pinch/zoom drift or jitter on iPhone. */
@@ -84,6 +86,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       suppressHydrationWarning
     >
       <head>
+        <meta name="theme-color" content={themeMode === 'light' ? '#f6f4ef' : '#0c0b12'} />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
@@ -107,6 +110,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <GlobalKeyboardManager />
         <GlobalPlatformChrome />
         <AppToaster />
+        <ConfirmDialogHost />
       </body>
     </html>
   )

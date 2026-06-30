@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 import { captureProfileFromFile, type ProfileCaptureResult } from '@/lib/profile-image-client'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { Button } from '@/components/ui'
+import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { cn } from '@/lib/utils'
 
 type Props = {
@@ -98,7 +99,7 @@ export function ProfilePhotoUploader({
   )
 
   async function removePhoto() {
-    if (!window.confirm('Remove your profile photo?')) return
+    if (!(await confirmDialog({ message: 'Remove your profile photo?', danger: true, confirmLabel: 'Remove' }))) return
     setBusy(true)
     try {
       const res = await fetch(endpoint, { method: 'DELETE' })

@@ -8,6 +8,7 @@ import toast from 'react-hot-toast'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { Button, Card, Empty, KpiCard, Skeleton, KPI_AUTO_GRID } from '@/components/ui'
+import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { PageEnter } from '@/components/layout/AgentAccess'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { useActor } from '@/contexts/ActorContext'
@@ -247,7 +248,7 @@ function AttendancePageInner() {
 
   async function resetAttendance(recordId: string, employeeName: string) {
     if (!canResetAttendance || resettingRecordId) return
-    const ok = window.confirm(`Remove ${employeeName}'s attendance for today? They can check in again; any late penalty will be reversed.`)
+    const ok = await confirmDialog({ message: `Remove ${employeeName}'s attendance for today? They can check in again; any late penalty will be reversed.`, confirmLabel: 'Remove', danger: true })
     if (!ok) return
     setResettingRecordId(recordId)
     try {

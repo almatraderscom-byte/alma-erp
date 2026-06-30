@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 import { useSession } from 'next-auth/react'
 import { motion } from 'framer-motion'
 import { Button, Card, Empty, Input, KpiCard, KPI_AUTO_GRID, Select, Skeleton } from '@/components/ui'
+import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { TradingPageShell } from '@/components/trading/TradingPageShell'
 import { useTradingAccounts } from '@/hooks/useTrading'
 import { api } from '@/lib/api'
@@ -254,7 +255,7 @@ export default function TradingTargetControlPage() {
                         </Button>
                       )}
                       <Button size="xs" variant="ghost" disabled={busyId === row.id} onClick={async () => {
-                        if (!confirm('Delete this target?')) return
+                        if (!(await confirmDialog({ message: 'Delete this target?', confirmLabel: 'Delete', danger: true }))) return
                         try {
                           await api.trading.deleteVolumeTarget(row.id)
                           toast.success('Removed')

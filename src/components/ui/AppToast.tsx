@@ -100,7 +100,7 @@ export function AppToast({ t }: { t: Toast }) {
       onClick={() => hotToast.dismiss(t.id)}
       className="alma-toast pointer-events-auto flex w-[min(90vw,360px)] cursor-pointer items-center gap-3 rounded-2xl border px-4 py-3 font-sans backdrop-blur-xl"
       style={{
-        background: 'linear-gradient(180deg, rgba(28,25,38,0.94) 0%, rgba(18,16,26,0.94) 100%)',
+        background: 'var(--toast-bg)',
         borderColor: c.ring,
         boxShadow: `0 0 0 1px ${c.ring}, 0 18px 50px -12px rgba(0,0,0,0.7), 0 0 40px -8px ${c.glow}`,
         opacity: t.visible ? 1 : 0,
@@ -109,7 +109,7 @@ export function AppToast({ t }: { t: Toast }) {
       }}
     >
       <ToastIcon tone={tone} accent={c.accent} />
-      <div className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-cream">
+      <div className="min-w-0 flex-1 text-[13px] font-semibold leading-snug" style={{ color: 'var(--toast-fg)' }}>
         {message}
       </div>
     </div>

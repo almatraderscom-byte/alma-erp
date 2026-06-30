@@ -18,6 +18,7 @@ import Confetti from './confetti'
 import { todoState } from './todo-status'
 import { OfficeTodoDock } from './office-todo-dock'
 import { successHaptic } from '@/lib/ui-haptics'
+import toast from 'react-hot-toast'
 
 // ── small formatting helpers ────────────────────────────────────────────────
 const BN = '০১২৩৪৫৬৭৮৯'
@@ -112,6 +113,9 @@ function pickQc(data: Record<string, unknown> | null): number | null {
   return null
 }
 
+/** Actions whose card leaves the owner's queue → safe to reflect optimistically. */
+const OPTIMISTIC_ACTIONS = ['approve', 'redo', 'self_approve', 'self_reject']
+
 type ActionBody = {
   action:
     | 'approve'
@@ -167,21 +171,49 @@ export default function OwnerHub({
   const [tab, setTab] = useState<'work' | 'team'>('work')
   const [trackOpen, setTrackOpen] = useState(false)
 
+  // Optimistic UI: an approve/redo/self-decision clears the card from the owner's
+  // queue INSTANTLY, then the server confirms in the background and a refresh
+  // reconciles. On failure the card returns + an error toast. Fresh server data
+  // (each router.refresh) clears the set — by then the task is already gone from
+  // the server lists, so there's no flicker. Money flows are NOT optimistic.
+  const [resolvedIds, setResolvedIds] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    setResolvedIds((prev) => (prev.size ? new Set() : prev))
+  }, [data])
+
   const run = useCallback(
     async (key: string, body: ActionBody) => {
       setBusyId(key)
+      const optimistic = body.taskId && OPTIMISTIC_ACTIONS.includes(body.action)
+      if (optimistic && body.taskId) {
+        const id = body.taskId
+        setResolvedIds((prev) => new Set(prev).add(id))
+      }
       const ok = await postAction({ ...body, businessId: data.businessId })
       setBusyId(null)
       if (ok) {
         successHaptic()
         startTransition(() => router.refresh())
+      } else if (optimistic && body.taskId) {
+        // Roll back — the action did not land, so the card must return.
+        const id = body.taskId
+        setResolvedIds((prev) => {
+          const next = new Set(prev)
+          next.delete(id)
+          return next
+        })
+        toast.error('কাজটি সম্পন্ন হয়নি — আবার চেষ্টা করুন')
       }
       return ok
     },
     [data.businessId, router],
   )
 
-  const { kpis, award, awardStats, overdueUpdates, pendingApproval, activeTasks, doneTodayTasks, selfInitiated, activity, team, leaderboard, performance, proposals } = data
+  const { kpis, award, awardStats, overdueUpdates, doneTodayTasks, activity, team, leaderboard, performance, proposals } = data
+  // Optimistically-resolved cards drop out of the owner's queue immediately.
+  const pendingApproval = data.pendingApproval.filter((t) => !resolvedIds.has(t.id))
+  const activeTasks = data.activeTasks.filter((t) => !resolvedIds.has(t.id))
+  const selfInitiated = data.selfInitiated.filter((t) => !resolvedIds.has(t.id))
   const busy = pending || busyId !== null
 
   // staffId → profile image map (from team rows) for avatars across the hub

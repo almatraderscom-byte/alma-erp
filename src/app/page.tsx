@@ -8,6 +8,7 @@ import { DateRangeFilter } from '@/components/date-filter/DateRangeFilter'
 import { aggregateDashboardMetrics } from '@/lib/order-analytics'
 import { formatGroupSizeLine } from '@/lib/product-size-breakdown'
 import { Card, KpiCard, Skeleton, StatusBadge, PageHeader, Empty, Money, BdtText, useCountUp } from '@/components/ui'
+import { SPRING } from '@/lib/motion'
 import { ConnectionStatus } from '@/components/ui/ConnectionStatus'
 import { fmt, fmtNum, pct } from '@/lib/utils'
 import type { Order } from '@/types'
@@ -471,7 +472,7 @@ function HeroKpi({ icon, label, value, num, format, accent, borderColor, valueCo
   return (
     <motion.div
       whileHover={{ y: -3 }}
-      transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+      transition={SPRING.default}
       className={`relative overflow-hidden rounded-2xl border border-border-subtle bg-card/80 shadow-card will-change-transform ${borderColor} border-l-[3px]`}
     >
       <div className={`absolute inset-0 bg-gradient-to-br ${accent} pointer-events-none`} />
@@ -516,7 +517,7 @@ function CompactKpi({ label, value, num, format, color, sub }: {
   return (
     <motion.div
       whileHover={{ y: -2 }}
-      transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+      transition={SPRING.default}
       className="bg-card/80 rounded-xl border border-border-subtle p-3.5 shadow-card will-change-transform">
       <p className="text-[10px] font-bold uppercase tracking-[0.06em] text-muted mb-1">{label}</p>
       {typeof display === 'string' && display.includes('৳') ? (
