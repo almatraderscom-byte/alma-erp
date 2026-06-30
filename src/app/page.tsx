@@ -16,6 +16,7 @@ import { useBusiness } from '@/contexts/BusinessContext'
 import { useActor } from '@/contexts/ActorContext'
 import type { AlmaRole } from '@/lib/roles'
 import Link from 'next/link'
+import { StaffWhatsAppOptIn } from '@/components/portal/StaffWhatsAppOptIn'
 
 const TradingDashboard = dynamic(() => import('@/app/trading/page'), {
   ssr: false,
@@ -105,6 +106,9 @@ function RoleDashboard({ role, name }: { role: AlmaRole; name: string }) {
               <p className="mt-1.5 text-[12px] text-muted">{desk.intro} — যা দরকার, এক ট্যাপ দূরে।</p>
             </Card>
           </motion.div>
+          {/* WhatsApp opt-in: one tap → staff sends a pre-written message → opens the
+              24h window so the office can WhatsApp them without a template. */}
+          <StaffWhatsAppOptIn name={name} />
           <motion.div variants={fadeUp} className="grid gap-3 sm:grid-cols-2">
             {desk.cards.map(c => (
               <Link key={c.href} prefetch href={c.href} className="block">
