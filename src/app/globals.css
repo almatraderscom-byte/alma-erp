@@ -499,6 +499,17 @@ a,
 
 /* AppToast (react-hot-toast renderer) — icon pop, check/✕ draw, loading spin.
    Keep additive: used only by .alma-toast in src/components/ui/AppToast.tsx. */
+
+/* Theme-aware toast surface (was hardcoded dark → unreadable in light mode). */
+.alma-toast {
+  --toast-bg: linear-gradient(180deg, rgba(28, 25, 38, 0.94) 0%, rgba(18, 16, 26, 0.94) 100%);
+  --toast-fg: #ece6da;
+}
+html[data-theme='light'] .alma-toast {
+  --toast-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(247, 244, 238, 0.97) 100%);
+  --toast-fg: #1f1d29;
+}
+
 @keyframes alma-toast-pop {
   0%   { transform: scale(0.4); opacity: 0; }
   60%  { transform: scale(1.12); opacity: 1; }
