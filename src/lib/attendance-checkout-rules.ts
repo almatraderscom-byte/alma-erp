@@ -197,7 +197,9 @@ export async function runCheckoutGates(input: {
     return { ok: true }
   }
   // Step 4 — an owner-approved leave covering today also waives ALL gates
-  // (whole-day/range leave always; hour/shifted-start leave within its window).
+  // (whole-day/range leave always; an HOURS leave only when its window runs
+  // through office close — a genuine early departure. SHIFTED_START never
+  // waives checkout: it only delays the morning start).
   if (await leaveWaivesCheckout(input.userId, input.businessId, input.attendanceDate, now)) {
     return { ok: true }
   }
