@@ -6,9 +6,18 @@ import type { AttendanceException } from '@prisma/client'
 // SCOPE→fine mapping and the "only refund posted fines" rule.
 const recordFindUnique = vi.fn<(...a: unknown[]) => unknown>()
 const createEntry = vi.fn<(...a: unknown[]) => Promise<{ id: string }>>(async () => ({ id: 'ledger-x' }))
+// Double-refund guard reads existing reversals: appeal waivers (with their
+// reversal ledger ids) + this day's ledger refund entries. Default to "nothing
+// refunded yet" so the simple scope tests behave exactly as before.
+const waiverFindMany = vi.fn<(...a: unknown[]) => Promise<unknown[]>>(async () => [])
+const ledgerFindMany = vi.fn<(...a: unknown[]) => Promise<unknown[]>>(async () => [])
 
 vi.mock('@/lib/prisma', () => ({
-  prisma: { attendanceRecord: { findUnique: (...a: unknown[]) => recordFindUnique(...a) } },
+  prisma: {
+    attendanceRecord: { findUnique: (...a: unknown[]) => recordFindUnique(...a) },
+    attendanceWaiverRequest: { findMany: (...a: unknown[]) => waiverFindMany(...a) },
+    employeeLedgerEntry: { findMany: (...a: unknown[]) => ledgerFindMany(...a) },
+  },
 }))
 vi.mock('@/lib/payroll-compensation', () => ({
   createCompensationLedgerEntry: (...a: unknown[]) => createEntry(...a),
@@ -31,6 +40,7 @@ function ex(scope: string): AttendanceException {
 
 // All three fines posted (ledger ids present, positive amounts).
 const fullyFinedRecord = {
+  id: 'rec-1',
   penaltyAmount: 200,
   penaltyLedgerEntryId: 'l-late',
   earlyLeavePenaltyAmount: 50,
@@ -47,6 +57,10 @@ describe('refundFinesForApprovedException — scope decides which posted fines r
   beforeEach(() => {
     recordFindUnique.mockReset()
     createEntry.mockClear()
+    waiverFindMany.mockReset()
+    waiverFindMany.mockResolvedValue([])
+    ledgerFindMany.mockReset()
+    ledgerFindMany.mockResolvedValue([])
   })
 
   it('LATE_ARRIVAL refunds only the late check-in fine', async () => {
@@ -94,5 +108,53 @@ describe('refundFinesForApprovedException — scope decides which posted fines r
     recordFindUnique.mockResolvedValue(null)
     await refundFinesForApprovedException(ex('FULL_DAY'))
     expect(createEntry).not.toHaveBeenCalled()
+  })
+
+  // ── Double-refund guard ──────────────────────────────────────────────────
+  // A fine already reversed via the penalty-appeal path must NOT be credited
+  // again by the exception path. Invariant: total credited ≤ total fines posted.
+
+  it('does not refund when an appeal already reversed the full day of fines', async () => {
+    recordFindUnique.mockResolvedValue(fullyFinedRecord) // 200+50+500 = 750 posted
+    waiverFindMany.mockResolvedValue([{ reversalLedgerEntryId: 'rev-1' }])
+    ledgerFindMany.mockImplementation(async (args: unknown) => {
+      const where = (args as { where?: { source?: string } }).where || {}
+      // appeal reversal already credited the whole 750
+      if (where.source === 'attendance_late_penalty_reversal') return [{ amount: 750 }]
+      return []
+    })
+    await refundFinesForApprovedException(ex('FULL_DAY'))
+    expect(createEntry).not.toHaveBeenCalled()
+  })
+
+  it('refunds only the remaining budget after a partial appeal reversal', async () => {
+    recordFindUnique.mockResolvedValue(fullyFinedRecord) // 750 posted
+    waiverFindMany.mockResolvedValue([{ reversalLedgerEntryId: 'rev-1' }])
+    ledgerFindMany.mockImplementation(async (args: unknown) => {
+      const where = (args as { where?: { source?: string } }).where || {}
+      if (where.source === 'attendance_late_penalty_reversal') return [{ amount: 500 }] // appeal took 500
+      return []
+    })
+    await refundFinesForApprovedException(ex('EARLY_CHECKOUT')) // wants early(50)+nocheckout(500)
+    const credited = createEntry.mock.calls
+      .map(c => c[0] as { sourceRef: string; amount: number })
+    const total = credited.reduce((s, c) => s + c.amount, 0)
+    // budget = 750 − 500 = 250: early 50 then nocheckout capped at 200
+    expect(total).toBe(250)
+    const nocheckout = credited.find(c => c.sourceRef.endsWith(':nocheckout'))
+    expect(nocheckout?.amount).toBe(200)
+  })
+
+  it('skips a fine kind this exception already refunded (idempotent re-run)', async () => {
+    recordFindUnique.mockResolvedValue(fullyFinedRecord)
+    ledgerFindMany.mockImplementation(async (args: unknown) => {
+      const where = (args as { where?: { source?: string } }).where || {}
+      if (where.source === 'attendance_exception_refund') {
+        return [{ amount: 50, sourceRef: 'attendance-exc-refund:exc-1:early' }]
+      }
+      return []
+    })
+    await refundFinesForApprovedException(ex('EARLY_CHECKOUT'))
+    expect(kindsFromCalls()).toEqual(['nocheckout']) // early already done, not re-posted
   })
 })

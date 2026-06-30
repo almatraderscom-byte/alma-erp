@@ -1,7 +1,8 @@
 import { Prisma, type AttendanceException } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { attendanceDateFor, localMinutesFor } from '@/lib/attendance'
+import { attendanceDateFor, localMinutesFor, LATE_PENALTY_REVERSAL_SOURCE } from '@/lib/attendance'
 import { createCompensationLedgerEntry } from '@/lib/payroll-compensation'
+import { roundMoney } from '@/lib/money'
 import {
   createApprovalRequest,
   dispatchApprovalsUpdated,
@@ -89,6 +90,7 @@ export async function refundFinesForApprovedException(ex: AttendanceException): 
       },
     },
     select: {
+      id: true,
       penaltyAmount: true,
       penaltyLedgerEntryId: true,
       earlyLeavePenaltyAmount: true,
@@ -106,15 +108,30 @@ export async function refundFinesForApprovedException(ex: AttendanceException): 
     { kind: 'nocheckout', amount: Number(record.noCheckoutFineAmount || 0), posted: !!record.noCheckoutFineLedgerEntryId },
   ]
 
+  // Guard against DOUBLE-REFUND. A fine can be reversed by two independent owner
+  // actions: the penalty-appeal flow (a single lump-sum ADJUSTMENT covering the
+  // day's fines) and this exception flow (one ADJUSTMENT per fine). They use
+  // different (source, sourceRef) keys, so the DB unique-guard does not cross
+  // protect them. Enforce one hard invariant instead: the total credited back
+  // for an attendance day can never exceed the total fines posted that day.
+  const totalFinesPosted = targets.reduce((sum, t) => sum + (t.posted ? t.amount : 0), 0)
+  const alreadyCredited = await sumExistingFineRefunds(record.id, ex.id)
+  const alreadyRefundedKinds = alreadyCredited.exceptionKinds
+  let budget = roundMoney(totalFinesPosted - alreadyCredited.total)
+  if (budget <= 0) return
+
   for (const t of targets) {
     if (!kinds.has(t.kind) || !t.posted || t.amount <= 0) continue
+    if (alreadyRefundedKinds.has(t.kind)) continue
+    const refund = Math.min(t.amount, budget)
+    if (refund <= 0) break
     try {
       await createCompensationLedgerEntry(
         {
           employeeId: ex.employeeId,
           businessId: ex.businessId,
           type: 'ADJUSTMENT',
-          amount: t.amount,
+          amount: refund,
           effectiveDate: ex.attendanceDate,
           createdById: ex.reviewedById,
           approvedById: ex.reviewedById,
@@ -124,6 +141,7 @@ export async function refundFinesForApprovedException(ex: AttendanceException): 
         },
         { skipNotify: true },
       )
+      budget = roundMoney(budget - refund)
     } catch (e) {
       // Already refunded (unique source/sourceRef) → fine, skip silently.
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') continue
@@ -134,6 +152,56 @@ export async function refundFinesForApprovedException(ex: AttendanceException): 
       })
     }
   }
+}
+
+/**
+ * Total fine-reversal credit already on the books for one attendance day, across
+ * BOTH reversal paths, so {@link refundFinesForApprovedException} never credits
+ * more than the staff was actually fined:
+ *  - appeal reversals: the lump-sum ADJUSTMENT(s) linked to waiver requests on
+ *    this attendance record (non-archived only);
+ *  - exception refunds already raised by THIS exception (per-fine), which also
+ *    tells us which fine kinds are done so we don't re-attempt them.
+ */
+async function sumExistingFineRefunds(
+  attendanceRecordId: string,
+  exceptionId: string,
+): Promise<{ total: number; exceptionKinds: Set<FineKind> }> {
+  const exceptionKinds = new Set<FineKind>()
+  let total = 0
+
+  // Appeal-path reversals tied to this attendance record.
+  const waivers = await prisma.attendanceWaiverRequest.findMany({
+    where: { attendanceRecordId, reversalLedgerEntryId: { not: null } },
+    select: { reversalLedgerEntryId: true },
+  })
+  const reversalIds = waivers
+    .map(w => w.reversalLedgerEntryId)
+    .filter((id): id is string => !!id)
+  if (reversalIds.length > 0) {
+    const rows = await prisma.employeeLedgerEntry.findMany({
+      where: { id: { in: reversalIds }, isArchived: false, source: LATE_PENALTY_REVERSAL_SOURCE },
+      select: { amount: true },
+    })
+    total += rows.reduce((sum, r) => sum + Number(r.amount || 0), 0)
+  }
+
+  // Exception-path refunds already raised by this exception.
+  const excRefunds = await prisma.employeeLedgerEntry.findMany({
+    where: {
+      source: EXCEPTION_REFUND_SOURCE,
+      sourceRef: { startsWith: `attendance-exc-refund:${exceptionId}:` },
+      isArchived: false,
+    },
+    select: { amount: true, sourceRef: true },
+  })
+  for (const r of excRefunds) {
+    total += Number(r.amount || 0)
+    const kind = r.sourceRef?.split(':').pop()
+    if (kind === 'late' || kind === 'early' || kind === 'nocheckout') exceptionKinds.add(kind)
+  }
+
+  return { total: roundMoney(total), exceptionKinds }
 }
 
 function dateLabel(date: Date) {
