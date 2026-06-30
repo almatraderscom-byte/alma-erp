@@ -765,7 +765,7 @@ async function processWalletRequest(
     return NextResponse.json({ error: 'approvedAmount must be > 0 and <= requested amount' }, { status: 400 })
   }
   if (request.type === 'WITHDRAWAL') {
-    const entries = await prisma.employeeLedgerEntry.findMany({ where: { employeeId: request.employeeId, businessId: request.businessId } })
+    const entries = await prisma.employeeLedgerEntry.findMany({ where: { employeeId: request.employeeId, businessId: request.businessId, isArchived: false } })
     const balance = computeWalletSummary(request.employeeId, request.businessId, entries).availableWithdrawable
     if (approvedAmount > balance) return NextResponse.json({ error: `Insufficient wallet balance. Available: ${balance}` }, { status: 400 })
   }

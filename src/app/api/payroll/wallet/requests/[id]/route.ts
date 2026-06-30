@@ -120,7 +120,7 @@ export async function PATCH(
 
   if (request.type === 'WITHDRAWAL') {
     const entries = await prisma.employeeLedgerEntry.findMany({
-      where: { employeeId: request.employeeId, businessId: request.businessId },
+      where: { employeeId: request.employeeId, businessId: request.businessId, isArchived: false },
     })
     const balance = computeWalletSummary(request.employeeId, request.businessId, entries).availableWithdrawable
     if (approvedAmount > balance) {
