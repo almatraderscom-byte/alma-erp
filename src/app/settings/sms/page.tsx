@@ -303,7 +303,7 @@ export default function SmsSettingsPage() {
             ) : (
               <div className="table-scroll">
                 <table className="w-full min-w-[900px] text-left text-[11px]">
-                  <thead className="border-b border-white/[0.08] text-[11px] font-medium uppercase tracking-wider text-muted">
+                  <thead className="sticky top-0 z-[1] bg-card/90 backdrop-blur-sm border-b border-white/[0.08] text-[11px] font-medium uppercase tracking-wider text-muted">
                     <tr>
                       <th className="py-2 pr-3">Created</th>
                       <th className="py-2 pr-3">Phone</th>

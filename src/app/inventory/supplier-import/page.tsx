@@ -328,7 +328,7 @@ export default function SupplierImportPage() {
           ) : (
             <div className="table-scroll border border-border rounded-xl">
               <table className="w-full text-[11px] border-collapse min-w-[820px]">
-                <thead>
+                <thead className="sticky top-0 z-[1] bg-card/95 backdrop-blur-sm">
                   <tr className="border-b border-border bg-white/[0.04]">
                     <th className="px-2 py-2 text-left w-10">✓</th>
                     <th className="px-2 py-2 text-left">Status</th>

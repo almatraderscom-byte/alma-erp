@@ -197,8 +197,8 @@ export default function AnalyticsPage() {
             ) : (
               <div className="overflow-x-auto min-w-0 max-w-full table-scroll">
                 <table className="w-full min-w-[720px] text-xs border-collapse">
-                  <thead>
-                    <tr className="border-b border-white/[0.06] bg-white/[0.04]/50">
+                  <thead className="sticky top-0 z-[1] bg-card/90 backdrop-blur-sm">
+                    <tr className="border-b border-white/[0.06]">
                       {['Category','Orders','Revenue','Profit','Margin'].map(h => (
                         <th key={h} className="px-4 py-3 text-left text-[10px] font-semibold tracking-[0.08em] uppercase text-muted">{h}</th>
                       ))}
