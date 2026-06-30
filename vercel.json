@@ -72,6 +72,10 @@
     {
       "path": "/api/assistant/internal/heartbeat-brain",
       "schedule": "0 4,7,10,13 * * *"
+    },
+    {
+      "path": "/api/assistant/internal/idle-watch",
+      "schedule": "*/5 3-14 * * *"
     }
   ],
   "headers": [
