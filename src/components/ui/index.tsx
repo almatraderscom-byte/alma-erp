@@ -1,8 +1,9 @@
 'use client'
 import { motion, useReducedMotion, useSpring } from 'framer-motion'
-import { useEffect, useState } from 'react'
+import { forwardRef, useEffect, useState, type ReactNode } from 'react'
 import { BDT_SYMBOL, fmtNum } from '@/lib/currency'
 import { cn } from '@/lib/utils'
+import { tapHaptic } from '@/lib/ui-haptics'
 import { BdtText, Money } from '@/components/ui/Currency'
 import { ResponsiveKpiValue, type KpiValueKind } from '@/components/ui/ResponsiveKpiValue'
 import type { OrderStatus, CustomerSegment, RiskLevel } from '@/types'
@@ -28,7 +29,7 @@ export function Skeleton({ className }: { className?: string }) {
  * under reduced motion or when disabled — never animates fractional taka mid-flight
  * because callers round/format the integer it returns. Internal to KpiCard.
  */
-function useCountUp(target: number, enabled: boolean): number {
+export function useCountUp(target: number, enabled: boolean): number {
   const reduce = useReducedMotion()
   const spring = useSpring(0, { stiffness: 80, damping: 22, mass: 0.9 })
   const [n, setN] = useState(enabled && !reduce ? 0 : target)
@@ -45,20 +46,16 @@ function useCountUp(target: number, enabled: boolean): number {
 }
 
 // ── Card ─────────────────────────────────────────────────────────────────
-export function Card({
-  children,
-  className,
-  gold,
-  interactive,
-}: {
-  children: React.ReactNode
+export const Card = forwardRef<HTMLDivElement, {
+  children: ReactNode
   className?: string
   gold?: boolean
   /** Subtle hover lift — presentation only. */
   interactive?: boolean
-}) {
+}>(function Card({ children, className, gold, interactive }, ref) {
   return (
     <div
+      ref={ref}
       className={cn(
         'min-w-0 rounded-2xl border bg-card/80 shadow-card',
         gold ? 'border-gold/30' : 'border-border-subtle',
@@ -69,7 +66,7 @@ export function Card({
       {children}
     </div>
   )
-}
+})
 
 /** Auto-fit KPI row: ~5 on desktop, 2–3 on tablet, 1–2 on mobile. */
 export const KPI_AUTO_GRID =
@@ -79,7 +76,7 @@ export const KPI_AUTO_GRID =
 export function KpiCard({ label, value, sub, delta, color, loading, valueKind, animate }: {
   label: string
   value: string | number
-  sub?: string
+  sub?: ReactNode
   delta?: number
   color?: string
   loading?: boolean
@@ -269,18 +266,18 @@ export function Button({
   className?: string
   type?: 'button' | 'submit'
 }) {
-  const base = 'inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl font-semibold transition-all duration-150 disabled:opacity-40 active:scale-[0.98] md:min-h-0'
+  const base = 'inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl font-semibold transition-all duration-150 disabled:opacity-50 disabled:saturate-[0.85] disabled:cursor-not-allowed disabled:active:scale-100 active:scale-[0.98] md:min-h-0'
   const sizes = { xs: 'px-2.5 py-1.5 text-[11px] min-h-[36px] md:min-h-0', sm: 'px-3.5 py-2 text-xs', md: 'px-5 py-2.5 text-sm' }
   const variants = {
-    gold:      'bg-gold/10 border border-gold/30 text-gold-dim hover:bg-gold/20',
-    secondary: 'bg-bg-2 border border-border-subtle text-cream hover:bg-bg-3 hover:border-border-strong',
-    ghost:     'bg-transparent border border-border-subtle text-muted-hi hover:bg-bg-2 hover:text-cream',
-    danger:    'bg-danger/10 border border-danger/30 text-danger hover:bg-danger/20',
+    gold:      'bg-gold/10 border border-gold/30 text-gold-dim hover:bg-gold/20 hover:shadow-gold-sm',
+    secondary: 'bg-bg-2 border border-border-subtle text-cream hover:bg-bg-3 hover:border-border-strong hover:shadow-card',
+    ghost:     'bg-transparent border border-border-subtle text-muted-hi hover:bg-bg-2 hover:text-cream hover:shadow-card',
+    danger:    'bg-danger/10 border border-danger/30 text-danger hover:bg-danger/20 hover:shadow-card',
   }
   return (
     <button
       type={type}
-      onClick={onClick}
+      onClick={onClick ? () => { tapHaptic(); onClick() } : undefined}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       className={cn(base, sizes[size], variants[variant], className)}
@@ -292,12 +289,16 @@ export function Button({
 }
 
 // ── Input ────────────────────────────────────────────────────────────────
-export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
+export function Input({ className, error, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { error?: boolean }) {
   return (
     <input
       {...props}
+      aria-invalid={error || undefined}
       className={cn(
-        'w-full rounded-xl bg-card border border-border-strong px-4 py-3 text-sm text-cream placeholder-muted transition-colors focus:outline-none focus:border-gold/50 focus:ring-1 focus:ring-gold/20',
+        'w-full rounded-xl bg-card border px-4 py-3 text-sm text-cream placeholder-muted transition-all focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed',
+        error
+          ? 'border-danger/60 focus:border-danger focus:ring-2 focus:ring-danger/30'
+          : 'border-border-strong focus:border-gold/60 focus:ring-2 focus:ring-gold/25 focus:shadow-gold-sm',
         className,
       )}
     />
@@ -357,22 +358,40 @@ export function Spinner({ size = 'sm' }: { size?: 'sm' | 'md' | 'lg' }) {
 }
 
 // ── Empty State ───────────────────────────────────────────────────────────
+/** Crafted "empty inbox" line illustration — replaces the abstract glyphs that
+ *  read like missing icons. currentColor lets the accent chip tint it. */
+function EmptyIllustration() {
+  return (
+    <svg viewBox="0 0 48 48" fill="none" aria-hidden className="h-8 w-8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 19 L40 19 L40 36 Q40 39 37 39 L12 39 Q9 39 9 36 Z" stroke="currentColor" strokeWidth="2" opacity="0.75" />
+      <path d="M9 19 L14 10 Q15 8.5 17 8.5 L32 8.5 Q34 8.5 35 10 L40 19" stroke="currentColor" strokeWidth="2" opacity="0.4" />
+      <path d="M9 19 L18 19 L21 24 L27 24 L30 19 L40 19" stroke="currentColor" strokeWidth="2" opacity="0.75" />
+    </svg>
+  )
+}
+
 export function Empty({
-  icon,
   title,
   desc,
   action,
 }: {
-  icon: string
+  /** Optional legacy glyph — ignored in favour of the crafted illustration; kept for back-compat. */
+  icon?: string
   title: string
   desc?: string
   action?: React.ReactNode
 }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
-      <span className="mb-4 text-5xl opacity-30">{icon}</span>
+      {/* Crafted illustration in a soft accent-tinted chip — premium, consistent. */}
+      <span
+        className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border text-muted-hi/80 shadow-card"
+        style={{ background: 'rgb(var(--c-accent) / 0.06)', borderColor: 'rgb(var(--c-accent) / 0.14)' }}
+      >
+        <EmptyIllustration />
+      </span>
       <p className="mb-1 text-sm font-semibold text-muted-hi">{title}</p>
-      {desc && <p className="text-[11px] text-muted">{desc}</p>}
+      {desc && <p className="text-[11px] text-muted max-w-[34ch]">{desc}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>
   )

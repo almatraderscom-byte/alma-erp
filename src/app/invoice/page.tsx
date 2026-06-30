@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useOrders } from '@/hooks/useERP'
 import { PageHeader, Card, StatusBadge, Button, SearchInput, Skeleton, Empty, Money, Select } from '@/components/ui'
+import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { api, APIError, type InvoiceRegistryRecord } from '@/lib/api'
 import toast from 'react-hot-toast'
 import type { Order } from '@/types'
@@ -199,7 +200,7 @@ export default function InvoicePage() {
   }
 
   async function regenerateInvoice(order: Order) {
-    if (!window.confirm(`Regenerate invoice for order ${order.id}? The existing registry record will be updated and the event will be audited.`)) return
+    if (!(await confirmDialog({ message: `Regenerate invoice for order ${order.id}? The existing registry record will be updated and the event will be audited.`, confirmLabel: 'Regenerate' }))) return
     setGenLoading(true)
     try {
       const r = await api.mutations.generateInvoice(order.id, { allowRegenerate: true })

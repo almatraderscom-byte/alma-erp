@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import type { OwnerHubData, StaffOfficeData } from '@/agent/lib/office-hub'
 import type { Motivation } from '@/agent/lib/office-motivation'
@@ -27,8 +28,32 @@ export default function OfficeShell({
   navItems: OfficeNavItem[]
 }) {
   const isOwner = self === 'owner'
+  const router = useRouter()
   const [navOpen, setNavOpen] = useState(false)
   const [histOpen, setHistOpen] = useState(false)
+
+  // Live sync across screens. The office board is server-rendered and otherwise
+  // only re-fetches when the viewer takes an action — so an approval made by the
+  // owner (or the agent's auto-verify) didn't reach a staff's open page, or a
+  // second tab, until a manual reload. Soft-refresh the server data on a gentle
+  // interval (only while the tab is visible) and immediately when the tab regains
+  // focus, so done/approved/redo state propagates everywhere on its own.
+  // router.refresh() preserves client state (open drawers, chat, scroll), so this
+  // never disrupts what the viewer is doing.
+  useEffect(() => {
+    const REFRESH_MS = 18_000
+    const refreshIfVisible = () => {
+      if (document.visibilityState === 'visible') router.refresh()
+    }
+    const id = setInterval(refreshIfVisible, REFRESH_MS)
+    document.addEventListener('visibilitychange', refreshIfVisible)
+    window.addEventListener('focus', refreshIfVisible)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', refreshIfVisible)
+      window.removeEventListener('focus', refreshIfVisible)
+    }
+  }, [router])
 
   // The app's GLOBAL MobilePullToRefresh listens on the ERP <main> scroll
   // element. The office is a fixed overlay whose OWN scroller is `.wrap`, so
@@ -45,6 +70,50 @@ export default function OfficeShell({
     const evs = ['touchstart', 'touchmove', 'touchend', 'touchcancel']
     evs.forEach((ev) => ohub.addEventListener(ev, stop))
     return () => evs.forEach((ev) => ohub.removeEventListener(ev, stop))
+  }, [])
+
+  // Scroll-triggered reveal: each section eases up as it scrolls into view (the
+  // "premium" motion). SAFETY: only BELOW-fold elements are hidden, a 2.5s
+  // fallback reveals everything no matter what, and any error reveals all — so
+  // content can never get stuck invisible.
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') return
+    const SEL =
+      '.ohub .perspective .card, .ohub .kpis, .ohub .hero-row, .ohub .award, .ohub .motiv, .ohub .track, .ohub .props, .ohub .section-h, .ohub .oh-tabs, .ohub .actcol, .ohub .note'
+    const revealAll = () => document.querySelectorAll('.ohub .oh-reveal').forEach((el) => el.classList.add('in'))
+    let io: IntersectionObserver | null = null
+    let setupT: ReturnType<typeof setTimeout> | undefined
+    let fallbackT: ReturnType<typeof setTimeout> | undefined
+    try {
+      io = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (e.isIntersecting) {
+              e.target.classList.add('in')
+              io?.unobserve(e.target)
+            }
+          }
+        },
+        { threshold: 0.05, rootMargin: '0px 0px -5% 0px' },
+      )
+      setupT = setTimeout(() => {
+        const vh = window.innerHeight || 800
+        document.querySelectorAll<HTMLElement>(SEL).forEach((el) => {
+          if (el.classList.contains('oh-reveal')) return
+          el.classList.add('oh-reveal')
+          if (el.getBoundingClientRect().top < vh * 0.9) el.classList.add('in')
+          else io?.observe(el)
+        })
+        fallbackT = setTimeout(revealAll, 2500)
+      }, 60)
+    } catch {
+      revealAll()
+    }
+    return () => {
+      if (setupT) clearTimeout(setupT)
+      if (fallbackT) clearTimeout(fallbackT)
+      io?.disconnect()
+    }
   }, [])
 
   return (

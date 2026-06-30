@@ -9,6 +9,8 @@ import { prisma } from '@/lib/prisma'
 import { shouldVerifyTaskType, proofPromptForType, type ProofType } from '@/agent/lib/task-verification'
 import { pushOwnerPing } from '@/agent/lib/office-notify'
 import { runAutoQc } from '@/agent/lib/auto-qc'
+import { postGroupMessage, postAgentTaskExplanation, type ChatMessage } from '@/agent/lib/office-chat'
+import { buildStaffTaskExplanation } from '@/agent/lib/office-task-explain'
 
 type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0]
 
@@ -327,6 +329,70 @@ export async function staffEndLunch(staff: SessionStaff): Promise<StaffResult & 
   })
   if (durationMin > 45) await pushOwnerPing(`${staff.name}: লাঞ্চ থেকে ফিরেছেন (${durationMin} মিনিট)`, 'একটু বেশি হয়ে গেছে')
   return { ok: true, status: 'back', durationMin }
+}
+
+// ── "আজকের কাজ" group-chat button ───────────────────────────────────────────
+
+export type TodayTaskBrief = { id: string; title: string; type: string; serial: number }
+
+/** Active (not-done) statuses a staff can still be asked to explain. */
+const EXPLAINABLE_STATUSES = ['sent', 'approved', 'carried', 'awaiting_proof'] as const
+
+/**
+ * The staff's still-open tasks for today, in serial (dispatch) order — drives the
+ * "আজকের কাজ" picker in the office group chat. Done tasks are dropped (nothing to
+ * explain). Returns at most 20.
+ */
+export async function listStaffTodayTasks(staff: SessionStaff): Promise<TodayTaskBrief[]> {
+  const today = dhakaLunchDate() // Dhaka YYYY-MM-DD
+  const todayDate = new Date(`${today}T00:00:00Z`)
+  const rows = await prisma.agentStaffTask.findMany({
+    where: { staffId: staff.id, businessId: staff.businessId, proposedFor: todayDate, status: { in: [...EXPLAINABLE_STATUSES] } },
+    orderBy: { createdAt: 'asc' },
+    take: 20,
+    select: { id: true, title: true, type: true },
+  })
+  return rows.map((r, i) => ({ id: r.id, title: r.title, type: r.type, serial: i + 1 }))
+}
+
+/**
+ * Staff taps a task they don't understand in the "আজকের কাজ" list → the agent
+ * explains THAT one task, once, in simple Bangla, with NO owner approval (owner
+ * decision: clarifying an already-assigned task is risk-free). Posts the staff's
+ * question to the group, then the agent's explanation right under it.
+ */
+export async function explainTaskToStaff(
+  taskId: string,
+  staff: SessionStaff,
+): Promise<{ ok: true; question: ChatMessage; answer: ChatMessage } | { ok: false; error: string; code: number }> {
+  const task = await loadOwnedTask(taskId, staff)
+  if (!task) return { ok: false, error: 'task_not_found', code: 404 }
+
+  // The staff's question first, so the chat shows what was asked.
+  const question = await postGroupMessage({
+    authorType: 'staff',
+    authorStaffId: staff.id,
+    body: `📋 "${task.title}" — এই কাজটা একটু বুঝিয়ে দিন।`,
+    taskRef: task.id,
+    businessId: staff.businessId,
+  })
+
+  const explanation = await buildStaffTaskExplanation({
+    staffName: staff.name,
+    title: task.title,
+    type: task.type,
+    detail: task.detail,
+    productRef: task.productRef,
+  })
+
+  const answer = await postAgentTaskExplanation({
+    businessId: staff.businessId,
+    body: explanation,
+    replyToId: question.id,
+    taskRef: task.id,
+  })
+
+  return { ok: true, question, answer }
 }
 
 /** Staff proposes self-initiated work → status proposed, awaits owner approval. */

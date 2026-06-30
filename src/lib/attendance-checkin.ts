@@ -37,6 +37,7 @@ import {
 import { notifyAttendancePenalty } from '@/lib/attendance'
 import { errorMeta, logEvent } from '@/lib/logger'
 import { isStaffOnLeaveByUserId } from '@/lib/staff-leave'
+import { checkoutRulesEnabled } from '@/lib/attendance-checkout-rules'
 
 const RECORD_INCLUDE = {
   waiverRequests: true,
@@ -176,6 +177,16 @@ export async function commitAttendanceCheckIn(
   const staffLeave = await isStaffOnLeaveByUserId(input.userId, attendanceDateIso)
   if (staffLeave.onLeave) {
     penaltyAmount = 0
+  }
+
+  // Step 4 — an owner-approved AttendanceLeave covering today (full day, range,
+  // hours, or shifted start) waives the late check-in penalty. Behind the same
+  // kill-switch as the rest of the checkout-discipline feature (ALMA_LIFESTYLE).
+  if (penaltyAmount > 0 && checkoutRulesEnabled(input.businessId)) {
+    const { leaveWaivesLatePenalty } = await import('@/lib/attendance-leave')
+    if (await leaveWaivesLatePenalty(input.userId, input.businessId, attendanceDate)) {
+      penaltyAmount = 0
+    }
   }
 
   const deviceKey = deviceKeyFor(input.req, input.metadata)

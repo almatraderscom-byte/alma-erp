@@ -27,6 +27,9 @@ function isPublicApiOrShare(pathname: string) {
   if (/^\/api\/trading\/screenshots\/[^/]+\/telegram$/.test(pathname)) return true
   if (pathname === '/api/health') return true
   if (pathname === '/api/build-info') return true
+  // Forced-update gate version probe — must run pre-login on the native shell;
+  // returns only the min Android build + public APK URL (no sensitive data).
+  if (pathname === '/api/app/native-version') return true
   // Sentry browser tunnel (POST) — must not redirect to /login (see docs/SENTRY.md).
   if (pathname === '/monitoring') return true
   if (pathname === '/api/orders/website') return true

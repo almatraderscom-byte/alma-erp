@@ -100,6 +100,10 @@ export function isPathAllowedForRole(pathname: string, role: AlmaRole, businessI
 
   if (pathname.startsWith('/api/business-archive')) return role === 'SUPER_ADMIN'
 
+  // Owner Morning Briefing + Business Insights — owner/admin only (business-wide intelligence).
+  if (pathname.startsWith('/briefing')) return role === 'SUPER_ADMIN' || role === 'ADMIN'
+  if (pathname.startsWith('/insights')) return role === 'SUPER_ADMIN' || role === 'ADMIN'
+
   if (role === 'SUPER_ADMIN') return true
 
   // Finance hub, expense ledger and CDIT (digital) are owner/admin only

@@ -96,7 +96,7 @@ export async function POST(
 
   // Record trust rejection (non-blocking)
   const trustDomain = (action.type as string).startsWith('staff_') ? 'staff' :
-    ['content_gate1', 'content_gate2', 'fb_post', 'ad_creative_gate', 'ads_creative_brief', 'reply_to_comment', 'launch_campaign'].includes(action.type as string) ? 'content' :
+    ['content_gate1', 'content_gate2', 'fb_post', 'instagram_post', 'ad_creative_gate', 'ads_creative_brief', 'reply_to_comment', 'launch_campaign'].includes(action.type as string) ? 'content' :
     (action.type as string).startsWith('website_') ? 'content' :
     (action.type as string).startsWith('log_') || action.type === 'delete_finance_entry' || action.type === 'edit_finance_entry' ? 'finance' :
     'general'

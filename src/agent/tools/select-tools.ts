@@ -185,6 +185,17 @@ const ROUTER_HEAD_GROUPS: ToolGroupName[] = [
   'base', 'erp', 'staff', 'finance', 'cs', 'website', 'diag', 'vision', 'cost',
 ]
 
+// growth-group tools the slim head keeps despite delegating the rest of growth.
+// All but list_audiences stage an owner-facing approval card (only the stateful
+// head can); list_audiences is the cheap read that feeds the create flow. Fixed
+// order = byte-stable cached prefix.
+const HEAD_KEPT_GROWTH_TOOLS = [
+  'launch_campaign',
+  'list_audiences',
+  'create_retargeting_audience',
+  'create_lookalike_audience',
+] as const
+
 // Delegation approval test mode (DELEGATION_APPROVAL=true): force marketing work
 // to transfer to a specialist by removing the marketing read-tools that leak into
 // the kept erp/staff groups, so the head can't quietly do it itself.
@@ -234,16 +245,20 @@ export async function selectToolsAndGroupsForTurnAsync(
       // specialist (which the owner then approves). Reversible; flag-gated.
       assembled = assembled.filter((t) => !DELEGATION_FORCE_DENYLIST.has(t.name))
     }
-    // launch_campaign is the one growth-group tool the slim head must keep:
-    // launching a paid campaign requires staging an OWNER-FACING approval card,
-    // which only the head (stateful, owner channel) can surface — a stateless
-    // worker can't. So whichever head handles the turn (slim Sonnet included),
-    // give it this single tool to stage the PAUSED-campaign confirm card itself
-    // rather than uselessly delegating. Appended last so the cached prefix from
-    // the kept groups stays byte-stable; guarded against duplication.
-    if (!assembled.some((t) => t.name === 'launch_campaign')) {
-      const launchTool = (TOOL_GROUPS.growth ?? []).find((t) => t.name === 'launch_campaign')
-      if (launchTool) assembled = [...assembled, launchTool]
+    // A few growth-group tools the slim head MUST keep, even though growth is
+    // otherwise delegated to the marketer worker. launch_campaign + the two
+    // audience-CREATE tools each stage an OWNER-FACING approval card, which only
+    // the head (stateful, owner channel) can surface — a stateless worker can't.
+    // list_audiences rides along so the head can run the whole retargeting /
+    // lookalike flow self-contained (read the audiences → stage the create card)
+    // without a wasteful delegation hop just to fetch a source id. Appended in a
+    // FIXED order so the cached prefix from the kept groups stays byte-stable;
+    // each guarded against duplication.
+    for (const keep of HEAD_KEPT_GROWTH_TOOLS) {
+      if (!assembled.some((t) => t.name === keep)) {
+        const tool = (TOOL_GROUPS.growth ?? []).find((t) => t.name === keep)
+        if (tool) assembled = [...assembled, tool]
+      }
     }
     return { tools: applyToolCacheControl(toolsToDefinitions(assembled)), groups }
   }

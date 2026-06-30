@@ -18,6 +18,7 @@ import { safeFetchJson } from '@/lib/safe-fetch'
 import { useApprovalCount } from '@/contexts/ApprovalCountContext'
 import { AgentSidebarLink } from '@/components/layout/AgentAccess'
 import { ThemeToggle, ThemePanel } from '@/components/layout/ThemeToggle'
+import { useSheetDragDismiss } from '@/hooks/useSheetDragDismiss'
 
 function updateAppBadge(count: number) {
   const nav = navigator as Navigator & { setAppBadge?: (count?: number) => Promise<void>; clearAppBadge?: () => Promise<void> }
@@ -49,7 +50,7 @@ function NavItem({ href, icon, label, badge, collapsed }: { href: string; icon: 
       <span className={`relative text-base shrink-0 transition-transform duration-200 ease-out group-hover:scale-[1.32] group-hover:-translate-y-0.5 ${active ? 'text-gold drop-shadow-[0_0_6px_rgba(224,122,95,0.55)]' : 'text-muted group-hover:text-gold group-hover:drop-shadow-[0_0_9px_rgba(224,122,95,0.55)]'}`}>
         {icon}
         {badge && collapsed && (
-          <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500 shadow-lg shadow-red-200/40" aria-hidden />
+          <span className="alert-pulse absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500 shadow-lg shadow-red-200/40" aria-hidden />
         )}
       </span>
       <AnimatePresence>
@@ -61,7 +62,7 @@ function NavItem({ href, icon, label, badge, collapsed }: { href: string; icon: 
         )}
       </AnimatePresence>
       {badge && !collapsed && (
-        <span className="relative ml-auto text-[10px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full transition-transform duration-200 group-hover:scale-110">{badge}</span>
+        <span className="alert-pulse relative ml-auto text-[10px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full transition-transform duration-200 group-hover:scale-110">{badge}</span>
       )}
     </MotionLink>
   )
@@ -258,7 +259,7 @@ const ROT_DWELL = 3600
 // Everything else (HR/finance details, settings, admin) lives in the Account drawer.
 // Matched by the nav label so it stays correct across all three businesses.
 const CORE_ROTATION_LABELS = new Set([
-  'Dashboard', 'Trading', 'Orders', 'CRM', 'Clients', 'Inventory',
+  'Dashboard', 'Briefing', 'Insights', 'Trading', 'Orders', 'CRM', 'Clients', 'Inventory',
   'Invoice', 'Invoices', 'Projects', 'Finance', 'Analytics', 'ALMA Agent',
 ])
 
@@ -411,6 +412,7 @@ export function MobileNav() {
   const { business, businessId, allowedBusinessIds, setBusinessId } = useBusiness()
   const { role } = useActor()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const { motionProps: sheetDrag, startDrag } = useSheetDragDismiss(() => setDrawerOpen(false))
   const [unread, setUnread] = useState(0)
   const { count: approvalCount } = useApprovalCount()
   const nav = useMemo(() => filterNavByRole(getNavForBusiness(business.id), role, business.id), [business.id, role])
@@ -569,8 +571,17 @@ export function MobileNav() {
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'spring', stiffness: 360, damping: 34 }}
+              {...sheetDrag}
             >
-              <div className="mx-auto mt-3 h-1.5 w-12 rounded-full bg-border-strong" />
+              {/* Grabber — drag it down with your finger to dismiss (follows 1:1). */}
+              <div
+                onPointerDown={startDrag}
+                className="flex cursor-grab touch-none justify-center pb-1 pt-3 active:cursor-grabbing"
+                role="button"
+                aria-label="টেনে বন্ধ করুন"
+              >
+                <div className="h-1.5 w-12 rounded-full bg-border-strong" />
+              </div>
               <div className="border-b border-border-subtle px-5 pb-4 pt-4">
                 <div className="flex items-center justify-between gap-3">
                   <EmployeeAvatar

@@ -110,11 +110,11 @@ export default function CrmPage() {
 
         {/* KPIs */}
         <motion.div variants={fadeUp} className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <KpiCard label="Total Customers" value={summary?.total ?? 0} loading={listLoading} />
-          <KpiCard label="Lifetime Revenue" value={fmt(summary?.total_revenue ?? 0)} color="text-gold-lt" loading={listLoading} />
-          <KpiCard label="VIP"          value={summary?.by_segment?.VIP ?? 0}       color="text-gold"      loading={listLoading} />
-          <KpiCard label="Avg CLV Score" value={`${summary?.avg_clv ?? 0}/100`}      color="text-blue-400"  loading={listLoading} />
-          <KpiCard label="High Risk"     value={summary?.by_segment?.HIGH ?? (data?.customers ?? []).filter(c => c.risk_level === 'HIGH').length ?? 0} color="text-red-400" loading={listLoading} />
+          <KpiCard label="Total Customers" value={summary?.total ?? 0} loading={listLoading} animate />
+          <KpiCard label="Lifetime Revenue" value={fmt(summary?.total_revenue ?? 0)} color="text-gold-lt" loading={listLoading} animate />
+          <KpiCard label="VIP"          value={summary?.by_segment?.VIP ?? 0}       color="text-gold"      loading={listLoading} animate />
+          <KpiCard label="Avg CLV Score" value={`${summary?.avg_clv ?? 0}/100`}      color="text-blue-400"  loading={listLoading} animate />
+          <KpiCard label="High Risk"     value={summary?.by_segment?.HIGH ?? (data?.customers ?? []).filter(c => c.risk_level === 'HIGH').length ?? 0} color="text-red-400" loading={listLoading} animate />
         </motion.div>
 
         {/* Segment tabs */}

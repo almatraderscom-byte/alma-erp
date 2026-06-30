@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import toast from 'react-hot-toast'
 import { motion } from 'framer-motion'
 import { Button, Card, Empty, Money, Progress, SearchInput, Select, Skeleton } from '@/components/ui'
+import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { TradingPageShell } from '@/components/trading/TradingPageShell'
 import { useTradingAccounts, useTradingStaff, useUpdateTradingAccount } from '@/hooks/useTrading'
 import { useActor } from '@/contexts/ActorContext'
@@ -44,7 +45,7 @@ export default function TradingAccountsPage() {
   }
 
   async function archive(account: TradingAccountListItem) {
-    if (!window.confirm(`Archive ${account.accountTitle}?`)) return
+    if (!(await confirmDialog({ message: `Archive ${account.accountTitle}?`, confirmLabel: 'Archive', danger: true }))) return
     const res = await updateAccount(account.id, { action: 'archive' })
     if (!res?.ok) { toast.error('Could not archive account'); return }
     toast.success('Trading account archived')

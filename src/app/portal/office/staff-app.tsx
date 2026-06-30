@@ -6,6 +6,9 @@ import Link from 'next/link'
 import type { StaffOfficeData, StaffTaskCard, TaskThread } from '@/agent/lib/office-hub'
 import type { Motivation } from '@/agent/lib/office-motivation'
 import Confetti from './confetti'
+import { todoState } from './todo-status'
+import { OfficeTodoDock } from './office-todo-dock'
+import { successHaptic } from '@/lib/ui-haptics'
 
 const BN = '০১২৩৪৫৬৭৮৯'
 function bn(n: number | string): string {
@@ -86,7 +89,10 @@ export default function StaffApp({
       setBusyId(key)
       const { ok } = await postStaff(body)
       setBusyId(null)
-      if (ok) startTransition(() => router.refresh())
+      if (ok) {
+        successHaptic()
+        startTransition(() => router.refresh())
+      }
       return ok
     },
     [router],
@@ -117,6 +123,11 @@ export default function StaffApp({
 
   return (
     <>
+      {/* at-a-glance todolist DOCK — pinned to the top, collapsed by default */}
+      <OfficeTodoDock storageKey="oh_todo_staff" total={total} done={doneN} remaining={remaining}>
+        <StaffTodoBody active={data.active} done={data.done} />
+      </OfficeTodoDock>
+
       {/* sticky performer + daily motivation hero (requests 3 & 4) */}
       <div className="staff-hero">
         <PerformerHero data={data} />
@@ -212,6 +223,34 @@ export default function StaffApp({
           সব আলোচনা, ছবি ও অনুমোদন এখন Office Hub-এ। নতুন কাজ, কমেন্ট বা অনুমোদনের নোটিফিকেশন এই অ্যাপে ও টেলিগ্রামে পাবেন।
         </div>
       </div>
+    </>
+  )
+}
+
+// ── at-a-glance todolist: today's tasks by status (done / pending / approval) ─
+function TodoRow({ t }: { t: StaffTaskCard }) {
+  const s = todoState(t)
+  return (
+    <div className={`todo-row${s.done ? ' is-done' : ''}`}>
+      <span className={`todo-ic ${s.key}`} aria-hidden>
+        {s.icon}
+      </span>
+      <span className="todo-t">{t.title}</span>
+      <span className={`badge ${s.badge}`}>{s.label}</span>
+    </div>
+  )
+}
+
+// Body of the staff todo dock — not-done first (active is tracked-first sorted), then done.
+function StaffTodoBody({ active, done }: { active: StaffTaskCard[]; done: StaffTaskCard[] }) {
+  return (
+    <>
+      {active.map((t) => (
+        <TodoRow key={t.id} t={t} />
+      ))}
+      {done.map((t) => (
+        <TodoRow key={t.id} t={t} />
+      ))}
     </>
   )
 }

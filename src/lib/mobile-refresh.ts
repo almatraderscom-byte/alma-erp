@@ -2,6 +2,7 @@
  * Global mobile pull-to-refresh coordination.
  * Dedupes requests, invalidates query cache, and notifies subscribers.
  */
+import { selectHaptic, successHaptic, warningHaptic } from '@/lib/ui-haptics'
 
 export type MobileRefreshResult = {
   ok: boolean
@@ -93,8 +94,9 @@ export async function performMobileRefresh(options?: {
 }
 
 export function mobileRefreshHaptic(kind: 'pull' | 'success' | 'error') {
-  if (typeof navigator === 'undefined' || !navigator.vibrate) return
-  if (kind === 'pull') navigator.vibrate(8)
-  if (kind === 'success') navigator.vibrate([12, 40, 12])
-  if (kind === 'error') navigator.vibrate([20, 60, 20])
+  // Native-first (iPhone Taptic Engine on the Capacitor app); falls back to the
+  // Web Vibration API on Android web and no-ops on iOS Safari / desktop.
+  if (kind === 'pull') selectHaptic()
+  else if (kind === 'success') successHaptic()
+  else warningHaptic()
 }

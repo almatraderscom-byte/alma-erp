@@ -61,11 +61,12 @@ const config: Config = {
         shimmer:    { '0%':{ backgroundPosition:'-200% 0' }, '100%':{ backgroundPosition:'200% 0' } },
       },
       backgroundImage: {
-        'gold-shimmer': 'linear-gradient(90deg, transparent, rgba(224,122,95,0.12), transparent)',
+        // Accent-driven so it follows the accent picker (--c-accent), not a fixed coral.
+        'gold-shimmer': 'linear-gradient(90deg, transparent, rgb(var(--c-accent) / 0.12), transparent)',
       },
       boxShadow: {
-        'gold-sm': '0 0 0 1px rgba(224,122,95,0.25)',
-        'gold':    '0 0 0 1px rgba(224,122,95,0.3), 0 4px 24px rgba(224,122,95,0.08)',
+        'gold-sm': '0 0 0 1px rgb(var(--c-accent) / 0.25)',
+        'gold':    '0 0 0 1px rgb(var(--c-accent) / 0.3), 0 4px 24px rgb(var(--c-accent) / 0.08)',
         'card':    '0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.03)',
         'elevated': '0 4px 16px rgba(0,0,0,0.06), 0 2px 6px rgba(0,0,0,0.04)',
         'ambient': '0 2px 12px rgba(0,0,0,0.05)',

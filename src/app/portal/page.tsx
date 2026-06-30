@@ -511,6 +511,20 @@ function minutesText(minutes: number) {
   return `${h}h ${m}m`
 }
 
+const LEAVE_KIND_LABEL: Record<string, string> = {
+  FULL_DAY: 'একদিন',
+  DATE_RANGE: 'কয়েকদিন',
+  HOURS: 'কয়েক ঘণ্টা',
+  SHIFTED_START: 'দেরিতে শুরু',
+}
+
+const LEAVE_STATUS_LABEL: Record<string, string> = {
+  PENDING: '⏳ অপেক্ষমাণ',
+  APPROVED: '✅ অনুমোদিত',
+  REJECTED: '❌ প্রত্যাখ্যাত',
+  CANCELLED: 'বাতিল',
+}
+
 function AttendanceCard({
   businessId,
   empLinked,
@@ -531,10 +545,21 @@ function AttendanceCard({
   onEndWork?: () => void
 }) {
   const router = useRouter()
-  const [busy, setBusy] = useState<'out' | 'cancel' | null>(null)
+  const [busy, setBusy] = useState<'out' | 'cancel' | 'exception' | 'leave' | null>(null)
   const [appealOpen, setAppealOpen] = useState(false)
   const [verifyRecord, setVerifyRecord] = useState<AttendanceRecordDto | null>(null)
   const [faceCheckInOpen, setFaceCheckInOpen] = useState(false)
+  const [exceptionOpen, setExceptionOpen] = useState(false)
+  const [exceptionReason, setExceptionReason] = useState('')
+  const [exceptionStatus, setExceptionStatus] = useState<string | null>(null)
+  const [leaveOpen, setLeaveOpen] = useState(false)
+  const [leaveKind, setLeaveKind] = useState<'FULL_DAY' | 'DATE_RANGE' | 'HOURS' | 'SHIFTED_START'>('FULL_DAY')
+  const [leaveStartDate, setLeaveStartDate] = useState('')
+  const [leaveEndDate, setLeaveEndDate] = useState('')
+  const [leaveStartTime, setLeaveStartTime] = useState('')
+  const [leaveEndTime, setLeaveEndTime] = useState('')
+  const [leaveReason, setLeaveReason] = useState('')
+  const [leaveList, setLeaveList] = useState<Array<{ id: string; kind: string; status: string; startDate: string; endDate: string }>>([])
   const desk = useMemo(
     () => (attendance ? normalizeMyAttendancePayload(attendance) : null),
     [attendance],
@@ -564,15 +589,146 @@ function AttendanceCard({
   async function postCheckOut() {
     setBusy('out')
     try {
+      // Capture GPS so the server can enforce the office geofence on checkout
+      // (same as check-in). Failures fall back to null location; the server
+      // decides whether that blocks based on the active rules.
+      const metadata = await attendanceMetadata().catch(() => undefined)
       const result = await safeFetchJsonWithToast('/api/attendance/check-out', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ business_id: businessId }),
+        body: JSON.stringify({ business_id: businessId, metadata }),
       })
       if (!result.ok) throw new Error(result.error.message)
       toast.success('Work ended')
       onEndWork?.()
       onRefresh()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Step 3 — load today's exception status so the staff sees pending/approved.
+  useEffect(() => {
+    if (!empLinked || !businessId) return
+    let cancelled = false
+    void (async () => {
+      const result = await safeFetchJson(
+        `/api/attendance/exceptions?business_id=${encodeURIComponent(businessId)}`,
+      )
+      if (!cancelled && result.ok) {
+        const ex = (result.data as { exception?: { status?: string } | null })?.exception
+        setExceptionStatus(ex?.status ?? null)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [empLinked, businessId, today?.checkInAt, today?.checkOutAt])
+
+  async function requestException() {
+    const reason = exceptionReason.trim()
+    if (reason.length < 3) {
+      toast.error('সংক্ষেপে কারণ লিখুন (অন্তত ৩ অক্ষর)।')
+      return
+    }
+    setBusy('exception')
+    try {
+      const result = await safeFetchJsonWithToast('/api/attendance/exceptions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: businessId, reason }),
+      })
+      if (!result.ok) throw new Error(result.error.message)
+      toast.success('অনুমতির অনুরোধ মালিকের কাছে পাঠানো হয়েছে।')
+      setExceptionStatus('PENDING')
+      setExceptionReason('')
+      setExceptionOpen(false)
+      onRefresh()
+    } catch (e) {
+      toast.error((e as Error).message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Step 4 — load the staff's recent leave applications (status display).
+  useEffect(() => {
+    if (!empLinked || !businessId) return
+    let cancelled = false
+    void (async () => {
+      const result = await safeFetchJson(
+        `/api/attendance/leave?business_id=${encodeURIComponent(businessId)}`,
+      )
+      if (!cancelled && result.ok) {
+        const rows = (result.data as { leaves?: typeof leaveList })?.leaves
+        setLeaveList(Array.isArray(rows) ? rows : [])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [empLinked, businessId, today?.checkInAt, today?.checkOutAt])
+
+  function timeToMinutes(value: string): number | null {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(value.trim())
+    if (!m) return null
+    return Number(m[1]) * 60 + Number(m[2])
+  }
+
+  async function requestLeave() {
+    if (!leaveStartDate) {
+      toast.error('ছুটির শুরুর তারিখ দিন।')
+      return
+    }
+    if (leaveReason.trim().length < 3) {
+      toast.error('ছুটির কারণ লিখুন (অন্তত ৩ অক্ষর)।')
+      return
+    }
+    const startMinutes = (leaveKind === 'HOURS' || leaveKind === 'SHIFTED_START')
+      ? timeToMinutes(leaveStartTime)
+      : null
+    const endMinutes = leaveKind === 'HOURS' ? timeToMinutes(leaveEndTime) : null
+    if ((leaveKind === 'HOURS' || leaveKind === 'SHIFTED_START') && startMinutes == null) {
+      toast.error('সময় (ঘণ্টা) সঠিকভাবে দিন।')
+      return
+    }
+    if (leaveKind === 'HOURS' && (endMinutes == null || (startMinutes != null && endMinutes <= startMinutes))) {
+      toast.error('ছুটির শুরু ও শেষ সময় ঠিকভাবে দিন।')
+      return
+    }
+    setBusy('leave')
+    try {
+      const result = await safeFetchJsonWithToast('/api/attendance/leave', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          business_id: businessId,
+          kind: leaveKind,
+          start_date: leaveStartDate,
+          end_date: leaveKind === 'DATE_RANGE' ? (leaveEndDate || leaveStartDate) : leaveStartDate,
+          start_minutes: startMinutes,
+          end_minutes: endMinutes,
+          reason: leaveReason.trim(),
+        }),
+      })
+      if (!result.ok) throw new Error(result.error.message)
+      toast.success('ছুটির আবেদন মালিকের কাছে পাঠানো হয়েছে।')
+      setLeaveOpen(false)
+      setLeaveReason('')
+      setLeaveStartDate('')
+      setLeaveEndDate('')
+      setLeaveStartTime('')
+      setLeaveEndTime('')
+      setLeaveKind('FULL_DAY')
+      const refreshed = await safeFetchJson(
+        `/api/attendance/leave?business_id=${encodeURIComponent(businessId)}`,
+      )
+      if (refreshed.ok) {
+        const rows = (refreshed.data as { leaves?: typeof leaveList })?.leaves
+        setLeaveList(Array.isArray(rows) ? rows : [])
+      }
     } catch (e) {
       toast.error((e as Error).message)
     } finally {
@@ -679,6 +835,203 @@ function AttendanceCard({
             )}
             {today.faceVerified && (
               <p className="mt-2 text-emerald-600">Face verified at check-in{today.faceVerifiedAt ? ` · ${formatAttendanceTime(today.faceVerifiedAt)}` : ''}</p>
+            )}
+          </div>
+        )}
+      </AttendanceSubsectionBoundary>
+
+      <AttendanceSubsectionBoundary name="Attendance exception">
+        {empLinked && today && !today.checkOutAt && (
+          <div className="mt-4 rounded-2xl border tone-amber p-3 text-[11px]">
+            {exceptionStatus === 'APPROVED' ? (
+              <p className="font-bold text-emerald-600">
+                ✅ আজকের জন্য মালিক অনুমতি দিয়েছেন — নিয়ম মওকুফ, এখন স্বাভাবিকভাবে চেক-আউট করতে পারবেন।
+              </p>
+            ) : exceptionStatus === 'PENDING' ? (
+              <p className="font-bold text-amber-600">
+                ⏳ আপনার অনুমতির অনুরোধ মালিকের অনুমোদনের অপেক্ষায় আছে।
+              </p>
+            ) : (
+              <>
+                <p className="font-bold">আগে বের হতে / মাঠের কাজ / দেরিতে আসা?</p>
+                <p className="mt-1 text-muted">
+                  নিয়ম (সময়, লোকেশন, কাজ, জরিমানা) মওকুফ চাইলে মালিকের কাছে অনুমতি চান। অনুমোদন পেলে আজকের জন্য নিয়ম প্রযোজ্য হবে না।
+                </p>
+                {exceptionOpen ? (
+                  <div className="mt-3 space-y-2">
+                    <textarea
+                      className="w-full rounded-lg border border-gold-dim/40 bg-white/80 p-2 text-xs text-cream"
+                      rows={3}
+                      placeholder="কারণ লিখুন (যেমন: মাঠে ডেলিভারিতে যাচ্ছি / জরুরি কাজ)"
+                      value={exceptionReason}
+                      onChange={e => setExceptionReason(e.target.value)}
+                      disabled={busy === 'exception'}
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        variant="gold"
+                        size="sm"
+                        disabled={busy === 'exception'}
+                        onClick={() => void requestException()}
+                      >
+                        {busy === 'exception' ? 'পাঠানো হচ্ছে...' : 'অনুমতি পাঠান'}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        disabled={busy === 'exception'}
+                        onClick={() => setExceptionOpen(false)}
+                      >
+                        বাতিল
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => setExceptionOpen(true)}
+                  >
+                    🙏 অনুমতি চাও
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </AttendanceSubsectionBoundary>
+
+      <AttendanceSubsectionBoundary name="Leave application">
+        {empLinked && (
+          <div className="mt-4 rounded-2xl border tone-blue p-3 text-[11px]">
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-bold">ছুটির আবেদন</p>
+              {!leaveOpen && (
+                <Button variant="secondary" size="sm" onClick={() => setLeaveOpen(true)}>
+                  🏖️ ছুটি চাও
+                </Button>
+              )}
+            </div>
+            <p className="mt-1 text-muted">
+              পুরো দিন, কয়েকদিন, কয়েক ঘণ্টা, বা দেরিতে শুরু — মালিক অনুমোদন করলে ঐ সময়ে কোনো জরিমানা হবে না।
+            </p>
+
+            {leaveOpen && (
+              <div className="mt-3 space-y-2">
+                <select
+                  className="w-full rounded-lg border border-gold-dim/40 bg-white/80 p-2 text-xs text-cream"
+                  value={leaveKind}
+                  onChange={e => setLeaveKind(e.target.value as typeof leaveKind)}
+                  disabled={busy === 'leave'}
+                >
+                  <option value="FULL_DAY">একদিনের ছুটি</option>
+                  <option value="DATE_RANGE">কয়েকদিনের ছুটি</option>
+                  <option value="HOURS">কয়েক ঘণ্টার ছুটি</option>
+                  <option value="SHIFTED_START">দেরিতে শুরু</option>
+                </select>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="block">
+                    <span className="text-muted">শুরুর তারিখ</span>
+                    <input
+                      type="date"
+                      className="mt-1 w-full rounded-lg border border-gold-dim/40 bg-white/80 p-2 text-xs text-cream"
+                      value={leaveStartDate}
+                      onChange={e => setLeaveStartDate(e.target.value)}
+                      disabled={busy === 'leave'}
+                    />
+                  </label>
+                  {leaveKind === 'DATE_RANGE' && (
+                    <label className="block">
+                      <span className="text-muted">শেষ তারিখ</span>
+                      <input
+                        type="date"
+                        className="mt-1 w-full rounded-lg border border-gold-dim/40 bg-white/80 p-2 text-xs text-cream"
+                        value={leaveEndDate}
+                        onChange={e => setLeaveEndDate(e.target.value)}
+                        disabled={busy === 'leave'}
+                      />
+                    </label>
+                  )}
+                </div>
+
+                {(leaveKind === 'HOURS' || leaveKind === 'SHIFTED_START') && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block">
+                      <span className="text-muted">{leaveKind === 'SHIFTED_START' ? 'কখন শুরু করবেন' : 'ছুটি শুরু'}</span>
+                      <input
+                        type="time"
+                        className="mt-1 w-full rounded-lg border border-gold-dim/40 bg-white/80 p-2 text-xs text-cream"
+                        value={leaveStartTime}
+                        onChange={e => setLeaveStartTime(e.target.value)}
+                        disabled={busy === 'leave'}
+                      />
+                    </label>
+                    {leaveKind === 'HOURS' && (
+                      <label className="block">
+                        <span className="text-muted">ছুটি শেষ</span>
+                        <input
+                          type="time"
+                          className="mt-1 w-full rounded-lg border border-gold-dim/40 bg-white/80 p-2 text-xs text-cream"
+                          value={leaveEndTime}
+                          onChange={e => setLeaveEndTime(e.target.value)}
+                          disabled={busy === 'leave'}
+                        />
+                      </label>
+                    )}
+                  </div>
+                )}
+
+                <textarea
+                  className="w-full rounded-lg border border-gold-dim/40 bg-white/80 p-2 text-xs text-cream"
+                  rows={2}
+                  placeholder="ছুটির কারণ লিখুন"
+                  value={leaveReason}
+                  onChange={e => setLeaveReason(e.target.value)}
+                  disabled={busy === 'leave'}
+                />
+
+                <div className="flex gap-2">
+                  <Button
+                    variant="gold"
+                    size="sm"
+                    disabled={busy === 'leave'}
+                    onClick={() => void requestLeave()}
+                  >
+                    {busy === 'leave' ? 'পাঠানো হচ্ছে...' : 'আবেদন পাঠান'}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={busy === 'leave'}
+                    onClick={() => setLeaveOpen(false)}
+                  >
+                    বাতিল
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {leaveList.length > 0 && (
+              <div className="mt-3 space-y-1">
+                {leaveList.slice(0, 5).map(lv => (
+                  <div key={lv.id} className="flex items-center justify-between gap-2 rounded-lg bg-white/40 px-2 py-1">
+                    <span>
+                      {lv.startDate.slice(0, 10)}
+                      {lv.startDate.slice(0, 10) !== lv.endDate.slice(0, 10) ? ` – ${lv.endDate.slice(0, 10)}` : ''}
+                      {' · '}{LEAVE_KIND_LABEL[lv.kind] || lv.kind}
+                    </span>
+                    <span className={
+                      lv.status === 'APPROVED' ? 'font-bold text-emerald-600'
+                        : lv.status === 'REJECTED' ? 'font-bold text-red-400'
+                          : 'font-bold text-amber-600'
+                    }>
+                      {LEAVE_STATUS_LABEL[lv.status] || lv.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         )}

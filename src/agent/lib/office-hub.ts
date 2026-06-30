@@ -135,6 +135,8 @@ export type OwnerHubData = {
   kpis: { pending: number; active: number; overdue: number; doneToday: number; online: number; staffTotal: number }
   pendingApproval: HubTaskCard[]
   activeTasks: HubTaskCard[]
+  /** Today's completed tasks (for the at-a-glance todolist). */
+  doneTodayTasks: HubTaskCard[]
   selfInitiated: HubTaskCard[]
   overdueUpdates: OverdueUpdateCard[]
   activity: ActivityItem[]
@@ -264,13 +266,19 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
   const weekEndDate = new Date(weekStartDate.getTime() + 7 * 24 * 60 * 60 * 1000)
 
   const lunchDate = today // Dhaka YYYY-MM-DD, matches StaffLunch.lunchDate
-  const [pendingRows, selfRows, activeRows, activeCount, doneToday, updateRows, events, awardRow, staffList, todayTasks, weekStatRows, scores, openLunch, attendanceRows, performance, proposals] = await Promise.all([
+  const [pendingRows, selfRows, activeRows, activeCount, doneToday, updateRows, events, awardRow, staffList, todayTasks, weekStatRows, scores, openLunch, attendanceRows, performance, proposals, doneTaskRows] = await Promise.all([
     prisma.agentStaffTask.findMany({
       // Owner review queue: proof awaiting review + anything the supervisor
       // couldn't auto-verify/understand and handed to the owner (the ~10%).
+      // `status: { not: 'done' }` on the whole query is essential: the agent's
+      // auto-verify sets verificationStatus='auto_verified' AND status='done'
+      // together, so without this guard an AI-approved DONE task would still
+      // match the review queue — double-counting it as both "pending" and
+      // "done" across the KPIs, approval list and todolist. Done = done.
       where: {
         businessId,
-        OR: [{ verificationStatus: { in: [...PENDING_REVIEW_VS] } }, { supervisorNeedsOwner: true, status: { not: 'done' } }],
+        status: { not: 'done' },
+        OR: [{ verificationStatus: { in: [...PENDING_REVIEW_VS] } }, { supervisorNeedsOwner: true }],
       },
       orderBy: { createdAt: 'asc' },
       select: CARD_SELECT,
@@ -360,6 +368,13 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
     }),
     computeStaffPerformance(businessId, weekStartDate),
     listPendingProposals(businessId),
+    // Today's COMPLETED tasks (for the at-a-glance todolist — checked-off items).
+    prisma.agentStaffTask.findMany({
+      where: { businessId, proposedFor: todayDate, status: 'done' },
+      orderBy: { completedAt: 'desc' },
+      take: 40,
+      select: CARD_SELECT,
+    }),
   ])
 
   // Staff currently on lunch (open StaffLunch row today) → lights up the 'lunch'
@@ -539,6 +554,7 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
     },
     pendingApproval: pendingRows.map(toCard),
     activeTasks: activeRows.map(toCard),
+    doneTodayTasks: doneTaskRows.map(toCard),
     selfInitiated: selfRows.map(toCard),
     overdueUpdates,
     activity: events.map((e) => ({

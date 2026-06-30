@@ -139,10 +139,22 @@ export interface LaunchCampaignSpec {
   message: string
   /** Optional short headline shown under the image. */
   headline?: string
-  /** Public image URL for the creative (link_data.picture). Optional. */
+  /**
+   * Public image URL for the creative. REQUIRED for Click-to-Messenger ads —
+   * the bytes are uploaded to the ad account's image library and referenced by
+   * image_hash (a raw picture URL is unreliable for signed/query-string URLs).
+   */
   imageUrl?: string
   ageMin?: number
   ageMax?: number
+  /**
+   * Optional custom/lookalike audience id to TARGET (retargeting or lookalike
+   * campaign). When set, the ad set targets exactly this audience (Advantage
+   * audience expansion stays off) instead of broad Bangladesh prospecting.
+   */
+  audienceId?: string
+  /** Optional custom audience id to EXCLUDE (e.g. exclude existing engagers from a lookalike prospecting campaign). */
+  excludeAudienceId?: string
 }
 
 /**
@@ -167,9 +179,18 @@ export async function launchCampaign(
   const name = spec.name.trim() || 'ALMA নতুন ক্যাম্পেইন'
   const message = spec.message.trim()
   if (!message) return { success: false, error: 'Ad message (primary text) খালি' }
+  // A Click-to-Messenger link ad REQUIRES media. Without it the ads-create step
+  // 400s with subcode 1487212 ("Missing media"). Reject early with a clear Bangla
+  // message so the agent never stages an imageless launch that is doomed to fail.
+  const imageUrl = spec.imageUrl?.trim()
+  if (!imageUrl) {
+    return { success: false, error: 'ছবি ছাড়া Click-to-Messenger ক্যাম্পেইন চালু করা যায় না — একটি প্রোডাক্ট ছবির public URL দিন।' }
+  }
   const budgetPaisa = Math.round(Math.max(1, spec.dailyBudgetBdt) * 100)
   const ageMin = Math.min(65, Math.max(13, Math.round(spec.ageMin ?? 18)))
   const ageMax = Math.min(65, Math.max(ageMin, Math.round(spec.ageMax ?? 45)))
+  const audienceId = spec.audienceId?.trim()
+  const excludeAudienceId = spec.excludeAudienceId?.trim()
 
   const post = async (path: string, body: Record<string, unknown>) => {
     const res = await resilientFetch(`${GRAPH_BASE}/${accountId}/${path}`, {
@@ -184,6 +205,32 @@ export async function launchCampaign(
     return JSON.parse(text) as { id?: string }
   }
 
+  // Upload the creative image to the ad account's image library and return its
+  // image_hash. Meta's link_data.picture (a raw URL) is unreliable for long
+  // signed URLs — it 400s with OAuthException 100 ("Invalid parameter" on
+  // img_url) because Meta's crawler can't ingest the query-string token. The
+  // robust path is image_hash: we fetch the bytes server-side (where the signed
+  // Supabase URL is reachable) and hand Meta the binary directly.
+  const uploadImageHash = async (url: string): Promise<string> => {
+    const imgRes = await resilientFetch(url, { timeoutMs: 30_000, retries: 1 })
+    if (!imgRes.ok) throw new Error(`creative image fetch ব্যর্থ: HTTP ${imgRes.status}`)
+    const b64 = Buffer.from(await imgRes.arrayBuffer()).toString('base64')
+    const params = new URLSearchParams({ bytes: b64, access_token: token })
+    const res = await resilientFetch(`${GRAPH_BASE}/${accountId}/adimages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+      timeoutMs: 60_000,
+      retries: 1,
+    })
+    const text = await res.text()
+    if (!res.ok) throw new Error(`adimages ${res.status}: ${text.slice(0, 240)}`)
+    const data = JSON.parse(text) as { images?: Record<string, { hash?: string }> }
+    const hash = data.images ? Object.values(data.images)[0]?.hash : undefined
+    if (!hash) throw new Error('adimages থেকে image_hash ফেরত আসেনি')
+    return hash
+  }
+
   let campaignId: string | undefined
   let adSetId: string | undefined
   let adId: string | undefined
@@ -193,6 +240,12 @@ export async function launchCampaign(
       objective: 'OUTCOME_ENGAGEMENT',
       status: 'PAUSED',
       special_ad_categories: [],
+      // Budget lives at the ad-set level (daily_budget on the ad set below), not
+      // campaign-level CBO. Newer Graph API versions REQUIRE this field to be
+      // explicitly true/false on create — omitting it returns OAuthException
+      // code 100 / subcode 4834011 ("Must specify True or False in
+      // is_adset_budget_sharing_enabled field"). false = ad-set-level budgets.
+      is_adset_budget_sharing_enabled: false,
     })
     campaignId = campaign.id
     if (!campaignId) throw new Error('campaign id ফেরত আসেনি')
@@ -203,14 +256,37 @@ export async function launchCampaign(
       daily_budget: budgetPaisa,
       billing_event: 'IMPRESSIONS',
       optimization_goal: 'CONVERSATIONS',
+      // With an ad-set-level daily_budget Meta REQUIRES an explicit bid_strategy;
+      // omitting it makes Meta infer one that demands a bid cap, returning
+      // OAuthException code 100 / subcode 2490487 ("Bid amount or bid constraints
+      // required for bid strategy"). LOWEST_COST_WITHOUT_CAP = Highest-volume
+      // auto-bidding, which needs NO bid amount — Meta optimizes delivery itself.
+      bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
       destination_type: 'MESSENGER',
       promoted_object: { page_id: pageId },
-      targeting: { geo_locations: { countries: ['BD'] }, age_min: ageMin, age_max: ageMax },
+      targeting: {
+        geo_locations: { countries: ['BD'] },
+        age_min: ageMin,
+        age_max: ageMax,
+        // Retargeting / lookalike: when an audience id is supplied the ad set
+        // targets exactly that custom or lookalike audience. excluded_custom_audiences
+        // lets a lookalike prospecting campaign exclude existing warm engagers so
+        // it only reaches NEW similar people.
+        ...(audienceId ? { custom_audiences: [{ id: audienceId }] } : {}),
+        ...(excludeAudienceId ? { excluded_custom_audiences: [{ id: excludeAudienceId }] } : {}),
+        // Advantage+ era: Meta REQUIRES an explicit Advantage Audience flag or the
+        // create 400s with OAuthException 100 / subcode 1870227 ("Advantage
+        // audience flag required"). 0 = OFF, so Meta honors exactly the targeting
+        // we specified (Bangladesh + the age range, plus any custom audience)
+        // instead of expanding beyond it.
+        targeting_automation: { advantage_audience: 0 },
+      },
       status: 'PAUSED',
     })
     adSetId = adSet.id
     if (!adSetId) throw new Error('ad set id ফেরত আসেনি')
 
+    const imageHash = await uploadImageHash(imageUrl)
     const creative = await post('adcreatives', {
       name: `${name} — Creative`,
       object_story_spec: {
@@ -219,7 +295,7 @@ export async function launchCampaign(
           message,
           name: spec.headline?.trim() || undefined,
           link: `https://m.me/${pageId}`,
-          picture: spec.imageUrl?.trim() || undefined,
+          image_hash: imageHash,
           call_to_action: { type: 'MESSAGE_PAGE', value: { app_destination: 'MESSENGER' } },
         },
       },

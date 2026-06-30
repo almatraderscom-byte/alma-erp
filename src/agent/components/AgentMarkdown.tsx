@@ -29,6 +29,56 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
+/**
+ * Generated images (e.g. `![Generated image](signedUrl)`) render as a framed image
+ * with a download control. Generation previously left the owner with a bare <img>
+ * and no way to save it ("image generate hole download option thake na, setaw add
+ * koro"). We try a blob fetch → object URL → anchor[download] so the file saves with
+ * a sensible name; if the fetch is blocked (cross-origin signed URL without CORS) we
+ * fall back to opening the image in a new tab so the owner can long-press / right-click
+ * save. Best-effort, never throws into render.
+ */
+function ImageWithDownload({ src, alt }: { src?: string; alt?: string }) {
+  const [busy, setBusy] = React.useState(false)
+  const download = useCallback(async () => {
+    if (!src || busy) return
+    setBusy(true)
+    try {
+      const res = await fetch(src)
+      if (!res.ok) throw new Error(`fetch ${res.status}`)
+      const blob = await res.blob()
+      const objUrl = URL.createObjectURL(blob)
+      const ext = (blob.type.split('/')[1] || 'png').split('+')[0].split(';')[0]
+      const a = document.createElement('a')
+      a.href = objUrl
+      a.download = `alma-${Date.now()}.${ext}`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(objUrl), 4000)
+    } catch {
+      // Cross-origin / CORS-blocked signed URL → open in a new tab as a fallback.
+      try { window.open(src, '_blank', 'noopener,noreferrer') } catch { /* noop */ }
+    } finally {
+      setBusy(false)
+    }
+  }, [src, busy])
+  if (!src) return null
+  return (
+    <span className="group relative my-3 block overflow-hidden rounded-xl border border-border-subtle bg-bg-1">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={src} alt={alt ?? ''} className="block h-auto w-full max-w-full" />
+      <button
+        onClick={download}
+        disabled={busy}
+        className="absolute right-2 top-2 rounded-full bg-card/82 backdrop-blur-md border border-border px-2.5 py-1 text-[10px] font-semibold text-muted transition-all hover:bg-[#E07A5F]/10 hover:text-[#E07A5F] hover:border-[#E07A5F]/25 disabled:opacity-60"
+      >
+        {busy ? '…' : '⬇ ডাউনলোড'}
+      </button>
+    </span>
+  )
+}
+
 function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
   return (
     <div className={cn('prose-agent select-text text-cream break-words [overflow-wrap:anywhere]', className)}>
@@ -121,6 +171,7 @@ function AgentMarkdownInner({ content, className }: AgentMarkdownProps) {
           },
           strong({ children }) { return <strong className="font-bold text-cream">{children}</strong> },
           em({ children }) { return <em className="italic text-muted-hi">{children}</em> },
+          img({ src, alt }) { return <ImageWithDownload src={typeof src === 'string' ? src : undefined} alt={typeof alt === 'string' ? alt : undefined} /> },
         }}
       >
         {content}

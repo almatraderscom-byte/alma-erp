@@ -8,6 +8,7 @@ import toast from 'react-hot-toast'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { Button, Card, Empty, KpiCard, Skeleton, KPI_AUTO_GRID } from '@/components/ui'
+import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { PageEnter } from '@/components/layout/AgentAccess'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { useActor } from '@/contexts/ActorContext'
@@ -247,7 +248,7 @@ function AttendancePageInner() {
 
   async function resetAttendance(recordId: string, employeeName: string) {
     if (!canResetAttendance || resettingRecordId) return
-    const ok = window.confirm(`Remove ${employeeName}'s attendance for today? They can check in again; any late penalty will be reversed.`)
+    const ok = await confirmDialog({ message: `Remove ${employeeName}'s attendance for today? They can check in again; any late penalty will be reversed.`, confirmLabel: 'Remove', danger: true })
     if (!ok) return
     setResettingRecordId(recordId)
     try {
@@ -380,13 +381,13 @@ function AttendancePageInner() {
       )}
 
       <div className={KPI_AUTO_GRID}>
-        <KpiCard label="Today penalties" value={k?.todayPenaltyTotal ?? 0} valueKind="currency" color="text-red-400" loading={loading} />
-        <KpiCard label="Employee scope" value={k?.employeeCount ?? 0} valueKind="plain" loading={loading} />
-        <KpiCard label="Monthly attendance" value={loading ? '—' : `${Number(k?.attendanceRate ?? 0)}%`} valueKind="plain" loading={loading} />
-        <KpiCard label="Monthly penalties" value={k?.monthPenaltyTotal ?? 0} valueKind="currency" color="text-red-400" loading={loading} />
-        <KpiCard label="Pending reviews" value={k?.pendingWaivers ?? 0} valueKind="plain" color="text-gold-lt" loading={loading} />
-        <KpiCard label="Security flags" value={k?.suspiciousAttendance ?? 0} valueKind="plain" color="text-amber-300" loading={loading} />
-        <KpiCard label="Verification due" value={k?.pendingVerifications ?? 0} valueKind="plain" color="text-amber-300" loading={loading} />
+        <KpiCard label="Today penalties" value={k?.todayPenaltyTotal ?? 0} valueKind="currency" color="text-red-400" loading={loading} animate />
+        <KpiCard label="Employee scope" value={k?.employeeCount ?? 0} valueKind="plain" loading={loading} animate />
+        <KpiCard label="Monthly attendance" value={loading ? '—' : `${Number(k?.attendanceRate ?? 0)}%`} valueKind="plain" loading={loading} animate />
+        <KpiCard label="Monthly penalties" value={k?.monthPenaltyTotal ?? 0} valueKind="currency" color="text-red-400" loading={loading} animate />
+        <KpiCard label="Pending reviews" value={k?.pendingWaivers ?? 0} valueKind="plain" color="text-gold-lt" loading={loading} animate />
+        <KpiCard label="Security flags" value={k?.suspiciousAttendance ?? 0} valueKind="plain" color="text-amber-300" loading={loading} animate />
+        <KpiCard label="Verification due" value={k?.pendingVerifications ?? 0} valueKind="plain" color="text-amber-300" loading={loading} animate />
       </div>
 
       {canReview && analytics && (

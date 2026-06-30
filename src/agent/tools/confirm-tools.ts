@@ -179,6 +179,101 @@ const post_to_facebook: AgentTool = {
   },
 }
 
+// ── Instagram: publish a single-image feed post ────────────────────────────
+
+const publish_to_instagram: AgentTool = {
+  name: 'publish_to_instagram',
+  description:
+    "Publishes a single-image post to ALMA's Instagram — the IG Business account LINKED to the chosen Facebook page. " +
+    'This tool ALWAYS creates a PENDING ACTION — the owner must approve before anything goes live (the post is PUBLIC). ' +
+    'Instagram REQUIRES an image: there are NO caption-only IG posts. ' +
+    'page: "lifestyle" (Alma Lifestyle) | "onlineshop" (Alma Online Shop) picks which linked IG account. ' +
+    'imageArtifactOrFileId: photo path — generated/<id>.png from generate_image OR a chat upload path. Auto-resolved from the conversation if omitted. ' +
+    'For Facebook use post_to_facebook; this is the Instagram twin. Reels/video are not supported yet (coming via the worker queue).',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      page: {
+        type: 'string',
+        enum: ['lifestyle', 'onlineshop'],
+        description: "Which page's linked Instagram account to post to",
+      },
+      caption: { type: 'string', description: 'Instagram caption (Bangla ok, hashtags ok)' },
+      imageArtifactOrFileId: {
+        type: 'string',
+        description: 'Supabase path: generated/<id>.png or chat upload path — optional if an image was generated/uploaded in this chat',
+      },
+      conversationId: { type: 'string' },
+    },
+    required: ['page', 'caption'],
+  },
+  handler: async (input) => {
+    try {
+      const page = String(input.page)
+      const caption = String(input.caption)
+      const pageId = resolvePageId(page)
+      const conversationId = input.conversationId ? String(input.conversationId) : null
+
+      // Instagram has no caption-only posts — an image is mandatory. Reuse the
+      // exact FB image-resolution chain (explicit ref → conversation generated →
+      // conversation upload). textOnly is always false here.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { imageRef, hadRecentPostableImage } = await resolveFbPostImageRef(prisma as any, {
+        conversationId,
+        imageArtifactOrFileId: input.imageArtifactOrFileId,
+        textOnly: false,
+      })
+
+      if (!imageRef) {
+        return {
+          success: false,
+          error: hadRecentPostableImage
+            ? 'ছবির path খুঁজে পাওয়া যায়নি — imageArtifactOrFileId দিন (generated/<id>.png)।'
+            : 'Instagram পোস্টে ছবি বাধ্যতামূলক — আগে generate_image approve করুন বা একটি ছবি upload করুন, তারপর publish করুন।',
+        }
+      }
+
+      const igLabel = page === 'lifestyle' ? 'Alma Lifestyle' : 'Alma Online Shop'
+      const summary =
+        `📸 Instagram পোস্ট → ${igLabel} (linked IG)\n` +
+        `ছবি: ${imageRef}\n\n` +
+        `"${caption.slice(0, 300)}${caption.length > 300 ? '…' : ''}"\n\n` +
+        '✅ Approve করলেই Instagram-এ সরাসরি লাইভ পোস্ট হবে — এটি public, সবাই দেখতে পাবে।'
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const action = await (prisma as any).agentPendingAction.create({
+        data: {
+          conversationId,
+          type: 'instagram_post',
+          payload: {
+            page,
+            pageId,
+            caption,
+            imageUrl: imageRef,
+            imageArtifactOrFileId: imageRef,
+            conversationId,
+          },
+          summary,
+          costEstimate: 0,
+          status: 'pending',
+        },
+      })
+
+      return {
+        success: true,
+        data: {
+          pendingActionId: action.id as string,
+          summary,
+          costEstimate: 0,
+          message: 'Instagram post staged. Awaiting owner approval before publishing.',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
 // ── Read: recent FB posts (no confirmation needed) ─────────────────────────
 
 const get_fb_recent_posts: AgentTool = {
@@ -499,6 +594,7 @@ const reply_to_comment: AgentTool = {
 export const CONFIRM_TOOLS: AgentTool[] = [
   generate_image,
   post_to_facebook,
+  publish_to_instagram,
   send_customer_message,
   get_fb_recent_posts,
   get_fb_messenger_inbox,

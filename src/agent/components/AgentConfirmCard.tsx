@@ -255,6 +255,24 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
   }
 
   if (phase === 'approved') {
+    // image_gen / video_gen are async: after approval the VPS worker keeps working
+    // for ~30–60s before the media lands in the thread. Without a live indicator the
+    // card just said "অনুমোদিত হয়েছে" and the UI looked frozen (owner report). Show a
+    // generating state with working dots so it's clearly still in progress; the image
+    // (and the agent's auto-continuation) then appear below when the worker finishes.
+    const isAsyncGen = meta.actionType === 'image_gen' || meta.actionType === 'video_gen'
+    if (isAsyncGen) {
+      const genLabel = meta.actionType === 'video_gen'
+        ? 'রিল তৈরি হচ্ছে… একটু সময় লাগবে, নিচে চলে আসবে'
+        : 'ছবি তৈরি হচ্ছে… একটু সময় লাগবে, নিচে চলে আসবে'
+      return (
+        <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+          className="mt-3 flex items-center justify-center gap-2.5 rounded-[18px] border tone-green px-4 py-5 text-sm shadow-card">
+          <AgentWorkingDots className="shrink-0" />
+          <span className="font-semibold text-cream/90">{genLabel}</span>
+        </motion.div>
+      )
+    }
     return (
       <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
         className="mt-3 rounded-[18px] border tone-green px-4 py-5 text-center text-sm shadow-card">

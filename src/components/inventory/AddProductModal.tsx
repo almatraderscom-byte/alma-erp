@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import toast from 'react-hot-toast'
 import { Button, Card, Select, Spinner } from '@/components/ui'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
+import { useModalSheetDrag } from '@/hooks/useModalSheetDrag'
 import type { CreateProductInput, CreateProductRes } from '@/lib/api'
 import { MEN_SIZE_GROUPS, WOMEN_STOCK_VARIANT_GROUPS, parseCollectionCode, smartFashionSku, type CollectionType } from '@/components/orders/new-order/collection-engine'
 
@@ -62,6 +63,7 @@ export function AddProductModal({ open, onOpenChange, categoryOptions, saving, s
   const [form, setForm] = useState<FormState>(emptyForm)
   const [localError, setLocalError] = useState<string | null>(null)
   const formRef = useRef<HTMLFormElement>(null)
+  const { sheetRef, handleProps } = useModalSheetDrag(() => onOpenChange(false))
 
   useEffect(() => {
     console.log('[AddProductModal] open →', open)
@@ -306,7 +308,10 @@ export function AddProductModal({ open, onOpenChange, categoryOptions, saving, s
       onBackdropClick={() => onOpenChange(false)}
       aria-label="Add inventory"
     >
-      <Card className="mobile-modal-shell w-full rounded-t-2xl border-gold-dim/30 shadow-2xl sm:max-w-lg sm:rounded-2xl">
+      <Card ref={sheetRef} className="mobile-modal-shell w-full rounded-t-2xl border-gold-dim/30 shadow-2xl sm:max-w-lg sm:rounded-2xl">
+        <div {...handleProps} className="flex justify-center pt-2 sm:hidden">
+          <span className="h-1 w-10 rounded-full bg-border-strong" />
+        </div>
         <div className="mobile-modal-header flex items-center justify-between gap-3 border-b border-border p-4 pb-3 sm:p-5 sm:pb-3">
           <div>
             <h2 id="add-product-modal-title" className="text-sm font-bold text-cream tracking-tight">

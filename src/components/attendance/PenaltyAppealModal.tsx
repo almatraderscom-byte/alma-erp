@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { Button, Card } from '@/components/ui'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
+import { useModalSheetDrag } from '@/hooks/useModalSheetDrag'
 
 export type PenaltyAppealTarget = {
   attendanceRecordId: string
@@ -35,6 +36,7 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
   const [partialAmount, setPartialAmount] = useState('')
   const [attachment, setAttachment] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const { sheetRef, handleProps } = useModalSheetDrag(onClose)
 
   useEffect(() => {
     if (!open) return
@@ -96,8 +98,11 @@ export function PenaltyAppealModal({ open, businessId, target, onClose, onSubmit
 
   return (
     <MobileModalPortal open zIndex={95} onBackdropClick={onClose}>
-      <Card className="mobile-modal-shell w-full max-w-lg border-gold-dim/35 sm:rounded-2xl">
+      <Card ref={sheetRef} className="mobile-modal-shell w-full max-w-lg border-gold-dim/35 sm:rounded-2xl">
         <div className="mobile-modal-header p-5 pb-3">
+          <div {...handleProps} className="-mt-1 mb-2 flex justify-center pb-1 sm:hidden">
+            <span className="h-1 w-10 rounded-full bg-border-strong" />
+          </div>
           <div className="flex justify-between items-start gap-3">
             <div>
               <p className="text-[10px] font-black uppercase tracking-[0.16em] text-gold">Request review</p>

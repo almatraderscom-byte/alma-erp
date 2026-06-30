@@ -17,6 +17,10 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
   // Images attached to the message being composed (uploaded → signed URLs).
   const [pendingImgs, setPendingImgs] = useState<{ id: string; preview: string; url: string }[]>([])
   const [uploadingImgs, setUploadingImgs] = useState(0)
+  // "আজকের কাজ" picker (staff only): tap a task → agent auto-explains it.
+  const [tasksOpen, setTasksOpen] = useState(false)
+  const [myTasks, setMyTasks] = useState<{ id: string; title: string; type: string; serial: number }[] | null>(null)
+  const [explainingId, setExplainingId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const MAX_IMGS = 6
@@ -140,6 +144,41 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
     )
   }
 
+  // Toggle the "আজকের কাজ" picker; fetch the staff's open tasks on first open.
+  const toggleTasks = async () => {
+    const next = !tasksOpen
+    setTasksOpen(next)
+    if (next && myTasks === null) {
+      try {
+        const res = await fetch('/api/assistant/office/my-tasks', { cache: 'no-store' })
+        const data = res.ok ? ((await res.json()) as { tasks?: typeof myTasks }) : null
+        setMyTasks(data?.tasks ?? [])
+      } catch {
+        setMyTasks([])
+      }
+    }
+  }
+
+  // Staff taps a task → agent explains it once (no owner approval). The question +
+  // explanation post straight to the group; we refresh and close the picker.
+  const explainTask = async (taskId: string) => {
+    if (explainingId) return
+    setExplainingId(taskId)
+    try {
+      const res = await fetch('/api/assistant/office/chat/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId }),
+      })
+      if (res.ok) {
+        setTasksOpen(false)
+        await load()
+      }
+    } finally {
+      setExplainingId(null)
+    }
+  }
+
   const send = async () => {
     const text = draft.trim()
     const attachments = pendingImgs.map((p) => ({ type: 'image', url: p.url }))
@@ -217,6 +256,29 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
               ))}
             </div>
           )}
+          {self === 'staff' && tasksOpen && (
+            <div className="cp-tasks">
+              <div className="cp-tasks-h">আজকের কাজ — যেটা বুঝছেন না, সেটায় চাপ দিন</div>
+              {myTasks === null ? (
+                <div className="cp-tasks-e">লোড হচ্ছে…</div>
+              ) : myTasks.length === 0 ? (
+                <div className="cp-tasks-e">আজ আপনার কোনো বাকি কাজ নেই।</div>
+              ) : (
+                myTasks.map((t) => (
+                  <button
+                    key={t.id}
+                    className="cp-task"
+                    disabled={explainingId !== null}
+                    onClick={() => explainTask(t.id)}
+                  >
+                    <span className="cp-task-n">{bn(t.serial)}</span>
+                    <span className="cp-task-t">{t.title}</span>
+                    <span className="cp-task-q">{explainingId === t.id ? '…' : 'বুঝিয়ে দিন'}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
           <div className="cp-foot">
             <input
               ref={fileRef}
@@ -226,6 +288,16 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
               hidden
               onChange={(e) => { pickImages(e.target.files); e.target.value = '' }}
             />
+            {self === 'staff' && (
+              <button
+                className={`cp-attach${tasksOpen ? ' on' : ''}`}
+                aria-label="আজকের কাজ"
+                aria-expanded={tasksOpen}
+                onClick={toggleTasks}
+              >
+                📋
+              </button>
+            )}
             <button
               className="cp-attach"
               aria-label="ছবি যোগ করুন"

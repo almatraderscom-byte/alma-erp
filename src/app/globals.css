@@ -259,8 +259,11 @@ a,
   transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
 .card-interactive:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04);
+  transform: translateY(-2px);
+  /* Soft depth + a faint accent glow that follows the accent picker (--c-accent). */
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.05),
+    0 0 0 1px rgb(var(--c-accent) / 0.10), inset 0 0 18px rgba(255, 255, 255, 0.02);
+  border-color: rgb(var(--c-accent) / 0.22);
 }
 
 /* Bengali Taka (U+09F3) — symbol uses Bengali fonts first so Inter never renders a broken glyph */
@@ -372,7 +375,8 @@ a,
 @media (prefers-reduced-motion: reduce) {
   .alma-shimmer-sweep,
   .skeleton,
-  .gold-pulse {
+  .gold-pulse,
+  .alert-pulse {
     animation: none !important;
   }
 }
@@ -445,6 +449,25 @@ a,
 }
 .gold-pulse { animation: goldPulse 2s ease-in-out infinite; }
 
+/* Urgent alert pulse (red) — a soft breathing ring to draw the eye to pending
+   approvals / unread alerts. Respects reduced-motion via the rule above pattern. */
+@keyframes almaAlertPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.45); }
+  50% { box-shadow: 0 0 0 5px rgba(239,68,68,0); }
+}
+.alert-pulse { animation: almaAlertPulse 2s ease-in-out infinite; }
+
+/* Page-enter fade — opacity only (never transform/size), re-triggered per route by
+   PageFade on the existing content element, so it can't affect any layout. */
+@keyframes almaPageEnter {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.alma-page-enter { animation: almaPageEnter 0.22s ease both; }
+@media (prefers-reduced-motion: reduce) {
+  .alma-page-enter { animation: none !important; }
+}
+
 /* Mobile safe areas */
 @supports (padding: max(0px)) {
   .safe-top    { padding-top:    max(0px, env(safe-area-inset-top)); }
@@ -487,6 +510,17 @@ a,
 
 /* AppToast (react-hot-toast renderer) — icon pop, check/✕ draw, loading spin.
    Keep additive: used only by .alma-toast in src/components/ui/AppToast.tsx. */
+
+/* Theme-aware toast surface (was hardcoded dark → unreadable in light mode). */
+.alma-toast {
+  --toast-bg: linear-gradient(180deg, rgba(28, 25, 38, 0.94) 0%, rgba(18, 16, 26, 0.94) 100%);
+  --toast-fg: #ece6da;
+}
+html[data-theme='light'] .alma-toast {
+  --toast-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(247, 244, 238, 0.97) 100%);
+  --toast-fg: #1f1d29;
+}
+
 @keyframes alma-toast-pop {
   0%   { transform: scale(0.4); opacity: 0; }
   60%  { transform: scale(1.12); opacity: 1; }
@@ -688,8 +722,10 @@ a,
   }
 
   .mobile-modal-backdrop {
-    @apply absolute inset-0 bg-black/50 backdrop-blur-sm;
+    @apply absolute inset-0 bg-black/45;
     touch-action: none;
+    /* Fade + blur the backdrop in instead of snapping (premium modal open). */
+    animation: alma-modal-backdrop-in 0.22s ease both;
   }
 
   .mobile-modal-overlay-inner {
@@ -706,6 +742,9 @@ a,
     max-height: 100%;
     min-height: 0;
     contain: none;
+    /* Phone: glide up from the bottom like an iOS sheet. */
+    animation: alma-modal-sheet-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+    will-change: transform;
   }
 
   @media (min-width: 640px) {
@@ -719,7 +758,22 @@ a,
 
     .mobile-modal-shell {
       max-height: min(calc(100dvh - 2rem), 920px);
+      /* Desktop: a centered dialog scales + fades in rather than sliding. */
+      animation: alma-modal-dialog-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
     }
+  }
+
+  @keyframes alma-modal-backdrop-in {
+    from { opacity: 0; backdrop-filter: blur(0); -webkit-backdrop-filter: blur(0); }
+    to   { opacity: 1; backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); }
+  }
+  @keyframes alma-modal-sheet-in {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+  }
+  @keyframes alma-modal-dialog-in {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
   }
 
   .mobile-modal-header {

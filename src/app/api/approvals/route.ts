@@ -231,6 +231,11 @@ function isExecutable(module: string, type: string) {
       'PENALTY_APPEAL',
       'MEAL_ALLOWANCE',
       APPROVAL_TYPES.SALARY_CORRECTION,
+      APPROVAL_TYPES.ATTENDANCE_LEAVE,
+      // Both have full approve+reject execution branches in [id]/route.ts but were
+      // missing here, so the owner only saw "Manual review" (no Approve button).
+      APPROVAL_TYPES.ATTENDANCE_EXCEPTION,
+      APPROVAL_TYPES.NO_CHECKOUT_FINE,
     ].includes(type))
   )
 }

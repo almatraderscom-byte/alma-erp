@@ -34,6 +34,10 @@
       "schedule": "5,20,35,50 3-16 * * *"
     },
     {
+      "path": "/api/cron/attendance-nocheckout-sweep",
+      "schedule": "0 17 * * *"
+    },
+    {
       "path": "/api/cron/telegram-notifications",
       "schedule": "*/10 * * * *"
     },

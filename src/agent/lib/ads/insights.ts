@@ -60,6 +60,7 @@ export type CampaignMetrics = {
   roasToday: number
   roasWeek: number
   dailyBudgetBdt: number
+  effectiveStatus: string
   hasEnoughData: boolean
 }
 
@@ -68,18 +69,28 @@ export const INSIGHT_MIN_IMPRESSIONS = 1000
 
 export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
   const accountId = adAccountId()
-  const campaigns = await adsApi<{ data?: Array<{ id: string; name: string; daily_budget?: string }> }>(
+  // Fetch effective_status as a real field and filter to ACTIVE client-side.
+  // The server-side `effective_status` filter param proved unreliable (it let
+  // PAUSED campaigns through), so we never trust it: we read the actual status
+  // and decide here. This also lets us surface the true status to the agent so
+  // it can never mislabel a live campaign as paused.
+  const campaignsRes = await adsApi<{
+    data?: Array<{ id: string; name: string; daily_budget?: string; effective_status?: string }>
+  }>(
     `${accountId}/campaigns`,
-    { effective_status: '["ACTIVE"]', fields: 'id,name,daily_budget', limit: '25' },
+    { fields: 'id,name,daily_budget,effective_status', limit: '100' },
   )
 
-  if (!campaigns.data?.length) return []
+  const activeCampaigns = (campaignsRes.data ?? []).filter(
+    (c) => c.effective_status === 'ACTIVE',
+  )
+  if (!activeCampaigns.length) return []
 
   const today = new Date().toISOString().slice(0, 10)
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
   const rows: CampaignMetrics[] = []
 
-  for (const campaign of campaigns.data) {
+  for (const campaign of activeCampaigns) {
     try {
       const todayData = await adsApi<{ data?: Array<Record<string, unknown>> }>(
         `${campaign.id}/insights`,
@@ -135,6 +146,7 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
         roasToday,
         roasWeek,
         dailyBudgetBdt,
+        effectiveStatus: campaign.effective_status ?? 'ACTIVE',
         hasEnoughData: spendWeek >= INSIGHT_MIN_SPEND_BDT && impressionsWeek >= INSIGHT_MIN_IMPRESSIONS,
       })
     } catch (err) {

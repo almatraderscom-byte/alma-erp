@@ -4,8 +4,7 @@ import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { createTurn } from '@/agent/lib/turn-status'
-import { buildTurnJobData, enqueueTurnJob, isTurnHandoffConfigured } from '@/agent/lib/turn-queue'
+import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
 import { createPagePost, verifyPost, resolvePageId } from '@/agent/lib/meta'
 import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
 import { pauseCampaign, updateCampaignBudget } from '@/agent/lib/meta-ads'
@@ -101,7 +100,7 @@ async function runApprove(
 
   // Record trust approval (non-blocking)
   const trustDomain = action.type.startsWith('staff_') ? 'staff' :
-    action.type.startsWith('content_') || action.type === 'fb_post' || action.type === 'ad_creative_gate' || action.type === 'ads_creative_brief' ? 'content' :
+    action.type.startsWith('content_') || action.type === 'fb_post' || action.type === 'instagram_post' || action.type === 'ad_creative_gate' || action.type === 'ads_creative_brief' ? 'content' :
     action.type.startsWith('website_') ? 'content' :
     action.type.startsWith('log_') || action.type === 'delete_finance_entry' || action.type === 'edit_finance_entry' ? 'finance' :
     'general'
@@ -251,6 +250,87 @@ async function runApprove(
       }
 
       return Response.json({ success: true, ...result })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
+  if (action.type === 'instagram_post') {
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        const current = await db.agentPendingAction.findUnique({ where: { id: actionId } })
+        const existingResult = current?.result as { mediaId?: string } | null
+        if (current?.status === 'executed' && existingResult?.mediaId) {
+          return Response.json({ success: true, mediaId: existingResult.mediaId, idempotent: true })
+        }
+        return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+      }
+
+      const pageId = String(payload.pageId ?? resolvePageId(String(payload.page ?? 'lifestyle')))
+      const caption = String(payload.caption ?? '')
+      const conversationId = String(payload.conversationId ?? action.conversationId ?? '')
+
+      // Re-resolve the image the same way fb_post does — the staged ref is
+      // preferred, with the conversation fallback as a safety net.
+      const { imageRef } = await resolveFbPostImageRef(db, {
+        conversationId: conversationId || null,
+        imageUrl: payload.imageUrl,
+        imageArtifactOrFileId: payload.imageArtifactOrFileId,
+        textOnly: false,
+      })
+      if (!imageRef) {
+        throw new Error('Instagram পোস্টের ছবি খুঁজে পাওয়া যায়নি — publish বাতিল।')
+      }
+
+      const { publishInstagramImage } = await import('@/agent/lib/meta-instagram')
+      const result = await publishInstagramImage({ pageId, caption, mediaRef: imageRef })
+      if (!result.success) {
+        await db.agentPendingAction.update({
+          where: { id: actionId },
+          data: { status: 'failed', result: { error: result.error } },
+        })
+        return Response.json({ error: result.error }, { status: 502 })
+      }
+
+      const resultData = {
+        mediaId: result.mediaId,
+        permalink: result.permalink ?? null,
+        igUsername: result.igUsername ?? null,
+        pageId,
+        imagePath: imageRef,
+      }
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', result: resultData },
+      })
+
+      void import('@/lib/content-intelligence').then(({ trackPublishedContent }) =>
+        trackPublishedContent({
+          productRef: typeof payload.productRef === 'string' ? payload.productRef : null,
+          message: caption,
+          contentType: 'ig_photo',
+          page: String(payload.page ?? 'lifestyle'),
+        }),
+      ).catch((err) => {
+        console.warn('[approve] trackPublishedContent (ig) failed:', err instanceof Error ? err.message : err)
+      })
+
+      await appendConversationNote(
+        db,
+        action,
+        `✅ Instagram-এ পোস্ট লাইভ হয়েছে${result.igUsername ? ` (@${result.igUsername})` : ''}।${result.permalink ? `\nLink: ${result.permalink}` : ''}`,
+      )
+
+      return Response.json({ success: true, ...resultData })
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       await db.agentPendingAction.update({
@@ -1029,10 +1109,11 @@ async function runApprove(
 
   if (action.type === 'launch_campaign') {
     const {
-      name, dailyBudget, message, headline, imageUrl, page, ageMin, ageMax,
+      name, dailyBudget, message, headline, imageUrl, page, ageMin, ageMax, audienceId, excludeAudienceId,
     } = payload as {
       name: string; dailyBudget: number; message: string;
-      headline?: string; imageUrl?: string; page?: string; ageMin?: number; ageMax?: number
+      headline?: string; imageUrl?: string; page?: string; ageMin?: number; ageMax?: number;
+      audienceId?: string; excludeAudienceId?: string
     }
     try {
       const claimed = await db.agentPendingAction.updateMany({
@@ -1052,6 +1133,8 @@ async function runApprove(
         page: page ? String(page) : undefined,
         ageMin: ageMin != null ? Number(ageMin) : undefined,
         ageMax: ageMax != null ? Number(ageMax) : undefined,
+        audienceId: audienceId ? String(audienceId) : undefined,
+        excludeAudienceId: excludeAudienceId ? String(excludeAudienceId) : undefined,
       })
       if (!result.success) {
         await db.agentPendingAction.update({
@@ -1074,6 +1157,97 @@ async function runApprove(
         `✅ নতুন ক্যাম্পেইন তৈরি হয়েছে (সব PAUSED — কোনো টাকা খরচ হয়নি)।\nCampaign ID: ${result.campaignId}\nAd Set ID: ${result.adSetId}\nAd ID: ${result.adId}\nAds Manager-এ গিয়ে রিভিউ করে ACTIVE করলেই চালু হবে।`,
       )
       return Response.json({ success: true, campaignId: result.campaignId, adSetId: result.adSetId, adId: result.adId })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
+  if (action.type === 'create_retargeting_audience') {
+    const { name, page, retentionDays } = payload as {
+      name: string; page?: string; retentionDays?: number
+    }
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        return Response.json({ error: 'already_resolved' }, { status: 409 })
+      }
+      const { createEngagementCustomAudience } = await import('@/agent/lib/meta-audiences')
+      const result = await createEngagementCustomAudience({
+        name: String(name),
+        page: page ? String(page) : undefined,
+        retentionDays: retentionDays != null ? Number(retentionDays) : undefined,
+      })
+      if (!result.success) {
+        await db.agentPendingAction.update({
+          where: { id: actionId },
+          data: { status: 'failed', result: { error: result.error } },
+        })
+        return Response.json({ error: result.error }, { status: 502 })
+      }
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', resolvedAt: new Date(), result: { audienceId: result.audienceId } },
+      })
+      await appendConversationNote(
+        db,
+        action,
+        `✅ রিটার্গেটিং audience তৈরি হয়েছে — "${name}" (Audience ID: ${result.audienceId})। Meta কিছুক্ষণ পর population ভরবে। এখন launch_campaign-এ audienceId দিয়ে retargeting ad (PAUSED) চালানো যাবে।`,
+      )
+      return Response.json({ success: true, audienceId: result.audienceId })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
+  if (action.type === 'create_lookalike_audience') {
+    const { name, sourceAudienceId, ratio, country } = payload as {
+      name: string; sourceAudienceId: string; ratio?: number; country?: string
+    }
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        return Response.json({ error: 'already_resolved' }, { status: 409 })
+      }
+      const { createLookalikeAudience } = await import('@/agent/lib/meta-audiences')
+      const result = await createLookalikeAudience({
+        name: String(name),
+        sourceAudienceId: String(sourceAudienceId),
+        ratio: ratio != null ? Number(ratio) : undefined,
+        country: country ? String(country) : undefined,
+      })
+      if (!result.success) {
+        await db.agentPendingAction.update({
+          where: { id: actionId },
+          data: { status: 'failed', result: { error: result.error } },
+        })
+        return Response.json({ error: result.error }, { status: 502 })
+      }
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', resolvedAt: new Date(), result: { audienceId: result.audienceId } },
+      })
+      await appendConversationNote(
+        db,
+        action,
+        `✅ Lookalike audience তৈরি হয়েছে — "${name}" (Audience ID: ${result.audienceId})। Meta কিছুক্ষণ পর similar মানুষ খুঁজে population ভরবে। এখন launch_campaign-এ এই audienceId দিয়ে prospecting ad (PAUSED) চালানো যাবে।`,
+      )
+      return Response.json({ success: true, audienceId: result.audienceId })
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       await db.agentPendingAction.update({
@@ -1321,41 +1495,33 @@ export async function POST(
   return res
 }
 
-/** Owner kill switch for auto-continue-after-approval. Default ON (owner asked for it);
- * set agent_kv_settings key `auto_continue_after_approval` = off to disable, no redeploy. */
-async function autoContinueEnabled(): Promise<boolean> {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const row = await (prisma as any).agentKvSetting.findUnique({ where: { key: 'auto_continue_after_approval' } })
-    const v = (row?.value ?? '').toString().trim().toLowerCase()
-    return v !== 'off' && v !== 'false' && v !== '0'
-  } catch {
-    return true
-  }
-}
-
 /**
  * Enqueue one continuation turn for the conversation the just-approved action belongs
- * to. Reuses the tested buildTurnJobData → enqueueTurnJob path; the VPS worker drains
- * it, runs the turn through the chat route (which persists the reply for the app poll
- * AND notifies Telegram), so both surfaces resume. No infinite loop: a continuation
- * only ever fires from a human approval, and the turn is told not to redo the action.
+ * to. Delegates to the shared enqueueAgentContinuation (createTurn → buildTurnJobData →
+ * enqueueTurnJob) the VPS worker drains, running the turn through the chat route (which
+ * persists the reply for the app poll AND notifies Telegram), so both surfaces resume.
+ * No infinite loop: a continuation only ever fires from a human approval, and the turn
+ * is told not to redo the action.
  */
 async function enqueueApprovalContinuation(actionId: string): Promise<void> {
-  if (!isTurnHandoffConfigured()) return        // no worker queue → silently skip
-  if (!(await autoContinueEnabled())) return    // owner disabled it
-
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
   const action = await db.agentPendingAction.findUnique({
     where: { id: actionId },
-    select: { conversationId: true, status: true, summary: true },
+    select: { conversationId: true, status: true, summary: true, type: true },
   })
   const conversationId: string | null = action?.conversationId ?? null
   if (!conversationId) return
   // Only continue once the action genuinely resolved (guards against a 2xx that
   // wasn't an approval, e.g. an idempotent no-op).
   if (action.status !== 'approved' && action.status !== 'executed') return
+
+  // Async generation jobs (image/video) are NOT finished at approval time — the VPS
+  // worker produces the artifact 30–60s later and reports via /internal/job-result,
+  // which owns the continuation so the head resumes WITH the generated media already
+  // in the conversation. Firing here would run the head before the image exists, so it
+  // couldn't chain to the next step (e.g. an Instagram post) and the flow would stall.
+  if (action.type === 'image_gen' || action.type === 'video_gen') return
 
   const summary = (action.summary ?? '').toString().slice(0, 200)
   const message =
@@ -1364,7 +1530,5 @@ async function enqueueApprovalContinuation(actionId: string): Promise<void> {
     '। এখন থেমে যেও না — তোমার চলমান কাজের পরের ধাপে নিজে থেকে এগোও, অথবা সব শেষ হলে সংক্ষেপে Sir-কে জানাও। ' +
     'যে কাজটা এইমাত্র approve হয়ে সম্পন্ন হয়েছে সেটা আর নতুন করে কোরো না।'
 
-  const turnId = await createTurn(conversationId)
-  const jobData = buildTurnJobData(turnId, conversationId, { message })
-  if (jobData) await enqueueTurnJob(jobData)
+  await enqueueAgentContinuation({ conversationId, message })
 }

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import toast from 'react-hot-toast'
 import { Button, Card, Empty, Skeleton } from '@/components/ui'
+import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { TradingTelegramLiveFeed } from '@/components/trading/TradingTelegramLiveFeed'
 import { TelegramAliasesTab, TelegramUsersTab } from '@/components/trading/TradingTelegramMappingTabs'
@@ -207,10 +208,10 @@ export function TradingTelegramAdmin({
     setBusy(false)
     const data = await res.json()
     if (!res.ok) {
-      alert(data.error || 'Bulk reject failed')
+      toast.error(data.error || 'Bulk reject failed')
       return
     }
-    alert(`Rejected ${data.rejected} draft(s). Failed: ${data.failed}`)
+    toast.success(`Rejected ${data.rejected} draft(s). Failed: ${data.failed}`)
     setSelected(new Set())
     void load()
   }
@@ -225,7 +226,7 @@ export function TradingTelegramAdmin({
     setBusy(false)
     if (!res.ok) {
       const data = await res.json()
-      alert(data.error || 'Reopen failed')
+      toast.error(data.error || 'Reopen failed')
       return
     }
     void load()
@@ -233,7 +234,12 @@ export function TradingTelegramAdmin({
 
   async function bulkConfirm() {
     if (!selected.size) return
-    if (!window.confirm(`Post ${selected.size} draft(s) to the ledger? This updates balances and P/L.`)) return
+    if (!(await confirmDialog({
+      title: 'Post to ledger',
+      message: `Post ${selected.size} draft(s) to the ledger? This updates balances and P/L.`,
+      confirmLabel: 'Post to ledger',
+      danger: true,
+    }))) return
     setBusy(true)
     const res = await fetch('/api/trading/telegram/drafts/bulk', {
       method: 'POST',
@@ -243,10 +249,10 @@ export function TradingTelegramAdmin({
     setBusy(false)
     const data = await res.json()
     if (!res.ok) {
-      alert(data.error || 'Bulk confirm failed')
+      toast.error(data.error || 'Bulk confirm failed')
       return
     }
-    alert(`Posted ${data.posted} trade(s). Failed: ${data.failed}`)
+    toast.success(`Posted ${data.posted} trade(s). Failed: ${data.failed}`)
     setSelected(new Set())
     void load()
   }
@@ -262,7 +268,7 @@ export function TradingTelegramAdmin({
     setBusy(false)
     if (!res.ok) {
       const data = await res.json()
-      alert(data.error || 'Reject failed')
+      toast.error(data.error || 'Reject failed')
       return
     }
     void load()
@@ -297,7 +303,7 @@ export function TradingTelegramAdmin({
     setBusy(false)
     if (!res.ok) {
       const data = await res.json()
-      alert(data.error || 'Save failed')
+      toast.error(data.error || 'Save failed')
       return
     }
     setEditId(null)
@@ -310,10 +316,10 @@ export function TradingTelegramAdmin({
     setBusy(false)
     const data = await res.json()
     if (!res.ok) {
-      alert(data.error || 'Webhook registration failed')
+      toast.error(data.error || 'Webhook registration failed')
       return
     }
-    alert('Webhook registered successfully')
+    toast.success('Webhook registered successfully')
     void load()
   }
 
@@ -357,7 +363,7 @@ export function TradingTelegramAdmin({
 
   async function removeUser(u: TradingTelegramUserRow) {
     const label = u.user?.name?.trim() || u.telegramUsername?.trim() || `ID ${u.telegramUserId}`
-    if (!window.confirm(`Unlink Telegram user ${label} from the ERP staff mapping?\n\nThis clears the link (userId + approved + default account) but preserves the row, drafts, and history. You can re-link later from this page.`)) {
+    if (!(await confirmDialog({ message: `Unlink Telegram user ${label} from the ERP staff mapping?\n\nThis clears the link (userId + approved + default account) but preserves the row, drafts, and history. You can re-link later from this page.`, confirmLabel: 'Unlink', danger: true }))) {
       return
     }
     setRemovingUserId(u.id)
