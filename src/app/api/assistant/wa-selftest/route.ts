@@ -23,7 +23,7 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { sendTwilioWaText, placeTwilioWaCall, getTwilioCallStatus, getTwilioCallError, twilioWaConfigured } from '@/agent/lib/wa/twilio-wa'
+import { sendTwilioWaText, placeTwilioWaCall, getTwilioCallStatus, getTwilioCallError, getTwilioRecentInbound, twilioWaConfigured } from '@/agent/lib/wa/twilio-wa'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 
 export const runtime = 'nodejs'
@@ -47,6 +47,14 @@ export async function GET(req: NextRequest) {
     const text = notify === '1' ? '🔔 ALMA এজেন্ট টেস্ট নোটিফিকেশন — WhatsApp চ্যানেল চালু আছে।' : notify
     const res = await sendOwnerText(text)
     return Response.json({ ok: true, notified: text, ownerNotifyResult: res, ownerWhatsAppConfigured: Boolean(process.env.OWNER_WHATSAPP_NUMBER) })
+  }
+
+  // Diagnostic: ?inbound=1 → did Twilio itself receive any inbound WhatsApp? Tells a
+  // webhook problem (Twilio has them, didn't forward) from Coexistence (Twilio never got them).
+  if ((searchParams.get('inbound') ?? '') === '1') {
+    const recent = await getTwilioRecentInbound()
+    console.log('[wa-selftest:inbound]', JSON.stringify(recent))
+    return Response.json({ ok: true, ...recent })
   }
 
   // Diagnostic: ?status=<CallSid> → look up why a created call didn't ring.

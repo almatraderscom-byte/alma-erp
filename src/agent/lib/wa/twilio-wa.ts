@@ -136,6 +136,34 @@ export async function placeTwilioWaCall(input: { to: string; message: string }):
 }
 
 /**
+ * List the most recent INBOUND WhatsApp messages Twilio itself received — to tell
+ * whether inbound is a webhook problem (Twilio got them but didn't forward to us) or a
+ * routing problem (Twilio never received them, e.g. the number's inbound is handled by
+ * the WhatsApp Business app via Coexistence). Best-effort.
+ */
+export async function getTwilioRecentInbound(): Promise<{ inbound?: Array<Record<string, unknown>>; error?: string }> {
+  if (!twilioWaConfigured()) return { error: 'not configured' }
+  const sid = process.env.TWILIO_ACCOUNT_SID ?? ''
+  const token = process.env.TWILIO_AUTH_TOKEN ?? ''
+  const auth = Buffer.from(`${sid}:${token}`).toString('base64')
+  try {
+    const res = await fetch(`${TWILIO_API}/Accounts/${sid}/Messages.json?PageSize=30`, {
+      headers: { Authorization: `Basic ${auth}` },
+      signal: AbortSignal.timeout(15_000),
+    })
+    const data = (await res.json().catch(() => ({}))) as { messages?: Array<Record<string, unknown>> }
+    if (!res.ok) return { error: `Twilio HTTP ${res.status}` }
+    const inbound = (data.messages ?? [])
+      .filter((m) => String(m.direction ?? '').startsWith('inbound'))
+      .slice(0, 10)
+      .map((m) => ({ from: m.from, to: m.to, body: String(m.body ?? '').slice(0, 120), date: m.date_sent, status: m.status }))
+    return { inbound }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
  * Pull the Twilio Monitor Alert (error code + text) for a failed call, so we can tell
  * apart e.g. 37000 (recipient didn't grant call permission) from 37007 (business-
  * initiated calling not available from this number's country). Best-effort.
