@@ -6,6 +6,7 @@ import { motion, AnimatePresence, useMotionValue } from 'framer-motion'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
 import { fetchTtsAudio } from '@/agent/lib/voice-tts-client'
+import { VoiceNavGlow } from './voice/VoiceNavGlow'
 import { cn } from '@/lib/utils'
 
 /**
@@ -188,8 +189,14 @@ export default function StaffAssistant() {
     : status === 'go' ? 'from-[#9ED0B6] via-[#81B29A] to-[#5d9079]'
     : 'from-[#E8B07A] via-gold to-gold-dim'
 
+  // Siri-style edge glow: light up the whole screen edges while the navigator is
+  // actively working (listening → thinking → going), then fade out.
+  const navGlowActive = status === 'listening' || status === 'thinking' || status === 'go'
+
   return (
-    <motion.div
+    <>
+      <VoiceNavGlow active={navGlowActive} />
+      <motion.div
       drag
       dragMomentum={false}
       dragElastic={0.06}
@@ -301,7 +308,8 @@ export default function StaffAssistant() {
             : <AssistantMark />}
         </motion.button>
       </div>
-    </motion.div>
+      </motion.div>
+    </>
   )
 }
 
