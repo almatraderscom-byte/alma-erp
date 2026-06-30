@@ -35,13 +35,44 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
      can't scroll back to the top. This split is the reliable native fix. */
   position:fixed; inset:0; z-index:70; display:flex; flex-direction:column;
   overflow:hidden; overscroll-behavior:none;
-  font-family:var(--font); background:var(--bg-0); color:var(--ink);
+  font-family:var(--font); background:#0B0B10; color:var(--ink);
   -webkit-font-smoothing:antialiased; line-height:1.5;
+  /* Luminous base wash so the drifting aurora (::before/::after) has depth to
+     glow against — mirrors the rest of ERP's --aurora-base. */
   background-image:
-    radial-gradient(900px 500px at 12% -8%, rgba(224,122,95,0.12), transparent 60%),
-    radial-gradient(800px 500px at 100% 0%, rgba(139,92,246,0.10), transparent 55%);
+    radial-gradient(ellipse 120% 80% at 50% -12%, rgba(37,99,235,0.20), transparent 60%),
+    radial-gradient(ellipse 130% 95% at 50% 116%, rgba(236,72,153,0.18), transparent 64%);
 }
+/* ── Living aurora — the SAME premium mesh the rest of ALMA ERP floats on, ported
+   into the office world so it no longer reads as a flat dark box. Two layers of
+   soft colour blobs drift on the compositor (transform only, 60fps, reduced-motion
+   aware) behind every panel; the glass surfaces sample them. */
+.ohub::before,.ohub::after{content:"";position:absolute;inset:-25%;z-index:0;pointer-events:none;
+  filter:blur(8px);will-change:transform;opacity:.85}
+.ohub::before{
+  background:
+    radial-gradient(38% 42% at 18% 22%, rgba(56,128,255,0.55), transparent 70%),
+    radial-gradient(34% 40% at 82% 18%, rgba(124,77,255,0.50), transparent 70%),
+    radial-gradient(40% 44% at 72% 82%, rgba(214,51,255,0.42), transparent 72%);
+  animation:oh-aurora-a 26s ease-in-out infinite alternate}
+.ohub::after{
+  background:
+    radial-gradient(36% 40% at 86% 64%, rgba(255,46,134,0.40), transparent 72%),
+    radial-gradient(40% 46% at 16% 80%, rgba(255,110,80,0.36), transparent 72%),
+    radial-gradient(30% 36% at 50% 36%, rgba(224,122,95,0.42), transparent 70%);
+  animation:oh-aurora-b 32s ease-in-out infinite alternate}
+@keyframes oh-aurora-a{
+  0%{transform:translate3d(-4%,-2%,0) rotate(0deg) scale(1.05)}
+  50%{transform:translate3d(5%,3%,0) rotate(8deg) scale(1.12)}
+  100%{transform:translate3d(-2%,4%,0) rotate(-5deg) scale(1.08)}}
+@keyframes oh-aurora-b{
+  0%{transform:translate3d(3%,2%,0) rotate(0deg) scale(1.08)}
+  50%{transform:translate3d(-5%,-3%,0) rotate(-9deg) scale(1.15)}
+  100%{transform:translate3d(4%,-2%,0) rotate(6deg) scale(1.1)}}
+@media(prefers-reduced-motion:reduce){.ohub::before,.ohub::after{animation:none}}
 .ohub *{box-sizing:border-box;margin:0;padding:0}
+/* Keep the scroller + topbar above the aurora layer. */
+.ohub .wrap{position:relative;z-index:1}
 .ohub::-webkit-scrollbar{width:9px;height:9px}
 .ohub::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:9px}
 .ohub .num{font-variant-numeric:tabular-nums}
@@ -87,14 +118,15 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 .ohub .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
 .ohub .kpi{position:relative;overflow:hidden;border-radius:var(--r-lg);padding:18px;
   background:
-    linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0) 42%),
-    linear-gradient(165deg,var(--bg-2),var(--bg-1));
-  border:1px solid var(--border-subtle);
-  box-shadow:0 8px 26px rgba(0,0,0,0.42),inset 0 1px 0 rgba(255,255,255,0.06);
+    linear-gradient(180deg,rgba(255,255,255,0.10),rgba(255,255,255,0.015) 46%),
+    rgba(20,20,28,0.45);
+  backdrop-filter:blur(22px) saturate(1.35);-webkit-backdrop-filter:blur(22px) saturate(1.35);
+  border:1px solid rgba(255,255,255,0.10);
+  box-shadow:0 10px 30px rgba(0,0,0,0.30),inset 0 1px 0 rgba(255,255,255,0.10);
   transition:transform .22s cubic-bezier(.22,1,.36,1),box-shadow .22s ease,border-color .22s ease}
 .ohub .kpi::after{content:"";position:absolute;left:0;top:0;height:100%;width:3px;border-radius:3px 0 0 3px;opacity:.9}
-.ohub .kpi:hover{transform:translateY(-3px);border-color:var(--border-strong);
-  box-shadow:0 16px 38px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.09)}
+.ohub .kpi:hover{transform:translateY(-3px);border-color:rgba(224,122,95,0.30);
+  box-shadow:0 18px 42px rgba(0,0,0,0.38),0 0 0 1px rgba(224,122,95,0.12),inset 0 1px 0 rgba(255,255,255,0.14)}
 .ohub .kpi .ic{font-size:20px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.4))}
 .ohub .kpi .v{font-size:30px;font-weight:800;letter-spacing:-.02em;margin-top:8px}
 .ohub .kpi .l{font-size:13px;color:var(--muted);margin-top:2px}
@@ -109,7 +141,11 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 .ohub .section-h h2{font-size:16px;font-weight:800;letter-spacing:-.01em;position:relative;padding-left:13px}
 .ohub .section-h h2::before{content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);width:4px;height:16px;border-radius:3px;background:linear-gradient(180deg,var(--accent-lt),var(--accent-dim));box-shadow:0 0 10px rgba(224,122,95,.5)}
 .ohub .section-h .count{font-size:12px;font-weight:700;color:var(--accent-lt);background:rgba(224,122,95,.12);border:1px solid rgba(224,122,95,.22);padding:3px 10px;border-radius:var(--r-pill)}
-.ohub .card{position:relative;background:linear-gradient(168deg,var(--bg-2),var(--bg-1) 60%);border:1px solid var(--border-subtle);border-radius:var(--r-lg);box-shadow:0 10px 34px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.05)}
+.ohub .card{position:relative;
+  background:linear-gradient(180deg,rgba(255,255,255,0.07),rgba(255,255,255,0.012) 40%),rgba(18,18,26,0.55);
+  backdrop-filter:blur(24px) saturate(1.3);-webkit-backdrop-filter:blur(24px) saturate(1.3);
+  border:1px solid rgba(255,255,255,0.09);border-radius:var(--r-lg);
+  box-shadow:0 14px 40px rgba(0,0,0,0.34),inset 0 1px 0 rgba(255,255,255,0.08)}
 
 /* ── approval queue item ── */
 .ohub .appr{display:flex;gap:14px;padding:16px;border-bottom:1px solid var(--border-subtle);cursor:pointer;transition:.16s}
@@ -226,10 +262,13 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 .ohub .stitle{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
 .ohub .sh1{font-size:22px;font-weight:700;margin-top:3px;margin-bottom:2px}
 .ohub .ssub{font-size:13px;color:var(--muted);margin-bottom:18px}
-.ohub .stask{position:relative;background:linear-gradient(168deg,var(--bg-2),var(--bg-1) 65%);border:1px solid var(--border-subtle);border-radius:var(--r-md);padding:14px;margin-bottom:12px;cursor:pointer;
-  box-shadow:0 4px 16px rgba(0,0,0,0.32),inset 0 1px 0 rgba(255,255,255,0.05);
+.ohub .stask{position:relative;
+  background:linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0.01) 50%),rgba(20,20,28,0.5);
+  backdrop-filter:blur(16px) saturate(1.25);-webkit-backdrop-filter:blur(16px) saturate(1.25);
+  border:1px solid rgba(255,255,255,0.08);border-radius:var(--r-md);padding:14px;margin-bottom:12px;cursor:pointer;
+  box-shadow:0 6px 20px rgba(0,0,0,0.26),inset 0 1px 0 rgba(255,255,255,0.07);
   transition:transform .2s cubic-bezier(.22,1,.36,1),border-color .2s ease,box-shadow .2s ease}
-.ohub .stask:hover{border-color:var(--border-strong);transform:translateY(-2px);box-shadow:0 12px 28px rgba(0,0,0,0.42),inset 0 1px 0 rgba(255,255,255,0.08)}
+.ohub .stask:hover{border-color:rgba(224,122,95,0.28);transform:translateY(-2px);box-shadow:0 14px 32px rgba(0,0,0,0.34),0 0 0 1px rgba(224,122,95,0.10),inset 0 1px 0 rgba(255,255,255,0.10)}
 .ohub .stask.carry{border-color:rgba(139,92,246,.4);background:linear-gradient(168deg,rgba(139,92,246,.12),var(--bg-1) 70%);box-shadow:0 4px 18px rgba(139,92,246,.16),inset 0 1px 0 rgba(255,255,255,0.06)}
 .ohub .stask .top{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:6px 10px}
 /* Title takes the bulk of the row (>=55%) so badges can never squeeze it down to
