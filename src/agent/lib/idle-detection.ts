@@ -250,7 +250,7 @@ export async function runIdleWatch(deviceId = process.env.IMOU_DEVICE_ID ?? ''):
         const sustainedMin = minutesBetween(now, open!.startedAt)
         const threshold = await thresholdMin(cat)
         if (sustainedMin >= threshold && !open!.notifiedAt) {
-          const sent = await alertOwner(cat, Math.round(sustainedMin), snap.url, summaryBn, now)
+          const sent = await alertOwner(cat, Math.round(sustainedMin), snap.url, summaryBn, now, deviceId)
           if (sent) {
             await episodes().update({ where: { id: open!.id }, data: { notifiedAt: now } })
             result.alerts.push(cat.key)
@@ -288,15 +288,72 @@ export async function runIdleWatchTest(deviceId = process.env.IMOU_DEVICE_ID ?? 
     const timeLabel = new Intl.DateTimeFormat('bn-BD', {
       timeZone: DHAKA_TZ, hour: 'numeric', minute: '2-digit', hour12: true,
     }).format(now)
+    // Also exercise the new staff-nudge approval path so the owner can SEE and TAP
+    // the ✅/❌ buttons live in this test (the real cron attaches them the same way).
+    const testCat = CATEGORIES[0]!
+    const actionId = await createIdleNudgeAction(testCat, snap.url, analysis.summary_bn ?? '', deviceId)
+    const reply_markup = actionId
+      ? {
+          inline_keyboard: [[
+            { text: '✅ স্টাফ গ্রুপে মনে করিয়ে দিন', callback_data: `approve:${actionId}` },
+            { text: '❌ থাক', callback_data: `reject:${actionId}` },
+          ]],
+        }
+      : undefined
     const caption =
       `🧪 idle-detection টেস্ট — Work Room (${timeLabel})\n` +
       `মানুষ: ${analysis.people_count ?? 0} | মোবাইল: ${flags.away_mobile ? 'হ্যাঁ' : 'না'} | ` +
       `ভিডিও: ${flags.monitor_video ? 'হ্যাঁ' : 'না'} | আড্ডা: ${flags.group_chatting ? 'হ্যাঁ' : 'না'}\n` +
-      (analysis.summary_bn ? `\nAI (${model}): ${analysis.summary_bn}` : '')
-    const res = await sendOwnerPhoto(snap.url, caption)
+      (analysis.summary_bn ? `\nAI (${model}): ${analysis.summary_bn}` : '') +
+      (actionId ? '\n\n👉 নিচের বাটন টেস্ট করুন — Approve চাপলে অফিস গ্রুপে নাম ছাড়া রিমাইন্ডার যাবে (chat id সেট থাকলে)।' : '')
+    const res = await sendOwnerPhoto(snap.url, caption, reply_markup)
     return { ran: true, peopleCount: analysis.people_count ?? 0, flags, alerts: res.ok ? ['test'] : [], error: res.ok ? undefined : `telegram: ${res.error}` }
   } catch (err) {
     return { ran: false, alerts: [], error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
+ * Create a `staff_idle_nudge` pending action so the owner alert can carry an
+ * Approve button. On approval the action route forwards the frame + a name-free
+ * gentle reminder to the office staff Telegram group (owner's chosen target).
+ * Returns the action id, or null if creation failed (alert still goes, sans button).
+ */
+async function createIdleNudgeAction(
+  cat: CategoryDef,
+  snapshotUrl: string,
+  summaryBn: string,
+  deviceId: string,
+): Promise<string | null> {
+  // Name-free, non-accusatory reminder — vision never identifies who is on the
+  // phone, so the message blames no one specific and just refocuses the room.
+  const message =
+    'আসসালামু আলাইকুম। অফিসে দেখা যাচ্ছে কাজের সময় কেউ কেউ ডেস্কে নেই বা ফোনে ব্যস্ত। ' +
+    'আজ অনেক কাজ বাকি — অনুগ্রহ করে একটু মনোযোগ দিয়ে কাজগুলো শেষ করে ফেলুন, ইনশাআল্লাহ। ধন্যবাদ 🙏'
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const action = await (prisma as any).agentPendingAction.create({
+      data: {
+        type: 'staff_idle_nudge',
+        businessId: 'ALMA_LIFESTYLE',
+        payload: {
+          photoUrl: snapshotUrl,
+          summaryBn,
+          labelBn: cat.labelBn,
+          camera: 'Work Room',
+          deviceId,
+          message,
+        },
+        summary: `স্টাফ idle (${cat.labelBn}) — অফিস গ্রুপে নাম ছাড়া রিমাইন্ডার পাঠানোর অনুমোদন`,
+        costEstimate: 0,
+        status: 'pending',
+      },
+      select: { id: true },
+    })
+    return action.id as string
+  } catch (err) {
+    console.warn('[idle-watch] create nudge action failed:', err instanceof Error ? err.message : err)
+    return null
   }
 }
 
@@ -306,17 +363,32 @@ async function alertOwner(
   snapshotUrl: string,
   summaryBn: string,
   now: Date,
+  deviceId: string,
 ): Promise<boolean> {
   const timeLabel = new Intl.DateTimeFormat('bn-BD', {
     timeZone: DHAKA_TZ, hour: 'numeric', minute: '2-digit', hour12: true,
   }).format(now)
+
+  // Pre-create the nudge action so the alert photo can carry an Approve button.
+  const actionId = await createIdleNudgeAction(cat, snapshotUrl, summaryBn, deviceId)
+  const reply_markup = actionId
+    ? {
+        inline_keyboard: [[
+          { text: '✅ স্টাফ গ্রুপে মনে করিয়ে দিন', callback_data: `approve:${actionId}` },
+          { text: '❌ থাক', callback_data: `reject:${actionId}` },
+        ]],
+      }
+    : undefined
+
   const caption =
     `${cat.emoji} সম্ভাব্য idle — Work Room\n` +
     `${cat.labelBn}\n` +
     `একটানা ~${sustainedMin} মিনিট ধরে (${timeLabel})\n` +
     (summaryBn ? `\nAI: ${summaryBn}\n` : '') +
-    `\n(পাইলট — ভুল হলে জানাবেন, threshold ঠিক করে দেব)`
-  const res = await sendOwnerPhoto(snapshotUrl, caption)
+    (actionId
+      ? '\n👉 চাইলে নিচের বাটনে চাপ দিন — অফিস স্টাফ গ্রুপে নাম ছাড়া একটা ভদ্র রিমাইন্ডার চলে যাবে।'
+      : '\n(পাইলট — ভুল হলে জানাবেন, threshold ঠিক করে দেব)')
+  const res = await sendOwnerPhoto(snapshotUrl, caption, reply_markup)
   if (!res.ok) console.warn('[idle-watch] owner photo alert failed:', res.error)
   return res.ok
 }
