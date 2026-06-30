@@ -2,6 +2,7 @@
  * Persist confirm cards in conversation history so they survive reload and polling.
  */
 import { prisma } from '@/lib/prisma'
+import { decodeUnicodeEscapes } from '@/agent/lib/decode-unicode-escapes'
 
 export type ConfirmCardPayload = {
   pendingActionId: string
@@ -23,7 +24,7 @@ export async function appendConfirmCardMessage(
       content: [{
         type: 'confirm_card',
         pendingActionId: card.pendingActionId,
-        summary: card.summary,
+        summary: decodeUnicodeEscapes(card.summary),
         actionType: card.actionType ?? null,
         costEstimate: card.costEstimate ?? null,
       }],

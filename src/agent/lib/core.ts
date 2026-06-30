@@ -27,6 +27,7 @@ import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/
 import { getBusinessSnapshot } from '@/agent/lib/business-snapshot'
 import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
 import { toolResultPreview } from '@/agent/lib/tool-labels'
+import { decodeUnicodeEscapes } from '@/agent/lib/decode-unicode-escapes'
 import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
 import { bumpPlaybookRulesForDomains } from '@/agent/lib/learning/learned-rules'
 import { detectTeachingIntent } from '@/agent/lib/learning/teaching-intent'
@@ -1241,9 +1242,9 @@ export async function* runAgentTurn(
               select: { status: true, summary: true, costEstimate: true },
             })
             if (row?.status === 'pending') {
-              const cardSummary = typeof d.summary === 'string' && d.summary
-                ? d.summary
-                : (row.summary ?? '')
+              const cardSummary = decodeUnicodeEscapes(
+                typeof d.summary === 'string' && d.summary ? d.summary : (row.summary ?? ''),
+              )
               const cardCost = typeof d.costEstimate === 'number' ? d.costEstimate : (row.costEstimate ?? undefined)
               const cardActionType = typeof d.actionType === 'string' ? d.actionType : undefined
               yield {

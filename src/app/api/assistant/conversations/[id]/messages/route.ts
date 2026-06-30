@@ -4,6 +4,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { toolResultPreview } from '@/agent/lib/tool-labels'
+import { decodeUnicodeEscapes } from '@/agent/lib/decode-unicode-escapes'
 
 export async function GET(
   req: NextRequest,
@@ -87,7 +88,9 @@ export async function GET(
     const block: Record<string, unknown> = {
       type: 'confirm_card',
       pendingActionId: a.id,
-      summary: a.summary ?? '',
+      // Decode any literal `\uXXXX` escapes a relayed summary may carry, so an
+      // astral emoji (e.g. 🎯) renders as the glyph, not its escape text.
+      summary: decodeUnicodeEscapes(a.summary ?? ''),
       actionType: a.type,
       status: a.status,
     }
@@ -127,7 +130,14 @@ export async function GET(
     const baseContent = Array.isArray(m.content)
       ? (m.content as Array<Record<string, unknown>>).map((b) =>
           b?.type === 'confirm_card' && typeof b.pendingActionId === 'string'
-            ? { ...b, status: statusById.get(b.pendingActionId) ?? 'expired' }
+            ? {
+                ...b,
+                status: statusById.get(b.pendingActionId) ?? 'expired',
+                // Heal any escaped astral emoji in a persisted breadcrumb summary.
+                ...(typeof b.summary === 'string'
+                  ? { summary: decodeUnicodeEscapes(b.summary) }
+                  : {}),
+              }
             : b,
         )
       : m.content
