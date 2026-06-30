@@ -199,6 +199,37 @@ export function summarizeBrowserTask(payload: BrowserTaskPayload): string {
   return lines.join('\n')
 }
 
+export interface CreatedBrowserTask {
+  pendingActionId: string
+  critical: boolean
+  stepCount: number
+  summary: string
+}
+
+/**
+ * Shared create-path: turn a validated BrowserTaskPayload into an owner-approval
+ * pending action. Used by both run_browser_task (free-form) and run_browser_recipe
+ * (Phase B) so the gating, summary and critical-flag logic stay identical.
+ */
+export async function createBrowserTaskPendingAction(
+  payload: BrowserTaskPayload,
+): Promise<CreatedBrowserTask> {
+  const summary = summarizeBrowserTask(payload)
+  const critical = isCriticalBrowserTask(payload)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const action = await (prisma as any).agentPendingAction.create({
+    data: {
+      conversationId: payload.conversationId ?? null,
+      type: BROWSER_ACTION_TYPE,
+      payload: { ...payload, critical },
+      summary,
+      costEstimate: null,
+      status: 'pending',
+    },
+  })
+  return { pendingActionId: action.id as string, critical, stepCount: payload.steps.length, summary }
+}
+
 /** Reads the browser-agent kill-switch (KV). Default OFF. */
 export async function isBrowserAgentEnabled(): Promise<boolean> {
   try {
