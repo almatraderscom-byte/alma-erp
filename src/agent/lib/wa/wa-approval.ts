@@ -124,7 +124,7 @@ export async function handleOwnerApprovalButton(fromDigits: string, payload: str
   if (!owner || last10(owner) !== last10(fromDigits)) return false
 
   // Safe no-op test payload from wa-selftest.
-  if (actionId === 'TEST-NO-OP') {
+  if (actionId.startsWith('TEST-NO-OP')) {
     await sendOwnerWaNote(`✅ টেস্ট বাটন কাজ করছে (${verb}) — আসল কোনো অ্যাকশন বদলায়নি।`)
     return true
   }
@@ -156,9 +156,9 @@ export async function testWaApproval(kind: 'single' | 'multi' = 'single'): Promi
   if (!ownerWaConfigured()) return { sent: false, reason: 'OWNER_WHATSAPP_NUMBER or Twilio not configured' }
   if (kind === 'multi') {
     return sendOwnerWaButtons('📋 টেস্ট (মাল্টি-স্টেপ) — একটা অপশন চাপুন, কিছু বদলাবে না:', [
-      { title: '১ ঘণ্টা', payload: 'approve:TEST-NO-OP' },
-      { title: '২ ঘণ্টা', payload: 'approve:TEST-NO-OP' },
-      { title: '❌ বাতিল', payload: 'reject:TEST-NO-OP' },
+      { title: '১ ঘণ্টা', payload: 'approve:TEST-NO-OP-1' },
+      { title: '২ ঘণ্টা', payload: 'approve:TEST-NO-OP-2' },
+      { title: '❌ বাতিল', payload: 'reject:TEST-NO-OP-3' },
     ])
   }
   return sendOwnerWaButtons('📋 টেস্ট অনুমোদন — ✅/❌ চাপুন (নিরাপদ, কিছু বদলাবে না):', [

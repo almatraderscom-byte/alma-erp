@@ -193,6 +193,13 @@ async function sendPhotoResilient(
   deviceId: string,
   reply_markup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> },
 ): Promise<{ ok: boolean; error?: string }> {
+  // Mirror the decision buttons to the owner's WhatsApp (best-effort, dormant).
+  if (reply_markup?.inline_keyboard?.length) {
+    try {
+      const { mirrorOwnerKeyboardToWhatsApp } = await import('./wa/wa-approval')
+      await mirrorOwnerKeyboardToWhatsApp(caption, reply_markup.inline_keyboard)
+    } catch { /* never break Telegram */ }
+  }
   let res = await sendTelegramPhoto(chatId, photoUrl, caption, reply_markup)
   if (!res.ok) {
     const fresh = await freshSnapshotUrl(deviceId)

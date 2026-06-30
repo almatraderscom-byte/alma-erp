@@ -96,6 +96,13 @@ export async function sendOwnerPhoto(
   caption?: string,
   reply_markup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> },
 ): Promise<{ ok: boolean; error?: string }> {
+  // Mirror the decision buttons to the owner's WhatsApp (best-effort, dormant).
+  if (reply_markup?.inline_keyboard?.length) {
+    try {
+      const { mirrorOwnerKeyboardToWhatsApp } = await import('./wa/wa-approval')
+      await mirrorOwnerKeyboardToWhatsApp(caption ?? '📋 অনুমোদন প্রয়োজন', reply_markup.inline_keyboard)
+    } catch { /* never break Telegram */ }
+  }
   const chatId = process.env.TELEGRAM_OWNER_CHAT_ID
   if (!chatId) return { ok: false, error: 'TELEGRAM_OWNER_CHAT_ID not set' }
   return sendTelegramPhoto(chatId, photo, caption, reply_markup)
