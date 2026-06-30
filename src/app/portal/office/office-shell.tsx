@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import type { OwnerHubData, StaffOfficeData } from '@/agent/lib/office-hub'
 import type { Motivation } from '@/agent/lib/office-motivation'
@@ -27,8 +28,32 @@ export default function OfficeShell({
   navItems: OfficeNavItem[]
 }) {
   const isOwner = self === 'owner'
+  const router = useRouter()
   const [navOpen, setNavOpen] = useState(false)
   const [histOpen, setHistOpen] = useState(false)
+
+  // Live sync across screens. The office board is server-rendered and otherwise
+  // only re-fetches when the viewer takes an action — so an approval made by the
+  // owner (or the agent's auto-verify) didn't reach a staff's open page, or a
+  // second tab, until a manual reload. Soft-refresh the server data on a gentle
+  // interval (only while the tab is visible) and immediately when the tab regains
+  // focus, so done/approved/redo state propagates everywhere on its own.
+  // router.refresh() preserves client state (open drawers, chat, scroll), so this
+  // never disrupts what the viewer is doing.
+  useEffect(() => {
+    const REFRESH_MS = 18_000
+    const refreshIfVisible = () => {
+      if (document.visibilityState === 'visible') router.refresh()
+    }
+    const id = setInterval(refreshIfVisible, REFRESH_MS)
+    document.addEventListener('visibilitychange', refreshIfVisible)
+    window.addEventListener('focus', refreshIfVisible)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', refreshIfVisible)
+      window.removeEventListener('focus', refreshIfVisible)
+    }
+  }, [router])
 
   // The app's GLOBAL MobilePullToRefresh listens on the ERP <main> scroll
   // element. The office is a fixed overlay whose OWN scroller is `.wrap`, so

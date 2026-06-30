@@ -7,7 +7,7 @@ import { useDateRange } from '@/contexts/DateRangeContext'
 import { DateRangeFilter } from '@/components/date-filter/DateRangeFilter'
 import { aggregateDashboardMetrics } from '@/lib/order-analytics'
 import { formatGroupSizeLine } from '@/lib/product-size-breakdown'
-import { Card, KpiCard, Skeleton, StatusBadge, PageHeader, Empty, Money, BdtText } from '@/components/ui'
+import { Card, KpiCard, Skeleton, StatusBadge, PageHeader, Empty, Money, BdtText, useCountUp } from '@/components/ui'
 import { ConnectionStatus } from '@/components/ui/ConnectionStatus'
 import { fmt, fmtNum, pct } from '@/lib/utils'
 import type { Order } from '@/types'
@@ -152,7 +152,8 @@ function LifestyleDashboard() {
           <HeroKpi
             icon={<IconRevenue />}
             label="Revenue"
-            value={loading ? null : fmt(kpis.total_revenue)}
+            num={loading ? null : kpis.total_revenue}
+            format={fmt}
             accent="from-gold/10 to-gold/[0.02]"
             borderColor="border-l-gold"
             loading={loading}
@@ -160,7 +161,8 @@ function LifestyleDashboard() {
           <HeroKpi
             icon={<IconProfit />}
             label="Net Profit"
-            value={loading ? null : fmt(profit)}
+            num={loading ? null : profit}
+            format={fmt}
             accent={profit < 0 ? 'from-danger/15 to-danger/5' : 'from-success/15 to-success/5'}
             borderColor={profit < 0 ? 'border-l-danger' : 'border-l-success'}
             valueColor={profit < 0 ? 'text-danger' : 'text-success'}
@@ -170,7 +172,8 @@ function LifestyleDashboard() {
           <HeroKpi
             icon={<IconOrders />}
             label="Total Orders"
-            value={loading ? null : fmtNum(kpis.total_orders)}
+            num={loading ? null : kpis.total_orders}
+            format={fmtNum}
             accent="from-info/15 to-info/5"
             borderColor="border-l-info"
             valueColor="text-info"
@@ -179,7 +182,8 @@ function LifestyleDashboard() {
           <HeroKpi
             icon={<IconDelivered />}
             label="Delivered"
-            value={loading ? null : fmtNum(kpis.delivered_count)}
+            num={loading ? null : kpis.delivered_count}
+            format={fmtNum}
             accent="from-violet-500/10 to-violet-500/[0.04]"
             borderColor="border-l-violet-500"
             valueColor="text-violet-500"
@@ -193,7 +197,9 @@ function LifestyleDashboard() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <CompactKpi
               label="Return Loss"
-              value={loading ? '—' : fmt(kpis.total_returns_loss ?? 0)}
+              value={loading ? '—' : undefined}
+              num={loading ? null : (kpis.total_returns_loss ?? 0)}
+              format={fmt}
               color="text-danger"
               sub={`${kpis.returned_paid_count ?? 0} paid · ${kpis.returned_unpaid_count ?? 0} refused`}
             />
@@ -205,13 +211,17 @@ function LifestyleDashboard() {
             />
             <CompactKpi
               label="Pending"
-              value={loading ? '—' : fmtNum(kpis.pending_count)}
+              value={loading ? '—' : undefined}
+              num={loading ? null : kpis.pending_count}
+              format={fmtNum}
               color="text-warning"
               sub="Awaiting action"
             />
             <CompactKpi
               label="Realized Profit"
-              value={loading ? '—' : fmt(kpis.total_realized_profit ?? kpis.total_profit)}
+              value={loading ? '—' : undefined}
+              num={loading ? null : (kpis.total_realized_profit ?? kpis.total_profit)}
+              format={fmt}
               color="text-success"
               sub="Delivered orders only"
             />
@@ -441,16 +451,23 @@ function LifestyleDashboard() {
 
 /* ── Sub-components ───────────────────────────────────────────────── */
 
-function HeroKpi({ icon, label, value, accent, borderColor, valueColor, sub, loading }: {
+function HeroKpi({ icon, label, value, num, format, accent, borderColor, valueColor, sub, loading }: {
   icon: React.ReactNode
   label: string
-  value: string | null
+  /** Pre-formatted string (fallback). Prefer num+format for a count-up animation. */
+  value?: string | null
+  /** Raw numeric value — when given with `format`, the number counts up on mount/change. */
+  num?: number | null
+  format?: (n: number) => string
   accent: string
   borderColor: string
   valueColor?: string
   sub?: string
   loading?: boolean
 }) {
+  // Count up the raw number (premium dashboard feel); fall back to the string.
+  const animated = useCountUp(num ?? 0, num != null && !!format)
+  const display = num != null && format ? format(animated) : value
   return (
     <motion.div
       whileHover={{ y: -3 }}
@@ -471,15 +488,15 @@ function HeroKpi({ icon, label, value, accent, borderColor, valueColor, sub, loa
               <span className="text-muted">{icon}</span>
               <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-muted">{label}</p>
             </div>
-            {value && (
-              typeof value === 'string' && value.includes('৳') ? (
+            {display && (
+              typeof display === 'string' && display.includes('৳') ? (
                 <BdtText
-                  value={value}
+                  value={display}
                   className={`block text-lg md:text-xl font-bold tracking-tight ${valueColor ?? 'text-cream'}`}
                 />
               ) : (
-                <p className={`text-lg md:text-xl font-bold tracking-tight ${valueColor ?? 'text-cream'}`}>
-                  {value}
+                <p className={`text-lg md:text-xl font-bold tracking-tight tabular-nums ${valueColor ?? 'text-cream'}`}>
+                  {display}
                 </p>
               )
             )}
@@ -491,22 +508,24 @@ function HeroKpi({ icon, label, value, accent, borderColor, valueColor, sub, loa
   )
 }
 
-function CompactKpi({ label, value, color, sub }: {
-  label: string; value: string; color: string; sub: string
+function CompactKpi({ label, value, num, format, color, sub }: {
+  label: string; value?: string; num?: number | null; format?: (n: number) => string; color: string; sub: string
 }) {
+  const animated = useCountUp(num ?? 0, num != null && !!format)
+  const display = num != null && format ? format(animated) : value
   return (
     <motion.div
       whileHover={{ y: -2 }}
       transition={{ type: 'spring', stiffness: 380, damping: 30 }}
       className="bg-card/80 rounded-xl border border-border-subtle p-3.5 shadow-card will-change-transform">
       <p className="text-[10px] font-bold uppercase tracking-[0.06em] text-muted mb-1">{label}</p>
-      {typeof value === 'string' && value.includes('৳') ? (
+      {typeof display === 'string' && display.includes('৳') ? (
         <BdtText
-          value={value}
+          value={display}
           className={`block text-sm font-bold tabular-nums ${color}`}
         />
       ) : (
-        <p className={`text-sm font-bold tabular-nums ${color}`}>{value}</p>
+        <p className={`text-sm font-bold tabular-nums ${color}`}>{display}</p>
       )}
       <p className="text-[10px] text-muted mt-0.5">{sub}</p>
     </motion.div>

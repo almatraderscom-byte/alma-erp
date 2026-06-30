@@ -17,6 +17,7 @@ import type { Motivation } from '@/agent/lib/office-motivation'
 import Confetti from './confetti'
 import { todoState } from './todo-status'
 import { OfficeTodoDock } from './office-todo-dock'
+import { successHaptic } from '@/lib/ui-haptics'
 
 // ── small formatting helpers ────────────────────────────────────────────────
 const BN = '০১২৩৪৫৬৭৮৯'
@@ -171,7 +172,10 @@ export default function OwnerHub({
       setBusyId(key)
       const ok = await postAction({ ...body, businessId: data.businessId })
       setBusyId(null)
-      if (ok) startTransition(() => router.refresh())
+      if (ok) {
+        successHaptic()
+        startTransition(() => router.refresh())
+      }
       return ok
     },
     [data.businessId, router],

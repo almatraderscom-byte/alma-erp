@@ -3,6 +3,7 @@ import { motion, useReducedMotion, useSpring } from 'framer-motion'
 import { useEffect, useState } from 'react'
 import { BDT_SYMBOL, fmtNum } from '@/lib/currency'
 import { cn } from '@/lib/utils'
+import { tapHaptic } from '@/lib/ui-haptics'
 import { BdtText, Money } from '@/components/ui/Currency'
 import { ResponsiveKpiValue, type KpiValueKind } from '@/components/ui/ResponsiveKpiValue'
 import type { OrderStatus, CustomerSegment, RiskLevel } from '@/types'
@@ -28,7 +29,7 @@ export function Skeleton({ className }: { className?: string }) {
  * under reduced motion or when disabled — never animates fractional taka mid-flight
  * because callers round/format the integer it returns. Internal to KpiCard.
  */
-function useCountUp(target: number, enabled: boolean): number {
+export function useCountUp(target: number, enabled: boolean): number {
   const reduce = useReducedMotion()
   const spring = useSpring(0, { stiffness: 80, damping: 22, mass: 0.9 })
   const [n, setN] = useState(enabled && !reduce ? 0 : target)
@@ -269,18 +270,18 @@ export function Button({
   className?: string
   type?: 'button' | 'submit'
 }) {
-  const base = 'inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl font-semibold transition-all duration-150 disabled:opacity-40 active:scale-[0.98] md:min-h-0'
+  const base = 'inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl font-semibold transition-all duration-150 disabled:opacity-50 disabled:saturate-[0.85] disabled:cursor-not-allowed disabled:active:scale-100 active:scale-[0.98] md:min-h-0'
   const sizes = { xs: 'px-2.5 py-1.5 text-[11px] min-h-[36px] md:min-h-0', sm: 'px-3.5 py-2 text-xs', md: 'px-5 py-2.5 text-sm' }
   const variants = {
-    gold:      'bg-gold/10 border border-gold/30 text-gold-dim hover:bg-gold/20',
-    secondary: 'bg-bg-2 border border-border-subtle text-cream hover:bg-bg-3 hover:border-border-strong',
-    ghost:     'bg-transparent border border-border-subtle text-muted-hi hover:bg-bg-2 hover:text-cream',
-    danger:    'bg-danger/10 border border-danger/30 text-danger hover:bg-danger/20',
+    gold:      'bg-gold/10 border border-gold/30 text-gold-dim hover:bg-gold/20 hover:shadow-gold-sm',
+    secondary: 'bg-bg-2 border border-border-subtle text-cream hover:bg-bg-3 hover:border-border-strong hover:shadow-card',
+    ghost:     'bg-transparent border border-border-subtle text-muted-hi hover:bg-bg-2 hover:text-cream hover:shadow-card',
+    danger:    'bg-danger/10 border border-danger/30 text-danger hover:bg-danger/20 hover:shadow-card',
   }
   return (
     <button
       type={type}
-      onClick={onClick}
+      onClick={onClick ? () => { tapHaptic(); onClick() } : undefined}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       className={cn(base, sizes[size], variants[variant], className)}
@@ -292,12 +293,16 @@ export function Button({
 }
 
 // ── Input ────────────────────────────────────────────────────────────────
-export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
+export function Input({ className, error, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { error?: boolean }) {
   return (
     <input
       {...props}
+      aria-invalid={error || undefined}
       className={cn(
-        'w-full rounded-xl bg-card border border-border-strong px-4 py-3 text-sm text-cream placeholder-muted transition-colors focus:outline-none focus:border-gold/50 focus:ring-1 focus:ring-gold/20',
+        'w-full rounded-xl bg-card border px-4 py-3 text-sm text-cream placeholder-muted transition-all focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed',
+        error
+          ? 'border-danger/60 focus:border-danger focus:ring-2 focus:ring-danger/30'
+          : 'border-border-strong focus:border-gold/60 focus:ring-2 focus:ring-gold/25 focus:shadow-gold-sm',
         className,
       )}
     />
@@ -370,9 +375,15 @@ export function Empty({
 }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
-      <span className="mb-4 text-5xl opacity-30">{icon}</span>
+      {/* Soft accent-tinted chip so the glyph reads as intentional, not a missing icon. */}
+      <span
+        className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border text-3xl text-muted-hi/80 shadow-card"
+        style={{ background: 'rgba(var(--c-accent), 0.06)', borderColor: 'rgba(var(--c-accent), 0.14)' }}
+      >
+        {icon}
+      </span>
       <p className="mb-1 text-sm font-semibold text-muted-hi">{title}</p>
-      {desc && <p className="text-[11px] text-muted">{desc}</p>}
+      {desc && <p className="text-[11px] text-muted max-w-[34ch]">{desc}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>
   )

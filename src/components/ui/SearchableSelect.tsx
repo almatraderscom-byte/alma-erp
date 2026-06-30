@@ -114,7 +114,7 @@ export function SearchableSelect({
               placeholder="Type to filter…"
               autoFocus
               required={required && !value}
-              className="w-full rounded-lg border border-border bg-white/[0.03] px-3 py-2 text-sm text-cream placeholder-zinc-600 focus:outline-none focus:border-gold-dim/50"
+              className="w-full rounded-lg border border-border bg-white/[0.03] px-3 py-2 text-sm text-cream placeholder-muted transition-colors focus:outline-none focus:border-gold/50 focus:ring-2 focus:ring-gold/25"
             />
           </div>
           <ul className="max-h-44 overflow-y-auto overscroll-contain py-1">
