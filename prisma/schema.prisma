@@ -2369,6 +2369,25 @@ model AgentKvSetting {
   @@map("agent_kv_settings")
 }
 
+// Staff idle-detection pilot: one row per ongoing "off-task" episode (a category
+// continuously observed across snapshots). Closed when the condition clears or
+// goes stale. notifiedAt is set once the owner has been alerted for that episode.
+model IdleEpisode {
+  id          String    @id @default(uuid())
+  category    String
+  deviceId    String    @map("device_id")
+  startedAt   DateTime  @default(now()) @map("started_at")
+  lastSeenAt  DateTime  @default(now()) @map("last_seen_at")
+  endedAt     DateTime? @map("ended_at")
+  notifiedAt  DateTime? @map("notified_at")
+  snapshotUrl String?   @map("snapshot_url") @db.Text
+  note        String?   @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([category, deviceId, endedAt])
+  @@map("idle_episodes")
+}
+
 // ─── PHASE 6: Finance ────────────────────────────────────────────────────────
 
 model AgentFinanceExpense {
