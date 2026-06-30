@@ -506,7 +506,7 @@ export default function EmployeePortalPage() {
               {(wallet!.entries ?? []).slice().reverse().slice(0, 60).map(tx => (
                 <div key={String(tx.id ?? `${tx.date}-${tx.type}`)} className="py-2 grid grid-cols-[82px_1fr_auto_auto] gap-2 items-center">
                   <span className="text-muted font-mono">{String(tx.date).slice(0, 10)}</span>
-                  <span className="text-cream">{tx.type.replace(/_/g, ' ')}</span>
+                  <span className="text-cream">{walletTxLabel(tx)}</span>
                   <span className={tx.signedAmount >= 0 ? 'font-mono text-green-400' : 'font-mono text-red-400'}>
                     {tx.signedAmount >= 0 ? '+' : '-'}৳ {Math.abs(tx.signedAmount).toLocaleString('en-BD')}
                   </span>
@@ -532,6 +532,22 @@ export default function EmployeePortalPage() {
 
 function money(n: unknown) {
   return `৳ ${Number(n || 0).toLocaleString('en-BD')}`
+}
+
+// Human label for a wallet transaction. Attendance fines all post as PENALTY,
+// so we read the ledger `source` to tell late check-in vs early checkout vs
+// no-checkout apart (and label the two refund kinds).
+const WALLET_SOURCE_LABEL: Record<string, string> = {
+  attendance_late_penalty: 'দেরিতে আসার জরিমানা',
+  attendance_early_leave_penalty: 'আগে বের হওয়ার জরিমানা',
+  attendance_no_checkout_fine: 'চেক-আউট না করার জরিমানা',
+  attendance_late_penalty_reversal: 'জরিমানা ফেরত (আপিল)',
+  attendance_exception_refund: 'জরিমানা ফেরত (অনুমতি)',
+}
+
+function walletTxLabel(tx: { type: string; source?: string | null }) {
+  const bySource = tx.source ? WALLET_SOURCE_LABEL[tx.source] : undefined
+  return bySource ?? tx.type.replace(/_/g, ' ')
 }
 
 function SystemOwnerCard({ businessName }: { businessName: string }) {

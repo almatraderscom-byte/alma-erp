@@ -1,6 +1,7 @@
-import type { AttendanceException } from '@prisma/client'
+import { Prisma, type AttendanceException } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { attendanceDateFor, localMinutesFor } from '@/lib/attendance'
+import { createCompensationLedgerEntry } from '@/lib/payroll-compensation'
 import {
   createApprovalRequest,
   dispatchApprovalsUpdated,
@@ -46,6 +47,93 @@ const SCOPE_LABEL: Record<ExceptionScope, string> = {
   FULL_DAY: 'সারাদিন সব নিয়ম মওকুফ',
   EARLY_CHECKOUT: 'আগে বের হওয়া / মাঠের কাজ',
   LATE_ARRIVAL: 'দেরিতে আসা',
+}
+
+// Refund credit (ADJUSTMENT) raised when an approved exception waives a fine
+// that was already posted. Idempotent on (source, sourceRef).
+export const EXCEPTION_REFUND_SOURCE = 'attendance_exception_refund'
+
+type FineKind = 'late' | 'early' | 'nocheckout'
+
+// Which already-posted fines an approved exception refunds, by purpose:
+//  - LATE_ARRIVAL   → the late check-in fine only
+//  - EARLY_CHECKOUT → the early-checkout + no-checkout fines
+//  - FULL_DAY       → all of them
+function finesRefundedByScope(scope: ExceptionScope): Set<FineKind> {
+  if (scope === 'LATE_ARRIVAL') return new Set<FineKind>(['late'])
+  if (scope === 'EARLY_CHECKOUT') return new Set<FineKind>(['early', 'nocheckout'])
+  return new Set<FineKind>(['late', 'early', 'nocheckout'])
+}
+
+const FINE_REFUND_LABEL: Record<FineKind, string> = {
+  late: 'দেরিতে আসার জরিমানা ফেরত',
+  early: 'আগে বের হওয়ার জরিমানা ফেরত',
+  nocheckout: 'চেক-আউট না করার জরিমানা ফেরত',
+}
+
+/**
+ * When the owner APPROVES an exception, refund any matching fine already posted
+ * on that staff's attendance record for the day — so an approved permission
+ * never leaves a stale fine on the wallet. Best-effort + idempotent; failures
+ * are swallowed so they never block the approval itself.
+ */
+export async function refundFinesForApprovedException(ex: AttendanceException): Promise<void> {
+  const scope = normalizeExceptionScope(ex.scope)
+  const kinds = finesRefundedByScope(scope)
+  const record = await prisma.attendanceRecord.findUnique({
+    where: {
+      businessId_employeeId_attendanceDate: {
+        businessId: ex.businessId,
+        employeeId: ex.employeeId,
+        attendanceDate: ex.attendanceDate,
+      },
+    },
+    select: {
+      penaltyAmount: true,
+      penaltyLedgerEntryId: true,
+      earlyLeavePenaltyAmount: true,
+      earlyLeavePenaltyLedgerEntryId: true,
+      noCheckoutFineAmount: true,
+      noCheckoutFineLedgerEntryId: true,
+    },
+  })
+  if (!record) return
+
+  const dateStr = dateLabel(ex.attendanceDate)
+  const targets: Array<{ kind: FineKind; amount: number; posted: boolean }> = [
+    { kind: 'late', amount: Number(record.penaltyAmount || 0), posted: !!record.penaltyLedgerEntryId },
+    { kind: 'early', amount: Number(record.earlyLeavePenaltyAmount || 0), posted: !!record.earlyLeavePenaltyLedgerEntryId },
+    { kind: 'nocheckout', amount: Number(record.noCheckoutFineAmount || 0), posted: !!record.noCheckoutFineLedgerEntryId },
+  ]
+
+  for (const t of targets) {
+    if (!kinds.has(t.kind) || !t.posted || t.amount <= 0) continue
+    try {
+      await createCompensationLedgerEntry(
+        {
+          employeeId: ex.employeeId,
+          businessId: ex.businessId,
+          type: 'ADJUSTMENT',
+          amount: t.amount,
+          effectiveDate: ex.attendanceDate,
+          createdById: ex.reviewedById,
+          approvedById: ex.reviewedById,
+          source: EXCEPTION_REFUND_SOURCE,
+          sourceRef: `attendance-exc-refund:${ex.id}:${t.kind}`,
+          note: `${FINE_REFUND_LABEL[t.kind]} · ${dateStr}`,
+        },
+        { skipNotify: true },
+      )
+    } catch (e) {
+      // Already refunded (unique source/sourceRef) → fine, skip silently.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') continue
+      logEvent('error', 'attendance.exception.refund_failed', {
+        exceptionId: ex.id,
+        kind: t.kind,
+        message: (e as Error).message,
+      })
+    }
+  }
 }
 
 function dateLabel(date: Date) {
@@ -253,6 +341,11 @@ export async function processExceptionApproval(input: {
     reason: note || (status === 'APPROVED' ? 'Exception approved' : 'Exception rejected'),
   })
 
+  // Approving the permission auto-refunds any matching fine already posted.
+  if (status === 'APPROVED') {
+    await refundFinesForApprovedException(updated).catch(() => {})
+  }
+
   const label = dateLabel(ex.attendanceDate)
   await notifyUser({
     userId: ex.userId,
@@ -322,6 +415,9 @@ export async function grantExceptionDirect(input: {
       reviewedAt: new Date(),
     },
   })
+
+  // A direct grant is an approval too — refund any matching posted fine.
+  await refundFinesForApprovedException(row).catch(() => {})
 
   await notifyUser({
     userId: input.userId,
