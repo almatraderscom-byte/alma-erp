@@ -41,6 +41,7 @@ import {
   normalizeMyAttendancePayload,
 } from '@/lib/attendance-portal-normalize'
 import { MySalarySlipCard } from '@/components/portal/MySalarySlipCard'
+import { OfficeAdvanceDeskCard } from '@/components/portal/OfficeAdvanceDeskCard'
 
 const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } }
 const fadeUp = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.35 } } }
@@ -438,6 +439,22 @@ export default function EmployeePortalPage() {
               <Button size="sm" variant="gold">Payment accounts</Button>
             </Link>
           </Card>
+        )}
+
+        {!systemOwner && (
+          <Card className="p-5 border-gold-dim/20 bg-card/78 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">নিজ খরচ ফেরত</p>
+              <p className="mt-1 text-[11px] text-muted">নিজের পকেট থেকে অফিসের খরচ করেছেন? ফেরতের আবেদন করুন — মালিক অনুমোদন করলে ওয়ালেটে যোগ হবে।</p>
+            </div>
+            <Link href="/portal/expense">
+              <Button size="sm" variant="gold">খরচ ফেরত চান</Button>
+            </Link>
+          </Card>
+        )}
+
+        {!systemOwner && (role === 'ADMIN' || role === 'SUPER_ADMIN') && (
+          <OfficeAdvanceDeskCard businessId={business.id} />
         )}
 
         {!systemOwner && (

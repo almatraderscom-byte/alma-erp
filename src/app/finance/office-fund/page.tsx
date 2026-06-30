@@ -28,6 +28,36 @@ type FundResponse = {
   ledger: LedgerRow[]
 }
 
+type AdvanceRow = {
+  id: string
+  amount: number
+  purpose: string | null
+  payoutMethod: string | null
+  payoutNumber: string | null
+  status: string
+  spentAmount: number | null
+  leftoverAmount: number | null
+  approvedAt: string | null
+  settledAt: string | null
+  createdAt: string
+}
+type AdvanceResponse = {
+  ok: boolean
+  advances: AdvanceRow[]
+  outstanding: { count: number; total: number }
+  fundBalance: number
+}
+
+const ADV_STATUS: Record<string, { bn: string; cls: string }> = {
+  PENDING: { bn: 'অপেক্ষমাণ', cls: 'text-amber-400 bg-amber-400/10 border-amber-400/25' },
+  OUTSTANDING: { bn: 'বকেয়া (হিসাব দিন)', cls: 'text-sky-400 bg-sky-400/10 border-sky-400/25' },
+  SETTLED: { bn: 'নিষ্পত্তি হয়েছে', cls: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/25' },
+  REJECTED: { bn: 'প্রত্যাখ্যাত', cls: 'text-danger bg-danger/10 border-danger/25' },
+  CANCELLED: { bn: 'বাতিল', cls: 'text-muted bg-bg-2 border-border-subtle' },
+}
+
+const PAYOUT_METHODS = ['bKash', 'Nagad', 'Rocket', 'ব্যাংক', 'ক্যাশ']
+
 const TYPE_LABEL: Record<string, { bn: string; positive: boolean }> = {
   TOP_UP: { bn: 'টপ-আপ (যোগ)', positive: true },
   RETURN_IN: { bn: 'ফেরত (যোগ)', positive: true },
@@ -51,6 +81,21 @@ export default function OfficeFundPage() {
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
 
+  // ── Office advances (admin draws office cash) ──────────────────────────────
+  const [adv, setAdv] = useState<AdvanceResponse | null>(null)
+  const [advLoading, setAdvLoading] = useState(true)
+  const [advAmount, setAdvAmount] = useState('')
+  const [advPurpose, setAdvPurpose] = useState('')
+  const [advMethod, setAdvMethod] = useState(PAYOUT_METHODS[0])
+  const [advNumber, setAdvNumber] = useState('')
+  const [advSaving, setAdvSaving] = useState(false)
+
+  // ── Reconcile (account for an outstanding advance) ─────────────────────────
+  const [recOpen, setRecOpen] = useState<string | null>(null)
+  const [recSpent, setRecSpent] = useState('')
+  const [recMethod, setRecMethod] = useState<'CASH_RETURN' | 'WALLET_DEDUCT'>('CASH_RETURN')
+  const [recSaving, setRecSaving] = useState(false)
+
   const load = useCallback(async () => {
     try {
       const res = await fetch('/api/finance/office-fund', { cache: 'no-store' })
@@ -67,7 +112,87 @@ export default function OfficeFundPage() {
     }
   }, [])
 
-  useEffect(() => { void load() }, [load])
+  const loadAdvances = useCallback(async () => {
+    try {
+      const res = await fetch('/api/finance/office-advance', { cache: 'no-store' })
+      if (!res.ok) {
+        if (res.status === 403) { setAdv(null); return }
+        throw new Error(`HTTP ${res.status}`)
+      }
+      const json = (await res.json()) as AdvanceResponse
+      setAdv(json)
+    } catch {
+      // Non-fatal — the fund still loads; advances just stay empty.
+    } finally {
+      setAdvLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { void load(); void loadAdvances() }, [load, loadAdvances])
+
+  const submitAdvance = useCallback(async () => {
+    const n = Number(String(advAmount).replace(/[^0-9.]/g, ''))
+    if (!(n > 0)) { toast.error('সঠিক একটি অঙ্ক দিন।'); return }
+    if (!advNumber.trim()) { toast.error('টাকা কোথায় পাঠাবেন সেই নম্বর দিন।'); return }
+    setAdvSaving(true)
+    const t = toast.loading('আবেদন পাঠানো হচ্ছে…')
+    try {
+      const res = await fetch('/api/finance/office-advance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          amount: n,
+          purpose: advPurpose.trim() || undefined,
+          payout_method: advMethod,
+          payout_number: advNumber.trim(),
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) throw new Error(json?.message || 'failed')
+      toast.success(json.message || 'আবেদন পাঠানো হয়েছে।', { id: t })
+      setAdvAmount(''); setAdvPurpose(''); setAdvNumber('')
+      await loadAdvances()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'আবেদন পাঠানো যায়নি।', { id: t })
+    } finally {
+      setAdvSaving(false)
+    }
+  }, [advAmount, advPurpose, advMethod, advNumber, loadAdvances])
+
+  const openReconcile = useCallback((id: string) => {
+    setRecOpen((cur) => (cur === id ? null : id))
+    setRecSpent('')
+    setRecMethod('CASH_RETURN')
+  }, [])
+
+  const submitReconcile = useCallback(async (id: string, advanceAmount: number) => {
+    const spent = Number(String(recSpent).replace(/[^0-9.]/g, ''))
+    if (!(spent >= 0)) { toast.error('সঠিক খরচের অঙ্ক দিন।'); return }
+    if (spent > advanceAmount) { toast.error('খরচ অ্যাডভান্সের চেয়ে বেশি হতে পারে না।'); return }
+    const leftover = advanceAmount - spent
+    setRecSaving(true)
+    const t = toast.loading('হিসাব পাঠানো হচ্ছে…')
+    try {
+      const res = await fetch('/api/finance/office-advance', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          advance_id: id,
+          spent,
+          leftover_method: leftover > 0 ? recMethod : 'CASH_RETURN',
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) throw new Error(json?.message || 'failed')
+      toast.success(json.message || 'হিসাব পাঠানো হয়েছে।', { id: t })
+      setRecOpen(null); setRecSpent('')
+      await loadAdvances()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'হিসাব পাঠানো যায়নি।', { id: t })
+    } finally {
+      setRecSaving(false)
+    }
+  }, [recSpent, recMethod, loadAdvances])
 
   const submit = useCallback(async () => {
     const n = Number(String(amount).replace(/[^0-9.]/g, ''))
@@ -127,6 +252,134 @@ export default function OfficeFundPage() {
             </Card>
           </motion.div>
         )}
+
+        {/* ── Office advance: admin draws office cash ──────────────────────── */}
+        <motion.div variants={fadeUp}>
+          <Card className="p-5 md:p-6">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-bold text-cream">অফিস অ্যাডভান্স নিন</p>
+                <p className="text-[11px] text-muted">অফিসের কাজে ফান্ড থেকে টাকা নিন — মালিক অনুমোদন করলে আপনার নম্বরে পাঠাবেন।</p>
+              </div>
+              {adv && adv.outstanding.count > 0 && (
+                <div className="shrink-0 text-right">
+                  <p className="text-[10px] text-muted">বকেয়া হিসাব</p>
+                  <span className="text-sm font-bold txt-neg"><Money amount={adv.outstanding.total} /></span>
+                  <p className="text-[10px] text-muted">{adv.outstanding.count} টি অ্যাডভান্স</p>
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] text-muted mb-1">টাকার অঙ্ক (৳)</label>
+                <Input inputMode="numeric" placeholder="যেমন 2000" value={advAmount} onChange={(e) => setAdvAmount(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-[11px] text-muted mb-1">কী কাজে</label>
+                <Input placeholder="যেমন প্যাকেজিং সামগ্রী কেনা" value={advPurpose} onChange={(e) => setAdvPurpose(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-[11px] text-muted mb-1">কোথায় পাঠাবে</label>
+                <select
+                  value={advMethod}
+                  onChange={(e) => setAdvMethod(e.target.value)}
+                  className="w-full rounded-xl border border-border-strong bg-card px-4 py-3 text-sm text-cream focus:border-gold/60 focus:outline-none"
+                >
+                  {PAYOUT_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] text-muted mb-1">বিকাশ/ওয়ালেট নম্বর</label>
+                <Input inputMode="tel" placeholder="01XXXXXXXXX" value={advNumber} onChange={(e) => setAdvNumber(e.target.value)} />
+              </div>
+            </div>
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <p className="text-[11px] text-muted">অনুমোদনের পর টাকা আপনার দায়িত্বে থাকবে — খরচ শেষে হিসাব দিতে হবে।</p>
+              <Button variant="gold" size="md" loading={advSaving} onClick={submitAdvance}>আবেদন পাঠান</Button>
+            </div>
+          </Card>
+        </motion.div>
+
+        {/* ── My office advances ───────────────────────────────────────────── */}
+        <motion.div variants={fadeUp}>
+          <Card className="p-5 md:p-6">
+            <p className="text-sm font-bold text-cream mb-4">আমার অ্যাডভান্সসমূহ</p>
+            {advLoading ? (
+              <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}</div>
+            ) : !adv || adv.advances.length === 0 ? (
+              <Empty title="কোনো অ্যাডভান্স নেই" desc="উপরে আবেদন করে অফিসের কাজে টাকা নিন।" />
+            ) : (
+              <div className="divide-y divide-border-subtle">
+                {adv.advances.map((a) => {
+                  const st = ADV_STATUS[a.status] ?? { bn: a.status, cls: 'text-muted bg-bg-2 border-border-subtle' }
+                  const isOpen = recOpen === a.id
+                  const spentNum = Number(String(recSpent).replace(/[^0-9.]/g, '')) || 0
+                  const leftoverPreview = Math.max(0, a.amount - spentNum)
+                  return (
+                    <div key={a.id} className="py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-cream truncate">{a.purpose || 'অফিস অ্যাডভান্স'}</p>
+                          <p className="text-[10px] text-muted truncate">
+                            {fmtDate(a.createdAt)}{a.payoutMethod ? ` · ${a.payoutMethod}` : ''}{a.payoutNumber ? ` ${a.payoutNumber}` : ''}
+                            {a.status === 'SETTLED' && a.spentAmount != null ? ` · খরচ ৳${a.spentAmount.toLocaleString('en-BD')}` : ''}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          <span className="text-sm font-bold text-cream"><Money amount={a.amount} /></span>
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${st.cls}`}>{st.bn}</span>
+                          {a.status === 'OUTSTANDING' && (
+                            <Button size="xs" variant="gold" onClick={() => openReconcile(a.id)}>
+                              {isOpen ? 'বন্ধ করুন' : 'হিসাব দিন'}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      {a.status === 'OUTSTANDING' && isOpen && (
+                        <div className="mt-3 rounded-xl border border-border-subtle bg-bg-2/40 p-3">
+                          <p className="text-[11px] text-muted mb-2">কত টাকা খরচ হয়েছে লিখুন — বাকি টাকা কীভাবে ফেরত দেবেন তা বেছে নিন। (দুটোই মালিকের অনুমোদন লাগবে।)</p>
+                          <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+                            <div className="flex-1">
+                              <label className="block text-[11px] text-muted mb-1">খরচ হয়েছে (৳)</label>
+                              <Input inputMode="numeric" placeholder={`সর্বোচ্চ ${a.amount}`} value={recSpent} onChange={(e) => setRecSpent(e.target.value)} />
+                            </div>
+                            <div className="text-[11px] text-muted">
+                              বাকি থাকবে: <span className="font-bold text-cream">৳{leftoverPreview.toLocaleString('en-BD')}</span>
+                            </div>
+                          </div>
+                          {leftoverPreview > 0 && (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setRecMethod('CASH_RETURN')}
+                                className={`rounded-lg border px-3 py-2 text-[11px] font-bold ${recMethod === 'CASH_RETURN' ? 'border-gold/50 text-gold bg-gold/10' : 'border-border-subtle text-muted'}`}
+                              >
+                                ক্যাশ ফেরত দেব
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setRecMethod('WALLET_DEDUCT')}
+                                className={`rounded-lg border px-3 py-2 text-[11px] font-bold ${recMethod === 'WALLET_DEDUCT' ? 'border-gold/50 text-gold bg-gold/10' : 'border-border-subtle text-muted'}`}
+                              >
+                                আমার ওয়ালেট থেকে কাটুন
+                              </button>
+                            </div>
+                          )}
+                          <div className="mt-3 flex justify-end">
+                            <Button size="sm" variant="gold" loading={recSaving} onClick={() => submitReconcile(a.id, a.amount)}>
+                              হিসাব পাঠান
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </Card>
+        </motion.div>
 
         <motion.div variants={fadeUp}>
           <Card className="p-5 md:p-6">

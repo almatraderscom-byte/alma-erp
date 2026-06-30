@@ -862,6 +862,46 @@ model OfficeFundEntry {
   @@index([refType, refId])
 }
 
+/// An office-fund advance an admin draws for office work. The owner sends the
+/// money manually (bKash/cash) on approval; it stays the company's money until
+/// reconciled (spent + leftover). Distinct from the staff wallet — never salary.
+model OfficeAdvance {
+  id              String    @id @default(cuid())
+  businessId      String    @default("ALMA_LIFESTYLE")
+  /// The admin who requested + received the advance (HR employee id).
+  employeeId      String
+  userId          String?
+  requestedByName String?
+  /// Whole taka requested / disbursed.
+  amount          Int
+  /// Why the cash is needed (office work description).
+  purpose         String?   @db.Text
+  /// Where the owner sends the money manually — display label + number.
+  payoutMethod    String?
+  payoutNumber    String?
+  /// PENDING → OUTSTANDING (approved, owner sent) → SETTLED (reconciled);
+  /// or REJECTED / CANCELLED. Outstanding advances show on the admin's My Desk.
+  status          String    @default("PENDING")
+  /// Reconciliation outcome (Phase D): how much was actually spent + leftover,
+  /// and how the leftover was returned (WALLET_DEDUCT | CASH_RETURN).
+  spentAmount     Int?
+  leftoverAmount  Int?
+  leftoverMethod  String?
+  /// Links to the approval requests that drove the advance and its reconcile.
+  approvalId          String?
+  reconcileApprovalId String?
+  approvedById    String?
+  approvedAt      DateTime?
+  settledAt       DateTime?
+  createdById     String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([businessId, status, createdAt(sort: Desc)])
+  @@index([employeeId, status])
+  @@index([userId, status])
+}
+
 model Notification {
   id           String               @id @default(cuid())
   userId       String?
