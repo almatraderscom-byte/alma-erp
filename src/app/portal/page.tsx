@@ -41,6 +41,7 @@ import {
   normalizeMyAttendancePayload,
 } from '@/lib/attendance-portal-normalize'
 import { MySalarySlipCard } from '@/components/portal/MySalarySlipCard'
+import { OfficeAdvanceDeskCard } from '@/components/portal/OfficeAdvanceDeskCard'
 
 const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.06 } } }
 const fadeUp = { hidden: { opacity: 0, y: 12 }, show: { opacity: 1, y: 0, transition: { duration: 0.35 } } }
@@ -450,6 +451,10 @@ export default function EmployeePortalPage() {
               <Button size="sm" variant="gold">খরচ ফেরত চান</Button>
             </Link>
           </Card>
+        )}
+
+        {!systemOwner && (role === 'ADMIN' || role === 'SUPER_ADMIN') && (
+          <OfficeAdvanceDeskCard businessId={business.id} />
         )}
 
         {!systemOwner && (
