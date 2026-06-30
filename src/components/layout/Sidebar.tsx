@@ -7,7 +7,7 @@ import { signOut, useSession } from 'next-auth/react'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { useActor } from '@/contexts/ActorContext'
 import { BUSINESSES, getNavForBusiness, type NavItem } from '@/lib/businesses'
-import { filterNavByRole, roleHomePath } from '@/lib/roles'
+import { filterNavByRole } from '@/lib/roles'
 import { BusinessSwitcher } from '@/components/layout/BusinessSwitcher'
 import { BusinessLogo } from '@/components/branding/BusinessLogo'
 import { UserAccountMenu } from '@/components/layout/UserAccountMenu'
@@ -239,6 +239,14 @@ function DockChip({ item, active }: { item: Dest; active: boolean }) {
 const ROT_BIG = 5
 const ROT_DWELL = 3600
 
+// Only the MAIN front-office pages rotate through the bar — keeps a full round short.
+// Everything else (HR/finance details, settings, admin) lives in the Account drawer.
+// Matched by the nav label so it stays correct across all three businesses.
+const CORE_ROTATION_LABELS = new Set([
+  'Dashboard', 'Trading', 'Orders', 'CRM', 'Clients', 'Inventory',
+  'Invoice', 'Invoices', 'Projects', 'Finance', 'Analytics', 'ALMA Agent',
+])
+
 function RotatingDockNav({ items, activeHref, trailing }: { items: Dest[]; activeHref: string; trailing: React.ReactNode }) {
   const N = items.length
   const [head, setHead] = useState(0)
@@ -309,6 +317,27 @@ function RotatingDockNav({ items, activeHref, trailing }: { items: Dest[]; activ
         </>
       )}
 
+      <div className="relative">
+        {/* Rotating coral/blue light that traces around the bar — the "ঘুরন্ত box".
+            Sits on a non-clipped wrapper so the wide ring can sweep above the bar. */}
+        {rotates && (
+          <motion.span
+            aria-hidden
+            className="pointer-events-none absolute inset-0 rounded-[26px]"
+            style={{
+              padding: '1.4px',
+              background:
+                'conic-gradient(from 0deg, transparent 0%, rgba(224,122,95,.55) 12%, transparent 32%, transparent 55%, rgba(56,128,255,.30) 68%, transparent 88%)',
+              WebkitMask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+              WebkitMaskComposite: 'xor',
+              mask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+              maskComposite: 'exclude',
+              opacity: 0.85,
+            }}
+            animate={{ rotate: 360 }}
+            transition={{ duration: 7, ease: 'linear', repeat: Infinity }}
+          />
+        )}
       <div className="relative overflow-hidden rounded-[26px] border border-border-subtle bg-card/80 p-1.5 shadow-lg shadow-black/8 backdrop-blur-2xl">
         {rotates && (
           <div className="pointer-events-none absolute inset-x-4 top-[3px] z-[6] h-[3px] rounded-full bg-white/[0.05]">
@@ -355,6 +384,7 @@ function RotatingDockNav({ items, activeHref, trailing }: { items: Dest[]; activ
           <div className="flex shrink-0 items-stretch gap-1 border-l border-border-subtle pl-1">{trailing}</div>
         </div>
       </div>
+      </div>
     </div>
   )
 }
@@ -370,43 +400,23 @@ export function MobileNav() {
   const { count: approvalCount } = useApprovalCount()
   const nav = useMemo(() => filterNavByRole(getNavForBusiness(business.id), role, business.id), [business.id, role])
 
-  // All role-allowed destinations, fed to the rotating bar (cycles through every one).
-  const destinations = useMemo<Dest[]>(
+  // Only the MAIN front-office pages feed the rotating bar (kept short so a full round
+  // is quick). Approvals is pinned in the trailing slot, so it's excluded here.
+  const rotationItems = useMemo<Dest[]>(
     () =>
-      nav.map(n => ({
-        key: n.href,
-        label: n.label,
-        icon: n.icon,
-        href: n.href,
-        badge: n.href === '/approvals' && approvalCount ? approvalCount : undefined,
-      })),
-    [nav, approvalCount],
+      nav
+        .filter(n => n.href !== '/approvals' && CORE_ROTATION_LABELS.has(n.label))
+        .map(n => ({ key: n.href, label: n.label, icon: n.icon, href: n.href })),
+    [nav],
   )
+  const rotationHrefs = useMemo(() => new Set(rotationItems.map(d => d.href)), [rotationItems])
 
-  const dashboardHref = roleHomePath(role, business.id)
-  const canAgent = role === 'SUPER_ADMIN' && nav.some(n => n.href === '/agent')
-  const primary = useMemo(() => {
-    const crmHref = business.id === 'CREATIVE_DIGITAL_IT' ? '/digital/clients' : '/crm'
-    const wanted = [
-      { key: 'dashboard', label: 'Dashboard', icon: '⬡', href: dashboardHref },
-      { key: 'orders', label: 'Orders', icon: '◫', href: '/orders' },
-      ...(canAgent ? [{ key: 'agent', label: 'Agent', icon: '✦', href: '/agent' }] : []),
-      { key: 'crm', label: 'CRM', icon: '◎', href: crmHref },
-    ]
-    return wanted.filter(item => nav.some(n => n.href === item.href) || item.href === dashboardHref || item.key === 'agent')
-  }, [business.id, canAgent, dashboardHref, nav])
-
-  const secondary = useMemo(() => {
-    const primaryHrefs = new Set(primary.map(p => p.href))
-    const preferred = ['Finance', 'Expenses', 'Payroll', 'Employees', 'Analytics', 'Branding', 'Audit', 'Database', 'Users', 'Notifications', 'Session', 'Inventory', 'Invoice', 'Clients', 'Projects', 'Invoices', 'My desk']
-    return [...nav]
-      .filter(n => !primaryHrefs.has(n.href))
-      .sort((a, b) => {
-        const ia = preferred.indexOf(a.label)
-        const ib = preferred.indexOf(b.label)
-        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
-      })
-  }, [nav, primary])
+  // Everything that isn't pinned (Approvals) and isn't in the rotating bar — shown in
+  // the Account drawer so no page is lost (HR/finance details, settings, admin, etc.).
+  const drawerModules = useMemo(
+    () => nav.filter(n => n.href !== '/approvals' && !rotationHrefs.has(n.href)),
+    [nav, rotationHrefs],
+  )
 
   const unreadPausedRef = useRef(false)
   const unreadBackoffRef = useRef(0)
@@ -511,12 +521,12 @@ export function MobileNav() {
     <>
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-bottom px-3 pb-2 mobile-app-chrome">
         <RotatingDockNav
-          items={destinations}
+          items={rotationItems}
           activeHref={path}
           trailing={
             <>
               <div className="w-[56px]">
-                <MobileTab icon="◌" label="Alerts" badge={unread} onClick={openNotifications} />
+                <MobileTab icon="✅" label="Approvals" href="/approvals" active={activePath(path, '/approvals')} badge={approvalCount} />
               </div>
               <div className="w-[56px]">
                 <MobileTab icon="◎" label="Account" active={drawerOpen} onClick={() => setDrawerOpen(true)} />
@@ -582,9 +592,20 @@ export function MobileNav() {
               </div>
               <div className="max-h-[calc(86dvh-160px)] overflow-y-auto px-4 py-4">
                 <ThemePanel className="mb-4" />
+                <button
+                  type="button"
+                  onClick={() => { setDrawerOpen(false); openNotifications() }}
+                  className="mb-4 flex w-full items-center gap-3 rounded-2xl border border-border-subtle bg-white/[0.04] px-3 py-3 text-left text-muted-hi transition-colors hover:border-gold/25 hover:bg-gold/[0.07] hover:text-cream"
+                >
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-border-subtle bg-card text-base">◌</span>
+                  <span className="min-w-0 flex-1 text-[13px] font-bold">Alerts</span>
+                  {!!unread && (
+                    <span className="min-w-5 rounded-full bg-red-500 px-1.5 text-center text-[11px] font-black leading-5 text-white">{unread > 99 ? '99+' : unread}</span>
+                  )}
+                </button>
                 <p className="mb-3 px-1 text-[10px] font-black uppercase tracking-[0.16em] text-muted">Workspace modules</p>
                 <div className="grid gap-2">
-                  {secondary.map(item => <DrawerLink key={item.href} item={item} onClose={() => setDrawerOpen(false)} />)}
+                  {drawerModules.map(item => <DrawerLink key={item.href} item={item} onClose={() => setDrawerOpen(false)} />)}
                   <button
                     type="button"
                     onClick={() => void signOut({ callbackUrl: '/login' })}
