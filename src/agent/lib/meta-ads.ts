@@ -147,6 +147,14 @@ export interface LaunchCampaignSpec {
   imageUrl?: string
   ageMin?: number
   ageMax?: number
+  /**
+   * Optional custom/lookalike audience id to TARGET (retargeting or lookalike
+   * campaign). When set, the ad set targets exactly this audience (Advantage
+   * audience expansion stays off) instead of broad Bangladesh prospecting.
+   */
+  audienceId?: string
+  /** Optional custom audience id to EXCLUDE (e.g. exclude existing engagers from a lookalike prospecting campaign). */
+  excludeAudienceId?: string
 }
 
 /**
@@ -181,6 +189,8 @@ export async function launchCampaign(
   const budgetPaisa = Math.round(Math.max(1, spec.dailyBudgetBdt) * 100)
   const ageMin = Math.min(65, Math.max(13, Math.round(spec.ageMin ?? 18)))
   const ageMax = Math.min(65, Math.max(ageMin, Math.round(spec.ageMax ?? 45)))
+  const audienceId = spec.audienceId?.trim()
+  const excludeAudienceId = spec.excludeAudienceId?.trim()
 
   const post = async (path: string, body: Record<string, unknown>) => {
     const res = await resilientFetch(`${GRAPH_BASE}/${accountId}/${path}`, {
@@ -258,11 +268,17 @@ export async function launchCampaign(
         geo_locations: { countries: ['BD'] },
         age_min: ageMin,
         age_max: ageMax,
+        // Retargeting / lookalike: when an audience id is supplied the ad set
+        // targets exactly that custom or lookalike audience. excluded_custom_audiences
+        // lets a lookalike prospecting campaign exclude existing warm engagers so
+        // it only reaches NEW similar people.
+        ...(audienceId ? { custom_audiences: [{ id: audienceId }] } : {}),
+        ...(excludeAudienceId ? { excluded_custom_audiences: [{ id: excludeAudienceId }] } : {}),
         // Advantage+ era: Meta REQUIRES an explicit Advantage Audience flag or the
         // create 400s with OAuthException 100 / subcode 1870227 ("Advantage
         // audience flag required"). 0 = OFF, so Meta honors exactly the targeting
-        // we specified (Bangladesh + the age range shown on the owner's confirm
-        // card) instead of expanding beyond it.
+        // we specified (Bangladesh + the age range, plus any custom audience)
+        // instead of expanding beyond it.
         targeting_automation: { advantage_audience: 0 },
       },
       status: 'PAUSED',

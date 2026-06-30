@@ -1029,10 +1029,11 @@ async function runApprove(
 
   if (action.type === 'launch_campaign') {
     const {
-      name, dailyBudget, message, headline, imageUrl, page, ageMin, ageMax,
+      name, dailyBudget, message, headline, imageUrl, page, ageMin, ageMax, audienceId, excludeAudienceId,
     } = payload as {
       name: string; dailyBudget: number; message: string;
-      headline?: string; imageUrl?: string; page?: string; ageMin?: number; ageMax?: number
+      headline?: string; imageUrl?: string; page?: string; ageMin?: number; ageMax?: number;
+      audienceId?: string; excludeAudienceId?: string
     }
     try {
       const claimed = await db.agentPendingAction.updateMany({
@@ -1052,6 +1053,8 @@ async function runApprove(
         page: page ? String(page) : undefined,
         ageMin: ageMin != null ? Number(ageMin) : undefined,
         ageMax: ageMax != null ? Number(ageMax) : undefined,
+        audienceId: audienceId ? String(audienceId) : undefined,
+        excludeAudienceId: excludeAudienceId ? String(excludeAudienceId) : undefined,
       })
       if (!result.success) {
         await db.agentPendingAction.update({
@@ -1074,6 +1077,97 @@ async function runApprove(
         `✅ নতুন ক্যাম্পেইন তৈরি হয়েছে (সব PAUSED — কোনো টাকা খরচ হয়নি)।\nCampaign ID: ${result.campaignId}\nAd Set ID: ${result.adSetId}\nAd ID: ${result.adId}\nAds Manager-এ গিয়ে রিভিউ করে ACTIVE করলেই চালু হবে।`,
       )
       return Response.json({ success: true, campaignId: result.campaignId, adSetId: result.adSetId, adId: result.adId })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
+  if (action.type === 'create_retargeting_audience') {
+    const { name, page, retentionDays } = payload as {
+      name: string; page?: string; retentionDays?: number
+    }
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        return Response.json({ error: 'already_resolved' }, { status: 409 })
+      }
+      const { createEngagementCustomAudience } = await import('@/agent/lib/meta-audiences')
+      const result = await createEngagementCustomAudience({
+        name: String(name),
+        page: page ? String(page) : undefined,
+        retentionDays: retentionDays != null ? Number(retentionDays) : undefined,
+      })
+      if (!result.success) {
+        await db.agentPendingAction.update({
+          where: { id: actionId },
+          data: { status: 'failed', result: { error: result.error } },
+        })
+        return Response.json({ error: result.error }, { status: 502 })
+      }
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', resolvedAt: new Date(), result: { audienceId: result.audienceId } },
+      })
+      await appendConversationNote(
+        db,
+        action,
+        `✅ রিটার্গেটিং audience তৈরি হয়েছে — "${name}" (Audience ID: ${result.audienceId})। Meta কিছুক্ষণ পর population ভরবে। এখন launch_campaign-এ audienceId দিয়ে retargeting ad (PAUSED) চালানো যাবে।`,
+      )
+      return Response.json({ success: true, audienceId: result.audienceId })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
+  if (action.type === 'create_lookalike_audience') {
+    const { name, sourceAudienceId, ratio, country } = payload as {
+      name: string; sourceAudienceId: string; ratio?: number; country?: string
+    }
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        return Response.json({ error: 'already_resolved' }, { status: 409 })
+      }
+      const { createLookalikeAudience } = await import('@/agent/lib/meta-audiences')
+      const result = await createLookalikeAudience({
+        name: String(name),
+        sourceAudienceId: String(sourceAudienceId),
+        ratio: ratio != null ? Number(ratio) : undefined,
+        country: country ? String(country) : undefined,
+      })
+      if (!result.success) {
+        await db.agentPendingAction.update({
+          where: { id: actionId },
+          data: { status: 'failed', result: { error: result.error } },
+        })
+        return Response.json({ error: result.error }, { status: 502 })
+      }
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', resolvedAt: new Date(), result: { audienceId: result.audienceId } },
+      })
+      await appendConversationNote(
+        db,
+        action,
+        `✅ Lookalike audience তৈরি হয়েছে — "${name}" (Audience ID: ${result.audienceId})। Meta কিছুক্ষণ পর similar মানুষ খুঁজে population ভরবে। এখন launch_campaign-এ এই audienceId দিয়ে prospecting ad (PAUSED) চালানো যাবে।`,
+      )
+      return Response.json({ success: true, audienceId: result.audienceId })
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       await db.agentPendingAction.update({
