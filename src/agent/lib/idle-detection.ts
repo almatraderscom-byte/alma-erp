@@ -103,6 +103,22 @@ async function analyzeFrame(
   }
 }
 
+/**
+ * Capture a fresh office frame and return ONLY the head-count — the exact same
+ * Gemini vision analysis runIdleWatch uses, so the number is consistent with the
+ * live cron. Exposed so the office-absence test can reflect the REAL number of
+ * people in the room instead of a hard-coded placeholder. Never throws beyond the
+ * underlying capture/vision errors (caller wraps it).
+ */
+export async function detectPeopleCount(
+  deviceId = process.env.IMOU_DEVICE_ID ?? '',
+): Promise<{ peopleCount: number; snapshotUrl: string }> {
+  const snap = await captureImouSnapshot(deviceId)
+  const { base64, mimeType } = await downloadSnapshot(snap.url)
+  const { analysis } = await analyzeFrame(base64, mimeType)
+  return { peopleCount: analysis.people_count ?? 0, snapshotUrl: snap.url }
+}
+
 // ── KV settings ───────────────────────────────────────────────────────────────
 async function kvGet(key: string): Promise<string | null> {
   try {

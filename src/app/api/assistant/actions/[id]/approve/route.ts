@@ -1668,7 +1668,9 @@ async function runApprove(
     return Response.json({ success: true, snoozeHours: hours, until: until.toISOString() })
   }
 
-  // A staff-name button → send THAT staffer the camera frame + a "you're absent" nudge.
+  // A staff-name button → owner named the absent staffer. DON'T message the staffer
+  // yet; first show the owner a final preview (image + exact text) with a ✅ পাঠান /
+  // ❌ বাতিল pair. The staffer only hears about it after that explicit approval.
   if (action.type === 'office_absence_nudge') {
     const claimed = await db.agentPendingAction.updateMany({
       where: { id: actionId, status: 'pending' },
@@ -1677,14 +1679,38 @@ async function runApprove(
     if (claimed.count === 0) return Response.json({ error: 'already_resolved' }, { status: 409 })
 
     const p = payload as { staffId?: string; staffName?: string; photoUrl?: string; deviceId?: string; groupId?: string }
-    const { sendAbsenceNudgeToStaff, cancelAbsenceSiblings } = await import('@/agent/lib/office-absence')
-    const res = await sendAbsenceNudgeToStaff({
+    const { sendAbsenceNudgePreview, cancelAbsenceSiblings } = await import('@/agent/lib/office-absence')
+    const res = await sendAbsenceNudgePreview({
       staffId: String(p.staffId ?? ''),
       staffName: String(p.staffName ?? ''),
       photoUrl: String(p.photoUrl ?? ''),
       deviceId: String(p.deviceId ?? ''),
     })
     await cancelAbsenceSiblings(String(p.groupId ?? ''), actionId)
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: res.ok ? 'executed' : 'failed', result: res.ok ? { previewedStaff: p.staffName } : { error: res.error } },
+    })
+    if (!res.ok) return Response.json({ error: res.error ?? 'send_failed' }, { status: 502 })
+    return Response.json({ success: true, message: 'Nudge preview sent for final approval.' })
+  }
+
+  // ✅ পাঠান on the preview → NOW actually send the camera frame + nudge to the staffer.
+  if (action.type === 'office_absence_nudge_send') {
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count === 0) return Response.json({ error: 'already_resolved' }, { status: 409 })
+
+    const p = payload as { staffId?: string; staffName?: string; photoUrl?: string; deviceId?: string }
+    const { sendAbsenceNudgeToStaff } = await import('@/agent/lib/office-absence')
+    const res = await sendAbsenceNudgeToStaff({
+      staffId: String(p.staffId ?? ''),
+      staffName: String(p.staffName ?? ''),
+      photoUrl: String(p.photoUrl ?? ''),
+      deviceId: String(p.deviceId ?? ''),
+    })
     await db.agentPendingAction.update({
       where: { id: actionId },
       data: { status: res.ok ? 'executed' : 'failed', result: res.ok ? { nudgedStaff: p.staffName } : { error: res.error } },
