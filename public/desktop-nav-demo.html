@@ -1,0 +1,103 @@
+<!doctype html>
+<html data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ALMA · Desktop Nav Demo</title>
+<style>
+:root{--bg:#0c0b12;--bg2:#13111c;--card:rgba(255,255,255,.045);--card2:rgba(255,255,255,.07);--bd:rgba(255,255,255,.09);--tx:#f3ece2;--mut:#9a93a6;--muthi:#cfc8d8;--acc:224,122,95;--acclt:244,162,140;}
+[data-theme="light"]{--bg:#f3efe7;--bg2:#fbf9f4;--card:rgba(20,16,30,.035);--card2:#ffffff;--bd:rgba(20,16,30,.10);--tx:#2a2530;--mut:#736c7e;--muthi:#3d3747;--acc:206,98,72;--acclt:224,122,95;}
+*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+body{background:radial-gradient(1200px 600px at 80% -10%,rgba(var(--acc),.10),transparent 60%),var(--bg);color:var(--tx);min-height:100vh;padding:26px 30px 60px;transition:background .3s,color .3s}
+.top{display:flex;align-items:center;justify-content:space-between;max-width:1180px;margin:0 auto 22px;flex-wrap:wrap;gap:12px}
+.top h1{font-size:20px;font-weight:800;letter-spacing:.3px}
+.top h1 b{color:rgb(var(--acc))}
+.top p{font-size:12.5px;color:var(--mut);margin-top:3px}
+.tg{display:flex;gap:6px;background:var(--card);border:1px solid var(--bd);border-radius:999px;padding:4px}
+.tg button{border:0;background:transparent;color:var(--mut);font-size:12px;font-weight:700;padding:7px 15px;border-radius:999px;cursor:pointer;transition:.2s}
+.tg button.on{background:rgba(var(--acc),.16);color:rgb(var(--acc));box-shadow:0 0 0 1px rgba(var(--acc),.35) inset}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:22px;max-width:1180px;margin:0 auto}
+@media(max-width:820px){.grid{grid-template-columns:1fr}}
+.card{background:var(--bg2);border:1px solid var(--bd);border-radius:20px;overflow:hidden;box-shadow:0 24px 60px -30px rgba(0,0,0,.6)}
+.lbl{display:flex;align-items:center;gap:8px;padding:13px 16px;border-bottom:1px solid var(--bd);font-size:12px;font-weight:800;letter-spacing:.4px;color:var(--muthi)}
+.lbl .n{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:7px;background:rgba(var(--acc),.16);color:rgb(var(--acc));font-size:11px;font-weight:900}
+.frame{height:340px;display:flex;background:radial-gradient(700px 320px at 78% -20%,rgba(var(--acc),.07),transparent),var(--bg);position:relative}
+.it{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:11px;cursor:pointer;color:var(--muthi);font-size:13px;font-weight:600;border:1px solid transparent;transition:.18s;position:relative}
+.it .ic{font-size:15px;width:20px;text-align:center;flex:0 0 auto}
+.it:hover{background:var(--card2);border-color:var(--bd)}
+.it.act{color:rgb(var(--acc));font-weight:800;background:linear-gradient(90deg,rgba(var(--acc),.22),rgba(var(--acc),.06),transparent);border-color:rgba(var(--acc),.42);box-shadow:0 0 18px rgba(var(--acc),.25) inset}
+.it.act::before{content:"";position:absolute;left:-1px;top:50%;transform:translateY(-50%);width:3px;height:20px;border-radius:3px;background:rgb(var(--acc));box-shadow:0 0 10px 2px rgba(var(--acc),.7)}
+.cap{font-size:9.5px;font-weight:900;letter-spacing:1.6px;color:var(--mut);padding:12px 12px 6px}
+.brand{display:flex;align-items:center;gap:10px;padding:14px 14px 13px;border-bottom:1px solid var(--bd)}
+.logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,rgb(var(--acc)),rgb(var(--acclt)));display:flex;align-items:center;justify-content:center;font-weight:900;color:#fff;font-size:15px;box-shadow:0 0 16px rgba(var(--acc),.5)}
+.brand .bt{font-size:12px;font-weight:900;letter-spacing:1.4px;color:rgb(var(--acc))}
+.brand .bs{font-size:8.5px;letter-spacing:1.6px;color:var(--mut);margin-top:2px}
+.content{flex:1;padding:18px;display:flex;flex-direction:column;gap:12px}
+.h2{height:13px;width:120px;border-radius:6px;background:var(--card2);border:1px solid var(--bd)}
+.row{display:flex;gap:12px}
+.tile{flex:1;height:64px;border-radius:14px;background:var(--card);border:1px solid var(--bd)}
+.line{height:9px;border-radius:5px;background:var(--card);border:1px solid var(--bd)}
+.badge{margin-left:auto;background:#e5484d;color:#fff;font-size:9px;font-weight:900;border-radius:999px;padding:1px 6px}
+.v1 .side{width:204px;border-right:1px solid var(--bd);background:var(--card);display:flex;flex-direction:column}
+.v1 .nav{padding:6px 10px;display:flex;flex-direction:column;gap:3px;overflow:auto}
+.v1 .foot{margin-top:auto;border-top:1px solid var(--bd);padding:10px}
+.v2 .rail{width:64px;border-right:1px solid var(--bd);background:var(--card);display:flex;flex-direction:column;align-items:center;padding-top:12px;gap:8px}
+.v2 .ri{width:42px;height:42px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:18px;color:var(--muthi);cursor:pointer;border:1px solid transparent;transition:.18s;position:relative}
+.v2 .ri:hover{background:var(--card2);border-color:var(--bd)}
+.v2 .ri:hover .tip{opacity:1;transform:translateX(0)}
+.v2 .ri.act{color:rgb(var(--acc));background:linear-gradient(135deg,rgba(var(--acc),.25),rgba(var(--acc),.08));border-color:rgba(var(--acc),.45);box-shadow:0 0 16px rgba(var(--acc),.3)}
+.v2 .tip{position:absolute;left:50px;white-space:nowrap;background:var(--bg2);border:1px solid var(--bd);color:var(--tx);font-size:11px;font-weight:700;padding:5px 10px;border-radius:8px;opacity:0;transform:translateX(-4px);transition:.18s;pointer-events:none;box-shadow:0 8px 24px -8px rgba(0,0,0,.5);z-index:5}
+.v2 .dot{width:34px;height:1px;background:var(--bd);margin:4px 0}
+.v3{flex-direction:column}
+.v3 .bar{display:flex;align-items:center;gap:6px;padding:10px 14px;border-bottom:1px solid var(--bd);background:var(--card);overflow:auto}
+.v3 .tab{display:flex;align-items:center;gap:7px;padding:8px 12px;border-radius:11px;font-size:12.5px;font-weight:700;color:var(--muthi);cursor:pointer;border:1px solid transparent;transition:.18s;white-space:nowrap}
+.v3 .tab .ic{font-size:14px}
+.v3 .tab:hover{background:var(--card2);border-color:var(--bd)}
+.v3 .tab.act{color:rgb(var(--acc));background:linear-gradient(180deg,rgba(var(--acc),.20),rgba(var(--acc),.05));border-color:rgba(var(--acc),.42);box-shadow:0 0 16px rgba(var(--acc),.22)}
+.v3 .sp{flex:1}
+.v3 .acc{width:32px;height:32px;border-radius:10px;border:1px solid var(--bd);display:flex;align-items:center;justify-content:center;font-size:15px;color:var(--muthi);cursor:pointer;flex:0 0 auto}
+.v4{align-items:center;padding-left:22px}
+.v4 .glass{width:198px;border-radius:22px;background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--bd);box-shadow:0 30px 70px -28px rgba(0,0,0,.7),0 0 0 1px rgba(var(--acc),.06),0 0 40px -10px rgba(var(--acc),.18);backdrop-filter:blur(20px);padding:8px;display:flex;flex-direction:column;gap:3px}
+.v4 .glass .brand{border:0;padding:12px 10px 10px}
+.v4 .content{padding:18px 18px 18px 6px}
+.hint{max-width:1180px;margin:18px auto 0;font-size:12px;color:var(--mut);text-align:center}
+</style>
+</head>
+<body>
+<div class="top">
+  <div>
+    <h1><b>ALMA</b> · ডেস্কটপ নেভিগেশন — ৪টা ডিজাইন</h1>
+    <p>মাউস রাখুন / ক্লিক করে দেখুন। উপরে ডান দিকে লাইট/ডার্ক টগল করুন। যেটা পছন্দ — আমাকে নাম্বার বলুন।</p>
+  </div>
+  <div class="tg">
+    <button id="dk" class="on" onclick="setTheme('dark')">🌙 Dark</button>
+    <button id="lt" onclick="setTheme('light')">☀️ Light</button>
+  </div>
+</div>
+<div class="grid" id="grid"></div>
+<div class="hint">এগুলো শুধু ডেমো — আসল অ্যাপে এখনো বসাইনি। আপনি ১/২/৩/৪ বললেই সেটা আসল ডেস্কটপে বসিয়ে প্রিভিউ লিংক দেব।</div>
+<script>
+function setTheme(t){document.documentElement.setAttribute('data-theme',t);document.getElementById('dk').classList.toggle('on',t==='dark');document.getElementById('lt').classList.toggle('on',t==='light')}
+var NAV=[['🏠','Dashboard'],['📦','Orders'],['👥','CRM'],['📊','Inventory'],['🧾','Invoice'],['💰','Finance'],['📈','Analytics']];
+function pic(){return '<div class="content"><div class="h2"></div><div class="row"><div class="tile"></div><div class="tile"></div><div class="tile"></div></div><div class="line" style="width:90%"></div><div class="line" style="width:75%"></div><div class="line" style="width:82%"></div></div>'}
+function v1(){var s='<div class="frame v1"><div class="side"><div class="brand"><div class="logo">A</div><div><div class="bt">ALMA</div><div class="bs">LIFESTYLE</div></div></div><div class="nav"><div class="cap">WORKSPACE</div>';
+[0,1,2,3].forEach(function(i){s+='<div class="it'+(i==1?' act':'')+'" onclick="ic(this)"><span class="ic">'+NAV[i][0]+'</span>'+NAV[i][1]+(i==1?'<span class="badge">3</span>':'')+'</div>'});
+s+='<div class="cap">FINANCE</div>';[4,5,6].forEach(function(i){s+='<div class="it" onclick="ic(this)"><span class="ic">'+NAV[i][0]+'</span>'+NAV[i][1]+'</div>'});
+s+='<div class="cap">ADMIN</div><div class="it" onclick="ic(this)"><span class="ic">✅</span>Approvals<span class="badge">1</span></div></div><div class="foot"><div class="it" onclick="ic(this)"><span class="ic">◎</span>Account</div></div></div>'+pic()+'</div>';return s}
+function v2(){var s='<div class="frame v2"><div class="rail"><div class="logo" style="margin-bottom:6px">A</div>';
+NAV.forEach(function(n,i){s+='<div class="ri'+(i==1?' act':'')+'" onclick="ir(this)">'+n[0]+'<span class="tip">'+n[1]+'</span></div>'});
+s+='<div class="dot"></div><div class="ri" onclick="ir(this)">✅<span class="tip">Approvals</span></div><div style="flex:1"></div><div class="ri" onclick="ir(this)">◎<span class="tip">Account</span></div><div class="ri" onclick="ir(this)">☀<span class="tip">Theme</span></div></div>'+pic()+'</div>';return s}
+function v3(){var s='<div class="frame v3"><div class="bar"><div class="logo" style="width:26px;height:26px;font-size:13px">A</div>';
+NAV.forEach(function(n,i){s+='<div class="tab'+(i==1?' act':'')+'" onclick="itab(this)"><span class="ic">'+n[0]+'</span>'+n[1]+'</div>'});
+s+='<div class="sp"></div><div class="tab" onclick="itab(this)"><span class="ic">✅</span><span class="badge" style="margin:0">1</span></div><div class="acc">◎</div></div>'+pic()+'</div>';return s}
+function v4(){var s='<div class="frame v4"><div class="glass"><div class="brand"><div class="logo">A</div><div><div class="bt">ALMA</div><div class="bs">LIFESTYLE</div></div></div>';
+[0,1,2,3,4].forEach(function(i){s+='<div class="it'+(i==1?' act':'')+'" onclick="ic(this)"><span class="ic">'+NAV[i][0]+'</span>'+NAV[i][1]+(i==1?'<span class="badge">3</span>':'')+'</div>'});
+s+='<div class="it" onclick="ic(this)"><span class="ic">✅</span>Approvals<span class="badge">1</span></div><div class="it" onclick="ic(this)"><span class="ic">◎</span>Account</div></div>'+pic()+'</div>';return s}
+function ic(el){var p=el.closest('.frame');[].forEach.call(p.querySelectorAll('.it.act'),function(c){c.classList.remove('act')});el.classList.add('act')}
+function ir(el){var p=el.closest('.frame');[].forEach.call(p.querySelectorAll('.ri.act'),function(c){c.classList.remove('act')});el.classList.add('act')}
+function itab(el){var p=el.closest('.frame');[].forEach.call(p.querySelectorAll('.tab.act'),function(c){c.classList.remove('act')});el.classList.add('act')}
+var defs=[['1','Grouped sidebar',v1],['2','Slim icon rail',v2],['3','Top navbar',v3],['4','Floating glass',v4]];
+document.getElementById('grid').innerHTML=defs.map(function(d){return '<div class="card"><div class="lbl"><span class="n">'+d[0]+'</span>'+d[1]+'</div>'+d[2]()+'</div>'}).join('');
+</script>
+</body>
+</html>
