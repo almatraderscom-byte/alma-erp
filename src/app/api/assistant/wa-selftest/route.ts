@@ -24,7 +24,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { sendTwilioWaText, placeTwilioWaCall, getTwilioCallStatus, getTwilioCallError, getTwilioRecentInbound, twilioWaConfigured } from '@/agent/lib/wa/twilio-wa'
-import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
+import { mirrorOwnerNotifyToWhatsApp } from '@/agent/lib/telegram-owner-notify'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -45,8 +45,15 @@ export async function GET(req: NextRequest) {
   const notify = (searchParams.get('notify') ?? '').trim()
   if (notify) {
     const text = notify === '1' ? '🔔 ALMA এজেন্ট টেস্ট নোটিফিকেশন — WhatsApp চ্যানেল চালু আছে।' : notify
-    const res = await sendOwnerText(text)
-    return Response.json({ ok: true, notified: text, ownerNotifyResult: res, ownerWhatsAppConfigured: Boolean(process.env.OWNER_WHATSAPP_NUMBER) })
+    // Test the WhatsApp owner-notify mirror directly (returns sent/skip + reason so the
+    // exact blocker is visible). Not via sendOwnerText — that would mirror a 2nd time.
+    const whatsapp = await mirrorOwnerNotifyToWhatsApp(text)
+    console.log('[wa-selftest:notify]', JSON.stringify({ whatsapp }))
+    return Response.json({
+      ok: true,
+      ownerWhatsAppConfigured: Boolean(process.env.OWNER_WHATSAPP_NUMBER),
+      whatsapp,
+    })
   }
 
   // Diagnostic: ?inbound=1 → did Twilio itself receive any inbound WhatsApp? Tells a

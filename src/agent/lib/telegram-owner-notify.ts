@@ -21,14 +21,22 @@ function telegramApiBase(): string {
  * (Free-form only reaches the owner inside WhatsApp's 24h window — i.e. within 24h of
  *  the owner last messaging the business number.)
  */
-export async function mirrorOwnerNotifyToWhatsApp(text: string): Promise<void> {
+export async function mirrorOwnerNotifyToWhatsApp(
+  text: string,
+): Promise<{ sent: boolean; reason?: string; sid?: string; error?: string }> {
   const to = process.env.OWNER_WHATSAPP_NUMBER
-  if (!to || !text.trim()) return
-  if (!twilioWaConfigured() || process.env.WHATSAPP_SEND_ENABLED !== 'true') return
+  // Gated ONLY on the owner explicitly setting their number (that IS the opt-in) +
+  // Twilio creds. No extra kill switch here — it's the owner's own number.
+  if (!to) return { sent: false, reason: 'OWNER_WHATSAPP_NUMBER not set' }
+  if (!text.trim()) return { sent: false, reason: 'empty text' }
+  if (!twilioWaConfigured()) return { sent: false, reason: 'Twilio WhatsApp not configured' }
   try {
-    await sendTwilioWaText({ to, body: text })
-  } catch {
-    /* best-effort: a WhatsApp failure must never break the owner's Telegram notify */
+    const res = await sendTwilioWaText({ to, body: text })
+    if (res.error) return { sent: false, reason: 'twilio_error', error: res.error }
+    return { sent: true, sid: res.sid }
+  } catch (err) {
+    // best-effort: a WhatsApp failure must never break the owner's Telegram notify
+    return { sent: false, reason: 'exception', error: err instanceof Error ? err.message : String(err) }
   }
 }
 
