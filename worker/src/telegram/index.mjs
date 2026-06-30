@@ -18,7 +18,7 @@ import { Telegraf } from 'telegraf'
 import { transcribeVoiceNote } from './voice.mjs'
 import { setTelegramForNotify } from '../notify/index.mjs'
 import { setDispatcherBot, getDispatcherBot } from './dispatcher.mjs'
-import { handleSalahCallback } from '../salah/scheduler.mjs'
+import { handleSalahCallback, handleSalahJamaatCallback } from '../salah/scheduler.mjs'
 import { handleReminderCallback } from '../reminders/callbacks.mjs'
 import { handlePawnaCommand, handleDetailsCommand } from '../finance/index.mjs'
 import {
@@ -1371,6 +1371,16 @@ export function createTelegramBot() {
         dateYmd,
         createSupabase(),
       )
+
+    } else if (data.startsWith('salah_jamaat:')) {
+      // salah_jamaat:<waqt>:<jamaat|alone>[:YYYY-MM-DD] — one-tap answer to the
+      // "জামাতে নাকি একা?" question (deterministic capture, no LLM turn).
+      const parts = data.split(':')
+      const waqt = parts[1]
+      const answer = parts[2]
+      const maybeDate = parts[3]
+      const jamaatDate = /^\d{4}-\d{2}-\d{2}$/.test(maybeDate) ? maybeDate : null
+      await handleSalahJamaatCallback(ctx, answer, waqt, jamaatDate)
 
     } else if (data.startsWith('reminder_done:') || data.startsWith('reminder_snooze:') || data.startsWith('reminder_cancel:')) {
       await handleReminderCallback(ctx, data)

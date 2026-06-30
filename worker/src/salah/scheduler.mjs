@@ -722,7 +722,22 @@ export async function handleSalahCallback(ctx, action, waqt, status, dateYmd = n
     }
     await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
     await ctx.answerCbQuery(messages[resolved] || 'আপডেট হয়েছে')
-    await ctx.reply(messages[resolved] || 'রেকর্ড আপডেট হয়েছে।')
+    // After "পড়েছি"/"দেরিতে" the next line asks জামাতে নাকি একা — attach BUTTONS so
+    // the owner answers in ONE TAP. A free-typed reply used to reach the chat agent
+    // and burn an LLM turn (and sometimes get mis-handled). qaza/missed have no ask.
+    const jamaatAsk = resolved === 'prayed_on_time' || resolved === 'prayed_late'
+    if (jamaatAsk) {
+      await ctx.reply(messages[resolved], {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '🕌 জামাতে', callback_data: `salah_jamaat:${waqt}:jamaat:${recordDate}` },
+            { text: '🧍 একা',    callback_data: `salah_jamaat:${waqt}:alone:${recordDate}` },
+          ]],
+        },
+      })
+    } else {
+      await ctx.reply(messages[resolved] || 'রেকর্ড আপডেট হয়েছে।')
+    }
   } else if (action === 'salah_later') {
     // "পরে পড়বো" must actually register a short snooze — write a delay_until
     // override so reminders + calls pause (scheduler + owner-call-lock both honor
@@ -757,6 +772,49 @@ export async function handleSalahCallback(ctx, action, waqt, status, dateYmd = n
     await ctx.answerCbQuery('ঠিক আছে — মনে করিয়ে দেব।')
     await ctx.reply(`ঠিক আছে Sir। ${snoozeMin} মিনিট পর আবার মনে করিয়ে দেব — ${WAQT_NAMES[waqt]}-এর সময় শেষ হওয়ার আগেই পড়ে নেবেন।`)
   }
+}
+
+/**
+ * Owner tapped জামাতে / একা under the prayer-confirm message. Capture it
+ * DETERMINISTICALLY via the app (no head/LLM turn), clear the buttons, and reply
+ * warmly. Even if the app call fails we still acknowledge with a canned reply, so
+ * the tap never falls through to the chat agent (which would spend an LLM turn).
+ */
+export async function handleSalahJamaatCallback(ctx, answer, waqt = null, dateYmd = null) {
+  const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
+  if (!ownerChatId || String(ctx.chat?.id) !== ownerChatId) return
+  if (answer !== 'jamaat' && answer !== 'alone') return
+
+  const recordDate = dateYmd || dhakaTodayYmd()
+  await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+
+  let reply = null
+  try {
+    const appUrl = getAppUrl()
+    const token = getInternalToken()
+    if (appUrl && token) {
+      const res = await fetch(`${appUrl}/api/assistant/internal/salah-jamaat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ answer, waqt, date: recordDate }),
+      })
+      if (res.ok) {
+        const body = await res.json().catch(() => ({}))
+        reply = typeof body.reply === 'string' ? body.reply : null
+      }
+    }
+  } catch (e) {
+    console.warn('[salah] jamaat capture failed:', e.message)
+  }
+
+  if (!reply) {
+    const waqtName = WAQT_NAMES[waqt] || 'নামাজ'
+    reply = answer === 'jamaat'
+      ? `আলহামদুলিল্লাহ, Sir! ${waqtName} জামাতে পড়েছেন — আল্লাহ কবুল করুন। 🤲`
+      : `ঠিক আছে, Sir। আল্লাহ ${waqtName} কবুল করুন। পরের ওয়াক্তটা ইনশাআল্লাহ জামাতে পড়ার চেষ্টা করবেন — কোনো চাপ নেই। 🤲`
+  }
+  await ctx.answerCbQuery('সংরক্ষণ হয়েছে ✓').catch(() => {})
+  await ctx.reply(reply)
 }
 
 export { WAQT_NAMES }

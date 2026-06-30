@@ -145,10 +145,13 @@ export async function processJamaatReply(
 export async function recordJamaatChoiceDirect(
   answer: 'jamaat' | 'alone',
   now = new Date(),
+  override?: { waqt?: string | null; date?: string | null },
 ): Promise<{ reply: string; waqt: string | null }> {
+  // The Telegram-bot flow knows the exact waqt + date (it just recorded the
+  // prayer) and passes them in; the in-app flow relies on the pending marker.
   const pending = await readPending(now)
-  const dateYmd = pending?.date ?? todayYmdDhaka()
-  const waqt = pending?.waqt ?? null
+  const dateYmd = override?.date ?? pending?.date ?? todayYmdDhaka()
+  const waqt = override?.waqt ?? pending?.waqt ?? null
   const waqtBn = waqt ? (WAQT_BN[waqt] ?? waqt) : 'নামাজ'
   const verdict = answer === 'jamaat' ? 'জামাতে' : 'একা'
 
