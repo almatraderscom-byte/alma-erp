@@ -273,10 +273,10 @@ export function Button({
   const base = 'inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl font-semibold transition-all duration-150 disabled:opacity-40 active:scale-[0.98] md:min-h-0'
   const sizes = { xs: 'px-2.5 py-1.5 text-[11px] min-h-[36px] md:min-h-0', sm: 'px-3.5 py-2 text-xs', md: 'px-5 py-2.5 text-sm' }
   const variants = {
-    gold:      'bg-gold/10 border border-gold/30 text-gold-dim hover:bg-gold/20',
-    secondary: 'bg-bg-2 border border-border-subtle text-cream hover:bg-bg-3 hover:border-border-strong',
-    ghost:     'bg-transparent border border-border-subtle text-muted-hi hover:bg-bg-2 hover:text-cream',
-    danger:    'bg-danger/10 border border-danger/30 text-danger hover:bg-danger/20',
+    gold:      'bg-gold/10 border border-gold/30 text-gold-dim hover:bg-gold/20 hover:shadow-gold-sm',
+    secondary: 'bg-bg-2 border border-border-subtle text-cream hover:bg-bg-3 hover:border-border-strong hover:shadow-card',
+    ghost:     'bg-transparent border border-border-subtle text-muted-hi hover:bg-bg-2 hover:text-cream hover:shadow-card',
+    danger:    'bg-danger/10 border border-danger/30 text-danger hover:bg-danger/20 hover:shadow-card',
   }
   return (
     <button
@@ -298,7 +298,7 @@ export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInp
     <input
       {...props}
       className={cn(
-        'w-full rounded-xl bg-card border border-border-strong px-4 py-3 text-sm text-cream placeholder-muted transition-colors focus:outline-none focus:border-gold/50 focus:ring-1 focus:ring-gold/20',
+        'w-full rounded-xl bg-card border border-border-strong px-4 py-3 text-sm text-cream placeholder-muted transition-all focus:outline-none focus:border-gold/60 focus:ring-2 focus:ring-gold/25 focus:shadow-gold-sm',
         className,
       )}
     />
