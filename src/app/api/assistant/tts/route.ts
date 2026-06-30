@@ -4,7 +4,6 @@ import { calcTtsCostUsd } from '@/agent/lib/pricing'
 import { logCost } from '@/agent/lib/cost-events'
 import { BANGLA_GOOGLE_TTS } from '@/agent/lib/voice-bangla'
 import { getToken } from 'next-auth/jwt'
-import { isSystemOwner } from '@/lib/roles'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -80,9 +79,10 @@ export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
+  // Any authenticated user — the staff navigator speaks the assistant's reply via
+  // Google TTS (text→audio only, no ERP data exposed). The owner agent also uses this.
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
   const creds = getGoogleCredentials()
   if (!creds) {

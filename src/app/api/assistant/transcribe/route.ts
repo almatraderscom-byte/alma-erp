@@ -4,7 +4,6 @@ import { logCost } from '@/agent/lib/cost-events'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { transcribeVoiceBangla } from '@/agent/lib/voice-bangla'
 import { getToken } from 'next-auth/jwt'
-import { isSystemOwner } from '@/lib/roles'
 import OpenAI from 'openai'
 
 export const runtime = 'nodejs'
@@ -22,9 +21,10 @@ export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
   if (disabled) return disabled
 
+  // Any authenticated user — the staff navigator assistant transcribes the
+  // speaker's own audio (no ERP data is exposed). The owner agent also uses this.
   const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
-  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
   if (!process.env.OPENAI_API_KEY) {
     return Response.json({ error: 'OPENAI_API_KEY সেট করা নেই। Vercel-এ OPENAI_API_KEY যোগ করুন।' }, { status: 503 })
