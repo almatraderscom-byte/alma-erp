@@ -136,6 +136,40 @@ export async function placeTwilioWaCall(input: { to: string; message: string }):
 }
 
 /**
+ * Fetch a Twilio Call's current status by SID — used to diagnose why a WhatsApp call
+ * that returned a SID still didn't ring (status 'failed' / 'no-answer' / 'completed'
+ * etc.). Returns the telling fields verbatim from the Twilio Call resource.
+ */
+export async function getTwilioCallStatus(callSid: string): Promise<Record<string, unknown> | { error: string }> {
+  if (!twilioWaConfigured()) return { error: 'Twilio WhatsApp not configured.' }
+  if (!/^CA[0-9a-f]{32}$/i.test(callSid)) return { error: 'bad call sid' }
+  const sid = process.env.TWILIO_ACCOUNT_SID ?? ''
+  const token = process.env.TWILIO_AUTH_TOKEN ?? ''
+  const auth = Buffer.from(`${sid}:${token}`).toString('base64')
+  try {
+    const res = await fetch(`${TWILIO_API}/Accounts/${sid}/Calls/${callSid}.json`, {
+      headers: { Authorization: `Basic ${auth}` },
+      signal: AbortSignal.timeout(15_000),
+    })
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
+    if (!res.ok) return { error: (data.message as string) ?? `Twilio HTTP ${res.status}` }
+    return {
+      status: data.status,
+      to: data.to,
+      from: data.from,
+      direction: data.direction,
+      duration: data.duration,
+      start_time: data.start_time,
+      end_time: data.end_time,
+      answered_by: data.answered_by,
+      price: data.price,
+    }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
  * Validate Twilio's `X-Twilio-Signature` for an inbound webhook: base64 of
  * HMAC-SHA1(authToken, fullUrl + each POST param key+value sorted by key).
  * Fails closed when the token or header is missing.

@@ -23,7 +23,7 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { sendTwilioWaText, placeTwilioWaCall, twilioWaConfigured } from '@/agent/lib/wa/twilio-wa'
+import { sendTwilioWaText, placeTwilioWaCall, getTwilioCallStatus, twilioWaConfigured } from '@/agent/lib/wa/twilio-wa'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -37,6 +37,18 @@ export async function GET(req: NextRequest) {
   if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
   const { searchParams } = new URL(req.url)
+
+  // Diagnostic: ?status=<CallSid> → look up why a created call didn't ring.
+  const statusSid = (searchParams.get('status') ?? '').trim()
+  if (statusSid) {
+    if (!twilioWaConfigured()) {
+      return Response.json({ error: 'not_configured' }, { status: 503 })
+    }
+    const callStatus = await getTwilioCallStatus(statusSid)
+    console.log('[wa-selftest:status]', JSON.stringify({ sid: statusSid, callStatus }))
+    return Response.json({ ok: true, sid: statusSid, callStatus })
+  }
+
   const to = (searchParams.get('to') ?? '').trim()
   const doParam = (searchParams.get('do') ?? 'both').trim().toLowerCase()
   const msg = (searchParams.get('msg') ?? '').trim()
