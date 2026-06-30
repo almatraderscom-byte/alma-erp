@@ -1,6 +1,6 @@
 import type { AttendanceLeave, AttendanceLeaveKind } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { attendanceDateFor, localMinutesFor } from '@/lib/attendance'
+import { attendanceDateFor, localMinutesFor, officeHoursFor } from '@/lib/attendance'
 import {
   createApprovalRequest,
   dispatchApprovalsUpdated,
@@ -70,10 +70,22 @@ export async function leaveWaivesCheckout(
 ): Promise<boolean> {
   const leave = await getApprovedLeaveForDate(userId, businessId, attendanceDate)
   if (!leave) return false
+  // Whole-day / date-range leave: the staff is absent all day, so every
+  // checkout gate is waived.
   if (isWholeDayKind(leave.kind)) return true
-  if (leave.startMinutes == null || leave.endMinutes == null) return true
+  // SHIFTED_START only delays the morning start (endMinutes is null); the staff
+  // still works a full day until office close — checkout is NOT waived. A mid-day
+  // HOURS leave (e.g. 1–3 PM) likewise does not authorise an early end-of-day
+  // departure. Checkout is waived ONLY when the approved leave window runs
+  // through office close — a genuine approved early departure.
+  if (leave.endMinutes == null) return false
+  const { endMinutes: officeEnd } = officeHoursFor(businessId)
+  if (leave.endMinutes < officeEnd) return false
+  // The leave reaches office close: waive checkout once the staff is at/after
+  // the start of their approved departure window.
+  if (leave.startMinutes == null) return true
   const nowMinutes = localMinutesFor(now)
-  return nowMinutes >= leave.startMinutes && nowMinutes <= leave.endMinutes
+  return nowMinutes >= leave.startMinutes
 }
 
 /** Does an approved leave waive the late check-in penalty for this staff today? */
