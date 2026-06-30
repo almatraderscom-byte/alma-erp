@@ -227,7 +227,7 @@ export default function BusinessArchiveControlPage() {
   }
 
   async function restoreBatch(id: string) {
-    if (!confirm('Restore all records in this archive batch?')) return
+    if (!(await confirmDialog({ message: 'Restore all records in this archive batch?', confirmLabel: 'Restore' }))) return
     setBusy(`restore-${id}`)
     try {
       const result = await safeFetchJsonWithToast<{ restored?: number }>('/api/business-archive/restore', {

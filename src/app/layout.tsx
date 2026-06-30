@@ -9,6 +9,7 @@ import { AppProviders } from '@/components/providers/AppProviders'
 import { ThemeProvider } from '@/components/providers/ThemeProvider'
 import { ACCENT_COOKIE, THEME_COOKIE, accentStyle, normalizeAccent, normalizeMode } from '@/lib/theme'
 import { AppToaster } from '@/components/ui/AppToaster'
+import { ConfirmDialogHost } from '@/components/ui/confirm-dialog'
 import { GlobalPlatformChrome } from '@/components/layout/GlobalPlatformChrome'
 import { AmbientBackground } from '@/components/ambient/AmbientBackground'
 import { GlobalKeyboardManager } from '@/components/ui-mobile/GlobalKeyboardManager'
@@ -109,6 +110,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <GlobalKeyboardManager />
         <GlobalPlatformChrome />
         <AppToaster />
+        <ConfirmDialogHost />
       </body>
     </html>
   )

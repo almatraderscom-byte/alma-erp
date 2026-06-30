@@ -13,6 +13,7 @@ import {
 import { useBranding } from '@/contexts/BrandingContext'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { Card, Button, Skeleton, Empty } from '@/components/ui'
+import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { SalarySlipToolbar } from '@/components/finance/SalarySlipToolbar'
 import type { SalarySlipModel } from '@/components/pdf/SalarySlipDocument'
 import type { EmployeeWalletResponse } from '@/types/payroll-wallet'
@@ -315,7 +316,7 @@ export default function EmployeeDetailPage() {
 
   async function resetAttendanceRecord(recordId: string, attendanceDate: string) {
     if (!canResetAttendance || resettingAttendanceId) return
-    const ok = window.confirm(`Remove attendance for ${attendanceDate.slice(0, 10)}? Employee can check in again; any late penalty will be reversed.`)
+    const ok = await confirmDialog({ message: `Remove attendance for ${attendanceDate.slice(0, 10)}? Employee can check in again; any late penalty will be reversed.`, confirmLabel: 'Remove', danger: true })
     if (!ok) return
     setResettingAttendanceId(recordId)
     try {

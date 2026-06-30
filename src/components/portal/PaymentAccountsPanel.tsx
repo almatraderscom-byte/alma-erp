@@ -114,7 +114,7 @@ export function PaymentAccountsPanel({ businessId }: { businessId: string }) {
   }
 
   async function remove(id: string) {
-    if (!confirm('Remove this payout account?')) return
+    if (!(await confirmDialog({ message: 'Remove this payout account?', confirmLabel: 'Remove', danger: true }))) return
     const result = await safeFetchJsonWithToast(`/api/employee/payment-methods/${id}`, { method: 'DELETE' })
     if (!result.ok) return
     toast.success('Account removed')
