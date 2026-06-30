@@ -13,6 +13,8 @@ import {
   distanceMeters,
 } from '@/lib/attendance'
 import { checkoutRulesEnabled, checkoutTimeBlockEnabled, runCheckoutGates } from '@/lib/attendance-checkout-rules'
+import { hasApprovedException } from '@/lib/attendance-exception'
+import { leaveWaivesCheckout } from '@/lib/attendance-leave'
 import { queueAttendanceCheckOutAlert } from '@/lib/telegram-notification/attendance-alerts'
 import { getTelegramOpsSetting } from '@/lib/telegram-notification/settings'
 import { archiveOpenAssignmentsOnCheckout } from '@/lib/operational-tasks'
@@ -90,10 +92,26 @@ export const POST = withApiRoute('attendance.check_out', async (req: NextRequest
 
   const totalWorkMinutes = workDurationMinutes(existing.checkInAt, now)
 
-  // Early checkout penalty ONLY for ALMA_LIFESTYLE
-  const { earlyMinutes, earlyPenaltyAmount } = businessId === 'ALMA_LIFESTYLE'
-    ? calculateEarlyCheckoutPenalty(now, businessId)
-    : { earlyMinutes: 0, earlyPenaltyAmount: 0 }
+  // Early checkout penalty ONLY for ALMA_LIFESTYLE. With the always-on 8 PM
+  // block (Step 1), a before-8PM checkout only reaches here when an owner
+  // approved exception/leave waived the block — in which case the owner
+  // explicitly permitted leaving early, so NO penalty applies.
+  let earlyMinutes = 0
+  let earlyPenaltyAmount = 0
+  if (businessId === 'ALMA_LIFESTYLE') {
+    const calc = calculateEarlyCheckoutPenalty(now, businessId)
+    earlyMinutes = calc.earlyMinutes
+    earlyPenaltyAmount = calc.earlyPenaltyAmount
+    if (earlyPenaltyAmount > 0) {
+      const permitted =
+        (await hasApprovedException(ctx.userId, businessId, attendanceDate, now)) ||
+        (await leaveWaivesCheckout(ctx.userId, businessId, attendanceDate, now))
+      if (permitted) {
+        earlyMinutes = 0
+        earlyPenaltyAmount = 0
+      }
+    }
+  }
   const finalStatus = earlyPenaltyAmount > 0 ? 'EARLY_LEAVE' : 'COMPLETED'
 
   const record = await prisma.attendanceRecord.update({
