@@ -291,11 +291,11 @@ export async function runIdleWatchTest(deviceId = process.env.IMOU_DEVICE_ID ?? 
     // Also exercise the new staff-nudge approval path so the owner can SEE and TAP
     // the ✅/❌ buttons live in this test (the real cron attaches them the same way).
     const testCat = CATEGORIES[0]!
-    const actionId = await createIdleNudgeAction(testCat, snap.url, analysis.summary_bn ?? '', deviceId)
+    const actionId = await createIdleNudgeAction(testCat, snap.url, analysis.summary_bn ?? '', deviceId, true)
     const reply_markup = actionId
       ? {
           inline_keyboard: [[
-            { text: '✅ স্টাফ গ্রুপে মনে করিয়ে দিন', callback_data: `approve:${actionId}` },
+            { text: '✅ স্টাফদের মনে করিয়ে দিন', callback_data: `approve:${actionId}` },
             { text: '❌ থাক', callback_data: `reject:${actionId}` },
           ]],
         }
@@ -305,7 +305,7 @@ export async function runIdleWatchTest(deviceId = process.env.IMOU_DEVICE_ID ?? 
       `মানুষ: ${analysis.people_count ?? 0} | মোবাইল: ${flags.away_mobile ? 'হ্যাঁ' : 'না'} | ` +
       `ভিডিও: ${flags.monitor_video ? 'হ্যাঁ' : 'না'} | আড্ডা: ${flags.group_chatting ? 'হ্যাঁ' : 'না'}\n` +
       (analysis.summary_bn ? `\nAI (${model}): ${analysis.summary_bn}` : '') +
-      (actionId ? '\n\n👉 নিচের বাটন টেস্ট করুন — Approve চাপলে অফিস গ্রুপে নাম ছাড়া রিমাইন্ডার যাবে (chat id সেট থাকলে)।' : '')
+      (actionId ? '\n\n👉 নিচের বাটন টেস্ট করুন — এটা টেস্ট মোড, Approve চাপলে রিমাইন্ডারটি স্টাফদের নয়, শুধু আপনার (Owner) Telegram-এই ফিরে আসবে।' : '')
     const res = await sendOwnerPhoto(snap.url, caption, reply_markup)
     return { ran: true, peopleCount: analysis.people_count ?? 0, flags, alerts: res.ok ? ['test'] : [], error: res.ok ? undefined : `telegram: ${res.error}` }
   } catch (err) {
@@ -324,6 +324,7 @@ async function createIdleNudgeAction(
   snapshotUrl: string,
   summaryBn: string,
   deviceId: string,
+  test = false,
 ): Promise<string | null> {
   // Name-free, non-accusatory reminder — vision never identifies who is on the
   // phone, so the message blames no one specific and just refocuses the room.
@@ -343,8 +344,11 @@ async function createIdleNudgeAction(
           camera: 'Work Room',
           deviceId,
           message,
+          // test nudges send the reminder back to the OWNER only (safe full-loop
+          // proof); real cron nudges broadcast to active staff DMs on approval.
+          test,
         },
-        summary: `স্টাফ idle (${cat.labelBn}) — অফিস গ্রুপে নাম ছাড়া রিমাইন্ডার পাঠানোর অনুমোদন`,
+        summary: `স্টাফ idle (${cat.labelBn}) — স্টাফদের নাম ছাড়া রিমাইন্ডার পাঠানোর অনুমোদন`,
         costEstimate: 0,
         status: 'pending',
       },
@@ -374,7 +378,7 @@ async function alertOwner(
   const reply_markup = actionId
     ? {
         inline_keyboard: [[
-          { text: '✅ স্টাফ গ্রুপে মনে করিয়ে দিন', callback_data: `approve:${actionId}` },
+          { text: '✅ স্টাফদের মনে করিয়ে দিন', callback_data: `approve:${actionId}` },
           { text: '❌ থাক', callback_data: `reject:${actionId}` },
         ]],
       }
@@ -386,7 +390,7 @@ async function alertOwner(
     `একটানা ~${sustainedMin} মিনিট ধরে (${timeLabel})\n` +
     (summaryBn ? `\nAI: ${summaryBn}\n` : '') +
     (actionId
-      ? '\n👉 চাইলে নিচের বাটনে চাপ দিন — অফিস স্টাফ গ্রুপে নাম ছাড়া একটা ভদ্র রিমাইন্ডার চলে যাবে।'
+      ? '\n👉 চাইলে নিচের বাটনে চাপ দিন — সব অ্যাক্টিভ স্টাফের Telegram-এ নাম ছাড়া একটা ভদ্র রিমাইন্ডার চলে যাবে।'
       : '\n(পাইলট — ভুল হলে জানাবেন, threshold ঠিক করে দেব)')
   const res = await sendOwnerPhoto(snapshotUrl, caption, reply_markup)
   if (!res.ok) console.warn('[idle-watch] owner photo alert failed:', res.error)
