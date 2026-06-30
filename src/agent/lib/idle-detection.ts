@@ -40,28 +40,68 @@ interface CategoryDef {
 }
 
 const CATEGORIES: CategoryDef[] = [
-  { key: 'away_mobile', flag: 'away_from_desk_mobile', defaultMin: 15, thresholdKey: 'idle_threshold_away_mobile_min', minConfidence: 0.45, emoji: '📱', labelBn: 'ডেস্কে না বসে মোবাইল ব্যবহার' },
+  { key: 'away_mobile', flag: 'away_from_desk_mobile', defaultMin: 15, thresholdKey: 'idle_threshold_away_mobile_min', minConfidence: 0.45, emoji: '📱', labelBn: 'ডেস্কে নেই / শুয়ে আছে / মোবাইল' },
   { key: 'monitor_video', flag: 'monitor_entertainment', defaultMin: 5, thresholdKey: 'idle_threshold_monitor_video_min', minConfidence: 0.6, emoji: '🎬', labelBn: 'মনিটরে ভিডিও/ইউটিউব দেখা' },
   { key: 'group_chatting', flag: 'group_chatting', defaultMin: 10, thresholdKey: 'idle_threshold_group_chatting_min', minConfidence: 0.5, emoji: '💬', labelBn: 'একসাথে বসে আড্ডা' },
 ]
 
-const VISION_PROMPT = `You are monitoring an office work room through a ceiling CCTV camera. This is a single still frame and may be black & white (night-vision). Staff are expected to be working at their computer desks.
+const VISION_PROMPT = `You are monitoring an office work room through a wide-angle (fisheye) ceiling CCTV camera. This is a single still frame and may be black & white (night-vision). The lens distorts the room, so people can appear near the floor or the edges of the frame. Staff are expected to be SITTING UPRIGHT at their computer desks and working.
+
+Look VERY carefully at each person's BODY POSTURE and LOCATION before deciding. Specifically check:
+- Is the person sitting upright at a desk facing a computer? (working)
+- Is the person LYING DOWN, reclining, or slumped on the floor, a sofa, or across chairs? (off-task)
+- Is the person standing or sitting idle AWAY from any computer desk? (off-task)
+- Are two or more people gathered close together facing each other? (chatting)
 
 Analyze the frame for off-task / idle behaviour and return ONLY this JSON (no prose):
 {
   "people_count": <integer>,
-  "away_from_desk_mobile": <true if a person is sitting away from their computer desk OR lying down AND appears to be using/looking at a mobile phone>,
+  "away_from_desk_mobile": <true if ANY person is lying down / reclining / slumped on the floor or sofa, OR is clearly away from their computer desk and not working — whether or not a phone is visible>,
   "monitor_entertainment": <true ONLY if you can clearly see a computer monitor showing entertainment video — YouTube, a movie, social/short video — rather than work content>,
   "group_chatting": <true if two or more people are gathered close together chatting/socialising instead of working>,
   "confidence": <0.0 to 1.0 overall confidence>,
-  "summary_bn": "<one short Bengali sentence describing what the people are doing>"
+  "summary_bn": "<one short factual Bengali sentence describing ONLY what is visibly happening — body posture and location>"
 }
 
 Rules:
-- Eating food at a desk is NOT idle.
-- A person seated at their desk facing a monitor is working — NOT idle.
-- If you are unsure about a flag, set it to false.
+- Describe ONLY what you can actually see. NEVER invent or guess a person's name. NEVER claim someone is "working on a laptop" or "looking at the screen" unless that is clearly visible.
+- A person lying on the floor or reclining is OFF-TASK even if no phone is visible.
+- Eating food while seated at a desk is NOT idle.
+- A person seated upright at their desk facing a monitor is working — NOT idle.
+- If you are genuinely unsure about a flag, set it to false but lower the confidence accordingly.
 - An empty room: all flags false, people_count 0.`
+
+// Stronger model used to confirm a suspected-idle frame before we trust it enough
+// to start/advance an episode or alert the owner. Flash is cheap and scans every
+// frame; Pro only runs on the rare frames Flash flags — so cost stays near Flash.
+const CONFIRM_MODEL = 'gemini-2.5-pro'
+
+/**
+ * Two-step frame analysis. Always runs the cheap Flash scan. If Flash flags ANY
+ * idle category, re-runs the SAME image through the stronger Pro model and trusts
+ * that result instead — this is what kills the "lying on the floor → working"
+ * misread without paying Pro prices on every clear frame. Falls back to the Flash
+ * read if the Pro pass errors, so a frame is never dropped.
+ */
+async function analyzeFrame(
+  base64: string,
+  mimeType: string,
+): Promise<{ analysis: FrameAnalysis; model: 'flash' | 'pro' }> {
+  const flash = await geminiVisionJson<FrameAnalysis>({
+    prompt: VISION_PROMPT, imageBase64: base64, mimeType, costKind: 'vision_idle_detection',
+  })
+  const flagged = CATEGORIES.some((c) => flash[c.flag] === true)
+  if (!flagged) return { analysis: flash, model: 'flash' }
+  try {
+    const pro = await geminiVisionJson<FrameAnalysis>({
+      prompt: VISION_PROMPT, imageBase64: base64, mimeType,
+      costKind: 'vision_idle_detection_confirm', model: CONFIRM_MODEL,
+    })
+    return { analysis: pro, model: 'pro' }
+  } catch {
+    return { analysis: flash, model: 'flash' }
+  }
+}
 
 // ── KV settings ───────────────────────────────────────────────────────────────
 async function kvGet(key: string): Promise<string | null> {
@@ -175,12 +215,7 @@ export async function runIdleWatch(deviceId = process.env.IMOU_DEVICE_ID ?? ''):
 
     const snap = await captureImouSnapshot(deviceId)
     const { base64, mimeType } = await downloadSnapshot(snap.url)
-    const analysis = await geminiVisionJson<FrameAnalysis>({
-      prompt: VISION_PROMPT,
-      imageBase64: base64,
-      mimeType,
-      costKind: 'vision_idle_detection',
-    })
+    const { analysis } = await analyzeFrame(base64, mimeType)
 
     result.ran = true
     result.peopleCount = analysis.people_count ?? 0
@@ -244,9 +279,7 @@ export async function runIdleWatchTest(deviceId = process.env.IMOU_DEVICE_ID ?? 
     if (!deviceId) return { ran: false, alerts: [], error: 'no_device_id' }
     const snap = await captureImouSnapshot(deviceId)
     const { base64, mimeType } = await downloadSnapshot(snap.url)
-    const analysis = await geminiVisionJson<FrameAnalysis>({
-      prompt: VISION_PROMPT, imageBase64: base64, mimeType, costKind: 'vision_idle_detection',
-    })
+    const { analysis, model } = await analyzeFrame(base64, mimeType)
     const flags = {
       away_mobile: analysis.away_from_desk_mobile === true,
       monitor_video: analysis.monitor_entertainment === true,
@@ -259,7 +292,7 @@ export async function runIdleWatchTest(deviceId = process.env.IMOU_DEVICE_ID ?? 
       `🧪 idle-detection টেস্ট — Work Room (${timeLabel})\n` +
       `মানুষ: ${analysis.people_count ?? 0} | মোবাইল: ${flags.away_mobile ? 'হ্যাঁ' : 'না'} | ` +
       `ভিডিও: ${flags.monitor_video ? 'হ্যাঁ' : 'না'} | আড্ডা: ${flags.group_chatting ? 'হ্যাঁ' : 'না'}\n` +
-      (analysis.summary_bn ? `\nAI: ${analysis.summary_bn}` : '')
+      (analysis.summary_bn ? `\nAI (${model}): ${analysis.summary_bn}` : '')
     const res = await sendOwnerPhoto(snap.url, caption)
     return { ran: true, peopleCount: analysis.people_count ?? 0, flags, alerts: res.ok ? ['test'] : [], error: res.ok ? undefined : `telegram: ${res.error}` }
   } catch (err) {

@@ -128,11 +128,18 @@ const get_office_camera_snapshot: AgentTool = {
         const { base64, mimeType } = await downloadSnapshot(snap.url)
         const res = await geminiVisionJson<FrameDescription>({
           prompt:
-            'You are looking at a still frame from an office CCTV camera. Return ONLY JSON: ' +
-            '{"people_count": <int>, "summary_bn": "<one short sentence in Bangla describing how many people are visible and what they appear to be doing>"}. ' +
-            'Be factual and neutral. If no person is visible, people_count=0.',
+            'You are looking at a single still frame from a wide-angle (fisheye) office CCTV camera. ' +
+            'The lens distorts the room, so people can appear near the floor or the edges of the frame. ' +
+            'Look carefully at each person\'s BODY POSTURE and LOCATION before describing. Return ONLY JSON: ' +
+            '{"people_count": <int>, "summary_bn": "<one short factual Bangla sentence: how many people are visible and their posture/location — e.g. ডেস্কে সোজা হয়ে বসা, মেঝে/সোফায় শুয়ে আছে, ডেস্ক ছেড়ে দূরে দাঁড়ানো>"}. ' +
+            'Describe ONLY what is clearly visible. NEVER invent or guess a person\'s name. ' +
+            'NEVER say someone is "working" or "looking at the screen / laptop" unless that is clearly visible. ' +
+            'A person lying on the floor or reclining is NOT working. If no person is visible, people_count=0.',
           imageBase64: base64,
           mimeType,
+          // High-accuracy model — the owner uses this to actually check on staff, so a
+          // wrong "lying down → working" read is worse than the tiny extra cost.
+          model: 'gemini-2.5-pro',
           costKind: 'vision_office_snapshot',
           maxTokens: 256,
         })
@@ -151,7 +158,9 @@ const get_office_camera_snapshot: AgentTool = {
         capturedAt: snap.capturedAt.toISOString(),
         peopleCount,
         description,
-        note: 'ছবিটা ওনারকে দেখাতে markdown image হিসেবে দাও: ![' + cam.name + '](imageUrl)। URL ১ ঘণ্টা পরে expire হবে।',
+        note:
+          'ছবিটা ওনারকে দেখাতে markdown image হিসেবে দাও: ![' + cam.name + '](imageUrl)। URL ১ ঘণ্টা পরে expire হবে। ' +
+          'গুরুত্বপূর্ণ: ছবিতে যা স্পষ্ট দেখা যাচ্ছে শুধু সেটুকুই বলবে — description ফিল্ডের বাইরে নিজে থেকে কোনো স্টাফের নাম, বা "কাজ করছে / ল্যাপটপে দেখছে" এমন কিছু অনুমান করে বলবে না। কেউ মেঝেতে শুয়ে থাকলে সেটাকে "কাজ করছে" বলবে না।',
       },
     }
   },
