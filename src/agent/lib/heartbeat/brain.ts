@@ -76,20 +76,34 @@ export interface HeartbeatTickResult {
  */
 export async function gatherPulse(businessId: string = BUSINESS_ID): Promise<HeartbeatPulse> {
   try {
-    const [pendingApprovals, ownerEscalations, openTodos] = await Promise.all([
+    // All counts are cheap DB-only queries (no LLM, no GAS/Meta) so a tick stays
+    // near-free. The aging-approvals cutoff mirrors the 3-day approval expiry —
+    // flag at 2 days so the owner gets a nudge BEFORE anything silently expires.
+    const twoDaysAgo = new Date(Date.now() - 2 * 86_400_000)
+    const [pendingApprovals, ownerEscalations, openTodos, csAlerts, moneyRequests, agingApprovals] = await Promise.all([
       prisma.agentPendingAction.count({ where: { status: 'pending' } }),
       prisma.agentStaffTask.count({ where: { businessId, supervisorNeedsOwner: true } }),
       prisma.agentTodo.count({ where: { businessId, status: { in: ['pending', 'in_progress'] } } }),
+      prisma.agentMessengerAlert.count({ where: { resolved: false } }).catch(() => 0),
+      prisma.walletRequest.count({ where: { status: 'PENDING', isArchived: false } }).catch(() => 0),
+      prisma.agentPendingAction.count({ where: { status: 'pending', createdAt: { lt: twoDaysAgo } } }).catch(() => 0),
     ])
-    return { pendingApprovals, ownerEscalations, openTodos }
+    return { pendingApprovals, ownerEscalations, openTodos, csAlerts, moneyRequests, agingApprovals }
   } catch {
-    return { pendingApprovals: 0, ownerEscalations: 0, openTodos: 0 }
+    return { pendingApprovals: 0, ownerEscalations: 0, openTodos: 0, csAlerts: 0, moneyRequests: 0, agingApprovals: 0 }
   }
 }
 
 /** True when the pulse carries something the head could actually act on. */
 export function pulseIsActionable(p: HeartbeatPulse): boolean {
-  return p.pendingApprovals > 0 || p.ownerEscalations > 0 || p.openTodos > 0
+  return (
+    p.pendingApprovals > 0 ||
+    p.ownerEscalations > 0 ||
+    p.openTodos > 0 ||
+    (p.csAlerts ?? 0) > 0 ||
+    (p.moneyRequests ?? 0) > 0 ||
+    (p.agingApprovals ?? 0) > 0
+  )
 }
 
 /** Bangla one-liner describing a pulse, for the idle/quiet heartbeat entries. */
@@ -97,6 +111,9 @@ function describePulse(p: HeartbeatPulse): string {
   if (!pulseIsActionable(p)) return 'দেখলাম — এই মুহূর্তে জরুরি কিছু নেই, সব ঠিক আছে।'
   const bits: string[] = []
   if (p.pendingApprovals > 0) bits.push(`${p.pendingApprovals}টি অনুমোদন বাকি`)
+  if ((p.agingApprovals ?? 0) > 0) bits.push(`${p.agingApprovals}টি অনুমোদন ২+ দিন পুরনো (এক্সপায়ার হতে পারে)`)
+  if ((p.moneyRequests ?? 0) > 0) bits.push(`${p.moneyRequests}টি ওয়ালেট/অ্যাডভান্স রিকোয়েস্ট বাকি`)
+  if ((p.csAlerts ?? 0) > 0) bits.push(`${p.csAlerts}টি কাস্টমার অ্যালার্ট খোলা`)
   if (p.ownerEscalations > 0) bits.push(`${p.ownerEscalations}টি কাজ আপনার নজরে`)
   if (p.openTodos > 0) bits.push(`${p.openTodos}টি খোলা টুডু`)
   return `দেখলাম: ${bits.join(', ')}।`
@@ -143,6 +160,9 @@ function buildHeartbeatDirective(pulse: HeartbeatPulse): string {
     `${HEARTBEAT_WAKE_SENTINEL} — তুমি নিজে থেকে জেগেছ, Boss কিছু বলেননি]\n\n` +
     'এই মুহূর্তে ব্যবসার অবস্থা একটু দেখে নাও। সংক্ষিপ্ত ইশারা:\n' +
     `• অনুমোদন-অপেক্ষমাণ কাজ: ${pulse.pendingApprovals}\n` +
+    `• ২+ দিন পুরনো অনুমোদন (এক্সপায়ার ঝুঁকি): ${pulse.agingApprovals ?? 0}\n` +
+    `• ওয়ালেট/অ্যাডভান্স রিকোয়েস্ট বাকি: ${pulse.moneyRequests ?? 0}\n` +
+    `• খোলা কাস্টমার অ্যালার্ট: ${pulse.csAlerts ?? 0}\n` +
     `• তোমার এসকেলেট-করা কাজ (Boss-এর নজরে): ${pulse.ownerEscalations}\n` +
     `• খোলা টুডু: ${pulse.openTodos}\n\n` +
     'প্রয়োজনে নিজের টুল দিয়ে আরও দেখো (অনুমোদন, গ্রাহক, স্টক, নগদ-প্রবাহ, ডেডলাইন)। ' +
