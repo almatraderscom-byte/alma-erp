@@ -691,8 +691,10 @@ a,
   }
 
   .mobile-modal-backdrop {
-    @apply absolute inset-0 bg-black/50 backdrop-blur-sm;
+    @apply absolute inset-0 bg-black/45;
     touch-action: none;
+    /* Fade + blur the backdrop in instead of snapping (premium modal open). */
+    animation: alma-modal-backdrop-in 0.22s ease both;
   }
 
   .mobile-modal-overlay-inner {
@@ -709,6 +711,9 @@ a,
     max-height: 100%;
     min-height: 0;
     contain: none;
+    /* Phone: glide up from the bottom like an iOS sheet. */
+    animation: alma-modal-sheet-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+    will-change: transform;
   }
 
   @media (min-width: 640px) {
@@ -722,7 +727,22 @@ a,
 
     .mobile-modal-shell {
       max-height: min(calc(100dvh - 2rem), 920px);
+      /* Desktop: a centered dialog scales + fades in rather than sliding. */
+      animation: alma-modal-dialog-in 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
     }
+  }
+
+  @keyframes alma-modal-backdrop-in {
+    from { opacity: 0; backdrop-filter: blur(0); -webkit-backdrop-filter: blur(0); }
+    to   { opacity: 1; backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); }
+  }
+  @keyframes alma-modal-sheet-in {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+  }
+  @keyframes alma-modal-dialog-in {
+    from { opacity: 0; transform: translateY(8px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
   }
 
   .mobile-modal-header {
