@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
   const jobs = await db.agentPendingAction.findMany({
     where: {
       status: 'approved',
-      type: { in: ['image_gen', 'video_gen', 'long_agent_task', 'dispatch_staff_tasks', 'add_staff_task_now', 'staff_announcement', 'urgent_notify', 'outbound_call'] },
+      type: { in: ['image_gen', 'video_gen', 'long_agent_task', 'dispatch_staff_tasks', 'add_staff_task_now', 'staff_announcement', 'urgent_notify', 'outbound_call', 'browser_action'] },
     },
     orderBy: { createdAt: 'asc' },
     take: 20,
