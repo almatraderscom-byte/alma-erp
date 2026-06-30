@@ -85,6 +85,70 @@ export async function sendTwilioWaMedia(input: {
   return twilioSendMessage(form)
 }
 
+/**
+ * Send an interactive (e.g. quick-reply buttons) WhatsApp message by ContentSid.
+ * Within the 24h service window this delivers free-form, so the owner gets tap-buttons
+ * just like Telegram. `contentVariables` fills the template's {{1}}, {{2}}… slots.
+ */
+export async function sendTwilioWaContent(input: {
+  to: string
+  contentSid: string
+  contentVariables?: Record<string, string>
+}): Promise<{ sid?: string; error?: string }> {
+  if (!twilioWaConfigured()) return { error: 'Twilio WhatsApp not configured (set TWILIO_WHATSAPP_FROM).' }
+  if (!input.contentSid) return { error: 'contentSid required' }
+  const form: Record<string, string> = {
+    From: toWhatsAppAddress(process.env.TWILIO_WHATSAPP_FROM ?? ''),
+    To: toWhatsAppAddress(input.to),
+    ContentSid: input.contentSid,
+  }
+  if (input.contentVariables && Object.keys(input.contentVariables).length) {
+    form.ContentVariables = JSON.stringify(input.contentVariables)
+  }
+  return twilioSendMessage(form)
+}
+
+/**
+ * Create (once) a quick-reply Content template with Approve / Reject buttons and return
+ * its ContentSid. Body is a single {{1}} variable (the action summary). Caller caches the
+ * sid (KV) so this only hits Twilio the first time.
+ */
+export async function createTwilioQuickReplyContent(input: {
+  friendlyName: string
+  bodyVar?: string
+  buttons: Array<{ id: string; title: string }>
+  language?: string
+}): Promise<{ sid?: string; error?: string }> {
+  if (!twilioWaConfigured()) return { error: 'Twilio WhatsApp not configured.' }
+  const sid = process.env.TWILIO_ACCOUNT_SID ?? ''
+  const token = process.env.TWILIO_AUTH_TOKEN ?? ''
+  const auth = Buffer.from(`${sid}:${token}`).toString('base64')
+  const payload = {
+    friendly_name: input.friendlyName,
+    language: input.language ?? 'bn',
+    variables: { '1': 'summary' },
+    types: {
+      'twilio/quick-reply': {
+        body: input.bodyVar ?? '{{1}}',
+        actions: input.buttons.slice(0, 3).map((b) => ({ id: b.id, title: b.title.slice(0, 20) })),
+      },
+    },
+  }
+  try {
+    const res = await fetch('https://content.twilio.com/v1/Content', {
+      method: 'POST',
+      headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(20_000),
+    })
+    const data = (await res.json().catch(() => ({}))) as { sid?: string; message?: string }
+    if (!res.ok) return { error: data.message ?? `Twilio Content HTTP ${res.status}` }
+    return { sid: data.sid }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 function escapeXml(s: string): string {
   return s
     .replace(/&/g, '&amp;')

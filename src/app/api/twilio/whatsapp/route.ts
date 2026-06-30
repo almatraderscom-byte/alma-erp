@@ -14,6 +14,7 @@ import { type NextRequest } from 'next/server'
 import { validateTwilioSignature } from '@/agent/lib/wa/twilio-wa'
 import { ingestWaInboundMessage } from '@/agent/lib/wa/wa-ingest'
 import { findUserIdByPhone, recordWaOptIn } from '@/agent/lib/wa/optin'
+import { handleOwnerApprovalButton } from '@/agent/lib/wa/wa-approval'
 
 export const runtime = 'nodejs'
 
@@ -38,6 +39,24 @@ export async function POST(req: NextRequest) {
   const messageId = params.MessageSid ?? params.SmsMessageSid ?? ''
   const body = params.Body ?? ''
   const name = params.ProfileName || undefined
+
+  // Owner tapped a WhatsApp approval button (✅/❌)? Twilio delivers the button's id in
+  // ButtonPayload. Drive the existing approve/reject route and stop — don't ingest it
+  // into the CS brain as a normal message.
+  const buttonPayload = params.ButtonPayload ?? ''
+  if (from && buttonPayload) {
+    try {
+      const handled = await handleOwnerApprovalButton(from, buttonPayload)
+      if (handled) {
+        return new Response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/xml' },
+        })
+      }
+    } catch (err) {
+      console.warn('[twilio-wa] approval button failed:', err instanceof Error ? err.message : err)
+    }
+  }
 
   if (from && messageId) {
     try {

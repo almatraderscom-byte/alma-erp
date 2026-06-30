@@ -53,6 +53,14 @@ export async function sendOwnerApprovalCard(input: {
     return { ok: false, error: 'ASSISTANT_BOT_TOKEN or TELEGRAM_OWNER_CHAT_ID not set' }
   }
 
+  // Mirror to WhatsApp as a tap-button approval (best-effort, dormant until configured).
+  if (input.pendingActionId) {
+    try {
+      const { sendOwnerWaApproval } = await import('./wa/wa-approval')
+      await sendOwnerWaApproval(input.summary, input.pendingActionId)
+    } catch { /* never break the Telegram path */ }
+  }
+
   const reply_markup = input.reply_markup ?? (input.pendingActionId ? {
     inline_keyboard: [[
       { text: input.approveLabel ?? '✅ আবার কল দিন', callback_data: `approve:${input.pendingActionId}` },

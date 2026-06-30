@@ -25,6 +25,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { sendTwilioWaText, placeTwilioWaCall, getTwilioCallStatus, getTwilioCallError, getTwilioRecentInbound, twilioWaConfigured } from '@/agent/lib/wa/twilio-wa'
 import { mirrorOwnerNotifyToWhatsApp } from '@/agent/lib/telegram-owner-notify'
+import { testWaApproval } from '@/agent/lib/wa/wa-approval'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -54,6 +55,14 @@ export async function GET(req: NextRequest) {
       ownerWhatsAppConfigured: Boolean(process.env.OWNER_WHATSAPP_NUMBER),
       whatsapp,
     })
+  }
+
+  // Diagnostic: ?approval=1 → create the quick-reply template + send the owner a test
+  // approval with tap-buttons (✅/❌). Tapping a button is a safe no-op (TEST-NO-OP).
+  if ((searchParams.get('approval') ?? '') === '1') {
+    const result = await testWaApproval()
+    console.log('[wa-selftest:approval]', JSON.stringify(result))
+    return Response.json({ ok: true, ...result })
   }
 
   // Diagnostic: ?inbound=1 → did Twilio itself receive any inbound WhatsApp? Tells a
