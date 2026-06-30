@@ -71,7 +71,7 @@ export function Sidebar() {
     <motion.aside
       animate={{ width: collapsed ? 64 : 220 }}
       transition={{ duration: 0.25, ease: 'easeInOut' }}
-      className="hidden md:flex flex-col bg-card/55 backdrop-blur-2xl border-r border-border-subtle shrink-0 overflow-hidden"
+      className="hidden md:flex flex-col m-3 rounded-[24px] bg-gradient-to-b from-card/75 to-card/45 backdrop-blur-2xl border border-border-subtle shrink-0 overflow-hidden shadow-[0_30px_70px_-28px_rgba(0,0,0,0.7),0_0_0_1px_rgba(224,122,95,0.06),0_0_44px_-12px_rgba(224,122,95,0.20)]"
     >
       <motion.div layout className={`flex items-center px-4 py-5 border-b border-border-subtle gap-2 ${collapsed ? 'justify-center' : ''}`}>
         <div className={`flex items-center min-w-0 ${collapsed ? 'justify-center' : 'flex-1 gap-3'}`}>
