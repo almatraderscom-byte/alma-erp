@@ -833,6 +833,31 @@ model LifestyleExpense {
   @@index([businessId, expType])
 }
 
+/// Office petty-cash fund for ALMA_LIFESTYLE — a single shared cash pool the owner
+/// tops up, and admins draw office advances from. The balance is DERIVED from this
+/// append-only ledger (whole-taka BDT, per the money rule). This is distinct from
+/// the per-staff wallet (EmployeeLedgerEntry); office money is not a staff's salary.
+model OfficeFundEntry {
+  id            String    @id @default(cuid())
+  businessId    String    @default("ALMA_LIFESTYLE")
+  /// TOP_UP / RETURN_IN raise the fund; ADVANCE_OUT / EXPENSE lower it; ADJUSTMENT is signed.
+  type          String
+  /// Whole taka. Positive magnitude; direction comes from `type`. ADJUSTMENT may be negative.
+  amount        Int
+  note          String?   @db.Text
+  /// Optional link to what drove the entry (e.g. office advance id, expense id).
+  refType       String?
+  refId         String?
+  createdById   String?
+  createdByName String?
+  deletedAt     DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([businessId, deletedAt, createdAt(sort: Desc)])
+  @@index([businessId, type])
+  @@index([refType, refId])
+}
+
 model Notification {
   id           String               @id @default(cuid())
   userId       String?

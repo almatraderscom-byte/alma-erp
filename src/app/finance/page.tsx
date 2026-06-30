@@ -34,6 +34,7 @@ export default function FinanceHubPage() {
       actions={(
         <div className="flex flex-wrap gap-2">
           <Link href="/expenses"><Button size="xs">Expenses</Button></Link>
+          <Link href="/finance/office-fund"><Button size="xs">Office Fund</Button></Link>
           <Link href="/payroll"><Button size="xs">Payroll</Button></Link>
         </div>
       )}
