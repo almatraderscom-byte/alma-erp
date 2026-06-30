@@ -5,6 +5,7 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { runIdleWatch, runIdleWatchTest } from '@/agent/lib/idle-detection'
+import { runAbsenceWatchTest } from '@/agent/lib/office-absence'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -22,9 +23,15 @@ export async function GET(req: NextRequest) {
 
   // Optional override for manual testing of a specific camera.
   const deviceId = req.nextUrl.searchParams.get('deviceId') ?? undefined
-  // ?test=1 → one-shot: capture + analyse + push to owner Telegram, ignoring time
-  // windows / thresholds / episode state. For verifying the full chain after setup.
-  const isTest = req.nextUrl.searchParams.get('test') === '1'
+  // ?test=1 → one-shot idle alert; ?test=absence → one-shot office-absence Card 1
+  // (with live ✅/❌ buttons), both bypassing time windows / thresholds / episode
+  // state. For verifying the full chain after setup.
+  const testParam = req.nextUrl.searchParams.get('test')
+  if (testParam === 'absence') {
+    const result = await runAbsenceWatchTest(deviceId)
+    return NextResponse.json({ ok: true, test: 'absence', ...result })
+  }
+  const isTest = testParam === '1'
   const result = isTest ? await runIdleWatchTest(deviceId) : await runIdleWatch(deviceId)
   return NextResponse.json({ ok: true, test: isTest, ...result })
 }

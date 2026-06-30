@@ -262,6 +262,20 @@ export async function runIdleWatch(deviceId = process.env.IMOU_DEVICE_ID ?? ''):
       }
     }
 
+    // Office-absence watch rides the SAME frame: how many people are in the room vs
+    // the expected head-count. Separate concern from idle (off-task) — never throws.
+    try {
+      const { checkOfficeAbsence } = await import('@/agent/lib/office-absence')
+      await checkOfficeAbsence({
+        peopleCount: result.peopleCount ?? 0,
+        snapshotUrl: snap.url,
+        deviceId,
+        now,
+      })
+    } catch (err) {
+      console.warn('[idle-watch] office-absence check failed:', err instanceof Error ? err.message : err)
+    }
+
     return result
   } catch (err) {
     return { ...result, error: err instanceof Error ? err.message : String(err) }

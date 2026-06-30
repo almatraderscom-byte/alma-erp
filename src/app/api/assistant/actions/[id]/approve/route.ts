@@ -1619,6 +1619,85 @@ async function runApprove(
     })
   }
 
+  // ── Office-absence flow ───────────────────────────────────────────────────
+  // Card 1 ✅ হ্যাঁ: owner confirms he sent someone out → offer snooze durations.
+  if (action.type === 'office_absence_confirm') {
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count === 0) return Response.json({ error: 'already_resolved' }, { status: 409 })
+
+    const p = payload as { photoUrl?: string; deviceId?: string }
+    const { sendAbsenceSnoozeOptions } = await import('@/agent/lib/office-absence')
+    const res = await sendAbsenceSnoozeOptions({
+      photoUrl: String(p.photoUrl ?? ''),
+      deviceId: String(p.deviceId ?? ''),
+    })
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: res.ok ? 'executed' : 'failed', result: res.ok ? { askedDuration: true } : { error: res.error } },
+    })
+    if (!res.ok) return Response.json({ error: res.error ?? 'send_failed' }, { status: 502 })
+    return Response.json({ success: true, message: 'Snooze duration options sent.' })
+  }
+
+  // A snooze-duration button → authorise 1 absent for N hours.
+  if (action.type === 'office_absence_snooze') {
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count === 0) return Response.json({ error: 'already_resolved' }, { status: 409 })
+
+    const p = payload as { hours?: number; authorizedAbsent?: number; groupId?: string }
+    const hours = Number(p.hours) > 0 ? Number(p.hours) : 2
+    const { applyAbsenceSnooze, cancelAbsenceSiblings } = await import('@/agent/lib/office-absence')
+    const { until } = await applyAbsenceSnooze(hours, Number(p.authorizedAbsent) || 1)
+    await cancelAbsenceSiblings(String(p.groupId ?? ''), actionId)
+
+    const untilLabel = new Intl.DateTimeFormat('bn-BD', {
+      timeZone: 'Asia/Dhaka', hour: 'numeric', minute: '2-digit', hour12: true,
+    }).format(until)
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', result: { snoozeHours: hours, until: until.toISOString() } },
+    })
+    const { sendOwnerText } = await import('@/agent/lib/telegram-owner-notify')
+    await sendOwnerText(`✅ ঠিক আছে Boss — ${untilLabel} পর্যন্ত ১ জন কম থাকলেও সব ঠিক ধরে নেব। সময় শেষে আবার চেক করব।`)
+    return Response.json({ success: true, snoozeHours: hours, until: until.toISOString() })
+  }
+
+  // A staff-name button → send THAT staffer the camera frame + a "you're absent" nudge.
+  if (action.type === 'office_absence_nudge') {
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: 'pending' },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count === 0) return Response.json({ error: 'already_resolved' }, { status: 409 })
+
+    const p = payload as { staffId?: string; staffName?: string; photoUrl?: string; deviceId?: string; groupId?: string }
+    const { sendAbsenceNudgeToStaff, cancelAbsenceSiblings } = await import('@/agent/lib/office-absence')
+    const res = await sendAbsenceNudgeToStaff({
+      staffId: String(p.staffId ?? ''),
+      staffName: String(p.staffName ?? ''),
+      photoUrl: String(p.photoUrl ?? ''),
+      deviceId: String(p.deviceId ?? ''),
+    })
+    await cancelAbsenceSiblings(String(p.groupId ?? ''), actionId)
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: res.ok ? 'executed' : 'failed', result: res.ok ? { nudgedStaff: p.staffName } : { error: res.error } },
+    })
+    const { sendOwnerText } = await import('@/agent/lib/telegram-owner-notify')
+    if (res.ok) {
+      await sendOwnerText(`📨 ${p.staffName ?? 'স্টাফ'}-কে ছবিসহ মেসেজ পাঠিয়ে দিয়েছি — অফিসে ফিরে কাজ শেষ করতে বলা হয়েছে।`)
+      return Response.json({ success: true, nudged: p.staffName })
+    }
+    await sendOwnerText(`⚠️ ${p.staffName ?? 'স্টাফ'}-কে মেসেজ পাঠানো গেল না (${res.error ?? 'unknown'})।`)
+    return Response.json({ error: res.error ?? 'send_failed' }, { status: 502 })
+  }
+
   return Response.json({ error: 'unknown_action_type', type: action.type }, { status: 400 })
 }
 
