@@ -29,7 +29,7 @@ export function Skeleton({ className }: { className?: string }) {
  * under reduced motion or when disabled — never animates fractional taka mid-flight
  * because callers round/format the integer it returns. Internal to KpiCard.
  */
-function useCountUp(target: number, enabled: boolean): number {
+export function useCountUp(target: number, enabled: boolean): number {
   const reduce = useReducedMotion()
   const spring = useSpring(0, { stiffness: 80, damping: 22, mass: 0.9 })
   const [n, setN] = useState(enabled && !reduce ? 0 : target)
