@@ -132,3 +132,43 @@ export async function processJamaatReply(
       `Just reply conversationally in warm Bangla as Sir. ${guidance}`,
   }
 }
+
+/**
+ * Deterministic, NO-LLM capture for the two quick-reply buttons (জামাতে / একা)
+ * shown under the conscience-nudge question. Tapping a button saves the answer the
+ * same way `processJamaatReply` would — but WITHOUT a head turn, since a free-typed
+ * reply sometimes isn't recognised by the model. Saves to memory, clears the
+ * one-shot pending marker, and returns a warm canned Bangla reply the caller
+ * persists as the agent's answer. Works even if the 30-min marker expired (falls
+ * back to today / unknown waqt) so a late tap is never lost.
+ */
+export async function recordJamaatChoiceDirect(
+  answer: 'jamaat' | 'alone',
+  now = new Date(),
+): Promise<{ reply: string; waqt: string | null }> {
+  const pending = await readPending(now)
+  const dateYmd = pending?.date ?? todayYmdDhaka()
+  const waqt = pending?.waqt ?? null
+  const waqtBn = waqt ? (WAQT_BN[waqt] ?? waqt) : 'নামাজ'
+  const verdict = answer === 'jamaat' ? 'জামাতে' : 'একা'
+
+  try {
+    await createOrUpdateAgentMemory({
+      scope: 'business',
+      key: `salah_jamaat:${dateYmd}:${waqt ?? 'unknown'}`,
+      content: `${dateYmd} তারিখে ${waqtBn} নামাজ Sir ${verdict} পড়েছেন।`,
+      metadata: { type: 'salah_jamaat', date: dateYmd, waqt: waqt ?? 'unknown', jamaat: answer === 'jamaat', businessId: BUSINESS_ID },
+      importance: 1,
+    })
+  } catch (err) {
+    console.warn('[jamaat] direct memory save failed:', err instanceof Error ? err.message : err)
+  }
+  await clearPending().catch(() => {})
+
+  const reply =
+    answer === 'jamaat'
+      ? `আলহামদুলিল্লাহ, Sir! ${waqtBn} জামাতে পড়েছেন — আল্লাহ কবুল করুন। 🤲`
+      : `ঠিক আছে, Sir। আল্লাহ ${waqtBn} কবুল করুন। পরের ওয়াক্তটা ইনশাআল্লাহ জামাতে পড়ার চেষ্টা করবেন — কোনো চাপ নেই। 🤲`
+
+  return { reply, waqt }
+}

@@ -5,6 +5,7 @@ import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import AgentMarkdown from './AgentMarkdown'
 import AgentConfirmCard, { type PendingAction } from './AgentConfirmCard'
 import AgentAskCard, { type AskCard } from './AgentAskCard'
+import { JamaatQuickReply } from './JamaatQuickReply'
 import AgentOpenTasksChip from './AgentOpenTasksChip'
 import type { Artifact } from './AgentArtifactsPanel'
 import toast from 'react-hot-toast'
@@ -893,6 +894,13 @@ function AgentModelSwitchCard({
   )
 }
 
+/** The conscience-nudge jamaat/alone question — detected so we can offer the two
+ *  deterministic quick-reply buttons under it (জামাত + একা + a question mark). */
+function isJamaatQuestion(text?: string): boolean {
+  if (!text) return false
+  return /জামাত/.test(text) && /একা/.test(text) && text.includes('?')
+}
+
 export default function AgentThread({ messages, onArtifactSave, conversationId, onArtifactOpen, onActionApproved, onQuickSend, onModelSwitchResolve, onStartVoiceSession, streamMode, streamVariant, compacting, homePanel, planDrive, onPlanDriveAction, onPlanDriveOpen }: AgentThreadProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -1184,6 +1192,15 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       onResolve={onModelSwitchResolve}
                     />
                   )}
+
+                  {/* Salah jamaat/alone — two deterministic (no-LLM) quick-reply
+                      buttons under the conscience-nudge question, so a tap always
+                      saves the answer (a free-typed reply was sometimes missed). */}
+                  {!isOfficeShift && !msg.streaming && msg.role === 'assistant' &&
+                    conversationId && msg.id === messages[messages.length - 1]?.id &&
+                    isJamaatQuestion(msg.text) && (
+                      <JamaatQuickReply conversationId={conversationId} onAnswered={onActionApproved} />
+                    )}
 
                   {/* "বাকি কাজ" — open-loop tracker at the end of the last reply.
                       Surfaces unfinished chat tasks + pending approvals; Continue
