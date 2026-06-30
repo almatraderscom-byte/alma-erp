@@ -8,11 +8,13 @@ import { PrismaClient } from '@prisma/client'
 import { gasGet } from './gas-client'
 import {
   mapGasCustomer,
+  mapGasExpense,
   mapGasOrder,
   mapGasOrderItem,
   mapGasProduct,
   mapGasStockItem,
   type GasCustomer,
+  type GasExpense,
   type GasOrder,
   type GasProduct,
   type GasStockItem,
@@ -184,6 +186,38 @@ async function importCustomers(): Promise<ImportStats> {
   return stats
 }
 
+async function importExpenses(): Promise<ImportStats> {
+  const stats: ImportStats = { read: 0, upserted: 0, skipped: 0, errors: [] }
+  // Wide range pulls the full ledger history in one GET (gasGet allows 120s).
+  const data = await gasGet<{ expenses?: GasExpense[]; total_expenses?: number }>('finance', {
+    startDate: '2015-01-01',
+    endDate: new Date().toISOString().slice(0, 10),
+  })
+  const expenses = data.expenses ?? []
+  stats.read = expenses.length
+  log(`expenses GAS count=${expenses.length} total_expenses=${data.total_expenses ?? 'n/a'}`)
+
+  for (let i = 0; i < expenses.length; i++) {
+    const raw = expenses[i]
+    const key = String(raw.exp_id ?? `row_${i}`)
+    try {
+      const mapped = mapGasExpense(raw)
+      await prisma.lifestyleExpense.upsert({
+        where: { legacySheetId: mapped.legacySheetId },
+        create: mapped,
+        update: mapped,
+      })
+      stats.upserted++
+      if ((i + 1) % 100 === 0) log(`expenses progress ${i + 1}/${expenses.length}`)
+    } catch (err) {
+      stats.skipped++
+      stats.errors.push({ id: key, reason: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  return stats
+}
+
 async function importPromos(): Promise<ImportStats> {
   const stats: ImportStats = { read: 0, upserted: 0, skipped: 0, errors: [] }
   try {
@@ -269,6 +303,7 @@ async function main() {
   const products = await importProducts()
   const stock = await importStock()
   const customers = await importCustomers()
+  const expenses = await importExpenses()
   const promos = await importPromos()
   await importInvoiceSequence()
 
@@ -276,6 +311,7 @@ async function main() {
   printStats('Products', products)
   printStats('Stock', stock)
   printStats('Customers', customers)
+  printStats('Expenses', expenses)
   printStats('Promos', promos)
 
   const orderItems = await prisma.lifestyleOrderItem.count()

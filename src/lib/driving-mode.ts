@@ -143,6 +143,49 @@ export async function createDrivingModeRequest(input: {
   return { session: linked, approval }
 }
 
+/** Owner/Admin turns a staff member's driving mode ON directly, skipping the
+ *  request→approval cycle (the owner is the approver, so a self-approval is
+ *  redundant). Used when a staff forgets to toggle it themselves. */
+export async function startDrivingModeByOwner(input: {
+  userId: string
+  businessId: string
+  employeeId: string
+  reason?: string | null
+  reviewerId: string
+}): Promise<{ session: DrivingModeSession }> {
+  const profile = await findDrivingModeProfile(input.userId, input.businessId)
+  if (!profile?.enabled) throw new Error('Driving mode is not enabled for this staff member.')
+
+  const existing = await prisma.drivingModeSession.findFirst({
+    where: { userId: input.userId, businessId: input.businessId, status: { in: ['PENDING', 'ACTIVE'] } },
+  })
+  if (existing) {
+    throw new Error(
+      existing.status === 'ACTIVE'
+        ? 'A driving mode session is already active.'
+        : 'A driving mode request is already pending approval.',
+    )
+  }
+
+  const staffId = await resolveStaffIdForUser(input.userId, input.businessId)
+  const reason = (input.reason || '').trim() || 'Driving / out of office'
+  const session = await prisma.drivingModeSession.create({
+    data: {
+      userId: input.userId,
+      businessId: input.businessId,
+      employeeId: input.employeeId,
+      staffId,
+      status: 'ACTIVE',
+      reason,
+      initiatedBy: 'owner',
+      approvedAt: new Date(),
+      reviewedById: input.reviewerId,
+    },
+  })
+  logEvent('info', 'driving_mode.owner_direct_start', { userId: input.userId, businessId: input.businessId, sessionId: session.id })
+  return { session }
+}
+
 export async function processDrivingModeApproval(
   approvalId: string,
   sessionId: string,

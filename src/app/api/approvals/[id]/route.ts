@@ -44,6 +44,7 @@ import { processSalaryCorrectionApproval } from '@/lib/salary-correction'
 import { processNoCheckoutFine } from '@/lib/attendance-checkout-fine'
 import { processExceptionApproval } from '@/lib/attendance-exception'
 import { processLeaveApproval } from '@/lib/attendance-leave'
+import { persistExpenseFromPayload } from '@/lib/finance-expense'
 
 type RouteContext = { params: { id: string } }
 
@@ -308,6 +309,8 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
         body.note,
       )
       response = apiDataSuccess(moduleResult)
+    } else if (approval.module === APPROVAL_MODULES.FINANCE && approval.type === APPROVAL_TYPES.EXPENSE_ADD) {
+      response = await processExpenseAdd(approval, body.action, token.sub, body.note)
     } else if (body.action === 'REJECT') {
       const updated = await resolveApprovalRequestById({ id: approval.id, status: 'REJECTED', actorUserId: token.sub, reason: body.note || 'Rejected' })
       response = apiDataSuccess({ approval: updated, moduleResult: null })
@@ -499,6 +502,44 @@ async function processOrderDelete(
   })
   dispatchApprovalsUpdated()
   return apiDataSuccess({ approval: updated, moduleResult: archived })
+}
+
+async function processExpenseAdd(
+  approval: { id: string; payloadSnapshot: unknown },
+  action: 'APPROVE' | 'REJECT',
+  actorUserId: string,
+  note?: string,
+) {
+  if (action === 'REJECT') {
+    const updated = await resolveApprovalRequestById({
+      id: approval.id,
+      status: 'REJECTED',
+      actorUserId,
+      reason: note || 'Rejected',
+    })
+    dispatchApprovalsUpdated()
+    return apiDataSuccess({ approval: updated, moduleResult: { created: false, rejected: true } })
+  }
+
+  const snapshot = approval.payloadSnapshot && typeof approval.payloadSnapshot === 'object'
+    ? approval.payloadSnapshot as Record<string, unknown>
+    : null
+  if (!snapshot) {
+    return approvalErrorResponse('Expense approval has no saved data to create from.', 400, 'missing_snapshot')
+  }
+
+  const { result, expenseId } = await persistExpenseFromPayload(snapshot)
+  if (result && typeof result === 'object' && 'error' in result && result.error) {
+    return approvalErrorResponse(String(result.error), 400, 'expense_create_failed')
+  }
+  const updated = await resolveApprovalRequestById({
+    id: approval.id,
+    status: 'APPROVED',
+    actorUserId,
+    reason: note || 'Approved',
+  })
+  dispatchApprovalsUpdated()
+  return apiDataSuccess({ approval: updated, moduleResult: { created: true, expenseId, result } })
 }
 
 async function processTradingDelete(

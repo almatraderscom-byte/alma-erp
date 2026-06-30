@@ -1097,3 +1097,39 @@ export async function backfillCustomersFromOrdersInPostgres(businessId = 'ALMA_L
 
   return { ok: true, processed, created, skipped, errors }
 }
+
+/** Append an expense to the Postgres ledger (replaces GAS add_expense). */
+export async function createLifestyleExpenseInPostgres(body: Record<string, unknown>) {
+  const category = String(body.category ?? '').trim()
+  const amount = num(body.amount)
+  if (!category) return { error: 'category required' }
+  if (!Number.isFinite(amount) || amount <= 0) return { error: 'amount must be greater than 0' }
+
+  const dateRaw = String(body.date ?? '').trim()
+  const expenseDate = dateRaw && !Number.isNaN(new Date(dateRaw).getTime()) ? new Date(dateRaw) : new Date()
+  const attachmentId = String(body.receipt_attachment_id ?? '').trim() || null
+  const created = await prisma.lifestyleExpense.create({
+    data: {
+      businessId: String(body.business_id || 'ALMA_LIFESTYLE'),
+      expenseDate,
+      category,
+      subCat: body.sub_cat != null ? String(body.sub_cat) : null,
+      expType: (body.exp_type ?? body.expense_kind) != null ? String(body.exp_type ?? body.expense_kind) : null,
+      title: body.title != null ? String(body.title) : null,
+      description: body.desc != null ? String(body.desc) : null,
+      vendor: body.vendor != null ? String(body.vendor) : null,
+      amount,
+      paymentMethod: (body.payment_method ?? body.payment) != null ? String(body.payment_method ?? body.payment) : null,
+      paymentStatus: body.payment_status != null ? String(body.payment_status) : null,
+      recurring: body.recurring === true || String(body.recurring ?? '') === 'true',
+      notes: (body.notes ?? body.note) != null ? String(body.notes ?? body.note) : null,
+      receiptRef: (body.receipt_ref ?? body.attachment_url) != null ? String(body.receipt_ref ?? body.attachment_url) : null,
+      attachmentId,
+      createdById: String(body.actor_user_id ?? '') || null,
+      createdByName: String(body.actor ?? '') || null,
+      source: 'erp',
+    },
+  })
+
+  return { ok: true, expense_id: created.id }
+}

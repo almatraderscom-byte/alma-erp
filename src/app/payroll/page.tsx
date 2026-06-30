@@ -43,6 +43,7 @@ type MealProfileRowState = {
 type DrivingProfileRow = {
   user: MealProfileUser
   profile: { id: string; enabled: boolean } | null
+  drivingStatus?: 'ACTIVE' | 'PENDING' | null
 }
 
 type DrivingProfileRowState = {
@@ -52,6 +53,8 @@ type DrivingProfileRowState = {
   employeeId: string
   enabled: boolean
   saving: boolean
+  drivingStatus: 'ACTIVE' | 'PENDING' | null
+  toggling: boolean
 }
 
 const PAYROLL_COMPENSATION_TYPES = [
@@ -257,6 +260,8 @@ export default function PayrollPage() {
           employeeId: row.user.employeeIdGas || '',
           enabled: row.profile?.enabled ?? false,
           saving: false,
+          drivingStatus: row.drivingStatus ?? null,
+          toggling: false,
         })),
       )
     } catch (e) {
@@ -299,6 +304,32 @@ export default function PayrollPage() {
     } catch (e) {
       toast.error((e as Error).message || 'Could not save driving mode setting')
       setDrivingRows(prev => prev.map(r => (r.userId === row.userId ? { ...r, saving: false } : r)))
+    }
+  }
+
+  async function toggleDrivingNow(row: DrivingProfileRowState) {
+    if (row.toggling) return
+    const turningOn = row.drivingStatus !== 'ACTIVE'
+    setDrivingRows(prev => prev.map(r => (r.userId === row.userId ? { ...r, toggling: true } : r)))
+    try {
+      const endpoint = turningOn
+        ? '/api/payroll/driving-mode/start'
+        : '/api/payroll/driving-mode/end'
+      const result = await safeFetchJsonWithToast(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_id: business.id, userId: row.userId }),
+      })
+      if (!result.ok) throw new Error(result.error.message)
+      toast.success(turningOn ? `${row.name} এখন ড্রাইভিং মোডে` : `${row.name}-এর ড্রাইভিং মোড বন্ধ করা হলো`)
+      setDrivingRows(prev =>
+        prev.map(r =>
+          r.userId === row.userId ? { ...r, drivingStatus: turningOn ? 'ACTIVE' : null, toggling: false } : r,
+        ),
+      )
+    } catch (e) {
+      toast.error((e as Error).message || 'Could not change driving mode')
+      setDrivingRows(prev => prev.map(r => (r.userId === row.userId ? { ...r, toggling: false } : r)))
     }
   }
 
@@ -848,6 +879,7 @@ export default function PayrollPage() {
                     <th className="py-3 pr-3 font-medium">Employee</th>
                     <th className="py-3 pr-3 font-medium">Phone</th>
                     <th className="py-3 pr-3 text-center font-medium">Enable</th>
+                    <th className="py-3 pr-3 text-center font-medium">Status</th>
                     <th className="py-3 font-medium" />
                   </tr>
                 </thead>
@@ -871,15 +903,36 @@ export default function PayrollPage() {
                           className="h-4 w-4 rounded border-white/[0.1] accent-[#E07A5F]"
                         />
                       </td>
+                      <td className="py-3 pr-3 text-center">
+                        {row.drivingStatus === 'ACTIVE' ? (
+                          <span className="inline-flex items-center rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400">Driving</span>
+                        ) : row.drivingStatus === 'PENDING' ? (
+                          <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-400">Pending</span>
+                        ) : (
+                          <span className="text-muted">—</span>
+                        )}
+                      </td>
                       <td className="py-3 text-right">
-                        <Button
-                          size="xs"
-                          variant="secondary"
-                          disabled={row.saving}
-                          onClick={() => void saveDrivingProfile(row)}
-                        >
-                          {row.saving ? 'Saving…' : 'Save'}
-                        </Button>
+                        <div className="inline-flex items-center gap-2">
+                          {row.enabled && row.drivingStatus !== 'PENDING' && (
+                            <Button
+                              size="xs"
+                              variant={row.drivingStatus === 'ACTIVE' ? 'danger' : 'gold'}
+                              disabled={row.toggling}
+                              onClick={() => void toggleDrivingNow(row)}
+                            >
+                              {row.toggling ? '…' : row.drivingStatus === 'ACTIVE' ? 'End' : 'Drive now'}
+                            </Button>
+                          )}
+                          <Button
+                            size="xs"
+                            variant="secondary"
+                            disabled={row.saving}
+                            onClick={() => void saveDrivingProfile(row)}
+                          >
+                            {row.saving ? 'Saving…' : 'Save'}
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}

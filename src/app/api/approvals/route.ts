@@ -194,6 +194,12 @@ function entityLabel(snapshot: unknown, fallback: string, type?: string) {
     const sign = delta >= 0 ? '+' : ''
     return `${empName} · ${sign}৳${Math.abs(delta).toLocaleString('en-BD')} salary correction`
   }
+  if (type === APPROVAL_TYPES.EXPENSE_ADD) {
+    const category = typeof data.category === 'string' && data.category ? data.category : 'Expense'
+    const vendor = typeof data.vendor === 'string' && data.vendor ? ` · ${data.vendor}` : ''
+    const amt = Number(data.amount ?? 0)
+    return `${category}${vendor} · ৳${amt.toLocaleString('en-BD')}`
+  }
   if (data.kind === 'driving_mode') {
     const who = (typeof data.userName === 'string' && data.userName)
       || (typeof data.employeeId === 'string' ? data.employeeId : fallback)
@@ -229,6 +235,7 @@ function isExecutable(module: string, type: string) {
   return (
     (module === 'ALMA_TRADING' && type === 'TRADE_DELETE') ||
     (module === 'ORDERS_CRM' && type === 'ORDER_DELETE') ||
+    (module === 'FINANCE' && type === 'EXPENSE_ADD') ||
     (module === 'PAYROLL' && [
       'SALARY_ADVANCE',
       'WALLET_ADVANCE',

@@ -322,6 +322,49 @@ export type GasCustomer = {
   notes?: string
 }
 
+export type GasExpense = {
+  exp_id?: string
+  date?: string
+  category?: string
+  business_id?: string
+  sub_cat?: string
+  exp_type?: string
+  title?: string
+  desc?: string
+  vendor?: string
+  amount?: number
+  payment_method?: string
+  payment_status?: string
+  receipt_ref?: string
+  receipt_attachment_id?: string
+  recurring?: boolean
+  notes?: string
+}
+
+export function mapGasExpense(e: GasExpense) {
+  const legacySheetId = String(e.exp_id ?? '').trim()
+  if (!legacySheetId) throw new Error('empty expense exp_id')
+  return {
+    legacySheetId,
+    businessId: String(e.business_id || 'ALMA_LIFESTYLE'),
+    expenseDate: parseRequiredDate(e.date, '2000-01-01'),
+    category: String(e.category ?? ''),
+    subCat: e.sub_cat != null ? String(e.sub_cat) : null,
+    expType: e.exp_type != null ? String(e.exp_type) : null,
+    title: e.title != null ? String(e.title) : null,
+    description: e.desc != null ? String(e.desc) : null,
+    vendor: e.vendor != null ? String(e.vendor) : null,
+    amount: roundMoney(e.amount),
+    paymentMethod: e.payment_method != null ? String(e.payment_method) : null,
+    paymentStatus: e.payment_status != null ? String(e.payment_status) : null,
+    recurring: e.recurring === true,
+    notes: e.notes != null ? String(e.notes) : null,
+    receiptRef: e.receipt_ref != null ? String(e.receipt_ref) : null,
+    attachmentId: e.receipt_attachment_id != null ? String(e.receipt_attachment_id) : null,
+    source: 'gas-import',
+  }
+}
+
 export function mapGasCustomer(c: GasCustomer) {
   const id = String(c.id ?? '').trim()
   const phone = String(c.phone ?? '').trim()

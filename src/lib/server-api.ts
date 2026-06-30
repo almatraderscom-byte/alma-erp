@@ -20,6 +20,7 @@ export async function serverGet<T>(
   route: string,
   params: Record<string, string> = {},
   revalidate = 30,
+  options?: ServerFetchOptions,
 ): Promise<T> {
   const BASE = getBase(), SECRET = getSecret()
   assertConfigured_(BASE, SECRET)
@@ -28,7 +29,7 @@ export async function serverGet<T>(
   url.searchParams.set('secret', SECRET)
   Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== '') url.searchParams.set(k, v) })
 
-  const timeoutMs = DEFAULT_TIMEOUT_MS
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const ctrl  = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
 
