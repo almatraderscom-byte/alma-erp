@@ -1,5 +1,6 @@
 import type {
   LifestyleCustomer,
+  LifestyleExpense,
   LifestyleOrder,
   LifestyleOrderItem,
   LifestyleProduct,
@@ -8,6 +9,7 @@ import type {
 } from '@prisma/client'
 import { roundMoney } from '@/lib/money'
 import type { Customer, Order, OrderItem, StockItem } from '@/types'
+import type { ERPFinanceExpense, ERPFinanceResponse } from '@/types/hr'
 
 function ymd(d: Date | null | undefined): string {
   if (!d) return ''
@@ -170,6 +172,54 @@ export function prismaProductToGas(row: LifestyleProduct) {
     active: row.active,
     notes: row.notes,
     updated_at: row.updatedAt.toISOString(),
+  }
+}
+
+export function prismaExpenseToGas(row: LifestyleExpense): ERPFinanceExpense {
+  const date = ymd(row.expenseDate)
+  return {
+    exp_id: row.legacySheetId || row.id,
+    date,
+    month: date.slice(0, 7),
+    category: row.category,
+    business_id: row.businessId,
+    sub_cat: row.subCat ?? undefined,
+    exp_type: row.expType ?? '',
+    title: row.title ?? row.category,
+    desc: row.description ?? undefined,
+    vendor: row.vendor ?? undefined,
+    amount: row.amount,
+    payment_method: row.paymentMethod ?? undefined,
+    payment_status: row.paymentStatus ?? undefined,
+    receipt_ref: row.receiptRef ?? undefined,
+    receipt_attachment_id: row.attachmentId ?? undefined,
+    recurring: row.recurring,
+    notes: row.notes ?? undefined,
+  }
+}
+
+/** Build the GAS-compatible finance payload from Postgres expense rows (date desc). */
+export function financeResponseFromExpenses(
+  rows: LifestyleExpense[],
+  cashBalance = 0,
+): ERPFinanceResponse {
+  const expenses = rows.map(prismaExpenseToGas)
+  const byCategory: Record<string, number> = {}
+  const byType: Record<string, number> = {}
+  let total = 0
+  for (const e of expenses) {
+    total += e.amount
+    byCategory[e.category || 'Uncategorized'] = (byCategory[e.category || 'Uncategorized'] ?? 0) + e.amount
+    const t = e.exp_type || 'Other'
+    byType[t] = (byType[t] ?? 0) + e.amount
+  }
+  return {
+    total_expenses: roundMoney(total),
+    cash_balance: roundMoney(cashBalance),
+    by_category: byCategory,
+    by_type: byType,
+    expenses,
+    recent_expenses: expenses.slice(0, 10),
   }
 }
 

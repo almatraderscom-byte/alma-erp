@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { resolveWalletScopeBusinessId } from '@/lib/payroll-wallet-access'
-import { createDrivingModeRequest } from '@/lib/driving-mode'
+import { createDrivingModeRequest, startDrivingModeByOwner } from '@/lib/driving-mode'
 import {
   withApiRoute,
   apiDataSuccess,
@@ -41,13 +41,26 @@ export const POST = withApiRoute('payroll.driving_mode.start', async (req: NextR
   }
 
   try {
+    // Owner/Admin starting it for a staff member activates immediately (the owner
+    // is the approver, so no separate approval step). Staff self-start still needs
+    // owner approval.
+    if (startingForOther) {
+      const result = await startDrivingModeByOwner({
+        userId,
+        businessId,
+        employeeId,
+        reason: body.reason,
+        reviewerId: ctx.userId,
+      })
+      return apiDataSuccess(result)
+    }
     const result = await createDrivingModeRequest({
       userId,
       businessId,
       employeeId,
       reason: body.reason,
       userName: user?.name || null,
-      initiatedBy: startingForOther ? 'owner' : 'staff',
+      initiatedBy: 'staff',
     })
     return apiDataSuccess(result)
   } catch (e) {

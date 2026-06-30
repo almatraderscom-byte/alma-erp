@@ -1,8 +1,10 @@
 import { prisma } from '@/lib/prisma'
 import type { Prisma } from '@prisma/client'
+import { serverGet } from '@/lib/server-api'
 import type { Order } from '@/types'
 import {
   customerSummary,
+  financeResponseFromExpenses,
   ordersSummaryFromSlice,
   prismaCustomerToGas,
   prismaOrderToGas,
@@ -11,6 +13,7 @@ import {
   prismaStockToGas,
   stockSummaryFromItems,
 } from '@/lib/lifestyle/prisma-mappers'
+import type { ERPFinanceResponse } from '@/types/hr'
 
 type QueryParams = Record<string, string>
 
@@ -137,6 +140,38 @@ async function readOrderFromSupabase(id: string, p: QueryParams) {
   return { order: prismaOrderToGas(row) }
 }
 
+async function readFinanceFromSupabase(p: QueryParams): Promise<ERPFinanceResponse> {
+  const businessId = p.business_id || 'ALMA_LIFESTYLE'
+  const where: Prisma.LifestyleExpenseWhereInput = { businessId, deletedAt: null }
+  if (p.startDate || p.endDate) {
+    where.expenseDate = {}
+    if (p.startDate) where.expenseDate.gte = new Date(p.startDate)
+    if (p.endDate) where.expenseDate.lte = new Date(`${p.endDate}T23:59:59.999`)
+  }
+  // Expenses come from Postgres (fast). cash_balance ("Ledger cash readout") is
+  // still a Sheet-maintained figure with no Postgres source, so we fetch only that
+  // one number from GAS best-effort with a short timeout — if the Sheet is slow it
+  // falls back to 0 instead of breaking the (now Postgres-backed) expense list.
+  const [rows, cashBalance] = await Promise.all([
+    prisma.lifestyleExpense.findMany({
+      where,
+      orderBy: { expenseDate: 'desc' },
+      take: 2000,
+    }),
+    readGasCashBalance(p),
+  ])
+  return financeResponseFromExpenses(rows, cashBalance)
+}
+
+async function readGasCashBalance(p: QueryParams): Promise<number> {
+  try {
+    const finance = await serverGet<{ cash_balance?: number }>('finance', p, 60, { timeoutMs: 8000 })
+    return Number(finance?.cash_balance ?? 0)
+  } catch {
+    return 0
+  }
+}
+
 /** Postgres-only lifestyle reads (Phase 4 — GAS fallback removed). */
 export async function getLifestyleStock(_p: QueryParams = {}) {
   return readStockFromSupabase()
@@ -148,6 +183,10 @@ export async function getLifestyleProducts(_p: QueryParams = {}) {
 
 export async function getLifestyleCustomers(p: QueryParams = {}) {
   return readCustomersFromSupabase(p)
+}
+
+export async function getLifestyleFinance(p: QueryParams = {}) {
+  return readFinanceFromSupabase(p)
 }
 
 export async function getLifestylePromos(_p: QueryParams = {}) {

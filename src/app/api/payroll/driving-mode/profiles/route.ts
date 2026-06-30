@@ -18,7 +18,7 @@ export const GET = withApiRoute('payroll.driving_mode.profiles.list', async (req
 
   const businessId = resolveWalletScopeBusinessId(ctx.businessIds, url.searchParams.get('business_id'))
 
-  const [profiles, users] = await Promise.all([
+  const [profiles, users, activeSessions] = await Promise.all([
     prisma.drivingModeProfile.findMany({ where: { businessId }, orderBy: { updatedAt: 'desc' } }),
     prisma.user.findMany({
       where: {
@@ -30,10 +30,19 @@ export const GET = withApiRoute('payroll.driving_mode.profiles.list', async (req
       select: { id: true, name: true, email: true, phone: true, employeeIdGas: true, role: true, businessAccess: true },
       orderBy: { name: 'asc' },
     }),
+    prisma.drivingModeSession.findMany({
+      where: { businessId, status: { in: ['ACTIVE', 'PENDING'] } },
+      select: { userId: true, status: true },
+    }),
   ])
 
   const profileByUserId = new Map(profiles.map((p) => [p.userId, p]))
-  const rows = users.map((user) => ({ user, profile: profileByUserId.get(user.id) ?? null }))
+  const sessionByUserId = new Map(activeSessions.map((s) => [s.userId, s.status]))
+  const rows = users.map((user) => ({
+    user,
+    profile: profileByUserId.get(user.id) ?? null,
+    drivingStatus: sessionByUserId.get(user.id) ?? null,
+  }))
 
   return apiDataSuccess({ businessId, rows })
 })

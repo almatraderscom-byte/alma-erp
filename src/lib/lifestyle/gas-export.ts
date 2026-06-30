@@ -4,6 +4,7 @@
 import { prisma } from '@/lib/prisma'
 import {
   prismaCustomerToGas,
+  prismaExpenseToGas,
   prismaOrderToGas,
   prismaProductToGas,
   prismaStockToGas,
@@ -13,23 +14,25 @@ import { logEvent } from '@/lib/logger'
 
 export type GasExportResult = {
   ok: boolean
-  counts: { orders: number; stock: number; products: number; customers: number }
+  counts: { orders: number; stock: number; products: number; customers: number; expenses: number }
   gas?: Record<string, unknown>
   error?: string
 }
 
 export async function buildLifestyleGasSnapshot() {
-  const [orders, stock, products, customers] = await Promise.all([
+  const [orders, stock, products, customers, expenses] = await Promise.all([
     prisma.lifestyleOrder.findMany({ orderBy: { date: 'asc' } }),
     prisma.lifestyleStockItem.findMany({ orderBy: { sku: 'asc' } }),
     prisma.lifestyleProduct.findMany({ orderBy: { sku: 'asc' } }),
     prisma.lifestyleCustomer.findMany({ orderBy: { id: 'asc' } }),
+    prisma.lifestyleExpense.findMany({ where: { deletedAt: null }, orderBy: { expenseDate: 'asc' } }),
   ])
   return {
     orders: orders.map(prismaOrderToGas),
     stock: stock.map(prismaStockToGas),
     products: products.map(prismaProductToGas),
     customers: customers.map(prismaCustomerToGas),
+    expenses: expenses.map(prismaExpenseToGas),
     exported_at: new Date().toISOString(),
   }
 }
@@ -41,6 +44,7 @@ export async function exportLifestyleSnapshotToGas(): Promise<GasExportResult> {
     stock: snapshot.stock.length,
     products: snapshot.products.length,
     customers: snapshot.customers.length,
+    expenses: snapshot.expenses.length,
   }
   try {
     const gas = await serverPost<Record<string, unknown>>('postgres_snapshot_sync', snapshot, {

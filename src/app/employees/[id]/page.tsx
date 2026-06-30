@@ -153,6 +153,7 @@ export default function EmployeeDetailPage() {
   const todayIso = useMemo(() => new Date().toISOString().slice(0, 10), [])
   const [wallet, setWallet] = useState<EmployeeWalletResponse | null>(null)
   const [walletLoading, setWalletLoading] = useState(true)
+  const [showBalanceNote, setShowBalanceNote] = useState(false)
   const slipPeriodOptions = useMemo(() => salarySlipPeriodOptions(), [])
   const [slipPeriodYm, setSlipPeriodYm] = useState(() => slipPeriodOptions.current)
   const [attendance, setAttendance] = useState<EmployeeAttendanceResponse | null>(null)
@@ -590,9 +591,25 @@ export default function EmployeeDetailPage() {
                 <p className="font-mono text-lg font-bold text-cream">৳ {Number(wallet.summary.lifetimeWithdrawn).toLocaleString('en-BD')}</p>
                 <p className="text-[10px] text-muted mt-0.5">Withdrawn</p>
               </div>
-              <div className="text-center">
-                <p className="font-mono text-lg font-bold text-emerald-600">৳ {Number(wallet.summary.currentBalance).toLocaleString('en-BD')}</p>
-                <p className="text-[10px] text-muted mt-0.5">Current Balance</p>
+              <div className="text-center relative">
+                <button
+                  type="button"
+                  onClick={() => setShowBalanceNote(v => !v)}
+                  className="w-full focus:outline-none cursor-pointer"
+                  title="বিস্তারিত দেখতে ক্লিক করুন"
+                >
+                  <p className={`font-mono text-lg font-bold ${Number(wallet.summary.currentBalance) < 0 ? 'text-red-500' : 'text-emerald-600'}`}>
+                    ৳ {Number(wallet.summary.currentBalance).toLocaleString('en-BD')}
+                  </p>
+                  <p className="text-[10px] text-muted mt-0.5">Current Balance</p>
+                </button>
+                {showBalanceNote && (
+                  <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 z-10 w-44 rounded-lg border border-white/10 bg-card px-2.5 py-1.5 text-[11px] leading-snug text-cream shadow-lg">
+                    {Number(wallet.summary.currentBalance) < 0
+                      ? 'এটা company আপনার থেকে পায়'
+                      : 'এটা আপনি company থেকে পাবেন'}
+                  </div>
+                )}
               </div>
             </div>
           )}

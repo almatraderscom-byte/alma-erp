@@ -7,14 +7,23 @@ import { notifyRole } from '@/lib/notifications'
 import { logEvent } from '@/lib/logger'
 import { apiFailure } from '@/lib/safe-api-response'
 import { TRADING_BUSINESS_ID, numberFromDecimal } from '@/lib/trading'
+import { getLifestyleFinance } from '@/lib/lifestyle/read'
+import { createLifestyleExpenseInPostgres } from '@/lib/lifestyle/write'
 
 export const revalidate = 0
+
+const LIFESTYLE_BUSINESS_ID = 'ALMA_LIFESTYLE'
 
 export async function GET(req: NextRequest) {
   const p = Object.fromEntries(new URL(req.url).searchParams)
   try {
     if (p.business_id === TRADING_BUSINESS_ID) {
       return NextResponse.json(await tradingFinanceLedger(p), {
+        headers: { 'Cache-Control': 'private, no-store' },
+      })
+    }
+    if (!p.business_id || p.business_id === LIFESTYLE_BUSINESS_ID) {
+      return NextResponse.json(await getLifestyleFinance(p), {
         headers: { 'Cache-Control': 'private, no-store' },
       })
     }
@@ -87,7 +96,11 @@ function financeDateRange(params: Record<string, string>) {
 export async function POST(req: NextRequest) {
   try {
     const raw = (await req.json()) as Record<string, unknown>
-    const result = await serverPost('add_expense', await mergeActorPayload(req, raw))
+    const payload = await mergeActorPayload(req, raw)
+    const businessId = String(raw.business_id || LIFESTYLE_BUSINESS_ID)
+    const result = businessId === LIFESTYLE_BUSINESS_ID
+      ? await createLifestyleExpenseInPostgres(payload)
+      : await serverPost('add_expense', payload)
     const attachmentId = String(raw.receipt_attachment_id || '').trim()
     const expenseId = String((result as { expense_id?: string; exp_id?: string }).expense_id || (result as { exp_id?: string }).exp_id || '')
     if (attachmentId && expenseId) {
@@ -96,7 +109,6 @@ export async function POST(req: NextRequest) {
         data: { expenseId },
       })
     }
-    const businessId = String(raw.business_id || 'ALMA_LIFESTYLE')
     const amount = Number(raw.amount || 0)
     const category = String(raw.category || 'Expense')
     void Promise.all([
