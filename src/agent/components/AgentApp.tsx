@@ -14,6 +14,7 @@ import { useMediaQuery } from '@/agent/hooks/useMediaQuery'
 import { AgentConversationSkeleton } from '@/agent/components/AgentThinkingIndicator'
 import { toolDisplay } from '@/agent/lib/tool-labels'
 import { cn } from '@/lib/utils'
+import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { type PlanDrivePanelData, type PlanDriveAction } from '@/agent/components/monitor/PlanDriveTimeline'
 
 interface AgentAppProps {
@@ -1223,9 +1224,13 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     // The turn keeps running server-side after the app backgrounds, so "stop" must
     // actually cancel it on the server (it wastes tokens otherwise). Confirm first —
     // the owner may prefer to let it finish in the background instead.
-    const ok = typeof window === 'undefined'
-      ? true
-      : window.confirm('server-side কাজ থামাবেন? টোকেন wasted হবে। (চাইলে ব্যাকগ্রাউন্ডে শেষ হতে দিন)')
+    const ok = await confirmDialog({
+      title: 'কাজ থামাবেন?',
+      message: 'server-side কাজ থামালে এ পর্যন্ত খরচ হওয়া টোকেন wasted হবে। চাইলে ব্যাকগ্রাউন্ডে শেষ হতে দিন।',
+      confirmLabel: 'থামান',
+      cancelLabel: 'চলতে দিন',
+      danger: true,
+    })
     if (!ok) return
     try {
       await fetch(`/api/assistant/turn/${turnId}/cancel`, { method: 'POST' })

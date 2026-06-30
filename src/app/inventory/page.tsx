@@ -9,6 +9,7 @@ import { PageHeader, Card, KpiCard, Button, SearchInput, Select, Progress, Skele
 import { PageEnter } from '@/components/layout/AgentAccess'
 import { fmt } from '@/lib/utils'
 import { api, type CreateProductInput } from '@/lib/api'
+import { promptDialog } from '@/components/ui/prompt-dialog'
 import toast from 'react-hot-toast'
 import type { StockItem } from '@/types'
 
@@ -190,19 +191,42 @@ export default function InventoryPage() {
   }, [pendingInventoryAction, refreshInventory])
 
   const adjustStock = useCallback(async (sku: string, current: number, buyingPrice?: number) => {
-    const next = window.prompt('New stock quantity', String(current))
+    const next = await promptDialog({
+      title: 'New stock quantity',
+      defaultValue: String(current),
+      inputMode: 'numeric',
+      confirmLabel: 'Next',
+      validate: (v) => {
+        const n = Number(v)
+        return Number.isFinite(n) && n >= 0 ? null : '0 বা তার বেশি একটি সংখ্যা দিন'
+      },
+    })
     if (next == null) return
     const qty = Number(next.trim())
     if (!Number.isFinite(qty) || qty < 0) {
       toast.error('Enter a valid stock quantity (0 or more)')
       return
     }
-    const reason = window.prompt('Adjustment reason: damaged, lost, manual correction, supplier update, return restock', 'manual correction') || 'manual correction'
+    const reason = (await promptDialog({
+      title: 'Adjustment reason',
+      message: 'damaged, lost, manual correction, supplier update, return restock',
+      defaultValue: 'manual correction',
+      confirmLabel: 'Save',
+    })) || 'manual correction'
     await mutateInventory({ action: 'adjust', sku, new_stock: qty, buying_price: buyingPrice, reason })
   }, [mutateInventory])
 
   const updateBuyingPrice = useCallback(async (sku: string, current?: number) => {
-    const next = window.prompt('New buying price', String(current || 0))
+    const next = await promptDialog({
+      title: 'New buying price',
+      defaultValue: String(current || 0),
+      inputMode: 'decimal',
+      confirmLabel: 'Save',
+      validate: (v) => {
+        const n = Number(v)
+        return Number.isFinite(n) && n >= 0 ? null : '0 বা তার বেশি একটি দাম দিন'
+      },
+    })
     if (next == null) return
     const price = Number(next.trim())
     if (!Number.isFinite(price) || price < 0) {

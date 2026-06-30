@@ -5,6 +5,7 @@ import { useRegisterMobileRefresh } from '@/hooks/useRegisterMobileRefresh'
 import toast from 'react-hot-toast'
 import { Button, Card, Empty, Skeleton } from '@/components/ui'
 import { confirmDialog } from '@/components/ui/confirm-dialog'
+import { promptDialog } from '@/components/ui/prompt-dialog'
 import { EmployeeAvatar } from '@/components/profile/EmployeeAvatar'
 import { TradingTelegramLiveFeed } from '@/components/trading/TradingTelegramLiveFeed'
 import { TelegramAliasesTab, TelegramUsersTab } from '@/components/trading/TradingTelegramMappingTabs'
@@ -178,7 +179,7 @@ export function TradingTelegramAdmin({
   }
 
   async function requestDeleteDraft(id: string) {
-    const reason = window.prompt('Reason for delete request?')?.trim()
+    const reason = (await promptDialog({ title: 'Reason for delete request?', placeholder: 'Why delete this draft?', confirmLabel: 'Request delete' }))?.trim()
     if (!reason) return
     setBusy(true)
     const res = await fetch(`/api/trading/telegram/drafts/${id}`, {
@@ -198,7 +199,7 @@ export function TradingTelegramAdmin({
 
   async function bulkReject() {
     if (!selected.size) return
-    const reason = window.prompt('Bulk reject reason?') || 'Rejected'
+    const reason = (await promptDialog({ title: 'Bulk reject reason?', defaultValue: 'Rejected', confirmLabel: 'Reject' })) || 'Rejected'
     setBusy(true)
     const res = await fetch('/api/trading/telegram/drafts/bulk', {
       method: 'POST',
@@ -258,7 +259,7 @@ export function TradingTelegramAdmin({
   }
 
   async function rejectDraft(id: string) {
-    const reason = window.prompt('Reject reason?') || 'Rejected'
+    const reason = (await promptDialog({ title: 'Reject reason?', defaultValue: 'Rejected', confirmLabel: 'Reject' })) || 'Rejected'
     setBusy(true)
     const res = await fetch(`/api/trading/telegram/drafts/${id}`, {
       method: 'PATCH',
