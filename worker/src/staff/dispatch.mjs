@@ -10,6 +10,7 @@ import { sendDispatchVoiceHeadline } from './staff-voice-nudge.mjs'
 import { taskDoneCallbackData, taskDetailsCallbackData } from '../telegram/callback-data.mjs'
 import { buildContextShot } from './context-shot.mjs'
 import { sendNtfyToTopic } from '../notify/ntfy.mjs'
+import { sendStaffWhatsApp } from './wa-notify.mjs'
 import { staffNtfyTopic } from './staff-fields.mjs'
 import { lunchButtonRow } from './lunch.mjs'
 import { isStaffOnLeaveSb } from './leave.mjs'
@@ -242,6 +243,14 @@ export async function dispatchTasksToStaff({ supabase, bot, date, taskIds }) {
           console.log(`[dispatch] ntfy sent to ${staffName} topic=${topic}`)
         }
       }
+
+      // Best-effort WhatsApp notice (dormant unless STAFF_WHATSAPP_ENABLED + creds set).
+      try {
+        const waMsg = isUpdate
+          ? `${staffName}, ${staffTasks.length}টি নতুন কাজ যোগ হয়েছে (মোট ${combinedTasks.length}টি)। বিস্তারিত Telegram/অ্যাপে দেখুন।`
+          : `${staffName}, আজকের ${combinedTasks.length}টি কাজ দেওয়া হয়েছে। বিস্তারিত Telegram/অ্যাপে দেখুন।`
+        await sendStaffWhatsApp({ supabase, staffId: staff.id, text: waMsg })
+      } catch { /* never break Telegram dispatch */ }
     } catch (err) {
       console.warn(`[dispatch] Telegram failed for ${staffName} (${chatId}):`, err.message)
       failures.push({

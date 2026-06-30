@@ -5,6 +5,7 @@
 import { loggedSendToStaff } from '../telegram/logged-send.mjs'
 import { prepareStaffOutboundMessage } from '../staff/alma-team-voice.mjs'
 import { sendVoiceMessage } from '../telegram/voice.mjs'
+import { sendStaffWhatsApp } from './wa-notify.mjs'
 import { createClient } from '@supabase/supabase-js'
 
 function sb() {
@@ -57,6 +58,13 @@ export async function sendStaffAnnouncement({ bot, payload }) {
           console.warn(`[announcement] TTS failed for ${name}:`, ttsErr.message)
         }
       }
+
+      // Best-effort WhatsApp copy (dormant unless STAFF_WHATSAPP_ENABLED + creds set).
+      try {
+        const wa = await sendStaffWhatsApp({ supabase, staffId: id, text: message })
+        if (wa.sent) console.log(`[announcement] WhatsApp also sent to ${name}`)
+      } catch { /* never break Telegram delivery */ }
+
       sentCount++
     } catch (err) {
       console.warn(`[announcement] Failed to send to ${name} (${chatId}):`, err.message)
