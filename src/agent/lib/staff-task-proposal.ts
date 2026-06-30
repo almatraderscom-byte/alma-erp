@@ -15,6 +15,7 @@ import type { WebsiteProductSummary } from '@/lib/website/types'
 import { getRecentPosts, resolvePageId } from '@/agent/lib/meta'
 import { trackContentTaskOutcomes } from '@/lib/outcome-wiring'
 import { buildStaffFriendlyDetail } from '@/agent/lib/staff-task-format'
+import { getActiveDrivingStaffIds } from '@/lib/driving-mode'
 import type { Order } from '@/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -794,11 +795,15 @@ function buildStaffMessage(args: {
 
 export async function buildStaffTaskProposal(dateYmd = todayYmdDhaka()) {
   // Lifestyle staff only — Trading staff are handled by buildTradingTaskProposal.
-  const staffList = await db.agentStaff.findMany({
+  const allStaff = await db.agentStaff.findMany({
     where: { active: true, businessId: 'ALMA_LIFESTYLE' },
     select: { id: true, name: true, role: true, telegramChatId: true },
     orderBy: { name: 'asc' },
   })
+
+  // Staff currently in driving mode are out of office — don't propose work for them.
+  const drivingIds = await getActiveDrivingStaffIds('ALMA_LIFESTYLE')
+  const staffList = allStaff.filter((s: { id: string }) => !drivingIds.has(s.id))
 
   if (!staffList.length) {
     return { success: false as const, error: 'কোনো active staff পাওয়া যায়নি' }
