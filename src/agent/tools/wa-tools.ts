@@ -1,6 +1,6 @@
 import type { AgentTool } from './registry'
 import { prisma } from '@/lib/prisma'
-import { sendTwilioWaText, twilioWaConfigured } from '@/agent/lib/wa/twilio-wa'
+import { sendTwilioWaText, placeTwilioWaCall, twilioWaConfigured } from '@/agent/lib/wa/twilio-wa'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -163,4 +163,67 @@ const get_wa_inbox: AgentTool = {
   },
 }
 
-export const WA_TOOLS: AgentTool[] = [send_whatsapp, get_wa_inbox]
+/**
+ * Place a ONE-WAY WhatsApp voice call (Twilio): the agent speaks the reminder and
+ * hangs up — it does NOT listen. Like outbound_phone_call but on WhatsApp. Use when
+ * Sir says "WhatsApp-এ কল করে মনে করিয়ে দাও / call করে বলো"。 Recipient = phone OR a
+ * staff/employee NAME (resolved from the ERP profile, same as send_whatsapp).
+ *
+ * Dormant + DOUBLE-gated: Twilio creds AND WHATSAPP_CALL_ENABLED=true. Beyond that,
+ * WhatsApp's own rules require Business Calling enabled on the sender AND the
+ * recipient to have granted call permission — until both are true Twilio rejects
+ * the call and the agent surfaces that error verbatim.
+ */
+const whatsapp_call: AgentTool = {
+  name: 'whatsapp_call',
+  description:
+    'Places a ONE-WAY WhatsApp voice call (Twilio) that SPEAKS a short reminder/message then hangs up — ' +
+    'the agent does not listen or take input. Use when Sir asks to CALL someone on WhatsApp to remind them ' +
+    '(e.g. "Eyafi-কে WhatsApp-এ কল করে বলো বস কল করতে"). ' +
+    'to = phone in international format (+8801…) OR a staff/employee NAME (resolved from the ERP profile). ' +
+    'message = what to say (kept short). Owner-directed reminders only. ' +
+    'NOTE: WhatsApp calling needs Business Calling enabled on the sender AND the recipient must have granted ' +
+    'call permission — otherwise the call is rejected by WhatsApp.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      to: { type: 'string', description: 'Recipient: phone (+8801…) OR a staff/employee name to look up' },
+      message: { type: 'string', description: 'What the call should say (kept short, max ~600 chars)' },
+    },
+    required: ['to', 'message'],
+  },
+  handler: async (input) => {
+    const rawTo = String(input.to ?? '').trim()
+    const message = String(input.message ?? '').trim()
+    if (!rawTo || !message) return { success: false, error: 'to ও message — দুটোই দরকার।' }
+    if (!twilioWaConfigured()) {
+      return {
+        success: false,
+        error:
+          'WhatsApp এখনো setup হয়নি — Twilio WhatsApp creds সেট করা নেই (TWILIO_WHATSAPP_FROM)। Sir-কে বলুন Twilio setup শেষ করে credentials দিতে।',
+      }
+    }
+    if (process.env.WHATSAPP_CALL_ENABLED !== 'true') {
+      return {
+        success: false,
+        error:
+          'WhatsApp কল এখন বন্ধ আছে (kill switch)। চালু করতে আগে Twilio-তে WhatsApp Business Calling enable করুন, তারপর WHATSAPP_CALL_ENABLED=true সেট করুন।',
+      }
+    }
+
+    const businessId = input.businessId === 'ALMA_TRADING' ? 'ALMA_TRADING' : 'ALMA_LIFESTYLE'
+    const to = await resolveRecipientPhone(rawTo, businessId)
+    if (!to) {
+      return {
+        success: false,
+        error: `"${rawTo}"-এর WhatsApp নম্বর প্রোফাইলে পাওয়া যায়নি। নম্বরটা সরাসরি দিন (+8801…) অথবা স্টাফের ERP প্রোফাইলে ফোন নম্বর যোগ করুন।`,
+      }
+    }
+
+    const res = await placeTwilioWaCall({ to, message })
+    if (res.error) return { success: false, error: `WhatsApp কল করা যায়নি: ${res.error}` }
+    return { success: true, data: { sid: res.sid, to, resolvedFrom: looksLikePhone(rawTo) ? 'number' : 'name', called: true } }
+  },
+}
+
+export const WA_TOOLS: AgentTool[] = [send_whatsapp, get_wa_inbox, whatsapp_call]

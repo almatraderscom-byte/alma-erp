@@ -85,6 +85,56 @@ export async function sendTwilioWaMedia(input: {
   return twilioSendMessage(form)
 }
 
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+/**
+ * Place a ONE-WAY WhatsApp voice call (Twilio Programmable Voice over WhatsApp) that
+ * speaks `message` then hangs up — the agent does NOT listen. Used for reminders.
+ *
+ * PREREQUISITES (WhatsApp rules — the call will fail at Twilio until both are met):
+ *  1. WhatsApp Business Calling must be ENABLED on the sender (voice-activated).
+ *  2. The recipient must have GRANTED call permission (anti-spam) — businesses can't
+ *     cold-call a WhatsApp user.
+ * Dormant + double-gated: configured creds AND WHATSAPP_CALL_ENABLED=true.
+ *
+ * NOTE: v1 uses TwiML <Say> (limited Bangla pronunciation). Bangla audio via
+ * <Play> + Google TTS is a follow-up once live calling is verified working.
+ */
+export async function placeTwilioWaCall(input: { to: string; message: string }): Promise<{ sid?: string; error?: string }> {
+  if (!twilioWaConfigured()) return { error: 'Twilio WhatsApp not configured (set TWILIO_WHATSAPP_FROM).' }
+  if (process.env.WHATSAPP_CALL_ENABLED !== 'true') {
+    return { error: 'WhatsApp calling is off (kill switch). Enable WhatsApp Business Calling on the sender, then set WHATSAPP_CALL_ENABLED=true.' }
+  }
+  const sid = process.env.TWILIO_ACCOUNT_SID ?? ''
+  const token = process.env.TWILIO_AUTH_TOKEN ?? ''
+  const auth = Buffer.from(`${sid}:${token}`).toString('base64')
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?><Response><Say>${escapeXml(input.message.slice(0, 600))}</Say></Response>`
+  try {
+    const res = await fetch(`${TWILIO_API}/Accounts/${sid}/Calls.json`, {
+      method: 'POST',
+      headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        To: toWhatsAppAddress(input.to),
+        From: toWhatsAppAddress(process.env.TWILIO_WHATSAPP_FROM ?? ''),
+        Twiml: twiml,
+      }).toString(),
+      signal: AbortSignal.timeout(20_000),
+    })
+    const data = (await res.json().catch(() => ({}))) as { sid?: string; message?: string }
+    if (!res.ok) return { error: data.message ?? `Twilio call HTTP ${res.status}` }
+    return { sid: data.sid }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 /**
  * Validate Twilio's `X-Twilio-Signature` for an inbound webhook: base64 of
  * HMAC-SHA1(authToken, fullUrl + each POST param key+value sorted by key).

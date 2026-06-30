@@ -33,6 +33,7 @@ export const TOOL_LABELS: Record<string, { label: string; icon: string; color: s
   publish_to_instagram: { label: 'Instagram পোস্ট তৈরি করছি', icon: '📸', color: '#e1306c' },
   send_whatsapp: { label: 'WhatsApp মেসেজ পাঠাচ্ছি', icon: '💬', color: '#25D366' },
   get_wa_inbox: { label: 'WhatsApp ইনবক্স দেখছি', icon: '💬', color: '#25D366' },
+  whatsapp_call: { label: 'WhatsApp-এ কল করছি', icon: '📞', color: '#25D366' },
   launch_campaign: { label: 'নতুন ক্যাম্পেইন তৈরি করছি', icon: '🚀', color: '#e1306c' },
   list_audiences: { label: 'Audience তালিকা দেখছি', icon: '🎯', color: '#e1306c' },
   create_retargeting_audience: { label: 'রিটার্গেটিং audience বানাচ্ছি', icon: '🎯', color: '#e1306c' },
