@@ -12,6 +12,7 @@ import { useActor } from '@/contexts/ActorContext'
 import type { TradingAccount, TradingBkashDailySummary, TradingCapitalEntry, TradingDailySummary, TradingExpense, TradingMutationResponse, TradingPartnershipSettlement, TradingPerformanceScreenshot, TradingSummary, TradingTrade, TradingTradeActionInput } from '@/types/trading'
 import { money, signedClass, statusClass } from '@/components/trading/trading-utils'
 import { optimizeTradingScreenshot } from '@/lib/trading-screenshot'
+import { roundMoney } from '@/lib/money'
 import { invalidateQueryCache } from '@/hooks/useQuery'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 
@@ -576,10 +577,10 @@ function DailySummaryPanel({ accountId, rows, onCreated }: { accountId: string; 
   const [totalProfitBdt, setTotalProfitBdt] = useState('')
   const [totalLossBdt, setTotalLossBdt] = useState('')
   const [notes, setNotes] = useState('')
-  const netResult = Number(totalProfitBdt || 0) - Number(totalLossBdt || 0)
+  const netResult = roundMoney(Number(totalProfitBdt || 0) - Number(totalLossBdt || 0))
 
   async function submit() {
-    const res = await mutation.mutate({ tradingAccountId: accountId, summaryDate, totalOrders: Number(totalOrders || 0), totalProfitBdt: Number(totalProfitBdt || 0), totalLossBdt: Number(totalLossBdt || 0), notes })
+    const res = await mutation.mutate({ tradingAccountId: accountId, summaryDate, totalOrders: Number(totalOrders || 0), totalProfitBdt: roundMoney(Number(totalProfitBdt || 0)), totalLossBdt: roundMoney(Number(totalLossBdt || 0)), notes })
     if (!res) return
     onCreated(res); setTotalOrders(''); setTotalProfitBdt(''); setTotalLossBdt(''); setNotes('')
   }

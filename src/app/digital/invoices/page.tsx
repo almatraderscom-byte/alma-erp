@@ -9,6 +9,7 @@ import { useActor } from '@/contexts/ActorContext'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { DateRangeFilter } from '@/components/date-filter/DateRangeFilter'
 import { can } from '@/lib/roles'
+import { roundMoney } from '@/lib/money'
 const PdfPreviewModal = dynamic(
   () => import('@/components/pdf/PdfPreviewModal').then(m => m.PdfPreviewModal),
   { ssr: false },
@@ -71,7 +72,7 @@ export default function DigitalInvoicesPage() {
     if (!form.client_name || !form.amount) { toast.error('Client and amount required'); return }
     const r = await create({
       ...form,
-      amount: Number(form.amount),
+      amount: roundMoney(Number(form.amount)),
       status: 'Sent',
       invoice_type: form.invoice_type as 'one-time' | 'recurring',
     })
@@ -89,7 +90,7 @@ export default function DigitalInvoicesPage() {
   }
 
   async function handlePartialPay(inv: { id: string; client_id: string; client_name: string }) {
-    const amount = Number(payAmount)
+    const amount = roundMoney(Number(payAmount))
     if (!amount || amount <= 0) { toast.error('Enter amount'); return }
     const r = await recordPay({
       invoice_id: inv.id,

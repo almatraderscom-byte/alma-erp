@@ -9,6 +9,7 @@ import { Card, KpiCard, Skeleton, Empty, Button, KPI_AUTO_GRID } from '@/compone
 import { PageEnter } from '@/components/layout/AgentAccess'
 import { useActor } from '@/contexts/ActorContext'
 import { can } from '@/lib/roles'
+import { roundMoney } from '@/lib/money'
 import { useBusiness } from '@/contexts/BusinessContext'
 const _stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
 const _fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] } } }
@@ -198,7 +199,7 @@ export default function PayrollPage() {
 
   async function saveMealProfile(row: MealProfileRowState) {
     if (row.saving) return
-    const amount = Number(row.amountBdt)
+    const amount = roundMoney(Number(row.amountBdt))
     if (row.enabled && (!Number.isFinite(amount) || amount <= 0)) {
       toast.error('Enter a valid amount (BDT) before enabling')
       return
@@ -336,7 +337,7 @@ export default function PayrollPage() {
   async function submitReview() {
     if (!review || reviewBusy) return
     const approvedAmount = review.action === 'APPROVE'
-      ? Number(review.approvedAmount || review.requestedAmount)
+      ? roundMoney(Number(review.approvedAmount || review.requestedAmount))
       : undefined
     if (review.action === 'APPROVE' && (!approvedAmount || approvedAmount <= 0)) {
       toast.error('Enter a valid approved amount')
@@ -418,7 +419,7 @@ export default function PayrollPage() {
 
   async function submitCompensation(e: React.FormEvent) {
     e.preventDefault()
-    const amount = Number(compForm.amount)
+    const amount = roundMoney(Number(compForm.amount))
     if (!compForm.employeeId || !Number.isFinite(amount) || amount === 0) {
       toast.error('Employee and non-zero amount required')
       return

@@ -8,6 +8,7 @@ import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
 import { Button, Card, Empty, Input, Skeleton } from '@/components/ui'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { isSystemOwner, normalizeAlmaRole } from '@/lib/roles'
+import { roundMoney } from '@/lib/money'
 import type { EmployeeWalletResponse, WalletRequestDto } from '@/types/payroll-wallet'
 import { FaceVerificationCheckIn } from '@/components/attendance/FaceVerificationCheckIn'
 import { needsSelfieVerification, SelfieVerificationModal } from '@/components/attendance/SelfieVerificationModal'
@@ -1532,7 +1533,7 @@ function WalletRequestCard({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
-    const amt = Number(amount)
+    const amt = roundMoney(Number(amount))
     const r = reason.trim()
     if (!amt || amt <= 0 || !r) {
       toast.error('Amount and reason required')
