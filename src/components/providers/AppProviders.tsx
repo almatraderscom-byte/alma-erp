@@ -20,6 +20,7 @@ import { PwaBootstrap } from '@/components/providers/PwaBootstrap'
 import { AppBootRecovery, AppReadyMarker } from '@/components/providers/AppBootRecovery'
 import { LoadingOverlay } from '@/components/loading/LoadingOverlay'
 import { RouteTransitionLoader } from '@/components/loading/RouteTransitionLoader'
+import { PageFade } from '@/components/layout/PageFade'
 import { MobileRefreshProvider } from '@/contexts/MobileRefreshContext'
 import { ApprovalCountProvider } from '@/contexts/ApprovalCountContext'
 import { MobilePullToRefresh } from '@/components/mobile/MobilePullToRefresh'
@@ -107,10 +108,10 @@ function ErpChrome({ children }: { children: ReactNode }) {
             )}
           >
             {isAgent ? (
-              <div className="flex h-full min-h-0 min-w-0 flex-col">{children}</div>
+              <div data-page-fade className="flex h-full min-h-0 min-w-0 flex-col">{children}</div>
             ) : (
               <MobilePullToRefresh scrollRef={mainScrollRef}>
-                <div className="min-w-0 max-w-full">{children}</div>
+                <div data-page-fade className="min-w-0 max-w-full">{children}</div>
                 <MobileBottomSpacer />
               </MobilePullToRefresh>
             )}
@@ -119,6 +120,7 @@ function ErpChrome({ children }: { children: ReactNode }) {
         <MobileNavBar />
         <AgentFab />
         <RouteTransitionLoader />
+        <PageFade />
         <RoutePrefetcher />
         <OneSignalPushManager />
         <NotificationSoundBridge />
