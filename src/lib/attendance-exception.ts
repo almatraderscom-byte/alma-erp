@@ -23,6 +23,31 @@ import { logEvent } from '@/lib/logger'
  * only consult an exception when checkoutRulesEnabled(businessId) is already on.
  */
 
+/**
+ * Purpose of an exception. The scope decides which rules a waiver unlocks:
+ *   - FULL_DAY       → all attendance rules waived for the day (legacy default)
+ *   - EARLY_CHECKOUT → may leave before 8 PM / field work (checkout unlocked)
+ *   - LATE_ARRIVAL   → came in late; explains the lateness only. It must NOT
+ *                      unlock an early checkout — that was the bug.
+ */
+export type ExceptionScope = 'FULL_DAY' | 'EARLY_CHECKOUT' | 'LATE_ARRIVAL'
+const EXCEPTION_SCOPES: ExceptionScope[] = ['FULL_DAY', 'EARLY_CHECKOUT', 'LATE_ARRIVAL']
+
+// Scopes whose approval waives the checkout rules (time/location/task) and the
+// no-checkout fine. A LATE_ARRIVAL waiver is deliberately absent here.
+const CHECKOUT_WAIVING_SCOPES = new Set<ExceptionScope>(['FULL_DAY', 'EARLY_CHECKOUT'])
+
+export function normalizeExceptionScope(value: unknown): ExceptionScope {
+  const v = String(value || '').trim().toUpperCase()
+  return (EXCEPTION_SCOPES as string[]).includes(v) ? (v as ExceptionScope) : 'FULL_DAY'
+}
+
+const SCOPE_LABEL: Record<ExceptionScope, string> = {
+  FULL_DAY: 'সারাদিন সব নিয়ম মওকুফ',
+  EARLY_CHECKOUT: 'আগে বের হওয়া / মাঠের কাজ',
+  LATE_ARRIVAL: 'দেরিতে আসা',
+}
+
 function dateLabel(date: Date) {
   return date.toISOString().slice(0, 10)
 }
@@ -47,9 +72,12 @@ export async function hasApprovedException(
   if (!userId) return false
   const ex = await prisma.attendanceException.findUnique({
     where: { businessId_userId_attendanceDate: { businessId, userId, attendanceDate } },
-    select: { status: true, startMinutes: true, endMinutes: true },
+    select: { status: true, scope: true, startMinutes: true, endMinutes: true },
   })
   if (!ex || ex.status !== 'APPROVED') return false
+  // A late-arrival waiver explains the lateness only — it must not unlock an
+  // early checkout. Only FULL_DAY / EARLY_CHECKOUT scopes waive the checkout.
+  if (!CHECKOUT_WAIVING_SCOPES.has(normalizeExceptionScope(ex.scope))) return false
   if (ex.startMinutes == null || ex.endMinutes == null) return true
   const nowMinutes = localMinutesFor(now)
   return nowMinutes >= ex.startMinutes && nowMinutes <= ex.endMinutes
@@ -63,6 +91,7 @@ export function attendanceExceptionDto(ex: AttendanceException) {
     employeeId: ex.employeeId,
     attendanceDate: ex.attendanceDate.toISOString(),
     status: ex.status,
+    scope: normalizeExceptionScope(ex.scope),
     startMinutes: ex.startMinutes,
     endMinutes: ex.endMinutes,
     reason: ex.reason,
@@ -85,6 +114,7 @@ export type SubmitExceptionInput = {
   employeeId: string
   userName?: string
   reason: string
+  scope?: ExceptionScope
   attendanceDate?: Date
   startMinutes?: number | null
   endMinutes?: number | null
@@ -106,6 +136,7 @@ export async function submitExceptionRequest(input: SubmitExceptionInput): Promi
     return { error: 'কারণ লিখুন (অন্তত ৩ অক্ষর)।', status: 400 }
   }
   const attendanceDate = input.attendanceDate ?? attendanceDateFor()
+  const scope = normalizeExceptionScope(input.scope)
   const startMinutes = input.startMinutes ?? null
   const endMinutes = input.endMinutes ?? null
   if ((startMinutes == null) !== (endMinutes == null)) {
@@ -136,6 +167,7 @@ export async function submitExceptionRequest(input: SubmitExceptionInput): Promi
       where: { id: existing.id },
       data: {
         status: 'PENDING',
+        scope,
         reason: reason.slice(0, 1200),
         startMinutes,
         endMinutes,
@@ -152,6 +184,7 @@ export async function submitExceptionRequest(input: SubmitExceptionInput): Promi
         userId: input.userId,
         employeeId: input.employeeId,
         attendanceDate,
+        scope,
         reason: reason.slice(0, 1200),
         startMinutes,
         endMinutes,
@@ -170,12 +203,13 @@ export async function submitExceptionRequest(input: SubmitExceptionInput): Promi
     priority: 'HIGH',
     actionUrl: '/approvals',
     title: 'উপস্থিতি অনুমতির অনুরোধ',
-    message: `${employeeName} (${input.employeeId}) ${dateLabel(attendanceDate)} তারিখে ${windowLabel(startMinutes, endMinutes)} উপস্থিতির নিয়ম মওকুফের অনুমতি চেয়েছেন। কারণ: ${reason.slice(0, 200)}`,
+    message: `${employeeName} (${input.employeeId}) ${dateLabel(attendanceDate)} তারিখে ${windowLabel(startMinutes, endMinutes)} উপস্থিতির নিয়ম মওকুফের অনুমতি চেয়েছেন। উদ্দেশ্য: ${SCOPE_LABEL[scope]}। কারণ: ${reason.slice(0, 200)}`,
     payloadSnapshot: {
       exceptionId: row.id,
       employeeId: input.employeeId,
       employeeName,
       attendanceDate: dateLabel(attendanceDate),
+      scope,
       startMinutes,
       endMinutes,
     },
@@ -252,11 +286,13 @@ export async function grantExceptionDirect(input: {
   employeeId: string
   actorUserId: string
   reason?: string
+  scope?: ExceptionScope
   attendanceDate?: Date
   startMinutes?: number | null
   endMinutes?: number | null
 }): Promise<{ ok: true; exception: ReturnType<typeof attendanceExceptionDto> }> {
   const attendanceDate = input.attendanceDate ?? attendanceDateFor()
+  const scope = normalizeExceptionScope(input.scope)
   const reason = String(input.reason || 'মালিক সরাসরি অনুমতি দিয়েছেন').trim().slice(0, 1200)
   const row = await prisma.attendanceException.upsert({
     where: { businessId_userId_attendanceDate: { businessId: input.businessId, userId: input.userId, attendanceDate } },
@@ -266,6 +302,7 @@ export async function grantExceptionDirect(input: {
       employeeId: input.employeeId,
       attendanceDate,
       status: 'APPROVED',
+      scope,
       startMinutes: input.startMinutes ?? null,
       endMinutes: input.endMinutes ?? null,
       reason,
@@ -275,6 +312,7 @@ export async function grantExceptionDirect(input: {
     },
     update: {
       status: 'APPROVED',
+      scope,
       startMinutes: input.startMinutes ?? null,
       endMinutes: input.endMinutes ?? null,
       reason,
