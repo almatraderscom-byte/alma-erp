@@ -116,9 +116,20 @@ export default function CreativeStudio() {
           className="flex shrink-0 items-center justify-between border-b border-border-subtle bg-card/85 px-3 pb-2.5 backdrop-blur-md sm:px-4"
           style={{ paddingTop: 'max(0.625rem, env(safe-area-inset-top))' }}
         >
-          <div>
-            <p className="text-sm font-bold text-cream">Creative Studio</p>
-            <p className="text-[10px] text-muted">{config?.organization ?? 'Alma Traders'}</p>
+          <div className="flex min-w-0 items-center gap-2">
+            <Link
+              href="/agent"
+              aria-label="পিছনে — চ্যাট"
+              className="alma-frost alma-pod grid h-8 w-8 shrink-0 place-items-center text-cream transition-transform active:scale-95"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </Link>
+            <div className="min-w-0">
+              <p className="text-sm font-bold text-cream">Creative Studio</p>
+              <p className="text-[10px] text-muted">{config?.organization ?? 'Alma Traders'}</p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             {config && (
@@ -131,12 +142,6 @@ export default function CreativeStudio() {
                 {config.fashnConfigured ? 'FASHN Pro ready' : 'Add FASHN_API_KEY'}
               </span>
             )}
-            <Link
-              href="/agent"
-              className="rounded-lg bg-[#E07A5F] px-2.5 py-1.5 text-[11px] font-semibold text-white md:hidden"
-            >
-              Chat
-            </Link>
           </div>
         </header>
 

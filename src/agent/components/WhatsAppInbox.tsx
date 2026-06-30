@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 /**
@@ -96,15 +97,16 @@ export default function WhatsAppInbox() {
       {!open ? (
         <>
           {/* List header */}
-          <div className="flex items-center justify-between px-4 py-3" style={{ background: WA.header }}>
-            <div>
+          <div className="flex items-center gap-2 px-3 pb-3" style={{ background: WA.header, paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
+            <Link href="/agent" className="px-1 text-[24px] leading-none transition-opacity active:opacity-60" style={{ color: WA.text }} aria-label="পিছনে — চ্যাট">‹</Link>
+            <div className="min-w-0 flex-1">
               <h1 className="text-[17px] font-semibold" style={{ color: WA.text }}>WhatsApp</h1>
               <p className="text-[12px]" style={{ color: WA.muted }}>
                 {loading ? 'লোড হচ্ছে…' : `${threads.length} চ্যাট${awaiting ? ` · ${awaiting} reply বাকি` : ''}`}
               </p>
             </div>
             <span
-              className="grid h-9 w-9 place-items-center rounded-full text-[18px]"
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-[18px]"
               style={{ background: WA.green, color: '#0b141a' }}
             >
               ✓
@@ -161,7 +163,7 @@ export default function WhatsAppInbox() {
       ) : (
         <>
           {/* Chat header */}
-          <div className="flex items-center gap-3 px-3 py-2.5" style={{ background: WA.header }}>
+          <div className="flex items-center gap-3 px-3 pb-2.5" style={{ background: WA.header, paddingTop: 'max(0.625rem, env(safe-area-inset-top))' }}>
             <button type="button" onClick={() => setOpenId(null)} className="px-1 text-[22px]" style={{ color: WA.text }} aria-label="back">‹</button>
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full text-[16px] font-semibold" style={{ background: '#2a3942', color: WA.text }}>
               {initials(open.name)}
