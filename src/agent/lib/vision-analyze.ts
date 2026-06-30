@@ -25,7 +25,7 @@ interface GeminiVisionOpts {
 }
 
 interface GeminiResponse {
-  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
+  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> }; finishReason?: string }>
   usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number }
 }
 
@@ -35,6 +35,14 @@ export async function geminiVisionJson<T>(opts: GeminiVisionOpts): Promise<T> {
 
   const model = opts.model ?? DEFAULT_VISION_MODEL
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`
+  // gemini-2.5-* are thinking models: without a thinking cap, the model can spend
+  // its whole output budget on internal reasoning and return TRUNCATED text (an
+  // opening `{` with no closing `}`) — which used to fail JSON parsing here.
+  // Fixes: (1) responseMimeType json forces a clean JSON-only body, (2) cap the
+  // thinking budget so the JSON itself always fits, (3) a larger token budget for
+  // headroom. Flash (the cheap per-frame scan) needs no thinking; Pro (the rare
+  // confirm pass) keeps a small budget for accuracy.
+  const thinkingBudget = model.includes('pro') ? 256 : 0
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -45,7 +53,12 @@ export async function geminiVisionJson<T>(opts: GeminiVisionOpts): Promise<T> {
           { inline_data: { mime_type: opts.mimeType, data: opts.imageBase64 } },
         ],
       }],
-      generationConfig: { temperature: 0.1, maxOutputTokens: opts.maxTokens ?? 1024 },
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: opts.maxTokens ?? 2048,
+        responseMimeType: 'application/json',
+        thinkingConfig: { thinkingBudget },
+      },
     }),
     signal: AbortSignal.timeout(30_000),
   })
@@ -59,7 +72,13 @@ export async function geminiVisionJson<T>(opts: GeminiVisionOpts): Promise<T> {
   const raw = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}'
 
   const jsonMatch = raw.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) throw new Error('Gemini returned no parseable JSON')
+  if (!jsonMatch) {
+    // Surface WHY so a repeat is diagnosable (truncation shows finishReason MAX_TOKENS).
+    const finishReason = data.candidates?.[0]?.finishReason ?? 'unknown'
+    throw new Error(
+      `Gemini returned no parseable JSON (finishReason=${finishReason}, len=${raw.length})`,
+    )
+  }
 
   const tokensIn = data.usageMetadata?.promptTokenCount ?? 500
   const tokensOut = data.usageMetadata?.candidatesTokenCount ?? 200
