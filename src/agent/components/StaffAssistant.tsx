@@ -41,6 +41,7 @@ export default function StaffAssistant() {
   const [reply, setReply] = useState<string | null>(null)
   const [status, setStatus] = useState<Status>('idle')
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const audioCtxRef = useRef<AudioContext | null>(null)
   const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inFlight = useRef(false)
 
@@ -136,6 +137,44 @@ export default function StaffAssistant() {
     errorTimer.current = setTimeout(() => setStatus('idle'), 3200)
   }, [])
 
+  // A soft Siri-like chime — rising on listen start, falling on stop. Built with
+  // the Web Audio API so there are no asset files to ship; best-effort only.
+  const playChime = useCallback((rising: boolean) => {
+    try {
+      const AC: typeof AudioContext | undefined =
+        window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (!AC) return
+      if (!audioCtxRef.current) audioCtxRef.current = new AC()
+      const ctx = audioCtxRef.current
+      void ctx.resume()
+      const now = ctx.currentTime
+      const master = ctx.createGain()
+      master.gain.setValueAtTime(0.0001, now)
+      master.gain.exponentialRampToValueAtTime(0.05, now + 0.04)
+      master.gain.exponentialRampToValueAtTime(0.0001, now + 0.5)
+      const filter = ctx.createBiquadFilter()
+      filter.type = 'lowpass'
+      filter.frequency.value = 2800
+      master.connect(filter)
+      filter.connect(ctx.destination)
+      const freqs = rising ? [523.25, 659.25, 783.99] : [783.99, 587.33, 440.0]
+      freqs.forEach((f, i) => {
+        const osc = ctx.createOscillator()
+        osc.type = 'sine'
+        osc.frequency.value = f
+        const g = ctx.createGain()
+        g.gain.value = 1 / (i + 1.3)
+        osc.connect(g)
+        g.connect(master)
+        const t = now + i * 0.06
+        osc.start(t)
+        osc.stop(t + 0.45)
+      })
+    } catch {
+      /* audio is best-effort */
+    }
+  }, [])
+
   const handle = useCallback(async (text: string, viaVoice: boolean) => {
     const q = text.trim()
     if (!q || inFlight.current) return
@@ -173,8 +212,8 @@ export default function StaffAssistant() {
   const recorder = useVoiceRecorder({
     onTranscribed: (text: string) => { void handle(text, true) },
     onError: () => flashError('শুনতে পারিনি — আবার চেষ্টা করুন।'),
-    onRecordingStart: () => setStatus('listening'),
-    onRecordingStop: () => setStatus((s) => (s === 'listening' ? 'thinking' : s)),
+    onRecordingStart: () => { setStatus('listening'); playChime(true) },
+    onRecordingStop: () => { setStatus((s) => (s === 'listening' ? 'thinking' : s)); playChime(false) },
   })
 
   const listening = status === 'listening'
