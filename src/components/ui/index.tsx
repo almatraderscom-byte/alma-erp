@@ -76,7 +76,7 @@ export const KPI_AUTO_GRID =
 export function KpiCard({ label, value, sub, delta, color, loading, valueKind, animate }: {
   label: string
   value: string | number
-  sub?: string
+  sub?: ReactNode
   delta?: number
   color?: string
   loading?: boolean

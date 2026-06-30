@@ -244,7 +244,7 @@ const ROT_DWELL = 3600
 // Everything else (HR/finance details, settings, admin) lives in the Account drawer.
 // Matched by the nav label so it stays correct across all three businesses.
 const CORE_ROTATION_LABELS = new Set([
-  'Dashboard', 'Briefing', 'Trading', 'Orders', 'CRM', 'Clients', 'Inventory',
+  'Dashboard', 'Briefing', 'Insights', 'Trading', 'Orders', 'CRM', 'Clients', 'Inventory',
   'Invoice', 'Invoices', 'Projects', 'Finance', 'Analytics', 'ALMA Agent',
 ])
 
