@@ -90,6 +90,12 @@ export default function OfficeFundPage() {
   const [advNumber, setAdvNumber] = useState('')
   const [advSaving, setAdvSaving] = useState(false)
 
+  // ── Reconcile (account for an outstanding advance) ─────────────────────────
+  const [recOpen, setRecOpen] = useState<string | null>(null)
+  const [recSpent, setRecSpent] = useState('')
+  const [recMethod, setRecMethod] = useState<'CASH_RETURN' | 'WALLET_DEDUCT'>('CASH_RETURN')
+  const [recSaving, setRecSaving] = useState(false)
+
   const load = useCallback(async () => {
     try {
       const res = await fetch('/api/finance/office-fund', { cache: 'no-store' })
@@ -152,6 +158,41 @@ export default function OfficeFundPage() {
       setAdvSaving(false)
     }
   }, [advAmount, advPurpose, advMethod, advNumber, loadAdvances])
+
+  const openReconcile = useCallback((id: string) => {
+    setRecOpen((cur) => (cur === id ? null : id))
+    setRecSpent('')
+    setRecMethod('CASH_RETURN')
+  }, [])
+
+  const submitReconcile = useCallback(async (id: string, advanceAmount: number) => {
+    const spent = Number(String(recSpent).replace(/[^0-9.]/g, ''))
+    if (!(spent >= 0)) { toast.error('সঠিক খরচের অঙ্ক দিন।'); return }
+    if (spent > advanceAmount) { toast.error('খরচ অ্যাডভান্সের চেয়ে বেশি হতে পারে না।'); return }
+    const leftover = advanceAmount - spent
+    setRecSaving(true)
+    const t = toast.loading('হিসাব পাঠানো হচ্ছে…')
+    try {
+      const res = await fetch('/api/finance/office-advance', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          advance_id: id,
+          spent,
+          leftover_method: leftover > 0 ? recMethod : 'CASH_RETURN',
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok || !json.ok) throw new Error(json?.message || 'failed')
+      toast.success(json.message || 'হিসাব পাঠানো হয়েছে।', { id: t })
+      setRecOpen(null); setRecSpent('')
+      await loadAdvances()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'হিসাব পাঠানো যায়নি।', { id: t })
+    } finally {
+      setRecSaving(false)
+    }
+  }, [recSpent, recMethod, loadAdvances])
 
   const submit = useCallback(async () => {
     const n = Number(String(amount).replace(/[^0-9.]/g, ''))
@@ -271,19 +312,67 @@ export default function OfficeFundPage() {
               <div className="divide-y divide-border-subtle">
                 {adv.advances.map((a) => {
                   const st = ADV_STATUS[a.status] ?? { bn: a.status, cls: 'text-muted bg-bg-2 border-border-subtle' }
+                  const isOpen = recOpen === a.id
+                  const spentNum = Number(String(recSpent).replace(/[^0-9.]/g, '')) || 0
+                  const leftoverPreview = Math.max(0, a.amount - spentNum)
                   return (
-                    <div key={a.id} className="flex items-start justify-between gap-3 py-3">
-                      <div className="min-w-0">
-                        <p className="text-xs font-semibold text-cream truncate">{a.purpose || 'অফিস অ্যাডভান্স'}</p>
-                        <p className="text-[10px] text-muted truncate">
-                          {fmtDate(a.createdAt)}{a.payoutMethod ? ` · ${a.payoutMethod}` : ''}{a.payoutNumber ? ` ${a.payoutNumber}` : ''}
-                          {a.status === 'SETTLED' && a.spentAmount != null ? ` · খরচ ৳${a.spentAmount.toLocaleString('en-BD')}` : ''}
-                        </p>
+                    <div key={a.id} className="py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-cream truncate">{a.purpose || 'অফিস অ্যাডভান্স'}</p>
+                          <p className="text-[10px] text-muted truncate">
+                            {fmtDate(a.createdAt)}{a.payoutMethod ? ` · ${a.payoutMethod}` : ''}{a.payoutNumber ? ` ${a.payoutNumber}` : ''}
+                            {a.status === 'SETTLED' && a.spentAmount != null ? ` · খরচ ৳${a.spentAmount.toLocaleString('en-BD')}` : ''}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end gap-1">
+                          <span className="text-sm font-bold text-cream"><Money amount={a.amount} /></span>
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${st.cls}`}>{st.bn}</span>
+                          {a.status === 'OUTSTANDING' && (
+                            <Button size="xs" variant="gold" onClick={() => openReconcile(a.id)}>
+                              {isOpen ? 'বন্ধ করুন' : 'হিসাব দিন'}
+                            </Button>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex shrink-0 flex-col items-end gap-1">
-                        <span className="text-sm font-bold text-cream"><Money amount={a.amount} /></span>
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${st.cls}`}>{st.bn}</span>
-                      </div>
+
+                      {a.status === 'OUTSTANDING' && isOpen && (
+                        <div className="mt-3 rounded-xl border border-border-subtle bg-bg-2/40 p-3">
+                          <p className="text-[11px] text-muted mb-2">কত টাকা খরচ হয়েছে লিখুন — বাকি টাকা কীভাবে ফেরত দেবেন তা বেছে নিন। (দুটোই মালিকের অনুমোদন লাগবে।)</p>
+                          <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
+                            <div className="flex-1">
+                              <label className="block text-[11px] text-muted mb-1">খরচ হয়েছে (৳)</label>
+                              <Input inputMode="numeric" placeholder={`সর্বোচ্চ ${a.amount}`} value={recSpent} onChange={(e) => setRecSpent(e.target.value)} />
+                            </div>
+                            <div className="text-[11px] text-muted">
+                              বাকি থাকবে: <span className="font-bold text-cream">৳{leftoverPreview.toLocaleString('en-BD')}</span>
+                            </div>
+                          </div>
+                          {leftoverPreview > 0 && (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setRecMethod('CASH_RETURN')}
+                                className={`rounded-lg border px-3 py-2 text-[11px] font-bold ${recMethod === 'CASH_RETURN' ? 'border-gold/50 text-gold bg-gold/10' : 'border-border-subtle text-muted'}`}
+                              >
+                                ক্যাশ ফেরত দেব
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setRecMethod('WALLET_DEDUCT')}
+                                className={`rounded-lg border px-3 py-2 text-[11px] font-bold ${recMethod === 'WALLET_DEDUCT' ? 'border-gold/50 text-gold bg-gold/10' : 'border-border-subtle text-muted'}`}
+                              >
+                                আমার ওয়ালেট থেকে কাটুন
+                              </button>
+                            </div>
+                          )}
+                          <div className="mt-3 flex justify-end">
+                            <Button size="sm" variant="gold" loading={recSaving} onClick={() => submitReconcile(a.id, a.amount)}>
+                              হিসাব পাঠান
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )
                 })}

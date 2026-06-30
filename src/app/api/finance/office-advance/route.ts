@@ -8,8 +8,10 @@ import { resolveMyDeskProfile } from '@/lib/profile-resolution'
 import { OFFICE_FUND_BUSINESS_ID, computeOfficeFundSummary } from '@/lib/office-fund'
 import {
   enqueueOfficeAdvanceRequest,
+  enqueueOfficeAdvanceReconcile,
   listOfficeAdvancesForUser,
   getOutstandingAdvancesForUser,
+  type LeftoverMethod,
 } from '@/lib/office-advance'
 
 export const revalidate = 0
@@ -117,5 +119,60 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     logEvent('error', 'office_advance.create_failed', { error: (e as Error).message })
     return apiFailure('server_error', 'অ্যাডভান্সের আবেদন পাঠানো যায়নি।', { status: 500 })
+  }
+}
+
+/** PATCH → an admin reconciles one of their OUTSTANDING advances (spent + leftover). */
+export async function PATCH(req: NextRequest) {
+  try {
+    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+    if (!token?.sub) return apiFailure('unauthorized', 'Login required.', { status: 401 })
+    const role = normalizeAlmaRole(token.role as string)
+    if (!isAdmin(role)) {
+      return apiFailure('forbidden', 'শুধু অ্যাডমিন হিসাব দিতে পারেন।', { status: 403 })
+    }
+
+    const raw = (await req.json()) as Record<string, unknown>
+    const advanceId = String(raw.advance_id || '').trim()
+    if (!advanceId) return apiFailure('no_advance', 'কোন অ্যাডভান্সের হিসাব দিচ্ছেন তা জানান।', { status: 400 })
+
+    const spent = parseMoneyInput(raw.spent as string | number | undefined)
+    if (spent < 0) return apiFailure('bad_spent', 'সঠিক খরচের অঙ্ক দিন।', { status: 400 })
+
+    const leftoverMethod: LeftoverMethod =
+      String(raw.leftover_method || '') === 'WALLET_DEDUCT' ? 'WALLET_DEDUCT' : 'CASH_RETURN'
+
+    const profile = await resolveMyDeskProfile(token.sub, OFFICE_FUND_BUSINESS_ID)
+    const actorName = String(profile?.name || token.name || token.email || 'Admin')
+
+    try {
+      const { approval, leftover } = await enqueueOfficeAdvanceReconcile({
+        advanceId,
+        userId: token.sub,
+        actorName,
+        spent,
+        leftoverMethod,
+        category: raw.category ? String(raw.category) : null,
+        note: raw.note ? String(raw.note) : null,
+      })
+      const leftoverLine =
+        leftover > 0
+          ? ` বাকি ৳${leftover.toLocaleString('en-BD')} ${leftoverMethod === 'WALLET_DEDUCT' ? 'আপনার ওয়ালেট থেকে কাটা হবে' : 'ক্যাশ ফেরত দেবেন'}।`
+          : ''
+      return NextResponse.json({
+        ok: true,
+        approvalId: approval.id,
+        message: `হিসাব পাঠানো হয়েছে — মালিকের অনুমোদনের অপেক্ষায়।${leftoverLine}`,
+      })
+    } catch (err) {
+      const code = (err as Error).message
+      if (code === 'advance_not_found') return apiFailure('not_found', 'অ্যাডভান্সটি খুঁজে পাওয়া যায়নি।', { status: 404 })
+      if (code === 'advance_not_outstanding') return apiFailure('not_outstanding', 'এই অ্যাডভান্সের হিসাব আগেই দেওয়া হয়েছে।', { status: 409 })
+      if (code === 'spent_out_of_range') return apiFailure('bad_spent', 'খরচ অ্যাডভান্সের চেয়ে বেশি হতে পারে না।', { status: 400 })
+      throw err
+    }
+  } catch (e) {
+    logEvent('error', 'office_advance.reconcile_failed', { error: (e as Error).message })
+    return apiFailure('server_error', 'হিসাব পাঠানো যায়নি।', { status: 500 })
   }
 }

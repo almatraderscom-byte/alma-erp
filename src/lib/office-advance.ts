@@ -1,6 +1,7 @@
-import { randomUUID } from 'crypto'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { roundMoney } from '@/lib/money'
+import { moneyDecimal } from '@/lib/payroll-wallet'
 import {
   createApprovalRequest,
   dispatchApprovalsUpdated,
@@ -8,7 +9,12 @@ import {
 } from '@/lib/approvals'
 import { APPROVAL_MODULES, APPROVAL_TYPES } from '@/lib/approval-types'
 import { recordFundEntry, OFFICE_FUND_BUSINESS_ID } from '@/lib/office-fund'
+import { persistExpenseFromPayload } from '@/lib/finance-expense'
 import { apiDataSuccess, apiFailure } from '@/lib/safe-api-response'
+
+/** How leftover (unspent) advance money is returned at reconciliation. */
+export type LeftoverMethod = 'CASH_RETURN' | 'WALLET_DEDUCT'
+const RECONCILE_WALLET_SOURCE = 'office_advance_reconcile'
 
 /**
  * Office-fund advances (ALMA_LIFESTYLE, owner decision 2026-06-30).
@@ -259,4 +265,240 @@ export async function getOutstandingAdvancesForUser(
   const mapped = rows.map(toRow)
   const total = roundMoney(mapped.reduce((s, r) => s + r.amount, 0))
   return { count: mapped.length, total, rows: mapped }
+}
+
+// ── Phase D: reconciliation (spent vs leftover) ──────────────────────────────
+
+export interface OfficeAdvanceReconcileInput {
+  /** The OUTSTANDING advance being accounted for. */
+  advanceId: string
+  /** The user filing the reconcile (must own the advance). */
+  userId: string
+  actorName: string
+  /** Whole taka actually spent on office work. */
+  spent: number
+  /** How any leftover is returned: cash back to fund, or deducted from wallet. */
+  leftoverMethod: LeftoverMethod
+  category?: string | null
+  note?: string | null
+}
+
+/**
+ * Admin files a reconciliation for an OUTSTANDING advance → PENDING approval.
+ * Anti-scam: BOTH leftover routes (cash return / wallet deduct) require the
+ * owner to approve. Nothing is created until approval. The advance stays
+ * OUTSTANDING until the owner approves the reconcile.
+ */
+export async function enqueueOfficeAdvanceReconcile(input: OfficeAdvanceReconcileInput) {
+  const advance = await db().findFirst({
+    where: { id: input.advanceId, userId: input.userId },
+    select: {
+      id: true, businessId: true, employeeId: true, userId: true, amount: true,
+      status: true, purpose: true, requestedByName: true,
+    },
+  })
+  if (!advance) throw new Error('advance_not_found')
+  if (advance.status !== 'OUTSTANDING') throw new Error('advance_not_outstanding')
+
+  const total = roundMoney(advance.amount)
+  const spent = roundMoney(input.spent)
+  if (spent < 0 || spent > total) throw new Error('spent_out_of_range')
+  const leftover = roundMoney(total - spent)
+  const leftoverMethod: LeftoverMethod = input.leftoverMethod === 'WALLET_DEDUCT' ? 'WALLET_DEDUCT' : 'CASH_RETURN'
+  const businessId = advance.businessId || OFFICE_FUND_BUSINESS_ID
+  const category = (input.category || 'Office expense').trim() || 'Office expense'
+  const note = input.note ? String(input.note).slice(0, 500) : null
+
+  // The snapshot doubles as the spent-expense create payload (snake_case keys
+  // persistExpenseFromPayload reads) plus reconcile-routing fields.
+  const payload: Record<string, unknown> = {
+    office_advance_id: advance.id,
+    business_id: businessId,
+    employee_id: advance.employeeId,
+    user_id: advance.userId,
+    actor: input.actorName,
+    actor_role: 'ADMIN',
+    actor_user_id: advance.userId,
+    advance_amount: total,
+    spent_amount: spent,
+    leftover_amount: leftover,
+    leftover_method: leftoverMethod,
+    // Expense-create fields (only persisted when spent > 0):
+    category,
+    amount: spent,
+    title: `${input.actorName} · অফিস অ্যাডভান্স খরচ`,
+    desc: note || advance.purpose || null,
+    note: note || advance.purpose || null,
+    payment_method: 'Office fund',
+    payment_status: 'Paid',
+  }
+
+  const leftoverLine =
+    leftover > 0
+      ? ` · বাকি ৳${leftover.toLocaleString('en-BD')} ${leftoverMethod === 'WALLET_DEDUCT' ? '(ওয়ালেট থেকে কাটা)' : '(ক্যাশ ফেরত)'}`
+      : ''
+  const approval = await createApprovalRequest({
+    module: APPROVAL_MODULES.FINANCE,
+    type: APPROVAL_TYPES.OFFICE_FUND_RECONCILE,
+    businessId,
+    entityId: advance.id,
+    requestedBy: advance.userId || input.userId,
+    reason: `অফিস অ্যাডভান্স হিসাব · খরচ ৳${spent.toLocaleString('en-BD')}${leftoverLine}`,
+    payloadSnapshot: payload,
+    priority: leftover > 0 ? 'HIGH' : 'NORMAL',
+    actionUrl: '/approvals',
+    title: 'Office advance reconcile needs approval',
+    message: `${input.actorName} · খরচ ৳${spent.toLocaleString('en-BD')} / মোট ৳${total.toLocaleString('en-BD')}${leftoverLine}`,
+  })
+
+  await db().update({ where: { id: advance.id }, data: { reconcileApprovalId: approval.id } })
+  return { advanceId: advance.id, approval, spent, leftover, leftoverMethod }
+}
+
+/**
+ * Owner approves/rejects an office-advance reconcile. On approval:
+ *   1. record the spent portion as a real company expense (LifestyleExpense),
+ *   2. credit the leftover back to the fund (RETURN_IN) so the fund only ever
+ *      loses what was truly spent, and
+ *   3. if the leftover is settled by WALLET_DEDUCT, debit the admin's wallet by
+ *      the leftover (ADJUSTMENT, negative — idempotent), recovering the cash.
+ * Then the advance is marked SETTLED (clears My Desk). On rejection the advance
+ * stays OUTSTANDING so it can be re-filed.
+ */
+export async function processOfficeAdvanceReconcileApproval(
+  approval: { id: string; entityId: string; payloadSnapshot: unknown; businessId: string | null },
+  action: 'APPROVE' | 'REJECT',
+  actorUserId: string,
+  note?: string,
+) {
+  const snapshot = approval.payloadSnapshot && typeof approval.payloadSnapshot === 'object'
+    ? (approval.payloadSnapshot as Record<string, unknown>)
+    : {}
+  const advanceId = String(snapshot.office_advance_id || approval.entityId || '').trim()
+  const businessId = String(snapshot.business_id || approval.businessId || OFFICE_FUND_BUSINESS_ID)
+  const employeeId = String(snapshot.employee_id || '').trim()
+  const userId = String(snapshot.user_id || '').trim() || null
+  const spent = roundMoney(Number(snapshot.spent_amount || 0))
+  const leftover = roundMoney(Number(snapshot.leftover_amount || 0))
+  const leftoverMethod: LeftoverMethod = snapshot.leftover_method === 'WALLET_DEDUCT' ? 'WALLET_DEDUCT' : 'CASH_RETURN'
+  const category = String(snapshot.category || 'Office expense')
+
+  if (action === 'REJECT') {
+    if (advanceId) {
+      await db().updateMany({
+        where: { id: advanceId, status: 'OUTSTANDING' },
+        data: { reconcileApprovalId: null },
+      })
+    }
+    const updated = await resolveApprovalRequestById({
+      id: approval.id,
+      status: 'REJECTED',
+      actorUserId,
+      reason: note || 'Rejected',
+    })
+    dispatchApprovalsUpdated()
+    return apiDataSuccess({ approval: updated, moduleResult: { advanceId, settled: false, rejected: true } })
+  }
+
+  if (!advanceId) {
+    return apiFailure('missing_advance', 'Reconcile approval has no saved advance to settle.', { status: 400 })
+  }
+
+  // Guard against re-running side effects on retry: settle the advance first and
+  // only proceed when this call is the one that transitioned it.
+  const moved = await db().updateMany({
+    where: { id: advanceId, status: 'OUTSTANDING' },
+    data: {
+      status: 'SETTLED',
+      spentAmount: spent,
+      leftoverAmount: leftover,
+      leftoverMethod,
+      settledAt: new Date(),
+    },
+  })
+
+  let expenseId: string | null = null
+  let fundBalance: number | null = null
+  let walletDeducted = false
+  let walletEntryId: string | null = null
+
+  if (moved.count > 0) {
+    // 1) Spent portion → company expense (verbatim replay).
+    if (spent > 0) {
+      const { result, expenseId: eid } = await persistExpenseFromPayload(snapshot)
+      if (result && typeof result === 'object' && 'error' in result && result.error) {
+        return apiFailure('expense_create_failed', String(result.error), { status: 400 })
+      }
+      expenseId = eid || null
+    }
+
+    // 2) Leftover → fund made whole.
+    if (leftover > 0) {
+      const entry = await recordFundEntry({
+        businessId,
+        type: 'RETURN_IN',
+        amount: leftover,
+        note: `অফিস অ্যাডভান্স ফেরত · ${category}${leftoverMethod === 'WALLET_DEDUCT' ? ' (ওয়ালেট থেকে)' : ' (ক্যাশ)'}`,
+        refType: 'office_advance_reconcile',
+        refId: advanceId,
+        createdById: actorUserId,
+        createdByName: String(snapshot.actor || '') || null,
+      })
+      fundBalance = entry.balance
+
+      // 3) WALLET_DEDUCT → recover the leftover from the admin's wallet.
+      if (leftoverMethod === 'WALLET_DEDUCT' && employeeId) {
+        try {
+          const led = await prisma.employeeLedgerEntry.create({
+            data: {
+              employeeId,
+              userId,
+              businessId,
+              date: new Date(),
+              periodYm: null,
+              type: 'ADJUSTMENT',
+              amount: moneyDecimal(-leftover), // negative → reduces wallet balance
+              note: `অফিস অ্যাডভান্স উদ্বৃত্ত ফেরত · ${category}`,
+              createdById: actorUserId || null,
+              approvedById: actorUserId || null,
+              source: RECONCILE_WALLET_SOURCE,
+              sourceRef: approval.id,
+            },
+            select: { id: true },
+          })
+          walletEntryId = led.id
+          walletDeducted = true
+        } catch (e) {
+          // Already deducted for this approval (retry) → not a double-charge.
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+            walletDeducted = true
+          } else {
+            throw e
+          }
+        }
+      }
+    }
+  }
+
+  const updated = await resolveApprovalRequestById({
+    id: approval.id,
+    status: 'APPROVED',
+    actorUserId,
+    reason: note || 'Approved',
+  })
+  dispatchApprovalsUpdated()
+  return apiDataSuccess({
+    approval: updated,
+    moduleResult: {
+      advanceId,
+      settled: moved.count > 0,
+      spent,
+      leftover,
+      leftoverMethod,
+      expenseId,
+      fundBalance,
+      walletDeducted,
+      walletEntryId,
+    },
+  })
 }
