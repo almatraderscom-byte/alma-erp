@@ -171,6 +171,28 @@ export default function OwnerHub({
   const [tab, setTab] = useState<'work' | 'team'>('work')
   const [trackOpen, setTrackOpen] = useState(false)
 
+  // Scroll restore: opening a task remembers where the owner was on the office
+  // wall; pressing back drops them right there instead of at the top. The detail
+  // sub-page always opens scrolled to the top.
+  const savedScroll = useRef(0)
+  const openThread = useCallback((t: HubTaskCard) => {
+    const w = document.querySelector('.wrap') as HTMLElement | null
+    savedScroll.current = w?.scrollTop ?? 0
+    setThreadTask(t)
+  }, [])
+  useEffect(() => {
+    const w = document.querySelector('.wrap') as HTMLElement | null
+    if (!w) return
+    if (threadTask !== null) {
+      w.scrollTop = 0
+    } else if (savedScroll.current > 0) {
+      const y = savedScroll.current
+      requestAnimationFrame(() => {
+        w.scrollTop = y
+      })
+    }
+  }, [threadTask])
+
   // Optimistic UI: an approve/redo/self-decision clears the card from the owner's
   // queue INSTANTLY, then the server confirms in the background and a refresh
   // reconciles. On failure the card returns + an error toast. Fresh server data
@@ -467,10 +489,10 @@ export default function OwnerHub({
                 task={t}
                 idx={i}
                 busy={busy}
-                onOpen={() => setThreadTask(t)}
+                onOpen={() => openThread(t)}
                 onZoom={setZoom}
                 onApprove={() => run(`ok-${t.id}`, { action: 'approve', taskId: t.id })}
-                onRedo={() => setThreadTask(t)}
+                onRedo={() => openThread(t)}
               />
             ))}
             {selfInitiated.map((t, i) => (
@@ -479,7 +501,7 @@ export default function OwnerHub({
                 task={t}
                 idx={i}
                 busy={busy}
-                onOpen={() => setThreadTask(t)}
+                onOpen={() => openThread(t)}
                 onZoom={setZoom}
                 onApprove={() => run(`self-ok-${t.id}`, { action: 'self_approve', taskId: t.id })}
               />

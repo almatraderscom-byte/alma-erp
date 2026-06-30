@@ -49,6 +49,43 @@ export default function StaffAssistant() {
   const draggedRef = useRef(false)
   const [constraints, setConstraints] = useState({ left: -300, right: 12, top: -500, bottom: 12 })
 
+  // On-screen keyboard height (px). Self-contained so the orb lifts its panel to
+  // sit just above the keyboard on BOTH iPhone and Android, instead of floating
+  // far above it. Native (Capacitor, resize:None on portal): the Keyboard plugin
+  // reports the exact height. Web / installed PWA: derive it from visualViewport.
+  const [kb, setKb] = useState(0)
+  useEffect(() => {
+    let disposed = false
+    const cleanups: Array<() => void> = []
+    async function setupNative(): Promise<boolean> {
+      try {
+        const { Capacitor } = await import('@capacitor/core')
+        if (!Capacitor?.isNativePlatform?.()) return false
+        const { Keyboard } = await import('@capacitor/keyboard')
+        const show = await Keyboard.addListener('keyboardWillShow', (info) => { if (!disposed) setKb(info.keyboardHeight) })
+        const hide = await Keyboard.addListener('keyboardWillHide', () => { if (!disposed) setKb(0) })
+        cleanups.push(() => { void show.remove(); void hide.remove() })
+        return true
+      } catch {
+        return false
+      }
+    }
+    function setupWeb() {
+      const vv = window.visualViewport
+      if (!vv) return
+      const onResize = () => {
+        const h = window.innerHeight - vv.height - vv.offsetTop
+        if (!disposed) setKb(h > 80 ? h : 0) // ignore URL-bar shifts; only a real keyboard
+      }
+      vv.addEventListener('resize', onResize)
+      vv.addEventListener('scroll', onResize)
+      cleanups.push(() => { vv.removeEventListener('resize', onResize); vv.removeEventListener('scroll', onResize) })
+      onResize()
+    }
+    void setupNative().then((isNative) => { if (!disposed && !isNative) setupWeb() })
+    return () => { disposed = true; cleanups.forEach((c) => c()) }
+  }, [])
+
   useEffect(() => {
     if (typeof window === 'undefined') return
     setConstraints({ left: -(window.innerWidth - 76), right: 12, top: -(window.innerHeight - 210), bottom: 12 })
@@ -59,6 +96,26 @@ export default function StaffAssistant() {
       /* ignore */
     }
   }, [x, y])
+
+  // When the keyboard opens with the panel up, pin the whole orb just above it and
+  // neutralise any dragged Y offset, so the input never drifts far above the
+  // keyboard (the reported Android bug). On agent routes the WebView resizes
+  // natively (html.cap-native-resize) so the fixed orb already sits above the
+  // keyboard — there we must NOT add the height again. The dragged position is
+  // restored on close.
+  const nativeResize = typeof document !== 'undefined' && document.documentElement.classList.contains('cap-native-resize')
+  const kbActive = open && kb > 0
+  const lift = kbActive && !nativeResize ? kb + 12 : 0
+  const yBeforeKb = useRef<number | null>(null)
+  useEffect(() => {
+    if (kbActive) {
+      if (yBeforeKb.current === null) yBeforeKb.current = y.get()
+      y.set(0)
+    } else if (yBeforeKb.current !== null) {
+      y.set(yBeforeKb.current)
+      yBeforeKb.current = null
+    }
+  }, [kbActive, y])
 
   const speak = useCallback(async (text: string) => {
     try {
@@ -137,7 +194,7 @@ export default function StaffAssistant() {
       dragMomentum={false}
       dragElastic={0.06}
       dragConstraints={constraints}
-      style={{ x, y, touchAction: 'none' }}
+      style={{ x, y, touchAction: 'none', ...(lift ? { bottom: lift, top: 'auto' } : {}) }}
       onDragStart={() => { draggedRef.current = true }}
       onDragEnd={() => {
         try { localStorage.setItem(POS_KEY, JSON.stringify({ x: x.get(), y: y.get() })) } catch { /* ignore */ }

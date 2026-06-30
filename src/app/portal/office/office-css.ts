@@ -106,7 +106,7 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 .ohub .ph3{background:linear-gradient(135deg,#4a3a26,#5b4a2e)}
 .ohub .appr .body{flex:1;min-width:0}
 .ohub .appr .top{display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap}
-.ohub .appr h3{font-size:15px;font-weight:600}
+.ohub .appr h3{font-size:15px;font-weight:600;overflow-wrap:anywhere;word-break:normal}
 .ohub .appr .meta{font-size:12.5px;color:var(--muted)}
 .ohub .appr .actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
 .ohub .btn{font-family:inherit;font-size:13px;font-weight:600;padding:8px 14px;border-radius:var(--r-pill);border:1px solid var(--border);background:var(--bg-2);color:var(--ink);cursor:pointer;transition:.16s;display:inline-flex;align-items:center;gap:6px}
@@ -169,8 +169,12 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 .ohub .ev .t{font-size:11.5px;color:var(--muted);margin-top:2px}
 
 /* ── thread / task detail ── */
-.ohub .thread-head{padding:20px;border-bottom:1px solid var(--border-subtle)}
-.ohub .thread-head .crumb{font-size:12.5px;color:var(--muted);margin-bottom:8px;cursor:pointer}
+/* Sticky header so the back crumb stays reachable while the thread scrolls —
+   the whole head pins to the top of the scroller (the crumb alone can't stay
+   visible once its non-scrolling parent leaves the viewport). */
+.ohub .thread-head{position:sticky;top:0;z-index:18;padding:16px 20px;border-bottom:1px solid var(--border-subtle);background:var(--bg-1);border-radius:var(--r-lg) var(--r-lg) 0 0}
+.ohub .thread-head .crumb{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--ink);background:var(--bg-2);border:1px solid var(--border-subtle);border-radius:var(--r-pill);padding:6px 12px;margin-bottom:10px;cursor:pointer}
+.ohub .thread-head .crumb:hover{border-color:var(--border-strong)}
 .ohub .thread-head h2{font-size:19px;font-weight:700;letter-spacing:-.01em}
 .ohub .thread-head .row{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
 .ohub .instr{margin:14px 20px;background:var(--bg-2);border:1px solid var(--border-subtle);border-radius:var(--r-md);padding:14px}
@@ -210,15 +214,22 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 .ohub .stask{background:var(--bg-1);border:1px solid var(--border-subtle);border-radius:var(--r-md);padding:14px;margin-bottom:12px;cursor:pointer;transition:.16s}
 .ohub .stask:hover{border-color:var(--border-strong);transform:translateY(-1px)}
 .ohub .stask.carry{border-color:rgba(139,92,246,.4);background:linear-gradient(180deg,rgba(139,92,246,.06),var(--bg-1))}
-.ohub .stask .top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
-.ohub .stask h4{font-size:14.5px;font-weight:600;line-height:1.35}
+.ohub .stask .top{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:6px 10px}
+/* Title takes the bulk of the row (>=55%) so badges can never squeeze it down to
+   a single Bangla glyph per line; it wraps cleanly by word, and badges drop to a
+   new line only when they genuinely don't fit. */
+.ohub .stask h4{flex:1 1 60%;min-width:0;font-size:14.5px;font-weight:600;line-height:1.35;overflow-wrap:anywhere;word-break:normal}
 .ohub .stask .d{font-size:12.5px;color:var(--muted);margin-top:7px}
 .ohub .stask .ntf{display:inline-flex;align-items:center;gap:5px;margin-top:9px;font-size:12px;font-weight:600;color:#fca5a5;background:rgba(239,68,68,.1);padding:4px 9px;border-radius:var(--r-pill)}
 .ohub .pnav{position:absolute;bottom:0;left:0;right:0;height:74px;background:rgba(18,18,22,.92);backdrop-filter:blur(16px);border-top:1px solid var(--border-subtle);display:flex;align-items:flex-start;justify-content:space-around;padding-top:11px;z-index:20}
 .ohub .pnav a{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;color:var(--muted);text-decoration:none}
 .ohub .pnav a.act{color:var(--accent-lt)}
 .ohub .pnav a .i{font-size:19px}
-.ohub .backbtn{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);background:none;border:0;cursor:pointer;font-family:inherit;margin-bottom:14px}
+/* Permanent (sticky) back button: stays pinned to the top of the scroller while
+   the detail sub-page scrolls, so the user always has a way back. Pill styling so
+   it reads as a tappable control floating over the content. */
+.ohub .backbtn{position:sticky;top:8px;z-index:18;display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--ink);background:var(--bg-2);border:1px solid var(--border-subtle);border-radius:var(--r-pill);padding:8px 14px;cursor:pointer;font-family:inherit;margin-bottom:14px;box-shadow:var(--shadow);backdrop-filter:blur(8px)}
+.ohub .backbtn:hover{border-color:var(--border-strong)}
 .ohub .perf{display:flex;gap:10px;margin-top:6px}
 .ohub .perf .pc{flex:1;background:var(--bg-1);border:1px solid var(--border-subtle);border-radius:14px;padding:13px;text-align:center}
 .ohub .perf .pc .v{font-size:22px;font-weight:700} .ohub .perf .pc .l{font-size:11.5px;color:var(--muted);margin-top:2px}

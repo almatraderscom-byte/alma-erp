@@ -31,6 +31,15 @@ const PENDING_REVIEW_VS = ['proof_submitted', 'auto_verified'] as const
 /** Minutes before an unanswered update request is escalated to the owner. */
 export const UPDATE_ESCALATE_MINUTES = 10
 
+/**
+ * Days an unfinished/pending task is allowed to linger on the LIVE office board.
+ * The board only ever shows the last `STALE_TASK_DAYS` days of still-open work, so
+ * a task abandoned long ago can't keep inflating the counts (e.g. "৩২ কাজ" when
+ * there are really only 5–6). Older items still exist in the durable records and
+ * surface in the day-by-day history — they just stop cluttering "today".
+ */
+export const STALE_TASK_DAYS = 2
+
 export type OfficeAuthor = 'owner' | 'staff' | 'agent' | 'system'
 
 export type HubTaskCard = {
@@ -252,6 +261,8 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
   const today = dhakaToday()
   const todayDate = new Date(`${today}T00:00:00Z`)
   const now = Date.now()
+  // Live board horizon: only show still-open work from the last STALE_TASK_DAYS.
+  const staleCutoff = new Date(todayDate.getTime() - STALE_TASK_DAYS * 86_400_000)
 
   const weekStartDate = (() => {
     // Monday 00:00 UTC anchoring the current Dhaka week (mirrors office-award).
@@ -278,13 +289,16 @@ export async function getOwnerHubData(businessId = 'ALMA_LIFESTYLE'): Promise<Ow
       where: {
         businessId,
         status: { not: 'done' },
+        // Don't let approvals abandoned for more than STALE_TASK_DAYS keep
+        // counting against "today" — they fall off the live queue (still in history).
+        proposedFor: { gte: staleCutoff },
         OR: [{ verificationStatus: { in: [...PENDING_REVIEW_VS] } }, { supervisorNeedsOwner: true }],
       },
       orderBy: { createdAt: 'asc' },
       select: CARD_SELECT,
     }),
     prisma.agentStaffTask.findMany({
-      where: { businessId, status: 'proposed', source: 'staff_initiated' },
+      where: { businessId, status: 'proposed', source: 'staff_initiated', createdAt: { gte: staleCutoff } },
       orderBy: { createdAt: 'asc' },
       select: CARD_SELECT,
     }),
@@ -638,6 +652,8 @@ export async function getStaffOfficeData(
   const today = dhakaToday()
   const todayDate = new Date(`${today}T00:00:00Z`)
   const now = Date.now()
+  // Carry-over horizon: an unfinished task is carried for at most STALE_TASK_DAYS.
+  const staleCutoff = new Date(todayDate.getTime() - STALE_TASK_DAYS * 86_400_000)
 
   const [rows, carryRows, proposalRows, awardRow, openLunch, attendanceRow] = await Promise.all([
     prisma.agentStaffTask.findMany({
@@ -654,14 +670,16 @@ export async function getStaffOfficeData(
       where: {
         staffId: staff.id,
         status: { in: [...ACTIVE_NOT_DONE_STATUSES] },
-        proposedFor: { lt: todayDate },
+        // Only carry the last STALE_TASK_DAYS of unfinished work — older tasks
+        // stop following the staff around (and stop inflating "৩২ কাজ").
+        proposedFor: { gte: staleCutoff, lt: todayDate },
       },
       orderBy: [{ updateRequestedAt: 'asc' }, { dueAt: 'asc' }, { createdAt: 'asc' }],
       take: 25,
       select: { ...CARD_SELECT, updateRequestedAt: true, updateRequestNote: true, lastStaffUpdateAt: true },
     }),
     prisma.agentStaffTask.findMany({
-      where: { staffId: staff.id, status: 'proposed', source: 'staff_initiated' },
+      where: { staffId: staff.id, status: 'proposed', source: 'staff_initiated', createdAt: { gte: staleCutoff } },
       orderBy: { createdAt: 'desc' },
       select: { ...CARD_SELECT, updateRequestedAt: true, updateRequestNote: true, lastStaffUpdateAt: true },
     }),
