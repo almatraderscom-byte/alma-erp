@@ -7,6 +7,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend,
 } from 'recharts'
 import { cn } from '@/lib/utils'
+import { AgentSubHeader } from '@/agent/components/AgentSubHeader'
 
 type DashboardData = {
   todayDhakaDate?: string
@@ -607,49 +608,51 @@ export default function AgentCostsDashboard() {
 
   if (loading) {
     return (
-      <div className="safe-top safe-x mx-auto max-w-5xl space-y-4 p-4 pb-[max(16px,env(safe-area-inset-bottom))] md:p-6 bg-transparent min-h-[100dvh]">
-        <div className="skeleton h-8 w-48 rounded-lg" />
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="skeleton h-24 rounded-2xl" />
-          ))}
+      <>
+        <AgentSubHeader title="AI খরচ" accent="ড্যাশবোর্ড" subtitle="API + সাবস্ক্রিপশন — এক জায়গায়" />
+        <div className="safe-x mx-auto max-w-5xl space-y-4 p-4 pb-[max(16px,env(safe-area-inset-bottom))] md:p-6 bg-transparent">
+          <div className="skeleton h-8 w-48 rounded-lg" />
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="skeleton h-24 rounded-2xl" />
+            ))}
+          </div>
+          <div className="skeleton h-56 rounded-2xl" />
         </div>
-        <div className="skeleton h-56 rounded-2xl" />
-      </div>
+      </>
     )
   }
 
   if (error || !data) {
     return (
-      <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-3 p-6 text-center bg-transparent">
-        <p className="text-sm text-red-500">⚠️ {error ?? 'ডেটা পাওয়া যায়নি'}</p>
-        <button onClick={() => void load()} className="rounded-xl border border-border-subtle bg-card/80 px-4 py-2 text-xs text-muted hover:text-cream hover:border-[#E07A5F]/30 shadow-sm transition-all">
-          আবার চেষ্টা
-        </button>
-      </div>
+      <>
+        <AgentSubHeader title="AI খরচ" accent="ড্যাশবোর্ড" />
+        <div className="flex min-h-[50dvh] flex-col items-center justify-center gap-3 p-6 text-center bg-transparent">
+          <p className="text-sm text-red-500">⚠️ {error ?? 'ডেটা পাওয়া যায়নি'}</p>
+          <button onClick={() => void load()} className="rounded-xl border border-border-subtle bg-card/80 px-4 py-2 text-xs text-muted hover:text-cream hover:border-[#E07A5F]/30 shadow-sm transition-all">
+            আবার চেষ্টা
+          </button>
+        </div>
+      </>
     )
   }
 
   return (
-    <div className="safe-top safe-x mx-auto max-w-5xl space-y-6 p-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6 bg-transparent min-h-[100dvh]">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[18px] alma-frost px-4 py-3">
-        <div>
-          <h1 className="text-lg font-bold text-cream">AI খরচ <span className="text-[#E07A5F]">ড্যাশবোর্ড</span></h1>
-          <p className="text-[11px] text-muted">API + সাবস্ক্রিপশন — এক জায়গায়</p>
-        </div>
-        <div className="flex gap-2">
-          <Link href="/agent" className="rounded-xl border border-border-subtle bg-card/80 px-3 py-2 text-xs text-muted hover:text-cream hover:border-[#E07A5F]/30 shadow-sm transition-all">
-            ← চ্যাট
-          </Link>
+    <>
+      <AgentSubHeader
+        title="AI খরচ"
+        accent="ড্যাশবোর্ড"
+        subtitle="API + সাবস্ক্রিপশন — এক জায়গায়"
+        actions={
           <a
             href="/api/assistant/costs/export"
             className="rounded-xl bg-[#E07A5F]/10 border border-[#E07A5F]/20 px-3 py-2 text-xs font-semibold text-[#E07A5F] hover:bg-[#E07A5F]/15 hover:shadow-[0_2px_12px_rgba(224,122,95,0.12)] transition-all"
           >
-            CSV ডাউনলোড
+            CSV
           </a>
-        </div>
-      </div>
-
+        }
+      />
+    <div className="safe-x mx-auto max-w-5xl space-y-6 p-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:p-6 md:pb-6 bg-transparent">
       {/* API balances */}
       <div className="rounded-[18px] border border-border-subtle bg-card/80 p-4 shadow-card">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -1417,5 +1420,6 @@ export default function AgentCostsDashboard() {
         </div>
       )}
     </div>
+    </>
   )
 }

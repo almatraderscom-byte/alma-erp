@@ -104,14 +104,6 @@ export default function TradingStaffAdmin() {
 
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-8">
-      <header className="rounded-2xl border border-border bg-white/[0.03] backdrop-blur-md px-5 py-4">
-        <h1 className="text-2xl font-bold text-cream">ALMA Trading — <span className="text-gold">Staff</span></h1>
-        <p className="mt-1 text-sm text-muted">
-          Binance P2P trader-দের AgentStaff row লিঙ্ক করুন। প্রত্যেক TradingAccount-এর assigned User-এর সাথে
-          এখান থেকে Telegram chat ID যোগ করুন — তাহলে agent এই staff-দের কাছে dispatch করতে পারবে।
-        </p>
-      </header>
-
       <section>
         <h2 className="text-xs font-bold uppercase tracking-wider text-gold mb-3">Linked Trading staff ({data.staff.length})</h2>
         {data.staff.length === 0 ? (

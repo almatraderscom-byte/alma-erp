@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { PageBackButton } from '@/components/layout/PageBackButton'
+import { AgentSubHeader } from '@/agent/components/AgentSubHeader'
 
 // ── Types (mirror src/agent/lib/catalog/product-images.ts) ──────────────────────
 type CatalogImageGroup = {
@@ -101,19 +101,8 @@ export default function CatalogImagesScreen({ canDelete = false }: { canDelete?:
 
   return (
     <div className="h-full min-h-0 overflow-y-auto pb-24">
+      <AgentSubHeader title="প্রোডাক্ট ছবি" subtitle="ছবি দেখুন ও আপলোড করুন — ফ্যামিলি সেটে স্বয়ংক্রিয় যোগ হয়" />
       <div className="mx-auto w-full max-w-5xl px-4 py-5">
-        {/* Header */}
-        <div className="mb-4 flex items-start gap-2.5">
-          <PageBackButton force fallbackHref="/" className="mt-0.5" />
-          <div className="min-w-0">
-            <h1 className="text-lg font-bold text-cream">প্রোডাক্ট ছবি</h1>
-            <p className="mt-0.5 text-xs text-muted">
-              প্রতিটি প্রোডাক্টের ছবি দেখুন ও আপলোড করুন। ফ্যামিলি ম্যাচিং সেট একটি কার্ডে — ছবি দিলে সেটের সব
-              মেম্বারে যোগ হবে।
-            </p>
-          </div>
-        </div>
-
         {/* Summary */}
         {data && (
           <div className="mb-4 grid grid-cols-3 gap-2">

@@ -6,6 +6,7 @@ import { isSystemOwner } from '@/lib/roles'
 import AgentStaffMonitor from '@/agent/components/AgentStaffMonitor'
 import AgentControlCenter from '@/agent/components/monitor/AgentControlCenter'
 import HeartbeatPanel from '@/agent/components/monitor/HeartbeatPanel'
+import { AgentSubHeader } from '@/agent/components/AgentSubHeader'
 import { StaffMonitorScrollWrapper } from './StaffMonitorScrollWrapper'
 
 /** Live monitor: agentDuties + salahDuties from /api/agent/staff-monitor */
@@ -21,6 +22,7 @@ export default async function StaffMonitorPage() {
 
   return (
     <StaffMonitorScrollWrapper>
+      <AgentSubHeader title="LIVE" accent="Business" subtitle="কন্ট্রোল • হার্টবিট • স্টাফ মনিটর" />
       <AgentControlCenter />
       <HeartbeatPanel />
       <AgentStaffMonitor />
