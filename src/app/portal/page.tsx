@@ -598,6 +598,7 @@ function AttendanceCard({
   const [faceCheckInOpen, setFaceCheckInOpen] = useState(false)
   const [exceptionOpen, setExceptionOpen] = useState(false)
   const [exceptionReason, setExceptionReason] = useState('')
+  const [exceptionScope, setExceptionScope] = useState<'EARLY_CHECKOUT' | 'LATE_ARRIVAL' | 'FULL_DAY'>('EARLY_CHECKOUT')
   const [exceptionStatus, setExceptionStatus] = useState<string | null>(null)
   const [leaveOpen, setLeaveOpen] = useState(false)
   const [leaveKind, setLeaveKind] = useState<'FULL_DAY' | 'DATE_RANGE' | 'HOURS' | 'SHIFTED_START'>('FULL_DAY')
@@ -685,12 +686,13 @@ function AttendanceCard({
       const result = await safeFetchJsonWithToast('/api/attendance/exceptions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ business_id: businessId, reason }),
+        body: JSON.stringify({ business_id: businessId, reason, scope: exceptionScope }),
       })
       if (!result.ok) throw new Error(result.error.message)
       toast.success('অনুমতির অনুরোধ মালিকের কাছে পাঠানো হয়েছে।')
       setExceptionStatus('PENDING')
       setExceptionReason('')
+      setExceptionScope('EARLY_CHECKOUT')
       setExceptionOpen(false)
       onRefresh()
     } catch (e) {
@@ -906,6 +908,38 @@ function AttendanceCard({
                 </p>
                 {exceptionOpen ? (
                   <div className="mt-3 space-y-2">
+                    <div>
+                      <p className="mb-1 font-semibold text-[11px]">উদ্দেশ্য বেছে নিন:</p>
+                      <div className="grid gap-1">
+                        {([
+                          ['EARLY_CHECKOUT', '🚶 আগে বের হবো / মাঠের কাজ'],
+                          ['LATE_ARRIVAL', '⏰ দেরিতে এসেছি / আসবো'],
+                          ['FULL_DAY', '📅 সারাদিন সব নিয়ম মওকুফ'],
+                        ] as const).map(([value, label]) => (
+                          <label
+                            key={value}
+                            className={`flex items-center gap-2 rounded-lg border p-2 text-[11px] cursor-pointer ${
+                              exceptionScope === value ? 'border-gold tone-gold' : 'border-gold-dim/40'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="exceptionScope"
+                              value={value}
+                              checked={exceptionScope === value}
+                              onChange={() => setExceptionScope(value)}
+                              disabled={busy === 'exception'}
+                            />
+                            {label}
+                          </label>
+                        ))}
+                      </div>
+                      {exceptionScope === 'LATE_ARRIVAL' && (
+                        <p className="mt-1 text-[10px] text-muted">
+                          নোট: দেরিতে আসার অনুমতি দিয়ে আগে বের হওয়া যাবে না — সেজন্য আলাদা অনুমতি লাগবে।
+                        </p>
+                      )}
+                    </div>
                     <textarea
                       className="w-full rounded-lg border border-gold-dim/40 bg-white/80 p-2 text-xs text-cream"
                       rows={3}

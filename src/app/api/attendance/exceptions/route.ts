@@ -4,6 +4,7 @@ import { attendanceDateFor } from '@/lib/attendance'
 import {
   attendanceExceptionDto,
   grantExceptionDirect,
+  normalizeExceptionScope,
   submitExceptionRequest,
 } from '@/lib/attendance-exception'
 import { withApiRoute, apiDataSuccess, apiFailure, requireWalletContext, parseJsonBody } from '@/lib/core/safe-route-helpers'
@@ -34,6 +35,7 @@ export const POST = withApiRoute('attendance.exceptions.create', async (req: Nex
   const body = await parseJsonBody<{
     business_id?: string
     reason?: string
+    scope?: string
     start_minutes?: number | null
     end_minutes?: number | null
     // Direct-grant (owner) fields:
@@ -41,6 +43,7 @@ export const POST = withApiRoute('attendance.exceptions.create', async (req: Nex
     target_user_id?: string
     target_employee_id?: string
   }>(req)
+  const scope = normalizeExceptionScope(body.scope)
   const auth = await requireWalletContext(req, body.business_id)
   if (!auth.ok) return auth.response
   const { ctx } = auth
@@ -59,6 +62,7 @@ export const POST = withApiRoute('attendance.exceptions.create', async (req: Nex
       employeeId: body.target_employee_id,
       actorUserId: ctx.userId,
       reason: body.reason,
+      scope,
       startMinutes: body.start_minutes ?? null,
       endMinutes: body.end_minutes ?? null,
     })
@@ -78,6 +82,7 @@ export const POST = withApiRoute('attendance.exceptions.create', async (req: Nex
     userId: ctx.userId,
     employeeId: ctx.employeeId,
     reason: String(body.reason || ''),
+    scope,
     startMinutes: body.start_minutes ?? null,
     endMinutes: body.end_minutes ?? null,
   })

@@ -636,6 +636,10 @@ model AttendanceException {
   employeeId     String
   attendanceDate DateTime
   status         AttendanceExceptionStatus @default(PENDING)
+  /// Purpose of the waiver: FULL_DAY (all rules), EARLY_CHECKOUT (leave before
+  /// 8 PM / field work), or LATE_ARRIVAL (came in late). A LATE_ARRIVAL waiver
+  /// must NOT unlock an early checkout — see hasApprovedException.
+  scope          String                    @default("FULL_DAY")
   startMinutes   Int?
   endMinutes     Int?
   reason         String                    @db.Text
