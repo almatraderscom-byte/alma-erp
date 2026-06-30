@@ -4,6 +4,7 @@ import { motion, useInView, useReducedMotion, useSpring, type HTMLMotionProps, t
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { tapHaptic } from '@/lib/ui-haptics'
+import { SPRING, ENTER, COUNT_SPRING } from '@/lib/motion'
 
 /**
  * Shared motion vocabulary for the whole app so every page feels alive and
@@ -14,12 +15,12 @@ import { tapHaptic } from '@/lib/ui-haptics'
 
 export const containerVariants: Variants = {
   hidden: {},
-  show: { transition: { staggerChildren: 0.05, delayChildren: 0.02 } },
+  show: { transition: { staggerChildren: ENTER.stagger, delayChildren: ENTER.delayChildren } },
 }
 
 export const itemVariants: Variants = {
-  hidden: { opacity: 0, y: 14 },
-  show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 260, damping: 26, mass: 0.7 } },
+  hidden: { opacity: 0, y: ENTER.y },
+  show: { opacity: 1, y: 0, transition: SPRING.gentle },
 }
 
 /** Wrap a section; direct <Reveal.Item> children fade+spring up in a stagger. */
@@ -51,7 +52,7 @@ export function Lift({ children, className, ...props }: { children: ReactNode; c
       className={cn('will-change-transform', className)}
       whileHover={{ y: -3 }}
       whileTap={{ scale: 0.985 }}
-      transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+      transition={SPRING.default}
       {...props}
     >
       {children}
@@ -68,7 +69,7 @@ export function Press({ children, className, onPointerDown, ...props }: { childr
     <motion.button
       className={cn('will-change-transform', className)}
       whileTap={{ scale: 0.96 }}
-      transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+      transition={SPRING.snappy}
       onPointerDown={(e) => { tapHaptic(); onPointerDown?.(e) }}
       {...props}
     >
@@ -105,7 +106,7 @@ export function AppearOnScroll({
       className={className}
       initial={{ opacity: 0, y }}
       animate={inView ? { opacity: 1, y: 0 } : { opacity: 0, y }}
-      transition={{ type: 'spring', stiffness: 260, damping: 28, mass: 0.7, delay }}
+      transition={{ ...SPRING.gentle, delay }}
       {...props}
     >
       {children}
@@ -130,7 +131,7 @@ export function CountUp({
 }) {
   const reduce = useReducedMotion()
   const fmt = format ?? ((n: number) => Math.round(n).toLocaleString('en-US'))
-  const spring = useSpring(reduce ? value : 0, { stiffness: 90, damping: 20, mass: 0.8 })
+  const spring = useSpring(reduce ? value : 0, COUNT_SPRING)
   const [display, setDisplay] = useState(reduce ? value : 0)
 
   useEffect(() => {
