@@ -167,7 +167,12 @@ export async function sendTelegramText(
 /** Plain status text to owner Telegram (no buttons) + WhatsApp mirror. */
 export async function sendOwnerText(text: string): Promise<{ ok: boolean; error?: string }> {
   // Second channel: mirror to the owner's WhatsApp (best-effort, dormant until configured).
-  await mirrorOwnerNotifyToWhatsApp(text)
+  // Telegram below ALWAYS fires regardless, so a closed 24h WhatsApp window never drops a
+  // notification — it just isn't duplicated to WhatsApp until the owner messages again.
+  const wa = await mirrorOwnerNotifyToWhatsApp(text)
+  if (process.env.OWNER_WHATSAPP_NUMBER && !wa.sent && wa.reason === 'twilio_error') {
+    console.warn('[owner-notify] WhatsApp copy not delivered (24h window likely closed) — Telegram still sent:', wa.error)
+  }
 
   const token = process.env.ASSISTANT_BOT_TOKEN
   const chatId = process.env.TELEGRAM_OWNER_CHAT_ID

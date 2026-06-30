@@ -150,6 +150,27 @@ export async function createTwilioQuickReplyContent(input: {
 }
 
 /**
+ * Delete a Content template by SID — used to clean up the one-shot per-card templates so
+ * they don't accumulate in the Twilio Content library. Best-effort; safe to call after
+ * the message is sent (Twilio resolves the content into the message at send time).
+ */
+export async function deleteTwilioContent(contentSid: string): Promise<void> {
+  if (!twilioWaConfigured() || !/^HX[0-9a-f]{32}$/i.test(contentSid)) return
+  const sid = process.env.TWILIO_ACCOUNT_SID ?? ''
+  const token = process.env.TWILIO_AUTH_TOKEN ?? ''
+  const auth = Buffer.from(`${sid}:${token}`).toString('base64')
+  try {
+    await fetch(`https://content.twilio.com/v1/Content/${contentSid}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Basic ${auth}` },
+      signal: AbortSignal.timeout(10_000),
+    })
+  } catch {
+    /* best-effort cleanup */
+  }
+}
+
+/**
  * Create a list-picker Content template (for 4–10 options that won't fit quick-reply's
  * 3-button cap). Body is {{1}}; each item carries its own id (the callback payload).
  */

@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
   // approval with tap-buttons (✅/❌). Tapping a button is a safe no-op (TEST-NO-OP).
   const approval = (searchParams.get('approval') ?? '').trim()
   if (approval) {
-    const kind = approval === 'multi' ? 'multi' : approval === 'photo' ? 'photo' : 'single'
+    const kind = approval === 'multi' ? 'multi' : approval === 'photo' ? 'photo' : approval === 'list' ? 'list' : 'single'
     const result = await testWaApproval(kind)
     console.log('[wa-selftest:approval]', JSON.stringify({ kind, result }))
     return Response.json({ ok: true, kind, ...result })

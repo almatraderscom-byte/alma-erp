@@ -23,6 +23,7 @@ import {
   createTwilioListPickerContent,
   sendTwilioWaText,
   sendTwilioWaMedia,
+  deleteTwilioContent,
   twilioWaConfigured,
 } from './twilio-wa'
 
@@ -75,6 +76,8 @@ export async function sendOwnerWaButtons(
           })
     if (!made.sid) return { sent: false, reason: 'content_create_failed', error: made.error }
     const res = await sendTwilioWaContent({ to, contentSid: made.sid, contentVariables: { '1': text.slice(0, 1500) } })
+    // One-shot template — clean it up so the Content library doesn't accumulate.
+    void deleteTwilioContent(made.sid)
     return { sent: !res.error, sid: res.sid, error: res.error }
   } catch (err) {
     return { sent: false, reason: 'exception', error: err instanceof Error ? err.message : String(err) }
@@ -160,8 +163,18 @@ export async function handleOwnerApprovalButton(fromDigits: string, payload: str
 }
 
 /** Diagnostic: send the owner a test card with REAL distinct payloads (safe no-op). */
-export async function testWaApproval(kind: 'single' | 'multi' | 'photo' = 'single'): Promise<{ sent: boolean; reason?: string; sid?: string; error?: string }> {
+export async function testWaApproval(kind: 'single' | 'multi' | 'photo' | 'list' = 'single'): Promise<{ sent: boolean; reason?: string; sid?: string; error?: string }> {
   if (!ownerWaConfigured()) return { sent: false, reason: 'OWNER_WHATSAPP_NUMBER or Twilio not configured' }
+  if (kind === 'list') {
+    // 5 options → forces the list-picker path (staff-picker style). Safe no-op.
+    return sendOwnerWaButtons('📋 টেস্ট (৩+ অপশন, list) — একটা বেছে নিন, কিছু বদলাবে না:', [
+      { title: 'করিম', payload: 'approve:TEST-NO-OP-a' },
+      { title: 'রহিম', payload: 'approve:TEST-NO-OP-b' },
+      { title: 'ইয়াফি', payload: 'approve:TEST-NO-OP-c' },
+      { title: 'সাকিব', payload: 'approve:TEST-NO-OP-d' },
+      { title: '❌ বাতিল', payload: 'reject:TEST-NO-OP-e' },
+    ])
+  }
   if (kind === 'photo') {
     // Exercises the photo-then-buttons path with a public sample image (safe no-op).
     await mirrorOwnerKeyboardToWhatsApp(
