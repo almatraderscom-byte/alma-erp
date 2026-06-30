@@ -45,6 +45,7 @@ import { processNoCheckoutFine } from '@/lib/attendance-checkout-fine'
 import { processExceptionApproval } from '@/lib/attendance-exception'
 import { processLeaveApproval } from '@/lib/attendance-leave'
 import { persistExpenseFromPayload } from '@/lib/finance-expense'
+import { processReimbursementApproval } from '@/lib/staff-reimbursement'
 
 type RouteContext = { params: { id: string } }
 
@@ -311,6 +312,8 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
       response = apiDataSuccess(moduleResult)
     } else if (approval.module === APPROVAL_MODULES.FINANCE && approval.type === APPROVAL_TYPES.EXPENSE_ADD) {
       response = await processExpenseAdd(approval, body.action, token.sub, body.note)
+    } else if (approval.module === APPROVAL_MODULES.FINANCE && approval.type === APPROVAL_TYPES.EXPENSE_REIMBURSEMENT) {
+      response = await processReimbursementApproval(approval, body.action, token.sub, body.note)
     } else if (body.action === 'REJECT') {
       const updated = await resolveApprovalRequestById({ id: approval.id, status: 'REJECTED', actorUserId: token.sub, reason: body.note || 'Rejected' })
       response = apiDataSuccess({ approval: updated, moduleResult: null })

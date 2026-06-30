@@ -441,6 +441,18 @@ export default function EmployeePortalPage() {
         )}
 
         {!systemOwner && (
+          <Card className="p-5 border-gold-dim/20 bg-card/78 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold">নিজ খরচ ফেরত</p>
+              <p className="mt-1 text-[11px] text-muted">নিজের পকেট থেকে অফিসের খরচ করেছেন? ফেরতের আবেদন করুন — মালিক অনুমোদন করলে ওয়ালেটে যোগ হবে।</p>
+            </div>
+            <Link href="/portal/expense">
+              <Button size="sm" variant="gold">খরচ ফেরত চান</Button>
+            </Link>
+          </Card>
+        )}
+
+        {!systemOwner && (
           <div className="min-h-[180px]">
             <WalletOverviewCard loading={walletLoading} wallet={wallet} />
           </div>
