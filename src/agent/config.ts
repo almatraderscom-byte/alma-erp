@@ -8,7 +8,10 @@
  * and makes the kill-switch (AGENT_ENABLED) unreliable.
  */
 
-export const isAgentEnabled = () => process.env.AGENT_ENABLED === 'true'
+// Kill-switch flag now lives in neutral src/lib so ERP code can honor it without
+// importing from src/agent (audit #7). Re-exported here so every agent caller of
+// `@/agent/config`'s isAgentEnabled keeps working unchanged.
+export { isAgentEnabled } from '@/lib/agent-runtime-flag'
 
 /** Server-only — never expose the key value. */
 export const isAnthropicConfigured = () => {

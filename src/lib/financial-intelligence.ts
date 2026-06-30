@@ -9,8 +9,13 @@ import { aggregateDashboardMetrics, filterOrdersByDateRange } from '@/lib/order-
 import { analyzePricing } from '@/lib/pricing-insight'
 import { learnFact } from '@/lib/knowledge-graph'
 import { roundMoney } from '@/lib/money'
-import { ACTIVE_FINANCE_FILTER } from '@/agent/lib/finance-shared'
 import type { Order } from '@/types'
+
+// Soft-delete filter for finance rows. Defined locally so this ERP module (reached
+// by the ERP /api/insights route) does NOT import from src/agent — the one-way
+// dependency rule that keeps the AGENT_ENABLED kill switch reliable (audit #7).
+// Mirrors @/agent/lib/finance-shared's ACTIVE_FINANCE_FILTER.
+const ACTIVE_FINANCE_FILTER = { deleted: false } as const
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
