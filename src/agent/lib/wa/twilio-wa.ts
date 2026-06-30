@@ -136,6 +136,32 @@ export async function placeTwilioWaCall(input: { to: string; message: string }):
 }
 
 /**
+ * Pull the Twilio Monitor Alert (error code + text) for a failed call, so we can tell
+ * apart e.g. 37000 (recipient didn't grant call permission) from 37007 (business-
+ * initiated calling not available from this number's country). Best-effort.
+ */
+export async function getTwilioCallError(callSid: string): Promise<{ errorCode?: string; text?: string; error?: string }> {
+  if (!twilioWaConfigured()) return { error: 'not configured' }
+  if (!/^CA[0-9a-f]{32}$/i.test(callSid)) return { error: 'bad call sid' }
+  const sid = process.env.TWILIO_ACCOUNT_SID ?? ''
+  const token = process.env.TWILIO_AUTH_TOKEN ?? ''
+  const auth = Buffer.from(`${sid}:${token}`).toString('base64')
+  try {
+    const res = await fetch('https://monitor.twilio.com/v1/Alerts?PageSize=50', {
+      headers: { Authorization: `Basic ${auth}` },
+      signal: AbortSignal.timeout(15_000),
+    })
+    const data = (await res.json().catch(() => ({}))) as { alerts?: Array<Record<string, unknown>> }
+    if (!res.ok) return { error: `Twilio HTTP ${res.status}` }
+    const match = (data.alerts ?? []).find((a) => a.resource_sid === callSid)
+    if (!match) return { text: 'no alert recorded for this call yet' }
+    return { errorCode: String(match.error_code ?? ''), text: String(match.alert_text ?? '').slice(0, 400) }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
  * Fetch a Twilio Call's current status by SID — used to diagnose why a WhatsApp call
  * that returned a SID still didn't ring (status 'failed' / 'no-answer' / 'completed'
  * etc.). Returns the telling fields verbatim from the Twilio Call resource.

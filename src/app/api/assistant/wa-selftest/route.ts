@@ -23,7 +23,7 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { sendTwilioWaText, placeTwilioWaCall, getTwilioCallStatus, twilioWaConfigured } from '@/agent/lib/wa/twilio-wa'
+import { sendTwilioWaText, placeTwilioWaCall, getTwilioCallStatus, getTwilioCallError, twilioWaConfigured } from '@/agent/lib/wa/twilio-wa'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -44,9 +44,12 @@ export async function GET(req: NextRequest) {
     if (!twilioWaConfigured()) {
       return Response.json({ error: 'not_configured' }, { status: 503 })
     }
-    const callStatus = await getTwilioCallStatus(statusSid)
-    console.log('[wa-selftest:status]', JSON.stringify({ sid: statusSid, callStatus }))
-    return Response.json({ ok: true, sid: statusSid, callStatus })
+    const [callStatus, callError] = await Promise.all([
+      getTwilioCallStatus(statusSid),
+      getTwilioCallError(statusSid),
+    ])
+    console.log('[wa-selftest:status]', JSON.stringify({ sid: statusSid, callStatus, callError }))
+    return Response.json({ ok: true, sid: statusSid, callStatus, callError })
   }
 
   const to = (searchParams.get('to') ?? '').trim()
