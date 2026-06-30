@@ -7,7 +7,7 @@ import { signOut, useSession } from 'next-auth/react'
 import { useBusiness } from '@/contexts/BusinessContext'
 import { useActor } from '@/contexts/ActorContext'
 import { BUSINESSES, getNavForBusiness, type NavItem } from '@/lib/businesses'
-import { filterNavByRole, isPathAllowedForRole, roleHomePath } from '@/lib/roles'
+import { filterNavByRole } from '@/lib/roles'
 import { BusinessSwitcher } from '@/components/layout/BusinessSwitcher'
 import { BusinessLogo } from '@/components/branding/BusinessLogo'
 import { UserAccountMenu } from '@/components/layout/UserAccountMenu'
@@ -185,6 +185,210 @@ function DrawerLink({ item, onClose }: { item: NavItem; onClose: () => void }) {
   )
 }
 
+// ── Rotating phone nav (phone only) ──────────────────────────────────────────
+// Cycles through ALL role-allowed destinations a few at a time. A progress light
+// runs across the top; when it fills, the window rotates and the departed button
+// slides up-left into a collapsible "আগে দেখা" dock (default hidden). Active =
+// current route. Theme-faithful: uses existing tokens, works in light + dark.
+type Dest = { key: string; label: string; icon: string; href: string; badge?: number }
+
+const BN = '০১২৩৪৫৬৭৮৯'
+const bn = (n: number | string) => String(n).replace(/\d/g, d => BN[+d])
+
+function RotTab({ item, active }: { item: Dest; active: boolean }) {
+  return (
+    <Link
+      prefetch
+      href={item.href}
+      className={cn(
+        'relative flex h-full w-full flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2.5 transition-colors active:scale-[0.96]',
+        active ? 'text-gold' : 'text-muted',
+      )}
+    >
+      {active && (
+        <span className="absolute inset-1 rounded-2xl border border-gold/40 bg-gradient-to-b from-gold/20 to-gold/5 shadow-[0_0_22px_rgba(224,122,95,0.3),inset_0_0_12px_rgba(224,122,95,0.1)]" />
+      )}
+      <span className={cn('relative text-[19px] leading-none', active && 'drop-shadow-[0_0_7px_rgba(224,122,95,0.55)]')}>{item.icon}</span>
+      <span className="relative w-full truncate text-center text-[9px] font-black tracking-[0.06em]">{item.label}</span>
+      {!!item.badge && (
+        <span className="absolute right-1.5 top-1 min-w-4 rounded-full bg-red-500 px-1 text-center text-[9px] font-black leading-4 text-white shadow-lg shadow-red-200/40">
+          {item.badge > 99 ? '99+' : item.badge}
+        </span>
+      )}
+    </Link>
+  )
+}
+
+function DockChip({ item, active }: { item: Dest; active: boolean }) {
+  return (
+    <Link
+      prefetch
+      href={item.href}
+      title={item.label}
+      className={cn(
+        'relative flex h-9 w-9 items-center justify-center rounded-xl border text-[16px] transition-colors',
+        active ? 'border-gold/40 bg-gold/15 text-gold' : 'border-border-subtle bg-white/[0.04] text-muted-hi',
+      )}
+    >
+      {item.icon}
+      {!!item.badge && <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-red-500" />}
+    </Link>
+  )
+}
+
+const ROT_BIG = 5
+const ROT_DWELL = 3600
+
+// Only the MAIN front-office pages rotate through the bar — keeps a full round short.
+// Everything else (HR/finance details, settings, admin) lives in the Account drawer.
+// Matched by the nav label so it stays correct across all three businesses.
+const CORE_ROTATION_LABELS = new Set([
+  'Dashboard', 'Trading', 'Orders', 'CRM', 'Clients', 'Inventory',
+  'Invoice', 'Invoices', 'Projects', 'Finance', 'Analytics', 'ALMA Agent',
+])
+
+function RotatingDockNav({ items, activeHref, trailing }: { items: Dest[]; activeHref: string; trailing: React.ReactNode }) {
+  const N = items.length
+  const [head, setHead] = useState(0)
+  const [dockOpen, setDockOpen] = useState(false)
+  const rotates = N > ROT_BIG
+
+  // Lead with the current page whenever the route changes.
+  useEffect(() => {
+    const idx = items.findIndex(it => activePath(activeHref, it.href))
+    if (idx >= 0) setHead(idx)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeHref])
+
+  // Auto-rotate; pause while the owner is browsing the dock.
+  useEffect(() => {
+    if (!rotates || dockOpen) return
+    const t = window.setInterval(() => setHead(h => (h + 1) % N), ROT_DWELL)
+    return () => window.clearInterval(t)
+  }, [N, rotates, dockOpen])
+
+  const visN = Math.min(ROT_BIG, N)
+  const barItems = Array.from({ length: visN }, (_, i) => items[(head + i) % N])
+  // Everything not currently on the bar lives in the dock (all of them, newest-departed first),
+  // so the "আগে দেখা" count matches what the owner actually finds when it opens.
+  const dockItems = rotates
+    ? Array.from({ length: N - visN }, (_, i) => items[(head - 1 - i + N) % N])
+    : []
+
+  return (
+    <div className="relative mx-auto max-w-lg">
+      {rotates && (
+        <>
+          <AnimatePresence>
+            {dockOpen && (
+              <motion.div
+                key="rot-dock"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 8 }}
+                className="absolute bottom-[calc(100%+44px)] left-0 right-0 flex flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-border-subtle bg-card/85 px-2.5 py-2.5 shadow-lg shadow-black/10 backdrop-blur-2xl"
+              >
+                <AnimatePresence mode="popLayout">
+                  {[...dockItems].reverse().map(it => (
+                    <motion.div
+                      key={it.key}
+                      layout
+                      initial={{ opacity: 0, scale: 0.6 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.6 }}
+                      transition={{ duration: 0.28 }}
+                    >
+                      <DockChip item={it} active={activePath(activeHref, it.href)} />
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              </motion.div>
+            )}
+          </AnimatePresence>
+          <button
+            type="button"
+            onClick={() => setDockOpen(o => !o)}
+            className="absolute -top-[26px] left-2 z-[2] flex items-center gap-1 rounded-full border border-border-subtle bg-card/85 px-2.5 py-1 text-[10px] font-bold text-muted backdrop-blur-2xl"
+          >
+            <span className={cn('inline-block transition-transform', dockOpen && 'rotate-180')}>⌃</span>
+            {dockOpen ? 'লুকাও' : 'আগে দেখা'}
+            {!dockOpen && <span className="rounded-full bg-gold/15 px-1 text-gold">{bn(N - visN)}</span>}
+          </button>
+        </>
+      )}
+
+      <div className="relative">
+        {/* Rotating coral/blue light that traces around the bar — the "ঘুরন্ত box".
+            Sits on a non-clipped wrapper so the wide ring can sweep above the bar. */}
+        {rotates && (
+          <motion.span
+            aria-hidden
+            className="pointer-events-none absolute inset-0 rounded-[26px]"
+            style={{
+              padding: '1.4px',
+              background:
+                'conic-gradient(from 0deg, transparent 0%, rgba(224,122,95,.55) 12%, transparent 32%, transparent 55%, rgba(56,128,255,.30) 68%, transparent 88%)',
+              WebkitMask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+              WebkitMaskComposite: 'xor',
+              mask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
+              maskComposite: 'exclude',
+              opacity: 0.85,
+            }}
+            animate={{ rotate: 360 }}
+            transition={{ duration: 7, ease: 'linear', repeat: Infinity }}
+          />
+        )}
+      <div className="relative overflow-hidden rounded-[26px] border border-border-subtle bg-card/80 p-1.5 shadow-lg shadow-black/8 backdrop-blur-2xl">
+        {rotates && (
+          <div className="pointer-events-none absolute inset-x-4 top-[3px] z-[6] h-[3px] rounded-full bg-white/[0.05]">
+            <motion.div
+              key={head}
+              className="relative h-full rounded-full"
+              style={{
+                background: 'linear-gradient(90deg, rgba(224,122,95,.15), rgb(var(--c-accent-lt)), rgb(var(--c-accent)))',
+                boxShadow: '0 0 10px rgba(224,122,95,.7)',
+              }}
+              initial={{ width: '0%' }}
+              animate={{ width: '100%' }}
+              transition={{ duration: ROT_DWELL / 1000, ease: 'linear' }}
+            >
+              <span
+                className="absolute right-0 top-1/2 h-[10px] w-[10px] -translate-y-1/2 translate-x-1/2 rounded-full"
+                style={{
+                  background: 'radial-gradient(circle, #fff 30%, rgb(var(--c-accent-lt)) 55%, rgb(var(--c-accent)) 70%, transparent 78%)',
+                  boxShadow: '0 0 14px 4px rgba(224,122,95,.85)',
+                }}
+              />
+            </motion.div>
+          </div>
+        )}
+
+        <div className="flex items-stretch gap-1">
+          <div className="flex min-w-0 flex-1 items-stretch gap-1">
+            <AnimatePresence mode="popLayout" initial={false}>
+              {barItems.map(it => (
+                <motion.div
+                  key={it.key}
+                  layout
+                  initial={{ opacity: 0, y: 10, scale: 0.8 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -14, x: -10, scale: 0.5 }}
+                  transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+                  className="min-w-0 flex-1"
+                >
+                  <RotTab item={it} active={activePath(activeHref, it.href)} />
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+          <div className="flex shrink-0 items-stretch gap-1 border-l border-border-subtle pl-1">{trailing}</div>
+        </div>
+      </div>
+      </div>
+    </div>
+  )
+}
+
 export function MobileNav() {
   const path = usePathname()
   const { data: session, status: sessionStatus } = useSession()
@@ -196,33 +400,23 @@ export function MobileNav() {
   const { count: approvalCount } = useApprovalCount()
   const nav = useMemo(() => filterNavByRole(getNavForBusiness(business.id), role, business.id), [business.id, role])
 
-  const dashboardHref = roleHomePath(role, business.id)
-  const canAgent = role === 'SUPER_ADMIN' && nav.some(n => n.href === '/agent')
-  const primary = useMemo(() => {
-    const crmHref = business.id === 'CREATIVE_DIGITAL_IT' ? '/digital/clients' : '/crm'
-    const wanted = [
-      { key: 'dashboard', label: 'Dashboard', icon: '⬡', href: dashboardHref },
-      { key: 'orders', label: 'Orders', icon: '◫', href: '/orders' },
-      ...(canAgent ? [{ key: 'agent', label: 'Agent', icon: '✦', href: '/agent' }] : []),
-      { key: 'crm', label: 'CRM', icon: '◎', href: crmHref },
-    ]
-    return wanted.filter(item => nav.some(n => n.href === item.href) || item.href === dashboardHref || item.key === 'agent')
-  }, [business.id, canAgent, dashboardHref, nav])
+  // Only the MAIN front-office pages feed the rotating bar (kept short so a full round
+  // is quick). Approvals is pinned in the trailing slot, so it's excluded here.
+  const rotationItems = useMemo<Dest[]>(
+    () =>
+      nav
+        .filter(n => n.href !== '/approvals' && CORE_ROTATION_LABELS.has(n.label))
+        .map(n => ({ key: n.href, label: n.label, icon: n.icon, href: n.href })),
+    [nav],
+  )
+  const rotationHrefs = useMemo(() => new Set(rotationItems.map(d => d.href)), [rotationItems])
 
-  const secondary = useMemo(() => {
-    const primaryHrefs = new Set(primary.map(p => p.href))
-    const preferred = ['Finance', 'Expenses', 'Payroll', 'Employees', 'Analytics', 'Branding', 'Audit', 'Database', 'Users', 'Notifications', 'Session', 'Inventory', 'Invoice', 'Clients', 'Projects', 'Invoices', 'My desk']
-    return [...nav]
-      .filter(n => !primaryHrefs.has(n.href))
-      .sort((a, b) => {
-        const ia = preferred.indexOf(a.label)
-        const ib = preferred.indexOf(b.label)
-        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib)
-      })
-  }, [nav, primary])
-
-  const canApprovals = isPathAllowedForRole('/approvals', role, business.id)
-  const mobileTabCount = Math.min(6, primary.slice(0, 3).length + (canApprovals ? 1 : 0) + 2)
+  // Everything that isn't pinned (Approvals) and isn't in the rotating bar — shown in
+  // the Account drawer so no page is lost (HR/finance details, settings, admin, etc.).
+  const drawerModules = useMemo(
+    () => nav.filter(n => n.href !== '/approvals' && !rotationHrefs.has(n.href)),
+    [nav, rotationHrefs],
+  )
 
   const unreadPausedRef = useRef(false)
   const unreadBackoffRef = useRef(0)
@@ -326,18 +520,20 @@ export function MobileNav() {
   return (
     <>
       <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-bottom px-3 pb-2 mobile-app-chrome">
-        <div className="mx-auto max-w-lg rounded-[26px] border border-border-subtle bg-card/80 p-1.5 shadow-lg shadow-black/8 backdrop-blur-2xl">
-          <div className="grid items-center gap-1" style={{ gridTemplateColumns: `repeat(${mobileTabCount}, minmax(0, 1fr))` }}>
-            {primary.slice(0, 3).map(item => (
-              <MobileTab key={item.key} icon={item.icon} label={item.label} href={item.href} active={activePath(path, item.href)} />
-            ))}
-            {canApprovals && (
-              <MobileTab icon="◆" label="Approvals" badge={approvalCount} href="/approvals" active={activePath(path, '/approvals')} />
-            )}
-            <MobileTab icon="◌" label="Alerts" badge={unread} onClick={openNotifications} />
-            <MobileTab icon="◎" label="Account" active={drawerOpen} onClick={() => setDrawerOpen(true)} />
-          </div>
-        </div>
+        <RotatingDockNav
+          items={rotationItems}
+          activeHref={path}
+          trailing={
+            <>
+              <div className="w-[56px]">
+                <MobileTab icon="✅" label="Approvals" href="/approvals" active={activePath(path, '/approvals')} badge={approvalCount} />
+              </div>
+              <div className="w-[56px]">
+                <MobileTab icon="◎" label="Account" active={drawerOpen} onClick={() => setDrawerOpen(true)} />
+              </div>
+            </>
+          }
+        />
       </nav>
 
       <AnimatePresence>
@@ -396,9 +592,20 @@ export function MobileNav() {
               </div>
               <div className="max-h-[calc(86dvh-160px)] overflow-y-auto px-4 py-4">
                 <ThemePanel className="mb-4" />
+                <button
+                  type="button"
+                  onClick={() => { setDrawerOpen(false); openNotifications() }}
+                  className="mb-4 flex w-full items-center gap-3 rounded-2xl border border-border-subtle bg-white/[0.04] px-3 py-3 text-left text-muted-hi transition-colors hover:border-gold/25 hover:bg-gold/[0.07] hover:text-cream"
+                >
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-border-subtle bg-card text-base">◌</span>
+                  <span className="min-w-0 flex-1 text-[13px] font-bold">Alerts</span>
+                  {!!unread && (
+                    <span className="min-w-5 rounded-full bg-red-500 px-1.5 text-center text-[11px] font-black leading-5 text-white">{unread > 99 ? '99+' : unread}</span>
+                  )}
+                </button>
                 <p className="mb-3 px-1 text-[10px] font-black uppercase tracking-[0.16em] text-muted">Workspace modules</p>
                 <div className="grid gap-2">
-                  {secondary.map(item => <DrawerLink key={item.href} item={item} onClose={() => setDrawerOpen(false)} />)}
+                  {drawerModules.map(item => <DrawerLink key={item.href} item={item} onClose={() => setDrawerOpen(false)} />)}
                   <button
                     type="button"
                     onClick={() => void signOut({ callbackUrl: '/login' })}
