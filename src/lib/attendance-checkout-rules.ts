@@ -51,6 +51,21 @@ export function checkoutRulesEnabled(businessId: string): boolean {
   return process.env.VERCEL_ENV !== 'production'
 }
 
+/**
+ * Hard time-block switch (Option A). UNLIKE checkoutRulesEnabled, this is ALWAYS
+ * on for ALMA_LIFESTYLE in every environment — production, preview, dev, every
+ * platform (Android, iPhone/Safari, web). The owner's rule "no checkout before
+ * 8:00 PM" must be enforced server-side regardless of the location/task
+ * kill-switch, because the previous gate (behind checkoutRulesEnabled) defaulted
+ * OFF in production and let Safari users slip out early.
+ *
+ * Owner-approved exceptions and leave still waive the block (handled inside
+ * runCheckoutGates).
+ */
+export function checkoutTimeBlockEnabled(businessId: string): boolean {
+  return businessId === CHECKOUT_RULES_BUSINESS
+}
+
 export type CheckoutGateResult =
   | { ok: true }
   | { ok: false; code: 'checkout_too_early'; message: string; meta: { officeEndMinutes: number; nowMinutes: number } }
@@ -169,8 +184,13 @@ export async function runCheckoutGates(input: {
   attendanceDate: Date
   now?: Date
   location: CheckoutLocation
+  // When false, only the always-on time block runs (location + task gates are
+  // skipped). The check-out route passes the kill-switch state here so the 8 PM
+  // block is enforced in production while location/task gates stay gated.
+  enforceExtraGates?: boolean
 }): Promise<CheckoutGateResult> {
   const now = input.now ?? new Date()
+  const enforceExtra = input.enforceExtraGates ?? true
   // Step 3 — an owner-approved exception waives ALL gates for this staff today
   // (whole-day, or within the granted hour window).
   if (await hasApprovedException(input.userId, input.businessId, input.attendanceDate, now)) {
@@ -183,6 +203,7 @@ export async function runCheckoutGates(input: {
   }
   const timeGate = checkoutTimeGate(input.businessId, now)
   if (!timeGate.ok) return timeGate
+  if (!enforceExtra) return { ok: true }
   const locationGate = checkoutLocationGate(input.businessId, input.location)
   if (!locationGate.ok) return locationGate
   return checkoutTaskGate(input.userId, input.businessId, input.attendanceDate)
