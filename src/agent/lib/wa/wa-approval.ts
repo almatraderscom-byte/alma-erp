@@ -22,6 +22,7 @@ import {
   createTwilioQuickReplyContent,
   createTwilioListPickerContent,
   sendTwilioWaText,
+  sendTwilioWaMedia,
   twilioWaConfigured,
 } from './twilio-wa'
 
@@ -98,11 +99,18 @@ export async function sendOwnerWaApproval(summary: string, pendingActionId: stri
 export async function mirrorOwnerKeyboardToWhatsApp(
   text: string,
   inlineKeyboard: Array<Array<{ text: string; callback_data: string }>>,
+  photoUrl?: string,
 ): Promise<void> {
   if (!ownerWaConfigured()) return
   const flat = inlineKeyboard.flat().filter((b) => /^(approve|reject):/.test(b.callback_data ?? ''))
   if (flat.length === 0) return
   try {
+    // Send the camera frame first (as its own media message) so the owner sees the same
+    // photo Telegram shows, then the decision buttons.
+    if (photoUrl && /^https?:\/\//i.test(photoUrl)) {
+      const to = process.env.OWNER_WHATSAPP_NUMBER as string
+      await sendTwilioWaMedia({ to, mediaUrl: photoUrl }).catch(() => undefined)
+    }
     await sendOwnerWaButtons(text, flat.map((b) => ({ title: b.text, payload: b.callback_data })))
   } catch (err) {
     console.warn('[wa-approval] mirror failed:', err instanceof Error ? err.message : err)
@@ -152,8 +160,20 @@ export async function handleOwnerApprovalButton(fromDigits: string, payload: str
 }
 
 /** Diagnostic: send the owner a test card with REAL distinct payloads (safe no-op). */
-export async function testWaApproval(kind: 'single' | 'multi' = 'single'): Promise<{ sent: boolean; reason?: string; sid?: string; error?: string }> {
+export async function testWaApproval(kind: 'single' | 'multi' | 'photo' = 'single'): Promise<{ sent: boolean; reason?: string; sid?: string; error?: string }> {
   if (!ownerWaConfigured()) return { sent: false, reason: 'OWNER_WHATSAPP_NUMBER or Twilio not configured' }
+  if (kind === 'photo') {
+    // Exercises the photo-then-buttons path with a public sample image (safe no-op).
+    await mirrorOwnerKeyboardToWhatsApp(
+      '📋 টেস্ট (ছবিসহ) — ছবির নিচে বাটন আসবে, কিছু বদলাবে না:',
+      [[
+        { text: '✅ অনুমোদন', callback_data: 'approve:TEST-NO-OP' },
+        { text: '❌ বাতিল', callback_data: 'reject:TEST-NO-OP' },
+      ]],
+      'https://demo.twilio.com/owl.png',
+    )
+    return { sent: true, reason: 'photo+buttons sent (check WhatsApp)' }
+  }
   if (kind === 'multi') {
     return sendOwnerWaButtons('📋 টেস্ট (মাল্টি-স্টেপ) — একটা অপশন চাপুন, কিছু বদলাবে না:', [
       { title: '১ ঘণ্টা', payload: 'approve:TEST-NO-OP-1' },

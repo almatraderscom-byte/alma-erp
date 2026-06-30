@@ -71,9 +71,10 @@ export async function GET(req: NextRequest) {
   // approval with tap-buttons (✅/❌). Tapping a button is a safe no-op (TEST-NO-OP).
   const approval = (searchParams.get('approval') ?? '').trim()
   if (approval) {
-    const result = await testWaApproval(approval === 'multi' ? 'multi' : 'single')
-    console.log('[wa-selftest:approval]', JSON.stringify(result))
-    return Response.json({ ok: true, kind: approval === 'multi' ? 'multi' : 'single', ...result })
+    const kind = approval === 'multi' ? 'multi' : approval === 'photo' ? 'photo' : 'single'
+    const result = await testWaApproval(kind)
+    console.log('[wa-selftest:approval]', JSON.stringify({ kind, result }))
+    return Response.json({ ok: true, kind, ...result })
   }
 
   // Diagnostic: ?inbound=1 → did Twilio itself receive any inbound WhatsApp? Tells a

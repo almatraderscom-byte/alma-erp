@@ -100,7 +100,7 @@ export async function sendOwnerPhoto(
   if (reply_markup?.inline_keyboard?.length) {
     try {
       const { mirrorOwnerKeyboardToWhatsApp } = await import('./wa/wa-approval')
-      await mirrorOwnerKeyboardToWhatsApp(caption ?? '📋 অনুমোদন প্রয়োজন', reply_markup.inline_keyboard)
+      await mirrorOwnerKeyboardToWhatsApp(caption ?? '📋 অনুমোদন প্রয়োজন', reply_markup.inline_keyboard, photo)
     } catch { /* never break Telegram */ }
   }
   const chatId = process.env.TELEGRAM_OWNER_CHAT_ID

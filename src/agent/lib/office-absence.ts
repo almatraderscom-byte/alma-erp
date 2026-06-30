@@ -197,7 +197,7 @@ async function sendPhotoResilient(
   if (reply_markup?.inline_keyboard?.length) {
     try {
       const { mirrorOwnerKeyboardToWhatsApp } = await import('./wa/wa-approval')
-      await mirrorOwnerKeyboardToWhatsApp(caption, reply_markup.inline_keyboard)
+      await mirrorOwnerKeyboardToWhatsApp(caption, reply_markup.inline_keyboard, photoUrl)
     } catch { /* never break Telegram */ }
   }
   let res = await sendTelegramPhoto(chatId, photoUrl, caption, reply_markup)
