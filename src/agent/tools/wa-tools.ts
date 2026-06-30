@@ -91,4 +91,76 @@ const send_whatsapp: AgentTool = {
   },
 }
 
-export const WA_TOOLS: AgentTool[] = [send_whatsapp]
+/** Pull readable text out of a CsMessage.content JSON ([{type:'text',text}] or string). */
+function csMessageText(content: unknown): string {
+  if (typeof content === 'string') return content.trim()
+  if (Array.isArray(content)) {
+    const parts = content
+      .map((b) => (b && typeof b === 'object' && 'text' in b ? String((b as { text?: unknown }).text ?? '') : ''))
+      .filter(Boolean)
+    if (parts.length) return parts.join(' ').trim()
+    // Non-text block (image/audio) → a short marker so the owner sees "something arrived".
+    const types = content
+      .map((b) => (b && typeof b === 'object' && 'type' in b ? String((b as { type?: unknown }).type ?? '') : ''))
+      .filter(Boolean)
+    if (types.length) return `(${types[0]})`
+  }
+  return ''
+}
+
+/**
+ * Read-only WhatsApp inbox — the messages staff/customers sent TO the business
+ * WhatsApp number. Unlike Messenger (live Graph API), Twilio WhatsApp inbound is
+ * stored in our own CsConversation/CsMessage tables (pageId prefixed "wa:"), so
+ * this reads from the DB. Lets the owner ask "WhatsApp-এ কী মেসেজ এসেছে দেখাও".
+ */
+const get_wa_inbox: AgentTool = {
+  name: 'get_wa_inbox',
+  description:
+    'Reads recent WhatsApp inbox threads (read-only) — messages staff/customers sent to the business ' +
+    'WhatsApp number. Use when Sir asks "WhatsApp-এ কী মেসেজ এসেছে / কে মেসেজ দিয়েছে / inbox দেখাও". ' +
+    'limit: 1–25 threads (default 15).',
+  input_schema: {
+    type: 'object' as const,
+    properties: { limit: { type: 'number', description: '1–25 threads (default 15)' } },
+  },
+  handler: async (input) => {
+    try {
+      const limit = Math.min(Math.max(Number(input.limit ?? 15), 1), 25)
+      const convs = await db.csConversation.findMany({
+        where: { pageId: { startsWith: 'wa:' } },
+        orderBy: { lastMessageAt: 'desc' },
+        take: limit,
+        select: {
+          psid: true,
+          customerName: true,
+          mode: true,
+          lastMessageAt: true,
+          lastCustomerMessageAt: true,
+          lastCsReplyAt: true,
+          messages: { orderBy: { createdAt: 'desc' }, take: 1, select: { role: true, content: true } },
+        },
+      })
+      const threads = convs.map((c) => {
+        const last = c.messages?.[0]
+        const unanswered =
+          c.lastCustomerMessageAt && (!c.lastCsReplyAt || c.lastCustomerMessageAt > c.lastCsReplyAt)
+        return {
+          number: c.psid,
+          name: c.customerName || c.psid,
+          lastMessage: csMessageText(last?.content) || '(মিডিয়া/খালি)',
+          lastFrom: last?.role === 'user' ? 'them' : 'us',
+          at: c.lastMessageAt,
+          needsReply: Boolean(unanswered),
+          mode: c.mode,
+        }
+      })
+      const awaitingReply = threads.filter((t) => t.needsReply).length
+      return { success: true, data: { count: threads.length, awaitingReply, threads } }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+export const WA_TOOLS: AgentTool[] = [send_whatsapp, get_wa_inbox]
