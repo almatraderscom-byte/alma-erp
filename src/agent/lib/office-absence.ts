@@ -368,21 +368,40 @@ export async function checkOfficeAbsence(opts: {
  */
 export async function runAbsenceWatchTest(
   deviceId = process.env.IMOU_DEVICE_ID ?? '',
-): Promise<{ ran: boolean; error?: string; actionSent?: boolean }> {
+): Promise<{ ran: boolean; error?: string; actionSent?: boolean; peopleCount?: number; expected?: number; absent?: number }> {
   try {
     if (!deviceId) return { ran: false, error: 'no_device_id' }
-    const { captureImouSnapshot } = await import('@/agent/lib/imou-camera')
-    const snap = await captureImouSnapshot(deviceId)
+    const now = new Date()
+    // Use the REAL head-count (same Gemini analysis as the live cron) so the test
+    // card shows the true situation — empty room → "অফিস খালি", not a fixed "১ কম".
+    const { detectPeopleCount } = await import('@/agent/lib/idle-detection')
+    const { peopleCount, snapshotUrl } = await detectPeopleCount(deviceId)
+
+    const expected = await getExpectedCount()
+    const openLunch = await getOpenLunchCount(now)
+    const effectiveExpected = Math.max(0, expected - openLunch)
+    const absent = Math.max(0, effectiveExpected - peopleCount)
+
+    // Everyone present → no absence card makes sense; just report the live count so
+    // the owner can confirm the camera is counting correctly.
+    if (absent <= 0) {
+      const { sendOwnerText } = await import('@/agent/lib/telegram-owner-notify')
+      await sendOwnerText(
+        `✅ টেস্ট: এখন ${toBnNum(peopleCount)}/${toBnNum(effectiveExpected)} জন অফিসে আছে — সবাই উপস্থিত, সব ঠিক।`,
+      )
+      return { ran: true, actionSent: true, peopleCount, expected: effectiveExpected, absent }
+    }
+
     const ok = await alertOwnerAbsence({
-      peopleCount: 1,
-      expected: 2,
-      absent: 1,
+      peopleCount,
+      expected: effectiveExpected,
+      absent,
       sustainedMin: 30,
-      snapshotUrl: snap.url,
+      snapshotUrl,
       deviceId,
-      now: new Date(),
+      now,
     })
-    return { ran: true, actionSent: ok }
+    return { ran: true, actionSent: ok, peopleCount, expected: effectiveExpected, absent }
   } catch (err) {
     return { ran: false, error: err instanceof Error ? err.message : String(err) }
   }
@@ -481,13 +500,89 @@ export async function sendAbsenceStaffPicker(opts: {
 
   // One staffer per row keeps long names readable on the phone.
   const keyboard = buttons.map((b) => [b])
-  const caption = 'কোন স্টাফ অফিসে নেই? নাম সিলেক্ট করুন — তাকে ক্যামেরার ছবিসহ মেসেজ পাঠিয়ে দেব।'
+  const caption = 'কোন স্টাফ অফিসে নেই? নাম সিলেক্ট করুন — পাঠানোর আগে মেসেজটা আপনাকে দেখিয়ে অনুমোদন নেব।'
   return sendPhotoResilient(
     String(process.env.TELEGRAM_OWNER_CHAT_ID ?? ''),
     opts.photoUrl,
     caption,
     opts.deviceId,
     { inline_keyboard: keyboard },
+  )
+}
+
+/** The exact Bangla nudge text — shared so the owner's preview matches what is sent. */
+function buildAbsenceNudgeMessage(name: string): string {
+  return (
+    `আসসালামু আলাইকুম ${name}। অফিসের ক্যামেরায় আপনাকে দেখা যাচ্ছে না — এখন কাজের সময়। ` +
+    `অনুগ্রহ করে দ্রুত অফিসে ফিরে কাজগুলো শেষ করুন, ইনশাআল্লাহ। ধন্যবাদ 🙏`
+  )
+}
+
+/**
+ * Owner tapped a staff name on the picker → he did NOT send that staffer out. Before
+ * anything reaches the staffer, show the owner a final PREVIEW: the camera frame +
+ * the exact message that will go out + a `✅ পাঠান` / `❌ বাতিল` pair. Only on ✅ does
+ * the message actually reach the staffer (office_absence_nudge_send). Nothing is sent
+ * to the staffer here. Stays within the approve:/reject: callback contract.
+ */
+export async function sendAbsenceNudgePreview(opts: {
+  staffId: string
+  staffName: string
+  photoUrl: string
+  deviceId: string
+}): Promise<{ ok: boolean; error?: string }> {
+  const staff = (await db.agentStaff.findUnique({
+    where: { id: opts.staffId },
+    select: { name: true, telegramChatId: true },
+  })) as { name: string; telegramChatId: string | null } | null
+
+  const name = staff?.name ?? opts.staffName
+  if (!(staff?.telegramChatId ?? '').trim()) {
+    await sendPhotoResilient(
+      String(process.env.TELEGRAM_OWNER_CHAT_ID ?? ''),
+      opts.photoUrl,
+      `${name}-এর Telegram পাওয়া যায়নি — তাই মেসেজ পাঠানো যাচ্ছে না।`,
+      opts.deviceId,
+    )
+    return { ok: false, error: 'no_staff_chat_id' }
+  }
+
+  const message = buildAbsenceNudgeMessage(name)
+  let actionId: string | null = null
+  try {
+    const action = await db.agentPendingAction.create({
+      data: {
+        type: 'office_absence_nudge_send',
+        businessId: BUSINESS_ID,
+        payload: { staffId: opts.staffId, staffName: name, photoUrl: opts.photoUrl, deviceId: opts.deviceId, message },
+        summary: `${name}-কে অনুপস্থিতির নোটিশ পাঠানোর চূড়ান্ত অনুমোদন`,
+        costEstimate: 0,
+        status: 'pending',
+      },
+      select: { id: true },
+    })
+    actionId = action.id as string
+  } catch (err) {
+    console.warn('[office-absence] create nudge-send action failed:', err instanceof Error ? err.message : err)
+    return { ok: false, error: 'create_action_failed' }
+  }
+
+  const caption =
+    `📨 ${name}-কে নিচের মেসেজটি (ছবিসহ) পাঠানো হবে:\n\n` +
+    `"${message}"\n\n` +
+    `👇 পাঠাবো?`
+  const reply_markup = {
+    inline_keyboard: [[
+      { text: '✅ পাঠান', callback_data: `approve:${actionId}` },
+      { text: '❌ বাতিল', callback_data: `reject:${actionId}` },
+    ]],
+  }
+  return sendPhotoResilient(
+    String(process.env.TELEGRAM_OWNER_CHAT_ID ?? ''),
+    opts.photoUrl,
+    caption,
+    opts.deviceId,
+    reply_markup,
   )
 }
 
@@ -507,11 +602,7 @@ export async function sendAbsenceNudgeToStaff(opts: {
   if (!chatId) return { ok: false, error: 'no_staff_chat_id' }
 
   const name = staff?.name ?? opts.staffName
-  const message =
-    `আসসালামু আলাইকুম ${name}। অফিসের ক্যামেরায় আপনাকে দেখা যাচ্ছে না — এখন কাজের সময়। ` +
-    `অনুগ্রহ করে দ্রুত অফিসে ফিরে কাজগুলো শেষ করুন, ইনশাআল্লাহ। ধন্যবাদ 🙏`
-
-  return sendPhotoResilient(chatId, opts.photoUrl, message, opts.deviceId)
+  return sendPhotoResilient(chatId, opts.photoUrl, buildAbsenceNudgeMessage(name), opts.deviceId)
 }
 
 /**

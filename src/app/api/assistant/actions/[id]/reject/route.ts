@@ -123,6 +123,19 @@ export async function POST(
     return Response.json({ success: true, status: 'rejected', askedWhichStaff: res.ok })
   }
 
+  // ❌ বাতিল on the staff-nudge preview → owner changed his mind; the staffer is
+  // NEVER messaged. Just acknowledge to the owner. (Row already marked rejected above.)
+  if (action.type === 'office_absence_nudge_send') {
+    const p = payload as { staffName?: string }
+    try {
+      const { sendOwnerText } = await import('@/agent/lib/telegram-owner-notify')
+      await sendOwnerText(`🚫 ঠিক আছে Boss — ${p.staffName ?? 'স্টাফ'}-কে কোনো মেসেজ পাঠানো হয়নি, বাতিল করা হলো।`)
+    } catch (err) {
+      console.warn('[reject] nudge-send cancel notice failed:', err instanceof Error ? err.message : err)
+    }
+    return Response.json({ success: true, status: 'rejected', cancelled: true })
+  }
+
   // Delegation rejected → the owner wants Sonnet to answer the task itself.
   if (action.type === 'delegation') {
     const task = String(payload.task ?? '').trim()
