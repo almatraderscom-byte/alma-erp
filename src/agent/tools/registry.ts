@@ -57,6 +57,7 @@ import { GRAPH_TOOLS } from './graph-tools'
 import { OPEN_TASK_TOOLS } from './open-task-tools'
 import { BROWSER_TOOLS } from './browser-tools'
 import { BROWSER_RECIPE_TOOLS } from './browser-recipe-tools'
+import { NATIVE_PUSH_TOOLS } from './native-push-tools'
 
 export interface ToolResult {
   success: boolean
@@ -404,6 +405,7 @@ export const CORE_AGENT_TOOLS: AgentTool[] = [
   ...OPEN_TASK_TOOLS,
   ...BROWSER_TOOLS,
   ...BROWSER_RECIPE_TOOLS,
+  ...NATIVE_PUSH_TOOLS,
 ]
 
 /** Lifestyle-only tools beyond CORE + base groups (not in TOOL_GROUPS.base). */
