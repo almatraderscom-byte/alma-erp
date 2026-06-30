@@ -12,6 +12,7 @@
  */
 import type { AgentTool } from './registry'
 import {
+  checkBrowserDailyCap,
   createBrowserTaskPendingAction,
   isBrowserAgentEnabled,
   normalizeBrowserTask,
@@ -63,6 +64,15 @@ const run_browser_recipe: AgentTool = {
     try {
       if (!(await isBrowserAgentEnabled())) {
         return { success: false, error: 'browser_agent_disabled', data: { message: BROWSER_OFF_MESSAGE } }
+      }
+
+      const cap = await checkBrowserDailyCap()
+      if (!cap.ok) {
+        return {
+          success: false,
+          error: cap.error,
+          data: { message: 'আজকের ব্রাউজার-টাস্কের সীমা পূর্ণ হয়ে গেছে, Sir — কাল আবার চেষ্টা করুন বা সীমা বাড়াতে বলুন।' },
+        }
       }
 
       const recipeId = String(input.recipeId ?? '').trim()

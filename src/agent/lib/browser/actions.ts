@@ -62,6 +62,67 @@ export interface BrowserTaskPayload {
 const MAX_STEPS = 40
 const MAX_VALUE_LEN = 2000
 
+/** KV: max browser tasks the agent may create per day (anti-runaway). */
+export const BROWSER_DAILY_CAP_KEY = 'browser_daily_task_cap'
+const DEFAULT_BROWSER_DAILY_CAP = 25
+
+/**
+ * Phase D hardening — SSRF guard. The VPS browser-service will `goto` whatever
+ * URL we approve, so a task must never be pointed at loopback / private / cloud
+ * metadata hosts (which could expose internal infra). Returns an error string for
+ * an unsafe URL, or null when the URL is a safe public http(s) target.
+ */
+export function unsafeBrowserUrlReason(rawUrl: string): string | null {
+  let host: string
+  try {
+    const u = new URL(rawUrl)
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      return `unsupported URL scheme: ${u.protocol}`
+    }
+    host = u.hostname.toLowerCase().replace(/\.$/, '')
+  } catch {
+    return `invalid URL: ${rawUrl}`
+  }
+  if (!host) return 'URL has no host'
+
+  // Loopback / internal hostnames.
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.internal') || host.endsWith('.local')) {
+    return `internal host not allowed: ${host}`
+  }
+  // Cloud metadata endpoints.
+  if (host === 'metadata.google.internal' || host === '169.254.169.254') {
+    return `metadata endpoint not allowed: ${host}`
+  }
+  // Bare hostname with no dot and not an IP → almost certainly internal.
+  const isIpv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(host)
+  if (!host.includes('.') && !isIpv4 && !host.includes(':')) {
+    return `non-public host not allowed: ${host}`
+  }
+  // Private / reserved IPv4 ranges.
+  if (isIpv4) {
+    const p = host.split('.').map(Number)
+    if (p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return `invalid IP: ${host}`
+    const [a, b] = p
+    if (
+      a === 0 || a === 127 || a === 10 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 169 && b === 254) || // link-local incl. metadata
+      a >= 224 // multicast / reserved
+    ) {
+      return `private/reserved IP not allowed: ${host}`
+    }
+  }
+  // IPv6 loopback / link-local / unique-local.
+  if (host.includes(':')) {
+    const h = host.replace(/^\[|\]$/g, '')
+    if (h === '::1' || h === '::' || h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) {
+      return `private/reserved IPv6 not allowed: ${host}`
+    }
+  }
+  return null
+}
+
 /**
  * Words that signal a high-risk / money / irreversible browser action. Phase A
  * already gates EVERY task behind owner approval, so this is an extra warning
@@ -112,6 +173,10 @@ export function normalizeBrowserTask(input: Record<string, unknown>): Normalized
   if (startUrl && !/^https?:\/\//i.test(startUrl)) {
     return { ok: false, error: 'startUrl must be an http(s) URL' }
   }
+  if (startUrl) {
+    const bad = unsafeBrowserUrlReason(startUrl)
+    if (bad) return { ok: false, error: `startUrl blocked — ${bad}` }
+  }
 
   const rawSteps = Array.isArray(input.steps) ? input.steps : []
   const steps: BrowserStep[] = []
@@ -132,6 +197,10 @@ export function normalizeBrowserTask(input: Record<string, unknown>): Normalized
       const url = String(r.url).trim()
       if (action === 'goto' && !/^https?:\/\//i.test(url)) {
         return { ok: false, error: `goto step needs an http(s) url, got: ${url}` }
+      }
+      if (action === 'goto') {
+        const bad = unsafeBrowserUrlReason(url)
+        if (bad) return { ok: false, error: `goto blocked — ${bad}` }
       }
       step.url = url
     }
@@ -228,6 +297,38 @@ export async function createBrowserTaskPendingAction(
     },
   })
   return { pendingActionId: action.id as string, critical, stepCount: payload.steps.length, summary }
+}
+
+/**
+ * Phase D hardening — anti-runaway daily cap. Counts browser tasks created since
+ * local midnight and refuses new ones past the (KV-tunable) cap, so a head-model
+ * loop can't flood the owner's approval queue. Fail-OPEN on any error (never block
+ * a legitimate task because the count read failed).
+ */
+export async function checkBrowserDailyCap(): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    let cap = DEFAULT_BROWSER_DAILY_CAP
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row = await (prisma as any).agentKvSetting.findUnique({
+      where: { key: BROWSER_DAILY_CAP_KEY },
+      select: { value: true },
+    })
+    const parsed = Number(row?.value)
+    if (Number.isFinite(parsed) && parsed > 0) cap = Math.floor(parsed)
+
+    const since = new Date()
+    since.setHours(0, 0, 0, 0)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const count = await (prisma as any).agentPendingAction.count({
+      where: { type: BROWSER_ACTION_TYPE, createdAt: { gte: since } },
+    })
+    if (count >= cap) {
+      return { ok: false, error: `daily browser-task limit reached (${count}/${cap}) — try again tomorrow or raise '${BROWSER_DAILY_CAP_KEY}'` }
+    }
+    return { ok: true }
+  } catch {
+    return { ok: true } // fail-open
+  }
 }
 
 /** Reads the browser-agent kill-switch (KV). Default OFF. */

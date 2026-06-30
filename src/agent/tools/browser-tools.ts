@@ -14,6 +14,7 @@ import { prisma } from '@/lib/prisma'
 import type { AgentTool } from './registry'
 import {
   BROWSER_ACTION_TYPE,
+  checkBrowserDailyCap,
   isBrowserAgentEnabled,
   isCriticalBrowserTask,
   normalizeBrowserTask,
@@ -72,6 +73,15 @@ const run_browser_task: AgentTool = {
               'ব্রাউজার দিয়ে কাজ করার ক্ষমতা এখন বন্ধ আছে, Sir। চালু করতে বলুন — ' +
               '"ব্রাউজার এজেন্ট চালু করো" (settings: browser_agent_enabled = true)।',
           },
+        }
+      }
+
+      const cap = await checkBrowserDailyCap()
+      if (!cap.ok) {
+        return {
+          success: false,
+          error: cap.error,
+          data: { message: 'আজকের ব্রাউজার-টাস্কের সীমা পূর্ণ হয়ে গেছে, Sir — কাল আবার চেষ্টা করুন বা সীমা বাড়াতে বলুন।' },
         }
       }
 
