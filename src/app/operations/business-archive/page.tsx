@@ -11,6 +11,7 @@ import { BUSINESS_LIST } from '@/lib/businesses'
 import { modulesForBusiness, type ArchiveModuleDef } from '@/lib/business-archive/module-registry'
 import { isSystemOwner } from '@/lib/roles'
 import { Button, Card, Input, PageHeader, Select, Skeleton } from '@/components/ui'
+import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { useRouter } from 'next/navigation'
 
 const stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }

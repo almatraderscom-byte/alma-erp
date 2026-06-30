@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 import { Button, Card, Input, Skeleton } from '@/components/ui'
+import { confirmDialog } from '@/components/ui/confirm-dialog'
 import { safeFetchJson, safeFetchJsonWithToast } from '@/lib/safe-fetch'
 
 type MethodRow = {
