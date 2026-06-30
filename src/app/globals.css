@@ -375,7 +375,8 @@ a,
 @media (prefers-reduced-motion: reduce) {
   .alma-shimmer-sweep,
   .skeleton,
-  .gold-pulse {
+  .gold-pulse,
+  .alert-pulse {
     animation: none !important;
   }
 }
@@ -447,6 +448,14 @@ a,
   50% { box-shadow: 0 0 0 6px rgba(224,122,95,0); }
 }
 .gold-pulse { animation: goldPulse 2s ease-in-out infinite; }
+
+/* Urgent alert pulse (red) — a soft breathing ring to draw the eye to pending
+   approvals / unread alerts. Respects reduced-motion via the rule above pattern. */
+@keyframes almaAlertPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.45); }
+  50% { box-shadow: 0 0 0 5px rgba(239,68,68,0); }
+}
+.alert-pulse { animation: almaAlertPulse 2s ease-in-out infinite; }
 
 /* Mobile safe areas */
 @supports (padding: max(0px)) {

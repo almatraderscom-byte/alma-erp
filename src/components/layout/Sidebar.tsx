@@ -37,7 +37,7 @@ function NavItem({ href, icon, label, badge, collapsed }: { href: string; icon: 
       <span className={`relative text-base shrink-0 transition-all ${active ? 'text-gold drop-shadow-[0_0_6px_rgba(224,122,95,0.55)]' : 'text-muted group-hover:text-cream'}`}>
         {icon}
         {badge && collapsed && (
-          <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500 shadow-lg shadow-red-200/40" aria-hidden />
+          <span className="alert-pulse absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500 shadow-lg shadow-red-200/40" aria-hidden />
         )}
       </span>
       <AnimatePresence>
@@ -49,7 +49,7 @@ function NavItem({ href, icon, label, badge, collapsed }: { href: string; icon: 
         )}
       </AnimatePresence>
       {badge && !collapsed && (
-        <span className="ml-auto text-[10px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full">{badge}</span>
+        <span className="alert-pulse ml-auto text-[10px] font-bold bg-red-500 text-white px-1.5 py-0.5 rounded-full">{badge}</span>
       )}
     </Link>
   )

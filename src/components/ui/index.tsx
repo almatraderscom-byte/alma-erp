@@ -270,7 +270,7 @@ export function Button({
   className?: string
   type?: 'button' | 'submit'
 }) {
-  const base = 'inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl font-semibold transition-all duration-150 disabled:opacity-40 active:scale-[0.98] md:min-h-0'
+  const base = 'inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl font-semibold transition-all duration-150 disabled:opacity-50 disabled:saturate-[0.85] disabled:cursor-not-allowed disabled:active:scale-100 active:scale-[0.98] md:min-h-0'
   const sizes = { xs: 'px-2.5 py-1.5 text-[11px] min-h-[36px] md:min-h-0', sm: 'px-3.5 py-2 text-xs', md: 'px-5 py-2.5 text-sm' }
   const variants = {
     gold:      'bg-gold/10 border border-gold/30 text-gold-dim hover:bg-gold/20 hover:shadow-gold-sm',
@@ -293,12 +293,16 @@ export function Button({
 }
 
 // ── Input ────────────────────────────────────────────────────────────────
-export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
+export function Input({ className, error, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { error?: boolean }) {
   return (
     <input
       {...props}
+      aria-invalid={error || undefined}
       className={cn(
-        'w-full rounded-xl bg-card border border-border-strong px-4 py-3 text-sm text-cream placeholder-muted transition-all focus:outline-none focus:border-gold/60 focus:ring-2 focus:ring-gold/25 focus:shadow-gold-sm',
+        'w-full rounded-xl bg-card border px-4 py-3 text-sm text-cream placeholder-muted transition-all focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed',
+        error
+          ? 'border-danger/60 focus:border-danger focus:ring-2 focus:ring-danger/30'
+          : 'border-border-strong focus:border-gold/60 focus:ring-2 focus:ring-gold/25 focus:shadow-gold-sm',
         className,
       )}
     />
@@ -371,9 +375,15 @@ export function Empty({
 }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
-      <span className="mb-4 text-5xl opacity-30">{icon}</span>
+      {/* Soft accent-tinted chip so the glyph reads as intentional, not a missing icon. */}
+      <span
+        className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border text-3xl text-muted-hi/80 shadow-card"
+        style={{ background: 'rgba(var(--c-accent), 0.06)', borderColor: 'rgba(var(--c-accent), 0.14)' }}
+      >
+        {icon}
+      </span>
       <p className="mb-1 text-sm font-semibold text-muted-hi">{title}</p>
-      {desc && <p className="text-[11px] text-muted">{desc}</p>}
+      {desc && <p className="text-[11px] text-muted max-w-[34ch]">{desc}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>
   )
