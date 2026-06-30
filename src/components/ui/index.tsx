@@ -1,6 +1,6 @@
 'use client'
 import { motion, useReducedMotion, useSpring } from 'framer-motion'
-import { useEffect, useState } from 'react'
+import { forwardRef, useEffect, useState, type ReactNode } from 'react'
 import { BDT_SYMBOL, fmtNum } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 import { tapHaptic } from '@/lib/ui-haptics'
@@ -46,8 +46,8 @@ export function useCountUp(target: number, enabled: boolean): number {
 }
 
 // ── Card ─────────────────────────────────────────────────────────────────
-export const Card = React.forwardRef<HTMLDivElement, {
-  children: React.ReactNode
+export const Card = forwardRef<HTMLDivElement, {
+  children: ReactNode
   className?: string
   gold?: boolean
   /** Subtle hover lift — presentation only. */
