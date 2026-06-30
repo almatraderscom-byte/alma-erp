@@ -9,7 +9,7 @@ import {
   type WorkflowTransitionState,
 } from '@/lib/telegram-notification/lifecycle-transition'
 
-export type ApprovalModule = 'ALMA_TRADING' | 'INVENTORY' | 'PAYROLL' | 'ORDERS_CRM'
+export type ApprovalModule = 'ALMA_TRADING' | 'INVENTORY' | 'PAYROLL' | 'ORDERS_CRM' | 'FINANCE'
 
 import type { ApprovalTx } from '@/lib/prisma-transaction'
 

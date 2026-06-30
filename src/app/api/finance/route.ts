@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { serverGet, serverPost } from '@/lib/server-api'
+import { serverGet } from '@/lib/server-api'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { sendFinanceAlert } from '@/lib/resend'
 import { prisma } from '@/lib/prisma'
@@ -8,7 +8,7 @@ import { logEvent } from '@/lib/logger'
 import { apiFailure } from '@/lib/safe-api-response'
 import { TRADING_BUSINESS_ID, numberFromDecimal } from '@/lib/trading'
 import { getLifestyleFinance } from '@/lib/lifestyle/read'
-import { createLifestyleExpenseInPostgres } from '@/lib/lifestyle/write'
+import { persistExpenseFromPayload, enqueueExpenseApproval } from '@/lib/finance-expense'
 
 export const revalidate = 0
 
@@ -98,17 +98,21 @@ export async function POST(req: NextRequest) {
     const raw = (await req.json()) as Record<string, unknown>
     const payload = await mergeActorPayload(req, raw)
     const businessId = String(raw.business_id || LIFESTYLE_BUSINESS_ID)
-    const result = businessId === LIFESTYLE_BUSINESS_ID
-      ? await createLifestyleExpenseInPostgres(payload)
-      : await serverPost('add_expense', payload)
-    const attachmentId = String(raw.receipt_attachment_id || '').trim()
-    const expenseId = String((result as { expense_id?: string; exp_id?: string }).expense_id || (result as { exp_id?: string }).exp_id || '')
-    if (attachmentId && expenseId) {
-      await prisma.expenseAttachment.updateMany({
-        where: { id: attachmentId, deletedAt: null },
-        data: { expenseId },
+
+    // Owner directive: only a Super Admin can add an expense directly. Anyone
+    // else (admin or staff) routes the add through the approval center — it is
+    // created only once the owner approves, and not at all if rejected.
+    if (String(payload.actor_role || '') !== 'SUPER_ADMIN') {
+      const approval = await enqueueExpenseApproval(payload)
+      return NextResponse.json({
+        ok: true,
+        pending_approval: true,
+        approval_id: approval.id,
+        message: 'খরচটি অনুমোদনের জন্য পাঠানো হয়েছে। অনুমোদন হলে যোগ হবে।',
       })
     }
+
+    const { result, expenseId } = await persistExpenseFromPayload(payload)
     const amount = Number(raw.amount || 0)
     const category = String(raw.category || 'Expense')
     void Promise.all([
@@ -130,7 +134,7 @@ export async function POST(req: NextRequest) {
       priority: 'NORMAL',
       actionUrl: '/finance',
       actionLabel: 'Open finance',
-      dedupeKey: `expense-added:${String((result as { expense_id?: string }).expense_id || Date.now())}`,
+      dedupeKey: `expense-added:${expenseId || Date.now()}`,
       metadata: { result, raw },
       }),
     ]).catch(() => {})
