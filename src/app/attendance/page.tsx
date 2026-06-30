@@ -397,7 +397,7 @@ function AttendancePageInner() {
             <AnalyticsStat label="Total penalties" value={money(analytics.totalPenalties)} tone="text-red-600" />
             <AnalyticsStat label="Waived / reduced" value={money(analytics.waivedAmount)} tone="text-emerald-600" />
             <AnalyticsStat label="Net after appeals" value={money(analytics.netPenaltiesAfterWaivers)} />
-            <AnalyticsStat label="Approval rate" value={`${analytics.approvalRate}%`} tone="text-[#E07A5F]" />
+            <AnalyticsStat label="Approval rate" value={`${analytics.approvalRate}%`} tone="text-gold" />
           </div>
           {analytics.repeatOffenders.length > 0 && (
             <p className="mt-3 text-[10px] text-muted">
@@ -574,7 +574,7 @@ function AttendancePageInner() {
                       <EmployeeAvatar userId={r.userId} name={r.name} imageUrl={r.profileImageUrl} size="sm" />
                       <span className="text-cream font-semibold truncate">{i + 1}. {r.name}</span>
                     </span>
-                    <span className="font-mono text-[#E07A5F] font-bold">{r.punctualityScore}%</span>
+                    <span className="font-mono text-gold font-bold">{r.punctualityScore}%</span>
                   </div>
                   <p className="mt-1 text-muted">{r.presentDays} days · {r.lateCount} late · avg {r.averageWorkLabel} · penalty {money(r.penaltyTotal)}</p>
                 </div>
@@ -664,7 +664,7 @@ function AttendancePageInner() {
 
       {review && (
         <MobileModalPortal open zIndex={90} onBackdropClick={() => setReview(null)}>
-          <Card className="mobile-modal-shell w-full max-w-md border-[#E07A5F]/20 sm:rounded-2xl">
+          <Card className="mobile-modal-shell w-full max-w-md border-gold/20 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
               <p className="text-sm font-bold text-cream">{review.action === 'APPROVE' ? 'Approve penalty reduction' : 'Reject penalty appeal'}</p>
               <p className="text-xs text-muted mt-1">
@@ -675,13 +675,13 @@ function AttendancePageInner() {
               {review.action === 'APPROVE' && (
                 <label className="block space-y-1 text-[11px]">
                   <span className="text-muted">Approved reduction (wallet credit)</span>
-                  <input value={review.amount} onChange={e => setReview(r => r ? { ...r, amount: e.target.value } : r)} type="number" min="1" max={review.originalPenalty} step="1" className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream font-mono focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                  <input value={review.amount} onChange={e => setReview(r => r ? { ...r, amount: e.target.value } : r)} type="number" min="1" max={review.originalPenalty} step="1" className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream font-mono focus:outline-none focus:ring-2 focus:ring-gold/20" />
                   <p className="text-muted">Final penalty after approval: {money(Math.max(0, review.originalPenalty - Number(review.amount || 0)))}</p>
                 </label>
               )}
               <label className="block space-y-1 text-[11px]">
                 <span className="text-muted">Admin note</span>
-                <textarea value={review.note} onChange={e => setReview(r => r ? { ...r, note: e.target.value } : r)} rows={3} className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                <textarea value={review.note} onChange={e => setReview(r => r ? { ...r, note: e.target.value } : r)} rows={3} className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-gold/20" />
               </label>
             </div>
             <div className="mobile-modal-footer px-5 pt-3">

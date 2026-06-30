@@ -296,7 +296,7 @@ export default function InvoicePage() {
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-0.5">
-                      <span className="font-mono text-[11px] text-[#E07A5F] font-bold">{o.id}</span>
+                      <span className="font-mono text-[11px] text-gold font-bold">{o.id}</span>
                       <StatusBadge status={o.status} />
                     </div>
                     <p className="text-sm font-semibold text-cream">{o.customer}</p>
@@ -327,7 +327,7 @@ export default function InvoicePage() {
                       <button type="button" onClick={() => order ? openPreview(order, invoiceUrl(inv), inv) : openInvoice(inv)} className="flex-1 min-w-0 text-left">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <span className="font-mono text-[11px] txt-pos font-bold">{inv.invoiceNumber}</span>
-                          <span className="font-mono text-[10px] text-[#E07A5F]">Order {inv.orderId}</span>
+                          <span className="font-mono text-[10px] text-gold">Order {inv.orderId}</span>
                           <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${inv.paymentStatus === 'PAID' ? 'tone-green' : inv.paymentStatus === 'PARTIAL' ? 'tone-amber' : 'border-border bg-white/[0.04] text-muted-hi'}`}>{inv.paymentStatus}</span>
                         </div>
                         <p className="text-sm font-semibold text-cream">{inv.customerName}</p>

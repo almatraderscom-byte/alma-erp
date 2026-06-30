@@ -295,7 +295,7 @@ export default function BusinessArchiveControlPage() {
 
         <motion.div variants={fadeUp}>
           <Card className="rounded-2xl border border-white/[0.06] p-5 space-y-4 shadow-sm">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#E07A5F]">Step 1 · Business</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-gold">Step 1 · Business</p>
             <Select
               value={business.id}
               onChange={v => {
@@ -313,7 +313,7 @@ export default function BusinessArchiveControlPage() {
           <>
             <motion.div variants={fadeUp}>
               <Card className="rounded-2xl border border-white/[0.06] p-5 space-y-3 shadow-sm">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#E07A5F]">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-gold">
                   Active vs archived stats
                 </p>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -332,7 +332,7 @@ export default function BusinessArchiveControlPage() {
 
             <motion.div variants={fadeUp}>
               <Card className="rounded-2xl border border-white/[0.06] p-5 space-y-4 shadow-sm">
-                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#E07A5F]">
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-gold">
                   Step 2–3 · Select modules
                 </p>
                 <div className="grid gap-2 sm:grid-cols-2">
@@ -346,7 +346,7 @@ export default function BusinessArchiveControlPage() {
                           unavailable
                             ? 'cursor-not-allowed border-border bg-white/[0.04] opacity-70'
                             : selected.includes(m.key)
-                              ? 'cursor-pointer border-[#E07A5F]/40 bg-[#E07A5F]/5'
+                              ? 'cursor-pointer border-gold/40 bg-gold/5'
                               : 'cursor-pointer border-white/[0.06] bg-card/85 hover:border-border hover:bg-white/[0.04]'
                         }`}
                       >
@@ -355,7 +355,7 @@ export default function BusinessArchiveControlPage() {
                           disabled={unavailable}
                           checked={selected.includes(m.key)}
                           onChange={() => !unavailable && toggleModule(m.key)}
-                          className="mt-0.5 accent-[#E07A5F]"
+                          className="mt-0.5 accent-gold"
                         />
                         <span>
                           <span className="font-bold text-cream">{m.label}</span>

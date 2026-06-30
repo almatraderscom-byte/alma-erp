@@ -179,7 +179,7 @@ export default function TaskSpotlightAdminPage() {
             </div>
             <Input placeholder="Task title" value={title} onChange={e => setTitle(e.target.value)} />
             <textarea
-              className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3 text-sm text-cream placeholder:text-muted min-h-[100px] focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20 focus:border-[#E07A5F]/40"
+              className="w-full rounded-xl border border-white/[0.06] bg-card/85 px-4 py-3 text-sm text-cream placeholder:text-muted min-h-[100px] focus:outline-none focus:ring-2 focus:ring-gold/20 focus:border-gold/40"
               placeholder="Instructions for the employee…"
               value={description}
               onChange={e => setDescription(e.target.value)}
@@ -200,11 +200,11 @@ export default function TaskSpotlightAdminPage() {
               <Input placeholder="Banner image URL (optional)" value={bannerUrl} onChange={e => setBannerUrl(e.target.value)} />
             </div>
             <label className="flex items-center gap-2 text-xs text-muted-hi cursor-pointer">
-              <input type="checkbox" checked={ackRequired} onChange={e => setAckRequired(e.target.checked)} className="rounded accent-[#E07A5F]" />
+              <input type="checkbox" checked={ackRequired} onChange={e => setAckRequired(e.target.checked)} className="rounded accent-gold" />
               Acknowledgment required
             </label>
             <label className="flex items-center gap-2 text-xs text-muted-hi cursor-pointer">
-              <input type="checkbox" checked={allowDismiss} onChange={e => setAllowDismiss(e.target.checked)} className="rounded accent-[#E07A5F]" />
+              <input type="checkbox" checked={allowDismiss} onChange={e => setAllowDismiss(e.target.checked)} className="rounded accent-gold" />
               Allow dismiss without completing
             </label>
             <div className="max-h-40 overflow-y-auto rounded-xl border border-white/[0.06] bg-white/[0.04]/50 p-3 space-y-1">
@@ -217,7 +217,7 @@ export default function TaskSpotlightAdminPage() {
                     type="checkbox"
                     checked={assigneeIds.includes(u.id)}
                     onChange={() => toggleAssignee(u.id)}
-                    className="rounded accent-[#E07A5F]"
+                    className="rounded accent-gold"
                   />
                   {u.name} <span className="text-muted">({u.email})</span>
                 </label>
@@ -256,7 +256,7 @@ export default function TaskSpotlightAdminPage() {
                       {t.assignments.map(a => (
                         <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.04] pt-2">
                           <span className="text-muted-hi">
-                            {a.assignee?.name || a.userId} — <span className="font-semibold text-[#E07A5F]">{a.status}</span>
+                            {a.assignee?.name || a.userId} — <span className="font-semibold text-gold">{a.status}</span>
                           </span>
                           <Button size="xs" variant="ghost" onClick={() => void resend(t.id, a.id)}>
                             Resend spotlight
