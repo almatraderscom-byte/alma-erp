@@ -41,6 +41,9 @@ interface ChatBody {
   projectId?: string
   personalMode?: boolean
   source?: string
+  /** Set by the voice session — the reply is read aloud (TTS), so the head should
+   *  answer TTS-friendly and hand money/irreversible confirmations off to a tap. */
+  voice?: boolean
   /** Owner's head-model choice for a NEW web conversation: a real model id or 'auto'. */
   modelId?: string
   /** A2: set by the VPS worker when running an enqueued turn — the turn row the
@@ -441,8 +444,22 @@ export async function POST(req: NextRequest) {
   // was already transcribed by Gemini Flash above and stored as a text block, so a
   // text-only model (DeepSeek) reads it from that description — no model switch, no
   // Claude vision cost.
+  // Voice turns: the reply is spoken aloud, so steer the head to a short,
+  // TTS-friendly answer and keep money/irreversible actions tap-gated (never let a
+  // mis-heard "হ্যাঁ" approve a money move). The head still ACTS by voice for
+  // everything its autonomy policy already allows — this only shapes the reply +
+  // the confirmation hand-off. Rides the existing projectSystemInstructions carrier.
+  const VOICE_TURN_INSTRUCTION =
+    '[VOICE MODE — তোমার উত্তর TTS দিয়ে Sir-কে জোরে পড়ে শোনানো হবে; তিনি হ্যান্ডস-ফ্রি।]\n' +
+    '- উত্তর ছোট রাখো: ১–৩ বাক্য, কথ্য বাংলা, কোনো markdown/লিংক/বুলেট/টেবিল নয়; সংখ্যা স্বাভাবিকভাবে বলো (যেমন "বারো হাজার পাঁচশো টাকা")।\n' +
+    '- টেক্সট চ্যাটের মতোই কাজ করতে পারো — একই autonomy policy মানো।\n' +
+    '- টাকা বা অপরিবর্তনীয় কাজের জন্য confirm card আগের মতোই বানাও, কিন্তু বলো এক লাইনে: "অ্যাপে Approve-এ ট্যাপ করুন" — মুখের "হ্যাঁ" কখনো টাকার কাজ approve বলে ধরে নিও না।\n' +
+    '- বাক্য এমনভাবে শেষ করো যেন শুনতে স্বাভাবিক লাগে।'
   const turnOptions = {
-    projectSystemInstructions,
+    projectSystemInstructions:
+      body.voice === true
+        ? [projectSystemInstructions, VOICE_TURN_INSTRUCTION].filter(Boolean).join('\n\n')
+        : projectSystemInstructions,
     personalMode,
     telegramFastPath,
     businessId,
