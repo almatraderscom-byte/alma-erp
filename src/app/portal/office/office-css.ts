@@ -58,7 +58,8 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 .ohub .brand small{display:block;font-size:11px;font-weight:500;color:var(--muted)}
 .ohub .seg{margin-left:auto;display:flex;gap:4px;padding:4px;background:var(--bg-2);border:1px solid var(--border-subtle);border-radius:var(--r-pill)}
 .ohub .seg button{font-family:inherit;font-size:13px;font-weight:600;color:var(--muted);padding:8px 16px;border:0;background:transparent;border-radius:var(--r-pill);cursor:pointer;transition:.18s}
-.ohub .seg button.active{background:linear-gradient(135deg,var(--accent),var(--accent-dim));color:#fff;box-shadow:0 3px 12px rgba(224,122,95,.4)}
+.ohub .seg button:hover{color:var(--muted-hi)}
+.ohub .seg button.active{background:linear-gradient(135deg,var(--accent-lt),var(--accent-dim));color:#fff;box-shadow:0 3px 14px rgba(224,122,95,.5),inset 0 1px 0 rgba(255,255,255,.25)}
 .ohub .bell{position:relative;flex-shrink:0;width:40px;height:40px;border-radius:var(--r-pill);display:grid;place-items:center;font-size:17px;background:var(--bg-2);border:1px solid var(--border-subtle);color:var(--ink);cursor:pointer}
 .ohub .bell .bdot{position:absolute;top:-4px;right:-4px;min-width:19px;height:19px;border-radius:10px;background:var(--danger);color:#fff;font-size:10.5px;font-weight:700;display:grid;place-items:center;padding:0 5px;border:2px solid var(--bg-0)}
 
@@ -71,30 +72,44 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 @keyframes oh-fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
 .ohub .phead{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px}
-.ohub .phead .kicker{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
-.ohub .phead h1{font-size:26px;font-weight:700;letter-spacing:-.02em;margin-top:4px}
+.ohub .phead .kicker{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;
+  background:linear-gradient(90deg,var(--accent-lt),var(--violet));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+.ohub .phead h1{font-size:27px;font-weight:800;letter-spacing:-.025em;margin-top:5px;
+  background:linear-gradient(180deg,#fff,#cfd2de);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
 .ohub .phead p{color:var(--muted);font-size:14px;margin-top:3px}
 .ohub .pill-row{display:flex;gap:8px;flex-wrap:wrap}
-.ohub .chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;padding:7px 13px;border-radius:var(--r-pill);background:var(--bg-2);border:1px solid var(--border-subtle);color:var(--muted-hi)}
+.ohub .chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;padding:7px 13px;border-radius:var(--r-pill);
+  background:linear-gradient(180deg,rgba(255,255,255,0.06),rgba(255,255,255,0) 70%),var(--bg-2);
+  border:1px solid var(--border-subtle);color:var(--muted-hi);box-shadow:inset 0 1px 0 rgba(255,255,255,0.05)}
 .ohub .chip.live{color:var(--success)} .ohub .chip.live .dot{width:7px;height:7px;border-radius:50%;background:var(--success);box-shadow:0 0 0 4px rgba(34,197,94,.18)}
 
 /* ── KPI cards ── */
 .ohub .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
-.ohub .kpi{position:relative;overflow:hidden;background:var(--bg-1);border:1px solid var(--border-subtle);border-radius:var(--r-lg);padding:18px}
-.ohub .kpi .ic{font-size:20px}
-.ohub .kpi .v{font-size:30px;font-weight:700;letter-spacing:-.02em;margin-top:8px}
+.ohub .kpi{position:relative;overflow:hidden;border-radius:var(--r-lg);padding:18px;
+  background:
+    linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0) 42%),
+    linear-gradient(165deg,var(--bg-2),var(--bg-1));
+  border:1px solid var(--border-subtle);
+  box-shadow:0 8px 26px rgba(0,0,0,0.42),inset 0 1px 0 rgba(255,255,255,0.06);
+  transition:transform .22s cubic-bezier(.22,1,.36,1),box-shadow .22s ease,border-color .22s ease}
+.ohub .kpi::after{content:"";position:absolute;left:0;top:0;height:100%;width:3px;border-radius:3px 0 0 3px;opacity:.9}
+.ohub .kpi:hover{transform:translateY(-3px);border-color:var(--border-strong);
+  box-shadow:0 16px 38px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.09)}
+.ohub .kpi .ic{font-size:20px;filter:drop-shadow(0 2px 6px rgba(0,0,0,.4))}
+.ohub .kpi .v{font-size:30px;font-weight:800;letter-spacing:-.02em;margin-top:8px}
 .ohub .kpi .l{font-size:13px;color:var(--muted);margin-top:2px}
-.ohub .kpi .glow{position:absolute;right:-20px;top:-20px;width:90px;height:90px;border-radius:50%;filter:blur(20px);opacity:.5}
-.ohub .kpi.amber .glow{background:var(--warning)} .ohub .kpi.amber .v{color:#fcd34d}
-.ohub .kpi.sky .glow{background:var(--sky)} .ohub .kpi.sky .v{color:#7dd3fc}
-.ohub .kpi.green .glow{background:var(--success)} .ohub .kpi.green .v{color:#6ee7b7}
-.ohub .kpi.violet .glow{background:var(--violet)} .ohub .kpi.violet .v{color:#c4b5fd}
+.ohub .kpi .glow{position:absolute;right:-20px;top:-20px;width:100px;height:100px;border-radius:50%;filter:blur(24px);opacity:.55}
+.ohub .kpi.amber .glow{background:var(--warning)} .ohub .kpi.amber .v{color:#fcd34d} .ohub .kpi.amber::after{background:linear-gradient(180deg,#fcd34d,var(--warning))}
+.ohub .kpi.sky .glow{background:var(--sky)} .ohub .kpi.sky .v{color:#7dd3fc} .ohub .kpi.sky::after{background:linear-gradient(180deg,#7dd3fc,var(--sky))}
+.ohub .kpi.green .glow{background:var(--success)} .ohub .kpi.green .v{color:#6ee7b7} .ohub .kpi.green::after{background:linear-gradient(180deg,#6ee7b7,var(--success))}
+.ohub .kpi.violet .glow{background:var(--violet)} .ohub .kpi.violet .v{color:#c4b5fd} .ohub .kpi.violet::after{background:linear-gradient(180deg,#c4b5fd,var(--violet))}
 
 .ohub .grid2{display:grid;grid-template-columns:1.55fr 1fr;gap:18px;align-items:start}
 .ohub .section-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-.ohub .section-h h2{font-size:16px;font-weight:700}
-.ohub .section-h .count{font-size:12px;font-weight:700;color:var(--accent-lt);background:rgba(224,122,95,.12);padding:3px 10px;border-radius:var(--r-pill)}
-.ohub .card{background:var(--bg-1);border:1px solid var(--border-subtle);border-radius:var(--r-lg);box-shadow:var(--shadow)}
+.ohub .section-h h2{font-size:16px;font-weight:800;letter-spacing:-.01em;position:relative;padding-left:13px}
+.ohub .section-h h2::before{content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);width:4px;height:16px;border-radius:3px;background:linear-gradient(180deg,var(--accent-lt),var(--accent-dim));box-shadow:0 0 10px rgba(224,122,95,.5)}
+.ohub .section-h .count{font-size:12px;font-weight:700;color:var(--accent-lt);background:rgba(224,122,95,.12);border:1px solid rgba(224,122,95,.22);padding:3px 10px;border-radius:var(--r-pill)}
+.ohub .card{position:relative;background:linear-gradient(168deg,var(--bg-2),var(--bg-1) 60%);border:1px solid var(--border-subtle);border-radius:var(--r-lg);box-shadow:0 10px 34px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.05)}
 
 /* ── approval queue item ── */
 .ohub .appr{display:flex;gap:14px;padding:16px;border-bottom:1px solid var(--border-subtle);cursor:pointer;transition:.16s}
@@ -106,7 +121,7 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 .ohub .ph3{background:linear-gradient(135deg,#4a3a26,#5b4a2e)}
 .ohub .appr .body{flex:1;min-width:0}
 .ohub .appr .top{display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap}
-.ohub .appr h3{font-size:15px;font-weight:600}
+.ohub .appr h3{font-size:15px;font-weight:600;overflow-wrap:anywhere;word-break:normal}
 .ohub .appr .meta{font-size:12.5px;color:var(--muted)}
 .ohub .appr .actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
 .ohub .btn{font-family:inherit;font-size:13px;font-weight:600;padding:8px 14px;border-radius:var(--r-pill);border:1px solid var(--border);background:var(--bg-2);color:var(--ink);cursor:pointer;transition:.16s;display:inline-flex;align-items:center;gap:6px}
@@ -169,8 +184,12 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 .ohub .ev .t{font-size:11.5px;color:var(--muted);margin-top:2px}
 
 /* ── thread / task detail ── */
-.ohub .thread-head{padding:20px;border-bottom:1px solid var(--border-subtle)}
-.ohub .thread-head .crumb{font-size:12.5px;color:var(--muted);margin-bottom:8px;cursor:pointer}
+/* Sticky header so the back crumb stays reachable while the thread scrolls —
+   the whole head pins to the top of the scroller (the crumb alone can't stay
+   visible once its non-scrolling parent leaves the viewport). */
+.ohub .thread-head{position:sticky;top:0;z-index:18;padding:16px 20px;border-bottom:1px solid var(--border-subtle);background:var(--bg-1);border-radius:var(--r-lg) var(--r-lg) 0 0}
+.ohub .thread-head .crumb{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--ink);background:var(--bg-2);border:1px solid var(--border-subtle);border-radius:var(--r-pill);padding:6px 12px;margin-bottom:10px;cursor:pointer}
+.ohub .thread-head .crumb:hover{border-color:var(--border-strong)}
 .ohub .thread-head h2{font-size:19px;font-weight:700;letter-spacing:-.01em}
 .ohub .thread-head .row{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
 .ohub .instr{margin:14px 20px;background:var(--bg-2);border:1px solid var(--border-subtle);border-radius:var(--r-md);padding:14px}
@@ -207,18 +226,27 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
 .ohub .stitle{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
 .ohub .sh1{font-size:22px;font-weight:700;margin-top:3px;margin-bottom:2px}
 .ohub .ssub{font-size:13px;color:var(--muted);margin-bottom:18px}
-.ohub .stask{background:var(--bg-1);border:1px solid var(--border-subtle);border-radius:var(--r-md);padding:14px;margin-bottom:12px;cursor:pointer;transition:.16s}
-.ohub .stask:hover{border-color:var(--border-strong);transform:translateY(-1px)}
-.ohub .stask.carry{border-color:rgba(139,92,246,.4);background:linear-gradient(180deg,rgba(139,92,246,.06),var(--bg-1))}
-.ohub .stask .top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
-.ohub .stask h4{font-size:14.5px;font-weight:600;line-height:1.35}
+.ohub .stask{position:relative;background:linear-gradient(168deg,var(--bg-2),var(--bg-1) 65%);border:1px solid var(--border-subtle);border-radius:var(--r-md);padding:14px;margin-bottom:12px;cursor:pointer;
+  box-shadow:0 4px 16px rgba(0,0,0,0.32),inset 0 1px 0 rgba(255,255,255,0.05);
+  transition:transform .2s cubic-bezier(.22,1,.36,1),border-color .2s ease,box-shadow .2s ease}
+.ohub .stask:hover{border-color:var(--border-strong);transform:translateY(-2px);box-shadow:0 12px 28px rgba(0,0,0,0.42),inset 0 1px 0 rgba(255,255,255,0.08)}
+.ohub .stask.carry{border-color:rgba(139,92,246,.4);background:linear-gradient(168deg,rgba(139,92,246,.12),var(--bg-1) 70%);box-shadow:0 4px 18px rgba(139,92,246,.16),inset 0 1px 0 rgba(255,255,255,0.06)}
+.ohub .stask .top{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:6px 10px}
+/* Title takes the bulk of the row (>=55%) so badges can never squeeze it down to
+   a single Bangla glyph per line; it wraps cleanly by word, and badges drop to a
+   new line only when they genuinely don't fit. */
+.ohub .stask h4{flex:1 1 60%;min-width:0;font-size:14.5px;font-weight:600;line-height:1.35;overflow-wrap:anywhere;word-break:normal}
 .ohub .stask .d{font-size:12.5px;color:var(--muted);margin-top:7px}
 .ohub .stask .ntf{display:inline-flex;align-items:center;gap:5px;margin-top:9px;font-size:12px;font-weight:600;color:#fca5a5;background:rgba(239,68,68,.1);padding:4px 9px;border-radius:var(--r-pill)}
 .ohub .pnav{position:absolute;bottom:0;left:0;right:0;height:74px;background:rgba(18,18,22,.92);backdrop-filter:blur(16px);border-top:1px solid var(--border-subtle);display:flex;align-items:flex-start;justify-content:space-around;padding-top:11px;z-index:20}
 .ohub .pnav a{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10.5px;color:var(--muted);text-decoration:none}
 .ohub .pnav a.act{color:var(--accent-lt)}
 .ohub .pnav a .i{font-size:19px}
-.ohub .backbtn{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);background:none;border:0;cursor:pointer;font-family:inherit;margin-bottom:14px}
+/* Permanent (sticky) back button: stays pinned to the top of the scroller while
+   the detail sub-page scrolls, so the user always has a way back. Pill styling so
+   it reads as a tappable control floating over the content. */
+.ohub .backbtn{position:sticky;top:8px;z-index:18;display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:var(--ink);background:var(--bg-2);border:1px solid var(--border-subtle);border-radius:var(--r-pill);padding:8px 14px;cursor:pointer;font-family:inherit;margin-bottom:14px;box-shadow:var(--shadow);backdrop-filter:blur(8px)}
+.ohub .backbtn:hover{border-color:var(--border-strong)}
 .ohub .perf{display:flex;gap:10px;margin-top:6px}
 .ohub .perf .pc{flex:1;background:var(--bg-1);border:1px solid var(--border-subtle);border-radius:14px;padding:13px;text-align:center}
 .ohub .perf .pc .v{font-size:22px;font-weight:700} .ohub .perf .pc .l{font-size:11.5px;color:var(--muted);margin-top:2px}
@@ -734,19 +762,39 @@ body:has(.ohub){overflow:hidden;position:fixed;inset:0;width:100%;height:100%;ov
    behind prefers-reduced-motion so it never fights accessibility settings.
    1) staggered entrance reveal  2) tactile press feedback  3) animated reveals.
    ════════════════════════════════════════════════════════════════════════ */
-/* ════ at-a-glance todolist DOCK — sticky to top, collapsible (agent-style) ════ */
-.ohub .todo-dock{position:sticky;top:0;z-index:36;margin:0 0 14px;border-radius:var(--r-lg);overflow:hidden;
-  background:rgba(20,20,26,0.94);backdrop-filter:blur(16px) saturate(1.1);
-  border:1px solid var(--border);box-shadow:0 10px 32px rgba(0,0,0,0.5)}
-.ohub .todo-dock-head{width:100%;display:flex;align-items:center;gap:10px;padding:12px 15px;min-height:46px;
+/* ════ at-a-glance todolist DOCK — NEON edition ════
+   A sticky glass card with a living neon ring: a conic-gradient border that
+   slowly rotates (Chromium/iOS16.4+ via @property; degrades to a static neon
+   ring elsewhere) plus a pulsing multi-colour glow, so today's todo is the
+   brightest thing on the board. Pure compositor work (opacity / registered
+   custom-prop), no layout thrash. */
+@property --oh-neon{syntax:'<angle>';inherits:false;initial-value:0deg}
+.ohub .todo-dock{position:sticky;top:0;z-index:36;margin:0 0 18px;border-radius:var(--r-lg);overflow:hidden;
+  background:linear-gradient(180deg,rgba(30,28,40,0.96),rgba(18,18,24,0.96));
+  backdrop-filter:blur(16px) saturate(1.15);
+  border:1px solid rgba(255,255,255,0.06);
+  box-shadow:0 10px 34px rgba(0,0,0,0.55),0 0 16px rgba(244,162,140,0.20),0 0 30px rgba(139,92,246,0.12);
+  animation:oh-dock-glow 3s ease-in-out infinite}
+/* rotating neon ring, masked to a 1.6px border so only the edge lights up */
+.ohub .todo-dock::before{content:"";position:absolute;inset:0;border-radius:inherit;padding:1.6px;pointer-events:none;
+  background:conic-gradient(from var(--oh-neon),#F4A28C,#8b5cf6,#38bdf8,#22c55e,#F4A28C);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;
+  opacity:.95;z-index:1;animation:oh-neon-spin 6s linear infinite}
+.ohub .todo-dock-head{position:relative;z-index:2;width:100%;display:flex;align-items:center;gap:11px;padding:13px 16px;min-height:48px;
   background:transparent;border:0;color:var(--ink);font-family:inherit;cursor:pointer;text-align:left}
-.ohub .todo-dock-ic{font-size:16px;flex:none}
-.ohub .todo-dock-sum{flex:1;min-width:0;font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ohub .todo-dock-sum .muted{font-weight:500;color:var(--muted)}
-.ohub .todo-dock-chev{flex:none;font-size:18px;line-height:1;color:var(--muted);transition:transform .25s ease}
+.ohub .todo-dock-ic{font-size:17px;flex:none;filter:drop-shadow(0 0 6px rgba(244,162,140,.6))}
+.ohub .todo-dock-sum{flex:1;min-width:0;font-size:13.5px;font-weight:800;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  color:#fff;text-shadow:0 0 10px rgba(244,162,140,.45)}
+.ohub .todo-dock-sum .muted{font-weight:600;color:var(--muted);text-shadow:none}
+.ohub .todo-dock-chev{flex:none;font-size:18px;line-height:1;color:var(--accent-lt);transition:transform .25s ease;filter:drop-shadow(0 0 5px rgba(244,162,140,.5))}
 .ohub .todo-dock.open .todo-dock-chev{transform:rotate(180deg)}
-.ohub .todo-dock-body{max-height:0;overflow:hidden;transition:max-height .32s cubic-bezier(.22,1,.36,1)}
+.ohub .todo-dock-body{position:relative;z-index:2;max-height:0;overflow:hidden;transition:max-height .32s cubic-bezier(.22,1,.36,1)}
 .ohub .todo-dock.open .todo-dock-body{max-height:min(66dvh,600px);overflow-y:auto;overscroll-behavior:contain}
+@keyframes oh-neon-spin{to{--oh-neon:360deg}}
+@keyframes oh-dock-glow{
+  0%,100%{box-shadow:0 10px 34px rgba(0,0,0,0.55),0 0 14px rgba(244,162,140,0.18),0 0 26px rgba(139,92,246,0.10)}
+  50%{box-shadow:0 10px 34px rgba(0,0,0,0.55),0 0 26px rgba(244,162,140,0.42),0 0 48px rgba(139,92,246,0.28)}}
 
 /* ════ todolist rows ════ */
 .ohub .todo-head{display:flex;align-items:center;gap:11px;padding:13px 15px;border-bottom:1px solid var(--border-subtle)}

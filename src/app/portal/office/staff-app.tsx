@@ -84,6 +84,27 @@ export default function StaffApp({
   const [detailId, setDetailId] = useState<string | null>(null)
   const busy = pending || busyId !== null
 
+  // Open/close a task detail while REMEMBERING where the list was scrolled. The
+  // detail swaps in place inside the shared `.wrap` scroller, so without this the
+  // list re-renders at the top and the owner loses their place. We snapshot the
+  // scroll offset on open and restore it on back (detail itself opens at the top).
+  const savedScroll = useRef(0)
+  const openDetail = useCallback((id: string) => {
+    const w = document.querySelector('.wrap') as HTMLElement | null
+    savedScroll.current = w?.scrollTop ?? 0
+    setDetailId(id)
+  }, [])
+  useEffect(() => {
+    const w = document.querySelector('.wrap') as HTMLElement | null
+    if (!w) return
+    if (detailId !== null) {
+      w.scrollTop = 0
+    } else if (savedScroll.current > 0) {
+      const y = savedScroll.current
+      requestAnimationFrame(() => { w.scrollTop = y })
+    }
+  }, [detailId])
+
   const run = useCallback(
     async (key: string, body: StaffActionBody) => {
       setBusyId(key)
@@ -168,7 +189,7 @@ export default function StaffApp({
             )}
 
             {data.active.map((t) => (
-              <StaskCard key={t.id} t={t} onOpen={() => setDetailId(t.id)} />
+              <StaskCard key={t.id} t={t} onOpen={() => openDetail(t.id)} />
             ))}
 
             <SelfInitiated
@@ -178,7 +199,7 @@ export default function StaffApp({
             />
 
             {data.done.map((t) => (
-              <div key={t.id} className="stask" style={{ opacity: 0.65 }} onClick={() => setDetailId(t.id)}>
+              <div key={t.id} className="stask" style={{ opacity: 0.65 }} onClick={() => openDetail(t.id)}>
                 <div className="top">
                   <h4>{t.title}</h4>
                   <span className="badge b-done">সম্পন্ন ✓</span>
