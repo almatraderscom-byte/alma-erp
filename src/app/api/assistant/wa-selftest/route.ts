@@ -24,6 +24,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { sendTwilioWaText, placeTwilioWaCall, getTwilioCallStatus, getTwilioCallError, twilioWaConfigured } from '@/agent/lib/wa/twilio-wa'
+import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -37,6 +38,16 @@ export async function GET(req: NextRequest) {
   if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
   const { searchParams } = new URL(req.url)
+
+  // Test the owner-notification channel end to end: fires sendOwnerText, which now
+  // also mirrors to the owner's WhatsApp (OWNER_WHATSAPP_NUMBER). Proves the agent can
+  // push notifications/reminders to the owner on WhatsApp.
+  const notify = (searchParams.get('notify') ?? '').trim()
+  if (notify) {
+    const text = notify === '1' ? '🔔 ALMA এজেন্ট টেস্ট নোটিফিকেশন — WhatsApp চ্যানেল চালু আছে।' : notify
+    const res = await sendOwnerText(text)
+    return Response.json({ ok: true, notified: text, ownerNotifyResult: res, ownerWhatsAppConfigured: Boolean(process.env.OWNER_WHATSAPP_NUMBER) })
+  }
 
   // Diagnostic: ?status=<CallSid> → look up why a created call didn't ring.
   const statusSid = (searchParams.get('status') ?? '').trim()

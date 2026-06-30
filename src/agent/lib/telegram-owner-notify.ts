@@ -6,9 +6,30 @@
  * Cloudflare proxy used by the VPS worker. Falls back to api.telegram.org direct.
  */
 
+import { sendTwilioWaText, twilioWaConfigured } from './wa/twilio-wa'
+
 function telegramApiBase(): string {
   const override = (process.env.TELEGRAM_API_BASE ?? '').replace(/\/$/, '')
   return override || 'https://api.telegram.org'
+}
+
+/**
+ * Mirror an owner notification to the owner's WhatsApp, so WhatsApp works as a second
+ * notification/reminder channel alongside Telegram. Best-effort + DORMANT: does nothing
+ * unless OWNER_WHATSAPP_NUMBER is set, Twilio WhatsApp is configured, and the
+ * WHATSAPP_SEND_ENABLED kill switch is on. Never throws into the caller.
+ * (Free-form only reaches the owner inside WhatsApp's 24h window — i.e. within 24h of
+ *  the owner last messaging the business number.)
+ */
+export async function mirrorOwnerNotifyToWhatsApp(text: string): Promise<void> {
+  const to = process.env.OWNER_WHATSAPP_NUMBER
+  if (!to || !text.trim()) return
+  if (!twilioWaConfigured() || process.env.WHATSAPP_SEND_ENABLED !== 'true') return
+  try {
+    await sendTwilioWaText({ to, body: text })
+  } catch {
+    /* best-effort: a WhatsApp failure must never break the owner's Telegram notify */
+  }
 }
 
 export async function sendOwnerApprovalCard(input: {
@@ -120,8 +141,11 @@ export async function sendTelegramText(
   return { ok: true }
 }
 
-/** Plain status text to owner Telegram (no buttons). */
+/** Plain status text to owner Telegram (no buttons) + WhatsApp mirror. */
 export async function sendOwnerText(text: string): Promise<{ ok: boolean; error?: string }> {
+  // Second channel: mirror to the owner's WhatsApp (best-effort, dormant until configured).
+  await mirrorOwnerNotifyToWhatsApp(text)
+
   const token = process.env.ASSISTANT_BOT_TOKEN
   const chatId = process.env.TELEGRAM_OWNER_CHAT_ID
   if (!token || !chatId) {
