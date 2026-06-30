@@ -72,6 +72,14 @@
     {
       "path": "/api/assistant/internal/heartbeat-brain",
       "schedule": "0 4,7,10,13 * * *"
+    },
+    {
+      "path": "/api/assistant/internal/run-strategist",
+      "schedule": "30 2 * * *"
+    },
+    {
+      "path": "/api/assistant/internal/run-reflection",
+      "schedule": "0 3 * * 6"
     }
   ],
   "headers": [
