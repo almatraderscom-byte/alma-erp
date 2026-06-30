@@ -4,6 +4,7 @@ import { type NextRequest } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { agentStorageSignedUrl } from '@/agent/lib/storage'
+import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
 import { buildOutboundDialMessage } from '@/agent/lib/outbound-call-tracking'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { prisma } from '@/lib/prisma'
@@ -98,6 +99,13 @@ export async function POST(req: NextRequest) {
   const convId = resolveConversationId(action)
   let messageText: string | null = null
   let pushTelegram = false
+  // True only for a plain image_gen success that just posted its image into the
+  // conversation. That is the moment the head can finally chain to the next step
+  // (e.g. an Instagram post), so we resume it AFTER the artifact lands — never at
+  // approval time (image isn't generated yet then). Batch/creative-studio jobs,
+  // content-pipeline gates and the video reel gate own their own follow-up, so they
+  // stay false.
+  let resumeAgentAfterImage = false
 
   if (action.type === 'outbound_call' && status === 'success') {
     const phone = String(payload.phone ?? '')
@@ -146,6 +154,7 @@ export async function POST(req: NextRequest) {
           : String(data?.imageUrl ?? '')
         if (!imageUrl) throw new Error('No image path in job result')
         messageText = `✅ Image generated successfully.\n![Generated image](${imageUrl})`
+        resumeAgentAfterImage = true
         const qcFlag = typeof data?.qc === 'object' && data.qc !== null
           ? (data.qc as { flagged?: string }).flagged
           : undefined
@@ -189,6 +198,24 @@ export async function POST(req: NextRequest) {
   if (pushTelegram && messageText) {
     const tg = await sendOwnerText(messageText)
     if (!tg.ok) console.warn('[job-result] owner telegram notify failed:', tg.error)
+  }
+
+  // The generated image is now in the conversation → resume the head so it carries on
+  // its task (e.g. build the Instagram/Facebook post it was about to make) instead of
+  // going silent. Best-effort: no-ops without a worker queue or if the owner disabled
+  // auto-continue, and never fails the worker callback.
+  if (resumeAgentAfterImage && convId) {
+    try {
+      await enqueueAgentContinuation({
+        conversationId: convId,
+        message:
+          '[সিস্টেম নোট — অনুমোদিত ছবি তৈরি হয়েছে] Sir-এর approve-করা ছবিটি এইমাত্র তৈরি হয়ে কনভারসেশনে যোগ হয়েছে। ' +
+          'এখন থেমে যেও না — তোমার চলমান কাজের পরের ধাপে নিজে থেকে এগোও (যেমন এই ছবিটা দিয়ে যে পোস্ট/কনটেন্ট বানানোর কথা ছিল সেটা তৈরি করো), ' +
+          'অথবা সব শেষ হলে সংক্ষেপে Sir-কে জানাও। ছবিটা আর নতুন করে generate কোরো না।',
+      })
+    } catch (err) {
+      console.warn('[job-result] agent continuation enqueue failed (result unaffected):', err instanceof Error ? err.message : err)
+    }
   }
 
   return Response.json({ success: true })

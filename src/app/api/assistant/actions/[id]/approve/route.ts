@@ -4,8 +4,7 @@ import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { createTurn } from '@/agent/lib/turn-status'
-import { buildTurnJobData, enqueueTurnJob, isTurnHandoffConfigured } from '@/agent/lib/turn-queue'
+import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
 import { createPagePost, verifyPost, resolvePageId } from '@/agent/lib/meta'
 import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
 import { pauseCampaign, updateCampaignBudget } from '@/agent/lib/meta-ads'
@@ -1496,41 +1495,33 @@ export async function POST(
   return res
 }
 
-/** Owner kill switch for auto-continue-after-approval. Default ON (owner asked for it);
- * set agent_kv_settings key `auto_continue_after_approval` = off to disable, no redeploy. */
-async function autoContinueEnabled(): Promise<boolean> {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const row = await (prisma as any).agentKvSetting.findUnique({ where: { key: 'auto_continue_after_approval' } })
-    const v = (row?.value ?? '').toString().trim().toLowerCase()
-    return v !== 'off' && v !== 'false' && v !== '0'
-  } catch {
-    return true
-  }
-}
-
 /**
  * Enqueue one continuation turn for the conversation the just-approved action belongs
- * to. Reuses the tested buildTurnJobData → enqueueTurnJob path; the VPS worker drains
- * it, runs the turn through the chat route (which persists the reply for the app poll
- * AND notifies Telegram), so both surfaces resume. No infinite loop: a continuation
- * only ever fires from a human approval, and the turn is told not to redo the action.
+ * to. Delegates to the shared enqueueAgentContinuation (createTurn → buildTurnJobData →
+ * enqueueTurnJob) the VPS worker drains, running the turn through the chat route (which
+ * persists the reply for the app poll AND notifies Telegram), so both surfaces resume.
+ * No infinite loop: a continuation only ever fires from a human approval, and the turn
+ * is told not to redo the action.
  */
 async function enqueueApprovalContinuation(actionId: string): Promise<void> {
-  if (!isTurnHandoffConfigured()) return        // no worker queue → silently skip
-  if (!(await autoContinueEnabled())) return    // owner disabled it
-
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
   const action = await db.agentPendingAction.findUnique({
     where: { id: actionId },
-    select: { conversationId: true, status: true, summary: true },
+    select: { conversationId: true, status: true, summary: true, type: true },
   })
   const conversationId: string | null = action?.conversationId ?? null
   if (!conversationId) return
   // Only continue once the action genuinely resolved (guards against a 2xx that
   // wasn't an approval, e.g. an idempotent no-op).
   if (action.status !== 'approved' && action.status !== 'executed') return
+
+  // Async generation jobs (image/video) are NOT finished at approval time — the VPS
+  // worker produces the artifact 30–60s later and reports via /internal/job-result,
+  // which owns the continuation so the head resumes WITH the generated media already
+  // in the conversation. Firing here would run the head before the image exists, so it
+  // couldn't chain to the next step (e.g. an Instagram post) and the flow would stall.
+  if (action.type === 'image_gen' || action.type === 'video_gen') return
 
   const summary = (action.summary ?? '').toString().slice(0, 200)
   const message =
@@ -1539,7 +1530,5 @@ async function enqueueApprovalContinuation(actionId: string): Promise<void> {
     '। এখন থেমে যেও না — তোমার চলমান কাজের পরের ধাপে নিজে থেকে এগোও, অথবা সব শেষ হলে সংক্ষেপে Sir-কে জানাও। ' +
     'যে কাজটা এইমাত্র approve হয়ে সম্পন্ন হয়েছে সেটা আর নতুন করে কোরো না।'
 
-  const turnId = await createTurn(conversationId)
-  const jobData = buildTurnJobData(turnId, conversationId, { message })
-  if (jobData) await enqueueTurnJob(jobData)
+  await enqueueAgentContinuation({ conversationId, message })
 }
