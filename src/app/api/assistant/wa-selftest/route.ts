@@ -69,5 +69,9 @@ export async function GET(req: NextRequest) {
     result.call = await placeTwilioWaCall({ to, message: callMsg })
   }
 
+  // Log the outcome so the result (esp. any Twilio call error) is visible in runtime
+  // logs without depending on the caller screenshotting the JSON.
+  console.log('[wa-selftest]', JSON.stringify({ to, text: result.text ?? null, call: result.call ?? null }))
+
   return Response.json({ ok: true, ...result })
 }

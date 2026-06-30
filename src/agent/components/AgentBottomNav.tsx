@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { href: '/', label: 'ERP', icon: ErpIcon, matchExact: true },
   { href: '/agent', label: 'Chat', icon: ChatIcon, matchExact: true },
   { href: '/agent/creative-studio', label: 'Studio', icon: StudioIcon },
+  { href: '/agent/whatsapp', label: 'WhatsApp', icon: WhatsAppIcon },
   { href: '/agent/staff-monitor', label: 'Monitor', icon: MonitorIcon },
   { href: '/agent/costs', label: 'Costs', icon: CostsIcon },
 ]
@@ -74,6 +75,15 @@ function StudioIcon({ className }: { className?: string }) {
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
       <path d="M5 3l1.2 2.8L9 7 6.2 8.2 5 11 3.8 8.2 1 7l2.8-1.2z" />
       <path d="M17 11l1.5 3.5L22 16l-3.5 1.5L17 21l-1.5-3.5L12 16l3.5-1.5z" />
+    </svg>
+  )
+}
+
+function WhatsAppIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 21l1.7-4.2A8 8 0 1 1 12 20a8 8 0 0 1-4.2-1.2z" />
+      <path d="M8.5 9.5c0 3 2 5 5 5 .6 0 1.2-.4 1.2-1l-.1-.9c-.1-.5-.7-.7-1.1-.5l-.7.3c-.9-.4-1.6-1.1-2-2l.3-.7c.2-.4 0-1-.5-1.1l-.9-.1c-.6 0-1 .6-1 1.2z" />
     </svg>
   )
 }
