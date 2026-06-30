@@ -101,7 +101,7 @@ async function runApprove(
 
   // Record trust approval (non-blocking)
   const trustDomain = action.type.startsWith('staff_') ? 'staff' :
-    action.type.startsWith('content_') || action.type === 'fb_post' || action.type === 'ad_creative_gate' || action.type === 'ads_creative_brief' ? 'content' :
+    action.type.startsWith('content_') || action.type === 'fb_post' || action.type === 'instagram_post' || action.type === 'ad_creative_gate' || action.type === 'ads_creative_brief' ? 'content' :
     action.type.startsWith('website_') ? 'content' :
     action.type.startsWith('log_') || action.type === 'delete_finance_entry' || action.type === 'edit_finance_entry' ? 'finance' :
     'general'
@@ -251,6 +251,87 @@ async function runApprove(
       }
 
       return Response.json({ success: true, ...result })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
+  if (action.type === 'instagram_post') {
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        const current = await db.agentPendingAction.findUnique({ where: { id: actionId } })
+        const existingResult = current?.result as { mediaId?: string } | null
+        if (current?.status === 'executed' && existingResult?.mediaId) {
+          return Response.json({ success: true, mediaId: existingResult.mediaId, idempotent: true })
+        }
+        return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+      }
+
+      const pageId = String(payload.pageId ?? resolvePageId(String(payload.page ?? 'lifestyle')))
+      const caption = String(payload.caption ?? '')
+      const conversationId = String(payload.conversationId ?? action.conversationId ?? '')
+
+      // Re-resolve the image the same way fb_post does — the staged ref is
+      // preferred, with the conversation fallback as a safety net.
+      const { imageRef } = await resolveFbPostImageRef(db, {
+        conversationId: conversationId || null,
+        imageUrl: payload.imageUrl,
+        imageArtifactOrFileId: payload.imageArtifactOrFileId,
+        textOnly: false,
+      })
+      if (!imageRef) {
+        throw new Error('Instagram পোস্টের ছবি খুঁজে পাওয়া যায়নি — publish বাতিল।')
+      }
+
+      const { publishInstagramImage } = await import('@/agent/lib/meta-instagram')
+      const result = await publishInstagramImage({ pageId, caption, mediaRef: imageRef })
+      if (!result.success) {
+        await db.agentPendingAction.update({
+          where: { id: actionId },
+          data: { status: 'failed', result: { error: result.error } },
+        })
+        return Response.json({ error: result.error }, { status: 502 })
+      }
+
+      const resultData = {
+        mediaId: result.mediaId,
+        permalink: result.permalink ?? null,
+        igUsername: result.igUsername ?? null,
+        pageId,
+        imagePath: imageRef,
+      }
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', result: resultData },
+      })
+
+      void import('@/lib/content-intelligence').then(({ trackPublishedContent }) =>
+        trackPublishedContent({
+          productRef: typeof payload.productRef === 'string' ? payload.productRef : null,
+          message: caption,
+          contentType: 'ig_photo',
+          page: String(payload.page ?? 'lifestyle'),
+        }),
+      ).catch((err) => {
+        console.warn('[approve] trackPublishedContent (ig) failed:', err instanceof Error ? err.message : err)
+      })
+
+      await appendConversationNote(
+        db,
+        action,
+        `✅ Instagram-এ পোস্ট লাইভ হয়েছে${result.igUsername ? ` (@${result.igUsername})` : ''}।${result.permalink ? `\nLink: ${result.permalink}` : ''}`,
+      )
+
+      return Response.json({ success: true, ...resultData })
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       await db.agentPendingAction.update({
