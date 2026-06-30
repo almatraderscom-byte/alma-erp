@@ -21,6 +21,7 @@ import { AppBootRecovery, AppReadyMarker } from '@/components/providers/AppBootR
 import { LoadingOverlay } from '@/components/loading/LoadingOverlay'
 import { RouteTransitionLoader } from '@/components/loading/RouteTransitionLoader'
 import { PageFade } from '@/components/layout/PageFade'
+import { CommandPalette } from '@/components/command/CommandPalette'
 import { MobileRefreshProvider } from '@/contexts/MobileRefreshContext'
 import { ApprovalCountProvider } from '@/contexts/ApprovalCountContext'
 import { MobilePullToRefresh } from '@/components/mobile/MobilePullToRefresh'
@@ -121,6 +122,7 @@ function ErpChrome({ children }: { children: ReactNode }) {
         <AgentFab />
         <RouteTransitionLoader />
         <PageFade />
+        <CommandPalette />
         <RoutePrefetcher />
         <OneSignalPushManager />
         <NotificationSoundBridge />
