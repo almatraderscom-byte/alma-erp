@@ -275,7 +275,7 @@ export default function SupplierImportPage() {
                     setCatRows(next)
                   }}
                   placeholder="Supplier category"
-                  className="flex-1 bg-card border border-border rounded-lg px-3 py-2 text-xs text-cream"
+                  className="flex-1 bg-card border border-border-strong rounded-lg px-3 py-2 text-xs text-cream focus:outline-none focus:border-gold/50 transition-colors"
                 />
                 <span className="text-muted-hi">→</span>
                 <input
@@ -286,7 +286,7 @@ export default function SupplierImportPage() {
                     setCatRows(next)
                   }}
                   placeholder="Your category"
-                  className="flex-1 bg-card border border-border rounded-lg px-3 py-2 text-xs text-cream"
+                  className="flex-1 bg-card border border-border-strong rounded-lg px-3 py-2 text-xs text-cream focus:outline-none focus:border-gold/50 transition-colors"
                 />
                 {catRows.length > 1 && (
                   <Button variant="ghost" size="xs" onClick={() => setCatRows(catRows.filter((_, j) => j !== i))}>

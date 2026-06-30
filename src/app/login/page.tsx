@@ -98,7 +98,7 @@ function LoginForm() {
   }
 
   return (
-    <main className="min-h-[100dvh] flex flex-col items-center justify-center px-4 bg-[radial-gradient(circle_at_15%_15%,rgba(224,122,95,0.18),transparent_42%),radial-gradient(circle_at_85%_85%,rgba(129,178,154,0.16),transparent_44%),linear-gradient(180deg,#1a1a20_0%,#202027_50%,#17171c_100%)]">
+    <main className="min-h-[100dvh] flex flex-col items-center justify-center px-4 bg-[radial-gradient(circle_at_15%_15%,rgb(var(--c-accent)/0.18),transparent_42%),radial-gradient(circle_at_85%_85%,rgba(129,178,154,0.16),transparent_44%),linear-gradient(180deg,#1a1a20_0%,#202027_50%,#17171c_100%)]">
       <motion.div
         initial={{ opacity: 0, y: 18, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}

@@ -59,7 +59,7 @@ export default function DigitalClientsPage() {
               <label key={k} className="block">
                 <span className="text-[10px] text-muted uppercase tracking-wider">{k}</span>
                 <input
-                  className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-cream"
+                  className="mt-1 w-full bg-card border border-border-strong rounded-xl px-3 py-2 text-sm text-cream focus:outline-none focus:border-gold/50 transition-colors"
                   value={form[k]}
                   onChange={e => setForm(f => ({ ...f, [k]: e.target.value }))}
                 />
@@ -68,7 +68,7 @@ export default function DigitalClientsPage() {
             <label className="block md:col-span-2">
               <span className="text-[10px] text-muted uppercase tracking-wider">Service type</span>
               <select
-                className="mt-1 w-full bg-card border border-border rounded-xl px-3 py-2 text-sm text-cream"
+                className="mt-1 w-full bg-card border border-border-strong rounded-xl px-3 py-2 text-sm text-cream focus:outline-none focus:border-gold/50 transition-colors cursor-pointer"
                 value={form.service_type}
                 onChange={e => setForm(f => ({ ...f, service_type: e.target.value }))}
               >

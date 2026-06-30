@@ -175,8 +175,8 @@ export default function DigitalInvoicesPage() {
                 </div>
                 {mayAdmin && payId === inv.id && (
                   <div className="flex gap-2 flex-wrap items-center pl-0 md:pl-28">
-                    <input type="number" placeholder="Amount" className="bg-card border border-border rounded-lg px-2 py-1 text-xs text-cream w-28" value={payAmount} onChange={e => setPayAmount(e.target.value)} />
-                    <select className="bg-card border border-border rounded-lg px-2 py-1 text-xs text-cream" value={payMethod} onChange={e => setPayMethod(e.target.value)}>
+                    <input type="number" placeholder="Amount" className="bg-card border border-border-strong rounded-lg px-2 py-1 text-xs text-cream w-28 focus:outline-none focus:border-gold/50 transition-colors" value={payAmount} onChange={e => setPayAmount(e.target.value)} />
+                    <select className="bg-card border border-border-strong rounded-lg px-2 py-1 text-xs text-cream focus:outline-none focus:border-gold/50 transition-colors cursor-pointer" value={payMethod} onChange={e => setPayMethod(e.target.value)}>
                       {CDIT_PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
                     <Button variant="gold" size="xs" disabled={paying} onClick={() => handlePartialPay(inv)}>Record</Button>

@@ -30,15 +30,15 @@ const TONES: Record<ToastTone, { accent: string; ring: string; glow: string; hal
   },
   loading: {
     accent: '#E07A5F',
-    ring: 'rgba(224,122,95,0.40)',
-    glow: 'rgba(224,122,95,0.16)',
-    halo: 'rgba(224,122,95,0.14)',
+    ring: 'rgb(var(--c-accent)/0.40)',
+    glow: 'rgb(var(--c-accent)/0.16)',
+    halo: 'rgb(var(--c-accent)/0.14)',
   },
   blank: {
     accent: '#E07A5F',
-    ring: 'rgba(224,122,95,0.38)',
-    glow: 'rgba(224,122,95,0.14)',
-    halo: 'rgba(224,122,95,0.12)',
+    ring: 'rgb(var(--c-accent)/0.38)',
+    glow: 'rgb(var(--c-accent)/0.14)',
+    halo: 'rgb(var(--c-accent)/0.12)',
   },
 }
 

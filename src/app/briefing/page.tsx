@@ -312,7 +312,7 @@ function DecisionCard({ d }: { d: Decision }) {
   const meta = AREA[d.area] ?? { icon: '•', label: d.area }
   const high = d.urgency === 'high'
   return (
-    <Card className={cn('p-4', high && 'border-danger/35 shadow-[0_0_18px_rgba(224,122,95,0.10)]')}>
+    <Card className={cn('p-4', high && 'border-danger/35 shadow-[0_0_18px_rgb(var(--c-accent)/0.10)]')}>
       <div className="flex items-start gap-3">
         <span className={cn(
           'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-base',
