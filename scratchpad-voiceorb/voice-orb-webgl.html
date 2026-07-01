@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Voice Orb — Photoreal WebGL glass</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+
+  .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; user-select: none; transition: background .6s ease, color .6s ease; }
+  .screen.light { background: radial-gradient(130% 120% at 50% 22%, #ffffff 0%, #eef4fc 52%, #dde8f5 100%); color: #2b3a52; }
+  .screen.dark  { background: radial-gradient(130% 120% at 50% 22%, #121826 0%, #0a0e17 55%, #04060c 100%); color: #dbe6f7; }
+
+  .settings { position: absolute; top: max(16px, env(safe-area-inset-top)); right: 16px; width: 44px; height: 44px; display: grid; place-items: center; border: none; background: transparent; border-radius: 50%; cursor: pointer; color: #9fb0c8; transition: background .25s; }
+  .settings:hover { background: rgba(120,140,180,.14); }
+
+  .status { margin-top: max(26px, calc(env(safe-area-inset-top) + 12px)); font-size: 13px; letter-spacing: .14em; text-transform: uppercase; font-weight: 500; opacity: .55; text-align: center; height: 18px; }
+  .status b { color: #2f7fe0; font-weight: 600; }
+
+  .states { margin-top: 12px; display: flex; gap: 8px; }
+  .pill { font-size: 11px; text-transform: capitalize; padding: 5px 12px; border-radius: 999px; cursor: pointer; border: 1px solid rgba(120,140,180,.3); background: transparent; color: inherit; opacity: .7; transition: all .25s; }
+  .pill.active { background: #2f7fe0; border-color: #2f7fe0; color: #fff; opacity: 1; }
+
+  .orb-holder { flex: 1; width: 100%; display: grid; place-items: center; }
+  .orb-stage { position: relative; width: clamp(230px, 62vw, 340px); aspect-ratio: 1/1; will-change: transform; transition: transform .1s linear; }
+  .orb-stage.idle     { animation: breathe 6s ease-in-out infinite; }
+  .orb-stage.thinking { animation: breathe 2.6s ease-in-out infinite; }
+  .orb-stage.listening{ animation: none; }
+  @keyframes breathe { 0%,100% { transform: scale(1);} 50% { transform: scale(1.04);} }
+
+  .halo { position: absolute; inset: -40%; border-radius: 50%; z-index: 0; filter: blur(26px);
+    background: radial-gradient(circle at 50% 46%, rgba(90,170,255,.5), rgba(80,150,255,.16) 46%, transparent 68%),
+                radial-gradient(circle at 62% 60%, rgba(120,110,255,.28), transparent 60%); }
+  .screen.dark .halo { background: radial-gradient(circle at 50% 46%, rgba(100,180,255,.72), rgba(80,150,255,.24) 46%, transparent 68%), radial-gradient(circle at 62% 60%, rgba(140,120,255,.4), transparent 60%); }
+
+  .shadow { position: absolute; left: 50%; bottom: -4%; width: 62%; height: 8%; transform: translateX(-50%); z-index: 0; filter: blur(9px);
+    background: radial-gradient(ellipse at center, rgba(30,70,150,.32), rgba(30,70,150,0) 70%); animation: shadowPulse 6.5s ease-in-out infinite; }
+  .screen.dark .shadow { background: radial-gradient(ellipse at center, rgba(0,0,0,.55), rgba(0,0,0,0) 70%); }
+  @keyframes shadowPulse { 0%,100% { transform: translateX(-50%) scale(1); opacity:.85;} 50% { transform: translateX(-50%) scale(.82); opacity:.55;} }
+
+  /* WebGL canvas host */
+  .orb-gl { position: absolute; inset: -6%; z-index: 1; }
+  .orb-gl canvas { width: 100% !important; height: 100% !important; display: block; }
+
+  /* ---- CSS fallback orb (shown only when WebGL is unavailable) ---- */
+  .orb-css { position: absolute; inset: 0; border-radius: 50%; overflow: hidden; z-index: 1; display: none; filter: url(#liquid); animation: floaty 6.5s ease-in-out infinite; }
+  .fallback .orb-css { display: block; }
+  .fallback .orb-gl { display: none; }
+  @keyframes floaty { 0%,100% { transform: translateY(-2.5%);} 50% { transform: translateY(2.5%);} }
+  .css-sphere { position: absolute; inset: 0; border-radius: 50%;
+    background: radial-gradient(circle at 36% 28%, #ffffff 0%, #e4f2ff 7%, #b7ddff 19%, #7ec2fb 36%, #4a98ee 56%, #2b73d8 74%, #1a56bd 88%, #103f92 100%);
+    box-shadow: inset -22px -26px 54px rgba(9,38,96,.55), inset 16px 18px 44px rgba(255,255,255,.5), inset 0 0 60px rgba(120,180,255,.25); }
+  .css-fluid { position: absolute; inset: -14%; border-radius: 50%; filter: blur(16px); mix-blend-mode: screen; opacity: .55; animation: spin 18s linear infinite;
+    background: conic-gradient(from 0deg, #8fe0ff, #4aa3ff, #6a7bff, #59e6ff, #3f8dff, #a7c4ff, #8fe0ff); }
+  .css-spec { position: absolute; left: 26%; top: 17%; width: 34%; height: 22%; border-radius: 50%; transform: rotate(-18deg); filter: blur(2px);
+    background: radial-gradient(ellipse at 42% 40%, rgba(255,255,255,.98), rgba(255,255,255,.5) 34%, transparent 68%); }
+  .css-ring { position: absolute; inset: 0; border-radius: 50%; mix-blend-mode: screen;
+    background: radial-gradient(circle at 50% 50%, transparent 66%, rgba(180,220,255,.35) 82%, rgba(255,255,255,.5) 90%, transparent 96%); }
+  @keyframes spin { to { transform: rotate(360deg);} }
+
+  .controls { width: 100%; max-width: 320px; display: flex; align-items: center; justify-content: space-between; padding: 0 42px; margin-bottom: max(38px, calc(env(safe-area-inset-bottom) + 20px)); }
+  .ctrl-btn { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+    background: rgba(255,255,255,.9); border: 1px solid rgba(20,40,80,.08); box-shadow: 0 10px 26px rgba(70,110,170,.22), inset 0 1px 1px rgba(255,255,255,.8); color: #10151f; backdrop-filter: blur(8px);
+    transition: transform .16s cubic-bezier(.2,.8,.2,1), background .3s, box-shadow .3s; }
+  .screen.dark .ctrl-btn { background: rgba(235,242,255,.92); }
+  .ctrl-btn:hover { transform: translateY(-2px) scale(1.05); }
+  .ctrl-btn:active { transform: scale(.9); }
+  .ctrl-btn.mic.on { background: #2f7fe0; color: #fff; box-shadow: 0 0 0 4px rgba(47,127,224,.18), 0 12px 30px rgba(47,127,224,.45); }
+</style>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+    <filter id="liquid" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.008" numOctaves="2" seed="3" result="n"><animate attributeName="baseFrequency" dur="18s" values="0.007;0.011;0.007" repeatCount="indefinite"/></feTurbulence>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="9" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs></svg>
+
+  <div class="screen light" id="screen">
+    <button class="settings" id="themeBtn" title="Toggle light / dark" aria-label="Settings">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+        <line x1="4" y1="8" x2="20" y2="8"/><circle cx="9" cy="8" r="2.3" fill="currentColor"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="15" cy="16" r="2.3" fill="currentColor"/>
+      </svg>
+    </button>
+
+    <div class="status" id="status">Tap the mic to <b>speak</b></div>
+    <div class="states" id="states">
+      <button class="pill active" data-s="idle">idle</button>
+      <button class="pill" data-s="listening">listening</button>
+      <button class="pill" data-s="thinking">thinking</button>
+    </div>
+
+    <div class="orb-holder">
+      <div class="orb-stage idle" id="stage">
+        <div class="halo"></div>
+        <div class="orb-gl" id="gl"></div>
+        <!-- CSS fallback (only if WebGL missing) -->
+        <div class="orb-css">
+          <div class="css-sphere"></div><div class="css-fluid"></div><div class="css-spec"></div><div class="css-ring"></div>
+        </div>
+        <div class="shadow"></div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="ctrl-btn mic" id="micBtn" aria-label="Microphone">
+        <svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg>
+      </button>
+      <button class="ctrl-btn" id="closeBtn" aria-label="Close">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/three@0.150.1/build/three.min.js"></script>
+  <script>
+  (function () {
+    'use strict';
+    var stage = document.getElementById('stage');
+    var screenEl = document.getElementById('screen');
+    var statusEl = document.getElementById('status');
+    var micBtn = document.getElementById('micBtn');
+    var LABEL = { idle: 'Tap the mic to <b>speak</b>', listening: 'Listening…', thinking: 'Thinking…' };
+    var isMobile = matchMedia('(pointer: coarse)').matches || Math.min(innerWidth, innerHeight) < 620;
+
+    /* ---- shared audio (real mic w/ mock fallback) ---- */
+    var audio = { active:false, level:0, analyser:null, data:null, ctx:null, stream:null };
+    function startMic() {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+      var ctx = new AC();
+      navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true } }).then(function (stream) {
+        var src = ctx.createMediaStreamSource(stream); var an = ctx.createAnalyser(); an.fftSize = 512; an.smoothingTimeConstant = 0.8; src.connect(an);
+        audio.ctx = ctx; audio.analyser = an; audio.stream = stream; audio.data = new Uint8Array(an.frequencyBinCount); audio.active = true;
+        if (ctx.state === 'suspended') ctx.resume();
+      }).catch(function () {});
+    }
+    function stopMic() { if (!audio.active) return; audio.stream.getTracks().forEach(function (t) { t.stop(); }); audio.ctx.close(); audio.active = false; }
+
+    /* ---- state machine ---- */
+    var state = 'idle', thinkTimer = null, mockT = 0, mock = 0;
+    function setState(s) {
+      state = s; stage.className = 'orb-stage ' + s + (webglFailed ? ' fallback' : '');
+      statusEl.innerHTML = LABEL[s]; micBtn.classList.toggle('on', s === 'listening');
+      Array.prototype.forEach.call(document.querySelectorAll('.pill'), function (p) { p.classList.toggle('active', p.dataset.s === s); });
+      clearTimeout(thinkTimer);
+      if (s === 'thinking') thinkTimer = setTimeout(function () { setState('idle'); }, 2800);
+      if (s === 'listening') startMic(); else stopMic();
+    }
+    // audio level per frame (0..1): real mic if available, else mock envelope while listening
+    function audioLevel(dt) {
+      if (state === 'listening') {
+        if (audio.active) {
+          audio.analyser.getByteFrequencyData(audio.data);
+          var sum = 0; for (var i = 0; i < audio.data.length; i++) sum += audio.data[i];
+          var lv = (sum / audio.data.length / 255) * 1.8;
+          audio.level += (lv - audio.level) * 0.3; return Math.min(1, audio.level);
+        }
+        mockT += dt; var env = 0.42 + 0.34 * Math.sin(mockT * 2.1) + 0.18 * Math.sin(mockT * 5.7 + 1.3);
+        mock += (Math.max(0, Math.min(1, env * (0.7 + Math.random() * 0.4))) - mock) * 0.2; return mock;
+      }
+      audio.level *= 0.9; mock *= 0.9; return 0;
+    }
+
+    document.getElementById('states').addEventListener('click', function (e) { if (e.target.dataset && e.target.dataset.s) setState(e.target.dataset.s); });
+    micBtn.addEventListener('click', function () { setState(state === 'listening' ? 'thinking' : 'listening'); });
+    document.getElementById('closeBtn').addEventListener('click', function () { setState('idle'); });
+    document.getElementById('themeBtn').addEventListener('click', function () { screenEl.classList.toggle('dark'); screenEl.classList.toggle('light'); });
+
+    /* ============================ WebGL photoreal glass ============================ */
+    var webglFailed = false;
+    try { if (typeof THREE === 'undefined') throw new Error('no-three'); initGL(); }
+    catch (e) { console.warn('WebGL orb unavailable — CSS fallback:', e); webglFailed = true; stage.classList.add('fallback'); }
+
+    function initGL() {
+      var host = document.getElementById('gl');
+      var renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+      if (!renderer.getContext()) throw new Error('no-context');
+      var DPR = Math.min(window.devicePixelRatio || 1, 2);
+      renderer.setPixelRatio(DPR); renderer.setClearColor(0x000000, 0);
+      function size() { return Math.max(2, Math.min(host.clientWidth, host.clientHeight)); }
+      renderer.setSize(host.clientWidth, host.clientHeight);
+      host.appendChild(renderer.domElement);
+
+      var scene = new THREE.Scene();
+      var camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
+      camera.position.set(0, 0, 4.2);
+
+      // --- environment scene captured to a cubemap (what the glass reflects/refracts) ---
+      var envScene = new THREE.Scene();
+      envScene.background = new THREE.Color(0xe8f3ff);
+      var blobs = new THREE.Group(); scene.userData = {};
+      var COLORS = [0x8fe0ff, 0x4aa3ff, 0x6a7bff, 0xffffff, 0xbfe0ff, 0xa78bff];
+      for (var i = 0; i < COLORS.length; i++) {
+        var m = new THREE.Mesh(new THREE.SphereGeometry(1.4 + (i % 3) * 0.5, 24, 24), new THREE.MeshBasicMaterial({ color: COLORS[i] }));
+        var a = (i / COLORS.length) * Math.PI * 2;
+        m.position.set(Math.cos(a) * 4.5, Math.sin(a * 1.3) * 3.2, Math.sin(a) * 4.5);
+        blobs.add(m);
+      }
+      envScene.add(blobs);
+      var cubeRT = new THREE.WebGLCubeRenderTarget(isMobile ? 128 : 256, { generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter });
+      var cubeCam = new THREE.CubeCamera(0.1, 100, cubeRT);
+
+      // --- simplex noise + fbm (Ashima, public domain) for fluid displacement ---
+      var SIMPLEX = [
+        'vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x,289.0);} vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}',
+        'float snoise(vec3 v){ const vec2 C=vec2(1.0/6.0,1.0/3.0); const vec4 D=vec4(0.0,0.5,1.0,2.0);',
+        ' vec3 i=floor(v+dot(v,C.yyy)); vec3 x0=v-i+dot(i,C.xxx); vec3 g=step(x0.yzx,x0.xyz); vec3 l=1.0-g;',
+        ' vec3 i1=min(g.xyz,l.zxy); vec3 i2=max(g.xyz,l.zxy); vec3 x1=x0-i1+C.xxx; vec3 x2=x0-i2+2.0*C.xxx; vec3 x3=x0-1.0+3.0*C.xxx;',
+        ' i=mod(i,289.0); vec4 p=permute(permute(permute(i.z+vec4(0.0,i1.z,i2.z,1.0))+i.y+vec4(0.0,i1.y,i2.y,1.0))+i.x+vec4(0.0,i1.x,i2.x,1.0));',
+        ' float n_=1.0/7.0; vec3 ns=n_*D.wyz-D.xzx; vec4 j=p-49.0*floor(p*ns.z*ns.z); vec4 x_=floor(j*ns.z); vec4 y_=floor(j-7.0*x_);',
+        ' vec4 x=x_*ns.x+ns.yyyy; vec4 y=y_*ns.x+ns.yyyy; vec4 h=1.0-abs(x)-abs(y); vec4 b0=vec4(x.xy,y.xy); vec4 b1=vec4(x.zw,y.zw);',
+        ' vec4 s0=floor(b0)*2.0+1.0; vec4 s1=floor(b1)*2.0+1.0; vec4 sh=-step(h,vec4(0.0)); vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy; vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;',
+        ' vec3 p0=vec3(a0.xy,h.x); vec3 p1=vec3(a0.zw,h.y); vec3 p2=vec3(a1.xy,h.z); vec3 p3=vec3(a1.zw,h.w);',
+        ' vec4 nn=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3))); p0*=nn.x;p1*=nn.y;p2*=nn.z;p3*=nn.w;',
+        ' vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0); m=m*m; return 42.0*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3))); }',
+        'float fbm(vec3 p){ float f=0.0,a=0.5; for(int i=0;i<4;i++){ f+=a*snoise(p); p*=2.03; a*=0.5;} return f; }'
+      ].join('\n');
+
+      var uniforms = {
+        uTime:{value:0}, uAmp:{value:0.05}, uDetail:{value:2.0}, uIrid:{value:1.0}, uFres:{value:0.9},
+        uEnv:{value:cubeRT.texture}, uTint:{value:new THREE.Color(0.78,0.86,1.0)}, uCore:{value:new THREE.Color(0.82,0.94,1.0)},
+        uLightDir:{value:new THREE.Vector3(-0.4,0.75,0.55).normalize()}
+      };
+      var mat = new THREE.ShaderMaterial({
+        uniforms: uniforms,
+        vertexShader: SIMPLEX + [
+          'uniform float uTime, uAmp, uDetail; varying vec3 vWorld, vNormal, vView;',
+          'void main(){ vec3 pos=position; vec3 nrm=normal;',
+          '  float d = fbm(normalize(pos)*uDetail + vec3(0.0, uTime*0.3, 0.0));',
+          '  pos += nrm * d * uAmp;',
+          '  vec3 P = normalize(pos)*uDetail*1.3 + vec3(0.0, uTime*0.25, 0.0);',
+          '  vec3 np = vec3(fbm(P+11.1), fbm(P+31.4), fbm(P+57.7));',   // normal jitter -> shimmer
+          '  nrm = normalize(nrm + np * (0.22 + uAmp*1.5));',
+          '  vec4 wp = modelMatrix * vec4(pos,1.0); vWorld = wp.xyz;',
+          '  vNormal = normalize(mat3(modelMatrix) * nrm); vView = normalize(cameraPosition - wp.xyz);',
+          '  gl_Position = projectionMatrix * viewMatrix * wp; }'
+        ].join('\n'),
+        fragmentShader: [
+          'precision highp float; uniform samplerCube uEnv; uniform float uIrid, uFres; uniform vec3 uTint, uCore, uLightDir;',
+          'varying vec3 vWorld, vNormal, vView;',
+          'void main(){ vec3 N=normalize(vNormal); vec3 V=normalize(vView); vec3 I=-V;',
+          '  float fres = pow(1.0 - max(dot(N,V),0.0), 3.0);',
+          '  vec3 reflCol = textureCube(uEnv, reflect(I,N)).rgb;',
+          '  float eta = 0.66;',                                        // 1/IOR-ish
+          '  vec3 rR = refract(I,N, eta - 0.018*uIrid);',
+          '  vec3 rG = refract(I,N, eta);',
+          '  vec3 rB = refract(I,N, eta + 0.018*uIrid);',
+          '  vec3 refrCol = vec3(textureCube(uEnv,rR).r, textureCube(uEnv,rG).g, textureCube(uEnv,rB).b);', // chromatic aberration
+          '  refrCol *= uTint;',
+          '  refrCol = mix(refrCol, uCore, (1.0 - fres) * 0.22);',       // subsurface interior glow
+          '  vec3 col = mix(refrCol, reflCol, clamp(fres*uFres, 0.0, 1.0));',
+          '  vec3 L = normalize(uLightDir); float spec = pow(max(dot(reflect(-L,N),V),0.0), 55.0);',
+          '  col += vec3(spec) * 1.3;',                                  // specular hotspot
+          '  col += vec3(0.55,0.72,1.0) * fres * 0.55;',                 // fresnel rim
+          '  gl_FragColor = vec4(col, 1.0); }'
+        ].join('\n')
+      });
+
+      var orb = new THREE.Mesh(new THREE.IcosahedronGeometry(1.2, isMobile ? 40 : 96), mat);
+      scene.add(orb);
+
+      // simple drag-rotate + wheel-zoom (no addons)
+      var ctrl = { rx:0, ry:0, trx:0, try_:0, dist:4.2, tdist:4.2, drag:false, px:0, py:0, pinch:0, two:false };
+      var dom = renderer.domElement; dom.style.touchAction = 'none';
+      dom.addEventListener('pointerdown', function (e) { if (ctrl.two) return; ctrl.drag = true; ctrl.px = e.clientX; ctrl.py = e.clientY; });
+      dom.addEventListener('pointermove', function (e) { if (!ctrl.drag || ctrl.two) return; ctrl.try_ += (e.clientX - ctrl.px) * 0.006; ctrl.trx += (e.clientY - ctrl.py) * 0.006; ctrl.trx = Math.max(-1.2, Math.min(1.2, ctrl.trx)); ctrl.px = e.clientX; ctrl.py = e.clientY; });
+      window.addEventListener('pointerup', function () { ctrl.drag = false; });
+      dom.addEventListener('wheel', function (e) { e.preventDefault(); ctrl.tdist = Math.max(3.0, Math.min(7.0, ctrl.tdist * (1 + (e.deltaY > 0 ? 0.08 : -0.08)))); }, { passive:false });
+      function td(e){ var a=e.touches[0], b=e.touches[1]; return Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY); }
+      dom.addEventListener('touchstart', function (e) { if (e.touches.length===2){ ctrl.two=true; ctrl.drag=false; ctrl.pinch=td(e);} }, { passive:false });
+      dom.addEventListener('touchmove', function (e) { if (e.touches.length===2){ e.preventDefault(); var d=td(e); if(ctrl.pinch) ctrl.tdist=Math.max(3.0,Math.min(7.0,ctrl.tdist*(ctrl.pinch/d))); ctrl.pinch=d; } }, { passive:false });
+      dom.addEventListener('touchend', function (e) { if (e.touches.length<2){ ctrl.two=false; ctrl.pinch=0; } });
+
+      function resize() { var w = host.clientWidth, h = host.clientHeight; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+      window.addEventListener('resize', resize); resize();
+
+      var clock = new THREE.Clock(), frame = 0, breath = 0;
+      renderer.setAnimationLoop(function () {
+        var dt = Math.min(clock.getDelta(), 0.05);
+        var amp = audioLevel(dt);
+        breath += dt; var idle = state === 'idle' ? 1 : 0;
+        var br = (Math.sin(breath * 0.9) * 0.5 + 0.5) * 0.04 * idle;
+
+        // state-driven look
+        var baseAmp = state === 'thinking' ? 0.11 : state === 'listening' ? 0.05 + amp * 0.14 : 0.05;
+        var flow    = state === 'thinking' ? 1.5  : state === 'listening' ? 1.0 + amp * 0.8 : 0.6;
+        uniforms.uTime.value += dt * flow;
+        uniforms.uAmp.value  += (baseAmp - uniforms.uAmp.value) * 0.1;
+        uniforms.uIrid.value += (((state === 'thinking' ? 1.7 : 1.0)) - uniforms.uIrid.value) * 0.08;
+
+        orb.scale.setScalar(1 + amp * 0.10 + br);
+        orb.rotation.y += dt * (state === 'thinking' ? 0.5 : 0.12);
+
+        // ease camera controls
+        ctrl.rx += (ctrl.trx - ctrl.rx) * 0.1; ctrl.ry += (ctrl.try_ - ctrl.ry) * 0.1; ctrl.dist += (ctrl.tdist - ctrl.dist) * 0.1;
+        orb.rotation.x = ctrl.rx;
+        camera.position.set(Math.sin(ctrl.ry) * ctrl.dist, 0, Math.cos(ctrl.ry) * ctrl.dist);
+        camera.lookAt(0, 0, 0);
+
+        // refresh environment cubemap occasionally (moving reflections)
+        if (frame % 3 === 0) { blobs.rotation.y += 0.02; blobs.rotation.x += 0.008; orb.visible = false; cubeCam.update(renderer, envScene); orb.visible = true; }
+        frame++;
+
+        renderer.render(scene, camera);
+      });
+    }
+  })();
+  </script>
+</body>
+</html>
