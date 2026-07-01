@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { useActor } from '@/contexts/ActorContext'
+import { notifySuccess } from '@/lib/haptics'
 import { cn } from '@/lib/utils'
 
 /**
@@ -143,6 +144,7 @@ export function OwnerTodoBar() {
   }, [draft, saving, refresh])
 
   const completeTodo = useCallback(async (todo: OwnerTodo) => {
+    notifySuccess()
     setJustDone((prev) => new Set(prev).add(todo.id))
     setTodos((prev) => prev.map((t) => (t.id === todo.id ? { ...t, status: 'completed' } : t)))
     window.setTimeout(() => {
@@ -221,7 +223,7 @@ export function OwnerTodoBar() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
               transition={{ duration: 0.16, ease: 'easeOut' }}
-              className="fixed z-[72] w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-border-subtle bg-card shadow-float"
+              className="fixed z-[72] w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-border-subtle bg-card/85 shadow-float backdrop-blur-xl"
               style={{
                 top: 'calc(max(0.625rem, env(safe-area-inset-top)) + 2.75rem)',
                 right: 'max(0.75rem, env(safe-area-inset-right))',

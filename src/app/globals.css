@@ -641,9 +641,105 @@ a,
 @supports ((backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px))) {
   .alma-glass-sheet {
     background: var(--alma-sheet-bg);
-    -webkit-backdrop-filter: blur(26px) saturate(1.4);
-    backdrop-filter: blur(26px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    backdrop-filter: blur(20px) saturate(1.4);
+    /* Promote to its own compositor layer so the blur doesn't re-rasterize the
+       page on scroll (mobile perf) — the blur region stays sheet-sized. */
+    transform: translateZ(0);
   }
+}
+
+/* ── Floating liquid-glass portal (GlassSheet) ─────────────────────────────
+   Overlay/backdrop/shell styled for ALL pointer types — the .mobile-modal-*
+   classes further down are scoped to coarse pointers only, so the reusable
+   GlassSheet ships its own layer here. Bottom-sheet on phones; floating
+   centered card from sm: up. Entry/exit motion is spring-driven in JS
+   (framer-motion, stiffness 300 / damping 30) — no CSS keyframes here. */
+.alma-glass-portal {
+  position: fixed;
+  top: var(--ios-vv-top, 0px);
+  left: var(--ios-vv-left, 0px);
+  width: var(--ios-vv-width, 100%);
+  height: var(--ios-vv-height, 100dvh);
+  max-height: var(--ios-vv-height, 100dvh);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-end;
+  overflow: hidden;
+  padding: 0;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+}
+html.cap-native .alma-glass-portal {
+  height: calc(var(--ios-vv-height, 100dvh) - var(--kb-inset, 0px));
+  max-height: calc(var(--ios-vv-height, 100dvh) - var(--kb-inset, 0px));
+}
+.alma-glass-portal .mobile-modal-overlay-inner {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  min-height: 0;
+  width: 100%;
+  flex: 1;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+.alma-glass-portal .mobile-modal-overlay-inner > * {
+  pointer-events: auto;
+}
+@media (min-width: 640px) {
+  .alma-glass-portal {
+    padding: 1rem;
+  }
+  .alma-glass-portal .mobile-modal-overlay-inner {
+    align-items: center;
+    justify-content: center;
+  }
+}
+/* Dim layer: constant (cheap) color, opacity-only animation — animating
+   backdrop-filter itself re-rasterizes every frame and lags mobile scroll. */
+.alma-glass-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 0.42);
+  touch-action: none;
+  animation: alma-glass-backdrop-in 0.26s ease both;
+}
+@keyframes alma-glass-backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+/* Panel layout shell (motion transform comes from framer, not CSS). */
+.alma-glass-shell {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  max-height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+  will-change: transform, opacity;
+}
+.alma-glass-shell .mobile-modal-header {
+  flex-shrink: 0;
+}
+.alma-glass-shell .mobile-modal-body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+@media (min-width: 640px) {
+  .alma-glass-shell {
+    max-height: min(calc(100dvh - 2rem), 920px);
+    border: 1px solid var(--alma-sheet-hairline);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .alma-glass-backdrop { animation: none; }
 }
 :root {
   --alma-sheet-bg: rgba(252, 251, 248, 0.8);

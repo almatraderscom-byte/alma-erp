@@ -18,7 +18,7 @@ import { PlanDriveInlineTurn } from './monitor/PlanDriveInlineTurn'
 import type { PlanDrivePanelData, PlanDriveAction } from './monitor/PlanDriveTimeline'
 import { AgentThinkingIndicator, ModelSpinner, type ModelVariant, type ThinkingMode } from './AgentThinkingIndicator'
 import { toolDisplay, toolDetail } from '@/agent/lib/tool-labels'
-import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
+import { GlassSheet, GlassSheetGrip } from '@/components/ui/GlassSheet'
 import { agentReplyHaptic } from '@/agent/lib/haptics'
 import { isHeartbeatWakeText } from '@/agent/lib/heartbeat/wake-marker'
 
@@ -543,25 +543,28 @@ function SparkleGlyph({ className, size = 14 }: { className?: string; size?: num
 }
 
 /**
- * Claude-Code "Bash"-style floating I/O sheet. Tapping a tool row lifts a
- * liquid-glass bottom-sheet with the tool's Input (Command) and Output — the
- * same premium, iPhone-first surface the owner asked for, instead of an inline
- * accordion. Reuses the shared MobileModalPortal (portal + iOS viewport sizing).
+ * Claude-Code "Bash"-style floating I/O sheet. Tapping a tool row (or its
+ * trigger icon) lifts the shared Floating Liquid Glass panel with the tool's
+ * Input (Command) and Output — spring-risen (stiffness 300 / damping 30),
+ * frosted blur(20px), instead of an inline accordion.
  */
 function ToolIOSheet({ tool, onClose }: { tool: ToolRow | null; onClose: () => void }) {
-  const d = tool ? toolDisplay(tool.name) : null
-  const inputStr = tool ? formatToolInput(tool.input) : null
-  const resultStr = tool && tool.result && tool.result.trim() ? tool.result : null
-  const failed = tool ? tool.ok === false : false
+  // Retain the last tool so the content stays intact through the exit glide.
+  const [shown, setShown] = useState<ToolRow | null>(tool)
+  useEffect(() => {
+    if (tool) setShown(tool)
+  }, [tool])
+  const t = tool ?? shown
+  const d = t ? toolDisplay(t.name) : null
+  const inputStr = t ? formatToolInput(t.input) : null
+  const resultStr = t && t.result && t.result.trim() ? t.result : null
+  const failed = t ? t.ok === false : false
   return (
-    <MobileModalPortal open={!!tool} aria-label="টুল বিস্তারিত" onBackdropClick={onClose} className="agent-tool-io-sheet">
-      <div className="mobile-modal-shell alma-glass-sheet w-full max-w-lg rounded-t-[26px] sm:rounded-[24px]">
-        <div className="flex shrink-0 justify-center pb-1 pt-2.5">
-          <span className="alma-sheet-grip" aria-hidden />
-        </div>
+    <GlassSheet open={!!tool} onClose={onClose} ariaLabel="টুল বিস্তারিত">
+      <GlassSheetGrip />
         <div className="mobile-modal-header flex items-center gap-2 px-5 pb-2.5 pt-1">
           <span className="text-base" aria-hidden>{d?.icon ?? '🔧'}</span>
-          <span className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.01em] text-cream">{d?.label ?? tool?.name}</span>
+          <span className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.01em] text-cream">{d?.label ?? t?.name}</span>
           <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${failed ? 'tone-red' : 'tone-green'}`}>
             {failed ? 'ব্যর্থ' : 'সম্পন্ন'}
           </span>
@@ -587,8 +590,7 @@ function ToolIOSheet({ tool, onClose }: { tool: ToolRow | null; onClose: () => v
             <p className="py-6 text-center text-[12px] text-muted">এই টুলের কোনো ইনপুট/ফলাফল নেই।</p>
           )}
         </div>
-      </div>
-    </MobileModalPortal>
+    </GlassSheet>
   )
 }
 
@@ -826,7 +828,7 @@ function ActivityTimeline({
                                 <button
                                   type="button"
                                   onClick={() => hasIO && setIoSheet(t)}
-                                  className={`flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[12px] leading-snug ${hasIO ? 'cursor-pointer' : 'cursor-default'}`}
+                                  className={`group/tool flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[12px] leading-snug ${hasIO ? 'cursor-pointer' : 'cursor-default'}`}
                                 >
                                   {t.live ? (
                                     <SparkleGlyph className="alma-sparkle-pulse shrink-0 text-gold" size={13} />
@@ -840,16 +842,26 @@ function ActivityTimeline({
                                     {t.live ? 'চলছে · ' : ''}{d.label}
                                     {target && !t.live && <span className="text-muted"> · {target}</span>}
                                   </span>
-                                  {hasIO && (
+                                  {/* Trigger icon — every command row carries its glass-panel
+                                      trigger (expand glyph); dimmed when there's no I/O yet. */}
+                                  <span
+                                    className={`shrink-0 rounded-md p-1 transition-colors ${
+                                      hasIO
+                                        ? 'text-muted/70 group-hover/tool:bg-white/[0.06] group-hover/tool:text-cream'
+                                        : 'text-muted/25'
+                                    }`}
+                                    aria-hidden
+                                  >
                                     <svg
-                                      width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+                                      width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
                                       strokeLinecap="round" strokeLinejoin="round"
-                                      className="shrink-0 text-muted/50"
-                                      aria-hidden
                                     >
-                                      <path d="M9 6l6 6-6 6" />
+                                      <path d="M15 3h6v6" />
+                                      <path d="M9 21H3v-6" />
+                                      <path d="M21 3l-7 7" />
+                                      <path d="M3 21l7-7" />
                                     </svg>
-                                  )}
+                                  </span>
                                 </button>
                               </div>
                             )

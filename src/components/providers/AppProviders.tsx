@@ -19,6 +19,7 @@ import { AgentFab } from '@/components/layout/AgentAccess'
 import { OwnerTodoBar } from '@/components/layout/OwnerTodoBar'
 import { StaffNavigator } from '@/components/layout/StaffNavigator'
 import { PwaBootstrap } from '@/components/providers/PwaBootstrap'
+import { HapticBridge } from '@/components/providers/HapticBridge'
 import { AppBootRecovery, AppReadyMarker } from '@/components/providers/AppBootRecovery'
 import { LoadingOverlay } from '@/components/loading/LoadingOverlay'
 import { RouteTransitionLoader } from '@/components/loading/RouteTransitionLoader'
@@ -380,6 +381,7 @@ function SessionBridge({ children, session }: { children: ReactNode; session: Se
       <AppBootRecovery />
       <AppReadyMarker />
       <PwaBootstrap />
+      <HapticBridge />
       <AuthGate initialSession={session}>{children}</AuthGate>
     </SessionProvider>
   )
