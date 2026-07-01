@@ -16,7 +16,7 @@ import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/li
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
 import { selectToolsAndGroupsForTurnAsync, selectToolGroupsSync, applyToolSearchDeferral, TOOL_SEARCH_ENABLED, SLIM_ROUTER_ENABLED } from '@/agent/tools/select-tools'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
-import { executeTool, executePersonalTool } from '@/agent/tools/registry'
+import { executeTool, executePersonalTool, type ToolResult } from '@/agent/tools/registry'
 import { AUTO_RUN_ROLES } from '@/agent/tools/orchestrator-tools'
 import { logRefusalEvent } from '@/agent/lib/tool-telemetry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -1280,11 +1280,31 @@ export async function* runAgentTurn(
           }
         }
 
-        toolResultContent.push({
-          type: 'tool_result',
-          tool_use_id: tb.id,
-          content: JSON.stringify(annotateEmptyResult(result)),
-        })
+        // Vision: if a tool returned a screenshot (live browser), hand the head
+        // model a REAL image block so it SEES the page — not a URL string it can't
+        // open. Strip the raw base64 out of the JSON text first (else it bloats the
+        // context by ~100KB per shot); the image travels only as the image block.
+        const img = (result as ToolResult).image
+        if (img && typeof img.data === 'string' && img.data.length > 0) {
+          const { image: _omitImg, ...resultNoImg } = result as ToolResult
+          toolResultContent.push({
+            type: 'tool_result',
+            tool_use_id: tb.id,
+            content: [
+              {
+                type: 'image',
+                source: { type: 'base64', media_type: img.mediaType, data: img.data },
+              },
+              { type: 'text', text: JSON.stringify(annotateEmptyResult(resultNoImg)) },
+            ],
+          })
+        } else {
+          toolResultContent.push({
+            type: 'tool_result',
+            tool_use_id: tb.id,
+            content: JSON.stringify(annotateEmptyResult(result)),
+          })
+        }
       }
 
       messages = [...messages, { role: 'user', content: toolResultContent }]

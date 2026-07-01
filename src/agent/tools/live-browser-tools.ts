@@ -27,7 +27,21 @@ import {
   type LiveBrowserAction,
 } from '@/agent/lib/live-browser/companion'
 
-/** Persist a companion screenshot dataURL → signed URL the head + owner can open. */
+/** Split a companion screenshot dataURL into raw base64 + media type for a vision block. */
+function splitDataUrl(
+  dataUrl: string | null | undefined,
+): { data: string; mediaType: 'image/jpeg' | 'image/png' } | null {
+  if (!dataUrl || !dataUrl.startsWith('data:image')) return null
+  const comma = dataUrl.indexOf(',')
+  if (comma < 0) return null
+  const meta = dataUrl.slice(5, comma) // e.g. "image/jpeg;base64"
+  const mediaType = meta.includes('png') ? 'image/png' : 'image/jpeg'
+  const data = dataUrl.slice(comma + 1)
+  if (!data) return null
+  return { data, mediaType }
+}
+
+/** Persist a companion screenshot dataURL → signed URL the OWNER can open in chat. */
 async function persistScreenshot(dataUrl: string | null | undefined): Promise<string | null> {
   if (!dataUrl || !dataUrl.startsWith('data:image')) return null
   try {
@@ -181,12 +195,20 @@ const live_browser_status: AgentTool = {
 const live_browser_look: AgentTool = {
   name: 'live_browser_look',
   description:
-    "Look at the owner's active Chrome tab — optionally navigate or scroll first — and return " +
-    'what is on screen: page URL/title, visible text, the clickable elements (links/buttons/inputs ' +
-    'with their text + ids), and a screenshot link the owner can open. Use this to review a page ' +
-    '(e.g. his Facebook page) or to see the result of a previous action. Read-only and safe. ' +
-    'Params: `url` (optional http(s) to navigate to first), `scrollBy` (optional pixels), ' +
-    '`want` ("text" | "dom" | "both", default "both"), `screenshot` (default true).',
+    "Look at the owner's live Chrome tab and get back a REAL SCREENSHOT you can SEE (a vision " +
+    'image), plus the page URL/title, visible text, and the clickable elements (links/buttons/' +
+    'inputs with their text + ids). Read-only and safe.\n' +
+    'WORK LIKE A HUMAN, not by guessing URLs:\n' +
+    '• Start from the site\'s normal HOME (e.g. https://www.facebook.com , https://mail.google.com) ' +
+    'using the owner\'s existing login — do NOT invent deep/guessed URLs like /SomePageName.\n' +
+    '• LOOK first: read the screenshot + elements to see where you actually are.\n' +
+    '• Then navigate using the on-page UI (menus, search box, profile/switch, tabs, buttons) with ' +
+    'live_browser_act — the same way a person clicks around — and LOOK again after each step to ' +
+    'confirm before the next.\n' +
+    '• If something is not visible, scroll and look again; never assume a URL exists.\n' +
+    'Params: `url` (optional http(s) to open first — use the real HOME, not a guessed path), ' +
+    '`scrollBy` (optional pixels), `want` ("text" | "dom" | "both", default "both"), ' +
+    '`screenshot` (default true — keep it on so you can SEE the page).',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -225,12 +247,16 @@ const live_browser_look: AgentTool = {
         if (r.ok) out.elements = (r.data as { elements?: unknown })?.elements ?? r.data
         else out.domError = r.error ?? r.status
       }
+      let visionImage: { data: string; mediaType: 'image/jpeg' | 'image/png' } | null = null
       if (input.screenshot !== false) {
         const shot = await runCommand(dev.deviceId, 'screenshot')
-        if (shot.ok) out.screenshotUrl = await persistScreenshot(shot.screenshot)
+        if (shot.ok) {
+          out.screenshotUrl = await persistScreenshot(shot.screenshot)
+          visionImage = splitDataUrl(shot.screenshot)
+        }
       }
 
-      return { success: true, data: out }
+      return { success: true, data: out, ...(visionImage ? { image: visionImage } : {}) }
     } catch (err) {
       return { success: false, error: String(err) }
     }
@@ -240,13 +266,19 @@ const live_browser_look: AgentTool = {
 const live_browser_act: AgentTool = {
   name: 'live_browser_act',
   description:
-    "Perform ONE action in the owner's active Chrome tab: click, type, scroll, navigate, or wait. " +
-    'After acting, it returns a fresh screenshot link so progress is visible. ' +
+    "Perform ONE action in the owner's live Chrome tab: click, type, scroll, navigate, or wait. " +
+    'After acting it returns a fresh REAL SCREENSHOT you can SEE, so you verify the effect with your ' +
+    'own eyes before the next step.\n' +
+    'HUMAN-LIKE OPERATION: prefer clicking the on-page UI (menus, search, buttons, tabs, links you can ' +
+    'see in the screenshot/elements) over typing guessed URLs. Locate a target by its visible `text` ' +
+    'when you can; use a CSS `selector` only when you actually see it in the elements list. Always ' +
+    'live_browser_look after acting to confirm what happened, then decide the next single step.\n' +
     'SAFETY: never use this to press a final Send / Post / Pay / Buy / Transfer / Confirm / Delete — ' +
     'fill the form and navigate, but leave that last irreversible click to the owner and ask him. ' +
     'Params by action: ' +
     'click → `selector` or `text`; type → (`selector` or `text` to find the field) + `value`; ' +
-    'scroll → `by` (pixels); navigate → `url` (http(s)); wait → `ms`.',
+    'scroll → `by` (pixels); navigate → `url` (http(s), use a real HOME URL not a guessed path); ' +
+    'wait → `ms`.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -295,13 +327,23 @@ const live_browser_act: AgentTool = {
       if (!res.ok) out.error = res.error ?? res.status
       if (res.data) out.result = res.data
 
-      // Follow-up screenshot so the owner sees the effect (skip for plain waits).
+      // Follow-up screenshot so BOTH the owner (link) and the head model (vision
+      // image) see the effect of the action (skip for plain waits).
+      let visionImage: { data: string; mediaType: 'image/jpeg' | 'image/png' } | null = null
       if (res.ok && action !== 'wait') {
         const shot = await runCommand(dev.deviceId, 'screenshot')
-        if (shot.ok) out.screenshotUrl = await persistScreenshot(shot.screenshot)
+        if (shot.ok) {
+          out.screenshotUrl = await persistScreenshot(shot.screenshot)
+          visionImage = splitDataUrl(shot.screenshot)
+        }
       }
 
-      return { success: res.ok, data: out, ...(res.ok ? {} : { error: out.error as string }) }
+      return {
+        success: res.ok,
+        data: out,
+        ...(res.ok ? {} : { error: out.error as string }),
+        ...(visionImage ? { image: visionImage } : {}),
+      }
     } catch (err) {
       return { success: false, error: String(err) }
     }

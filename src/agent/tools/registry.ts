@@ -64,6 +64,14 @@ export interface ToolResult {
   success: boolean
   data?: unknown
   error?: string
+  /**
+   * Optional screenshot/image to hand the head model as a REAL vision block
+   * (not a URL string). The core loop strips this out of the JSON text payload
+   * and attaches it as an `image` content block in the tool_result, so the model
+   * literally SEES the page — the way Claude sees a browser — instead of guessing
+   * from text/DOM alone. `data` is raw base64 (no data: prefix).
+   */
+  image?: { data: string; mediaType: 'image/jpeg' | 'image/png' }
 }
 
 export interface AgentTool {
