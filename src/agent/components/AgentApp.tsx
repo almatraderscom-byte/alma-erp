@@ -625,6 +625,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     if (pendingFiles.length > 0) {
       try {
         fileRefs = await Promise.all(pendingFiles.map(async (pf) => {
+          // Claude-app flow: the file already pre-uploaded in the background when it
+          // was attached, so reuse that result — send is then instant and never races
+          // an unfinished upload. Only fall back to uploading here if it's missing.
+          if (pf.remote?.path) return pf.remote
           const fd = new FormData()
           fd.append('file', pf.file)
           if (convIdForUpload) fd.append('conversationId', convIdForUpload)
