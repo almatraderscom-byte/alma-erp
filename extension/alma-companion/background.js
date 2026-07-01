@@ -2,8 +2,17 @@
  * ALMA Companion — background service worker (MV3).
  *
  * Bridges the ALMA agent (server) to THIS Chrome. It long-polls the agent's
- * live-browser command endpoint, runs each command in the owner's active tab
- * (his own logged-in session), and posts the result + a screenshot back.
+ * live-browser command endpoint, runs each command in a DEDICATED ALMA window
+ * (the owner's own logged-in session — same cookies), draws a live on-page
+ * status banner + highlight so the owner can watch every step, and posts the
+ * result + a screenshot back.
+ *
+ * Why a dedicated window (v0.2.0):
+ *   • The agent NEVER hijacks the tab the owner is working in. It opens/keeps
+ *     one separate ALMA window and drives that, so the owner can keep browsing
+ *     (and keep chatting with the agent) in his other windows/tabs.
+ *   • Screenshots use captureVisibleTab on that window, which works even when
+ *     it's not focused — so the owner watches without being interrupted.
  *
  * Safety model:
  *   • Paired to ONE owner via a one-time code → a bearer `token` (kept in
@@ -43,9 +52,34 @@ async function getConfig() {
   }
 }
 
-async function activeTab() {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
-  return tab || null
+// ---- dedicated ALMA work window --------------------------------------------
+// All page actions run here, never in the owner's active tab.
+
+async function getAgentTab(createIfMissing = true) {
+  const { agentTabId } = await chrome.storage.local.get('agentTabId')
+  if (agentTabId) {
+    try {
+      const tab = await chrome.tabs.get(agentTabId)
+      if (tab && tab.id) return tab
+    } catch {
+      /* tab was closed — fall through and recreate */
+    }
+  }
+  if (!createIfMissing) return null
+  // First creation is focused=true so the owner SEES the ALMA window appear and
+  // knows where to watch; later navigations won't steal focus again.
+  const win = await chrome.windows.create({
+    url: 'about:blank',
+    focused: true,
+    width: 1200,
+    height: 860,
+  })
+  const tab = win && win.tabs && win.tabs[0]
+  if (tab && tab.id) {
+    await chrome.storage.local.set({ agentTabId: tab.id, agentWindowId: win.id })
+    return tab
+  }
+  return null
 }
 
 // ---- injected page functions (run in the page, not here) -------------------
@@ -73,7 +107,47 @@ function pageReadDom() {
   return { url: location.href, title: document.title, elements: out }
 }
 
-function pageClick(arg) {
+// Live status banner + moving cursor dot — injected so the owner SEES the agent
+// working end-to-end, Claude-extension style. Self-contained, pointer-events off.
+function pageOverlay(arg) {
+  const label = (arg && arg.label) || ''
+  const box = { x: arg && arg.x, y: arg && arg.y }
+  const root = document.documentElement
+  let bar = document.getElementById('__alma_bar__')
+  if (!bar) {
+    const st = document.createElement('style')
+    st.textContent =
+      '@keyframes __almapulse{0%,100%{opacity:1}50%{opacity:.3}}' +
+      '#__alma_bar__{position:fixed;z-index:2147483647;left:50%;top:14px;transform:translateX(-50%);' +
+      'background:rgba(18,18,26,.94);color:#f4e9c9;font:600 13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;' +
+      'padding:9px 16px;border-radius:999px;box-shadow:0 8px 28px rgba(0,0,0,.4);' +
+      'border:1px solid rgba(201,168,76,.55);display:flex;align-items:center;gap:9px;pointer-events:none}' +
+      '#__alma_dot__{width:9px;height:9px;border-radius:50%;background:#c9a84c;box-shadow:0 0 9px #c9a84c;animation:__almapulse 1s infinite}' +
+      '#__alma_cur__{position:fixed;z-index:2147483647;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;' +
+      'border:2px solid #c9a84c;background:rgba(201,168,76,.25);box-shadow:0 0 12px rgba(201,168,76,.7);' +
+      'pointer-events:none;transition:left .35s ease,top .35s ease}'
+    root.appendChild(st)
+    bar = document.createElement('div')
+    bar.id = '__alma_bar__'
+    bar.innerHTML = '<span id="__alma_dot__"></span><span id="__alma_txt__"></span>'
+    root.appendChild(bar)
+  }
+  const txt = document.getElementById('__alma_txt__')
+  if (txt) txt.textContent = 'ALMA কাজ করছে · ' + label
+  if (typeof box.x === 'number' && typeof box.y === 'number') {
+    let cur = document.getElementById('__alma_cur__')
+    if (!cur) {
+      cur = document.createElement('div')
+      cur.id = '__alma_cur__'
+      root.appendChild(cur)
+    }
+    cur.style.left = box.x + 'px'
+    cur.style.top = box.y + 'px'
+  }
+  return { ok: true }
+}
+
+async function pageClick(arg) {
   const { selector, text } = arg
   let el = null
   if (selector) el = document.querySelector(selector)
@@ -82,12 +156,29 @@ function pageClick(arg) {
     el = all.find((e) => (e.innerText || e.value || '').trim().toLowerCase().includes(String(text).toLowerCase())) || null
   }
   if (!el) return { ok: false, error: 'element not found' }
-  el.scrollIntoView({ block: 'center' })
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  await new Promise((r) => setTimeout(r, 350))
+  const rect = el.getBoundingClientRect()
+  const prevOutline = el.style.outline
+  el.style.outline = '3px solid #c9a84c'
+  el.style.outlineOffset = '2px'
+  // point the ALMA cursor at the target so the owner sees WHAT gets clicked
+  const cx = Math.round(rect.left + rect.width / 2)
+  const cy = Math.round(rect.top + rect.height / 2)
+  let cur = document.getElementById('__alma_cur__')
+  if (cur) {
+    cur.style.left = cx + 'px'
+    cur.style.top = cy + 'px'
+  }
+  await new Promise((r) => setTimeout(r, 450))
   el.click()
+  setTimeout(() => {
+    el.style.outline = prevOutline
+  }, 600)
   return { ok: true }
 }
 
-function pageType(arg) {
+async function pageType(arg) {
   const { selector, text, value } = arg
   let el = selector ? document.querySelector(selector) : null
   if (!el && text) {
@@ -95,7 +186,12 @@ function pageType(arg) {
     el = all.find((e) => (e.getAttribute('aria-label') || e.placeholder || e.name || '').toLowerCase().includes(String(text).toLowerCase())) || null
   }
   if (!el) return { ok: false, error: 'field not found' }
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' })
   el.focus()
+  const prevOutline = el.style.outline
+  el.style.outline = '3px solid #c9a84c'
+  el.style.outlineOffset = '2px'
+  await new Promise((r) => setTimeout(r, 300))
   if (el.isContentEditable) {
     el.textContent = value
   } else {
@@ -103,6 +199,9 @@ function pageType(arg) {
   }
   el.dispatchEvent(new Event('input', { bubbles: true }))
   el.dispatchEvent(new Event('change', { bubbles: true }))
+  setTimeout(() => {
+    el.style.outline = prevOutline
+  }, 600)
   return { ok: true }
 }
 
@@ -119,6 +218,16 @@ async function runInPage(tabId, func, arg) {
   return res ? res.result : null
 }
 
+// Best-effort: paint the status banner in the ALMA tab. Never throws (about:blank
+// / chrome:// pages can't be scripted, and that's fine).
+async function showOverlay(tabId, label) {
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, func: pageOverlay, args: [{ label }] })
+  } catch {
+    /* page not scriptable yet — ignore */
+  }
+}
+
 async function executeCommand(cmd) {
   const action = String(cmd.action || '')
   if (!ALLOWED_ACTIONS.has(action)) return { ok: false, error: `unsupported action: ${action}` }
@@ -129,24 +238,40 @@ async function executeCommand(cmd) {
     return { ok: true }
   }
 
-  const tab = await activeTab()
-  if (!tab || !tab.id) return { ok: false, error: 'no active tab' }
+  const tab = await getAgentTab(true)
+  if (!tab || !tab.id) return { ok: false, error: 'could not open ALMA window' }
 
   if (action === 'navigate') {
     if (!/^https?:\/\//i.test(cmd.url || '')) return { ok: false, error: 'navigate needs http(s) url' }
     await chrome.tabs.update(tab.id, { url: cmd.url })
-    await new Promise((r) => setTimeout(r, 2500))
+    await new Promise((r) => setTimeout(r, 2600))
+    await showOverlay(tab.id, 'পেজ খুলছে: ' + cmd.url.replace(/^https?:\/\//, '').slice(0, 48))
     return { ok: true, data: { url: cmd.url } }
   }
   if (action === 'screenshot') {
     const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 55 })
     return { ok: true, screenshot: dataUrl }
   }
-  if (action === 'read_text') return { ok: true, data: await runInPage(tab.id, pageReadText) }
-  if (action === 'read_dom') return { ok: true, data: await runInPage(tab.id, pageReadDom) }
-  if (action === 'scroll') return await runInPage(tab.id, pageScroll, { by: cmd.by })
-  if (action === 'click') return await runInPage(tab.id, pageClick, { selector: cmd.selector, text: cmd.text })
-  if (action === 'type') return await runInPage(tab.id, pageType, { selector: cmd.selector, text: cmd.text, value: cmd.value })
+  if (action === 'read_text') {
+    await showOverlay(tab.id, 'পেজ পড়ছে…')
+    return { ok: true, data: await runInPage(tab.id, pageReadText) }
+  }
+  if (action === 'read_dom') {
+    await showOverlay(tab.id, 'পেজ দেখছে…')
+    return { ok: true, data: await runInPage(tab.id, pageReadDom) }
+  }
+  if (action === 'scroll') {
+    await showOverlay(tab.id, 'স্ক্রল করছে…')
+    return await runInPage(tab.id, pageScroll, { by: cmd.by })
+  }
+  if (action === 'click') {
+    await showOverlay(tab.id, 'ক্লিক করছে: ' + String(cmd.text || cmd.selector || '').slice(0, 40))
+    return await runInPage(tab.id, pageClick, { selector: cmd.selector, text: cmd.text })
+  }
+  if (action === 'type') {
+    await showOverlay(tab.id, 'লিখছে: ' + String(cmd.value || '').slice(0, 40))
+    return await runInPage(tab.id, pageType, { selector: cmd.selector, text: cmd.text, value: cmd.value })
+  }
   return { ok: false, error: 'unhandled action' }
 }
 
@@ -236,6 +361,12 @@ chrome.runtime.onStartup.addListener(() => loop())
 chrome.runtime.onInstalled.addListener(() => loop())
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.token || changes.paused) loop()
+})
+
+// If the owner closes the ALMA window, forget it so the next command opens a fresh one.
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  const { agentTabId } = await chrome.storage.local.get('agentTabId')
+  if (agentTabId === tabId) await chrome.storage.local.remove(['agentTabId', 'agentWindowId'])
 })
 
 // Popup ↔ background messaging (pairing / status / kill switch).
