@@ -9,6 +9,11 @@ import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
 export interface PendingFile {
   file: File
   previewUrl: string
+  /** Per-file upload lifecycle — Claude-app style: attach → pre-upload → ready. */
+  id?: string
+  status?: 'uploading' | 'ready' | 'error'
+  /** Set once the background pre-upload succeeds; send reuses it (no re-upload). */
+  remote?: { bucket: string; path: string; mediaType: string }
 }
 
 interface AgentComposerProps {
@@ -43,6 +48,7 @@ export default function AgentComposer({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const lastSeedRef = useRef<string | null>(null)
+  const fileIdRef = useRef(0)
 
   // A deep-link draft (staff quick-action) seeds the input once, focuses the
   // cursor at the end, and lets the owner review/edit before sending.
@@ -108,6 +114,7 @@ export default function AgentComposer({
 
   const send = useCallback(() => {
     if ((!text.trim() && files.length === 0) || disabled || streaming) return
+    if (files.some((f) => f.status === 'uploading')) { toast('ছবি আপলোড হচ্ছে — এক মুহূর্ত…'); return }
     onSend(text, files)
     setText('')
     setFiles([])
@@ -122,14 +129,45 @@ export default function AgentComposer({
     }
   }
 
+  // Claude-app anatomy: an attached file starts uploading IMMEDIATELY in the
+  // background (status:'uploading' → spinner on the thumbnail), so by the time the
+  // owner hits send the image is already on the server. Sending is then instant and
+  // reliable — no more "uploaded before it fully sat" errors on quick paste+send.
+  const uploadOne = useCallback(async (id: string, file: File) => {
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      if (conversationId) fd.append('conversationId', conversationId)
+      const res = await fetch('/api/assistant/upload', {
+        method: 'POST',
+        body: fd,
+        signal: AbortSignal.timeout(60_000),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const remote = (await res.json()) as { bucket: string; path: string; mediaType: string }
+      setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status: 'ready', remote } : f)))
+    } catch {
+      setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status: 'error' } : f)))
+    }
+  }, [conversationId])
+
   function addFiles(selected: File[]) {
     const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
     const MAX = 10 * 1024 * 1024
     for (const f of selected) {
-      if (!allowed.includes(f.type)) continue
-      if (f.size > MAX) continue
-      setFiles((prev) => [...prev, { file: f, previewUrl: URL.createObjectURL(f) }])
+      if (!allowed.includes(f.type)) { toast.error('শুধু ছবি বা PDF দেওয়া যাবে।'); continue }
+      if (f.size > MAX) { toast.error('ফাইলটি অনেক বড় (সর্বোচ্চ ১০MB)।'); continue }
+      const id = `f${fileIdRef.current++}`
+      setFiles((prev) => [...prev, { id, file: f, previewUrl: URL.createObjectURL(f), status: 'uploading' }])
+      void uploadOne(id, f)
     }
+  }
+
+  function retryUpload(id: string) {
+    const target = files.find((f) => f.id === id)
+    if (!target) return
+    setFiles((prev) => prev.map((f) => (f.id === id ? { ...f, status: 'uploading' } : f)))
+    void uploadOne(id, target.file)
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -164,7 +202,8 @@ export default function AgentComposer({
     })
   }
 
-  const canSend = (text.trim().length > 0 || files.length > 0) && !disabled && !streaming
+  const anyUploading = files.some((f) => f.status === 'uploading')
+  const canSend = (text.trim().length > 0 || files.length > 0) && !disabled && !streaming && !anyUploading
 
   return (
     <>
@@ -192,13 +231,33 @@ export default function AgentComposer({
         {files.length > 0 && (
           <div className="flex gap-2 overflow-x-auto px-1 pt-1 pb-0.5">
             {files.map((f, i) => (
-              <div key={i} className="group relative shrink-0">
+              <div key={f.id ?? i} className="group relative shrink-0">
                 {f.file.type.startsWith('image/') ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={f.previewUrl} alt="" className="h-16 w-16 rounded-xl border border-border-subtle object-cover" />
                 ) : (
                   <div className="flex h-16 w-16 items-center justify-center rounded-xl border border-border-subtle bg-white/[0.04] text-[10px] text-muted">PDF</div>
                 )}
+
+                {/* Upload status overlay — Claude-app feel: spinner while uploading,
+                    tap-to-retry on failure. Ready = clean (no overlay). */}
+                {f.status === 'uploading' && (
+                  <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/45 backdrop-blur-[1px]">
+                    <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                  </div>
+                )}
+                {f.status === 'error' && (
+                  <button
+                    type="button"
+                    onClick={() => f.id && retryUpload(f.id)}
+                    aria-label="আবার চেষ্টা করুন"
+                    className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 rounded-xl bg-red-950/55 text-[9px] font-semibold text-red-200 backdrop-blur-[1px]"
+                  >
+                    <span className="text-sm leading-none">↻</span>
+                    আবার
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => removeFile(i)}
