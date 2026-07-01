@@ -141,6 +141,131 @@ const schedule_content: AgentTool = {
   },
 }
 
+const schedule_content_batch: AgentTool = {
+  name: 'schedule_content_batch',
+  description:
+    'Schedule a WHOLE batch of posts (a campaign / weekly plan) in ONE step, creating a SINGLE approval card for all of them — ' +
+    'so the owner approves the entire plan at once instead of post-by-post. Use this for "next week er jonno 5 ta post banaw" style requests. ' +
+    'Each post: platform, caption, scheduledFor, optional imageRef (required for Instagram), optional pageRef. ' +
+    'On approval, every post becomes eligible and the growth-publish cron publishes each at its scheduled time. ' +
+    'Draft strong on-brand halal-compliant Bangla captions yourself (delegate heavy ideation to the content specialist if needed) before calling this.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      campaignName: { type: 'string', description: 'Short name for this campaign/plan (shown on the approval card).' },
+      posts: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 30,
+        description: 'The posts to schedule.',
+        items: {
+          type: 'object',
+          properties: {
+            platform: { type: 'string', enum: ['facebook', 'instagram'] },
+            caption: { type: 'string' },
+            scheduledFor: { type: 'string', description: 'ISO or Dhaka local "YYYY-MM-DD HH:mm".' },
+            imageRef: { type: 'string', description: 'Supabase image path; required for Instagram.' },
+            pageRef: { type: 'string', description: '"lifestyle" (default) or "trading".' },
+          },
+          required: ['platform', 'caption', 'scheduledFor'],
+        },
+      },
+      conversationId: { type: 'string' },
+    },
+    required: ['posts'],
+  },
+  handler: async (input) => {
+    try {
+      const rawPosts = Array.isArray(input.posts) ? input.posts : []
+      if (rawPosts.length === 0) return { success: false, error: 'অন্তত একটা পোস্ট দরকার।' }
+      const campaignName = input.campaignName ? String(input.campaignName).trim() : 'গ্রোথ ক্যাম্পেইন'
+      const conversationId = input.conversationId ? String(input.conversationId) : null
+
+      const prepared: Array<{
+        platform: string
+        caption: string
+        imageRef: string | null
+        pageRef: string
+        when: Date
+      }> = []
+
+      for (let i = 0; i < rawPosts.length; i++) {
+        const p = rawPosts[i] as Record<string, unknown>
+        const platform = String(p.platform) === 'instagram' ? 'instagram' : 'facebook'
+        const caption = String(p.caption ?? '').trim()
+        const imageRef = p.imageRef ? String(p.imageRef).trim() : null
+        const pageRef = p.pageRef ? String(p.pageRef).trim() : 'lifestyle'
+        if (!caption) return { success: false, error: `পোস্ট #${i + 1}: caption খালি।` }
+        if (platform === 'instagram' && !imageRef) {
+          return { success: false, error: `পোস্ট #${i + 1}: Instagram-এর জন্য ছবি (imageRef) লাগবে।` }
+        }
+        const when = parseScheduledFor(String(p.scheduledFor))
+        if (!when) return { success: false, error: `পোস্ট #${i + 1}: scheduledFor বুঝিনি।` }
+        if (when.getTime() < Date.now() - 60_000) {
+          return { success: false, error: `পোস্ট #${i + 1}: অতীতের সময় দেওয়া যাবে না।` }
+        }
+        try {
+          resolvePageId(pageRef)
+        } catch {
+          return { success: false, error: `পোস্ট #${i + 1}: "${pageRef}" পেজ চিনিনি।` }
+        }
+        prepared.push({ platform, caption, imageRef, pageRef, when })
+      }
+
+      const created = await db.$transaction(
+        prepared.map((p) =>
+          db.agentContentCalendar.create({
+            data: {
+              platform: p.platform,
+              pageRef: p.pageRef,
+              caption: p.caption,
+              imageRef: p.imageRef,
+              scheduledFor: p.when,
+              status: 'draft',
+              conversationId,
+            },
+          }),
+        ),
+      )
+      const calendarIds = created.map((c: { id: string }) => c.id)
+
+      const lines = prepared
+        .slice()
+        .sort((a, b) => a.when.getTime() - b.when.getTime())
+        .map(
+          (p) =>
+            `• ${p.platform === 'instagram' ? '📸' : '📘'} ${formatDateTimeDhaka(p.when)} — ${p.caption.slice(0, 60)}${p.caption.length > 60 ? '…' : ''}`,
+        )
+      const summary =
+        `📅 ক্যাম্পেইন: ${campaignName} — ${prepared.length}টি পোস্ট\n` +
+        `${lines.join('\n')}\n\nএকবার approve করলেই সবগুলো নির্ধারিত সময়ে নিজে নিজে পোস্ট হবে।`
+
+      const action = await db.agentPendingAction.create({
+        data: {
+          conversationId,
+          type: 'schedule_content_batch',
+          payload: { calendarIds, campaignName, count: prepared.length, conversationId },
+          summary,
+          status: 'pending',
+        },
+      })
+
+      return {
+        success: true,
+        data: {
+          pendingActionId: action.id,
+          campaignName,
+          count: prepared.length,
+          calendarIds,
+          message: `${prepared.length}টি পোস্টের একটাই approval card তৈরি — approve করলে পুরো প্ল্যান চালু।`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
 const list_content_calendar: AgentTool = {
   name: 'list_content_calendar',
   description:
@@ -239,4 +364,18 @@ const cancel_scheduled_content: AgentTool = {
   },
 }
 
-export const GROWTH_TOOLS: AgentTool[] = [schedule_content, list_content_calendar, cancel_scheduled_content]
+export const GROWTH_TOOLS: AgentTool[] = [
+  schedule_content,
+  schedule_content_batch,
+  list_content_calendar,
+  cancel_scheduled_content,
+]
+
+export const GROWTH_ROLE_PROMPT = `
+## গ্রোথ অটোপাইলট — কনটেন্ট ক্যালেন্ডার
+- মালিক যখন সময় ধরে একাধিক পোস্ট চান (যেমন "আগামী সপ্তাহের জন্য ৫টা FB পোস্ট বানাও"), তখন **schedule_content_batch** ব্যবহার করুন — সব ক্যাপশন নিজে লিখে (ভারী আইডিয়া দরকার হলে content specialist-কে delegate করে), সময় বেছে, একবারে সব শিডিউল করুন। এতে মালিক **একটাই approval card**-এ পুরো প্ল্যান অনুমোদন করেন।
+- একটা মাত্র পোস্ট শিডিউল করতে **schedule_content**; এখনই পোস্ট করতে পুরোনো fb_post/instagram_post।
+- ক্যাপশন সবসময় বাংলা, on-brand, হালাল-সম্মত। Instagram-এ ছবি বাধ্যতামূলক — ছবি লাগলে আগে generate_image (approval) করে তার path imageRef-এ দিন।
+- **কিছুই নিজে থেকে পাবলিশ হয় না** — approve করলে তবেই নির্ধারিত সময়ে cron পোস্ট করে। প্ল্যান দেখতে list_content_calendar, বাতিল করতে cancel_scheduled_content।
+- সময় দিন Dhaka লোকাল "YYYY-MM-DD HH:mm" বা ISO ফরম্যাটে; অতীতের সময় দেবেন না।
+`

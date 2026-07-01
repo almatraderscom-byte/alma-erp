@@ -381,6 +381,44 @@ async function runApprove(
     }
   }
 
+  // Growth Autopilot: approve a whole campaign batch — flip every calendar row
+  // in the batch to 'approved' so the cron publishes each at its scheduled time.
+  if (action.type === 'schedule_content_batch') {
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        const current = await db.agentPendingAction.findUnique({ where: { id: actionId } })
+        return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+      }
+      const calendarIds = Array.isArray(payload.calendarIds) ? (payload.calendarIds as string[]) : []
+      if (calendarIds.length === 0) throw new Error('calendarIds missing from schedule_content_batch payload')
+      const upd = await db.agentContentCalendar.updateMany({
+        where: { id: { in: calendarIds }, status: 'draft' },
+        data: { status: 'approved', approvedAt: new Date() },
+      })
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', result: { calendarIds, approved: upd.count } },
+      })
+      await appendConversationNote(
+        db,
+        action,
+        `✅ ক্যাম্পেইন অনুমোদিত — ${upd.count}টি পোস্ট নির্ধারিত সময়ে নিজে থেকে পাবলিশ হবে।`,
+      )
+      return Response.json({ success: true, approved: upd.count })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
   if (action.type === 'content_gate1') {
     try {
       const claimed = await db.agentPendingAction.updateMany({
