@@ -30,7 +30,8 @@ const delegate_to_specialist: AgentTool = {
     'Delegate ONE focused sub-task to a specialist sub-agent that runs with a narrowed, role-appropriate tool set. ' +
     'Use this to break a larger job into pieces — e.g. send data-pulling to "analyst", market/competitor research to "researcher", ' +
     'ALL marketing to "marketer" (it owns marketing end-to-end: Facebook posts, ad campaigns, AND preparing any office-staff ' +
-    'task a campaign needs), copy/creative drafting to "content", staff/operations checks to "ops". ' +
+    'task a campaign needs), copy/creative drafting to "content", staff/operations checks to "ops", ' +
+    'on-page SEO audits / fix drafts / keyword-rank tracking to "seo". ' +
     'NOTE: "marketer" and "content" run DIRECTLY with no "transfer to worker?" card — just delegate marketing and it happens; ' +
     'their money/posting/dispatch steps still surface their own approval cards. ' +
     'The sub-agent gathers real data with its tools and returns a concise Bangla summary you can build on. ' +
@@ -41,7 +42,7 @@ const delegate_to_specialist: AgentTool = {
       role: {
         type: 'string',
         enum: SPECIALIST_ROLE_KEYS,
-        description: 'Which specialist to delegate to: researcher | analyst | marketer | content | ops',
+        description: 'Which specialist to delegate to: researcher | analyst | marketer | content | ops | seo',
       },
       task: {
         type: 'string',
