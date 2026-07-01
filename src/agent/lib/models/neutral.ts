@@ -69,7 +69,7 @@ export function dbRowsToNeutral(
 
 export function appendToolExchange(
   messages: NeutralMsg[],
-  calls: Array<{ id: string; name: string; input: Record<string, unknown> }>,
+  calls: Array<{ id: string; name: string; input: Record<string, unknown>; thoughtSignature?: string }>,
   results: Array<{ id: string; name: string; result: unknown }>,
 ): NeutralMsg[] {
   if (calls.length === 0) return messages
