@@ -226,18 +226,18 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
     }
     return (
       <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
-        className="mt-3 w-full max-w-full overflow-hidden rounded-2xl border tone-amber px-3 py-2.5 text-xs shadow-float">
-        <div className="mb-1.5 flex items-center gap-1.5 font-semibold">
+        className="mt-3 w-full max-w-full overflow-hidden rounded-3xl border border-white/[0.08] bg-card/80 px-4 py-3.5 text-xs shadow-float">
+        <div className="mb-1.5 flex items-center gap-1.5 text-[13px] font-semibold text-cream">
           <span>🤝</span><span>কে করবে?</span>
         </div>
-        <p className="mb-2.5 break-words [overflow-wrap:anywhere] leading-relaxed text-cream">{summary}</p>
+        <p className="mb-3 break-words [overflow-wrap:anywhere] leading-relaxed text-cream">{summary}</p>
         <div className="flex gap-2">
           <button type="button" onClick={() => resolve('approve')}
-            className="min-w-0 flex-1 rounded-lg border tone-green px-2.5 py-1.5 text-[11px] font-medium transition-colors hover:bg-green-500/20">
+            className="min-w-0 flex-1 rounded-full bg-[#81B29A] px-3 py-2 text-[12px] font-semibold text-white transition-all hover:brightness-110 active:scale-[0.98]">
             Worker
           </button>
           <button type="button" onClick={() => resolve('reject')}
-            className="min-w-0 flex-1 rounded-lg border tone-purple px-2.5 py-1.5 text-[11px] font-medium transition-colors hover:bg-purple-500/20">
+            className="min-w-0 flex-1 rounded-full bg-white/[0.06] px-3 py-2 text-[12px] font-medium text-cream transition-all hover:bg-white/[0.10] active:scale-[0.98]">
             Sonnet
           </button>
         </div>
@@ -307,9 +307,9 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
   }
 
   return (
-    <motion.div className="mt-3 w-full max-w-full overflow-hidden rounded-[18px] border tone-amber p-4 text-sm shadow-float"
+    <motion.div className="mt-3 w-full max-w-full overflow-hidden rounded-3xl border border-white/[0.08] bg-card/80 p-5 text-sm shadow-float"
       initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}>
-      <div className="mb-1 flex items-center gap-2 font-semibold">
+      <div className="mb-2 flex items-center gap-2 text-[14px] font-semibold text-cream">
         <span>{isDelegation ? '🤝' : '⚠️'}</span>
         <span>{isDelegation ? 'কে কাজটি করবে?' : 'অনুমোদন প্রয়োজন'}</span>
       </div>
@@ -364,19 +364,19 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="mt-1 flex flex-wrap gap-2">
         <button type="button" onClick={() => resolve('approve')}
-          className="min-w-0 flex-1 rounded-lg border tone-green px-3 py-2.5 text-xs font-medium transition-all hover:bg-green-500/20 hover:shadow-sm">
+          className="min-w-0 flex-1 rounded-full bg-[#81B29A] px-4 py-2.5 text-[13px] font-semibold text-white transition-all hover:brightness-110 active:scale-[0.98]">
           {isDelegation ? '✅ Worker করুক' : meta.isBatch ? '✅ সব Approve' : '✓ Approve'}
         </button>
         {meta.isFinance && (
           <button type="button" onClick={() => setPhase('editing')}
-            className="min-w-0 flex-1 rounded-lg border tone-amber px-3 py-2.5 text-xs font-medium transition-all hover:bg-amber-500/20 hover:shadow-sm">
+            className="min-w-0 flex-1 rounded-full bg-white/[0.06] px-4 py-2.5 text-[13px] font-medium text-cream transition-all hover:bg-white/[0.10] active:scale-[0.98]">
             ✏️ সংশোধন
           </button>
         )}
         <button type="button" onClick={() => resolve('reject')}
-          className={`min-w-0 flex-1 rounded-lg border px-3 py-2.5 text-xs font-medium transition-all hover:shadow-sm ${isDelegation ? 'tone-purple hover:bg-purple-500/20' : 'tone-red hover:bg-red-500/20'}`}>
+          className="min-w-0 flex-1 rounded-full bg-white/[0.06] px-4 py-2.5 text-[13px] font-medium text-[#E07A5F] transition-all hover:bg-[#E07A5F]/10 active:scale-[0.98]">
           {isDelegation ? '🧠 Sonnet বলুক' : '✗ Reject'}
         </button>
       </div>
