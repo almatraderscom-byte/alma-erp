@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Voice Orb — Modular</title>
+<link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="app"></div>
+  <div id="vignette"></div>
+
+  <div id="status" class="hud">Tap the mic to <b>speak</b></div>
+  <div id="fps" class="hud"></div>
+  <div class="hint" id="hint">Drag to rotate · pinch / scroll to zoom</div>
+
+  <button id="panelToggle" class="btn hud" title="Settings" aria-label="Settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+      <line x1="4" y1="8" x2="20" y2="8"/><circle cx="9" cy="8" r="2.4" fill="#05070d"/>
+      <line x1="4" y1="16" x2="20" y2="16"/><circle cx="15" cy="16" r="2.4" fill="#05070d"/>
+    </svg>
+  </button>
+
+  <div id="panel">
+    <h3>Orb Settings</h3>
+    <div class="row"><label>Deform</label><input id="s_deform" type="range" min="0" max="1.5" step="0.01" value="0.55"><span class="val" id="v_deform"></span></div>
+    <div class="row"><label>Speed</label><input id="s_speed" type="range" min="0" max="2" step="0.01" value="0.7"><span class="val" id="v_speed"></span></div>
+    <div class="row"><label>Detail</label><input id="s_detail" type="range" min="0.5" max="4" step="0.05" value="1.8"><span class="val" id="v_detail"></span></div>
+    <div class="row"><label>Bloom</label><input id="s_bloom" type="range" min="0" max="2.5" step="0.01" value="1.05"><span class="val" id="v_bloom"></span></div>
+    <div class="row"><label>Aura</label><input id="s_aura" type="range" min="0" max="2" step="0.01" value="1"><span class="val" id="v_aura"></span></div>
+    <div class="row"><label>Mic gain</label><input id="s_mic" type="range" min="0" max="4" step="0.05" value="1.6"><span class="val" id="v_mic"></span></div>
+    <div class="row" style="align-items:flex-start;flex-direction:column;">
+      <label style="margin-bottom:6px;">Palette</label>
+      <div class="swatches" id="swatches"></div>
+    </div>
+  </div>
+
+  <div id="controls" class="hud">
+    <button id="mic" class="btn mic" title="Toggle microphone" aria-label="Microphone">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/>
+      </svg>
+    </button>
+    <button id="close" class="btn close" title="Stop" aria-label="Stop">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+    </button>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
