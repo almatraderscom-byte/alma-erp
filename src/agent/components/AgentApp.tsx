@@ -84,7 +84,10 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
   return rows.map((r) => {
     const textBlocks = r.content.filter((b) => b.type === 'text')
     const fileBlocks = r.content.filter((b) => b.type === 'file_ref')
-    const confirmBlock = r.content.find((b) => b.type === 'confirm_card' && b.pendingActionId)
+    // A single turn can create several pending actions (e.g. an expense AND a
+    // post) — collect ALL of them so the approval card matches the agent's text
+    // instead of only showing the last one.
+    const confirmBlocks = r.content.filter((b) => b.type === 'confirm_card' && b.pendingActionId)
     // Persisted extended-thinking trace (usage.reasoning) + tool cards, reconstructed
     // so they survive the message poll / reload instead of only living in the stream.
     const toolActivity = (r.toolCalls ?? []).map((t) => ({
@@ -115,16 +118,16 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
       cacheCreation: r.cacheCreation ?? undefined,
       cacheRead: r.cacheRead ?? undefined,
       costUsd: r.costUsd != null ? parseFloat(r.costUsd) : undefined,
-      pendingAction: confirmBlock?.pendingActionId
-        ? {
-            id: confirmBlock.pendingActionId,
-            summary: confirmBlock.summary ?? '',
-            costEstimate: confirmBlock.costEstimate,
-            actionType: confirmBlock.actionType,
+      pendingActions: confirmBlocks.length
+        ? confirmBlocks.map((cb) => ({
+            id: cb.pendingActionId as string,
+            summary: cb.summary ?? '',
+            costEstimate: cb.costEstimate,
+            actionType: cb.actionType,
             // Persisted/reloaded cards carry their resolved status so the card
             // renders as a settled breadcrumb (✅/❌) instead of a fresh prompt.
-            resolvedStatus: confirmBlock.status,
-          }
+            resolvedStatus: cb.status,
+          }))
         : undefined,
     }
   })
@@ -923,22 +926,24 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               : m
           ))
         } else if (evt.type === 'confirm_card') {
-          setMessages((prev) => prev.map((m) =>
-            m.id === assistantMsgId
-              ? {
-                  ...m,
-                  pendingAction: {
-                    id: evt.pendingActionId as string,
-                    summary: evt.summary as string,
-                    costEstimate: evt.costEstimate as number | undefined,
-                    actionType: evt.actionType as string | undefined,
-                    entryCount: evt.entryCount as number | undefined,
-                    isFinance: evt.isFinance as boolean | undefined,
-                    isBatch: evt.isBatch as boolean | undefined,
-                  },
-                }
-              : m
-          ))
+          const incoming = {
+            id: evt.pendingActionId as string,
+            summary: evt.summary as string,
+            costEstimate: evt.costEstimate as number | undefined,
+            actionType: evt.actionType as string | undefined,
+            entryCount: evt.entryCount as number | undefined,
+            isFinance: evt.isFinance as boolean | undefined,
+            isBatch: evt.isBatch as boolean | undefined,
+          }
+          setMessages((prev) => prev.map((m) => {
+            if (m.id !== assistantMsgId) return m
+            // Multiple actions in one turn each fire a confirm_card — APPEND them
+            // (dedupe by id) so all of them show together in one grouped card,
+            // instead of the last event overwriting the earlier ones.
+            const existing = m.pendingActions ?? []
+            if (existing.some((a) => a.id === incoming.id)) return m
+            return { ...m, pendingActions: [...existing, incoming] }
+          }))
         } else if (evt.type === 'ask_card') {
           setMessages((prev) => prev.map((m) =>
             m.id === assistantMsgId

@@ -24,6 +24,7 @@ import { CATALOG_TOOLS } from './catalog-tools'
 import { WEBSITE_TOOLS } from './website-tools'
 import { RESEARCH_TOOLS } from './research-tools'
 import { SEO_TOOLS } from './seo-tools'
+import { GROWTH_TOOLS } from './growth-tools'
 import { COMPETITOR_TOOLS } from './competitor-tools'
 import { ADVISOR_TOOLS } from './advisor-tools'
 import { FAMILY_TOOLS, place_agent_call } from './personal-tools'
@@ -480,6 +481,11 @@ export const TOOLS: AgentTool[] = [
   ...WEBSITE_TOOLS,
   ...RESEARCH_TOOLS,
   ...SEO_TOOLS,
+  // Growth Autopilot calendar tools (schedule_content_batch, configure_growth_autopilot,
+  // etc.). Advertised to the head via the `growth` tool-group (tool-groups.ts) — so they
+  // MUST also live in this execution pool, otherwise the head sees them but a call returns
+  // "Unknown tool" (same footgun the place_agent_call comment above warns about).
+  ...GROWTH_TOOLS,
   ...COMPETITOR_TOOLS,
   ...ADVISOR_TOOLS,
   ...OWNER_TODO_TOOLS,

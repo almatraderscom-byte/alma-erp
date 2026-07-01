@@ -3812,3 +3812,90 @@ model AgentVoiceCall {
   @@index([conversationId])
   @@map("agent_voice_calls")
 }
+
+/// ─── GROWTH AUTOPILOT: scheduled content calendar ────────────────────────────
+/// One row per planned social post. The agent drafts entries (status 'draft');
+/// the owner approves them into 'approved'; the growth-publish cron picks up
+/// 'approved' entries whose scheduledFor is due, publishes to FB/IG, verifies,
+/// then marks 'published' (or 'failed'). Nothing publishes without owner approval.
+model AgentContentCalendar {
+  id             String    @id @default(uuid())
+  businessId     String    @default("ALMA_LIFESTYLE") @map("business_id")
+  /// 'facebook' | 'instagram'
+  platform       String
+  /// Page selector understood by resolvePageId ('lifestyle' | 'trading' | a page id).
+  pageRef        String    @default("lifestyle") @map("page_ref")
+  caption        String    @db.Text
+  /// Supabase storage path for the image (e.g. 'generated/...'). Null = text-only (FB).
+  imageRef       String?   @map("image_ref")
+  scheduledFor   DateTime  @map("scheduled_for")
+  /// 'draft' | 'approved' | 'published' | 'failed' | 'canceled'
+  status         String    @default("draft")
+  postId         String?   @map("post_id")
+  permalinkUrl   String?   @map("permalink_url")
+  error          String?   @db.Text
+  conversationId String?   @map("conversation_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  approvedAt     DateTime? @map("approved_at")
+  publishedAt    DateTime? @map("published_at")
+
+  @@index([status, scheduledFor])
+  @@index([businessId, status])
+  @@index([conversationId])
+  @@map("agent_content_calendar")
+}
+
+/// Growth Autopilot — weekly analytics snapshot. One row per digest run so
+/// week-over-week history builds up over time (ads spend/ROAS, content
+/// cadence, catalog health). Written by the growth-digest cron.
+model AgentGrowthMetric {
+  id          String   @id @default(uuid())
+  businessId  String   @default("ALMA_LIFESTYLE") @map("business_id")
+  /// 'weekly_digest' — snapshot source/kind.
+  source      String   @default("weekly_digest")
+  periodStart DateTime @map("period_start")
+  periodEnd   DateTime @map("period_end")
+  /// Aggregated metrics blob (ads totals, content counts, catalog stats).
+  metrics     Json
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([businessId, periodStart])
+  @@index([source, periodStart])
+  @@map("agent_growth_metric")
+}
+
+/// Growth Autopilot — a keyword the owner wants tracked in Google (Bangladesh).
+/// The weekly rank-tracker cron pulls SERP for every active row (cost-capped).
+model AgentTrackedKeyword {
+  id          String   @id @default(uuid())
+  businessId  String   @default("ALMA_LIFESTYLE") @map("business_id")
+  keyword     String
+  /// Optional product this keyword should ideally rank for (almatraders.com/products/{slug}).
+  productSlug String?  @map("product_slug")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([businessId, keyword])
+  @@index([active])
+  @@map("agent_tracked_keyword")
+}
+
+/// Growth Autopilot — one SERP observation for a tracked keyword. History of
+/// where almatraders.com ranked over time, written by the rank-tracker cron.
+model AgentKeywordRank {
+  id           String   @id @default(uuid())
+  businessId   String   @default("ALMA_LIFESTYLE") @map("business_id")
+  keyword      String
+  productSlug  String?  @map("product_slug")
+  /// Best position of an almatraders.com URL in the top results, null = not in top N.
+  rank         Int?
+  url          String?
+  foundInTop10 Boolean  @default(false) @map("found_in_top10")
+  /// Snapshot of the top results for context (rank/url/title).
+  top10        Json?
+  checkedAt    DateTime @default(now()) @map("checked_at")
+
+  @@index([keyword, checkedAt])
+  @@index([businessId, checkedAt])
+  @@map("agent_keyword_rank")
+}

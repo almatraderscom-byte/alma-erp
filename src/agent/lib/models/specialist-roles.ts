@@ -13,7 +13,7 @@
 import type { ToolGroupName } from '@/agent/tools/tool-groups'
 import { MARKETER_KNOWLEDGE_BRIEF, CONTENT_KNOWLEDGE_BRIEF } from '@/agent/lib/marketing/playbook-knowledge'
 
-export type SpecialistRole = 'researcher' | 'analyst' | 'marketer' | 'content' | 'ops' | 'cs'
+export type SpecialistRole = 'researcher' | 'analyst' | 'marketer' | 'content' | 'ops' | 'cs' | 'seo'
 
 export interface SpecialistRoleDef {
   /** Bangla label shown to the owner on the delegation card + CCTV view. */
@@ -114,6 +114,25 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
     // stays on Claude. NOTE: not yet delegatable — the head can't route to `cs` until
     // the orchestrator + tier-router are wired in the later routing step.
     preferredModelId: 'or-qwen3-max',
+  },
+  seo: {
+    label: 'এসইও',
+    labelEn: 'SEO',
+    icon: '🔍',
+    // growth → SEO audit / rank-tracking / keyword tools; website → single-product
+    // fix proposals (update_product_web) + catalog reads. Every write (draft_seo_fixes,
+    // update_product_web, paid keyword research) surfaces its own owner-approval card.
+    toolGroups: ['base', 'growth', 'website'],
+    instruction:
+      'You are ALMA Lifestyle\'s SEO specialist for almatraders.com. Run cost-free on-page audits with audit_product_seo ' +
+      '(use scope="all_published" for a full-site scan), find the products with the weakest meta/description, then DRAFT ' +
+      'improved keyword-rich, on-brand, halal-compliant Bangla copy and package it with draft_seo_fixes (one approval card ' +
+      'for the whole batch) — never rewrite live content yourself. Manage weekly Google-rank tracking with ' +
+      'track_keyword / list_tracked_keywords. Only use paid research_seo_keywords when the owner has approved the spend. ' +
+      'Return a concise Bangla summary of what you audited, what you drafted, and what is awaiting the owner\'s approval.',
+    // Non-critical → cheap DeepSeek worker (owner cost rule). SEO involves no money
+    // decisions; every live change stays behind an owner-approval card regardless.
+    preferredModelId: 'or-deepseek-v4-flash',
   },
 }
 

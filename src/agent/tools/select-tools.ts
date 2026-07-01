@@ -186,14 +186,23 @@ const ROUTER_HEAD_GROUPS: ToolGroupName[] = [
 ]
 
 // growth-group tools the slim head keeps despite delegating the rest of growth.
-// All but list_audiences stage an owner-facing approval card (only the stateful
-// head can); list_audiences is the cheap read that feeds the create flow. Fixed
-// order = byte-stable cached prefix.
+// Most stage an owner-facing approval card (only the stateful head, on the owner
+// channel, can surface one — a stateless worker cannot); list_audiences is the
+// cheap read that feeds the create flow, and configure_growth_autopilot is the
+// owner's master on/off switch (an owner-intent control, not worker work). Fixed
+// order = byte-stable cached prefix — APPEND new entries at the end so the
+// existing cached prefix bytes never shift.
 const HEAD_KEPT_GROWTH_TOOLS = [
   'launch_campaign',
   'list_audiences',
   'create_retargeting_audience',
   'create_lookalike_audience',
+  // Growth Autopilot (G2/G3/G7): each is owner-facing and unreachable via a
+  // stateless worker — schedule_content_batch + draft_seo_fixes stage a single
+  // batch approval card; configure_growth_autopilot is the owner master switch.
+  'schedule_content_batch',
+  'draft_seo_fixes',
+  'configure_growth_autopilot',
 ] as const
 
 // Delegation approval test mode (DELEGATION_APPROVAL=true): force marketing work

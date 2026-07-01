@@ -21,7 +21,7 @@ export const CRITICAL_SPECIALIST_ROLES = new Set<SpecialistRole>(['analyst'])
 
 export function roleToTaskTier(role: SpecialistRole): TaskTier {
   if (CRITICAL_SPECIALIST_ROLES.has(role)) return 'critical'
-  if (role === 'researcher' || role === 'marketer' || role === 'content') return 'heavy'
+  if (role === 'researcher' || role === 'marketer' || role === 'content' || role === 'seo') return 'heavy'
   return 'light'
 }
 

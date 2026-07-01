@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState, useCallback, useMemo, type ReactNode } from 'react'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import AgentMarkdown from './AgentMarkdown'
-import AgentConfirmCard, { type PendingAction } from './AgentConfirmCard'
+import { type PendingAction } from './AgentConfirmCard'
+import AgentConfirmCardGroup from './AgentConfirmCardGroup'
 import AgentAskCard, { type AskCard } from './AgentAskCard'
 import { JamaatQuickReply } from './JamaatQuickReply'
 import AgentOpenTasksChip from './AgentOpenTasksChip'
@@ -18,6 +19,7 @@ import { PlanDriveInlineTurn } from './monitor/PlanDriveInlineTurn'
 import type { PlanDrivePanelData, PlanDriveAction } from './monitor/PlanDriveTimeline'
 import { AgentThinkingIndicator, ModelSpinner, type ModelVariant, type ThinkingMode } from './AgentThinkingIndicator'
 import { toolDisplay, toolDetail } from '@/agent/lib/tool-labels'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { agentReplyHaptic } from '@/agent/lib/haptics'
 import { isHeartbeatWakeText } from '@/agent/lib/heartbeat/wake-marker'
 
@@ -82,7 +84,7 @@ export interface ChatMessage {
    * Built live from SSE events and persisted (usage.timeline) so it survives reload.
    */
   timeline?: TimelineEntry[]
-  pendingAction?: PendingAction
+  pendingActions?: PendingAction[]
   askCard?: AskCard
   /**
    * Set when the head router wants to upgrade this thread to a premium model
@@ -592,47 +594,88 @@ function formatToolInput(input: unknown): string | null {
 }
 
 
-/**
- * Premium expandable input/result panel — shared by the unified timeline's tool
- * rows. Renders the tool's input and result in tidy, capped mono blocks (labelled
- * "ইনপুট" / "ফলাফল"), not a raw JSON dump.
- */
-function ToolIODetail({ input, result, failed }: { input?: unknown; result?: string; failed: boolean }) {
-  const inputStr = formatToolInput(input)
-  const resultStr = result && result.trim() ? result : null
-  if (!inputStr && !resultStr) return null
+/** Multi-pointed sparkle (4-point star) — the icon that shimmers/pulses on the
+ *  live "Running" tool row and grows on the completed "Ran …" status line. */
+function SparkleGlyph({ className, size = 14 }: { className?: string; size?: number }) {
   return (
-    <div className="alma-glass mt-1.5 space-y-2 rounded-2xl p-2.5">
-      {inputStr && (
-        <div>
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">ইনপুট</div>
-          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[11px] leading-relaxed text-cream/80 [overflow-wrap:anywhere]">{inputStr}</pre>
-        </div>
-      )}
-      {resultStr && (
-        <div>
-          <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">
-            <span>ফলাফল</span>
-            <span className="font-normal lowercase opacity-50">· result</span>
-          </div>
-          <pre className={`max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[11px] leading-relaxed [overflow-wrap:anywhere] ${failed ? 'text-red-300/90' : 'text-cream/80'}`}>{resultStr}</pre>
-        </div>
-      )}
-    </div>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
+      <path d="M12 0c.4 5.7 2.3 9.6 12 12-9.7 2.4-11.6 6.3-12 12-.4-5.7-2.3-9.6-12-12C9.7 9.6 11.6 5.7 12 0z" />
+    </svg>
   )
 }
 
-type TimelineRow =
-  | { kind: 'think'; headline: string; detail: string; live: boolean }
-  | { kind: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; live: boolean }
+/**
+ * Claude-Code "Bash"-style floating I/O sheet. Tapping a tool row lifts a
+ * liquid-glass bottom-sheet with the tool's Input (Command) and Output — the
+ * same premium, iPhone-first surface the owner asked for, instead of an inline
+ * accordion. Reuses the shared MobileModalPortal (portal + iOS viewport sizing).
+ */
+function ToolIOSheet({ tool, onClose }: { tool: ToolRow | null; onClose: () => void }) {
+  const d = tool ? toolDisplay(tool.name) : null
+  const inputStr = tool ? formatToolInput(tool.input) : null
+  const resultStr = tool && tool.result && tool.result.trim() ? tool.result : null
+  const failed = tool ? tool.ok === false : false
+  return (
+    <MobileModalPortal open={!!tool} aria-label="টুল বিস্তারিত" onBackdropClick={onClose} className="agent-tool-io-sheet">
+      <div className="mobile-modal-shell alma-glass-sheet w-full max-w-lg rounded-t-[26px] sm:rounded-[24px]">
+        <div className="flex shrink-0 justify-center pb-1 pt-2.5">
+          <span className="alma-sheet-grip" aria-hidden />
+        </div>
+        <div className="mobile-modal-header flex items-center gap-2 px-5 pb-2.5 pt-1">
+          <span className="text-base" aria-hidden>{d?.icon ?? '🔧'}</span>
+          <span className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.01em] text-cream">{d?.label ?? tool?.name}</span>
+          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${failed ? 'tone-red' : 'tone-green'}`}>
+            {failed ? 'ব্যর্থ' : 'সম্পন্ন'}
+          </span>
+          <button type="button" onClick={onClose} aria-label="বন্ধ করুন"
+            className="rounded-full p-1.5 text-muted transition-colors hover:bg-white/[0.06] hover:text-cream">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="M18 6L6 18M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div className="mobile-modal-body space-y-3 px-5 pb-5 pt-1">
+          {inputStr && (
+            <div>
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">ইনপুট · input</div>
+              <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-white/[0.06] bg-black/25 p-3 text-[12px] leading-relaxed text-cream/85 [overflow-wrap:anywhere]">{inputStr}</pre>
+            </div>
+          )}
+          {resultStr && (
+            <div>
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">ফলাফল · output</div>
+              <pre className={`max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-white/[0.06] bg-black/25 p-3 text-[12px] leading-relaxed [overflow-wrap:anywhere] ${failed ? 'text-red-300/90' : 'text-cream/85'}`}>{resultStr}</pre>
+            </div>
+          )}
+          {!inputStr && !resultStr && (
+            <p className="py-6 text-center text-[12px] text-muted">এই টুলের কোনো ইনপুট/ফলাফল নেই।</p>
+          )}
+        </div>
+      </div>
+    </MobileModalPortal>
+  )
+}
+
+type ToolRow = { name: string; ok: boolean; input?: unknown; result?: string; live: boolean }
 
 /**
- * Unified, premium Claude.ai-style activity stream. Replaces the old scattered
- * "Thought" block + separate tool chips with ONE connected card: reasoning steps
- * interleaved with tool calls in true order, each a tappable headline that expands
- * to its detail (reasoning prose, or tool input+result). Header keeps the
- * "X সেকেন্ড ধরে ভেবেছে · ~N টোকেন · M ধাপ" summary; collapses after the reply
- * begins (re-expandable), exactly like Claude's thinking panel.
+ * A work "phase": a clear headline (what the agent is doing, in its own words —
+ * drawn from the reasoning that leads into the step) plus the batch of tool calls
+ * that carried it out. Reasoning prose sits behind the headline; the tools fold
+ * into one collapsed pill. This is the Claude-Code shape the owner asked for.
+ */
+type Phase = { headline: string; detail: string; tools: ToolRow[]; live: boolean }
+
+/**
+ * Claude-Code-style activity stream (3-level, theme-aware).
+ *
+ * Top: a slim pinned summary (thinking time + ~token estimate + phase count).
+ * Body: a vertical list of PHASES. Each phase shows —
+ *   1. a bold, high-contrast HEADLINE (text-cream = dark ink in light mode,
+ *      near-white in dark mode) — the actual work being done; tap to reveal the
+ *      full reasoning prose (muted, secondary);
+ *   2. beneath it, one collapsed "Nটি টুল ব্যবহার হয়েছে ›" pill — even 5–10 tools
+ *      stay folded behind this single pill;
+ *   3. expand the pill → each tool as its own row → expand a row → its input/output.
+ * The headline reads loud and clear; everything below it is deliberately quieter.
  */
 function ActivityTimeline({
   timeline,
@@ -647,11 +690,12 @@ function ActivityTimeline({
   toolActivity?: ChatMessage['toolActivity']
   live: boolean
 }) {
-  const [open, setOpen] = useState(live)
-  const [openRows, setOpenRows] = useState<Record<number, boolean>>({})
-  const bodyRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => { setOpen(live) }, [live])
+  // Independent collapse state, keyed by role+index (h=headline detail,
+  // g=tools pill, t=individual tool). Everything starts collapsed.
+  const [open, setOpen] = useState<Record<string, boolean>>({})
+  const toggle = (k: string) => setOpen((s) => ({ ...s, [k]: !s[k] }))
+  // Tapped tool → its I/O opens in the floating liquid-glass sheet (not inline).
+  const [ioSheet, setIoSheet] = useState<ToolRow | null>(null)
 
   // Effective timeline: the persisted/live ordered stream, or — for older messages
   // that predate the timeline — a fallback assembled from thinking + tool activity.
@@ -665,166 +709,226 @@ function ActivityTimeline({
     return fb
   }, [timeline, thinking, toolActivity])
 
-  // Flatten into display rows: each reasoning segment expands into its own headline
-  // sub-steps (Claude's multi-headline feel); each tool call is one row.
-  const rows: TimelineRow[] = useMemo(() => {
-    const out: TimelineRow[] = []
+  // Fold the ordered stream into phases: the reasoning that precedes a tool batch
+  // becomes that batch's headline; a fresh reasoning block after tools opens a new
+  // phase. Consecutive reasoning blocks (before any tool) merge, keeping the latest
+  // intent line as the headline.
+  const phases: Phase[] = useMemo(() => {
+    const out: Phase[] = []
+    let cur: Phase | null = null
     entries.forEach((e, i) => {
       const lastEntry = i === entries.length - 1
       if (e.t === 'think') {
         const steps = parseThoughtSteps(e.text)
-        steps.forEach((s, j) =>
-          out.push({ kind: 'think', headline: s.headline, detail: s.detail, live: live && lastEntry && j === steps.length - 1 }),
-        )
+        const headline = steps.length ? steps[steps.length - 1].headline : e.text.trim().slice(0, 140)
+        const detail = e.text.trim()
+        if (cur && cur.tools.length > 0) { out.push(cur); cur = null }
+        if (!cur) cur = { headline, detail, tools: [], live: live && lastEntry }
+        else {
+          cur.detail = cur.detail ? `${cur.detail}\n\n${detail}` : detail
+          cur.headline = headline
+          if (live && lastEntry) cur.live = true
+        }
       } else {
-        out.push({ kind: 'tool', name: e.name, ok: e.ok, input: e.input, result: e.result, live: Boolean(e.live) })
+        if (!cur) cur = { headline: '', detail: '', tools: [], live: false }
+        const tool: ToolRow = { name: e.name, ok: e.ok, input: e.input, result: e.result, live: Boolean(e.live) }
+        cur.tools.push(tool)
+        if (tool.live) cur.live = true
       }
     })
+    if (cur) out.push(cur)
     return out
   }, [entries, live])
 
-  useEffect(() => {
-    if (live && open && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
-  }, [rows.length, thinking, live, open])
-
-  if (rows.length === 0) return null
+  if (phases.length === 0) return null
 
   const seconds = thinkingMs != null ? Math.max(1, Math.round(thinkingMs / 1000)) : null
   const baseSrc = (thinking ?? entries.filter((e) => e.t === 'think').map((e) => (e as { text: string }).text).join('\n')).trim()
   const tokenEst = baseSrc ? Math.max(1, Math.round(baseSrc.length / 4)) : 0
   const timeLabel = live ? 'কাজ করছি…' : seconds != null ? `${seconds} সেকেন্ড ধরে ভেবেছে` : 'কাজের ধাপ'
-  const header = tokenEst > 0 ? `${timeLabel} · ~${fmtTok(tokenEst)} টোকেন` : timeLabel
+  const summary = tokenEst > 0 ? `${timeLabel} · ~${fmtTok(tokenEst)} টোকেন` : timeLabel
 
   return (
-    <div className="alma-glass mb-3 overflow-hidden rounded-2xl">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-1.5 px-3 py-2.5 text-[12px] font-medium text-muted transition-colors hover:text-muted-hi"
-      >
+    <div className="mb-3">
+      {/* Pinned summary line — stays on top (owner keeps this). */}
+      <div className="mb-2 flex items-center gap-1.5 px-0.5 text-[11.5px] font-medium text-muted">
         {live ? (
           <motion.span
-            className="inline-block h-3 w-3 rounded-full border-[1.5px] border-[#E07A5F]/40 border-t-[#E07A5F]"
+            className="inline-block h-3 w-3 rounded-full border-[1.5px] border-gold/40 border-t-gold"
             animate={{ rotate: 360 }}
             transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
             aria-hidden
           />
         ) : (
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M12 2a7 7 0 00-4 12.74V17a2 2 0 002 2h4a2 2 0 002-2v-2.26A7 7 0 0012 2z" />
             <path d="M9 21h6" />
           </svg>
         )}
-        <span>{header}</span>
-        <span className="rounded-full bg-white/[0.06] px-1.5 py-px text-[10px] tabular-nums text-muted">{rows.length} ধাপ</span>
-        <svg
-          width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-          strokeLinecap="round" strokeLinejoin="round"
-          className={`ml-auto transition-transform ${open ? 'rotate-180' : ''}`}
-          aria-hidden
-        >
-          <path d="M6 9l6 6 6-6" />
-        </svg>
-      </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div ref={bodyRef} className="max-h-[420px] overflow-y-auto px-3 pb-3 pt-0.5">
-              <div className="flex flex-col">
-                {rows.map((row, i) => {
-                  const isOpen = openRows[i] ?? false
-                  const isLast = i === rows.length - 1
-                  const d = row.kind === 'tool' ? toolDisplay(row.name) : null
-                  const target = row.kind === 'tool' ? toolDetail(row.name, row.input) : null
-                  const hasDetail =
-                    row.kind === 'think'
-                      ? row.detail.trim().length > 0
-                      : Boolean(formatToolInput(row.input) || (row.result && row.result.trim()))
-                  const failed = row.kind === 'tool' && row.ok === false
-                  return (
-                    <div key={i} className="relative pl-6">
-                      {/* connector down to next node */}
-                      {!isLast && <span className="absolute left-[7px] top-[20px] bottom-0 w-px bg-white/[0.08]" aria-hidden />}
-                      {/* node */}
-                      <span className="absolute left-0 top-[7px] flex h-[15px] w-[15px] items-center justify-center" aria-hidden>
-                        {row.live ? (
-                          <motion.span
-                            className="h-[10px] w-[10px] rounded-full border-[1.5px] border-[#E07A5F]/40 border-t-[#E07A5F]"
-                            animate={{ rotate: 360 }}
-                            transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
-                          />
-                        ) : row.kind === 'tool' ? (
-                          failed ? (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="3" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                          ) : (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
-                          )
-                        ) : (
-                          <span className="h-[7px] w-[7px] rounded-full bg-[#E07A5F]/60" />
-                        )}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => hasDetail && setOpenRows((s) => ({ ...s, [i]: !s[i] }))}
-                        className={`group flex w-full items-start gap-1.5 py-1.5 text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
-                      >
-                        <span className="min-w-0 flex-1 text-[12.5px] leading-snug break-words [overflow-wrap:anywhere]">
-                          {row.kind === 'tool' ? (
-                            <span className="text-muted-hi group-hover:text-cream">
-                              <span className="mr-1">{d?.icon}</span>
-                              {d?.label}
-                              {target && <span className="text-muted"> · {target}</span>}
-                            </span>
-                          ) : (
-                            <span className="text-muted-hi group-hover:text-cream">{row.headline}</span>
-                          )}
-                        </span>
-                        {hasDetail && (
-                          <svg
-                            width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
-                            strokeLinecap="round" strokeLinejoin="round"
-                            className={`mt-[4px] shrink-0 text-muted transition-transform ${isOpen ? 'rotate-90' : ''}`}
-                            aria-hidden
-                          >
-                            <path d="M9 6l6 6-6 6" />
-                          </svg>
-                        )}
-                      </button>
-                      <AnimatePresence initial={false}>
-                        {isOpen && hasDetail && (
-                          <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            transition={{ duration: 0.18 }}
-                            className="overflow-hidden"
-                          >
-                            {row.kind === 'think' ? (
-                              <div className="pb-2 pr-1 text-[12.5px] leading-relaxed text-muted whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                                {row.detail}
-                              </div>
-                            ) : (
-                              <div className="pb-2">
-                                <ToolIODetail input={row.input} result={row.result} failed={failed} />
-                              </div>
-                            )}
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
+        <span>{summary}</span>
+        <span className="rounded-full bg-muted/10 px-1.5 py-px text-[10px] tabular-nums text-muted/80">{phases.length} ধাপ</span>
+      </div>
+
+      {/* Phases: bold headline → collapsed tool pill → tool → input/output. */}
+      <div className="flex flex-col">
+        {phases.map((p, i) => {
+          const isLast = i === phases.length - 1
+          const headline = p.headline || (p.tools[0] ? toolDisplay(p.tools[0].name).label : 'কাজ করছি')
+          const hasDetail = p.detail.trim().length > 0 && p.detail.trim() !== p.headline.trim()
+          const headOpen = open[`h${i}`] ?? false
+          const toolsOpen = open[`g${i}`] ?? (p.live && isLast) // show live activity; collapse when done
+          const anyFailed = p.tools.some((t) => t.ok === false)
+          return (
+            <div key={i} className="relative pl-6">
+              {/* left rail connecting phases */}
+              {!isLast && <span className="absolute left-[8px] top-6 bottom-0 w-px bg-muted/15" aria-hidden />}
+              {/* phase node */}
+              <span className="absolute left-[3px] top-[6px] flex h-3.5 w-3.5 items-center justify-center" aria-hidden>
+                {p.live ? (
+                  <motion.span
+                    className="h-[9px] w-[9px] rounded-full border-[1.5px] border-gold/40 border-t-gold"
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
+                  />
+                ) : anyFailed ? (
+                  <span className="h-[8px] w-[8px] rounded-full bg-danger" />
+                ) : (
+                  <span className="h-[8px] w-[8px] rounded-full bg-gold shadow-[0_0_0_3px_rgb(var(--c-accent)/0.12)]" />
+                )}
+              </span>
+
+              {/* 1 — HEADLINE (loud, theme-aware). Tap to reveal reasoning. */}
+              <button
+                type="button"
+                onClick={() => hasDetail && toggle(`h${i}`)}
+                className={`group flex w-full items-start gap-1.5 py-1 text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
+              >
+                <span className="min-w-0 flex-1 text-[13.5px] font-semibold leading-snug tracking-[-0.01em] text-cream break-words [overflow-wrap:anywhere]">
+                  {headline}
+                </span>
+                {hasDetail && (
+                  <svg
+                    width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+                    strokeLinecap="round" strokeLinejoin="round"
+                    className={`mt-[5px] shrink-0 text-muted/60 transition-transform ${headOpen ? 'rotate-90' : ''}`}
+                    aria-hidden
+                  >
+                    <path d="M9 6l6 6-6 6" />
+                  </svg>
+                )}
+              </button>
+              <AnimatePresence initial={false}>
+                {headOpen && hasDetail && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.18 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="mb-1 mt-0.5 border-l-2 border-muted/15 pb-1 pl-2.5 pr-1 text-[12px] leading-relaxed text-muted whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                      {p.detail}
                     </div>
-                  )
-                })}
-              </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Part-3 "Ran …" beat: while this phase is still live but its last
+                  tool just finished, show a bright sweeping "সম্পন্ন · <tool>" line
+                  with a BIGGER pulsing sparkle — the owner's completed-state accent. */}
+              {p.live && isLast && !p.tools.some((t) => t.live) && p.tools.length > 0 && (
+                <div className="mb-1.5 mt-0.5 flex items-center gap-1.5">
+                  <SparkleGlyph className="alma-sparkle-pulse text-gold" size={17} />
+                  <span className="alma-run-shimmer text-[12.5px] font-semibold tracking-[-0.01em]">
+                    সম্পন্ন · {toolDisplay(p.tools[p.tools.length - 1].name).label}
+                  </span>
+                </div>
+              )}
+
+              {/* 2 — TOOL PILL (quiet, secondary). One pill for the whole batch. */}
+              {p.tools.length > 0 && (
+                <div className="mb-1.5 mt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => toggle(`g${i}`)}
+                    className="group inline-flex max-w-full items-center gap-1.5 rounded-full border border-border-subtle bg-card/60 px-2.5 py-1 text-[11.5px] text-muted transition-colors hover:text-muted-hi"
+                  >
+                    <span aria-hidden className="text-[11px]">🔧</span>
+                    <span className="truncate tabular-nums">
+                      {p.tools.length}টি টুল ব্যবহার হয়েছে
+                    </span>
+                    {anyFailed && !p.live && <span className="text-danger" aria-hidden>· ব্যর্থ</span>}
+                    <svg
+                      width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+                      strokeLinecap="round" strokeLinejoin="round"
+                      className={`shrink-0 text-muted/60 transition-transform ${toolsOpen ? 'rotate-90' : ''}`}
+                      aria-hidden
+                    >
+                      <path d="M9 6l6 6-6 6" />
+                    </svg>
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {toolsOpen && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.18 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="mt-1.5 flex flex-col gap-1">
+                          {p.tools.map((t, j) => {
+                            const d = toolDisplay(t.name)
+                            const target = toolDetail(t.name, t.input)
+                            const failed = t.ok === false
+                            const hasIO = Boolean(formatToolInput(t.input) || (t.result && t.result.trim()))
+                            return (
+                              <div key={j} className="rounded-lg border border-border-subtle bg-card/40">
+                                {/* 3 — tool row; tap opens the floating I/O sheet */}
+                                <button
+                                  type="button"
+                                  onClick={() => hasIO && setIoSheet(t)}
+                                  className={`flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[12px] leading-snug ${hasIO ? 'cursor-pointer' : 'cursor-default'}`}
+                                >
+                                  {t.live ? (
+                                    <SparkleGlyph className="alma-sparkle-pulse shrink-0 text-gold" size={13} />
+                                  ) : failed ? (
+                                    <svg className="shrink-0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" strokeWidth="3" strokeLinecap="round" aria-hidden><path d="M18 6L6 18M6 6l12 12"/></svg>
+                                  ) : (
+                                    <svg className="shrink-0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6L9 17l-5-5"/></svg>
+                                  )}
+                                  <span className={`min-w-0 flex-1 break-words [overflow-wrap:anywhere] ${t.live ? 'alma-run-shimmer font-medium' : 'text-muted-hi'}`}>
+                                    <span className="mr-1" aria-hidden>{d.icon}</span>
+                                    {t.live ? 'চলছে · ' : ''}{d.label}
+                                    {target && !t.live && <span className="text-muted"> · {target}</span>}
+                                  </span>
+                                  {hasIO && (
+                                    <svg
+                                      width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+                                      strokeLinecap="round" strokeLinejoin="round"
+                                      className="shrink-0 text-muted/50"
+                                      aria-hidden
+                                    >
+                                      <path d="M9 6l6 6-6 6" />
+                                    </svg>
+                                  )}
+                                </button>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              )}
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          )
+        })}
+      </div>
+
+      {/* Floating liquid-glass I/O sheet — opened by tapping any tool row. */}
+      <ToolIOSheet tool={ioSheet} onClose={() => setIoSheet(null)} />
     </div>
   )
 }
@@ -1159,13 +1263,14 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     />
                   )}
 
-                  {msg.pendingAction && (
-                    <AgentConfirmCard
-                      action={msg.pendingAction}
+                  {msg.pendingActions && msg.pendingActions.length > 0 && (
+                    <AgentConfirmCardGroup
+                      actions={msg.pendingActions}
+                      onQuickSend={onQuickSend}
                       onResolved={(status) => {
                         // Approve always posts a result note. For a delegation,
                         // Reject ALSO posts one (Sonnet's own answer), so poll then too.
-                        if (status === 'approved' || msg.pendingAction?.actionType === 'delegation') {
+                        if (status === 'approved' || msg.pendingActions?.some((a) => a.actionType === 'delegation')) {
                           onActionApproved?.()
                         }
                       }}

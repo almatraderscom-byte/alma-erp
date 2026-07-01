@@ -43,6 +43,7 @@ import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
 import {
   buildVerificationReminder,
+  detectMissingCardViolation,
   MAX_VERIFY_RETRIES,
   type ClaimViolation,
   type ToolLedgerEntry,
@@ -790,6 +791,10 @@ export async function* runAgentTurn(
   // Confirm cards emitted this turn — persisted into the assistant message so the
   // card (and later its approved/rejected outcome) survives a page reload.
   const emittedConfirmCards: Array<{ type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string }> = []
+  // Interactive question cards surfaced this turn (owner-facing yes/no / choice).
+  // Tracked alongside confirm cards so the card-detection rule knows whether ANY
+  // card actually reached the owner before the head claimed one did.
+  let askCardsEmitted = 0
   let memoryNudgeSent = false
   let intentNudgeSent = false
   let verifyRetries = 0
@@ -1042,6 +1047,13 @@ export async function* runAgentTurn(
           const violations: ClaimViolation[] = finalText
             ? verifyClaimsAgainstLedger(finalText, ledger)
             : []
+          // Card-detection: reply promises an owner-facing approval/question card
+          // but NO interactive card surfaced this turn (head forgot to call the
+          // approval tool, or a sub-agent made a DB-only pending action). Force the
+          // head to actually surface it or admit it couldn't.
+          if (finalText && violations.length === 0 && emittedConfirmCards.length === 0 && askCardsEmitted === 0) {
+            violations.push(...detectMissingCardViolation(finalText))
+          }
           if (violations.length > 0) {
             verifyRetries++
             yield {
@@ -1302,6 +1314,7 @@ export async function* runAgentTurn(
             }
           }
           if (typeof d.askCardId === 'string' && Array.isArray(d.options)) {
+            askCardsEmitted++
             yield {
               type: 'ask_card',
               askCardId: d.askCardId,

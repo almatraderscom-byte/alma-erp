@@ -17,6 +17,7 @@ export type ClaimViolationCategory =
   | 'staff_dispatch'
   | 'fb_post'
   | 'general_write'
+  | 'missing_card'
 
 export interface ClaimViolation {
   category: ClaimViolationCategory
@@ -275,6 +276,53 @@ export function detectLedgerViolations(
   return []
 }
 
+// ── Card-detection (owner-facing approval / question card) ────────────────────
+//
+// The head narrates that an approval/confirmation/question card is now in front
+// of the owner ("অনুমোদন কার্ড পাঠাচ্ছি", "approval card নিচে দিলাম", "confirm
+// card এসেছে") — but NO interactive card actually surfaced this turn. This is
+// the exact failure the owner reported: he was told a card was coming, kept
+// asking, and it never appeared (a sub-agent created a DB-only pending action, or
+// the head simply forgot to call the pending-action tool). The head must catch
+// this itself and either actually surface the card or admit it couldn't.
+
+// A card noun, optionally qualified (approval/confirm/question/অনুমোদন/প্রশ্ন…).
+const CARD_NOUN = '(?:approval|approve|confirm(?:ation)?|question|yes[\\s/-]*no|অনুমোদন(?:ের)?|নিশ্চিতকরণ|প্রশ্ন|হ্যাঁ[\\s/-]*না)?\\s*(?:card|কার্ড)'
+// Present/near-future "it is in front of the owner now" delivery verbs.
+const CARD_DELIVERY = '(?:পাঠা(?:চ্ছি|লাম|চ্ছে|নো\\s*হ[য়ছ][েি]|নো\\s*হচ্ছে)|পাঠিয়ে(?:ছি|\\s*দিয়েছি|\\s*দিলাম)?|দিচ্ছি|দিলাম|দিয়ে\\s*দিলাম|দিয়েছি|আসবে|আসছে|এসেছে|দেখতে\\s*পাবেন|পাবেন|নিচে\\s*(?:দেখুন|আছে|দিলাম|পাবেন)|তৈরি\\s*কর[ছিলােয]+|surfac|show|sent|sending|pathacchi|pathalam|pathiyechi|dilam|diyechi)'
+
+const CARD_PROMISE = new RegExp(
+  `${CARD_NOUN}[^।.!?\\n]{0,45}?${CARD_DELIVERY}`,
+  'i',
+)
+const CARD_PROMISE_REV = new RegExp(
+  `${CARD_DELIVERY}[^।.!?\\n]{0,25}?${CARD_NOUN}`,
+  'i',
+)
+// Honest "I couldn't surface it / it isn't showing" — never a violation.
+const CARD_INABILITY = /(?:card|কার্ড)[^।.!?\n]{0,30}?(?:আসেনি|আসছে\s*না|দেখা\s*যাচ্ছে\s*না|পারিনি|পারলাম\s*না|পারছি\s*না|failed|আসেনা)|(?:card|কার্ড)\s*(?:তৈরি|surface|show)[^।.!?\n]{0,20}?(?:পারিনি|পারলাম\s*না)/i
+
+/**
+ * Detects an unbacked owner-facing card promise: the reply says an approval/
+ * question card is now shown, but no confirm_card or ask_card was emitted this
+ * turn. Only call this when both counts are zero.
+ */
+export function detectMissingCardViolation(replyText: string): ClaimViolation[] {
+  const text = replyText.trim()
+  if (text.length < 6) return []
+  if (CARD_INABILITY.test(text)) return []
+
+  const m = CARD_PROMISE.exec(text) ?? CARD_PROMISE_REV.exec(text)
+  if (!m) return []
+
+  return [{
+    category: 'missing_card',
+    ruleId: 'card_promised_not_emitted',
+    matchedSnippet: stripWhitespace(m[0]).slice(0, 120),
+    requiredTools: [],
+  }]
+}
+
 /**
  * Combined verification: Layer 1 (regex) + Layer 2 (ledger).
  */
@@ -316,6 +364,10 @@ const CATEGORY_GUIDANCE: Record<ClaimViolationCategory, string> = {
     'আপনি কাজ সম্পন্ন হওয়ার দাবি করেছেন কিন্তু এই turn-এ কোনো সফল write/action tool call হয়নি। ' +
     'এখনই প্রয়োজনীয় tool call করুন এবং success result পেলে তবেই confirm দিন। ' +
     'যদি tool call ব্যর্থ হয়ে থাকে → সততা সঙ্গে ব্যর্থতা স্বীকার করুন।',
+  missing_card:
+    'আপনি বলেছেন অনুমোদন/প্রশ্ন কার্ড স্যারের সামনে পাঠিয়েছেন/দিচ্ছেন — কিন্তু এই turn-এ আসলে কোনো confirm_card বা ask_card তৈরি হয়নি, তাই স্যারের স্ক্রিনে কোনো কার্ড আসেনি। ' +
+    'কার্ড শুধু তখনই আসে যখন আপনি নিজে (head) approval-দরকার এমন action tool টি সরাসরি call করেন এবং সেটি pendingActionId ফেরত দেয় — sub-agent-এর তৈরি pending action স্ক্রিনে কার্ড দেখায় না। ' +
+    'এখনই দুটি option: (ক) নিজে সঠিক approval tool টি call করুন যাতে আসল কার্ড surface করে; (খ) যদি এই মুহূর্তে সম্ভব না → চুপচাপ "পাঠিয়েছি" বলবেন না, সততা সঙ্গে বলুন কার্ড আসেনি এবং স্যারকে কী করতে হবে বলুন। কখনো "কার্ড পাঠিয়েছি" বলবেন না যদি কার্ড আসলে না আসে।',
 }
 
 export function buildVerificationReminder(violations: ClaimViolation[]): string {

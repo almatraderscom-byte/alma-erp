@@ -341,6 +341,131 @@ async function runApprove(
     }
   }
 
+  // Growth Autopilot: approving a scheduled post does NOT publish now — it flips
+  // the calendar entry to 'approved' so the growth-publish cron publishes it at
+  // the scheduled time. This keeps the owner-approval gate while allowing
+  // publish-later scheduling.
+  if (action.type === 'schedule_content') {
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        const current = await db.agentPendingAction.findUnique({ where: { id: actionId } })
+        return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+      }
+      const calendarId = String(payload.calendarId ?? '')
+      if (!calendarId) throw new Error('calendarId missing from schedule_content payload')
+      await db.agentContentCalendar.update({
+        where: { id: calendarId },
+        data: { status: 'approved', approvedAt: new Date() },
+      })
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', result: { calendarId, scheduled: true } },
+      })
+      await appendConversationNote(
+        db,
+        action,
+        '✅ পোস্টটি শিডিউল অনুমোদিত — নির্ধারিত সময়ে নিজে থেকে পাবলিশ হবে।',
+      )
+      return Response.json({ success: true, calendarId, scheduled: true })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
+  // Growth Autopilot: approve a whole campaign batch — flip every calendar row
+  // in the batch to 'approved' so the cron publishes each at its scheduled time.
+  if (action.type === 'schedule_content_batch') {
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        const current = await db.agentPendingAction.findUnique({ where: { id: actionId } })
+        return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+      }
+      const calendarIds = Array.isArray(payload.calendarIds) ? (payload.calendarIds as string[]) : []
+      if (calendarIds.length === 0) throw new Error('calendarIds missing from schedule_content_batch payload')
+      const upd = await db.agentContentCalendar.updateMany({
+        where: { id: { in: calendarIds }, status: 'draft' },
+        data: { status: 'approved', approvedAt: new Date() },
+      })
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', result: { calendarIds, approved: upd.count } },
+      })
+      await appendConversationNote(
+        db,
+        action,
+        `✅ ক্যাম্পেইন অনুমোদিত — ${upd.count}টি পোস্ট নির্ধারিত সময়ে নিজে থেকে পাবলিশ হবে।`,
+      )
+      return Response.json({ success: true, approved: upd.count })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
+  // Growth Autopilot: approve a batch of on-page SEO copy fixes — apply
+  // shortDescription/description to every product in the batch, live.
+  if (action.type === 'seo_fix_batch') {
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        const current = await db.agentPendingAction.findUnique({ where: { id: actionId } })
+        return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+      }
+      const items = Array.isArray(payload.items)
+        ? (payload.items as Array<{ productId: string; slug: string; fields: { shortDescription?: string; description?: string } }>)
+        : []
+      if (items.length === 0) throw new Error('items missing from seo_fix_batch payload')
+      const { updateWebsiteProductFields } = await import('@/lib/website/write.service')
+      const applied: string[] = []
+      const failed: Array<{ slug: string; error: string }> = []
+      for (const it of items) {
+        const result = await updateWebsiteProductFields(String(it.productId), it.fields ?? {})
+        if (result.ok) applied.push(it.slug)
+        else failed.push({ slug: it.slug, error: result.error })
+      }
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: {
+          status: failed.length === 0 ? 'executed' : 'partial',
+          result: { applied, failed },
+        },
+      })
+      const note =
+        `✅ SEO ফিক্স অনুমোদিত — ${applied.length}টি product আপডেট হয়েছে` +
+        (failed.length ? `, ${failed.length}টি ব্যর্থ (${failed.map((f) => f.slug).join(', ')})` : '') +
+        `। ISR/cache — live page দেখতে কিছুক্ষণ লাগতে পারে।`
+      await appendConversationNote(db, action, note)
+      return Response.json({ success: failed.length === 0, applied, failed })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
   if (action.type === 'content_gate1') {
     try {
       const claimed = await db.agentPendingAction.updateMany({

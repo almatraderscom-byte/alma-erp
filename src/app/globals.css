@@ -569,6 +569,103 @@ a,
   }
 }
 
+/* ── Claude-Code "Running → Ran" status (owner spec) ───────────────────────
+   Phase 1 (tool running): "Running ›" — a bright light-reflection sweeps
+   left→right across the text (dark-gray → bright-white → dark-gray), clipped
+   to the glyphs. Phase 2 (tool done): the sparkle icon grows and breathes
+   (pulse-scale), a bigger, calmer "settled" beat. Pure CSS, dark-theme tuned. */
+.alma-run-shimmer {
+  background: linear-gradient(
+    90deg,
+    #6b7280 0%, #6b7280 34%, #ffffff 50%, #6b7280 66%, #6b7280 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: alma-run-sweep 1.5s ease-in-out infinite;
+}
+@keyframes alma-run-sweep {
+  0%   { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
+
+/* Multi-pointed sparkle that breathes — scales 0.8 ↔ 1.2 with a soft opacity
+   pulse. Used small while a tool runs, and LARGER once it finishes (the owner
+   wants the completed "Ran …" line to carry a bigger, prouder sparkle). */
+.alma-sparkle-pulse {
+  transform-origin: center;
+  animation: alma-pulse-scale 1.6s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+@keyframes alma-pulse-scale {
+  0%, 100% { transform: scale(0.8); opacity: 0.55; }
+  50%      { transform: scale(1.2); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .alma-run-shimmer { animation: none; -webkit-text-fill-color: #9ca3af; color: #9ca3af; }
+  .alma-sparkle-pulse { animation: none; }
+}
+
+/* Liquid-glass floating sheet — the Claude-Code bottom-sheet surface. Frosted,
+   translucent, soft top-rounded, with a hairline highlight along the top edge.
+   Theme-aware so it reads on the cream (light) and near-black (dark) canvases. */
+.alma-glass-sheet {
+  /* Opaque fallback first so WKWebView / any engine without backdrop-filter
+     still gets a clean premium surface (never a washed-out translucent strip). */
+  background: var(--alma-sheet-bg-solid);
+  border-top: 1px solid var(--alma-sheet-hairline);
+  box-shadow:
+    0 -22px 60px -22px rgba(0, 0, 0, 0.6),
+    0 -1px 0 0 var(--alma-sheet-sheen) inset;
+  position: relative;
+  isolation: isolate;
+}
+/* Liquid-glass sheen: a soft top-edge highlight that reads as light catching the
+   rim of the sheet as it rises. Sits above the surface, below the content. */
+.alma-glass-sheet::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 46%;
+  pointer-events: none;
+  z-index: -1;
+  background: linear-gradient(
+    to bottom,
+    var(--alma-sheet-sheen) 0%,
+    transparent 100%
+  );
+  border-radius: inherit;
+}
+@supports ((backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px))) {
+  .alma-glass-sheet {
+    background: var(--alma-sheet-bg);
+    -webkit-backdrop-filter: blur(26px) saturate(1.4);
+    backdrop-filter: blur(26px) saturate(1.4);
+  }
+}
+:root {
+  --alma-sheet-bg: rgba(252, 251, 248, 0.8);
+  --alma-sheet-bg-solid: #FAF9F6;
+  --alma-sheet-hairline: rgba(0, 0, 0, 0.08);
+  --alma-sheet-sheen: rgba(255, 255, 255, 0.55);
+}
+:root[data-theme='dark'] {
+  --alma-sheet-bg: rgba(24, 24, 27, 0.76);
+  --alma-sheet-bg-solid: #18181B;
+  --alma-sheet-hairline: rgba(255, 255, 255, 0.12);
+  --alma-sheet-sheen: rgba(255, 255, 255, 0.08);
+}
+/* Grab-handle atop the sheet (iOS drag affordance). */
+.alma-sheet-grip {
+  width: 38px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--alma-sheet-hairline);
+  opacity: 0.9;
+}
+
 /* Claude-style streamed-text reveal (their `cds-reveal-in`). Claude eases each
    new token in with a fade + slight upward slide instead of snapping. Markdown
    re-renders the whole tree on every delta, so we can't key per-token mounts;
@@ -748,9 +845,11 @@ a,
     max-height: 100%;
     min-height: 0;
     contain: none;
-    /* Phone: glide up from the bottom like an iOS sheet. */
-    animation: alma-modal-sheet-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
-    will-change: transform;
+    /* Phone: glide up from the bottom like an iOS sheet — a slightly longer,
+       eased rise with a touch of settle so it reads as a substantial card
+       floating up, not a strip snapping into place. */
+    animation: alma-modal-sheet-in 0.42s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+    will-change: transform, opacity;
   }
 
   @media (min-width: 640px) {
@@ -774,8 +873,9 @@ a,
     to   { opacity: 1; backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); }
   }
   @keyframes alma-modal-sheet-in {
-    from { transform: translateY(100%); }
-    to   { transform: translateY(0); }
+    from { transform: translateY(100%); opacity: 0.6; }
+    60%  { opacity: 1; }
+    to   { transform: translateY(0); opacity: 1; }
   }
   @keyframes alma-modal-dialog-in {
     from { opacity: 0; transform: translateY(8px) scale(0.98); }

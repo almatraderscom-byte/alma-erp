@@ -1,7 +1,9 @@
+import { prisma } from '@/lib/prisma'
 import { listWebsiteProducts, getWebsiteProduct } from '@/lib/website/catalog.service'
 import { websiteSupabaseConfigured } from '@/lib/website/supabase-client'
 import { oxylabsSerpSearch, oxylabsConfigured, logOxylabsUsage } from '@/lib/oxylabs/client'
 import { verifyOxylabsSpendApproval, consumeOxylabsApproval } from '@/agent/lib/oxylabs-approval'
+import { RANK_TRACKING_MAX_KEYWORDS } from '@/agent/lib/growth/settings'
 import type { WebsiteProductDetail, WebsiteProductSummary } from '@/lib/website/types'
 import type { AgentTool } from './registry'
 
@@ -187,12 +189,229 @@ const research_seo_keywords: AgentTool = {
   },
 }
 
-export const SEO_TOOLS: AgentTool[] = [audit_product_seo, research_seo_keywords]
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const db = prisma as any
+
+const draft_seo_fixes: AgentTool = {
+  name: 'draft_seo_fixes',
+  description:
+    'Package a BATCH of on-page SEO content fixes for almatraders.com products into ONE approval card. ' +
+    'Workflow: first run audit_product_seo to find products with weak meta/description, then YOU draft the improved ' +
+    'Bangla copy for each (meta description 50-160 chars, product description 100+ chars, keyword-rich, on-brand, ' +
+    'halal-compliant), then call this with the drafts. The owner approves the whole batch at once; on approval each ' +
+    'product\'s shortDescription/description is updated live. NEVER auto-apply — this only creates the pending card. ' +
+    'Only shortDescription (meta) and description are writable via SEO fixes; do not attempt alt-text/slug here.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      fixes: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 20,
+        description: 'Per-product SEO copy fixes you have drafted.',
+        items: {
+          type: 'object',
+          properties: {
+            slugOrId: { type: 'string', description: 'Product slug or UUID' },
+            shortDescription: { type: 'string', description: 'New meta description, 50-160 chars, Bangla, keyword-rich.' },
+            description: { type: 'string', description: 'New/expanded product description, 100+ chars.' },
+          },
+          required: ['slugOrId'],
+        },
+      },
+      note: { type: 'string', description: 'Short label for this SEO batch (shown on the card).' },
+      conversationId: { type: 'string' },
+    },
+    required: ['fixes'],
+  },
+  handler: async (input) => {
+    if (!websiteSupabaseConfigured()) {
+      return { success: false, error: 'Website Supabase not configured.' }
+    }
+    try {
+      const rawFixes = Array.isArray(input.fixes) ? input.fixes : []
+      if (rawFixes.length === 0) return { success: false, error: 'অন্তত একটা product fix দরকার।' }
+      const conversationId = input.conversationId ? String(input.conversationId) : null
+      const note = input.note ? String(input.note).trim() : 'SEO ফিক্স'
+
+      const items: Array<{
+        productId: string
+        slug: string
+        name: string
+        fields: { shortDescription?: string; description?: string }
+        changes: Record<string, { before: unknown; after: unknown }>
+      }> = []
+
+      for (let i = 0; i < rawFixes.length; i++) {
+        const f = rawFixes[i] as Record<string, unknown>
+        const slugOrId = String(f.slugOrId ?? '').trim()
+        if (!slugOrId) return { success: false, error: `ফিক্স #${i + 1}: slugOrId খালি।` }
+        const product = await getWebsiteProduct(slugOrId)
+        if (!product) return { success: false, error: `ফিক্স #${i + 1}: product পাওয়া যায়নি (${slugOrId})।` }
+
+        const fields: { shortDescription?: string; description?: string } = {}
+        const changes: Record<string, { before: unknown; after: unknown }> = {}
+
+        if (f.shortDescription != null) {
+          const meta = String(f.shortDescription).trim()
+          if (meta.length < 50 || meta.length > 160) {
+            return { success: false, error: `ফিক্স #${i + 1} (${product.slug}): meta description ${meta.length} chars — 50-160-এর মধ্যে দিন।` }
+          }
+          fields.shortDescription = meta
+          changes.shortDescription = { before: product.shortDescription?.slice(0, 80) ?? null, after: meta.slice(0, 80) }
+        }
+        if (f.description != null) {
+          const desc = String(f.description).trim()
+          if (desc.length < 100) {
+            return { success: false, error: `ফিক্স #${i + 1} (${product.slug}): description ${desc.length} chars — অন্তত 100 chars দিন।` }
+          }
+          fields.description = desc
+          changes.description = { before: product.description?.slice(0, 80) ?? null, after: desc.slice(0, 80) }
+        }
+
+        if (Object.keys(fields).length === 0) {
+          return { success: false, error: `ফিক্স #${i + 1} (${product.slug}): shortDescription বা description অন্তত একটা দিন।` }
+        }
+        items.push({ productId: product.id, slug: product.slug, name: product.name, fields, changes })
+      }
+
+      const lines = items.map((it) => {
+        const parts = Object.keys(it.changes).map((k) => (k === 'shortDescription' ? 'meta' : k))
+        return `• ${it.name} (${it.slug}) — ${parts.join(', ')} আপডেট`
+      })
+      const summary =
+        `🔍 ${note} — ${items.length}টি product\n` +
+        `${lines.join('\n')}\n\n⚠️ ISR/cache — live page আপডেট দেখতে কিছুক্ষণ লাগতে পারে।\n` +
+        `একবার approve করলেই সব product-এর SEO কপি আপডেট হবে।`
+
+      const action = await db.agentPendingAction.create({
+        data: {
+          conversationId,
+          type: 'seo_fix_batch',
+          payload: { items, note, count: items.length, conversationId },
+          summary,
+          costEstimate: 0,
+          status: 'pending',
+        },
+      })
+
+      return {
+        success: true,
+        data: {
+          pendingActionId: action.id,
+          count: items.length,
+          products: items.map((it) => it.slug),
+          message: `${items.length}টি product-এর SEO ফিক্স একটাই approval card-এ — approve করলে সব লাইভ হবে।`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+const track_keyword: AgentTool = {
+  name: 'track_keyword',
+  description:
+    'Add a keyword to weekly Google-rank tracking for almatraders.com. Adding costs nothing; the weekly ' +
+    'rank-tracker cron then pulls the SERP for every tracked keyword (Oxylabs, ~1 credit each) — but only ' +
+    'while the owner has rank-tracking turned ON. Use for terms the business wants to rank for, e.g. ' +
+    '"premium panjabi Dhaka". Optionally tie it to the product slug it should rank for.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      keyword: { type: 'string', description: 'Search term, e.g. "family matching panjabi set"' },
+      productSlug: { type: 'string', description: 'Optional product slug this keyword should rank for.' },
+    },
+    required: ['keyword'],
+  },
+  handler: async (input) => {
+    const keyword = String(input.keyword ?? '').trim()
+    if (!keyword) return { success: false, error: 'keyword দরকার।' }
+    const productSlug = input.productSlug ? String(input.productSlug).trim() : null
+    try {
+      const count = await db.agentTrackedKeyword.count({ where: { active: true } })
+      const existing = await db.agentTrackedKeyword.findFirst({ where: { keyword } })
+      if (!existing && count >= RANK_TRACKING_MAX_KEYWORDS) {
+        return { success: false, error: `সর্বোচ্চ ${RANK_TRACKING_MAX_KEYWORDS}টি keyword track করা যায় (খরচ নিয়ন্ত্রণে)। আগে একটা untrack করুন।` }
+      }
+      const row = await db.agentTrackedKeyword.upsert({
+        where: { businessId_keyword: { businessId: 'ALMA_LIFESTYLE', keyword } },
+        update: { active: true, productSlug },
+        create: { keyword, productSlug, active: true },
+      })
+      return {
+        success: true,
+        data: { id: row.id, keyword, productSlug, message: `"${keyword}" এখন সাপ্তাহিক rank tracking-এ। (rank tracking ON থাকলে প্রতি সপ্তাহে SERP টানা হবে।)` },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+const list_tracked_keywords: AgentTool = {
+  name: 'list_tracked_keywords',
+  description:
+    'List the keywords under weekly rank tracking, each with its latest known Google rank (from the last ' +
+    'SERP pull). Cost-free — reads stored history only.',
+  input_schema: { type: 'object' as const, properties: {} },
+  handler: async () => {
+    try {
+      const rows = await db.agentTrackedKeyword.findMany({ where: { active: true }, orderBy: { createdAt: 'asc' } })
+      const out: Array<{ keyword: string; productSlug: string | null; latestRank: number | null; checkedAt: string | null }> = []
+      for (const r of rows) {
+        const last = await db.agentKeywordRank.findFirst({ where: { keyword: r.keyword }, orderBy: { checkedAt: 'desc' } })
+        out.push({
+          keyword: r.keyword,
+          productSlug: r.productSlug ?? null,
+          latestRank: last?.rank ?? null,
+          checkedAt: last?.checkedAt ? new Date(last.checkedAt).toISOString() : null,
+        })
+      }
+      return { success: true, data: { count: out.length, keywords: out } }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+const untrack_keyword: AgentTool = {
+  name: 'untrack_keyword',
+  description: 'Stop weekly rank tracking for a keyword (deactivates it — history is kept). Cost-free.',
+  input_schema: {
+    type: 'object' as const,
+    properties: { keyword: { type: 'string' } },
+    required: ['keyword'],
+  },
+  handler: async (input) => {
+    const keyword = String(input.keyword ?? '').trim()
+    if (!keyword) return { success: false, error: 'keyword দরকার।' }
+    try {
+      const upd = await db.agentTrackedKeyword.updateMany({ where: { keyword, active: true }, data: { active: false } })
+      if (upd.count === 0) return { success: false, error: `"${keyword}" tracking-এ ছিল না।` }
+      return { success: true, data: { keyword, message: `"${keyword}" tracking বন্ধ করা হয়েছে।` } }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+export const SEO_TOOLS: AgentTool[] = [
+  audit_product_seo,
+  research_seo_keywords,
+  draft_seo_fixes,
+  track_keyword,
+  list_tracked_keywords,
+  untrack_keyword,
+]
 
 export const SEO_ROLE_PROMPT = `
 ## SEO
-audit_product_seo দিয়ে on-page SEO check করুন (cost-free) — title/meta description/description/alt-text/slug।
+audit_product_seo দিয়ে on-page SEO check করুন (cost-free) — title/meta description/description/alt-text/slug। scope="all_published" দিলে পুরো সাইট scan হয়।
 research_seo_keywords দিয়ে keyword ranking দেখুন — **আগে confirm_oxylabs_spend** (≈১ ক্রেডিট), owner Approve ছাড়া চালাবেন না।
-SEO fix proposal করলে update_product_web ব্যবহার করুন (description/shortDescription) — owner Approve প্রয়োজন।
-কখনোই নিজে থেকে content/meta change করবেন না — শুধু audit + proposal।
+**একসাথে অনেক product ঠিক করতে:** আগে audit চালান → যেসব product-এর meta/description দুর্বল, তাদের জন্য নিজে উন্নত বাংলা কপি লিখুন (meta 50-160 chars, description 100+ chars, keyword-rich, on-brand, হালাল) → তারপর **draft_seo_fixes**-এ সব একসাথে দিন। এতে owner **একটাই approval card**-এ পুরো ব্যাচ অনুমোদন করেন, approve করলেই সব লাইভ আপডেট হয়।
+একটা মাত্র product-এর জন্য update_product_web-ও ব্যবহার করা যায় (price সহ)।
+**র‍্যাঙ্ক ট্র্যাকিং:** যে keyword-এ business rank করতে চায় সেটা track_keyword দিয়ে যোগ করুন (যোগ করা ফ্রি) — rank tracking ON থাকলে প্রতি সপ্তাহে নিজে থেকে SERP টেনে owner-কে র‍্যাঙ্ক জানাবে। list_tracked_keywords-এ সর্বশেষ র‍্যাঙ্ক, untrack_keyword-এ বন্ধ। এককালীন check-এ research_seo_keywords (Approve লাগে)।
+কখনোই নিজে থেকে content/meta change করবেন না — শুধু audit + draft + owner Approve।
 `
