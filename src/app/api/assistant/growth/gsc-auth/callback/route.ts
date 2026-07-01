@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
   if (!code) return growthRedirect(req, 'no_code')
 
   try {
-    const conn = await exchangeCodeForTokens(code)
+    const conn = await exchangeCodeForTokens(code, req.nextUrl.origin)
     await saveGscConnection(conn)
     console.log('[gsc-auth/callback] connected:', conn.email || '(email hidden)')
     return growthRedirect(req, 'connected')

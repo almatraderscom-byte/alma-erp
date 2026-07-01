@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
 
   const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth')
   authUrl.searchParams.set('client_id', creds.clientId)
-  authUrl.searchParams.set('redirect_uri', getGscRedirectUri())
+  authUrl.searchParams.set('redirect_uri', getGscRedirectUri(req.nextUrl.origin))
   authUrl.searchParams.set('response_type', 'code')
   authUrl.searchParams.set('scope', `${GSC_SCOPE} https://www.googleapis.com/auth/userinfo.email`)
   authUrl.searchParams.set('access_type', 'offline')

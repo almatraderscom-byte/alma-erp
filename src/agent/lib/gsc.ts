@@ -27,9 +27,23 @@ export function getGscClientCreds(): { clientId: string; clientSecret: string } 
   return clientId && clientSecret ? { clientId, clientSecret } : null
 }
 
-/** The registered OAuth redirect URI — must match the GCP OAuth client exactly. */
-export function getGscRedirectUri(): string {
-  const base = (process.env.NEXTAUTH_URL ?? process.env.APP_URL ?? '').replace(/\/$/, '')
+/**
+ * The registered OAuth redirect URI — must match the GCP OAuth client exactly and
+ * must be identical between the auth request and the callback exchange.
+ *
+ * Base URL priority: NEXTAUTH_URL / APP_URL (set on production) → the live request
+ * origin (so preview deployments work without a per-branch env, as long as the
+ * preview URL is registered in the OAuth client) → VERCEL_URL as a last resort.
+ */
+export function getGscRedirectUri(reqOrigin?: string): string {
+  const vercel = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : ''
+  const base = (
+    process.env.NEXTAUTH_URL ||
+    process.env.APP_URL ||
+    reqOrigin ||
+    vercel ||
+    ''
+  ).replace(/\/$/, '')
   return `${base}/api/assistant/growth/gsc-auth/callback`
 }
 
@@ -92,8 +106,12 @@ async function getAccessToken(refreshToken: string): Promise<string> {
   return data.access_token
 }
 
-/** Exchange an OAuth authorization code for tokens (callback route). */
-export async function exchangeCodeForTokens(code: string): Promise<GscConnection> {
+/**
+ * Exchange an OAuth authorization code for tokens (callback route).
+ * `reqOrigin` must be the same origin used to build the auth request's
+ * redirect_uri, otherwise Google rejects the exchange with redirect_uri_mismatch.
+ */
+export async function exchangeCodeForTokens(code: string, reqOrigin?: string): Promise<GscConnection> {
   const creds = getGscClientCreds()
   if (!creds) throw new Error('GSC/Google OAuth client creds not set')
   const res = await fetch('https://oauth2.googleapis.com/token', {
@@ -104,7 +122,7 @@ export async function exchangeCodeForTokens(code: string): Promise<GscConnection
       client_secret: creds.clientSecret,
       code,
       grant_type: 'authorization_code',
-      redirect_uri: getGscRedirectUri(),
+      redirect_uri: getGscRedirectUri(reqOrigin),
     }),
     signal: AbortSignal.timeout(10_000),
   })
