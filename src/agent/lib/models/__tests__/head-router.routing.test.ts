@@ -9,7 +9,7 @@
  *     honoured exactly ("select a model → that real model runs"); the 'auto'
  *     sentinel falls through to the cost-optimized router (current behaviour).
  */
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { resolveHeadModelId } from '@/agent/lib/models/head-router'
 
 const ROUTINE_MESSAGES = [
@@ -56,20 +56,58 @@ describe('resolveHeadModelId — routine fast-path', () => {
 })
 
 describe('resolveHeadModelId — explicit model selection vs Auto', () => {
-  it.each(['claude-opus-4-8', 'or-deepseek-v4-flash', 'claude-sonnet-4-6'])(
-    'honours an explicitly selected model exactly: %s',
-    async (modelId) => {
+  // When Anthropic credits are healthy, an explicit pin (including Sonnet/Opus) is
+  // honoured exactly. The redirect below only kicks in while ANTHROPIC_HEAD_DOWN.
+  describe('with Anthropic head available', () => {
+    beforeAll(() => {
+      process.env.ANTHROPIC_HEAD_DOWN = 'false'
+    })
+    afterAll(() => {
+      delete process.env.ANTHROPIC_HEAD_DOWN
+    })
+
+    it.each(['claude-opus-4-8', 'or-deepseek-v4-flash', 'claude-sonnet-4-6'])(
+      'honours an explicitly selected model exactly: %s',
+      async (modelId) => {
+        const decision = await resolveHeadModelId({
+          requestedModelId: modelId,
+          // Routine text would otherwise route to DeepSeek — explicit pin must win.
+          lastUserText: 'aj koto sale holo',
+          personalMode: false,
+          businessId: 'ALMA_LIFESTYLE',
+        })
+        expect(decision.tier).toBe('explicit')
+        expect(decision.modelId).toBe(modelId)
+      },
+    )
+  })
+
+  describe('while Anthropic head is down (owner command, credits out — default)', () => {
+    it('redirects an explicitly-pinned Anthropic head to Gemini so the chat still answers', async () => {
+      for (const modelId of ['claude-sonnet-4-6', 'claude-opus-4-8']) {
+        const decision = await resolveHeadModelId({
+          requestedModelId: modelId,
+          lastUserText: 'aj koto sale holo',
+          personalMode: false,
+          businessId: 'ALMA_LIFESTYLE',
+        })
+        expect(decision.tier).toBe('heavy')
+        expect(decision.modelId).toBe('gemini-3.1-pro')
+        expect(decision.via).toBe('anthropic_down_explicit_redirect')
+      }
+    })
+
+    it('still honours a non-Anthropic explicit pin exactly (e.g. DeepSeek)', async () => {
       const decision = await resolveHeadModelId({
-        requestedModelId: modelId,
-        // Routine text would otherwise route to DeepSeek — explicit pin must win.
+        requestedModelId: 'or-deepseek-v4-flash',
         lastUserText: 'aj koto sale holo',
         personalMode: false,
         businessId: 'ALMA_LIFESTYLE',
       })
       expect(decision.tier).toBe('explicit')
-      expect(decision.modelId).toBe(modelId)
-    },
-  )
+      expect(decision.modelId).toBe('or-deepseek-v4-flash')
+    })
+  })
 
   it("'auto' sentinel falls through to the cost-optimized router", async () => {
     const decision = await resolveHeadModelId({
