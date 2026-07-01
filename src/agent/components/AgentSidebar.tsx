@@ -195,6 +195,13 @@ export default function AgentSidebar({
           >
             📷
           </a>
+          <a
+            href="/agent/growth"
+            className="rounded-full border border-border-subtle bg-white/[0.04] px-2 py-0.5 text-[9px] text-muted transition-all hover:border-[#4285F4]/40 hover:bg-[#4285F4]/10 hover:text-[#4285F4]"
+            title="Growth — Google সংযোগ (Search Console)"
+          >
+            🔍
+          </a>
         </div>
         {isMobile && (
           <button onClick={onClose} className="rounded-lg p-1.5 text-muted hover:text-muted-hi">✕</button>

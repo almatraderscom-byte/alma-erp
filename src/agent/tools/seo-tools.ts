@@ -4,8 +4,28 @@ import { websiteSupabaseConfigured } from '@/lib/website/supabase-client'
 import { oxylabsSerpSearch, oxylabsConfigured, logOxylabsUsage } from '@/lib/oxylabs/client'
 import { verifyOxylabsSpendApproval, consumeOxylabsApproval } from '@/agent/lib/oxylabs-approval'
 import { RANK_TRACKING_MAX_KEYWORDS } from '@/agent/lib/growth/settings'
+import {
+  isGscConnected,
+  resolveSiteUrl,
+  searchAnalyticsQuery,
+  listSitemaps,
+  inspectUrl,
+} from '@/agent/lib/gsc'
 import type { WebsiteProductDetail, WebsiteProductSummary } from '@/lib/website/types'
 import type { AgentTool } from './registry'
+
+/** YYYY-MM-DD in UTC, offset by `daysAgo` days from today. */
+function ymd(daysAgo: number): string {
+  const d = new Date()
+  d.setUTCDate(d.getUTCDate() - daysAgo)
+  return d.toISOString().slice(0, 10)
+}
+
+const GSC_NOT_CONNECTED = {
+  success: false as const,
+  error:
+    'Google Search Console যুক্ত করা নেই। ALMA Agent → সাইডবারে 🔍 (Growth) পেজ থেকে "Google Search Console যুক্ত করুন"-এ ক্লিক করে owner একবার connect করলে real search data আসবে।',
+}
 
 type SeoIssue = { field: string; issue: string; severity: 'high' | 'medium' | 'low' }
 
@@ -397,6 +417,146 @@ const untrack_keyword: AgentTool = {
   },
 }
 
+const get_search_console_performance: AgentTool = {
+  name: 'get_search_console_performance',
+  description:
+    'REAL Google Search Console data for almatraders.com — actual clicks, impressions, CTR and average ' +
+    'Google position, plus the top search queries and top landing pages over a date range. This is ground ' +
+    'truth from Google (not an Oxylabs guess) and is completely FREE — prefer it over research_seo_keywords ' +
+    'for how the site actually performs in search. Defaults to the last 28 days (GSC data lags ~3 days). ' +
+    'Requires the owner to have connected Search Console once (Growth page).',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      startDate: { type: 'string', description: 'YYYY-MM-DD. Default: 31 days ago.' },
+      endDate: { type: 'string', description: 'YYYY-MM-DD. Default: 3 days ago (GSC data lag).' },
+      rowLimit: { type: 'number', description: 'Max rows for top queries/pages (default 15, max 50).' },
+      siteUrl: { type: 'string', description: 'Optional GSC property override, e.g. "sc-domain:almatraders.com". Auto-detected if omitted.' },
+    },
+  },
+  handler: async (input) => {
+    if (!(await isGscConnected())) return GSC_NOT_CONNECTED
+    try {
+      const startDate = input.startDate ? String(input.startDate) : ymd(31)
+      const endDate = input.endDate ? String(input.endDate) : ymd(3)
+      const rowLimit = Math.min(Math.max(Number(input.rowLimit ?? 15), 1), 50)
+      const siteUrl = await resolveSiteUrl(input.siteUrl ? String(input.siteUrl) : undefined)
+
+      const [totals, byQuery, byPage] = await Promise.all([
+        searchAnalyticsQuery({ siteUrl, startDate, endDate, dimensions: [], rowLimit: 1 }),
+        searchAnalyticsQuery({ siteUrl, startDate, endDate, dimensions: ['query'], rowLimit }),
+        searchAnalyticsQuery({ siteUrl, startDate, endDate, dimensions: ['page'], rowLimit }),
+      ])
+
+      const t = totals.rows[0]
+      const summary = t
+        ? {
+            clicks: t.clicks,
+            impressions: t.impressions,
+            ctr: Math.round(t.ctr * 1000) / 10, // percent, 1 decimal
+            avgPosition: Math.round(t.position * 10) / 10,
+          }
+        : { clicks: 0, impressions: 0, ctr: 0, avgPosition: null }
+
+      return {
+        success: true,
+        data: {
+          siteUrl,
+          dateRange: { startDate, endDate },
+          totals: summary,
+          topQueries: byQuery.rows.map((r) => ({
+            query: r.keys[0],
+            clicks: r.clicks,
+            impressions: r.impressions,
+            ctr: Math.round(r.ctr * 1000) / 10,
+            position: Math.round(r.position * 10) / 10,
+          })),
+          topPages: byPage.rows.map((r) => ({
+            page: r.keys[0],
+            clicks: r.clicks,
+            impressions: r.impressions,
+            ctr: Math.round(r.ctr * 1000) / 10,
+            position: Math.round(r.position * 10) / 10,
+          })),
+        },
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.includes('not_connected')) return GSC_NOT_CONNECTED
+      return { success: false, error: `Search Console query failed: ${msg}` }
+    }
+  },
+}
+
+const get_indexing_status: AgentTool = {
+  name: 'get_indexing_status',
+  description:
+    'Google indexing / coverage status for almatraders.com from Search Console (FREE). With no argument it ' +
+    'summarises the submitted sitemaps (submitted vs indexed URL counts, warnings, errors). Pass a full page ' +
+    'URL to inspect that single page — whether Google has indexed it, its coverage state and last crawl time. ' +
+    'Requires the owner to have connected Search Console once (Growth page).',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      url: { type: 'string', description: 'Optional full page URL to inspect (e.g. https://almatraders.com/products/xyz).' },
+      siteUrl: { type: 'string', description: 'Optional GSC property override. Auto-detected if omitted.' },
+    },
+  },
+  handler: async (input) => {
+    if (!(await isGscConnected())) return GSC_NOT_CONNECTED
+    try {
+      const siteUrl = await resolveSiteUrl(input.siteUrl ? String(input.siteUrl) : undefined)
+
+      if (input.url) {
+        const url = String(input.url).trim()
+        const r = await inspectUrl(siteUrl, url)
+        return {
+          success: true,
+          data: {
+            siteUrl,
+            url,
+            verdict: r.verdict ?? null,
+            coverageState: r.coverageState ?? null,
+            indexingState: r.indexingState ?? null,
+            robotsTxtState: r.robotsTxtState ?? null,
+            lastCrawlTime: r.lastCrawlTime ?? null,
+            googleCanonical: r.googleCanonical ?? null,
+          },
+        }
+      }
+
+      const sitemaps = await listSitemaps(siteUrl)
+      const out = sitemaps.map((s) => {
+        const submitted = (s.contents ?? []).reduce((n, c) => n + Number(c.submitted ?? 0), 0)
+        const indexed = (s.contents ?? []).reduce((n, c) => n + Number(c.indexed ?? 0), 0)
+        return {
+          path: s.path ?? null,
+          lastSubmitted: s.lastSubmitted ?? null,
+          lastDownloaded: s.lastDownloaded ?? null,
+          isPending: Boolean(s.isPending),
+          submitted,
+          indexed,
+          warnings: Number(s.warnings ?? 0),
+          errors: Number(s.errors ?? 0),
+        }
+      })
+      return {
+        success: true,
+        data: {
+          siteUrl,
+          sitemapCount: out.length,
+          sitemaps: out,
+          message: out.length === 0 ? 'কোনো sitemap submit করা নেই — Feature 4 (sitemap/IndexNow)-এ এটা ঠিক হবে।' : undefined,
+        },
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.includes('not_connected')) return GSC_NOT_CONNECTED
+      return { success: false, error: `Indexing status failed: ${msg}` }
+    }
+  },
+}
+
 export const SEO_TOOLS: AgentTool[] = [
   audit_product_seo,
   research_seo_keywords,
@@ -404,12 +564,15 @@ export const SEO_TOOLS: AgentTool[] = [
   track_keyword,
   list_tracked_keywords,
   untrack_keyword,
+  get_search_console_performance,
+  get_indexing_status,
 ]
 
 export const SEO_ROLE_PROMPT = `
 ## SEO
 audit_product_seo দিয়ে on-page SEO check করুন (cost-free) — title/meta description/description/alt-text/slug। scope="all_published" দিলে পুরো সাইট scan হয়।
-research_seo_keywords দিয়ে keyword ranking দেখুন — **আগে confirm_oxylabs_spend** (≈১ ক্রেডিট), owner Approve ছাড়া চালাবেন না।
+**আসল Google ডেটা (ফ্রি):** সাইট search-এ কেমন করছে জানতে **get_search_console_performance** ব্যবহার করুন — Google Search Console থেকে সত্যিকারের clicks/impressions/CTR/গড় position + top query ও top page (ডিফল্ট শেষ ২৮ দিন)। ইনডেক্সিং/কভারেজ দেখতে **get_indexing_status** (আর্গুমেন্ট ছাড়া sitemap সারাংশ, বা নির্দিষ্ট page URL দিলে সেটা ইনডেক্স হয়েছে কিনা)। এগুলো ফ্রি ও নির্ভরযোগ্য — Oxylabs-এর আগে এগুলোই দেখুন। (owner একবার Growth পেজ থেকে Search Console connect করলে চালু হবে।)
+research_seo_keywords দিয়ে keyword ranking দেখুন — **আগে confirm_oxylabs_spend** (≈১ ক্রেডিট), owner Approve ছাড়া চালাবেন না। GSC-তে যা পাওয়া যায় তার জন্য Oxylabs খরচ করবেন না।
 **একসাথে অনেক product ঠিক করতে:** আগে audit চালান → যেসব product-এর meta/description দুর্বল, তাদের জন্য নিজে উন্নত বাংলা কপি লিখুন (meta 50-160 chars, description 100+ chars, keyword-rich, on-brand, হালাল) → তারপর **draft_seo_fixes**-এ সব একসাথে দিন। এতে owner **একটাই approval card**-এ পুরো ব্যাচ অনুমোদন করেন, approve করলেই সব লাইভ আপডেট হয়।
 একটা মাত্র product-এর জন্য update_product_web-ও ব্যবহার করা যায় (price সহ)।
 **র‍্যাঙ্ক ট্র্যাকিং:** যে keyword-এ business rank করতে চায় সেটা track_keyword দিয়ে যোগ করুন (যোগ করা ফ্রি) — rank tracking ON থাকলে প্রতি সপ্তাহে নিজে থেকে SERP টেনে owner-কে র‍্যাঙ্ক জানাবে। list_tracked_keywords-এ সর্বশেষ র‍্যাঙ্ক, untrack_keyword-এ বন্ধ। এককালীন check-এ research_seo_keywords (Approve লাগে)।
