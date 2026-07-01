@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState, useCallback, useMemo, type ReactNode } from 'react'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import AgentMarkdown from './AgentMarkdown'
-import AgentConfirmCard, { type PendingAction } from './AgentConfirmCard'
+import { type PendingAction } from './AgentConfirmCard'
+import AgentConfirmCardGroup from './AgentConfirmCardGroup'
 import AgentAskCard, { type AskCard } from './AgentAskCard'
 import { JamaatQuickReply } from './JamaatQuickReply'
 import AgentOpenTasksChip from './AgentOpenTasksChip'
@@ -83,7 +84,7 @@ export interface ChatMessage {
    * Built live from SSE events and persisted (usage.timeline) so it survives reload.
    */
   timeline?: TimelineEntry[]
-  pendingAction?: PendingAction
+  pendingActions?: PendingAction[]
   askCard?: AskCard
   /**
    * Set when the head router wants to upgrade this thread to a premium model
@@ -1262,14 +1263,14 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     />
                   )}
 
-                  {msg.pendingAction && (
-                    <AgentConfirmCard
-                      action={msg.pendingAction}
+                  {msg.pendingActions && msg.pendingActions.length > 0 && (
+                    <AgentConfirmCardGroup
+                      actions={msg.pendingActions}
                       onQuickSend={onQuickSend}
                       onResolved={(status) => {
                         // Approve always posts a result note. For a delegation,
                         // Reject ALSO posts one (Sonnet's own answer), so poll then too.
-                        if (status === 'approved' || msg.pendingAction?.actionType === 'delegation') {
+                        if (status === 'approved' || msg.pendingActions?.some((a) => a.actionType === 'delegation')) {
                           onActionApproved?.()
                         }
                       }}
