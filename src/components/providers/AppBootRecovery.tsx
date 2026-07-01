@@ -109,7 +109,7 @@ export function AppBootRecovery() {
       </p>
       <button
         type="button"
-        className="rounded-xl border border-[#E07A5F]/30 bg-[#E07A5F]/10 px-4 py-2 text-sm font-semibold text-[#E07A5F]"
+        className="rounded-xl border border-gold/30 bg-gold/10 px-4 py-2 text-sm font-semibold text-gold"
         onClick={() => {
           void clearAppCaches().finally(() => {
             try {

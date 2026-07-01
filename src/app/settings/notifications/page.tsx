@@ -132,7 +132,7 @@ export default function NotificationSettingsPage() {
             ) : (
               <div className="table-scroll">
                 <table className="w-full min-w-[760px] text-left text-[11px]">
-                  <thead className="text-[11px] font-medium uppercase tracking-wider text-muted border-b border-white/[0.08]">
+                  <thead className="sticky top-0 z-[1] bg-card/90 backdrop-blur-sm text-[11px] font-medium uppercase tracking-wider text-muted border-b border-white/[0.08]">
                     <tr>
                       <th className="py-2 pr-3">Title</th>
                       <th className="py-2 pr-3">Target</th>

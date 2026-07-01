@@ -150,7 +150,7 @@ export default function CrmPage() {
         <Card className="hidden min-w-0 md:block">
           <div className="overflow-x-auto min-w-0 max-w-full table-scroll">
           <table className="w-full min-w-[1080px] text-xs border-collapse">
-            <thead>
+            <thead className="sticky top-0 z-[1] bg-card/90 backdrop-blur-sm">
               <tr className="border-b border-border">
                 {['Customer','District','Orders','Revenue','CLV Score','Risk','Segment','Last Order','Actions'].map(h => (
                   <th key={h} className="px-3 py-3 text-left text-[10px] font-bold tracking-[0.08em] uppercase text-muted whitespace-nowrap">{h}</th>

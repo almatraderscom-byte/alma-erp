@@ -7,7 +7,7 @@ import toast from 'react-hot-toast'
 
 // Shared with login + reset for a consistent premium first impression.
 const AUTH_BG =
-  'bg-[radial-gradient(circle_at_15%_15%,rgba(224,122,95,0.18),transparent_42%),radial-gradient(circle_at_85%_85%,rgba(129,178,154,0.16),transparent_44%),linear-gradient(180deg,#1a1a20_0%,#202027_50%,#17171c_100%)]'
+  'bg-[radial-gradient(circle_at_15%_15%,rgb(var(--c-accent)/0.18),transparent_42%),radial-gradient(circle_at_85%_85%,rgba(129,178,154,0.16),transparent_44%),linear-gradient(180deg,#1a1a20_0%,#202027_50%,#17171c_100%)]'
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')

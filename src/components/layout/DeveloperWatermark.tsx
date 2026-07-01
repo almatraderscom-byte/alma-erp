@@ -39,7 +39,7 @@ function WatermarkDisplay({ text, showCursor }: { text: string; showCursor: bool
   return (
     <>
       {PREFIX}
-      <span className="font-semibold tracking-[0.08em] text-[#E07A5F]/40 md:text-[#E07A5F]/45">
+      <span className="font-semibold tracking-[0.08em] text-gold/40 md:text-gold/45">
         {text.slice(marufStart)}
       </span>
       {showCursor ? <span className="animate-pulse">|</span> : null}

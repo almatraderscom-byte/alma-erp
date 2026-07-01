@@ -361,7 +361,7 @@ export default function SystemDiagnosticsPage() {
                         <td className="py-2 px-3">
                           {(row.status === 'FAILED' || row.status === 'QUEUED') && (
                             <button
-                              className="text-[9px] font-semibold text-[#E07A5F] hover:underline disabled:opacity-40"
+                              className="text-[9px] font-semibold text-gold hover:underline disabled:opacity-40"
                               disabled={actionBusy}
                               onClick={() => void runAction('retry_single', 'Retry', { id: row.id })}
                             >

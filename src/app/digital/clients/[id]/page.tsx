@@ -218,7 +218,7 @@ export default function CditClientDetailPage() {
         ) : (
           <div className="table-scroll">
           <table className="w-full min-w-[680px] text-left text-xs">
-            <thead>
+            <thead className="sticky top-0 z-[1] bg-card/90 backdrop-blur-sm">
               <tr className="text-muted border-b border-border">
                 <th className="py-2 pr-2">ID</th>
                 <th className="py-2 pr-2">Date</th>

@@ -31,14 +31,14 @@ export function RouteTransitionLoader() {
       {visible && (
         <>
           <motion.div
-            className="pointer-events-none fixed inset-x-0 top-0 z-[95] h-0.5 overflow-hidden bg-[#E07A5F]/10 md:hidden"
+            className="pointer-events-none fixed inset-x-0 top-0 z-[95] h-0.5 overflow-hidden bg-gold/10 md:hidden"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             aria-hidden="true"
           >
             <motion.div
-              className="h-full bg-gradient-to-r from-transparent via-[#E07A5F] to-transparent"
+              className="h-full bg-gradient-to-r from-transparent via-gold to-transparent"
               initial={reduceMotion ? { x: '0%' } : { x: '-100%' }}
               animate={reduceMotion ? { x: '0%' } : { x: '100%' }}
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}

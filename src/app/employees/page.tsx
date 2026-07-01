@@ -275,7 +275,7 @@ export default function EmployeesPage() {
             </motion.div>
             <motion.div variants={fadeUp}>
               <Card className="p-4 text-center">
-                <p className="text-2xl font-bold text-[#E07A5F]">{stats.departments}</p>
+                <p className="text-2xl font-bold text-gold">{stats.departments}</p>
                 <p className="text-xs text-muted mt-1">Roles</p>
               </Card>
             </motion.div>
@@ -294,13 +294,13 @@ export default function EmployeesPage() {
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 placeholder="Search by name, ID, or phone..."
-                className="w-full rounded-xl border border-white/[0.06] bg-card/85 pl-10 pr-4 py-2.5 text-sm text-cream placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20 focus:border-[#E07A5F]/40 transition-all"
+                className="w-full rounded-xl border border-white/[0.06] bg-card/85 pl-10 pr-4 py-2.5 text-sm text-cream placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-gold/20 focus:border-gold/40 transition-all"
               />
             </div>
             <select
               value={roleFilter}
               onChange={e => setRoleFilter(e.target.value)}
-              className="rounded-xl border border-white/[0.06] bg-card/85 px-4 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20 focus:border-[#E07A5F]/40 transition-all"
+              className="rounded-xl border border-white/[0.06] bg-card/85 px-4 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-gold/20 focus:border-gold/40 transition-all"
             >
               <option value="ALL">All roles</option>
               {uniqueRoles.map(role => (
@@ -413,7 +413,7 @@ export default function EmployeesPage() {
                           <td className="py-3.5 pr-5">
                             <Link
                               href={`/employees/${encodeURIComponent(em.emp_id)}`}
-                              className="text-[#E07A5F] hover:text-[#c56a52] text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity"
+                              className="text-gold hover:text-gold text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity"
                             >
                               View details →
                             </Link>
@@ -431,7 +431,7 @@ export default function EmployeesPage() {
 
       {linkRosterEmpId && (
         <MobileModalPortal open zIndex={110} onBackdropClick={() => setLinkRosterEmpId(null)}>
-          <Card className="mobile-modal-shell w-full max-w-md border-[#E07A5F]/20 p-5">
+          <Card className="mobile-modal-shell w-full max-w-md border-gold/20 p-5">
             <p className="text-sm font-bold text-cream">Link roster row to user</p>
             <p className="text-[11px] text-muted mt-1 font-mono">{linkRosterEmpId}</p>
             <label className="block mt-4 text-[11px] text-muted">
@@ -459,7 +459,7 @@ export default function EmployeesPage() {
 
       {open && (
         <MobileModalPortal open zIndex={120} onBackdropClick={() => { setOpen(false); setSelectedUserId('') }}>
-          <Card className="mobile-modal-shell w-full max-w-5xl border-[#E07A5F]/20 sm:rounded-2xl">
+          <Card className="mobile-modal-shell w-full max-w-5xl border-gold/20 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
               <div className="flex justify-between gap-3 items-start">
                 <div>
@@ -474,7 +474,7 @@ export default function EmployeesPage() {
             <div className="mobile-modal-body px-5 pb-4">
             <div className="grid lg:grid-cols-[1.05fr_1fr] gap-4">
               <div className="rounded-2xl border border-white/[0.06] bg-white/[0.04]/50 p-4">
-                <p className="text-[10px] font-black uppercase tracking-[0.14em] text-[#E07A5F] mb-3">Create Employee From User</p>
+                <p className="text-[10px] font-black uppercase tracking-[0.14em] text-gold mb-3">Create Employee From User</p>
                 {usersLoading ? (
                   <Skeleton className="h-40 w-full" />
                 ) : !users.length ? (
@@ -484,7 +484,7 @@ export default function EmployeesPage() {
                     {users.map(user => (
                       <div
                         key={user.id}
-                        className={`rounded-xl border p-3 transition-all ${selectedUserId === user.id ? 'border-[#E07A5F]/40 bg-[#E07A5F]/5 shadow-sm' : user.selectable ? 'border-white/[0.06] bg-card/85 hover:border-white/[0.12]' : 'border-white/[0.04] bg-white/[0.04] opacity-70'}`}
+                        className={`rounded-xl border p-3 transition-all ${selectedUserId === user.id ? 'border-gold/40 bg-gold/5 shadow-sm' : user.selectable ? 'border-white/[0.06] bg-card/85 hover:border-white/[0.12]' : 'border-white/[0.04] bg-white/[0.04] opacity-70'}`}
                       >
                         <button
                           type="button"
@@ -564,8 +564,8 @@ export default function EmployeesPage() {
 
             <div className="space-y-3 text-xs">
               {selectedUser && (
-                <div className="rounded-2xl border border-[#E07A5F]/20 bg-[#E07A5F]/[0.03] p-3">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#E07A5F]">Selected user</p>
+                <div className="rounded-2xl border border-gold/20 bg-gold/[0.03] p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gold">Selected user</p>
                   <p className="mt-1 text-sm font-bold text-cream">{selectedUser.name}</p>
                   <p className="text-[11px] text-muted">{selectedUser.role.replace(/_/g, ' ')} · {selectedUser.businessAccess.replace(/,/g, ', ')}</p>
                   {selectedUser.linked && (
@@ -578,44 +578,44 @@ export default function EmployeesPage() {
               )}
               <label className="block space-y-1">
                 <span className="text-muted">Existing ID (optional)</span>
-                <input name="emp_id" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream font-mono text-[11px] placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" placeholder="AUTO if empty" />
+                <input name="emp_id" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream font-mono text-[11px] placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-gold/20" placeholder="AUTO if empty" />
               </label>
               <label className="block space-y-1">
                 <span className="text-muted">Full name</span>
-                <input name="name" required className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream text-sm focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                <input name="name" required className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream text-sm focus:outline-none focus:ring-2 focus:ring-gold/20" />
               </label>
               <div className="grid grid-cols-2 gap-2">
                 <label className="block space-y-1">
                   <span className="text-muted">Phone</span>
-                  <input name="phone" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                  <input name="phone" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream font-mono text-sm focus:outline-none focus:ring-2 focus:ring-gold/20" />
                 </label>
                 <label className="block space-y-1">
                   <span className="text-muted">Email</span>
-                  <input name="email" type="email" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream text-sm focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                  <input name="email" type="email" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream text-sm focus:outline-none focus:ring-2 focus:ring-gold/20" />
                 </label>
               </div>
               <label className="block space-y-1">
                 <span className="text-muted">Address</span>
-                <textarea name="address" rows={2} className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream text-sm focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                <textarea name="address" rows={2} className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream text-sm focus:outline-none focus:ring-2 focus:ring-gold/20" />
               </label>
               <div className="grid grid-cols-2 gap-2">
                 <label className="block space-y-1">
                   <span className="text-muted">Role</span>
-                  <input name="role" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream text-sm focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                  <input name="role" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream text-sm focus:outline-none focus:ring-2 focus:ring-gold/20" />
                 </label>
                 <label className="block space-y-1">
                   <span className="text-muted">Joining date</span>
-                  <input name="joining_date" type="date" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                  <input name="joining_date" type="date" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream font-mono text-sm focus:outline-none focus:ring-2 focus:ring-gold/20" />
                 </label>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <label className="block space-y-1">
                   <span className="text-muted">Monthly salary</span>
-                  <input name="monthly_salary" type="number" step="0.01" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                  <input name="monthly_salary" type="number" step="0.01" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-gold/20" />
                 </label>
                 <label className="block space-y-1">
                   <span className="text-muted">Status</span>
-                  <select name="status" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20">
+                  <select name="status" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-gold/20">
                     <option>Active</option>
                     <option>Inactive</option>
                     <option>Probation</option>
@@ -624,7 +624,7 @@ export default function EmployeesPage() {
               </div>
               <label className="block space-y-1">
                 <span className="text-muted">Notes</span>
-                <textarea name="notes" rows={3} className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream text-sm focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                <textarea name="notes" rows={3} className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream text-sm focus:outline-none focus:ring-2 focus:ring-gold/20" />
               </label>
             </div>
             </div>

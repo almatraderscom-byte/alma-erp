@@ -28,7 +28,7 @@ export function ProfilePhotoSection({
   return (
     <section
       id="profile-photo"
-      className="scroll-mt-24 rounded-2xl border border-gold-dim/35 bg-gradient-to-br from-gold/[0.06] via-card to-card p-5 sm:p-6 shadow-[0_0_40px_rgba(224,122,95,0.08)]"
+      className="scroll-mt-24 rounded-2xl border border-gold-dim/35 bg-gradient-to-br from-gold/[0.06] via-card to-card p-5 sm:p-6 shadow-[0_0_40px_rgb(var(--c-accent)/0.08)]"
     >
       <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <div>

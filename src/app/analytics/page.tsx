@@ -197,8 +197,8 @@ export default function AnalyticsPage() {
             ) : (
               <div className="overflow-x-auto min-w-0 max-w-full table-scroll">
                 <table className="w-full min-w-[720px] text-xs border-collapse">
-                  <thead>
-                    <tr className="border-b border-white/[0.06] bg-white/[0.04]/50">
+                  <thead className="sticky top-0 z-[1] bg-card/90 backdrop-blur-sm">
+                    <tr className="border-b border-white/[0.06]">
                       {['Category','Orders','Revenue','Profit','Margin'].map(h => (
                         <th key={h} className="px-4 py-3 text-left text-[10px] font-semibold tracking-[0.08em] uppercase text-muted">{h}</th>
                       ))}
@@ -219,9 +219,9 @@ export default function AnalyticsPage() {
                         <td className="px-4 py-3.5">
                           <div className="flex items-center gap-2">
                             <div className="flex-1 h-1 bg-white/[0.06] rounded-full overflow-hidden w-16">
-                              <div className="h-full bg-[#E07A5F] rounded-full" style={{ width: `${c.margin}%` }} />
+                              <div className="h-full bg-gold rounded-full" style={{ width: `${c.margin}%` }} />
                             </div>
-                            <span className="text-[11px] font-bold text-[#E07A5F] w-8 text-right">{c.margin}%</span>
+                            <span className="text-[11px] font-bold text-gold w-8 text-right">{c.margin}%</span>
                           </div>
                         </td>
                       </tr>
@@ -270,12 +270,12 @@ export default function AnalyticsPage() {
                       <span className="font-semibold text-cream">{source}</span>
                       <div className="flex gap-3">
                         <span className="text-muted">{v.orders} orders</span>
-                        <span className="font-bold text-[#E07A5F]"><Money amount={v.revenue} /></span>
+                        <span className="font-bold text-gold"><Money amount={v.revenue} /></span>
                       </div>
                     </div>
                     <div className="h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-[#E07A5F] rounded-full"
+                        className="h-full bg-gold rounded-full"
                         style={{ width: `${Math.round(v.revenue / (kpis.total_revenue || 1) * 100)}%` }}
                       />
                     </div>

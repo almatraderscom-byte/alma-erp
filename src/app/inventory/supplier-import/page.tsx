@@ -275,7 +275,7 @@ export default function SupplierImportPage() {
                     setCatRows(next)
                   }}
                   placeholder="Supplier category"
-                  className="flex-1 bg-card border border-border rounded-lg px-3 py-2 text-xs text-cream"
+                  className="flex-1 bg-card border border-border-strong rounded-lg px-3 py-2 text-xs text-cream focus:outline-none focus:border-gold/50 transition-colors"
                 />
                 <span className="text-muted-hi">→</span>
                 <input
@@ -286,7 +286,7 @@ export default function SupplierImportPage() {
                     setCatRows(next)
                   }}
                   placeholder="Your category"
-                  className="flex-1 bg-card border border-border rounded-lg px-3 py-2 text-xs text-cream"
+                  className="flex-1 bg-card border border-border-strong rounded-lg px-3 py-2 text-xs text-cream focus:outline-none focus:border-gold/50 transition-colors"
                 />
                 {catRows.length > 1 && (
                   <Button variant="ghost" size="xs" onClick={() => setCatRows(catRows.filter((_, j) => j !== i))}>
@@ -328,7 +328,7 @@ export default function SupplierImportPage() {
           ) : (
             <div className="table-scroll border border-border rounded-xl">
               <table className="w-full text-[11px] border-collapse min-w-[820px]">
-                <thead>
+                <thead className="sticky top-0 z-[1] bg-card/95 backdrop-blur-sm">
                   <tr className="border-b border-border bg-white/[0.04]">
                     <th className="px-2 py-2 text-left w-10">✓</th>
                     <th className="px-2 py-2 text-left">Status</th>

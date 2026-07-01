@@ -538,7 +538,7 @@ export default function EmployeeDetailPage() {
       <FinancePageChrome title="Employee" subtitle="Profile & payroll ledger">
         <Empty icon="◎" title="Not found" desc="Return to roster and choose an employee." />
         <div className="text-center mt-4">
-          <Link href="/employees" className="text-[#E07A5F] underline text-sm font-medium">← Employees</Link>
+          <Link href="/employees" className="text-gold underline text-sm font-medium">← Employees</Link>
         </div>
       </FinancePageChrome>
     )
@@ -573,7 +573,7 @@ export default function EmployeeDetailPage() {
                   {employee.address && <p className="text-xs text-muted mt-1">{employee.address}</p>}
                 </div>
                 <div className="text-right space-y-1">
-                  <p className="text-2xl font-bold text-[#E07A5F] font-mono">{formatMoneyBDT(employee.monthly_salary)}</p>
+                  <p className="text-2xl font-bold text-gold font-mono">{formatMoneyBDT(employee.monthly_salary)}</p>
                   <p className="text-[10px] text-muted uppercase tracking-wider">Monthly Salary</p>
                 </div>
               </div>
@@ -643,7 +643,7 @@ export default function EmployeeDetailPage() {
                   />
                   <button
                     type="button"
-                    className="text-[10px] text-[#E07A5F] font-medium underline"
+                    className="text-[10px] text-gold font-medium underline"
                     onClick={() => document.getElementById('postgres-wallet-ledger')?.scrollIntoView({ behavior: 'smooth' })}
                   >
                     View detailed ledger
@@ -742,7 +742,7 @@ export default function EmployeeDetailPage() {
             <Button size="xs" variant="ghost" onClick={() => setOpenSalary(true)}>Edit salary</Button>
           ) : null}
         </div>
-        <p className="font-mono text-2xl font-bold text-[#E07A5F]">
+        <p className="font-mono text-2xl font-bold text-gold">
           {formatMoneyBDT(employee.monthly_salary)}
         </p>
         <p className="text-[10px] text-muted mt-2">Past accruals are not recalculated when salary changes.</p>
@@ -787,7 +787,7 @@ export default function EmployeeDetailPage() {
                           </span>
                         </td>
                         <td className={`py-2.5 pr-3 text-right font-mono font-medium ${tx.signedAmount >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{tx.signedAmount >= 0 ? '+' : '-'}৳ {Math.abs(tx.signedAmount).toLocaleString('en-BD')}</td>
-                        <td className="py-2.5 pr-3 text-right font-mono text-[#E07A5F] font-medium">৳ {tx.runningBalance.toLocaleString('en-BD')}</td>
+                        <td className="py-2.5 pr-3 text-right font-mono text-gold font-medium">৳ {tx.runningBalance.toLocaleString('en-BD')}</td>
                         <td className="py-2.5 text-muted max-w-[200px] truncate">{tx.note || '—'}</td>
                         {canReverseSalary ? (
                           <td className="py-2.5 text-right">
@@ -884,7 +884,7 @@ export default function EmployeeDetailPage() {
                         {tx.tx_type}
                       </span>
                     </td>
-                    <td className="py-2.5 pr-3 text-right font-mono text-[#E07A5F] font-medium">{tx.amount.toLocaleString('en-BD')}</td>
+                    <td className="py-2.5 pr-3 text-right font-mono text-gold font-medium">{tx.amount.toLocaleString('en-BD')}</td>
                     <td className="py-2.5 pr-3 text-muted-hi">{tx.period_ym}</td>
                     <td className="py-2.5 text-muted">{tx.note}</td>
                   </tr>
@@ -898,7 +898,7 @@ export default function EmployeeDetailPage() {
       {/* Modals */}
       {openSalary && employee && (
         <MobileModalPortal open zIndex={120} onBackdropClick={() => !savingSalary && setOpenSalary(false)} aria-label="Update employee salary">
-          <Card className="mobile-modal-shell w-full max-w-md border-[#E07A5F]/20 sm:rounded-2xl">
+          <Card className="mobile-modal-shell w-full max-w-md border-gold/20 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
               <p className="text-sm font-bold text-cream">Update salary for {employee.name}</p>
             </div>
@@ -922,7 +922,7 @@ export default function EmployeeDetailPage() {
                     step={1}
                     required
                     defaultValue={employee.monthly_salary}
-                    className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                    className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream focus:outline-none focus:ring-2 focus:ring-gold/20"
                   />
                 </label>
                 <label className="block space-y-1">
@@ -932,7 +932,7 @@ export default function EmployeeDetailPage() {
                     type="date"
                     defaultValue={todayIso}
                     required
-                    className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                    className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream focus:outline-none focus:ring-2 focus:ring-gold/20"
                   />
                 </label>
                 <p className="text-[10px] text-muted">
@@ -945,7 +945,7 @@ export default function EmployeeDetailPage() {
                     rows={2}
                     maxLength={500}
                     placeholder="e.g. annual increment, role change"
-                    className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                    className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-gold/20"
                   />
                 </label>
               </div>
@@ -969,7 +969,7 @@ export default function EmployeeDetailPage() {
               <p className="text-sm font-bold text-amber-700">Confirm wallet debit</p>
               <p className="mt-2 text-xs text-muted-hi leading-relaxed">
                 This will <span className="font-bold text-red-600">DECREASE</span> {employee.name}&apos;s wallet balance by{' '}
-                <span className="font-mono text-[#E07A5F] font-bold">৳ {payConfirm.amount.toLocaleString('en-BD')}</span>.
+                <span className="font-mono text-gold font-bold">৳ {payConfirm.amount.toLocaleString('en-BD')}</span>.
               </p>
               <p className="mt-2 text-xs text-muted">
                 Current balance:{' '}
@@ -1013,7 +1013,7 @@ export default function EmployeeDetailPage() {
           onBackdropClick={() => !correctionSubmitting && setOpenCorrection(false)}
           aria-label="Request salary correction"
         >
-          <Card className="mobile-modal-shell w-full max-w-lg border-[#E07A5F]/20 sm:rounded-2xl">
+          <Card className="mobile-modal-shell w-full max-w-lg border-gold/20 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
               <p className="text-sm font-bold text-cream">Request salary correction for {employee.name}</p>
             </div>
@@ -1033,18 +1033,18 @@ export default function EmployeeDetailPage() {
                       return (
                         <label
                           key={entry.id}
-                          className={`flex cursor-pointer gap-3 rounded-xl border px-3 py-2.5 transition-all ${selected ? 'border-[#E07A5F]/40 bg-[#E07A5F]/5 shadow-sm' : 'border-white/[0.06] bg-white/[0.04]/50 hover:bg-white/[0.04]'}`}
+                          className={`flex cursor-pointer gap-3 rounded-xl border px-3 py-2.5 transition-all ${selected ? 'border-gold/40 bg-gold/5 shadow-sm' : 'border-white/[0.06] bg-white/[0.04]/50 hover:bg-white/[0.04]'}`}
                         >
                           <input
                             type="radio"
                             name="correction_accrual"
-                            className="mt-1 accent-[#E07A5F]"
+                            className="mt-1 accent-gold"
                             checked={selected}
                             onChange={() => setCorrectionAccrualId(entry.id || '')}
                           />
                           <div className="min-w-0 flex-1">
                             <p className="font-bold text-cream">{period}</p>
-                            <p className="font-mono text-[#E07A5F] mt-0.5">{formatMoneyBDT(amount)}</p>
+                            <p className="font-mono text-gold mt-0.5">{formatMoneyBDT(amount)}</p>
                             <p className="text-muted mt-1 line-clamp-2">{entry.note || '—'}</p>
                           </div>
                         </label>
@@ -1064,7 +1064,7 @@ export default function EmployeeDetailPage() {
                   onChange={e => setCorrectionProposed(e.target.value)}
                   disabled={!selectedAccrual}
                   placeholder={selectedAccrual ? `Current ${formatMoneyBDT(Number(selectedAccrual.amount || 0))}` : 'Select accrual first'}
-                  className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                  className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-gold/20"
                 />
                 {correctionDelta != null ? (
                   <p className={`font-mono font-bold ${correctionDelta >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
@@ -1139,7 +1139,7 @@ export default function EmployeeDetailPage() {
                   minLength={5}
                   maxLength={800}
                   placeholder="Explain why this accrual amount should change"
-                  className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                  className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-gold/20"
                 />
               </section>
             </div>
@@ -1171,7 +1171,7 @@ export default function EmployeeDetailPage() {
 
       {openPay && (
         <MobileModalPortal open zIndex={120} onBackdropClick={() => { setOpenPay(false); setPayConfirm(null) }} aria-label="Log payroll movement">
-          <Card className="mobile-modal-shell w-full max-w-md border-[#E07A5F]/20 sm:rounded-2xl">
+          <Card className="mobile-modal-shell w-full max-w-md border-gold/20 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
               <p className="text-sm font-bold text-cream">Log payroll movement</p>
             </div>
@@ -1183,7 +1183,7 @@ export default function EmployeeDetailPage() {
                   name="tx_type"
                   value={payTxType}
                   onChange={e => setPayTxType(e.target.value as LegacyPayTxType)}
-                  className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream text-sm focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                  className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-cream text-sm focus:outline-none focus:ring-2 focus:ring-gold/20"
                   required
                 >
                   {LEGACY_PAY_TX_OPTIONS.map(opt => (
@@ -1196,21 +1196,21 @@ export default function EmployeeDetailPage() {
               </label>
               <label className="block space-y-1">
                 <span className="text-muted">Amount (৳)</span>
-                <input name="amount" type="number" step="0.01" required className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                <input name="amount" type="number" step="0.01" required className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream focus:outline-none focus:ring-2 focus:ring-gold/20" />
               </label>
               <div className="grid grid-cols-2 gap-2">
                 <label className="block space-y-1">
                   <span className="text-muted">Effective date</span>
-                  <input name="date" type="date" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                  <input name="date" type="date" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream focus:outline-none focus:ring-2 focus:ring-gold/20" />
                 </label>
                 <label className="block space-y-1">
                   <span className="text-muted">Period (YYYY-MM)</span>
-                  <input name="period_ym" placeholder="2026-05" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                  <input name="period_ym" placeholder="2026-05" className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 font-mono text-sm text-cream focus:outline-none focus:ring-2 focus:ring-gold/20" />
                 </label>
               </div>
               <label className="block space-y-1">
                 <span className="text-muted">Note</span>
-                <textarea name="note" rows={2} className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+                <textarea name="note" rows={2} className="w-full rounded-xl bg-card/85 border border-white/[0.06] px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-gold/20" />
               </label>
               </div>
               <div className="mobile-modal-footer px-5 pt-3">

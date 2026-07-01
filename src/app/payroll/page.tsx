@@ -500,20 +500,20 @@ export default function PayrollPage() {
             </div>
           </div>
           <form onSubmit={submitCompensation} className="grid md:grid-cols-[1.2fr_1fr_1fr_1fr_1.5fr_auto] gap-2 text-[11px]">
-            <select value={compForm.employeeId} onChange={e => setCompForm(f => ({ ...f, employeeId: e.target.value }))} className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20">
+            <select value={compForm.employeeId} onChange={e => setCompForm(f => ({ ...f, employeeId: e.target.value }))} className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-gold/20">
               <option value="">Select employee</option>
               {compWallets.map(w => <option key={`${w.businessId}:${w.employeeId}`} value={w.employeeId}>{w.name} · {w.employeeId}</option>)}
             </select>
-            <select value={compForm.type} onChange={e => setCompForm(f => ({ ...f, type: e.target.value }))} className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20">
+            <select value={compForm.type} onChange={e => setCompForm(f => ({ ...f, type: e.target.value }))} className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-gold/20">
               {PAYROLL_COMPENSATION_TYPES.map(t => (
                 <option key={t.value} value={t.value}>
                   {t.label}{t.kind === 'credit' ? ' · credit' : t.kind === 'debit' ? ' · debit' : ''}
                 </option>
               ))}
             </select>
-            <input value={compForm.amount} onChange={e => setCompForm(f => ({ ...f, amount: e.target.value }))} type="number" min={compForm.type === 'ADJUSTMENT' ? undefined : 1} step="1" placeholder={compForm.type === 'ADJUSTMENT' ? 'Amount (+/-)' : 'Amount'} className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream font-mono focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
-            <input value={compForm.date} onChange={e => setCompForm(f => ({ ...f, date: e.target.value }))} type="date" className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
-            <input value={compForm.note} onChange={e => setCompForm(f => ({ ...f, note: e.target.value }))} placeholder="Note" className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20" />
+            <input value={compForm.amount} onChange={e => setCompForm(f => ({ ...f, amount: e.target.value }))} type="number" min={compForm.type === 'ADJUSTMENT' ? undefined : 1} step="1" placeholder={compForm.type === 'ADJUSTMENT' ? 'Amount (+/-)' : 'Amount'} className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream font-mono focus:outline-none focus:ring-2 focus:ring-gold/20" />
+            <input value={compForm.date} onChange={e => setCompForm(f => ({ ...f, date: e.target.value }))} type="date" className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-gold/20" />
+            <input value={compForm.note} onChange={e => setCompForm(f => ({ ...f, note: e.target.value }))} placeholder="Note" className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-gold/20" />
             <Button size="xs" variant="gold" type="submit" loading={compBusy}>Post</Button>
           </form>
           {orphanLedgerCount > 0 && (
@@ -521,7 +521,7 @@ export default function PayrollPage() {
               {orphanLedgerCount} orphan ledger {orphanLedgerCount === 1 ? 'entry' : 'entries'} (not on roster / no linked user).{' '}
               <button
                 type="button"
-                className="text-[#E07A5F] underline font-medium"
+                className="text-gold underline font-medium"
                 onClick={() => {
                   setLedgerTypeFilter('ALL')
                   setEmployeeFilter('')
@@ -566,7 +566,7 @@ export default function PayrollPage() {
                       <span className="font-mono text-muted">{run.periodYm}</span>
                       <span className={run.status === 'SUCCESS' ? 'txt-pos font-medium' : run.status === 'RUNNING' ? 'text-amber-500 font-medium' : 'txt-neg font-medium'}>{run.status}</span>
                       <span className="text-muted">{run.trigger}</span>
-                      <span className="font-mono text-[#E07A5F]">+{run.createdCount} / skip {run.skippedCount}</span>
+                      <span className="font-mono text-gold">+{run.createdCount} / skip {run.skippedCount}</span>
                     </div>
                   ))}
                 </div>
@@ -596,7 +596,7 @@ export default function PayrollPage() {
                     <p className="text-[10px] text-muted mt-1">{req.businessId.replace(/_/g, ' ')} · {req.createdAt.slice(0, 10)}</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="font-mono text-[#E07A5F] text-sm font-bold">৳ {Number(req.requestedAmount).toLocaleString('en-BD')}</span>
+                    <span className="font-mono text-gold text-sm font-bold">৳ {Number(req.requestedAmount).toLocaleString('en-BD')}</span>
                     <Button size="xs" variant="secondary" type="button" onClick={() => setReview({ id: req.id, action: 'REJECT', type: req.type, requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount), transactionId: '' })}>Reject</Button>
                     <Button size="xs" variant="gold" type="button" onClick={() => setReview({ id: req.id, action: 'APPROVE', type: req.type, requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount), transactionId: '' })}>Approve</Button>
                   </div>
@@ -616,7 +616,7 @@ export default function PayrollPage() {
               <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
               </svg>
-              <input value={employeeFilter} onChange={e => setEmployeeFilter(e.target.value)} placeholder="Filter employee" className="w-full min-h-[44px] rounded-xl border border-white/[0.06] bg-card/85 pl-9 pr-3 py-2 text-[11px] text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20 md:min-h-0" />
+              <input value={employeeFilter} onChange={e => setEmployeeFilter(e.target.value)} placeholder="Filter employee" className="w-full min-h-[44px] rounded-xl border border-white/[0.06] bg-card/85 pl-9 pr-3 py-2 text-[11px] text-cream focus:outline-none focus:ring-2 focus:ring-gold/20 md:min-h-0" />
             </div>
           </div>
         </div>
@@ -628,7 +628,7 @@ export default function PayrollPage() {
               onClick={() => setLedgerTypeFilter(t)}
               className={`shrink-0 min-h-[44px] rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${
                 ledgerTypeFilter === t
-                  ? 'border-[#E07A5F]/30 bg-[#E07A5F]/10 text-[#E07A5F]'
+                  ? 'border-gold/30 bg-gold/10 text-gold'
                   : 'border-white/[0.06] text-muted hover:text-cream hover:bg-white/[0.04]'
               }`}
             >
@@ -666,12 +666,12 @@ export default function PayrollPage() {
                     <td className="py-3 pr-3"><span className="text-cream font-medium">{w.name}</span><span className="block text-muted font-mono text-[10px]">{w.employeeId}</span></td>
                     <td className="py-3 pr-3 font-mono text-right text-cream">৳ {w.summary.lifetimeEarned.toLocaleString('en-BD')}</td>
                     <td className="py-3 pr-3 font-mono text-right txt-pos">৳ {w.summary.totalCommissions.toLocaleString('en-BD')}</td>
-                    <td className="py-3 pr-3 font-mono text-right text-[#E07A5F]">৳ {w.summary.totalBonuses.toLocaleString('en-BD')}</td>
+                    <td className="py-3 pr-3 font-mono text-right text-gold">৳ {w.summary.totalBonuses.toLocaleString('en-BD')}</td>
                     <td className="py-3 pr-3 font-mono text-right txt-neg">৳ {(w.summary.totalMealDeductions + w.summary.totalPenalties).toLocaleString('en-BD')}</td>
                     <td className="py-3 pr-3 font-mono text-right text-muted">৳ {w.summary.lifetimeWithdrawn.toLocaleString('en-BD')}</td>
                     <td className="py-3 pr-3 font-mono text-right txt-pos font-medium">৳ {w.summary.companyLiability.toLocaleString('en-BD')}</td>
                     <td className="py-3 pr-3 font-mono text-right text-muted">{w.summary.totalAccrued ? `${Math.round(((w.summary.totalCommissions + w.summary.totalBonuses) / w.summary.totalAccrued) * 100)}% variable` : '—'}</td>
-                    <td className="py-3"><Link href={`/employees/${encodeURIComponent(w.employeeId)}`} className="text-[#E07A5F] hover:text-[#c56a52] font-medium">Ledger</Link></td>
+                    <td className="py-3"><Link href={`/employees/${encodeURIComponent(w.employeeId)}`} className="text-gold hover:text-gold font-medium">Ledger</Link></td>
                   </tr>
                 ))}
               </tbody>
@@ -691,7 +691,7 @@ export default function PayrollPage() {
                       <p className="truncate font-semibold text-cream">{w.name}</p>
                       <p className="font-mono text-muted text-[10px]">{w.employeeId}</p>
                     </div>
-                    <Link href={`/employees/${encodeURIComponent(w.employeeId)}`} className="shrink-0 text-[#E07A5F] font-medium text-xs">
+                    <Link href={`/employees/${encodeURIComponent(w.employeeId)}`} className="shrink-0 text-gold font-medium text-xs">
                       Ledger →
                     </Link>
                   </div>
@@ -763,7 +763,7 @@ export default function PayrollPage() {
                               prev.map(r => (r.userId === row.userId ? { ...r, enabled: e.target.checked } : r)),
                             )
                           }
-                          className="h-4 w-4 rounded border-white/[0.1] accent-[#E07A5F]"
+                          className="h-4 w-4 rounded border-white/[0.1] accent-gold"
                         />
                       </td>
                       <td className="py-3 pr-3">
@@ -778,7 +778,7 @@ export default function PayrollPage() {
                               prev.map(r => (r.userId === row.userId ? { ...r, amountBdt: e.target.value } : r)),
                             )
                           }
-                          className="w-full max-w-[120px] ml-auto rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-right font-mono text-cream disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                          className="w-full max-w-[120px] ml-auto rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-right font-mono text-cream disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-gold/20"
                         />
                       </td>
                       <td className="py-3 text-right">
@@ -821,7 +821,7 @@ export default function PayrollPage() {
                               prev.map(r => (r.userId === row.userId ? { ...r, enabled: e.target.checked } : r)),
                             )
                           }
-                          className="h-4 w-4 rounded border-white/[0.1] accent-[#E07A5F]"
+                          className="h-4 w-4 rounded border-white/[0.1] accent-gold"
                         />
                       </label>
                     </div>
@@ -839,7 +839,7 @@ export default function PayrollPage() {
                               prev.map(r => (r.userId === row.userId ? { ...r, amountBdt: e.target.value } : r)),
                             )
                           }
-                          className="w-full min-h-[44px] rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 font-mono text-cream disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                          className="w-full min-h-[44px] rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 font-mono text-cream disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-gold/20"
                         />
                       </label>
                       <Button
@@ -901,7 +901,7 @@ export default function PayrollPage() {
                               prev.map(r => (r.userId === row.userId ? { ...r, enabled: e.target.checked } : r)),
                             )
                           }
-                          className="h-4 w-4 rounded border-white/[0.1] accent-[#E07A5F]"
+                          className="h-4 w-4 rounded border-white/[0.1] accent-gold"
                         />
                       </td>
                       <td className="py-3 pr-3 text-center">
@@ -947,13 +947,13 @@ export default function PayrollPage() {
 
       {review && (
         <MobileModalPortal open zIndex={80} onBackdropClick={() => setReview(null)}>
-          <Card className="mobile-modal-shell w-full max-w-md sm:rounded-2xl border-[#E07A5F]/20">
+          <Card className="mobile-modal-shell w-full max-w-md sm:rounded-2xl border-gold/20">
             <div className="mobile-modal-header p-5 pb-3">
               <p className="text-sm font-bold text-cream">
                 {review.action === 'APPROVE' ? 'Approve wallet request' : 'Reject wallet request'}
               </p>
               <p className="mt-1 text-xs text-muted">
-                Requested amount: <span className="font-mono text-[#E07A5F] font-bold">৳ {review.requestedAmount.toLocaleString('en-BD')}</span>
+                Requested amount: <span className="font-mono text-gold font-bold">৳ {review.requestedAmount.toLocaleString('en-BD')}</span>
               </p>
             </div>
             <div className="mobile-modal-body px-5">
@@ -967,7 +967,7 @@ export default function PayrollPage() {
                     min="1"
                     value={review.approvedAmount}
                     onChange={e => setReview(r => r ? { ...r, approvedAmount: e.target.value } : r)}
-                    className="mt-2 w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-sm text-cream outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                    className="mt-2 w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-sm text-cream outline-none focus:ring-2 focus:ring-gold/20"
                   />
                 </label>
               )}
@@ -980,7 +980,7 @@ export default function PayrollPage() {
                     placeholder="যে নম্বর/ID থেকে টাকা পাঠালেন"
                     value={review.transactionId}
                     onChange={e => setReview(r => r ? { ...r, transactionId: e.target.value } : r)}
-                    className="mt-2 w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-sm text-cream outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                    className="mt-2 w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-sm text-cream outline-none focus:ring-2 focus:ring-gold/20"
                   />
                   <span className="mt-1 block text-[10px] font-normal normal-case text-muted">এই ID সহ staff-কে SMS পাঠানো হবে।</span>
                 </label>
@@ -1022,8 +1022,8 @@ export default function PayrollPage() {
                     <td className="py-3 pr-3 font-mono text-right text-cream">৳ {r.monthly_salary.toLocaleString('en-BD')}</td>
                     <td className="py-3 pr-3 font-mono text-right text-muted">৳ {r.salary_paid.toLocaleString('en-BD')}</td>
                     <td className="py-3 pr-3 font-mono text-right text-muted">৳ {Math.max(0, r.advance_balance).toLocaleString('en-BD')}</td>
-                    <td className="py-3 pr-3 font-mono text-right text-[#E07A5F] font-medium">৳ {Math.max(0, r.current_due).toLocaleString('en-BD')}</td>
-                    <td className="py-3"><Link href={`/employees/${r.emp_id}`} className="text-[#E07A5F] hover:text-[#c56a52] font-medium">Detail</Link></td>
+                    <td className="py-3 pr-3 font-mono text-right text-gold font-medium">৳ {Math.max(0, r.current_due).toLocaleString('en-BD')}</td>
+                    <td className="py-3"><Link href={`/employees/${r.emp_id}`} className="text-gold hover:text-gold font-medium">Detail</Link></td>
                   </tr>
                 ))}
               </tbody>
@@ -1042,7 +1042,7 @@ export default function PayrollPage() {
               <div key={tx.tx_id} className="py-2.5 flex justify-between gap-2 items-center">
                 <span className="text-muted font-mono text-[10px]">{tx.date.slice(0, 10)}</span>
                 <span className="flex-1 text-cream font-medium">{tx.emp_name} · {tx.tx_type.replace('_',' ')}</span>
-                <span className="font-mono text-[#E07A5F] font-bold">৳ {tx.amount.toLocaleString('en-BD')}</span>
+                <span className="font-mono text-gold font-bold">৳ {tx.amount.toLocaleString('en-BD')}</span>
               </div>
             ))}
           </div>

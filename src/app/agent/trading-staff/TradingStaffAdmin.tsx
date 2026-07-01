@@ -168,7 +168,7 @@ export default function TradingStaffAdmin() {
                         }
                       }}
                       placeholder="123456789"
-                      className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-1.5 text-cream text-xs focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
+                      className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-1.5 text-cream text-xs focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgb(var(--c-accent)/0.1)] transition-all"
                     />
                   </label>
                   <label className="space-y-1">
@@ -179,7 +179,7 @@ export default function TradingStaffAdmin() {
                         const v = e.target.value.trim() || 'p2p_trader'
                         if (v !== s.role) void upsert({ id: s.id, role: v })
                       }}
-                      className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-1.5 text-cream text-xs focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
+                      className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-1.5 text-cream text-xs focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgb(var(--c-accent)/0.1)] transition-all"
                     />
                   </label>
                 </div>
@@ -206,7 +206,7 @@ export default function TradingStaffAdmin() {
                   const u = availableUsers.find((x) => x.id === e.target.value)
                   setDraft((d) => ({ ...d, userId: e.target.value, name: u?.name ?? d.name }))
                 }}
-                className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-2 text-sm text-cream focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
+                className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-2 text-sm text-cream focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgb(var(--c-accent)/0.1)] transition-all"
               >
                 <option value="" className="bg-card/60 backdrop-blur-2xl text-muted">— select user —</option>
                 {availableUsers.map((u) => (
@@ -222,7 +222,7 @@ export default function TradingStaffAdmin() {
                 value={draft.name}
                 onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
                 placeholder="default = User.name"
-                className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-1.5 text-sm text-cream focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
+                className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-1.5 text-sm text-cream focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgb(var(--c-accent)/0.1)] transition-all"
               />
             </label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -231,7 +231,7 @@ export default function TradingStaffAdmin() {
                 <input
                   value={draft.role}
                   onChange={(e) => setDraft((d) => ({ ...d, role: e.target.value }))}
-                  className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-1.5 text-sm text-cream focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
+                  className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-1.5 text-sm text-cream focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgb(var(--c-accent)/0.1)] transition-all"
                 />
               </label>
               <label className="block space-y-1">
@@ -240,7 +240,7 @@ export default function TradingStaffAdmin() {
                   value={draft.telegramChatId}
                   onChange={(e) => setDraft((d) => ({ ...d, telegramChatId: e.target.value }))}
                   placeholder="123456789"
-                  className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-1.5 text-sm text-cream focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgba(224,122,95,0.1)] transition-all"
+                  className="w-full rounded-lg bg-white/[0.03] border border-border backdrop-blur-sm px-2.5 py-1.5 text-sm text-cream focus:outline-none focus:border-gold/40 focus:shadow-[0_0_12px_rgb(var(--c-accent)/0.1)] transition-all"
                 />
               </label>
             </div>
@@ -258,7 +258,7 @@ export default function TradingStaffAdmin() {
                     setDraft({ userId: '', name: '', role: 'p2p_trader', telegramChatId: '' })
                   })
                 }}
-                className="rounded-lg bg-gold/10 border border-gold/30 backdrop-blur-sm px-4 py-2 text-sm font-semibold text-gold-lt disabled:opacity-50 hover:bg-gold/15 hover:shadow-[0_0_16px_rgba(224,122,95,0.15)] transition-all"
+                className="rounded-lg bg-gold/10 border border-gold/30 backdrop-blur-sm px-4 py-2 text-sm font-semibold text-gold-lt disabled:opacity-50 hover:bg-gold/15 hover:shadow-[0_0_16px_rgb(var(--c-accent)/0.15)] transition-all"
               >
                 {saving ? 'Saving…' : 'Link staff'}
               </button>

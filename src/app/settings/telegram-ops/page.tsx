@@ -352,7 +352,7 @@ function TelegramOpsSettingsPageInner() {
                 <Card className="rounded-2xl border border-white/[0.06] p-5 text-[11px] text-muted-hi shadow-sm">
                   <p className="font-bold text-cream">Owner routing diagnostics</p>
                   <p className="mt-2">
-                    Active source: <span className="font-semibold text-[#E07A5F]">{routingLabel(routing.source)}</span>
+                    Active source: <span className="font-semibold text-gold">{routingLabel(routing.source)}</span>
                     {' · '}
                     Delivering to: <span className="font-mono text-cream">{routing.chatIds.join(', ') || '—'}</span>
                   </p>
@@ -365,10 +365,10 @@ function TelegramOpsSettingsPageInner() {
                     </p>
                   ) : null}
                   <p className="mt-2 text-muted">
-                    Priority: database chat IDs first. If empty or invalid, <code className="text-[#E07A5F]">TELEGRAM_OWNER_CHAT_IDS</code> env is used.
+                    Priority: database chat IDs first. If empty or invalid, <code className="text-gold">TELEGRAM_OWNER_CHAT_IDS</code> env is used.
                   </p>
                   <p className="mt-2 text-muted">
-                    Delivery: <span className="text-[#E07A5F]">enqueue → cron/worker</span> (ERP never waits on Telegram API).
+                    Delivery: <span className="text-gold">enqueue → cron/worker</span> (ERP never waits on Telegram API).
                     High priority: approvals, penalties, wallet. Low priority: screenshots, summaries (45s delay).
                   </p>
                 </Card>
@@ -448,7 +448,7 @@ function TelegramOpsSettingsPageInner() {
                         type="checkbox"
                         checked={Boolean(setting[t.key])}
                         onChange={e => void save({ [t.key]: e.target.checked } as Partial<TelegramOpsSettingDto>)}
-                        className="h-4 w-4 accent-[#E07A5F]"
+                        className="h-4 w-4 accent-gold"
                       />
                     </label>
                   ))}

@@ -295,10 +295,10 @@ export default function BrandingSettingsPage() {
                     Files are stored permanently in Google Drive and used on invoices, PDFs, dashboards, and print layouts.
                   </p>
                 </div>
-                <div className="rounded-xl border border-[#E07A5F]/20 bg-[#E07A5F]/[0.04] p-4 text-[11px] text-muted-hi leading-relaxed space-y-1">
-                  <p><span className="font-bold text-[#E07A5F]">Logo:</span> Recommended 1200x400 PNG, 3:1 aspect ratio, transparent background preferred.</p>
-                  <p><span className="font-bold text-[#E07A5F]">Favicon:</span> Recommended 512x512 PNG, square image required.</p>
-                  <p><span className="font-bold text-[#E07A5F]">PWA icon:</span> Recommended 512x512 PNG. Use the favicon/PWA icon upload for browser tab and home-screen branding.</p>
+                <div className="rounded-xl border border-gold/20 bg-gold/[0.04] p-4 text-[11px] text-muted-hi leading-relaxed space-y-1">
+                  <p><span className="font-bold text-gold">Logo:</span> Recommended 1200x400 PNG, 3:1 aspect ratio, transparent background preferred.</p>
+                  <p><span className="font-bold text-gold">Favicon:</span> Recommended 512x512 PNG, square image required.</p>
+                  <p><span className="font-bold text-gold">PWA icon:</span> Recommended 512x512 PNG. Use the favicon/PWA icon upload for browser tab and home-screen branding.</p>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {(['logo', 'favicon'] as const).map(assetType => {
@@ -338,7 +338,7 @@ export default function BrandingSettingsPage() {
                           <input
                             type="file"
                             accept={rules.accept}
-                            className="block w-full text-xs text-muted file:mr-3 file:rounded-lg file:border-0 file:bg-[#E07A5F]/10 file:px-3 file:py-2 file:text-xs file:font-bold file:text-[#E07A5F]"
+                            className="block w-full text-xs text-muted file:mr-3 file:rounded-lg file:border-0 file:bg-gold/10 file:px-3 file:py-2 file:text-xs file:font-bold file:text-gold"
                             disabled={uploading === assetType}
                             onChange={e => void handleSelectAsset(assetType, e.target.files?.[0] ?? null)}
                           />
@@ -348,7 +348,7 @@ export default function BrandingSettingsPage() {
                             type="checkbox"
                             checked={autoOptimize[assetType]}
                             onChange={e => setAutoOptimize(v => ({ ...v, [assetType]: e.target.checked }))}
-                            className="accent-[#E07A5F]"
+                            className="accent-gold"
                           />
                           Auto optimize {isLogo ? 'to 1200x400 transparent PNG' : 'to 512x512 transparent PNG'}
                         </label>
@@ -385,7 +385,7 @@ export default function BrandingSettingsPage() {
                     <label key={key} className="block">
                       <span className="text-[10px] text-muted uppercase tracking-wider font-medium">{label}</span>
                       <input
-                        className="mt-1 w-full bg-card/85 border border-white/[0.06] rounded-xl px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20 focus:border-[#E07A5F]/40"
+                        className="mt-1 w-full bg-card/85 border border-white/[0.06] rounded-xl px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-gold/20 focus:border-gold/40"
                         value={form[key]}
                         onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
                       />
@@ -409,14 +409,14 @@ export default function BrandingSettingsPage() {
                       type="checkbox"
                       checked={form.invoice_watermark_enabled}
                       onChange={e => setForm(f => ({ ...f, invoice_watermark_enabled: e.target.checked }))}
-                      className="accent-[#E07A5F]"
+                      className="accent-gold"
                     />
                     Enable invoice watermark
                   </label>
                   <label className="block">
                     <span className="text-[10px] text-muted uppercase tracking-wider font-medium">Watermark opacity</span>
                     <select
-                      className="mt-1 w-full bg-card/85 border border-white/[0.06] rounded-xl px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                      className="mt-1 w-full bg-card/85 border border-white/[0.06] rounded-xl px-3 py-2.5 text-sm text-cream focus:outline-none focus:ring-2 focus:ring-gold/20"
                       value={form.invoice_watermark_opacity}
                       onChange={e => setForm(f => ({ ...f, invoice_watermark_opacity: e.target.value }))}
                     >
@@ -451,7 +451,7 @@ export default function BrandingSettingsPage() {
                           className="w-10 h-10 rounded-lg border border-white/[0.06] bg-transparent cursor-pointer"
                         />
                         <input
-                          className="flex-1 bg-card/85 border border-white/[0.06] rounded-xl px-3 py-2 text-sm text-cream font-mono focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20"
+                          className="flex-1 bg-card/85 border border-white/[0.06] rounded-xl px-3 py-2 text-sm text-cream font-mono focus:outline-none focus:ring-2 focus:ring-gold/20"
                           value={form[key]}
                           onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
                         />
@@ -473,7 +473,7 @@ export default function BrandingSettingsPage() {
                   <label key={key} className="block">
                     <span className="text-[10px] text-muted uppercase tracking-wider font-medium">{label}</span>
                     <textarea
-                      className="mt-1 w-full bg-card/85 border border-white/[0.06] rounded-xl px-3 py-2.5 text-sm text-cream min-h-[64px] focus:outline-none focus:ring-2 focus:ring-[#E07A5F]/20 focus:border-[#E07A5F]/40"
+                      className="mt-1 w-full bg-card/85 border border-white/[0.06] rounded-xl px-3 py-2.5 text-sm text-cream min-h-[64px] focus:outline-none focus:ring-2 focus:ring-gold/20 focus:border-gold/40"
                       value={form[key]}
                       onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
                     />
