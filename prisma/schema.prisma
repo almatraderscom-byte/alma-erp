@@ -3844,3 +3844,22 @@ model AgentContentCalendar {
   @@index([conversationId])
   @@map("agent_content_calendar")
 }
+
+/// Growth Autopilot — weekly analytics snapshot. One row per digest run so
+/// week-over-week history builds up over time (ads spend/ROAS, content
+/// cadence, catalog health). Written by the growth-digest cron.
+model AgentGrowthMetric {
+  id          String   @id @default(uuid())
+  businessId  String   @default("ALMA_LIFESTYLE") @map("business_id")
+  /// 'weekly_digest' — snapshot source/kind.
+  source      String   @default("weekly_digest")
+  periodStart DateTime @map("period_start")
+  periodEnd   DateTime @map("period_end")
+  /// Aggregated metrics blob (ads totals, content counts, catalog stats).
+  metrics     Json
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([businessId, periodStart])
+  @@index([source, periodStart])
+  @@map("agent_growth_metric")
+}
