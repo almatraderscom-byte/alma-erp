@@ -30,7 +30,7 @@
  */
 import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
-import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
+import { sendOwnerActionable } from '@/agent/lib/telegram-owner-notify'
 import { getOrCreateDayShiftConversation, appendShiftNarrative } from '@/agent/lib/day-shift'
 
 const DEFAULT_INTERVAL_MIN = 120 // calm fallback when nothing urgent is pending
@@ -109,6 +109,21 @@ export async function collectPendingItems(): Promise<PendingItem[]> {
     label: (r.summary || '').trim() || prettyType(r.type),
     createdAt: r.createdAt,
   }))
+}
+
+/**
+ * One row per pending item — a labelled ✅ approve + a compact ❌ reject, using the bot's
+ * existing `approve:<id>` / `reject:<id>` callback contract. So every reminder is tappable
+ * (no typing → no fragile LLM re-parse). Capped so the keyboard stays usable.
+ */
+function buildApprovalKeyboard(items: PendingItem[]): Array<Array<{ text: string; callback_data: string }>> {
+  return items.slice(0, 8).map((i) => {
+    const label = i.label.length > 24 ? `${i.label.slice(0, 23)}…` : i.label
+    return [
+      { text: `✅ ${label}`, callback_data: `approve:${i.id}` },
+      { text: '❌', callback_data: `reject:${i.id}` },
+    ]
+  })
 }
 
 function fingerprintOf(items: PendingItem[]): string {
@@ -229,7 +244,7 @@ export async function runPendingFollowupTick(): Promise<{ nagged: boolean; count
   const message = composeMessage(items, now, false)
   const conversationId = await getOrCreateDayShiftConversation(today)
   await appendShiftNarrative(conversationId, message)
-  void sendOwnerText(message).catch(() => {})
+  void sendOwnerActionable(message, buildApprovalKeyboard(items)).catch(() => {})
 
   await saveNagState(today, {
     lastNagAt: new Date(now).toISOString(),
@@ -254,7 +269,7 @@ export async function runPendingFollowupDayStart(): Promise<{ asked: boolean; co
   const message = composeMessage(carried, Date.now(), true)
   const conversationId = await getOrCreateDayShiftConversation(today)
   await appendShiftNarrative(conversationId, message)
-  void sendOwnerText(message).catch(() => {})
+  void sendOwnerActionable(message, buildApprovalKeyboard(carried)).catch(() => {})
 
   await saveNagState(today, {
     lastNagAt: new Date().toISOString(),

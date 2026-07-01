@@ -193,3 +193,41 @@ export async function sendOwnerText(text: string): Promise<{ ok: boolean; error?
   }
   return { ok: true }
 }
+
+/**
+ * Owner Telegram message WITH inline approve/reject buttons + WhatsApp mirror (buttons).
+ * Use for any owner-facing text that references pending items so the owner can TAP to act
+ * instead of typing (which forces a fragile LLM re-parse). callback_data must use the
+ * bot's existing `approve:<id>` / `reject:<id>` contract.
+ */
+export async function sendOwnerActionable(
+  text: string,
+  inlineKeyboard: Array<Array<{ text: string; callback_data: string }>>,
+): Promise<{ ok: boolean; error?: string }> {
+  // WhatsApp mirror with the same buttons (best-effort, dormant until configured).
+  if (inlineKeyboard?.length) {
+    try {
+      const { mirrorOwnerKeyboardToWhatsApp } = await import('./wa/wa-approval')
+      await mirrorOwnerKeyboardToWhatsApp(text, inlineKeyboard)
+    } catch { /* never break Telegram */ }
+  }
+
+  const token = process.env.ASSISTANT_BOT_TOKEN
+  const chatId = process.env.TELEGRAM_OWNER_CHAT_ID
+  if (!token || !chatId) return { ok: false, error: 'ASSISTANT_BOT_TOKEN or TELEGRAM_OWNER_CHAT_ID not set' }
+
+  const res = await fetch(`${telegramApiBase()}/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      reply_markup: inlineKeyboard?.length ? { inline_keyboard: inlineKeyboard } : undefined,
+    }),
+    signal: AbortSignal.timeout(8_000),
+  })
+
+  const data = await res.json() as { ok?: boolean; description?: string }
+  if (!res.ok || !data.ok) return { ok: false, error: data.description ?? `HTTP ${res.status}` }
+  return { ok: true }
+}
