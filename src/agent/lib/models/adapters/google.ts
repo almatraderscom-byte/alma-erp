@@ -23,15 +23,33 @@ function toGeminiContents(messages: NeutralMsg[]): Content[] {
     }
 
     if (msg.role === 'tool') {
-      out.push({
-        role: 'user',
-        parts: [{
-          functionResponse: {
-            name: msg.name,
-            response: { result: msg.result },
-          },
-        }],
-      })
+      // Vision: if a tool (live browser) returned a screenshot, hand Gemini a REAL
+      // inline image so it SEES the page — the same way the native Claude path
+      // attaches an image block. Left as JSON, the base64 is undecodable to the
+      // model AND bloats context ~100KB/shot, so strip it from the functionResponse
+      // text and carry it only as an inlineData part alongside the response.
+      const img =
+        msg.result && typeof msg.result === 'object' && 'image' in msg.result
+          ? (msg.result as { image?: { data?: unknown; mediaType?: unknown } }).image
+          : undefined
+      const imgData = img && typeof img.data === 'string' ? img.data : ''
+      const imgMime = img && typeof img.mediaType === 'string' ? img.mediaType : 'image/jpeg'
+
+      let responsePayload: unknown = msg.result
+      if (imgData) {
+        const { image: _omitImg, ...rest } = msg.result as Record<string, unknown>
+        responsePayload = rest
+      }
+
+      const parts: Part[] = [{
+        functionResponse: {
+          name: msg.name,
+          response: { result: responsePayload },
+        },
+      }]
+      if (imgData) parts.push({ inlineData: { mimeType: imgMime, data: imgData } })
+
+      out.push({ role: 'user', parts })
     }
   }
 
