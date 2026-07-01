@@ -266,43 +266,63 @@ const live_browser_look: AgentTool = {
 const live_browser_act: AgentTool = {
   name: 'live_browser_act',
   description:
-    "Perform ONE action in the owner's live Chrome tab: click, type, scroll, navigate, or wait. " +
-    'After acting it returns a fresh REAL SCREENSHOT you can SEE, so you verify the effect with your ' +
-    'own eyes before the next step.\n' +
+    "Perform ONE action in the owner's live Chrome tab: click, type, press (a keyboard key), " +
+    'scroll, navigate, go_back, or wait. After acting it returns a fresh REAL SCREENSHOT you can ' +
+    'SEE, so you verify the effect with your own eyes before the next step.\n' +
     'HUMAN-LIKE OPERATION: prefer clicking the on-page UI (menus, search, buttons, tabs, links you can ' +
     'see in the screenshot/elements) over typing guessed URLs. Locate a target by its visible `text` ' +
     'when you can; use a CSS `selector` only when you actually see it in the elements list. Always ' +
     'live_browser_look after acting to confirm what happened, then decide the next single step.\n' +
+    'TYPING is React/modern-app safe (it uses the native value setter, so controlled inputs like ' +
+    'Facebook / Gmail / Twitter composers actually keep the text). To submit a search or form, either ' +
+    'pass `submit: true` on the type action (presses Enter after typing) OR do a separate ' +
+    'action="press" with key="Enter". Use press for Enter / Tab / Escape / ArrowDown etc. — do NOT ' +
+    'report "press not supported"; it IS supported now.\n' +
     'SAFETY: never use this to press a final Send / Post / Pay / Buy / Transfer / Confirm / Delete — ' +
     'fill the form and navigate, but leave that last irreversible click to the owner and ask him. ' +
+    '(A plain Enter to run a Google/search query or move to the next field is fine; the ban is on ' +
+    'the final irreversible submit of a message / money / deletion.)\n' +
     'Params by action: ' +
-    'click → `selector` or `text`; type → (`selector` or `text` to find the field) + `value`; ' +
-    'scroll → `by` (pixels); navigate → `url` (http(s), use a real HOME URL not a guessed path); ' +
-    'wait → `ms`.',
+    'click → `selector` or `text`; type → (`selector` or `text` to find the field) + `value` ' +
+    '(+ optional `submit` to press Enter after); press → `key` (e.g. "Enter", "Tab", "Escape"); ' +
+    'scroll → `by` (pixels, negative = up); navigate → `url` (http(s), use a real HOME URL not a ' +
+    'guessed path); go_back → (none); wait → `ms`.',
   input_schema: {
     type: 'object' as const,
     properties: {
       action: {
         type: 'string',
-        enum: ['click', 'type', 'scroll', 'navigate', 'wait'],
+        enum: ['click', 'type', 'press', 'scroll', 'navigate', 'go_back', 'wait'],
         description: 'What to do.',
       },
       selector: { type: 'string', description: 'CSS selector of the target element.' },
       text: { type: 'string', description: 'Visible text to locate the element/field by.' },
       value: { type: 'string', description: 'Text to type (for action=type).' },
+      submit: {
+        type: 'boolean',
+        description: 'For action=type: press Enter after typing (submit a search/form).',
+      },
+      key: {
+        type: 'string',
+        description:
+          'For action=press: the key to send, e.g. "Enter", "Tab", "Escape", "ArrowDown", "Backspace".',
+      },
       url: { type: 'string', description: 'http(s) URL (for action=navigate).' },
-      by: { type: 'number', description: 'Pixels to scroll (for action=scroll).' },
+      by: { type: 'number', description: 'Pixels to scroll (for action=scroll; negative = up).' },
       ms: { type: 'number', description: 'Milliseconds to wait (for action=wait).' },
     },
     required: ['action'],
   },
   handler: async (input) => {
     const action = String(input.action ?? '') as LiveBrowserAction
-    const allowed = new Set(['click', 'type', 'scroll', 'navigate', 'wait'])
+    const allowed = new Set(['click', 'type', 'press', 'scroll', 'navigate', 'go_back', 'wait'])
     if (!allowed.has(action)) return { success: false, error: `unsupported action: ${action}` }
 
     if (action === 'navigate' && !/^https?:\/\//i.test(String(input.url ?? ''))) {
       return { success: false, error: 'navigate needs an http(s) url' }
+    }
+    if (action === 'press' && !String(input.key ?? '').trim()) {
+      return { success: false, error: 'press needs a key (e.g. "Enter")' }
     }
 
     const dev = await requireActiveDevice()
@@ -313,6 +333,8 @@ const live_browser_act: AgentTool = {
       if (input.selector) params.selector = input.selector
       if (input.text) params.text = input.text
       if (input.value !== undefined) params.value = input.value
+      if (input.submit !== undefined) params.submit = Boolean(input.submit)
+      if (input.key) params.key = input.key
       if (input.url) params.url = input.url
       if (input.by !== undefined) params.by = input.by
       if (input.ms !== undefined) params.ms = input.ms

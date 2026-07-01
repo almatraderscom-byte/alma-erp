@@ -35,14 +35,16 @@ export const LIVE_BROWSER_ACTIONS = [
   'read_dom',
   'click',
   'type',
+  'press',
   'scroll',
   'wait',
   'screenshot',
+  'go_back',
 ] as const
 export type LiveBrowserAction = (typeof LIVE_BROWSER_ACTIONS)[number]
 
 /** Verbs that change page state (vs. pure read). Used for audit / future gating. */
-const WRITE_ACTIONS = new Set<LiveBrowserAction>(['click', 'type', 'navigate'])
+const WRITE_ACTIONS = new Set<LiveBrowserAction>(['click', 'type', 'press', 'navigate', 'go_back'])
 
 const COMMAND_DEFAULT_TIMEOUT_MS = 45_000
 const COMMAND_POLL_INTERVAL_MS = 700

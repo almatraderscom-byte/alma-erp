@@ -35,9 +35,11 @@ const ALLOWED_ACTIONS = new Set([
   'read_dom',
   'click',
   'type',
+  'press',
   'scroll',
   'wait',
   'screenshot',
+  'go_back',
 ])
 
 let looping = false
@@ -149,15 +151,42 @@ function pageOverlay(arg) {
 
 async function pageClick(arg) {
   const { selector, text } = arg
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const visible = (e) => {
+    const r = e.getBoundingClientRect()
+    return r.width > 0 && r.height > 0
+  }
   let el = null
-  if (selector) el = document.querySelector(selector)
+  if (selector) {
+    try {
+      el = document.querySelector(selector)
+    } catch {
+      el = null
+    }
+  }
   if (!el && text) {
-    const all = Array.from(document.querySelectorAll('a,button,[role=button],input,[role=link]'))
-    el = all.find((e) => (e.innerText || e.value || '').trim().toLowerCase().includes(String(text).toLowerCase())) || null
+    const needle = String(text).trim().toLowerCase()
+    const cand = Array.from(
+      document.querySelectorAll(
+        'a,button,[role=button],[role=link],[role=menuitem],[role=tab],input[type=submit],input[type=button],label,summary,[onclick]',
+      ),
+    ).filter(visible)
+    const hay = (e) =>
+      (
+        (e.innerText || e.value || '') +
+        ' ' +
+        (e.getAttribute('aria-label') || '') +
+        ' ' +
+        (e.getAttribute('title') || '')
+      )
+        .trim()
+        .toLowerCase()
+    // Prefer an exact match, then a substring match — steadier than "first contains".
+    el = cand.find((e) => hay(e) === needle) || cand.find((e) => hay(e).includes(needle)) || null
   }
   if (!el) return { ok: false, error: 'element not found' }
   el.scrollIntoView({ block: 'center', behavior: 'smooth' })
-  await new Promise((r) => setTimeout(r, 350))
+  await sleep(350)
   const rect = el.getBoundingClientRect()
   const prevOutline = el.style.outline
   el.style.outline = '3px solid #c9a84c'
@@ -170,20 +199,102 @@ async function pageClick(arg) {
     cur.style.left = cx + 'px'
     cur.style.top = cy + 'px'
   }
-  await new Promise((r) => setTimeout(r, 450))
+  await sleep(450)
+  // Fire a real mouse-event sequence — many sites (React/SPA) ignore a bare
+  // .click() but respond to pointer/mouse events. Then call .click() as backstop.
+  const mo = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy }
+  try {
+    el.dispatchEvent(new MouseEvent('mouseover', mo))
+    el.dispatchEvent(new MouseEvent('mousedown', mo))
+    el.dispatchEvent(new MouseEvent('mouseup', mo))
+  } catch {
+    /* older engines — ignore */
+  }
   el.click()
   setTimeout(() => {
     el.style.outline = prevOutline
   }, 600)
-  return { ok: true }
+  return { ok: true, clicked: (el.innerText || el.value || '').trim().slice(0, 60) }
 }
 
 async function pageType(arg) {
-  const { selector, text, value } = arg
-  let el = selector ? document.querySelector(selector) : null
+  const { selector, text, value, submit } = arg
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const visible = (e) => {
+    const r = e.getBoundingClientRect()
+    return r.width > 0 && r.height > 0
+  }
+  // Set a value the way React/Vue/Angular controlled inputs actually accept it:
+  // go through the element PROTOTYPE's native value setter, then fire a real
+  // InputEvent. A bare `el.value = x` is silently reverted by React on next
+  // render (the exact reason the ALMA composer needed form_input).
+  const almaSetValue = (el, val) => {
+    if (el.isContentEditable) {
+      el.focus()
+      try {
+        document.execCommand('selectAll', false, null)
+        document.execCommand('insertText', false, val)
+      } catch {
+        /* execCommand unsupported — fall through */
+      }
+      if ((el.innerText || el.textContent || '').trim() === '' && val) {
+        el.textContent = val
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, data: val, inputType: 'insertText' }))
+      }
+      return
+    }
+    const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
+    const desc = Object.getOwnPropertyDescriptor(proto, 'value')
+    if (desc && desc.set) desc.set.call(el, val)
+    else el.value = val
+    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: val, inputType: 'insertText' }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+  const almaDispatchKey = (el, key) => {
+    const opts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }
+    const kd = new KeyboardEvent('keydown', opts)
+    el.dispatchEvent(kd)
+    el.dispatchEvent(new KeyboardEvent('keypress', opts))
+    el.dispatchEvent(new KeyboardEvent('keyup', opts))
+    return kd
+  }
+  let el = null
+  if (selector) {
+    try {
+      el = document.querySelector(selector)
+    } catch {
+      el = null
+    }
+  }
   if (!el && text) {
-    const all = Array.from(document.querySelectorAll('input,textarea,[contenteditable=true]'))
-    el = all.find((e) => (e.getAttribute('aria-label') || e.placeholder || e.name || '').toLowerCase().includes(String(text).toLowerCase())) || null
+    const needle = String(text).toLowerCase()
+    el =
+      Array.from(document.querySelectorAll('input,textarea,[contenteditable=true]'))
+        .filter(visible)
+        .find((e) =>
+          (
+            (e.getAttribute('aria-label') || '') +
+            ' ' +
+            (e.placeholder || '') +
+            ' ' +
+            (e.name || '') +
+            ' ' +
+            (e.getAttribute('title') || '')
+          )
+            .toLowerCase()
+            .includes(needle),
+        ) || null
+  }
+  // Fallbacks so we rarely get stuck: the already-focused editable, else the first
+  // visible text field on the page.
+  if (!el) {
+    const a = document.activeElement
+    if (a && (a.isContentEditable || /^(INPUT|TEXTAREA)$/.test(a.tagName))) el = a
+  }
+  if (!el) {
+    el =
+      Array.from(document.querySelectorAll('input:not([type=hidden]),textarea,[contenteditable=true]'))
+        .filter(visible)[0] || null
   }
   if (!el) return { ok: false, error: 'field not found' }
   el.scrollIntoView({ block: 'center', behavior: 'smooth' })
@@ -191,18 +302,76 @@ async function pageType(arg) {
   const prevOutline = el.style.outline
   el.style.outline = '3px solid #c9a84c'
   el.style.outlineOffset = '2px'
-  await new Promise((r) => setTimeout(r, 300))
-  if (el.isContentEditable) {
-    el.textContent = value
-  } else {
-    el.value = value
+  await sleep(300)
+  almaSetValue(el, value == null ? '' : String(value))
+  if (submit) {
+    await sleep(150)
+    const kd = almaDispatchKey(el, 'Enter')
+    // If nothing swallowed Enter, submit the enclosing form like a human would.
+    const form = el.closest && el.closest('form')
+    if (form && !kd.defaultPrevented) {
+      const btn = form.querySelector('button[type=submit],input[type=submit],button:not([type])')
+      if (btn) btn.click()
+      else if (typeof form.requestSubmit === 'function') {
+        try {
+          form.requestSubmit()
+        } catch {
+          /* ignore */
+        }
+      }
+    }
   }
-  el.dispatchEvent(new Event('input', { bubbles: true }))
-  el.dispatchEvent(new Event('change', { bubbles: true }))
   setTimeout(() => {
     el.style.outline = prevOutline
   }, 600)
-  return { ok: true }
+  return { ok: true, typed: value == null ? '' : String(value), submitted: Boolean(submit) }
+}
+
+function pageKey(arg) {
+  const key = String((arg && arg.key) || 'Enter')
+  const map = {
+    Enter: { keyCode: 13, code: 'Enter', k: 'Enter' },
+    Tab: { keyCode: 9, code: 'Tab', k: 'Tab' },
+    Escape: { keyCode: 27, code: 'Escape', k: 'Escape' },
+    Esc: { keyCode: 27, code: 'Escape', k: 'Escape' },
+    ArrowDown: { keyCode: 40, code: 'ArrowDown', k: 'ArrowDown' },
+    ArrowUp: { keyCode: 38, code: 'ArrowUp', k: 'ArrowUp' },
+    ArrowLeft: { keyCode: 37, code: 'ArrowLeft', k: 'ArrowLeft' },
+    ArrowRight: { keyCode: 39, code: 'ArrowRight', k: 'ArrowRight' },
+    Backspace: { keyCode: 8, code: 'Backspace', k: 'Backspace' },
+    Delete: { keyCode: 46, code: 'Delete', k: 'Delete' },
+    Space: { keyCode: 32, code: 'Space', k: ' ' },
+  }
+  const info = map[key] || { keyCode: 0, code: key, k: key }
+  const opts = {
+    key: info.k,
+    code: info.code,
+    keyCode: info.keyCode,
+    which: info.keyCode,
+    bubbles: true,
+    cancelable: true,
+  }
+  const el =
+    document.activeElement && document.activeElement !== document.body ? document.activeElement : document.body
+  const kd = new KeyboardEvent('keydown', opts)
+  el.dispatchEvent(kd)
+  el.dispatchEvent(new KeyboardEvent('keypress', opts))
+  el.dispatchEvent(new KeyboardEvent('keyup', opts))
+  if (key === 'Enter') {
+    const form = el.closest && el.closest('form')
+    if (form && !kd.defaultPrevented) {
+      const btn = form.querySelector('button[type=submit],input[type=submit],button:not([type])')
+      if (btn) btn.click()
+      else if (typeof form.requestSubmit === 'function') {
+        try {
+          form.requestSubmit()
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }
+  return { ok: true, pressed: key }
 }
 
 function pageScroll(arg) {
@@ -216,6 +385,25 @@ function pageScroll(arg) {
 async function runInPage(tabId, func, arg) {
   const [res] = await chrome.scripting.executeScript({ target: { tabId }, func, args: arg ? [arg] : [] })
   return res ? res.result : null
+}
+
+// Wait until the tab finishes loading (status === 'complete') instead of a blind
+// fixed sleep — fast pages proceed immediately, slow ones get up to timeoutMs.
+async function waitForTabLoad(tabId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  await new Promise((r) => setTimeout(r, 350)) // let the navigation actually begin
+  while (Date.now() < deadline) {
+    try {
+      const t = await chrome.tabs.get(tabId)
+      if (t && t.status === 'complete') {
+        await new Promise((r) => setTimeout(r, 500)) // small settle for late scripts
+        return
+      }
+    } catch {
+      return // tab gone — nothing to wait for
+    }
+    await new Promise((r) => setTimeout(r, 300))
+  }
 }
 
 // Best-effort: paint the status banner in the ALMA tab. Never throws (about:blank
@@ -252,9 +440,19 @@ async function executeCommand(cmd) {
     } catch {
       /* window gone — ignore, next getAgentTab recreates */
     }
-    await new Promise((r) => setTimeout(r, 2600))
+    await waitForTabLoad(tab.id, 15000)
     await showOverlay(tab.id, 'পেজ খুলছে: ' + cmd.url.replace(/^https?:\/\//, '').slice(0, 48))
     return { ok: true, data: { url: cmd.url } }
+  }
+  if (action === 'go_back') {
+    try {
+      await chrome.tabs.goBack(tab.id)
+    } catch {
+      return { ok: false, error: 'no page to go back to' }
+    }
+    await waitForTabLoad(tab.id, 12000)
+    await showOverlay(tab.id, 'পিছনে যাচ্ছে…')
+    return { ok: true, data: { back: true } }
   }
   if (action === 'screenshot') {
     const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 55 })
@@ -278,7 +476,21 @@ async function executeCommand(cmd) {
   }
   if (action === 'type') {
     await showOverlay(tab.id, 'লিখছে: ' + String(cmd.value || '').slice(0, 40))
-    return await runInPage(tab.id, pageType, { selector: cmd.selector, text: cmd.text, value: cmd.value })
+    const r = await runInPage(tab.id, pageType, {
+      selector: cmd.selector,
+      text: cmd.text,
+      value: cmd.value,
+      submit: Boolean(cmd.submit),
+    })
+    if (r && r.ok && cmd.submit) await waitForTabLoad(tab.id, 12000)
+    return r
+  }
+  if (action === 'press') {
+    await showOverlay(tab.id, 'কী চাপছে: ' + String(cmd.key || 'Enter').slice(0, 20))
+    const r = await runInPage(tab.id, pageKey, { key: cmd.key })
+    // Enter often triggers navigation/submit — give the page a moment to settle.
+    if (r && r.ok && String(cmd.key || 'Enter') === 'Enter') await waitForTabLoad(tab.id, 12000)
+    return r
   }
   return { ok: false, error: 'unhandled action' }
 }
