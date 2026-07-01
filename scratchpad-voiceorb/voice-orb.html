@@ -349,21 +349,41 @@
       document.getElementById('mode').textContent = 'Lite 2D mode — open in desktop Chrome for the full WebGL orb';
       var cv = document.createElement('canvas'); mount.appendChild(cv);
       var ctx = cv.getContext('2d');
-      var supportsFilter = (typeof ctx.filter !== 'undefined');
+      var ol = document.createElement('canvas'); var olc = ol.getContext('2d'); // offscreen orb layer
       var W, H, DPR2 = Math.min(window.devicePixelRatio || 1, 2);
-      function resize() { W = mount.clientWidth; H = mount.clientHeight; cv.width = W*DPR2; cv.height = H*DPR2; cv.style.width = W+'px'; cv.style.height = H+'px'; ctx.setTransform(DPR2,0,0,DPR2,0,0); }
+      function resize() {
+        W = mount.clientWidth; H = mount.clientHeight;
+        cv.width = W*DPR2; cv.height = H*DPR2; cv.style.width = W+'px'; cv.style.height = H+'px'; ctx.setTransform(DPR2,0,0,DPR2,0,0);
+        ol.width = W*DPR2; ol.height = H*DPR2; olc.setTransform(DPR2,0,0,DPR2,0,0);
+      }
       resize(); window.addEventListener('resize', resize);
 
-      var pal = PALETTES[0];
-      applyPalette = function (i) { pal = PALETTES[i]; params.palette = i; };
+      // ---- value-noise cloud texture (rebuilt once per palette) ----
+      function hash(i, j) { var n = (i*374761393 + j*668265263) | 0; n = (n ^ (n>>13)) * 1274126177; n = n ^ (n>>16); return ((n>>>0) % 100000) / 100000; }
+      function sstep(a, b, x) { x = x*x*(3-2*x); return a + (b-a)*x; }
+      function vnoise(x, y) { var xi=Math.floor(x), yi=Math.floor(y), xf=x-xi, yf=y-yi; return sstep(sstep(hash(xi,yi), hash(xi+1,yi), xf), sstep(hash(xi,yi+1), hash(xi+1,yi+1), xf), yf); }
+      function fbm2(x, y) { var f=0, a=0.5, s=0; for (var k=0;k<5;k++){ f+=a*vnoise(x,y); s+=a; x=x*2.0+1.7; y=y*2.0+9.3; a*=0.5; } return f/s; }
+      function lerp3(A, B, m) { return [A[0]+(B[0]-A[0])*m, A[1]+(B[1]-A[1])*m, A[2]+(B[2]-A[2])*m]; }
+      var cloudTex;
+      function buildCloud(p) {
+        var S = 200, c = document.createElement('canvas'); c.width = c.height = S; var g = c.getContext('2d');
+        var img = g.createImageData(S, S), d = img.data;
+        var deep = hexRGB(p.deep), mid = hexRGB(p.mid), light = hexRGB(p.light), white = [255,255,255];
+        for (var y = 0; y < S; y++) for (var x = 0; x < S; x++) {
+          var n = fbm2(x/S*3.2, y/S*3.2);
+          n = Math.min(1, Math.max(0, (n - 0.28) / 0.5));                 // boost contrast
+          var col = n < 0.5 ? lerp3(deep, mid, n/0.5) : lerp3(mid, light, (n-0.5)/0.5);
+          if (n > 0.72) col = lerp3(col, white, (n-0.72)/0.28*0.8);       // white cloud wisps pop
+          var idx = (y*S+x)*4; d[idx]=col[0]|0; d[idx+1]=col[1]|0; d[idx+2]=col[2]|0; d[idx+3]=255;
+        }
+        g.putImageData(img, 0, 0); return c;
+      }
+      var pal = PALETTES[0]; cloudTex = buildCloud(pal);
+      applyPalette = function (i) { pal = PALETTES[i]; params.palette = i; cloudTex = buildCloud(pal); };
 
-      // drifting cloud blobs (relative to orb centre/radius)
-      var blobs = [];
-      var NB = 9;
-      for (var i = 0; i < NB; i++) {
-        blobs.push({ ang: (i / NB) * 6.283 + Math.random(), dist: 0.15 + Math.random()*0.55, rad: 0.35 + Math.random()*0.5,
-                     spd: (Math.random()*0.5 + 0.15) * (Math.random()<0.5?-1:1), ph: Math.random()*6.283,
-                     tone: i % 4 }); // 0 light,1 white,2 mid,3 deep
+      function drawTex(g, cx, cy, size, rot, ox, oy, alpha) {
+        g.save(); g.globalAlpha = alpha; g.translate(cx + ox, cy + oy); g.rotate(rot);
+        g.drawImage(cloudTex, -size/2, -size/2, size, size); g.restore();
       }
 
       var t = 0, breath = 0;
@@ -375,55 +395,53 @@
         var br = (Math.sin(breath*0.8)*0.5 + 0.5) * 0.06 * idle;
         var amp = audio.level + br;
 
-        // light background
+        // light page background
         var bg = ctx.createRadialGradient(W/2, H*0.34, 0, W/2, H*0.34, Math.max(W,H)*0.9);
         bg.addColorStop(0, '#ffffff'); bg.addColorStop(0.6, '#f1f6fc'); bg.addColorStop(1, '#e7eef7');
         ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
 
-        var cx = W/2, cy = H*0.44, R = Math.min(W, H) * 0.17 * (1 + amp*0.14);
+        var cx = W/2, cy = H*0.44, R = Math.min(W, H) * 0.17 * (1 + amp*0.12);
 
         // soft outer glow
-        var og = ctx.createRadialGradient(cx, cy, R*0.55, cx, cy, R*2.0);
-        og.addColorStop(0, hexA(pal.mid, (0.22 + amp*0.22) * params.bloom));
+        var og = ctx.createRadialGradient(cx, cy, R*0.6, cx, cy, R*2.1);
+        og.addColorStop(0, hexA(pal.mid, (0.20 + amp*0.2) * params.bloom));
         og.addColorStop(1, hexA(pal.mid, 0));
         ctx.fillStyle = og; ctx.fillRect(0, 0, W, H);
 
-        // orb interior (clipped)
-        ctx.save();
-        ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.283); ctx.clip();
+        // ---- render orb on the offscreen layer ----
+        olc.clearRect(0, 0, W, H);
+        olc.save();
+        olc.beginPath(); olc.arc(cx, cy, R, 0, 6.283); olc.clip();
 
-        // vertical base gradient (top light -> bottom deep)
-        var lg = ctx.createLinearGradient(cx, cy - R, cx, cy + R);
-        lg.addColorStop(0, pal.light); lg.addColorStop(0.5, pal.mid); lg.addColorStop(1, pal.deep);
-        ctx.fillStyle = lg; ctx.fillRect(cx - R, cy - R, R*2, R*2);
+        olc.fillStyle = pal.mid; olc.fillRect(cx-R, cy-R, R*2, R*2);
 
-        // watercolor cloud blobs
-        if (supportsFilter) ctx.filter = 'blur(' + (R * 0.26) + 'px)';
-        for (var j = 0; j < NB; j++) {
-          var bl = blobs[j];
-          var a = bl.ang + t * bl.spd * 0.4;
-          var bx = cx + Math.cos(a) * bl.dist * R + Math.sin(t*0.25 + bl.ph) * R * 0.12;
-          var by = cy + Math.sin(a) * bl.dist * R * 0.92 + Math.cos(t*0.2 + bl.ph) * R * 0.1;
-          var brad = R * bl.rad * (1 + 0.12*Math.sin(t + bl.ph) + amp*0.15);
-          var tone = bl.tone === 0 ? pal.light : bl.tone === 1 ? '#ffffff' : bl.tone === 2 ? pal.mid : pal.deep;
-          var alpha = bl.tone === 3 ? 0.35 : 0.5;
-          var bgrad = ctx.createRadialGradient(bx, by, 0, bx, by, brad);
-          bgrad.addColorStop(0, hexA(tone, alpha)); bgrad.addColorStop(1, hexA(tone, 0));
-          ctx.fillStyle = bgrad; ctx.beginPath(); ctx.arc(bx, by, brad, 0, 6.283); ctx.fill();
-        }
-        if (supportsFilter) ctx.filter = 'none';
+        // two counter-drifting cloud layers -> flowing, morphing clouds
+        var dx = Math.sin(t*0.15)*R*0.15, dy = Math.cos(t*0.12)*R*0.12;
+        drawTex(olc, cx, cy, R*2.9,  t*0.03,   dx,        dy,        0.9);
+        olc.globalCompositeOperation = 'screen';
+        drawTex(olc, cx, cy, R*2.3, -t*0.024, -dx*0.7,   -dy*0.7,    0.55);
+        olc.globalCompositeOperation = 'source-over';
 
-        // top-left highlight sheen
-        var hi = ctx.createRadialGradient(cx - R*0.32, cy - R*0.38, 0, cx - R*0.32, cy - R*0.38, R*1.0);
-        hi.addColorStop(0, 'rgba(255,255,255,' + (0.5 + amp*0.25) + ')');
-        hi.addColorStop(0.45, 'rgba(255,255,255,0.06)'); hi.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.fillStyle = hi; ctx.fillRect(cx - R, cy - R, R*2, R*2);
-        ctx.restore();
+        // vertical light (top lighter, bottom deeper; mid transparent keeps cloud contrast)
+        var vg = olc.createLinearGradient(cx, cy-R, cx, cy+R);
+        vg.addColorStop(0, hexA(pal.light, 0.55)); vg.addColorStop(0.5, hexA(pal.mid, 0.0)); vg.addColorStop(1, hexA(pal.deep, 0.45));
+        olc.fillStyle = vg; olc.fillRect(cx-R, cy-R, R*2, R*2);
 
-        // feather the circle edge into the background
-        var fe = ctx.createRadialGradient(cx, cy, R*0.9, cx, cy, R*1.06);
-        fe.addColorStop(0, 'rgba(244,248,253,0)'); fe.addColorStop(1, 'rgba(244,248,253,1)');
-        ctx.fillStyle = fe; ctx.beginPath(); ctx.arc(cx, cy, R*1.08, 0, 6.283); ctx.fill();
+        // top-left sheen
+        var hi = olc.createRadialGradient(cx - R*0.3, cy - R*0.36, 0, cx - R*0.3, cy - R*0.36, R*1.05);
+        hi.addColorStop(0, 'rgba(255,255,255,' + (0.5 + amp*0.25) + ')'); hi.addColorStop(0.4, 'rgba(255,255,255,0.05)'); hi.addColorStop(1, 'rgba(255,255,255,0)');
+        olc.fillStyle = hi; olc.fillRect(cx-R, cy-R, R*2, R*2);
+        olc.restore();
+
+        // soft-edge feather via alpha mask (no white ring)
+        olc.globalCompositeOperation = 'destination-in';
+        var m = olc.createRadialGradient(cx, cy, R*0.82, cx, cy, R*1.01);
+        m.addColorStop(0, 'rgba(0,0,0,1)'); m.addColorStop(1, 'rgba(0,0,0,0)');
+        olc.fillStyle = m; olc.fillRect(cx-R*1.1, cy-R*1.1, R*2.2, R*2.2);
+        olc.globalCompositeOperation = 'source-over';
+
+        // composite the orb onto the page
+        ctx.drawImage(ol, 0, 0, W, H);
       })();
     }
   })();
