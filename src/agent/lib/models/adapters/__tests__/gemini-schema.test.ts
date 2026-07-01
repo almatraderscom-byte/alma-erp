@@ -35,6 +35,26 @@ describe('sanitizeSchemaForGemini', () => {
     expect(out.properties.role.enum).toEqual(['ops', 'cs'])
   })
 
+  it('strips numeric array constraints (minItems/maxItems) that 400 Gemini as int64/string', () => {
+    const out = sanitizeSchemaForGemini({
+      type: 'object',
+      properties: {
+        entries: {
+          type: 'array',
+          minItems: 2,
+          maxItems: 30,
+          items: { type: 'object', properties: { amount: { type: 'number', minimum: 0 } } },
+        },
+      },
+    }) as any
+    expect(out.properties.entries.minItems).toBeUndefined()
+    expect(out.properties.entries.maxItems).toBeUndefined()
+    expect(out.properties.entries.type).toBe('array')
+    // nested numeric constraints are dropped too, but the shape survives
+    expect(out.properties.entries.items.properties.amount.minimum).toBeUndefined()
+    expect(out.properties.entries.items.properties.amount.type).toBe('number')
+  })
+
   it('still strips Gemini-unsupported fields ($schema, additionalProperties, $defs)', () => {
     const out = sanitizeSchemaForGemini({
       $schema: 'https://json-schema.org/draft/2020-12/schema',
