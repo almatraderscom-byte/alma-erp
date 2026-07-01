@@ -428,6 +428,12 @@ export function MobileNav() {
   )
   const rotationHrefs = useMemo(() => new Set(rotationItems.map(d => d.href)), [rotationItems])
 
+  // Approvals is a SUPER_ADMIN / normal-ADMIN surface only. filterNavByRole already
+  // strips /approvals for STAFF/other low-privilege roles, so the pinned mobile tab
+  // must follow the same gate — otherwise staff phones show an Approvals tab they
+  // aren't allowed to open (owner report 2026-07).
+  const canSeeApprovals = useMemo(() => nav.some(n => n.href === '/approvals'), [nav])
+
   // Everything that isn't pinned (Approvals) and isn't in the rotating bar — shown in
   // the Account drawer so no page is lost (HR/finance details, settings, admin, etc.).
   const drawerModules = useMemo(
@@ -542,9 +548,11 @@ export function MobileNav() {
           activeHref={path}
           trailing={
             <>
-              <div className="w-[56px]">
-                <MobileTab icon="✅" label="Approvals" href="/approvals" active={activePath(path, '/approvals')} badge={approvalCount} />
-              </div>
+              {canSeeApprovals && (
+                <div className="w-[56px]">
+                  <MobileTab icon="✅" label="Approvals" href="/approvals" active={activePath(path, '/approvals')} badge={approvalCount} />
+                </div>
+              )}
               <div className="w-[56px]">
                 <MobileTab icon="◎" label="Account" active={drawerOpen} onClick={() => setDrawerOpen(true)} />
               </div>

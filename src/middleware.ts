@@ -93,6 +93,12 @@ function apiRoleDenied(pathname: string, method: string, role: ReturnType<typeof
   // CDIT (digital) and Finance data — including reads — are owner/admin only
   // (owner decision 2026-06): low-privilege roles must not see financial ledgers.
   if (pathname.startsWith('/api/digital')) return !['SUPER_ADMIN', 'ADMIN'].includes(role)
+  // Staff own-pocket expense refund (নিজ খরচ ফেরত) is self-scoped inside the route
+  // by token.sub: GET returns only the signed-in staffer's own claims, POST files a
+  // claim into the owner's approval center (credits the wallet only on approval).
+  // It is NOT a financial-ledger read, so every logged-in staffer may use it —
+  // this exception MUST precede the blanket /api/finance owner/admin gate below.
+  if (pathname.startsWith('/api/finance/reimbursement')) return false
   if (
     pathname.startsWith('/api/orders/orders/status')
     || pathname.startsWith('/api/orders/orders/field')
