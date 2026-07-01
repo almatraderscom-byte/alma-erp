@@ -153,7 +153,7 @@ export default function AgentSidebar({
   }
 
   const sidebarContent = (
-    <div className={cn('flex h-full flex-col bg-card/85', isMobile && 'safe-top')}>
+    <div className={cn('glass-panel flex h-full flex-col rounded-none border-y-0 border-l-0 border-r border-white/[0.08]', isMobile && 'safe-top')}>
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border-subtle px-4 py-3">
         <div className="flex items-center gap-2">

@@ -37,6 +37,7 @@ const ALLOWED_ACTIONS = new Set([
   'type',
   'press',
   'select_option',
+  'hover',
   'scroll',
   'scroll_to',
   'wait',
@@ -590,6 +591,54 @@ function pageScroll(arg) {
   return { ok: true, scrolledBy: by }
 }
 
+// Move the mouse over an element (by ref → selector → visible text) to reveal
+// hover-only menus / tooltips before clicking them. Dispatches the full pointer +
+// mouse enter/over sequence so hover-driven UIs (dropdown menus, submenus) open.
+function pageHover(arg) {
+  const { selector, text, ref } = arg
+  const visible = (e) => {
+    const r = e.getBoundingClientRect()
+    return r.width > 0 && r.height > 0
+  }
+  let el = null
+  if (ref) {
+    try {
+      el = document.querySelector('[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]')
+    } catch {
+      el = null
+    }
+  }
+  if (!el && selector) {
+    try {
+      el = document.querySelector(selector)
+    } catch {
+      el = null
+    }
+  }
+  if (!el && text) {
+    const needle = String(text).toLowerCase()
+    el =
+      Array.from(document.querySelectorAll('a,button,li,span,div,[role=button],[role=link],[role=menuitem]'))
+        .filter(visible)
+        .find((e) => (e.innerText || e.getAttribute('aria-label') || '').trim().toLowerCase().includes(needle)) ||
+      null
+  }
+  if (!el) return { ok: false, error: 'element not found to hover' }
+  el.scrollIntoView({ block: 'center', inline: 'center' })
+  const r = el.getBoundingClientRect()
+  const cx = r.left + r.width / 2
+  const cy = r.top + r.height / 2
+  const opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window }
+  for (const type of ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove']) {
+    try {
+      el.dispatchEvent(new MouseEvent(type, opts))
+    } catch {
+      /* some engines lack pointer events — ignore */
+    }
+  }
+  return { ok: true, hovered: (el.innerText || el.getAttribute('aria-label') || el.tagName || '').trim().slice(0, 60) }
+}
+
 // ---- command execution ------------------------------------------------------
 
 async function runInPage(tabId, func, arg) {
@@ -621,6 +670,24 @@ async function runInAllFrames(tabId, func, arg) {
     if (val && firstDefined === null) firstDefined = val
   }
   return firstDefined
+}
+
+// Run a page function that targets an element, but tolerate the element not being
+// rendered YET: retry a few times with a short wait, then fall back to searching
+// all iframes. This is the main "never get stuck on a not-yet-loaded element"
+// guard — async apps (React/SPA) often render the target a beat after the click
+// that triggered it. Returns the first ok result, else the last non-ok result.
+async function actWithRetry(tabId, func, arg) {
+  let last = await runInPage(tabId, func, arg)
+  if (last && last.ok) return last
+  for (let i = 0; i < 3 && !(last && last.ok); i++) {
+    await new Promise((r) => setTimeout(r, 450))
+    last = await runInPage(tabId, func, arg)
+  }
+  if (last && last.ok) return last
+  const alt = await runInAllFrames(tabId, func, arg)
+  if (alt && alt.ok) return alt
+  return last || alt
 }
 
 // Wait until the tab finishes loading (status === 'complete') instead of a blind
@@ -708,55 +775,38 @@ async function executeCommand(cmd) {
   }
   if (action === 'click') {
     await showOverlay(tab.id, 'ক্লিক করছে: ' + String(cmd.text || cmd.selector || '').slice(0, 40))
-    const arg = { selector: cmd.selector, text: cmd.text, ref: cmd.ref }
-    let r = await runInPage(tab.id, pageClick, arg)
-    if (!(r && r.ok)) {
-      const alt = await runInAllFrames(tab.id, pageClick, arg)
-      if (alt && alt.ok) r = alt
-    }
-    return r
+    // actWithRetry: tolerate an element that renders a beat late + search iframes.
+    return await actWithRetry(tab.id, pageClick, { selector: cmd.selector, text: cmd.text, ref: cmd.ref })
   }
   if (action === 'type') {
     await showOverlay(tab.id, 'লিখছে: ' + String(cmd.value || '').slice(0, 40))
-    const arg = {
+    const r = await actWithRetry(tab.id, pageType, {
       selector: cmd.selector,
       text: cmd.text,
       ref: cmd.ref,
       value: cmd.value,
       submit: Boolean(cmd.submit),
-    }
-    let r = await runInPage(tab.id, pageType, arg)
-    if (!(r && r.ok)) {
-      const alt = await runInAllFrames(tab.id, pageType, arg)
-      if (alt && alt.ok) r = alt
-    }
+    })
     if (r && r.ok && cmd.submit) await waitForTabLoad(tab.id, 12000)
     return r
   }
   if (action === 'select_option') {
     await showOverlay(tab.id, 'অপশন বাছছে: ' + String(cmd.option || cmd.value || '').slice(0, 40))
-    const arg = {
+    return await actWithRetry(tab.id, pageSelect, {
       selector: cmd.selector,
       text: cmd.text,
       ref: cmd.ref,
       option: cmd.option,
       value: cmd.value,
-    }
-    let r = await runInPage(tab.id, pageSelect, arg)
-    if (!(r && r.ok)) {
-      const alt = await runInAllFrames(tab.id, pageSelect, arg)
-      if (alt && alt.ok) r = alt
-    }
-    return r
+    })
+  }
+  if (action === 'hover') {
+    await showOverlay(tab.id, 'হোভার করছে: ' + String(cmd.text || cmd.selector || '').slice(0, 40))
+    return await actWithRetry(tab.id, pageHover, { selector: cmd.selector, text: cmd.text, ref: cmd.ref })
   }
   if (action === 'scroll_to') {
     await showOverlay(tab.id, 'স্ক্রল করছে: ' + String(cmd.text || cmd.selector || '').slice(0, 40))
-    let r = await runInPage(tab.id, pageScrollTo, { selector: cmd.selector, text: cmd.text, ref: cmd.ref })
-    if (!(r && r.ok)) {
-      const alt = await runInAllFrames(tab.id, pageScrollTo, { selector: cmd.selector, text: cmd.text, ref: cmd.ref })
-      if (alt && alt.ok) r = alt
-    }
-    return r
+    return await actWithRetry(tab.id, pageScrollTo, { selector: cmd.selector, text: cmd.text, ref: cmd.ref })
   }
   if (action === 'switch_tab') {
     const picked = await pickFollowTab(tab)

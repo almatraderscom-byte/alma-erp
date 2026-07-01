@@ -163,35 +163,127 @@ body.kb-open .agent-composer-wrap {
   }
 }
 
-.glass-panel {
-  background: rgba(32, 32, 39, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+/* ── Liquid glass (frosted / translucent) — premium, THEME-AWARE agent surface ──
+   Owner wants Claude-app frosted glass on iPhone too (blur was desktop-only before).
+   CRITICAL: the glass MUST flip with the theme. Hardcoded dark glass turned every
+   surface muddy & unreadable in LIGHT mode (owner report). These tokens are
+   frosted-white in light mode (dark text stays readable) and dark glass in dark
+   mode. Base :root = light; :root[data-theme='dark'] overrides. */
+:root {
+  --glass-bg:          rgba(255, 255, 255, 0.55);
+  --glass-bg-strong:   rgba(250, 249, 246, 0.82);
+  --glass-bg-soft:     rgba(255, 255, 255, 0.42);
+  --glass-border:      rgba(0, 0, 0, 0.07);
+  --glass-hi:          rgba(255, 255, 255, 0.70);
+  --glass-shadow:      0 10px 34px -14px rgba(0, 0, 0, 0.16);
+  --glass-shadow-soft: 0 8px 26px -14px rgba(0, 0, 0, 0.12);
+  --glass-shadow-lift: 0 12px 40px -16px rgba(0, 0, 0, 0.20);
+  --glass-solid-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }
 
-@supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
-  @media (min-width: 768px) {
-    .glass-panel {
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      background: rgba(32, 32, 39, 0.55);
-    }
+:root[data-theme='dark'] {
+  --glass-bg:          rgba(28, 28, 34, 0.55);
+  --glass-bg-strong:   rgba(28, 28, 34, 0.80);
+  --glass-bg-soft:     rgba(30, 30, 36, 0.44);
+  --glass-border:      rgba(255, 255, 255, 0.09);
+  --glass-hi:          rgba(255, 255, 255, 0.10);
+  --glass-shadow:      0 10px 34px -14px rgba(0, 0, 0, 0.55);
+  --glass-shadow-soft: 0 8px 28px -14px rgba(0, 0, 0, 0.50);
+  --glass-shadow-lift: 0 12px 40px -16px rgba(0, 0, 0, 0.60);
+  --glass-solid-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.glass-panel {
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-solid-shadow);
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-panel {
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: blur(22px) saturate(1.7);
+    backdrop-filter: blur(22px) saturate(1.7);
+    box-shadow: inset 0 1px 0 var(--glass-hi), var(--glass-shadow);
   }
 }
 
 .glass-card {
-  background: rgba(32, 32, 39, 0.68);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--glass-border);
 }
 
-@supports (backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px)) {
-  @media (min-width: 768px) {
-    .glass-card {
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      background: rgba(32, 32, 39, 0.5);
-    }
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-card {
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: blur(16px) saturate(1.5);
+    backdrop-filter: blur(16px) saturate(1.5);
+    box-shadow: inset 0 1px 0 var(--glass-hi), var(--glass-shadow-soft);
   }
+}
+
+/* Canonical reusable frosted-glass surface — apply to any agent card/pod/panel to
+   get the translucent liquid-glass look with one class. */
+.alma-glass {
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-solid-shadow);
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .alma-glass {
+    background: var(--glass-bg-soft);
+    -webkit-backdrop-filter: blur(18px) saturate(1.6);
+    backdrop-filter: blur(18px) saturate(1.6);
+    box-shadow: inset 0 1px 0 var(--glass-hi), var(--glass-shadow-soft);
+  }
+}
+
+/* A brighter edge-lit variant for the most prominent surfaces (composer, active
+   cards) — a touch more sheen so it reads as glass, not just a flat panel. */
+.alma-glass-lift {
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-solid-shadow);
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .alma-glass-lift {
+    background: var(--glass-bg);
+    -webkit-backdrop-filter: blur(24px) saturate(1.8);
+    backdrop-filter: blur(24px) saturate(1.8);
+    box-shadow: inset 0 1px 0 var(--glass-hi), var(--glass-shadow-lift);
+  }
+}
+
+/* Premium "Connecting" indicator — rendered INSIDE the composer (Claude Code
+   anatomy: the input box grows to fit it). A smoothly-spinning coral sparkle +
+   a shimmering label. Deliberately not a floating pill. */
+@keyframes agent-spark-spin { to { transform: rotate(360deg); } }
+
+.agent-connecting__spark {
+  color: #E07A5F;
+  transform-origin: center;
+  animation: agent-spark-spin 1.15s linear infinite;
+  filter: drop-shadow(0 0 4px rgba(224, 122, 95, 0.45));
+}
+
+.agent-connecting__label {
+  background-image: linear-gradient(
+    100deg,
+    #c96a52 0%, #c96a52 28%, #f2b6a6 48%, #ffffff 56%, #f2b6a6 64%, #c96a52 82%, #c96a52 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: alma-ai-flow 2.2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-connecting__spark { animation: none; }
+  .agent-connecting__label { animation: none; -webkit-text-fill-color: #c96a52; color: #c96a52; }
 }
 
 .neon-gold {

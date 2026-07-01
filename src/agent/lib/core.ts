@@ -594,6 +594,37 @@ export async function* runAgentTurn(
     }
   }
 
+  // Part 1.5 — SALAH-aware snooze. If the owner asks for time ("আমাকে ৩০ মিনিট দাও",
+  // "30 min por") WHILE a namaz waqt is in its duty window, actually pause reminders
+  // + calls (per-waqt override + global owner-call-lock) instead of the generic nag
+  // snooze below — which only paused business chases and left the salah call ringing.
+  // Runs BEFORE the pace-reply so a live prayer window wins, and only fires inside the
+  // 45-min moral window (outside it → falls through, we never fake a lock).
+  if (!personalMode && lastUserText && !intakeAutoReply && !intakeContextBlock) {
+    try {
+      const { parseSnoozeMs } = await import('@/agent/lib/pending-followup')
+      const ms = parseSnoozeMs(lastUserText)
+      if (ms != null) {
+        const { resolveActiveSalahWaqt, applySalahDelay } = await import('@/agent/lib/salah-delay')
+        const active = await resolveActiveSalahWaqt()
+        if (active) {
+          const res = await applySalahDelay({
+            waqt: active.waqt,
+            minutes: Math.round(ms / 60_000),
+            reason: 'owner typed snooze',
+          })
+          if (res) {
+            intakeAutoReply =
+              `ঠিক আছে স্যার — ${res.grantedMin} মিনিটের জন্য নামাজের কল ও রিমাইন্ডার বন্ধ রাখলাম ` +
+              `(${res.resumeAtLabel}-এ আবার মনে করিয়ে দেব)। নিশ্চিন্তে সেরে নিন। 🤝`
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[core] salah snooze intercept failed:', err instanceof Error ? err.message : err)
+    }
+  }
+
   // Part 2 — owner replies "busy / 30 min por / driving" to a pending-approval reminder:
   // snooze the chase by exactly that long. Guarded (only when a reminder went out recently)
   // so it never hijacks unrelated chat.

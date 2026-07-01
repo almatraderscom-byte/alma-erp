@@ -211,6 +211,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [activeConvId, setActiveConvId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streaming, setStreaming] = useState(false)
+  // Brief "সংযোগ হচ্ছে…" glass pill on cold open / return-from-background (Claude-app
+  // feel — confirms the session reconnected). Auto-hides after a short confirmation.
+  const [reconnecting, setReconnecting] = useState(false)
   // streamStatus is still computed (telemetry / future use) but the live
   // indicator now shows the Claude-style rotating verb + model name instead.
   const [, setStreamStatus] = useState<string | null>(null)
@@ -324,15 +327,37 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     }
   }, [])
 
+  const hiddenSinceRef = useRef<number | null>(null)
+  const reconnectTimerRef = useRef<number | null>(null)
+  const flashReconnecting = useCallback((ms: number) => {
+    setReconnecting(true)
+    if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current)
+    reconnectTimerRef.current = window.setTimeout(() => setReconnecting(false), ms)
+  }, [])
+
+  // Cold open — brief connecting confirmation so the session feels "live" on entry.
   useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return
+    flashReconnecting(1200)
+    return () => { if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current) }
+  }, [flashReconnecting])
+
+  useEffect(() => {
+    const onVisChange = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenSinceRef.current = performance.now()
+        return
+      }
+      // Became visible — show the "সংযোগ হচ্ছে…" pill only after a real absence
+      // (not a quick tab flick), then resync the conversation.
+      const away = hiddenSinceRef.current != null ? performance.now() - hiddenSinceRef.current : 0
+      hiddenSinceRef.current = null
       if (streamingRef.current) return
+      if (away > 2500) flashReconnecting(1400)
       void resyncActiveConversation(activeConvIdRef.current)
     }
-    document.addEventListener('visibilitychange', onVisible)
-    return () => document.removeEventListener('visibilitychange', onVisible)
-  }, [resyncActiveConversation])
+    document.addEventListener('visibilitychange', onVisChange)
+    return () => document.removeEventListener('visibilitychange', onVisChange)
+  }, [resyncActiveConversation, flashReconnecting])
 
   // App-presence heartbeat: while the agent app is foreground, ping the server so
   // it knows the owner is here and suppresses agent push (ntfy). When he leaves
@@ -628,6 +653,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     if (pendingFiles.length > 0) {
       try {
         fileRefs = await Promise.all(pendingFiles.map(async (pf) => {
+          // Claude-app flow: the file already pre-uploaded in the background when it
+          // was attached, so reuse that result — send is then instant and never races
+          // an unfinished upload. Only fall back to uploading here if it's missing.
+          if (pf.remote?.path) return pf.remote
           const fd = new FormData()
           fd.append('file', pf.file)
           if (convIdForUpload) fd.append('conversationId', convIdForUpload)
@@ -1537,6 +1566,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           disabled={false}
           onStop={stopGeneration}
           streaming={streaming}
+          reconnecting={reconnecting}
           conversationId={activeConvId}
           isMobile={isMobile}
           activeModelId={activeModelId}

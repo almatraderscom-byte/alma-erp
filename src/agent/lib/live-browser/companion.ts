@@ -37,6 +37,7 @@ export const LIVE_BROWSER_ACTIONS = [
   'type',
   'press',
   'select_option',
+  'hover',
   'scroll',
   'scroll_to',
   'wait',
