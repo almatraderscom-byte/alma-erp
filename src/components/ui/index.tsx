@@ -57,7 +57,9 @@ export const Card = forwardRef<HTMLDivElement, {
     <div
       ref={ref}
       className={cn(
-        'min-w-0 rounded-2xl border bg-card/80 shadow-card',
+        // Floating (iOS / Claude-app) look: soft layered shadow + pillowy corners
+        // so every card visibly lifts off the page. Applies app-wide via this base.
+        'min-w-0 rounded-3xl border bg-card/80 shadow-float',
         gold ? 'border-gold/30' : 'border-border-subtle',
         interactive && 'card-interactive',
         className,
