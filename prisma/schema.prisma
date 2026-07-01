@@ -2471,6 +2471,49 @@ model AgentKvSetting {
   @@map("agent_kv_settings")
 }
 
+// Phase E (live browser companion) — a paired Chrome (the owner's own browser
+// running the ALMA Companion extension). The agent drives it live via the
+// command queue below. Token is stored hashed; pairing uses a short-lived code.
+model LiveBrowserDevice {
+  id           String    @id @default(uuid())
+  ownerUserId  String
+  name         String    @default("My Chrome")
+  /// sha256(token) — the raw token only ever lives in the extension.
+  tokenHash    String?   @unique
+  /// one-time pairing code + expiry (cleared once paired).
+  pairingCode  String?   @unique
+  pairingExp   DateTime?
+  pairedAt     DateTime?
+  lastSeenAt   DateTime?
+  revoked      Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+
+  commands     LiveBrowserCommand[]
+
+  @@index([ownerUserId])
+  @@map("live_browser_devices")
+}
+
+// One command the agent wants the paired browser to run (navigate/read/click/…)
+// Durable queue (never in-memory): extension polls 'queued', posts result back.
+model LiveBrowserCommand {
+  id          String    @id @default(uuid())
+  deviceId    String
+  device      LiveBrowserDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  action      String
+  params      Json?
+  /// queued → delivered → done | failed
+  status      String    @default("queued")
+  result      Json?
+  error       String?   @db.Text
+  createdAt   DateTime  @default(now())
+  deliveredAt DateTime?
+  resolvedAt  DateTime?
+
+  @@index([deviceId, status])
+  @@map("live_browser_commands")
+}
+
 // Staff idle-detection pilot: one row per ongoing "off-task" episode (a category
 // continuously observed across snapshots). Closed when the condition clears or
 // goes stale. notifiedAt is set once the owner has been alerted for that episode.
