@@ -37,6 +37,16 @@ const cheapHeadEnabled = (): boolean => process.env.ENABLE_CHEAP_HEAD !== 'false
 const cheapHeadModelId = (): string => process.env.CHEAP_HEAD_MODEL_ID?.trim() || 'or-deepseek-v4-flash'
 const triageModelId = (): string => process.env.CHEAP_HEAD_TRIAGE_MODEL_ID?.trim() || 'or-deepseek-v4-flash'
 
+// Heavy/sensitive head model. Owner command (2026-07): Anthropic credits exhausted,
+// so the heavy tier answers on Gemini 3.1 Pro instead of the dead Sonnet head.
+// Owner-tunable via HEAVY_HEAD_MODEL_ID (no redeploy). Falls back to DEFAULT_MODEL_ID
+// only if the configured id is unknown — DEFAULT_MODEL_ID itself stays Claude because
+// it guards the finance/CRITICAL sub-agent path, which is separate from the head.
+const heavyHeadModelId = (): string => {
+  const id = process.env.HEAVY_HEAD_MODEL_ID?.trim() || 'gemini-3.1-pro'
+  return isKnownModelId(id) ? id : DEFAULT_MODEL_ID
+}
+
 // Marketing head: when the owner's message is marketing/content work, Qwen answers
 // DIRECTLY as the head (runs the full agent loop) — exactly like DeepSeek does for
 // "light" turns. No Sonnet→sub-agent hop, so no double token cost. Owner-tunable.
@@ -264,7 +274,7 @@ export async function resolveHeadModelId(opts: {
   businessId: AgentBusinessId
   conversationId?: string
 }): Promise<HeadDecision> {
-  const heavy = (via: string): HeadDecision => ({ modelId: DEFAULT_MODEL_ID, tier: 'heavy', via })
+  const heavy = (via: string): HeadDecision => ({ modelId: heavyHeadModelId(), tier: 'heavy', via })
 
   // Owner's model choice for this conversation:
   //  - a concrete known model id (INCLUDING Sonnet) → run THAT exact model, no triage.
