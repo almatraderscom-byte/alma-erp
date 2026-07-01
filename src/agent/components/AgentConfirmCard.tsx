@@ -7,6 +7,7 @@ import AgentSparkleLoader from './AgentSparkleLoader'
 import AgentWorkingDots from './AgentWorkingDots'
 import { notifyTodosChanged } from './AgentTodoContext'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
+import { notifyError, notifySuccess, notifyWarning } from '@/lib/haptics'
 
 export interface PendingAction {
   id: string
@@ -132,12 +133,15 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuic
         throw new Error(code || `HTTP ${res.status}`)
       }
       setPhase(decision === 'approve' ? 'approved' : 'rejected')
+      if (decision === 'approve') notifySuccess()
+      else notifyWarning()
       toast.success(decision === 'approve' ? 'অনুমোদিত ✓' : 'বাতিল করা হয়েছে')
       onResolved(decision === 'approve' ? 'approved' : 'rejected')
       // A resolved card may have cancelled/created a todo (e.g. todo_cancel) —
       // refresh the dock immediately so it doesn't linger until the next poll.
       notifyTodosChanged()
     } catch (err) {
+      notifyError()
       toast.error(`সমস্যা: ${err instanceof Error ? err.message : String(err)}`)
       setPhase('idle')
       setLoadingDecision(null)

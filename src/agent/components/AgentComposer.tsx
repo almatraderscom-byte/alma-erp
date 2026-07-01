@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
+import { impactMedium } from '@/lib/haptics'
 import AgentModelSelector from './AgentModelSelector'
 import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
 
@@ -118,6 +119,7 @@ export default function AgentComposer({
   const send = useCallback(() => {
     if ((!text.trim() && files.length === 0) || disabled || streaming) return
     if (files.some((f) => f.status === 'uploading')) { toast('ছবি আপলোড হচ্ছে — এক মুহূর্ত…'); return }
+    impactMedium()
     onSend(text, files)
     setText('')
     setFiles([])
