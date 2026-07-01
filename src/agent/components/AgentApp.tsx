@@ -208,6 +208,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const [activeConvId, setActiveConvId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streaming, setStreaming] = useState(false)
+  // Brief "সংযোগ হচ্ছে…" glass pill on cold open / return-from-background (Claude-app
+  // feel — confirms the session reconnected). Auto-hides after a short confirmation.
+  const [reconnecting, setReconnecting] = useState(false)
   // streamStatus is still computed (telemetry / future use) but the live
   // indicator now shows the Claude-style rotating verb + model name instead.
   const [, setStreamStatus] = useState<string | null>(null)
@@ -321,15 +324,37 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     }
   }, [])
 
+  const hiddenSinceRef = useRef<number | null>(null)
+  const reconnectTimerRef = useRef<number | null>(null)
+  const flashReconnecting = useCallback((ms: number) => {
+    setReconnecting(true)
+    if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current)
+    reconnectTimerRef.current = window.setTimeout(() => setReconnecting(false), ms)
+  }, [])
+
+  // Cold open — brief connecting confirmation so the session feels "live" on entry.
   useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return
+    flashReconnecting(1200)
+    return () => { if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current) }
+  }, [flashReconnecting])
+
+  useEffect(() => {
+    const onVisChange = () => {
+      if (document.visibilityState === 'hidden') {
+        hiddenSinceRef.current = performance.now()
+        return
+      }
+      // Became visible — show the "সংযোগ হচ্ছে…" pill only after a real absence
+      // (not a quick tab flick), then resync the conversation.
+      const away = hiddenSinceRef.current != null ? performance.now() - hiddenSinceRef.current : 0
+      hiddenSinceRef.current = null
       if (streamingRef.current) return
+      if (away > 2500) flashReconnecting(1400)
       void resyncActiveConversation(activeConvIdRef.current)
     }
-    document.addEventListener('visibilitychange', onVisible)
-    return () => document.removeEventListener('visibilitychange', onVisible)
-  }, [resyncActiveConversation])
+    document.addEventListener('visibilitychange', onVisChange)
+    return () => document.removeEventListener('visibilitychange', onVisChange)
+  }, [resyncActiveConversation, flashReconnecting])
 
   // App-presence heartbeat: while the agent app is foreground, ping the server so
   // it knows the owner is here and suppresses agent push (ntfy). When he leaves
@@ -1529,6 +1554,17 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             isMobile={isMobile}
           />
         </div>
+
+        {/* Reconnect confirmation — small frosted-glass "Connecting" pill (Claude-app
+            feel) shown briefly on cold open / return-from-background. */}
+        {reconnecting && (
+          <div className="pointer-events-none flex justify-center px-3 pb-1">
+            <div className="alma-glass animate-fade-in flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[12px] font-medium text-cream/90">
+              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/25 border-t-[#E07A5F]" />
+              সংযোগ হচ্ছে…
+            </div>
+          </div>
+        )}
 
         {/* Composer */}
         <AgentComposer
