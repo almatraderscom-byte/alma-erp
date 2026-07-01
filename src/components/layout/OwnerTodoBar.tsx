@@ -42,11 +42,15 @@ function isOpenOwnerTodo(t: OwnerTodo): boolean {
 
 function dueLabel(dueDate: string | null): { text: string; overdue: boolean } | null {
   if (!dueDate) return null
+  const dueMs = new Date(dueDate).getTime()
+  if (Number.isNaN(dueMs)) return null
   const fmt = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Dhaka', year: 'numeric', month: '2-digit', day: '2-digit',
   })
   const today = fmt.format(new Date())
-  const due = dueDate.slice(0, 10)
+  // Compare Dhaka calendar dates (an ISO string sliced at 10 is the UTC date,
+  // which is yesterday for Dhaka times before 06:00).
+  const due = fmt.format(new Date(dueMs))
   if (due === today) return { text: 'আজ', overdue: false }
   if (due < today) return { text: 'বাকি পড়ে আছে', overdue: true }
   const tomorrow = fmt.format(new Date(Date.now() + 24 * 60 * 60 * 1000))
