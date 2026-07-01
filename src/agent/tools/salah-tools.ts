@@ -10,10 +10,9 @@ import {
 } from '@/agent/lib/salah-context'
 import { buildSalahStatusAnswer } from '@/agent/lib/salah-status-answer'
 import { getDhakaPrayerTimes } from '@/agent/lib/salah-times'
-import { getDhakaSchedule } from '@/agent/lib/dhaka-schedule'
 import { isPhantomSalahConfirmation } from '@/agent/lib/salah-resolve'
-import { computeLockUntil, MAX_DELAY_MIN } from '@/lib/salah/duty-window'
-import { setOwnerCallLockUntil } from '@/lib/owner-call-lock'
+import { MAX_DELAY_MIN } from '@/lib/salah/duty-window'
+import { applySalahDelay } from '@/agent/lib/salah-delay'
 import {
   getSalahTimeConfig,
   setSalahWaqtTimes,
@@ -24,34 +23,6 @@ import { todayYmdDhaka, dhakaMidnightUtc, addDaysYmd } from '@/lib/agent-api/dha
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
-
-async function resolvePrayerStartIso(waqt: string, dateYmd?: string): Promise<string | null> {
-  const ymd = dateYmd || todayYmdDhaka()
-  const schedule = await getDhakaSchedule(ymd)
-  const w = schedule[waqt as WaqtKey]
-  if (!w?.prayerStart) return null
-  return w.prayerStart.toISOString()
-}
-
-async function upsertSalahDelayOverride(args: {
-  dateYmd: string
-  waqt: string
-  delayUntil: Date
-  grantedMin: number
-}) {
-  const dateObj = dhakaMidnightUtc(args.dateYmd)
-  await db.agentSalahOverride.deleteMany({ where: { date: dateObj, waqt: args.waqt } })
-  await db.agentSalahOverride.create({
-    data: {
-      date: dateObj,
-      waqt: args.waqt,
-      delayUntil: args.delayUntil,
-      overrideTime: null,
-      skip: false,
-      reason: `owner requested ${args.grantedMin}min`,
-    },
-  })
-}
 
 // ── get_prayer_times ──────────────────────────────────────────────────────────
 
@@ -333,13 +304,11 @@ const request_salah_delay: AgentTool = {
         return { success: false, error: 'waqt এবং minutes (১+) লাগবে।' }
       }
 
-      const prayerStartIso = await resolvePrayerStartIso(waqt, dateYmd)
-      if (!prayerStartIso) {
-        return { success: false, error: 'নামাজের সময় পাওয়া যায়নি।' }
-      }
-
-      const lock = computeLockUntil(prayerStartIso, minutes)
-      if (!lock) {
+      // Single source of truth: writes BOTH the per-waqt override AND the global
+      // owner-call-lock, so reminders + calls both actually pause. Returns null
+      // outside the duty window (do NOT claim a lock then).
+      const res = await applySalahDelay({ waqt, minutes, dateYmd })
+      if (!res) {
         return {
           success: false,
           error:
@@ -347,30 +316,15 @@ const request_salah_delay: AgentTool = {
         }
       }
 
-      await upsertSalahDelayOverride({
-        dateYmd,
-        waqt,
-        delayUntil: lock.lockUntil,
-        grantedMin: lock.grantedMin,
-      })
-      await setOwnerCallLockUntil(lock.lockUntil)
-
-      const resumeLabel = lock.lockUntil.toLocaleTimeString('bn-BD', {
-        timeZone: 'Asia/Dhaka',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true,
-      })
-
       return {
         success: true,
         data: {
-          waqt,
-          grantedMinutes: lock.grantedMin,
-          resumeAt: lock.lockUntil.toISOString(),
-          resumeAtLabel: resumeLabel,
+          waqt: res.waqt,
+          grantedMinutes: res.grantedMin,
+          resumeAt: res.resumeAt,
+          resumeAtLabel: res.resumeAtLabel,
           message:
-            `ঠিক আছে স্যার — ${lock.grantedMin} মিনিটের জন্য নামাজের কল বন্ধ রাখলাম (${resumeLabel} পর আবার মনে করিয়ে দেব)। ` +
+            `ঠিক আছে স্যার — ${res.grantedMin} মিনিটের জন্য নামাজের কল বন্ধ রাখলাম (${res.resumeAtLabel} পর আবার মনে করিয়ে দেব)। ` +
             `সর্বোচ্চ ${MAX_DELAY_MIN} মিনিট; নামাজের সময় + ৩০ মিনিটের পর আর delay হবে না।`,
         },
       }

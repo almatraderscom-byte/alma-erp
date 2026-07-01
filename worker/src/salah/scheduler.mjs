@@ -739,38 +739,36 @@ export async function handleSalahCallback(ctx, action, waqt, status, dateYmd = n
       await ctx.reply(messages[resolved] || 'রেকর্ড আপডেট হয়েছে।')
     }
   } else if (action === 'salah_later') {
-    // "পরে পড়বো" must actually register a short snooze — write a delay_until
-    // override so reminders + calls pause (scheduler + owner-call-lock both honor
-    // it) AND the chat agent stops nagging (web salah-context reads the same
-    // override). Bounded by window end so the waqt is never silently skipped.
-    let snoozeMin = 20
+    // "পরে পড়বো" must ACTUALLY pause reminders + calls — write a delay_until override
+    // AND the global owner-call-lock. Do the write on the web (Vercel) via the shared
+    // salah-delay engine: the worker's own supabase write here was unreliable and the
+    // button was silently a no-op (DB showed zero button-written overrides), so calls
+    // kept ringing. Only confirm "বন্ধ রাখলাম" when the lock actually landed — never
+    // give a false assurance.
+    let reply = null
     try {
-      if (supabase) {
-        const now = new Date()
-        const dayRecords = await getSalahRecords(recordDate)
-        const existing = dayRecords.find((r) => r.waqt === waqt)
-        const windowEnd = existing ? new Date(existing.windowEnd ?? existing.window_end) : null
-        let delayUntil = new Date(now.getTime() + 20 * 60_000)
-        if (windowEnd && Number.isFinite(windowEnd.getTime()) && delayUntil > windowEnd) {
-          delayUntil = windowEnd
-        }
-        if (delayUntil > now) {
-          snoozeMin = Math.max(1, Math.round((delayUntil.getTime() - now.getTime()) / 60_000))
-          await supabase.from('salah_overrides').delete().eq('waqt', waqt).eq('date', recordDate)
-          await supabase.from('salah_overrides').insert({
-            date: recordDate,
-            waqt,
-            delay_until: delayUntil.toISOString(),
-            skip: false,
-            reason: 'owner pressed পরে পড়বো',
-          })
+      const appUrl = getAppUrl()
+      const token = getInternalToken()
+      if (appUrl && token) {
+        const res = await fetch(`${appUrl}/api/assistant/internal/salah-delay`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ waqt, minutes: 20, date: recordDate }),
+        })
+        if (res.ok) {
+          const body = await res.json().catch(() => ({}))
+          if (typeof body.reply === 'string') reply = body.reply
         }
       }
     } catch (e) {
-      console.warn('[salah] later snooze write failed:', e.message)
+      console.warn('[salah] later delay via web failed:', e.message)
     }
-    await ctx.answerCbQuery('ঠিক আছে — মনে করিয়ে দেব।')
-    await ctx.reply(`ঠিক আছে Sir। ${snoozeMin} মিনিট পর আবার মনে করিয়ে দেব — ${WAQT_NAMES[waqt]}-এর সময় শেষ হওয়ার আগেই পড়ে নেবেন।`)
+    await ctx.answerCbQuery('ঠিক আছে।')
+    await ctx.reply(
+      reply
+      // Truthful fallback: if the web lock couldn't be confirmed, do NOT claim it's off.
+      || `একটু সমস্যা হলো Sir — এই মুহূর্তে কল বন্ধ করা নিশ্চিত করতে পারিনি। ${WAQT_NAMES[waqt]} সময় শেষের আগে পড়ে নিলে ভালো হয়। 🤲`,
+    )
   }
 }
 
