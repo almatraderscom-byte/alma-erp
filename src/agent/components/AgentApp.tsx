@@ -1555,23 +1555,13 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           />
         </div>
 
-        {/* Reconnect confirmation — small frosted-glass "Connecting" pill (Claude-app
-            feel) shown briefly on cold open / return-from-background. */}
-        {reconnecting && (
-          <div className="pointer-events-none flex justify-center px-3 pb-1">
-            <div className="alma-glass animate-fade-in flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[12px] font-medium text-cream/90">
-              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/25 border-t-[#E07A5F]" />
-              সংযোগ হচ্ছে…
-            </div>
-          </div>
-        )}
-
         {/* Composer */}
         <AgentComposer
           onSend={handleSend}
           disabled={false}
           onStop={stopGeneration}
           streaming={streaming}
+          reconnecting={reconnecting}
           conversationId={activeConvId}
           isMobile={isMobile}
           activeModelId={activeModelId}

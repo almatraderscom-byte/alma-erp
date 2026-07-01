@@ -21,6 +21,8 @@ interface AgentComposerProps {
   disabled: boolean
   onStop: () => void
   streaming: boolean
+  /** Brief "সংযোগ হচ্ছে…" indicator shown INSIDE the box on open / return. */
+  reconnecting?: boolean
   conversationId: string | null
   isMobile?: boolean
   activeModelId?: string
@@ -35,6 +37,7 @@ export default function AgentComposer({
   disabled,
   onStop,
   streaming,
+  reconnecting,
   conversationId,
   isMobile = false,
   activeModelId,
@@ -217,6 +220,17 @@ export default function AgentComposer({
           ...(streaming ? { borderColor: 'rgba(224,122,95,0.35)' } : null),
         }}
       >
+        {/* Connecting — lives INSIDE the box (Claude Code anatomy: the input grows
+            to fit it). Premium spinning sparkle + shimmering label, no cheap ring. */}
+        {reconnecting && (
+          <div className="flex items-center gap-2 px-2 pt-0.5 pb-1">
+            <svg viewBox="0 0 24 24" fill="currentColor" className="agent-connecting__spark h-[15px] w-[15px]" aria-hidden>
+              <path d="M12 2c.55 4.7 2.75 6.9 7.5 7.45C14.75 10 12.55 12.2 12 16.9 11.45 12.2 9.25 10 4.5 9.45 9.25 8.9 11.45 6.7 12 2z" />
+            </svg>
+            <span className="agent-connecting__label text-[12.5px] font-semibold tracking-wide">সংযোগ হচ্ছে…</span>
+          </div>
+        )}
+
         {recording ? (
           <RecordingBar
             level={micLevel}
