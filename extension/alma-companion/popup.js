@@ -6,6 +6,23 @@ function send(msg) {
 
 const el = (id) => document.getElementById(id)
 
+// Auto-suggest a device name based on the OS so multi-device targeting
+// ("Windows Chrome" vs "Mac Chrome") works out of the box. The owner can
+// still edit the field before pairing.
+function suggestDeviceName() {
+  const f = el('deviceName')
+  if (!f) return
+  const ua = (navigator.userAgent || '').toLowerCase()
+  const plat = (navigator.platform || '').toLowerCase()
+  let os = 'Chrome'
+  if (ua.includes('windows') || plat.includes('win')) os = 'My Windows Chrome'
+  else if (ua.includes('mac') || plat.includes('mac')) os = 'My Mac Chrome'
+  else if (ua.includes('linux') || plat.includes('linux')) os = 'My Linux Chrome'
+  else if (ua.includes('cros')) os = 'My Chromebook'
+  else os = 'My Chrome'
+  f.value = os
+}
+
 async function render() {
   const s = await send({ type: 'status' })
   const paired = s && s.paired
@@ -54,4 +71,5 @@ el('unpairBtn').addEventListener('click', async () => {
   render()
 })
 
+suggestDeviceName()
 render()

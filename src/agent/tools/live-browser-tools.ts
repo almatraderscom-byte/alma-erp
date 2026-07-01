@@ -22,7 +22,6 @@ import {
   setLiveBrowserEnabled,
   createPairingTicket,
   listOwnerDevices,
-  pickActiveDevice,
   runCommand,
   type LiveBrowserAction,
 } from '@/agent/lib/live-browser/companion'
@@ -58,10 +57,19 @@ async function persistScreenshot(dataUrl: string | null | undefined): Promise<st
   }
 }
 
-/** Resolve the device to drive, or a friendly Bangla reason why we can't. */
-async function requireActiveDevice(): Promise<
-  { ok: true; deviceId: string; name: string } | { ok: false; error: string }
-> {
+/**
+ * Resolve the device to drive, or a friendly Bangla reason why we can't.
+ *
+ * `hint` lets the owner pick a specific Chrome by name when several are paired
+ * (e.g. "Windows" / "Mac"). Rules:
+ *   • hint given → match it (case-insensitive substring) among ONLINE devices;
+ *     no match → error listing the online device names.
+ *   • no hint, exactly 1 online → use it.
+ *   • no hint, 2+ online → ambiguous: ask the owner which one (list the names).
+ */
+async function requireActiveDevice(
+  hint?: string,
+): Promise<{ ok: true; deviceId: string; name: string } | { ok: false; error: string }> {
   if (!(await isLiveBrowserEnabled())) {
     return {
       ok: false,
@@ -70,8 +78,9 @@ async function requireActiveDevice(): Promise<
         'ALMA Companion এক্সটেনশনটা যুক্ত (pair) থাকতে হবে।',
     }
   }
-  const dev = await pickActiveDevice()
-  if (!dev) {
+  const devices = await listOwnerDevices()
+  const online = devices.filter((d) => d.online)
+  if (online.length === 0) {
     return {
       ok: false,
       error:
@@ -79,7 +88,33 @@ async function requireActiveDevice(): Promise<
         '"থামান" করা থাকলে চালু করুন — তারপর আবার বলুন।',
     }
   }
-  return { ok: true, deviceId: dev.id, name: dev.name }
+
+  const wanted = (hint ?? '').trim().toLowerCase()
+  if (wanted) {
+    const match =
+      online.find((d) => d.name.toLowerCase() === wanted) ||
+      online.find((d) => d.name.toLowerCase().includes(wanted)) ||
+      online.find((d) => wanted.includes(d.name.toLowerCase()))
+    if (!match) {
+      return {
+        ok: false,
+        error:
+          `"${hint}" নামের কোনো অনলাইন Chrome পেলাম না, Sir। এখন অনলাইন আছে: ` +
+          `${online.map((d) => d.name).join(', ')}। কোনটা ব্যবহার করব?`,
+      }
+    }
+    return { ok: true, deviceId: match.id, name: match.name }
+  }
+
+  if (online.length > 1) {
+    return {
+      ok: false,
+      error:
+        `আপনার একাধিক Chrome এখন অনলাইন, Sir: ${online.map((d) => d.name).join(', ')}। ` +
+        'কোনটাতে কাজ করব বলুন (যেমন "Windows-টায়" বা "Mac-টায়")।',
+    }
+  }
+  return { ok: true, deviceId: online[0].id, name: online[0].name }
 }
 
 const set_live_browser: AgentTool = {
@@ -216,11 +251,16 @@ const live_browser_look: AgentTool = {
       scrollBy: { type: 'number', description: 'Optional pixels to scroll down before reading.' },
       want: { type: 'string', enum: ['text', 'dom', 'both'], description: 'What to read back.' },
       screenshot: { type: 'boolean', description: 'Capture a screenshot (default true).' },
+      device: {
+        type: 'string',
+        description:
+          'Optional: which paired Chrome to use when several are online, by name (e.g. "Windows", "Mac"). Omit if only one is connected.',
+      },
     },
     required: [],
   },
   handler: async (input) => {
-    const dev = await requireActiveDevice()
+    const dev = await requireActiveDevice(input.device as string | undefined)
     if (!dev.ok) return { success: false, error: dev.error }
     try {
       const steps: string[] = []
@@ -267,9 +307,16 @@ const live_browser_act: AgentTool = {
   name: 'live_browser_act',
   description:
     "Perform ONE action in the owner's live Chrome tab: click, type, press (a keyboard key), " +
-    'select_option, scroll, scroll_to, navigate, go_back, switch_tab, close_tab, or wait. After acting ' +
-    'it returns a fresh REAL SCREENSHOT you can SEE, so you verify the effect with your own eyes before ' +
-    'the next step.\n' +
+    'select_option, hover, scroll, scroll_to, navigate, go_back, switch_tab, close_tab, or wait. After ' +
+    'acting it returns a fresh REAL SCREENSHOT you can SEE, so you verify the effect with your own eyes ' +
+    'before the next step.\n' +
+    'MULTIPLE CHROMES: if the owner has more than one Chrome paired (e.g. Mac + Windows) and both are ' +
+    'online, pass `device` with his chosen name ("Windows"/"Mac"); if you act without it and it is ' +
+    'ambiguous the tool will ask which one — relay that and wait for his choice.\n' +
+    'HOVER: action="hover" moves the mouse over an element (by selector/text/ref) to reveal hover menus ' +
+    'or tooltips before clicking.\n' +
+    'ROBUST: click/type/select_option/scroll_to auto wait-and-retry briefly if the element has not ' +
+    'loaded yet, so a not-yet-rendered target does not fail on the first try.\n' +
     'HUMAN-LIKE OPERATION: prefer clicking the on-page UI (menus, search, buttons, tabs, links you can ' +
     'see in the screenshot/elements) over typing guessed URLs. Locate a target by its visible `text` ' +
     'when you can; use a CSS `selector` only when you actually see it in the elements list. On big / ' +
@@ -292,8 +339,8 @@ const live_browser_act: AgentTool = {
     '(A plain Enter to run a Google/search query or move to the next field is fine; the ban is on ' +
     'the final irreversible submit of a message / money / deletion.)\n' +
     'Params by action: ' +
-    'click → `selector`/`text`/`ref`; type → (`selector`/`text`/`ref` to find the field) + `value` ' +
-    '(+ optional `submit`); press → `key` (e.g. "Enter", "Tab", "Escape"); select_option → ' +
+    'click → `selector`/`text`/`ref`; hover → `selector`/`text`/`ref`; type → (`selector`/`text`/`ref` ' +
+    'to find the field) + `value` (+ optional `submit`); press → `key` (e.g. "Enter", "Tab", "Escape"); select_option → ' +
     '(`selector`/`text`/`ref` to find the <select>) + `option` (visible option text); scroll → `by` ' +
     '(pixels, negative = up); scroll_to → `selector`/`text`/`ref`; navigate → `url` (http(s), use a ' +
     'real HOME URL not a guessed path); go_back / switch_tab / close_tab → (none); wait → `ms`.',
@@ -307,6 +354,7 @@ const live_browser_act: AgentTool = {
           'type',
           'press',
           'select_option',
+          'hover',
           'scroll',
           'scroll_to',
           'navigate',
@@ -341,6 +389,11 @@ const live_browser_act: AgentTool = {
       url: { type: 'string', description: 'http(s) URL (for action=navigate).' },
       by: { type: 'number', description: 'Pixels to scroll (for action=scroll; negative = up).' },
       ms: { type: 'number', description: 'Milliseconds to wait (for action=wait).' },
+      device: {
+        type: 'string',
+        description:
+          'Optional: which paired Chrome to act in when several are online, by name (e.g. "Windows", "Mac"). Omit if only one is connected.',
+      },
     },
     required: ['action'],
   },
@@ -351,6 +404,7 @@ const live_browser_act: AgentTool = {
       'type',
       'press',
       'select_option',
+      'hover',
       'scroll',
       'scroll_to',
       'navigate',
@@ -368,7 +422,7 @@ const live_browser_act: AgentTool = {
       return { success: false, error: 'press needs a key (e.g. "Enter")' }
     }
 
-    const dev = await requireActiveDevice()
+    const dev = await requireActiveDevice(input.device as string | undefined)
     if (!dev.ok) return { success: false, error: dev.error }
 
     try {
