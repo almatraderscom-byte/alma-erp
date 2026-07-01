@@ -70,6 +70,9 @@ const config: Config = {
         'card':    '0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.03)',
         'elevated': '0 4px 16px rgba(0,0,0,0.06), 0 2px 6px rgba(0,0,0,0.04)',
         'ambient': '0 2px 12px rgba(0,0,0,0.05)',
+        // iOS / Claude-app "floating" card lift — soft, layered ambient depth so
+        // cards visibly detach from the page. Negative spreads keep it tight & soft.
+        'float':   '0 14px 34px -14px rgba(0,0,0,0.22), 0 6px 14px -8px rgba(0,0,0,0.10), 0 1px 2px rgba(0,0,0,0.04)',
       },
       fontSize: {
         'display-1': ['1.75rem', { lineHeight: '1.15', fontWeight: '700', letterSpacing: '-0.02em' }],

@@ -259,9 +259,10 @@ a,
   transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
 .card-interactive:hover {
-  transform: translateY(-2px);
-  /* Soft depth + a faint accent glow that follows the accent picker (--c-accent). */
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.05),
+  transform: translateY(-3px);
+  /* Lifts ABOVE the resting shadow-float, so interactive cards rise further on hover.
+     Soft depth + a faint accent glow that follows the accent picker (--c-accent). */
+  box-shadow: 0 20px 44px -16px rgba(0, 0, 0, 0.26), 0 8px 18px -8px rgba(0, 0, 0, 0.12),
     0 0 0 1px rgb(var(--c-accent) / 0.10), inset 0 0 18px rgba(255, 255, 255, 0.02);
   border-color: rgb(var(--c-accent) / 0.22);
 }
