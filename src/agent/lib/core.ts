@@ -155,6 +155,34 @@ function getClient(): Anthropic {
   return globalForAnthropic.anthropic
 }
 
+// ── Defensive: strip lone UTF-16 surrogates before sending to Anthropic ───────
+// Surrogate-unsafe string truncation upstream (e.g. `.slice(0, N)` landing between
+// a surrogate pair while trimming injected memory/context) can leave a lone high
+// or low surrogate in the request. JSON.stringify then emits an unpaired `\udXXX`
+// escape, which Anthropic's strict JSON parser rejects ("no low surrogate in
+// string") and 400s the entire turn. Replace any lone surrogate with U+FFFD so the
+// outgoing body is always well-formed regardless of which upstream field split an
+// emoji. This is a safety net at the single send site, not a substitute for
+// surrogate-aware truncation upstream.
+const LONE_HIGH_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g
+const LONE_LOW_SURROGATE = /(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g
+function stripLoneSurrogates(s: string): string {
+  if (!/[\uD800-\uDFFF]/.test(s)) return s
+  return s.replace(LONE_HIGH_SURROGATE, '�').replace(LONE_LOW_SURROGATE, '�')
+}
+function sanitizeSurrogatesDeep<T>(value: T): T {
+  if (typeof value === 'string') return stripLoneSurrogates(value) as unknown as T
+  if (Array.isArray(value)) return value.map((v) => sanitizeSurrogatesDeep(v)) as unknown as T
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = sanitizeSurrogatesDeep(v)
+    }
+    return out as unknown as T
+  }
+  return value
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 type ApiMessage = Anthropic.Messages.MessageParam
@@ -949,9 +977,9 @@ export async function* runAgentTurn(
           model: apiModel,
           max_tokens: 8192,
           thinking: { type: 'adaptive' },
-          system: systemBlocks,
-          tools: iterationTools,
-          messages: apiMessages,
+          system: sanitizeSurrogatesDeep(systemBlocks),
+          tools: sanitizeSurrogatesDeep(iterationTools),
+          messages: sanitizeSurrogatesDeep(apiMessages),
         },
         { signal: signal ?? undefined },
       )
