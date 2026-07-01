@@ -419,6 +419,53 @@ async function runApprove(
     }
   }
 
+  // Growth Autopilot: approve a batch of on-page SEO copy fixes — apply
+  // shortDescription/description to every product in the batch, live.
+  if (action.type === 'seo_fix_batch') {
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        const current = await db.agentPendingAction.findUnique({ where: { id: actionId } })
+        return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+      }
+      const items = Array.isArray(payload.items)
+        ? (payload.items as Array<{ productId: string; slug: string; fields: { shortDescription?: string; description?: string } }>)
+        : []
+      if (items.length === 0) throw new Error('items missing from seo_fix_batch payload')
+      const { updateWebsiteProductFields } = await import('@/lib/website/write.service')
+      const applied: string[] = []
+      const failed: Array<{ slug: string; error: string }> = []
+      for (const it of items) {
+        const result = await updateWebsiteProductFields(String(it.productId), it.fields ?? {})
+        if (result.ok) applied.push(it.slug)
+        else failed.push({ slug: it.slug, error: result.error })
+      }
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: {
+          status: failed.length === 0 ? 'executed' : 'partial',
+          result: { applied, failed },
+        },
+      })
+      const note =
+        `✅ SEO ফিক্স অনুমোদিত — ${applied.length}টি product আপডেট হয়েছে` +
+        (failed.length ? `, ${failed.length}টি ব্যর্থ (${failed.map((f) => f.slug).join(', ')})` : '') +
+        `। ISR/cache — live page দেখতে কিছুক্ষণ লাগতে পারে।`
+      await appendConversationNote(db, action, note)
+      return Response.json({ success: failed.length === 0, applied, failed })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
   if (action.type === 'content_gate1') {
     try {
       const claimed = await db.agentPendingAction.updateMany({
