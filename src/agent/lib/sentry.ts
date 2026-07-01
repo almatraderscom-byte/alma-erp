@@ -9,6 +9,7 @@ export type AgentSentryContext = {
   scheduler?: string
   conversationId?: string
   requestId?: string
+  modelId?: string
 }
 
 export async function captureAgentError(
