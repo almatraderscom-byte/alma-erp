@@ -244,6 +244,14 @@ async function executeCommand(cmd) {
   if (action === 'navigate') {
     if (!/^https?:\/\//i.test(cmd.url || '')) return { ok: false, error: 'navigate needs http(s) url' }
     await chrome.tabs.update(tab.id, { url: cmd.url })
+    // Bring the ALMA window to the front so the owner SEES each page as it loads.
+    // (This is the "watch live" moment; between tasks he can click back to his
+    // own window, or hit Pause in the popup to stop entirely.)
+    try {
+      await chrome.windows.update(tab.windowId, { focused: true, drawAttention: true })
+    } catch {
+      /* window gone — ignore, next getAgentTab recreates */
+    }
     await new Promise((r) => setTimeout(r, 2600))
     await showOverlay(tab.id, 'পেজ খুলছে: ' + cmd.url.replace(/^https?:\/\//, '').slice(0, 48))
     return { ok: true, data: { url: cmd.url } }
@@ -358,7 +366,12 @@ chrome.alarms.onAlarm.addListener(async (a) => {
 })
 
 chrome.runtime.onStartup.addListener(() => loop())
-chrome.runtime.onInstalled.addListener(() => loop())
+chrome.runtime.onInstalled.addListener(async () => {
+  // Forget any window from a previous load so the next task opens a fresh,
+  // visible ALMA window (avoids reusing one buried behind other windows).
+  await chrome.storage.local.remove(['agentTabId', 'agentWindowId'])
+  loop()
+})
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.token || changes.paused) loop()
 })
