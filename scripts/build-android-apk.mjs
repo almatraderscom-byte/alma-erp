@@ -25,7 +25,17 @@ function run(cmd, args, opts = {}) {
 // Disable Capacitor telemetry prompt (blocks non-interactive builds).
 spawnSync('npx', ['cap', 'telemetry', 'off'], { cwd: ROOT, stdio: 'ignore' })
 
-run('node', ['scripts/generate-mobile-icons.mjs'])
+// Launcher-icon regeneration is OPT-IN. The committed android res/ PNGs are the
+// source of truth for the app logo. Running generate-mobile-icons.mjs rewrites
+// them from public/icon.svg, so a stale SVG silently reverts the real logo
+// (this shipped a wrong logo once — never again by default). Regenerate icons
+// intentionally with REGEN_MOBILE_ICONS=1 after you've updated public/icon.svg.
+if (process.env.REGEN_MOBILE_ICONS === '1') {
+  run('node', ['scripts/generate-mobile-icons.mjs'])
+} else {
+  console.log('↷ Skipping launcher-icon regeneration (committed res/ icons are canonical).')
+  console.log('  Set REGEN_MOBILE_ICONS=1 only after intentionally updating public/icon.svg.')
+}
 run('npx', ['cap', 'sync', 'android'], {
   env: { ...process.env, CI: 'true' },
 })
