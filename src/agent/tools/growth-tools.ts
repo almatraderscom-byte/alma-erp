@@ -6,6 +6,12 @@
 import { prisma } from '@/lib/prisma'
 import { pageLabel, resolvePageId } from '@/agent/lib/meta'
 import { formatDateTimeDhaka } from '@/lib/agent-api/dhaka-date'
+import {
+  isGrowthAutopilotOn,
+  isRankTrackingOn,
+  setGrowthAutopilot,
+  setRankTracking,
+} from '@/agent/lib/growth/settings'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -364,11 +370,55 @@ const cancel_scheduled_content: AgentTool = {
   },
 }
 
+const configure_growth_autopilot: AgentTool = {
+  name: 'configure_growth_autopilot',
+  description:
+    'View or change the Growth Autopilot switches (owner-only control, takes effect immediately, no redeploy). ' +
+    'Call with NO arguments to just report current status. ' +
+    '`autopilot` on/off is the master for the scheduled-publish + weekly-digest crons (default ON; turning it OFF ' +
+    'pauses all autonomous publishing and the weekly report — already-scheduled approved posts simply wait). ' +
+    '`rankTracking` on/off controls the weekly Google-rank SERP pull, which spends Oxylabs credits (default OFF). ' +
+    'This only flips the switches — it never publishes or spends by itself.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      autopilot: { type: 'string', enum: ['on', 'off'], description: 'Master switch for publish + digest crons.' },
+      rankTracking: { type: 'string', enum: ['on', 'off'], description: 'Weekly SERP rank pull (spends credits).' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const changed: string[] = []
+      if (input.autopilot === 'on' || input.autopilot === 'off') {
+        await setGrowthAutopilot(input.autopilot === 'on')
+        changed.push(`অটোপাইলট ${input.autopilot === 'on' ? 'চালু' : 'বন্ধ'}`)
+      }
+      if (input.rankTracking === 'on' || input.rankTracking === 'off') {
+        await setRankTracking(input.rankTracking === 'on')
+        changed.push(`র‍্যাঙ্ক ট্র্যাকিং ${input.rankTracking === 'on' ? 'চালু' : 'বন্ধ'}`)
+      }
+      const [autopilot, rankTracking] = await Promise.all([isGrowthAutopilotOn(), isRankTrackingOn()])
+      const status = `অটোপাইলট: ${autopilot ? 'চালু ✅' : 'বন্ধ ⛔'} | র‍্যাঙ্ক ট্র্যাকিং: ${rankTracking ? 'চালু ✅' : 'বন্ধ ⛔'}`
+      return {
+        success: true,
+        data: {
+          autopilot,
+          rankTracking,
+          message: changed.length ? `${changed.join(', ')}। এখন — ${status}` : status,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
 export const GROWTH_TOOLS: AgentTool[] = [
   schedule_content,
   schedule_content_batch,
   list_content_calendar,
   cancel_scheduled_content,
+  configure_growth_autopilot,
 ]
 
 export const GROWTH_ROLE_PROMPT = `
@@ -378,4 +428,5 @@ export const GROWTH_ROLE_PROMPT = `
 - ক্যাপশন সবসময় বাংলা, on-brand, হালাল-সম্মত। Instagram-এ ছবি বাধ্যতামূলক — ছবি লাগলে আগে generate_image (approval) করে তার path imageRef-এ দিন।
 - **কিছুই নিজে থেকে পাবলিশ হয় না** — approve করলে তবেই নির্ধারিত সময়ে cron পোস্ট করে। প্ল্যান দেখতে list_content_calendar, বাতিল করতে cancel_scheduled_content।
 - সময় দিন Dhaka লোকাল "YYYY-MM-DD HH:mm" বা ISO ফরম্যাটে; অতীতের সময় দেবেন না।
+- মালিক অটোপাইলট চালু/বন্ধ বা সাপ্তাহিক র‍্যাঙ্ক ট্র্যাকিং চালু/বন্ধ চাইলে **configure_growth_autopilot** ব্যবহার করুন (কোনো argument ছাড়া কল করলে বর্তমান অবস্থা দেখায়)। অটোপাইলট বন্ধ থাকলে শিডিউলড পোস্ট আর সাপ্তাহিক রিপোর্ট থেমে থাকে।
 `

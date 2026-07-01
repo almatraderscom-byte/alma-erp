@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { isAgentEnabled } from '@/agent/config'
+import { isGrowthAutopilotOn } from '@/agent/lib/growth/settings'
 import { buildWeeklyDigest } from '@/agent/lib/growth/digest'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 
@@ -34,6 +35,10 @@ export async function GET(req: NextRequest) {
   // Kill switch: if the agent is disabled, send nothing.
   if (!isAgentEnabled()) {
     return NextResponse.json({ ok: true, skipped: 'agent_disabled' })
+  }
+  // Module master switch (owner-tunable, no redeploy). Default ON.
+  if (!(await isGrowthAutopilotOn())) {
+    return NextResponse.json({ ok: true, skipped: 'growth_autopilot_off' })
   }
 
   const started = Date.now()
