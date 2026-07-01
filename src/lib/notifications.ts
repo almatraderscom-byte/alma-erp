@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { logEvent } from '@/lib/logger'
 import { sendEmail } from '@/lib/resend'
 import {
+  ANDROID_NOTIFICATION_CHANNEL_ID,
   ANDROID_NOTIFICATION_SOUND_RAW,
   notificationSoundUrl,
 } from '@/lib/notification-sound'
@@ -62,11 +63,15 @@ function oneSignalResponseHasErrors(errors: unknown) {
 }
 
 /** OneSignal dashboard channel UUID vs native Android channel id (see AlmaPushChannels.java). */
-function resolveAndroidChannelFields(channelId?: string | null): Record<string, string> | null {
+function resolveAndroidChannelFields(channelId?: string | null): Record<string, string> {
   const id = channelId?.trim()
-  if (!id) return null
-  const isDashboardUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
-  return isDashboardUuid ? { android_channel_id: id } : { existing_android_channel_id: id }
+  // Only honor a dashboard UUID override; any non-UUID env (e.g. a stale
+  // "alma_alerts") is superseded by the current native channel constant so the
+  // custom-sound fix works without editing Vercel env.
+  if (id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return { android_channel_id: id }
+  }
+  return { existing_android_channel_id: ANDROID_NOTIFICATION_CHANNEL_ID }
 }
 
 async function sendOneSignal(
@@ -96,8 +101,8 @@ async function sendOneSignal(
     // the click listener in native-push.ts using data.actionUrl below.
     web_url: url,
     priority: priority === 'LOW' ? 5 : 10,
-    // Android 8+: sound comes from alma_alerts channel (res/raw/alma_alert). android_sound API is deprecated.
-    ...(resolveAndroidChannelFields(process.env.ONESIGNAL_ANDROID_CHANNEL_ID) || { existing_android_channel_id: 'alma_alerts' }),
+    // Android 8+: sound comes from the alma_alerts_v2 channel (res/raw/alma_alert). android_sound API is deprecated.
+    ...resolveAndroidChannelFields(process.env.ONESIGNAL_ANDROID_CHANNEL_ID),
     android_visibility: 1, // PUBLIC — show on lock screen
     android_led_color: 'FFC9A84C', // gold LED
     chrome_web_icon: `${absoluteActionUrl('/icon.svg')}`,

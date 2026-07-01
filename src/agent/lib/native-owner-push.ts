@@ -20,6 +20,7 @@
  * until then iOS subscriptions simply don't exist, so this no-ops for them.
  */
 import { prisma } from '@/lib/prisma'
+import { ANDROID_NOTIFICATION_CHANNEL_ID } from '@/lib/notification-sound'
 
 /** KV flag (owner-tunable, no redeploy). Default OFF — capability is opt-in. */
 export const AGENT_NATIVE_PUSH_ENABLED_KEY = 'agent_native_push_enabled'
@@ -95,10 +96,13 @@ export async function resolveOwnerUserIds(): Promise<string[]> {
 /** OneSignal dashboard channel UUID vs native Android channel id (mirrors ERP). */
 function resolveAndroidChannelFields(channelId?: string | null): Record<string, string> {
   const id = channelId?.trim()
-  if (!id) return { existing_android_channel_id: 'alma_alerts' }
-  const isDashboardUuid =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
-  return isDashboardUuid ? { android_channel_id: id } : { existing_android_channel_id: id }
+  // Only honor a dashboard UUID override; any non-UUID env (e.g. a stale
+  // "alma_alerts") is superseded by the current native channel constant so the
+  // custom-sound fix works without editing Vercel env.
+  if (id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return { android_channel_id: id }
+  }
+  return { existing_android_channel_id: ANDROID_NOTIFICATION_CHANNEL_ID }
 }
 
 function absoluteUrl(path?: string | null): string | undefined {

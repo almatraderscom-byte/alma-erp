@@ -12,7 +12,11 @@ import android.os.Build;
 
 /** Native Android channel for Alma ERP push (HIGH importance, lock-screen visible, notification sound). */
 public final class AlmaPushChannels {
-    public static final String ALMA_ALERTS_ID = "alma_alerts";
+    // Bumped to _v2: a channel's sound is immutable after creation and Android
+    // "tombstones" a deleted channel id, so reusing "alma_alerts" kept the old
+    // default sound. A fresh id forces res/raw/alma_alert.mp3 to take effect.
+    // Keep in sync with ANDROID_NOTIFICATION_CHANNEL_ID in src/lib/notification-sound.ts.
+    public static final String ALMA_ALERTS_ID = "alma_alerts_v2";
 
     private AlmaPushChannels() {}
 
