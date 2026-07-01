@@ -163,34 +163,78 @@ body.kb-open .agent-composer-wrap {
   }
 }
 
+/* ── Liquid glass (frosted / translucent) — premium agent surface ─────────────
+   Owner wants Claude-app style frosted glass across the WHOLE agent section, on
+   iPhone too. The blur was previously gated behind @media(min-width:768px), so
+   the phone NEVER saw it. Enable it on mobile with a moderate blur + a top sheen
+   (inset highlight) for the liquid-glass look. These classes go on FIXED chrome
+   (nav / composer / sidebar / pods) + a few key cards — cheap on iOS because the
+   blurred layers don't move; we deliberately do NOT blur every scrolling bubble. */
 .glass-panel {
-  background: rgba(32, 32, 39, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(28, 28, 34, 0.80);
+  border: 1px solid rgba(255, 255, 255, 0.09);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 
-@supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
-  @media (min-width: 768px) {
-    .glass-panel {
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      background: rgba(32, 32, 39, 0.55);
-    }
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-panel {
+    background: rgba(28, 28, 34, 0.55);
+    -webkit-backdrop-filter: blur(22px) saturate(1.7);
+    backdrop-filter: blur(22px) saturate(1.7);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10),
+                0 10px 34px -14px rgba(0, 0, 0, 0.55);
   }
 }
 
 .glass-card {
-  background: rgba(32, 32, 39, 0.68);
+  background: rgba(30, 30, 36, 0.74);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-@supports (backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px)) {
-  @media (min-width: 768px) {
-    .glass-card {
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      background: rgba(32, 32, 39, 0.5);
-    }
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-card {
+    background: rgba(30, 30, 36, 0.52);
+    -webkit-backdrop-filter: blur(16px) saturate(1.5);
+    backdrop-filter: blur(16px) saturate(1.5);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08),
+                0 8px 26px -14px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* Canonical reusable frosted-glass surface — apply to any agent card/pod/panel to
+   get the translucent liquid-glass look with one class. */
+.alma-glass {
+  background: rgba(30, 30, 36, 0.64);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .alma-glass {
+    background: rgba(30, 30, 36, 0.44);
+    -webkit-backdrop-filter: blur(18px) saturate(1.6);
+    backdrop-filter: blur(18px) saturate(1.6);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09),
+                0 8px 28px -14px rgba(0, 0, 0, 0.5);
+  }
+}
+
+/* A brighter edge-lit variant for the most prominent surfaces (composer, active
+   cards) — a touch more sheen so it reads as glass, not just a dark panel. */
+.alma-glass-lift {
+  background: rgba(34, 34, 40, 0.66);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .alma-glass-lift {
+    background: rgba(34, 34, 40, 0.46);
+    -webkit-backdrop-filter: blur(24px) saturate(1.8);
+    backdrop-filter: blur(24px) saturate(1.8);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14),
+                inset 0 -1px 0 rgba(255, 255, 255, 0.03),
+                0 12px 40px -16px rgba(0, 0, 0, 0.6);
   }
 }
 

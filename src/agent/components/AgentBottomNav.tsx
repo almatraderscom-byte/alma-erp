@@ -23,7 +23,7 @@ export function AgentBottomNav() {
 
   return (
     <nav className="agent-bottom-nav fixed bottom-0 left-0 right-0 z-50 md:hidden">
-      <div className="absolute inset-0 bg-card/80 border-t border-border-subtle" />
+      <div className="glass-panel absolute inset-0 rounded-none border-x-0 border-b-0 border-t border-white/[0.10]" />
 
       <div
         className="relative flex items-center justify-around px-4 pt-2"
