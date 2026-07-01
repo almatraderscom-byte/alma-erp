@@ -81,10 +81,10 @@
     left: 0; right: 0; text-align: center; font-size: 12px; color: rgba(170,190,225,0.35);
     letter-spacing: .04em; transition: opacity .5s ease;
   }
-
-  #err {
-    position: fixed; z-index: 10; left: 50%; top: 50%; transform: translate(-50%,-50%);
-    max-width: 80%; text-align: center; color: #ffb4b4; font-size: 14px; line-height: 1.5; display: none;
+  #mode {
+    position: fixed; z-index: 4; bottom: max(8px, env(safe-area-inset-bottom));
+    left: 0; right: 0; text-align: center; font-size: 10.5px; color: rgba(150,175,215,0.3);
+    letter-spacing: .05em;
   }
 </style>
 </head>
@@ -95,7 +95,7 @@
   <div id="status" class="hud">Tap the mic to <b>speak</b></div>
   <div id="fps" class="hud"></div>
   <div class="hint" id="hint">Drag to rotate · pinch / scroll to zoom</div>
-  <div id="err"></div>
+  <div id="mode" class="hud"></div>
 
   <button id="panelToggle" class="btn hud" title="Settings" aria-label="Settings">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
@@ -134,63 +134,8 @@
   <script>
   (function () {
     'use strict';
-    var errEl = document.getElementById('err');
-    function fail(msg){ errEl.style.display = 'block'; errEl.innerHTML = msg; }
 
-    if (typeof THREE === 'undefined') {
-      fail('Could not load Three.js from the CDN.<br>Check your internet connection and reload.');
-      return;
-    }
-
-    /* ---------- GLSL: Ashima / Stefan Gustavson 3D simplex noise (public domain) ---------- */
-    var GLSL_SIMPLEX = [
-      'vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x,289.0);}',
-      'vec4 taylorInvSqrt(vec4 r){return 1.79284291400159 - 0.85373472095314 * r;}',
-      'float snoise(vec3 v){',
-      '  const vec2 C = vec2(1.0/6.0, 1.0/3.0);',
-      '  const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);',
-      '  vec3 i  = floor(v + dot(v, C.yyy));',
-      '  vec3 x0 = v - i + dot(i, C.xxx);',
-      '  vec3 g = step(x0.yzx, x0.xyz);',
-      '  vec3 l = 1.0 - g;',
-      '  vec3 i1 = min(g.xyz, l.zxy);',
-      '  vec3 i2 = max(g.xyz, l.zxy);',
-      '  vec3 x1 = x0 - i1 + C.xxx;',
-      '  vec3 x2 = x0 - i2 + 2.0 * C.xxx;',
-      '  vec3 x3 = x0 - 1.0 + 3.0 * C.xxx;',
-      '  i = mod(i, 289.0);',
-      '  vec4 p = permute(permute(permute(',
-      '             i.z + vec4(0.0, i1.z, i2.z, 1.0))',
-      '           + i.y + vec4(0.0, i1.y, i2.y, 1.0))',
-      '           + i.x + vec4(0.0, i1.x, i2.x, 1.0));',
-      '  float n_ = 1.0/7.0;',
-      '  vec3 ns = n_ * D.wyz - D.xzx;',
-      '  vec4 j = p - 49.0 * floor(p * ns.z * ns.z);',
-      '  vec4 x_ = floor(j * ns.z);',
-      '  vec4 y_ = floor(j - 7.0 * x_);',
-      '  vec4 x = x_ * ns.x + ns.yyyy;',
-      '  vec4 y = y_ * ns.x + ns.yyyy;',
-      '  vec4 h = 1.0 - abs(x) - abs(y);',
-      '  vec4 b0 = vec4(x.xy, y.xy);',
-      '  vec4 b1 = vec4(x.zw, y.zw);',
-      '  vec4 s0 = floor(b0)*2.0 + 1.0;',
-      '  vec4 s1 = floor(b1)*2.0 + 1.0;',
-      '  vec4 sh = -step(h, vec4(0.0));',
-      '  vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;',
-      '  vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;',
-      '  vec3 p0 = vec3(a0.xy, h.x);',
-      '  vec3 p1 = vec3(a0.zw, h.y);',
-      '  vec3 p2 = vec3(a1.xy, h.z);',
-      '  vec3 p3 = vec3(a1.zw, h.w);',
-      '  vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));',
-      '  p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;',
-      '  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);',
-      '  m = m * m;',
-      '  return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));',
-      '}',
-      'float fbm(vec3 p){ float f=0.0,a=0.5; for(int i=0;i<5;i++){ f+=a*snoise(p); p*=2.02; a*=0.5; } return f; }'
-    ].join('\n');
-
+    /* ============================ shared config ============================ */
     var PALETTES = [
       { name:'Aqua',   a:'#2fa8ff', b:'#7fe0ff', c:'#0a63ff', bloom:'#8ecbff' },
       { name:'Violet', a:'#8b5cf6', b:'#d8b4fe', c:'#5b21b6', bloom:'#c4b5fd' },
@@ -198,227 +143,17 @@
       { name:'Mint',   a:'#22d3aa', b:'#b8ffe9', c:'#0f766e', bloom:'#8ff0d6' },
       { name:'Rose',   a:'#ff5c8a', b:'#ffc2d6', c:'#be185d', bloom:'#ff9bbd' }
     ];
-
     var params = { deform:0.55, speed:0.7, detail:1.8, bloom:1.05, aura:1.0, micGain:1.6, palette:0 };
     var isMobile = matchMedia('(pointer: coarse)').matches || Math.min(innerWidth, innerHeight) < 620;
-
-    /* ---------------- renderer / scene ---------------- */
     var mount = document.getElementById('app');
-    var renderer;
-    try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    } catch (e) {
-      fail('WebGL is not available in this browser.'); return;
-    }
-    renderer.setClearColor(0x05070d, 1);
-    var DPR = Math.min(window.devicePixelRatio || 1, isMobile ? 2 : 2);
-    renderer.setPixelRatio(DPR);
-    renderer.setSize(mount.clientWidth, mount.clientHeight);
-    mount.appendChild(renderer.domElement);
+    var applyPalette = function () {};
 
-    var scene = new THREE.Scene();
-    var camera = new THREE.PerspectiveCamera(45, mount.clientWidth / mount.clientHeight, 0.1, 100);
-
-    scene.add(new THREE.Mesh(
-      new THREE.SphereGeometry(40, 32, 32),
-      new THREE.MeshBasicMaterial({ side: THREE.BackSide, color: 0x070b14 })
-    ));
-
-    /* ---------------- orb ---------------- */
-    var uniforms = {
-      uTime:{value:0}, uDeform:{value:params.deform}, uDetail:{value:params.detail},
-      uAudio:{value:0}, uAudioLow:{value:0}, uAudioHigh:{value:0},
-      uColorA:{value:new THREE.Color()}, uColorB:{value:new THREE.Color()}, uColorC:{value:new THREE.Color()}
-    };
-    var orbMat = new THREE.ShaderMaterial({
-      uniforms: uniforms,
-      vertexShader: GLSL_SIMPLEX + [
-        'uniform float uTime, uDeform, uDetail, uAudio, uAudioLow, uAudioHigh;',
-        'varying vec3 vNormal, vPos; varying float vDisp;',
-        'void main(){',
-        '  vec3 p = position;',
-        '  float t = uTime * 0.55;',
-        '  float base = fbm(normalize(p) * uDetail + vec3(0.0, t, 0.0));',
-        '  float ripple = snoise(normalize(p) * (uDetail*2.3) + vec3(t*1.7));',
-        '  float disp = base * uDeform + ripple * (0.10 + uAudioHigh * 0.55) + uAudioLow * 0.45;',
-        '  disp += uAudio * 0.35 * (0.6 + 0.4*sin(t*3.0));',
-        '  vec3 displaced = p + normal * disp;',
-        '  vDisp = disp; vPos = displaced;',
-        '  vNormal = normalize(normalMatrix * normal);',
-        '  gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);',
-        '}'
-      ].join('\n'),
-      fragmentShader: [
-        'precision highp float;',
-        'uniform vec3 uColorA, uColorB, uColorC; uniform float uAudio;',
-        'varying vec3 vNormal, vPos; varying float vDisp;',
-        'void main(){',
-        '  vec3 viewDir = normalize(-vPos);',
-        '  float fres = pow(1.0 - max(dot(viewDir, normalize(vNormal)), 0.0), 2.4);',
-        '  float g = clamp(vDisp * 1.6 + 0.5, 0.0, 1.0);',
-        '  vec3 body = mix(uColorC, uColorA, smoothstep(0.0, 0.6, g));',
-        '  body = mix(body, uColorB, smoothstep(0.5, 1.0, g));',
-        '  vec3 col = body + uColorB * fres * (1.3 + uAudio*1.4);',
-        '  col += uColorB * 0.15;',
-        '  col *= 1.0 + uAudio * 0.6;',
-        '  gl_FragColor = vec4(col, 1.0);',
-        '}'
-      ].join('\n')
-    });
-    var orbDetail = isMobile ? 24 : 48;
-    var orb = new THREE.Mesh(new THREE.IcosahedronGeometry(1.15, orbDetail), orbMat);
-    scene.add(orb);
-
-    var core = new THREE.Mesh(
-      new THREE.SphereGeometry(0.95, 32, 32),
-      new THREE.MeshBasicMaterial({ color: 0x2a6bff, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending })
-    );
-    scene.add(core);
-
-    /* ---------------- particle aura ---------------- */
-    var COUNT = isMobile ? 500 : 900;
-    var posArr = new Float32Array(COUNT * 3), rndArr = new Float32Array(COUNT);
-    var seed = 1;
-    function rand(){ seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
-    for (var i = 0; i < COUNT; i++) {
-      var r = 1.5 + rand() * 1.6, th = rand() * Math.PI * 2, ph = Math.acos(2 * rand() - 1);
-      posArr[i*3]   = r*Math.sin(ph)*Math.cos(th);
-      posArr[i*3+1] = r*Math.sin(ph)*Math.sin(th);
-      posArr[i*3+2] = r*Math.cos(ph);
-      rndArr[i] = rand();
-    }
-    var auraGeo = new THREE.BufferGeometry();
-    auraGeo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
-    auraGeo.setAttribute('aRnd', new THREE.BufferAttribute(rndArr, 1));
-    var auraUniforms = {
-      uTime:{value:0}, uAudio:{value:0}, uAura:{value:params.aura},
-      uColor:{value:new THREE.Color('#9fd0ff')}, uDpr:{value:DPR}
-    };
-    var aura = new THREE.Points(auraGeo, new THREE.ShaderMaterial({
-      uniforms: auraUniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-      vertexShader: [
-        'uniform float uTime, uAudio, uAura, uDpr; attribute float aRnd; varying float vA;',
-        'void main(){',
-        '  vec3 p = position; float t = uTime*0.3 + aRnd*6.28;',
-        '  float breathe = 1.0 + 0.06*sin(t*1.5) + uAudio*0.35; p *= breathe;',
-        '  p.xy *= mat2(cos(t*0.1), -sin(t*0.1), sin(t*0.1), cos(t*0.1));',
-        '  vec4 mv = modelViewMatrix * vec4(p, 1.0);',
-        '  float twinkle = 0.4 + 0.6*sin(uTime*2.0 + aRnd*20.0);',
-        '  vA = twinkle * uAura * (0.5 + uAudio*0.8);',
-        '  gl_PointSize = (1.5 + aRnd*3.0) * uDpr * (300.0 / -mv.z) * (0.6 + uAudio*0.9);',
-        '  gl_Position = projectionMatrix * mv;',
-        '}'
-      ].join('\n'),
-      fragmentShader: [
-        'precision mediump float; uniform vec3 uColor; varying float vA;',
-        'void main(){ vec2 c = gl_PointCoord - 0.5; float d = length(c);',
-        '  if(d>0.5) discard; float a = smoothstep(0.5, 0.0, d) * vA;',
-        '  gl_FragColor = vec4(uColor, a); }'
-      ].join('\n')
-    }));
-    scene.add(aura);
-
-    /* ---------------- bloom (hand-rolled multi-pass) ---------------- */
-    var fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    var fsScene = new THREE.Scene();
-    var fsQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), null);
-    fsScene.add(fsQuad);
-    var FS_VERT = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
-
-    function makeMat(frag, extra) {
-      var u = { tDiffuse:{value:null} };
-      if (extra) for (var k in extra) u[k] = extra[k];
-      return new THREE.ShaderMaterial({ uniforms:u, vertexShader:FS_VERT, fragmentShader:frag, depthTest:false, depthWrite:false });
-    }
-    var brightMat = makeMat([
-      'precision highp float; uniform sampler2D tDiffuse; uniform float uThreshold; varying vec2 vUv;',
-      'void main(){ vec3 c = texture2D(tDiffuse, vUv).rgb; float l = max(max(c.r,c.g),c.b);',
-      '  float k = smoothstep(uThreshold, uThreshold+0.5, l); gl_FragColor = vec4(c*k, 1.0); }'
-    ].join('\n'), { uThreshold:{value:0.55} });
-    var blurMat = makeMat([
-      'precision highp float; uniform sampler2D tDiffuse; uniform vec2 uTexel; uniform vec2 uDir; varying vec2 vUv;',
-      'void main(){ vec2 o = uTexel * uDir;',
-      '  vec3 c = texture2D(tDiffuse, vUv).rgb * 0.2270270270;',
-      '  c += texture2D(tDiffuse, vUv + o*1.3846153846).rgb * 0.3162162162;',
-      '  c += texture2D(tDiffuse, vUv - o*1.3846153846).rgb * 0.3162162162;',
-      '  c += texture2D(tDiffuse, vUv + o*3.2307692308).rgb * 0.0702702703;',
-      '  c += texture2D(tDiffuse, vUv - o*3.2307692308).rgb * 0.0702702703;',
-      '  gl_FragColor = vec4(c, 1.0); }'
-    ].join('\n'), { uTexel:{value:new THREE.Vector2()}, uDir:{value:new THREE.Vector2(1,0)} });
-    var compMat = makeMat([
-      'precision highp float; uniform sampler2D tDiffuse; uniform sampler2D tBloom; uniform float uStrength; varying vec2 vUv;',
-      'vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); }',
-      'void main(){ vec3 base = texture2D(tDiffuse, vUv).rgb; vec3 bloom = texture2D(tBloom, vUv).rgb;',
-      '  vec3 col = aces((base + bloom * uStrength) * 1.05); gl_FragColor = vec4(col, 1.0); }'
-    ].join('\n'), { tBloom:{value:null}, uStrength:{value:params.bloom} });
-
-    var rtScene, rtA, rtB, bloomOK = true;
-    var rtType = THREE.HalfFloatType;
-    function makeRT(w, h) {
-      return new THREE.WebGLRenderTarget(Math.max(2, w), Math.max(2, h), {
-        minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
-        type: rtType, format: THREE.RGBAFormat, depthBuffer: true
-      });
-    }
-    function buildTargets() {
-      var w = Math.floor(mount.clientWidth * DPR), h = Math.floor(mount.clientHeight * DPR);
-      if (rtScene) { rtScene.dispose(); rtA.dispose(); rtB.dispose(); }
-      rtScene = makeRT(w, h);
-      rtA = makeRT(Math.floor(w/2), Math.floor(h/2));
-      rtB = makeRT(Math.floor(w/2), Math.floor(h/2));
-    }
-    buildTargets();
-
-    function blit(mat, target) {
-      fsQuad.material = mat;
-      renderer.setRenderTarget(target || null);
-      renderer.render(fsScene, fsCam);
+    function hexA(hex, a) {
+      var n = parseInt(hex.slice(1), 16);
+      return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
     }
 
-    /* ---------------- lightweight orbit controls (mouse + touch) ---------------- */
-    var ctrl = { radius:5.2, theta:0, phi:Math.PI/2, tRadius:5.2, tTheta:0, tPhi:Math.PI/2,
-                 min:3, max:9, autoSpeed:0.35, dragging:false, px:0, py:0, pinch:0, twoTouch:false };
-    var dom = renderer.domElement;
-    dom.style.touchAction = 'none';
-    dom.addEventListener('pointerdown', function (e) {
-      if (ctrl.twoTouch) return;
-      ctrl.dragging = true; ctrl.px = e.clientX; ctrl.py = e.clientY;
-      try { dom.setPointerCapture(e.pointerId); } catch (_) {}
-    });
-    dom.addEventListener('pointermove', function (e) {
-      if (!ctrl.dragging || ctrl.twoTouch) return;
-      var dx = e.clientX - ctrl.px, dy = e.clientY - ctrl.py;
-      ctrl.px = e.clientX; ctrl.py = e.clientY;
-      ctrl.tTheta -= dx * 0.005;
-      ctrl.tPhi = Math.max(0.15, Math.min(Math.PI - 0.15, ctrl.tPhi - dy * 0.005));
-    });
-    window.addEventListener('pointerup', function () { ctrl.dragging = false; });
-    dom.addEventListener('wheel', function (e) {
-      e.preventDefault();
-      ctrl.tRadius = Math.max(ctrl.min, Math.min(ctrl.max, ctrl.tRadius * (1 + (e.deltaY > 0 ? 0.08 : -0.08))));
-    }, { passive: false });
-    function tdist(e) { var a = e.touches[0], b = e.touches[1]; return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
-    dom.addEventListener('touchstart', function (e) { if (e.touches.length === 2) { ctrl.twoTouch = true; ctrl.dragging = false; ctrl.pinch = tdist(e); } }, { passive: false });
-    dom.addEventListener('touchmove', function (e) {
-      if (e.touches.length === 2) {
-        e.preventDefault(); var d = tdist(e);
-        if (ctrl.pinch) ctrl.tRadius = Math.max(ctrl.min, Math.min(ctrl.max, ctrl.tRadius * (ctrl.pinch / d)));
-        ctrl.pinch = d;
-      }
-    }, { passive: false });
-    dom.addEventListener('touchend', function (e) { if (e.touches.length < 2) { ctrl.twoTouch = false; ctrl.pinch = 0; } });
-
-    function updateControls(dt, idle) {
-      if (!ctrl.dragging) ctrl.tTheta += ctrl.autoSpeed * dt * (idle ? 1 : 0.34);
-      ctrl.theta += (ctrl.tTheta - ctrl.theta) * 0.12;
-      ctrl.phi  += (ctrl.tPhi  - ctrl.phi)  * 0.12;
-      ctrl.radius += (ctrl.tRadius - ctrl.radius) * 0.12;
-      var sp = Math.sin(ctrl.phi);
-      camera.position.set(ctrl.radius*sp*Math.sin(ctrl.theta), ctrl.radius*Math.cos(ctrl.phi), ctrl.radius*sp*Math.cos(ctrl.theta));
-      camera.lookAt(0, 0, 0);
-    }
-
-    /* ---------------- audio ---------------- */
+    /* ============================ shared audio ============================ */
     var audio = { active:false, level:0, low:0, high:0, ctx:null, analyser:null, data:null, stream:null };
     function startMic() {
       var AC = window.AudioContext || window.webkitAudioContext;
@@ -452,89 +187,7 @@
       audio.high  += ((highSum / (n - split)) * g - audio.high) * 0.40;
     }
 
-    /* ---------------- palette ---------------- */
-    function setPalette(idx) {
-      params.palette = idx; var p = PALETTES[idx];
-      uniforms.uColorA.value.set(p.a); uniforms.uColorB.value.set(p.b); uniforms.uColorC.value.set(p.c);
-      auraUniforms.uColor.value.set(p.bloom); core.material.color.set(p.c);
-    }
-    setPalette(0);
-
-    /* ---------------- resize ---------------- */
-    function onResize() {
-      var w = mount.clientWidth, h = mount.clientHeight;
-      camera.aspect = w / h; camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
-      buildTargets();
-    }
-    window.addEventListener('resize', onResize);
-
-    /* ---------------- render loop ---------------- */
-    var clock = new THREE.Clock(), breath = 0;
-    function frame() {
-      var dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
-      sampleAudio();
-
-      breath += dt;
-      var idle = audio.active ? 0 : 1;
-      var br = (Math.sin(breath * 0.9) * 0.5 + 0.5) * 0.12 * idle;
-
-      uniforms.uTime.value += dt * params.speed * (1 + audio.level * 0.5);
-      uniforms.uDeform.value = params.deform;
-      uniforms.uDetail.value = params.detail;
-      uniforms.uAudio.value = audio.level + br;
-      uniforms.uAudioLow.value = audio.low;
-      uniforms.uAudioHigh.value = audio.high;
-
-      var s = 1 + audio.level * 0.10 + br * 0.6;
-      orb.scale.setScalar(s); core.scale.setScalar(s * 0.98);
-      core.material.opacity = 0.30 + audio.level * 0.4;
-
-      auraUniforms.uTime.value = t;
-      auraUniforms.uAudio.value = audio.level + br * 0.5;
-      auraUniforms.uAura.value = params.aura;
-      aura.rotation.y += dt * 0.05;
-
-      updateControls(dt, idle);
-
-      if (bloomOK) {
-        try {
-          var w = rtScene.width, h = rtScene.height;
-          renderer.setRenderTarget(rtScene);
-          renderer.render(scene, camera);
-
-          brightMat.uniforms.tDiffuse.value = rtScene.texture;
-          blit(brightMat, rtA);
-
-          var hw = rtA.width, hh = rtA.height;
-          blurMat.uniforms.tDiffuse.value = rtA.texture;
-          blurMat.uniforms.uTexel.value.set(1 / hw, 1 / hh);
-          blurMat.uniforms.uDir.value.set(1, 0); blit(blurMat, rtB);
-          blurMat.uniforms.tDiffuse.value = rtB.texture;
-          blurMat.uniforms.uDir.value.set(0, 1); blit(blurMat, rtA);
-          // second, wider pass for a soft volumetric halo
-          blurMat.uniforms.tDiffuse.value = rtA.texture;
-          blurMat.uniforms.uDir.value.set(2.2, 0); blit(blurMat, rtB);
-          blurMat.uniforms.tDiffuse.value = rtB.texture;
-          blurMat.uniforms.uDir.value.set(0, 2.2); blit(blurMat, rtA);
-
-          compMat.uniforms.tDiffuse.value = rtScene.texture;
-          compMat.uniforms.tBloom.value = rtA.texture;
-          compMat.uniforms.uStrength.value = params.bloom * (1 + audio.level * 0.5);
-          blit(compMat, null);
-          renderer.setRenderTarget(null);
-        } catch (e) {
-          console.warn('Bloom disabled:', e);
-          bloomOK = false;
-        }
-      } else {
-        renderer.setRenderTarget(null);
-        renderer.render(scene, camera);
-      }
-    }
-    renderer.setAnimationLoop(frame);
-
-    /* ---------------- UI wiring ---------------- */
+    /* ============================ shared UI wiring ============================ */
     var fpsEl = document.getElementById('fps');
     var frames = 0, last = performance.now();
     (function fpsLoop() {
@@ -572,12 +225,9 @@
       function sync() { var v = parseFloat(el.value); params[key] = v; vEl.textContent = v.toFixed(2); }
       el.addEventListener('input', sync); sync();
     }
-    bindSlider('s_deform','deform','v_deform');
-    bindSlider('s_speed','speed','v_speed');
-    bindSlider('s_detail','detail','v_detail');
-    bindSlider('s_bloom','bloom','v_bloom');
-    bindSlider('s_aura','aura','v_aura');
-    bindSlider('s_mic','micGain','v_mic');
+    bindSlider('s_deform','deform','v_deform'); bindSlider('s_speed','speed','v_speed');
+    bindSlider('s_detail','detail','v_detail'); bindSlider('s_bloom','bloom','v_bloom');
+    bindSlider('s_aura','aura','v_aura');       bindSlider('s_mic','micGain','v_mic');
 
     var sw = document.getElementById('swatches');
     PALETTES.forEach(function (p, i) {
@@ -586,12 +236,283 @@
       el.style.background = 'linear-gradient(135deg, ' + p.a + ', ' + p.b + ')';
       el.title = p.name;
       el.addEventListener('click', function () {
-        setPalette(i);
+        applyPalette(i);
         Array.prototype.forEach.call(sw.children, function (c) { c.classList.remove('active'); });
         el.classList.add('active');
       });
       sw.appendChild(el);
     });
+
+    /* ============================ choose renderer ============================ */
+    var ok = false;
+    if (typeof THREE !== 'undefined') {
+      try { ok = initWebGL(); } catch (e) { console.warn('WebGL orb unavailable, using 2D fallback:', e); }
+    }
+    if (!ok) init2D();
+
+    /* ============================ WebGL orb (full 3D) ============================ */
+    function initWebGL() {
+      var GLSL_SIMPLEX = [
+        'vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x,289.0);}',
+        'vec4 taylorInvSqrt(vec4 r){return 1.79284291400159 - 0.85373472095314 * r;}',
+        'float snoise(vec3 v){',
+        '  const vec2 C = vec2(1.0/6.0, 1.0/3.0); const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);',
+        '  vec3 i  = floor(v + dot(v, C.yyy)); vec3 x0 = v - i + dot(i, C.xxx);',
+        '  vec3 g = step(x0.yzx, x0.xyz); vec3 l = 1.0 - g;',
+        '  vec3 i1 = min(g.xyz, l.zxy); vec3 i2 = max(g.xyz, l.zxy);',
+        '  vec3 x1 = x0 - i1 + C.xxx; vec3 x2 = x0 - i2 + 2.0 * C.xxx; vec3 x3 = x0 - 1.0 + 3.0 * C.xxx;',
+        '  i = mod(i, 289.0);',
+        '  vec4 p = permute(permute(permute(i.z + vec4(0.0, i1.z, i2.z, 1.0))',
+        '           + i.y + vec4(0.0, i1.y, i2.y, 1.0)) + i.x + vec4(0.0, i1.x, i2.x, 1.0));',
+        '  float n_ = 1.0/7.0; vec3 ns = n_ * D.wyz - D.xzx;',
+        '  vec4 j = p - 49.0 * floor(p * ns.z * ns.z);',
+        '  vec4 x_ = floor(j * ns.z); vec4 y_ = floor(j - 7.0 * x_);',
+        '  vec4 x = x_ * ns.x + ns.yyyy; vec4 y = y_ * ns.x + ns.yyyy;',
+        '  vec4 h = 1.0 - abs(x) - abs(y); vec4 b0 = vec4(x.xy, y.xy); vec4 b1 = vec4(x.zw, y.zw);',
+        '  vec4 s0 = floor(b0)*2.0 + 1.0; vec4 s1 = floor(b1)*2.0 + 1.0; vec4 sh = -step(h, vec4(0.0));',
+        '  vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy; vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;',
+        '  vec3 p0 = vec3(a0.xy, h.x); vec3 p1 = vec3(a0.zw, h.y); vec3 p2 = vec3(a1.xy, h.z); vec3 p3 = vec3(a1.zw, h.w);',
+        '  vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));',
+        '  p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;',
+        '  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0); m = m * m;',
+        '  return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));',
+        '}',
+        'float fbm(vec3 p){ float f=0.0,a=0.5; for(int i=0;i<5;i++){ f+=a*snoise(p); p*=2.02; a*=0.5; } return f; }'
+      ].join('\n');
+
+      var renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+      if (!renderer.getContext()) throw new Error('no-webgl-context');
+      renderer.setClearColor(0x05070d, 1);
+      var DPR = Math.min(window.devicePixelRatio || 1, 2);
+      renderer.setPixelRatio(DPR);
+      renderer.setSize(mount.clientWidth, mount.clientHeight);
+      mount.appendChild(renderer.domElement);
+
+      var scene = new THREE.Scene();
+      var camera = new THREE.PerspectiveCamera(45, mount.clientWidth / mount.clientHeight, 0.1, 100);
+      scene.add(new THREE.Mesh(new THREE.SphereGeometry(40, 32, 32),
+        new THREE.MeshBasicMaterial({ side: THREE.BackSide, color: 0x070b14 })));
+
+      var uniforms = {
+        uTime:{value:0}, uDeform:{value:params.deform}, uDetail:{value:params.detail},
+        uAudio:{value:0}, uAudioLow:{value:0}, uAudioHigh:{value:0},
+        uColorA:{value:new THREE.Color()}, uColorB:{value:new THREE.Color()}, uColorC:{value:new THREE.Color()}
+      };
+      var orb = new THREE.Mesh(new THREE.IcosahedronGeometry(1.15, isMobile ? 24 : 48), new THREE.ShaderMaterial({
+        uniforms: uniforms,
+        vertexShader: GLSL_SIMPLEX + [
+          'uniform float uTime, uDeform, uDetail, uAudio, uAudioLow, uAudioHigh;',
+          'varying vec3 vNormal, vPos; varying float vDisp;',
+          'void main(){ vec3 p = position; float t = uTime * 0.55;',
+          '  float base = fbm(normalize(p) * uDetail + vec3(0.0, t, 0.0));',
+          '  float ripple = snoise(normalize(p) * (uDetail*2.3) + vec3(t*1.7));',
+          '  float disp = base * uDeform + ripple * (0.10 + uAudioHigh * 0.55) + uAudioLow * 0.45;',
+          '  disp += uAudio * 0.35 * (0.6 + 0.4*sin(t*3.0));',
+          '  vec3 displaced = p + normal * disp; vDisp = disp; vPos = displaced;',
+          '  vNormal = normalize(normalMatrix * normal);',
+          '  gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0); }'
+        ].join('\n'),
+        fragmentShader: [
+          'precision highp float; uniform vec3 uColorA, uColorB, uColorC; uniform float uAudio;',
+          'varying vec3 vNormal, vPos; varying float vDisp;',
+          'void main(){ vec3 viewDir = normalize(-vPos);',
+          '  float fres = pow(1.0 - max(dot(viewDir, normalize(vNormal)), 0.0), 2.4);',
+          '  float g = clamp(vDisp * 1.6 + 0.5, 0.0, 1.0);',
+          '  vec3 body = mix(uColorC, uColorA, smoothstep(0.0, 0.6, g));',
+          '  body = mix(body, uColorB, smoothstep(0.5, 1.0, g));',
+          '  vec3 col = body + uColorB * fres * (1.3 + uAudio*1.4);',
+          '  col += uColorB * 0.15; col *= 1.0 + uAudio * 0.6;',
+          '  gl_FragColor = vec4(col, 1.0); }'
+        ].join('\n')
+      }));
+      scene.add(orb);
+
+      var core = new THREE.Mesh(new THREE.SphereGeometry(0.95, 32, 32),
+        new THREE.MeshBasicMaterial({ color: 0x2a6bff, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending }));
+      scene.add(core);
+
+      var COUNT = isMobile ? 500 : 900;
+      var posArr = new Float32Array(COUNT * 3), rndArr = new Float32Array(COUNT), seed = 1;
+      function rand(){ seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
+      for (var k = 0; k < COUNT; k++) {
+        var r = 1.5 + rand() * 1.6, th = rand() * Math.PI * 2, ph = Math.acos(2 * rand() - 1);
+        posArr[k*3] = r*Math.sin(ph)*Math.cos(th); posArr[k*3+1] = r*Math.sin(ph)*Math.sin(th); posArr[k*3+2] = r*Math.cos(ph);
+        rndArr[k] = rand();
+      }
+      var auraGeo = new THREE.BufferGeometry();
+      auraGeo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+      auraGeo.setAttribute('aRnd', new THREE.BufferAttribute(rndArr, 1));
+      var auraUniforms = { uTime:{value:0}, uAudio:{value:0}, uAura:{value:params.aura}, uColor:{value:new THREE.Color('#9fd0ff')}, uDpr:{value:DPR} };
+      var aura = new THREE.Points(auraGeo, new THREE.ShaderMaterial({
+        uniforms: auraUniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+        vertexShader: [
+          'uniform float uTime, uAudio, uAura, uDpr; attribute float aRnd; varying float vA;',
+          'void main(){ vec3 p = position; float t = uTime*0.3 + aRnd*6.28;',
+          '  float breathe = 1.0 + 0.06*sin(t*1.5) + uAudio*0.35; p *= breathe;',
+          '  p.xy *= mat2(cos(t*0.1), -sin(t*0.1), sin(t*0.1), cos(t*0.1));',
+          '  vec4 mv = modelViewMatrix * vec4(p, 1.0);',
+          '  float twinkle = 0.4 + 0.6*sin(uTime*2.0 + aRnd*20.0);',
+          '  vA = twinkle * uAura * (0.5 + uAudio*0.8);',
+          '  gl_PointSize = (1.5 + aRnd*3.0) * uDpr * (300.0 / -mv.z) * (0.6 + uAudio*0.9);',
+          '  gl_Position = projectionMatrix * mv; }'
+        ].join('\n'),
+        fragmentShader: [
+          'precision mediump float; uniform vec3 uColor; varying float vA;',
+          'void main(){ vec2 c = gl_PointCoord - 0.5; float d = length(c); if(d>0.5) discard;',
+          '  gl_FragColor = vec4(uColor, smoothstep(0.5, 0.0, d) * vA); }'
+        ].join('\n')
+      }));
+      scene.add(aura);
+
+      // bloom (bright -> separable gaussian -> ACES composite)
+      var fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      var fsScene = new THREE.Scene();
+      var fsQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), null); fsScene.add(fsQuad);
+      var FS_VERT = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
+      function makeMat(frag, extra) {
+        var u = { tDiffuse:{value:null} }; if (extra) for (var kk in extra) u[kk] = extra[kk];
+        return new THREE.ShaderMaterial({ uniforms:u, vertexShader:FS_VERT, fragmentShader:frag, depthTest:false, depthWrite:false });
+      }
+      var brightMat = makeMat('precision highp float; uniform sampler2D tDiffuse; uniform float uThreshold; varying vec2 vUv; void main(){ vec3 c = texture2D(tDiffuse, vUv).rgb; float l = max(max(c.r,c.g),c.b); gl_FragColor = vec4(c*smoothstep(uThreshold, uThreshold+0.5, l), 1.0); }', { uThreshold:{value:0.55} });
+      var blurMat = makeMat('precision highp float; uniform sampler2D tDiffuse; uniform vec2 uTexel; uniform vec2 uDir; varying vec2 vUv; void main(){ vec2 o = uTexel * uDir; vec3 c = texture2D(tDiffuse, vUv).rgb * 0.2270270270; c += texture2D(tDiffuse, vUv + o*1.3846153846).rgb * 0.3162162162; c += texture2D(tDiffuse, vUv - o*1.3846153846).rgb * 0.3162162162; c += texture2D(tDiffuse, vUv + o*3.2307692308).rgb * 0.0702702703; c += texture2D(tDiffuse, vUv - o*3.2307692308).rgb * 0.0702702703; gl_FragColor = vec4(c, 1.0); }', { uTexel:{value:new THREE.Vector2()}, uDir:{value:new THREE.Vector2(1,0)} });
+      var compMat = makeMat('precision highp float; uniform sampler2D tDiffuse; uniform sampler2D tBloom; uniform float uStrength; varying vec2 vUv; vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); } void main(){ vec3 base = texture2D(tDiffuse, vUv).rgb; vec3 bloom = texture2D(tBloom, vUv).rgb; gl_FragColor = vec4(aces((base + bloom * uStrength) * 1.05), 1.0); }', { tBloom:{value:null}, uStrength:{value:params.bloom} });
+
+      var rtScene, rtA, rtB, bloomOK = true, rtType = THREE.HalfFloatType;
+      function makeRT(w, h) { return new THREE.WebGLRenderTarget(Math.max(2, w), Math.max(2, h), { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, type: rtType, format: THREE.RGBAFormat, depthBuffer: true }); }
+      function buildTargets() {
+        var w = Math.floor(mount.clientWidth * DPR), h = Math.floor(mount.clientHeight * DPR);
+        if (rtScene) { rtScene.dispose(); rtA.dispose(); rtB.dispose(); }
+        rtScene = makeRT(w, h); rtA = makeRT(Math.floor(w/2), Math.floor(h/2)); rtB = makeRT(Math.floor(w/2), Math.floor(h/2));
+      }
+      buildTargets();
+      function blit(mat, target) { fsQuad.material = mat; renderer.setRenderTarget(target || null); renderer.render(fsScene, fsCam); }
+
+      // controls
+      var ctrl = { radius:5.2, theta:0, phi:Math.PI/2, tRadius:5.2, tTheta:0, tPhi:Math.PI/2, min:3, max:9, autoSpeed:0.35, dragging:false, px:0, py:0, pinch:0, twoTouch:false };
+      var dom = renderer.domElement; dom.style.touchAction = 'none';
+      dom.addEventListener('pointerdown', function (e) { if (ctrl.twoTouch) return; ctrl.dragging = true; ctrl.px = e.clientX; ctrl.py = e.clientY; try { dom.setPointerCapture(e.pointerId); } catch (_) {} });
+      dom.addEventListener('pointermove', function (e) { if (!ctrl.dragging || ctrl.twoTouch) return; var dx = e.clientX - ctrl.px, dy = e.clientY - ctrl.py; ctrl.px = e.clientX; ctrl.py = e.clientY; ctrl.tTheta -= dx * 0.005; ctrl.tPhi = Math.max(0.15, Math.min(Math.PI - 0.15, ctrl.tPhi - dy * 0.005)); });
+      window.addEventListener('pointerup', function () { ctrl.dragging = false; });
+      dom.addEventListener('wheel', function (e) { e.preventDefault(); ctrl.tRadius = Math.max(ctrl.min, Math.min(ctrl.max, ctrl.tRadius * (1 + (e.deltaY > 0 ? 0.08 : -0.08)))); }, { passive: false });
+      function tdist(e) { var a = e.touches[0], b = e.touches[1]; return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
+      dom.addEventListener('touchstart', function (e) { if (e.touches.length === 2) { ctrl.twoTouch = true; ctrl.dragging = false; ctrl.pinch = tdist(e); } }, { passive: false });
+      dom.addEventListener('touchmove', function (e) { if (e.touches.length === 2) { e.preventDefault(); var d = tdist(e); if (ctrl.pinch) ctrl.tRadius = Math.max(ctrl.min, Math.min(ctrl.max, ctrl.tRadius * (ctrl.pinch / d))); ctrl.pinch = d; } }, { passive: false });
+      dom.addEventListener('touchend', function (e) { if (e.touches.length < 2) { ctrl.twoTouch = false; ctrl.pinch = 0; } });
+
+      function setPalette(idx) { params.palette = idx; var p = PALETTES[idx]; uniforms.uColorA.value.set(p.a); uniforms.uColorB.value.set(p.b); uniforms.uColorC.value.set(p.c); auraUniforms.uColor.value.set(p.bloom); core.material.color.set(p.c); }
+      applyPalette = setPalette; setPalette(0);
+
+      window.addEventListener('resize', function () { var w = mount.clientWidth, h = mount.clientHeight; camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h); buildTargets(); });
+
+      var clock = new THREE.Clock(), breath = 0;
+      renderer.setAnimationLoop(function () {
+        var dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+        sampleAudio();
+        breath += dt; var idle = audio.active ? 0 : 1;
+        var br = (Math.sin(breath * 0.9) * 0.5 + 0.5) * 0.12 * idle;
+
+        uniforms.uTime.value += dt * params.speed * (1 + audio.level * 0.5);
+        uniforms.uDeform.value = params.deform; uniforms.uDetail.value = params.detail;
+        uniforms.uAudio.value = audio.level + br; uniforms.uAudioLow.value = audio.low; uniforms.uAudioHigh.value = audio.high;
+
+        var s = 1 + audio.level * 0.10 + br * 0.6;
+        orb.scale.setScalar(s); core.scale.setScalar(s * 0.98); core.material.opacity = 0.30 + audio.level * 0.4;
+
+        auraUniforms.uTime.value = t; auraUniforms.uAudio.value = audio.level + br * 0.5; auraUniforms.uAura.value = params.aura; aura.rotation.y += dt * 0.05;
+
+        if (!ctrl.dragging) ctrl.tTheta += ctrl.autoSpeed * dt * (idle ? 1 : 0.34);
+        ctrl.theta += (ctrl.tTheta - ctrl.theta) * 0.12; ctrl.phi += (ctrl.tPhi - ctrl.phi) * 0.12; ctrl.radius += (ctrl.tRadius - ctrl.radius) * 0.12;
+        var sp = Math.sin(ctrl.phi);
+        camera.position.set(ctrl.radius*sp*Math.sin(ctrl.theta), ctrl.radius*Math.cos(ctrl.phi), ctrl.radius*sp*Math.cos(ctrl.theta));
+        camera.lookAt(0, 0, 0);
+
+        if (bloomOK) {
+          try {
+            renderer.setRenderTarget(rtScene); renderer.render(scene, camera);
+            brightMat.uniforms.tDiffuse.value = rtScene.texture; blit(brightMat, rtA);
+            blurMat.uniforms.uTexel.value.set(1 / rtA.width, 1 / rtA.height);
+            blurMat.uniforms.tDiffuse.value = rtA.texture; blurMat.uniforms.uDir.value.set(1, 0); blit(blurMat, rtB);
+            blurMat.uniforms.tDiffuse.value = rtB.texture; blurMat.uniforms.uDir.value.set(0, 1); blit(blurMat, rtA);
+            blurMat.uniforms.tDiffuse.value = rtA.texture; blurMat.uniforms.uDir.value.set(2.2, 0); blit(blurMat, rtB);
+            blurMat.uniforms.tDiffuse.value = rtB.texture; blurMat.uniforms.uDir.value.set(0, 2.2); blit(blurMat, rtA);
+            compMat.uniforms.tDiffuse.value = rtScene.texture; compMat.uniforms.tBloom.value = rtA.texture;
+            compMat.uniforms.uStrength.value = params.bloom * (1 + audio.level * 0.5); blit(compMat, null);
+            renderer.setRenderTarget(null);
+          } catch (e) { console.warn('Bloom disabled:', e); bloomOK = false; }
+        } else { renderer.setRenderTarget(null); renderer.render(scene, camera); }
+      });
+      return true;
+    }
+
+    /* ============================ 2D fallback orb (no WebGL) ============================ */
+    function init2D() {
+      document.getElementById('mode').textContent = 'Lite 2D mode — open in desktop Chrome for the full WebGL orb';
+      var cv = document.createElement('canvas'); mount.appendChild(cv);
+      var ctx = cv.getContext('2d');
+      var W, H, DPR2 = Math.min(window.devicePixelRatio || 1, 2);
+      function resize() { W = mount.clientWidth; H = mount.clientHeight; cv.width = W * DPR2; cv.height = H * DPR2; cv.style.width = W + 'px'; cv.style.height = H + 'px'; ctx.setTransform(DPR2, 0, 0, DPR2, 0, 0); }
+      resize(); window.addEventListener('resize', resize);
+
+      var pal = PALETTES[0];
+      applyPalette = function (i) { pal = PALETTES[i]; params.palette = i; };
+
+      var N = isMobile ? 60 : 120, parts = [];
+      for (var i = 0; i < N; i++) parts.push({ a: Math.random() * 6.28, r: 0.7 + Math.random() * 1.1, s: 0.3 + Math.random() * 0.8, z: Math.random() });
+
+      var t = 0, breath = 0;
+      (function loop() {
+        requestAnimationFrame(loop);
+        sampleAudio();
+        var dt = 0.016; t += dt * params.speed * (1 + audio.level * 0.5); breath += dt;
+        var idle = audio.active ? 0 : 1;
+        var br = (Math.sin(breath * 0.9) * 0.5 + 0.5) * 0.12 * idle;
+        var amp = audio.level + br;
+
+        ctx.clearRect(0, 0, W, H);
+        var cx = W / 2, cy = H * 0.46, R = Math.min(W, H) * 0.19 * (1 + amp * 0.22);
+
+        // outer volumetric glow
+        var og = ctx.createRadialGradient(cx, cy, R * 0.3, cx, cy, R * 3.4);
+        og.addColorStop(0, hexA(pal.b, (0.26 + amp * 0.3) * params.aura));
+        og.addColorStop(0.45, hexA(pal.a, 0.10 * params.aura));
+        og.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = og; ctx.fillRect(0, 0, W, H);
+
+        // particle aura
+        for (var j = 0; j < N; j++) {
+          var p = parts[j]; p.a += dt * 0.15 * p.s;
+          var rr = R * (1.5 + p.r) * (1 + amp * 0.3);
+          var x = cx + Math.cos(p.a) * rr, y = cy + Math.sin(p.a) * rr * 0.92;
+          var tw = 0.4 + 0.6 * Math.sin(t * 2 + j);
+          ctx.beginPath(); ctx.arc(x, y, 0.7 + p.z * 1.9, 0, 6.283);
+          ctx.fillStyle = hexA(pal.bloom, (0.12 + tw * 0.35) * params.aura); ctx.fill();
+        }
+
+        // wobbling liquid blob
+        ctx.save();
+        ctx.shadowColor = hexA(pal.b, 0.9); ctx.shadowBlur = 35 + amp * 90 * params.bloom;
+        var grd = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.35, R * 0.1, cx, cy, R * 1.2);
+        grd.addColorStop(0, hexA(pal.b, 1)); grd.addColorStop(0.45, hexA(pal.a, 1)); grd.addColorStop(1, hexA(pal.c, 1));
+        ctx.fillStyle = grd; ctx.beginPath();
+        var steps = 90;
+        for (var s2 = 0; s2 <= steps; s2++) {
+          var ang = s2 / steps * 6.283185;
+          var w = Math.sin(ang * 3 + t * 1.7) * 0.5 + Math.sin(ang * 5 - t * 1.2) * 0.3 + Math.sin(ang * 2 + t * 0.6) * 0.4;
+          var rad = R * (1 + w * 0.05 * (params.deform * 1.8) + audio.high * 0.10 + amp * 0.05);
+          var x2 = cx + Math.cos(ang) * rad, y2 = cy + Math.sin(ang) * rad;
+          if (s2 === 0) ctx.moveTo(x2, y2); else ctx.lineTo(x2, y2);
+        }
+        ctx.closePath(); ctx.fill();
+
+        // inner highlight
+        ctx.shadowBlur = 0; ctx.globalCompositeOperation = 'screen';
+        var hi = ctx.createRadialGradient(cx - R * 0.35, cy - R * 0.4, 0, cx - R * 0.35, cy - R * 0.4, R * 0.95);
+        hi.addColorStop(0, 'rgba(255,255,255,' + (0.34 + amp * 0.3) + ')');
+        hi.addColorStop(0.4, 'rgba(255,255,255,0.05)'); hi.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = hi; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.283); ctx.fill();
+        ctx.restore();
+      })();
+    }
   })();
   </script>
 </body>
