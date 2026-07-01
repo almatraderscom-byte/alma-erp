@@ -10,6 +10,10 @@
   },
   "crons": [
     {
+      "path": "/api/cron/growth-publish",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/payroll-accrual",
       "schedule": "0 0 10 * *"
     },

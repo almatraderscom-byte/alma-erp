@@ -3812,3 +3812,35 @@ model AgentVoiceCall {
   @@index([conversationId])
   @@map("agent_voice_calls")
 }
+
+/// ─── GROWTH AUTOPILOT: scheduled content calendar ────────────────────────────
+/// One row per planned social post. The agent drafts entries (status 'draft');
+/// the owner approves them into 'approved'; the growth-publish cron picks up
+/// 'approved' entries whose scheduledFor is due, publishes to FB/IG, verifies,
+/// then marks 'published' (or 'failed'). Nothing publishes without owner approval.
+model AgentContentCalendar {
+  id             String    @id @default(uuid())
+  businessId     String    @default("ALMA_LIFESTYLE") @map("business_id")
+  /// 'facebook' | 'instagram'
+  platform       String
+  /// Page selector understood by resolvePageId ('lifestyle' | 'trading' | a page id).
+  pageRef        String    @default("lifestyle") @map("page_ref")
+  caption        String    @db.Text
+  /// Supabase storage path for the image (e.g. 'generated/...'). Null = text-only (FB).
+  imageRef       String?   @map("image_ref")
+  scheduledFor   DateTime  @map("scheduled_for")
+  /// 'draft' | 'approved' | 'published' | 'failed' | 'canceled'
+  status         String    @default("draft")
+  postId         String?   @map("post_id")
+  permalinkUrl   String?   @map("permalink_url")
+  error          String?   @db.Text
+  conversationId String?   @map("conversation_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  approvedAt     DateTime? @map("approved_at")
+  publishedAt    DateTime? @map("published_at")
+
+  @@index([status, scheduledFor])
+  @@index([businessId, status])
+  @@index([conversationId])
+  @@map("agent_content_calendar")
+}

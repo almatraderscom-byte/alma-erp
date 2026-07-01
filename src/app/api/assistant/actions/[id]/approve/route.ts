@@ -341,6 +341,46 @@ async function runApprove(
     }
   }
 
+  // Growth Autopilot: approving a scheduled post does NOT publish now — it flips
+  // the calendar entry to 'approved' so the growth-publish cron publishes it at
+  // the scheduled time. This keeps the owner-approval gate while allowing
+  // publish-later scheduling.
+  if (action.type === 'schedule_content') {
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        const current = await db.agentPendingAction.findUnique({ where: { id: actionId } })
+        return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+      }
+      const calendarId = String(payload.calendarId ?? '')
+      if (!calendarId) throw new Error('calendarId missing from schedule_content payload')
+      await db.agentContentCalendar.update({
+        where: { id: calendarId },
+        data: { status: 'approved', approvedAt: new Date() },
+      })
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', result: { calendarId, scheduled: true } },
+      })
+      await appendConversationNote(
+        db,
+        action,
+        '✅ পোস্টটি শিডিউল অনুমোদিত — নির্ধারিত সময়ে নিজে থেকে পাবলিশ হবে।',
+      )
+      return Response.json({ success: true, calendarId, scheduled: true })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
   if (action.type === 'content_gate1') {
     try {
       const claimed = await db.agentPendingAction.updateMany({
