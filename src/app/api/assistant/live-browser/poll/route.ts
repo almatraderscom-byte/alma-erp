@@ -32,5 +32,10 @@ export async function GET(req: NextRequest) {
   }
 
   const cmd = await claimNextCommand(device.id)
-  return Response.json({ command: cmd })
+  // The deployed companion reads command fields FLAT (cmd.url, cmd.selector,
+  // cmd.text, cmd.value, cmd.by, cmd.ms). Our bus stores them nested under
+  // `params`, so flatten here — keeping the fix server-side means the owner
+  // never has to reload the extension.
+  const command = cmd ? { id: cmd.id, action: cmd.action, ...cmd.params } : null
+  return Response.json({ command })
 }
