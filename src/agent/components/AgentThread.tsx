@@ -622,17 +622,20 @@ function ToolIODetail({ input, result, failed }: { input?: unknown; result?: str
   )
 }
 
-type TimelineRow =
+type ToolRow = { name: string; ok: boolean; input?: unknown; result?: string; live: boolean }
+
+type TimelineGroup =
   | { kind: 'think'; headline: string; detail: string; live: boolean }
-  | { kind: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; live: boolean }
+  | { kind: 'tools'; tools: ToolRow[]; live: boolean }
 
 /**
- * Unified, premium Claude.ai-style activity stream. Replaces the old scattered
- * "Thought" block + separate tool chips with ONE connected card: reasoning steps
- * interleaved with tool calls in true order, each a tappable headline that expands
- * to its detail (reasoning prose, or tool input+result). Header keeps the
- * "X সেকেন্ড ধরে ভেবেছে · ~N টোকেন · M ধাপ" summary; collapses after the reply
- * begins (re-expandable), exactly like Claude's thinking panel.
+ * Claude-Code-style activity stream. Instead of hiding every step behind one
+ * "N ধাপ" pill, the flow reads top-to-bottom like Claude Code: a slim summary
+ * line (thinking time + token estimate) stays pinned on top, then reasoning
+ * headlines appear inline as narration and consecutive tool calls collapse into a
+ * single "Nটি ধাপ চালানো হয়েছে ›" run summary. Each headline/run expands in place
+ * to reveal the reasoning prose or the tool input+result — more human, easier to
+ * scan.
  */
 function ActivityTimeline({
   timeline,
@@ -647,11 +650,7 @@ function ActivityTimeline({
   toolActivity?: ChatMessage['toolActivity']
   live: boolean
 }) {
-  const [open, setOpen] = useState(live)
-  const [openRows, setOpenRows] = useState<Record<number, boolean>>({})
-  const bodyRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => { setOpen(live) }, [live])
+  const [openGroups, setOpenGroups] = useState<Record<number, boolean>>({})
 
   // Effective timeline: the persisted/live ordered stream, or — for older messages
   // that predate the timeline — a fallback assembled from thinking + tool activity.
@@ -665,10 +664,10 @@ function ActivityTimeline({
     return fb
   }, [timeline, thinking, toolActivity])
 
-  // Flatten into display rows: each reasoning segment expands into its own headline
-  // sub-steps (Claude's multi-headline feel); each tool call is one row.
-  const rows: TimelineRow[] = useMemo(() => {
-    const out: TimelineRow[] = []
+  // Build display groups in true order: each reasoning segment becomes its own
+  // inline headline; runs of consecutive tool calls fold into ONE run group.
+  const groups: TimelineGroup[] = useMemo(() => {
+    const out: TimelineGroup[] = []
     entries.forEach((e, i) => {
       const lastEntry = i === entries.length - 1
       if (e.t === 'think') {
@@ -677,31 +676,36 @@ function ActivityTimeline({
           out.push({ kind: 'think', headline: s.headline, detail: s.detail, live: live && lastEntry && j === steps.length - 1 }),
         )
       } else {
-        out.push({ kind: 'tool', name: e.name, ok: e.ok, input: e.input, result: e.result, live: Boolean(e.live) })
+        const tool: ToolRow = { name: e.name, ok: e.ok, input: e.input, result: e.result, live: Boolean(e.live) }
+        const prev = out[out.length - 1]
+        if (prev && prev.kind === 'tools') {
+          prev.tools.push(tool)
+          prev.live = prev.live || tool.live
+        } else {
+          out.push({ kind: 'tools', tools: [tool], live: tool.live })
+        }
       }
     })
     return out
   }, [entries, live])
 
-  useEffect(() => {
-    if (live && open && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight
-  }, [rows.length, thinking, live, open])
+  const stepCount = useMemo(
+    () => groups.reduce((n, g) => n + (g.kind === 'tools' ? g.tools.length : 1), 0),
+    [groups],
+  )
 
-  if (rows.length === 0) return null
+  if (groups.length === 0) return null
 
   const seconds = thinkingMs != null ? Math.max(1, Math.round(thinkingMs / 1000)) : null
   const baseSrc = (thinking ?? entries.filter((e) => e.t === 'think').map((e) => (e as { text: string }).text).join('\n')).trim()
   const tokenEst = baseSrc ? Math.max(1, Math.round(baseSrc.length / 4)) : 0
   const timeLabel = live ? 'কাজ করছি…' : seconds != null ? `${seconds} সেকেন্ড ধরে ভেবেছে` : 'কাজের ধাপ'
-  const header = tokenEst > 0 ? `${timeLabel} · ~${fmtTok(tokenEst)} টোকেন` : timeLabel
+  const summary = tokenEst > 0 ? `${timeLabel} · ~${fmtTok(tokenEst)} টোকেন` : timeLabel
 
   return (
-    <div className="mb-3 overflow-hidden rounded-2xl border border-white/[0.07] bg-card/50 backdrop-blur-sm">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-1.5 px-3 py-2.5 text-[12px] font-medium text-muted transition-colors hover:text-muted-hi"
-      >
+    <div className="mb-3">
+      {/* Pinned summary line — stays on top, never hides the steps below. */}
+      <div className="mb-1.5 flex items-center gap-1.5 px-0.5 text-[11.5px] font-medium text-muted">
         {live ? (
           <motion.span
             className="inline-block h-3 w-3 rounded-full border-[1.5px] border-[#E07A5F]/40 border-t-[#E07A5F]"
@@ -710,121 +714,172 @@ function ActivityTimeline({
             aria-hidden
           />
         ) : (
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="M12 2a7 7 0 00-4 12.74V17a2 2 0 002 2h4a2 2 0 002-2v-2.26A7 7 0 0012 2z" />
             <path d="M9 21h6" />
           </svg>
         )}
-        <span>{header}</span>
-        <span className="rounded-full bg-white/[0.06] px-1.5 py-px text-[10px] tabular-nums text-muted">{rows.length} ধাপ</span>
-        <svg
-          width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-          strokeLinecap="round" strokeLinejoin="round"
-          className={`ml-auto transition-transform ${open ? 'rotate-180' : ''}`}
-          aria-hidden
-        >
-          <path d="M6 9l6 6 6-6" />
-        </svg>
-      </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div ref={bodyRef} className="max-h-[420px] overflow-y-auto px-3 pb-3 pt-0.5">
-              <div className="flex flex-col">
-                {rows.map((row, i) => {
-                  const isOpen = openRows[i] ?? false
-                  const isLast = i === rows.length - 1
-                  const d = row.kind === 'tool' ? toolDisplay(row.name) : null
-                  const target = row.kind === 'tool' ? toolDetail(row.name, row.input) : null
-                  const hasDetail =
-                    row.kind === 'think'
-                      ? row.detail.trim().length > 0
-                      : Boolean(formatToolInput(row.input) || (row.result && row.result.trim()))
-                  const failed = row.kind === 'tool' && row.ok === false
-                  return (
-                    <div key={i} className="relative pl-6">
-                      {/* connector down to next node */}
-                      {!isLast && <span className="absolute left-[7px] top-[20px] bottom-0 w-px bg-white/[0.08]" aria-hidden />}
-                      {/* node */}
-                      <span className="absolute left-0 top-[7px] flex h-[15px] w-[15px] items-center justify-center" aria-hidden>
-                        {row.live ? (
-                          <motion.span
-                            className="h-[10px] w-[10px] rounded-full border-[1.5px] border-[#E07A5F]/40 border-t-[#E07A5F]"
-                            animate={{ rotate: 360 }}
-                            transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
-                          />
-                        ) : row.kind === 'tool' ? (
-                          failed ? (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="3" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                          ) : (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
-                          )
-                        ) : (
-                          <span className="h-[7px] w-[7px] rounded-full bg-[#E07A5F]/60" />
-                        )}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => hasDetail && setOpenRows((s) => ({ ...s, [i]: !s[i] }))}
-                        className={`group flex w-full items-start gap-1.5 py-1.5 text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
-                      >
-                        <span className="min-w-0 flex-1 text-[12.5px] leading-snug break-words [overflow-wrap:anywhere]">
-                          {row.kind === 'tool' ? (
-                            <span className="text-muted-hi group-hover:text-cream">
-                              <span className="mr-1">{d?.icon}</span>
-                              {d?.label}
-                              {target && <span className="text-muted"> · {target}</span>}
-                            </span>
-                          ) : (
-                            <span className="text-muted-hi group-hover:text-cream">{row.headline}</span>
-                          )}
-                        </span>
-                        {hasDetail && (
-                          <svg
-                            width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
-                            strokeLinecap="round" strokeLinejoin="round"
-                            className={`mt-[4px] shrink-0 text-muted transition-transform ${isOpen ? 'rotate-90' : ''}`}
-                            aria-hidden
-                          >
-                            <path d="M9 6l6 6-6 6" />
-                          </svg>
-                        )}
-                      </button>
-                      <AnimatePresence initial={false}>
-                        {isOpen && hasDetail && (
-                          <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            transition={{ duration: 0.18 }}
-                            className="overflow-hidden"
-                          >
-                            {row.kind === 'think' ? (
-                              <div className="pb-2 pr-1 text-[12.5px] leading-relaxed text-muted whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                                {row.detail}
-                              </div>
-                            ) : (
-                              <div className="pb-2">
-                                <ToolIODetail input={row.input} result={row.result} failed={failed} />
-                              </div>
-                            )}
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  )
-                })}
+        <span>{summary}</span>
+        <span className="rounded-full bg-white/[0.05] px-1.5 py-px text-[10px] tabular-nums text-muted/80">{stepCount} ধাপ</span>
+      </div>
+
+      {/* Inline flow: reasoning headlines + collapsible tool-run groups. */}
+      <div className="flex flex-col gap-0.5">
+        {groups.map((g, i) => {
+          const isOpen = openGroups[i] ?? (g.live && i === groups.length - 1)
+          if (g.kind === 'think') {
+            const hasDetail = g.detail.trim().length > 0
+            return (
+              <div key={i} className="relative pl-5">
+                <span className="absolute left-0 top-[9px] flex h-3 w-3 items-center justify-center" aria-hidden>
+                  {g.live ? (
+                    <motion.span
+                      className="h-[8px] w-[8px] rounded-full border-[1.5px] border-[#E07A5F]/40 border-t-[#E07A5F]"
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
+                    />
+                  ) : (
+                    <span className="h-[6px] w-[6px] rounded-full bg-[#E07A5F]/60" />
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => hasDetail && setOpenGroups((s) => ({ ...s, [i]: !isOpen }))}
+                  className={`group flex w-full items-start gap-1.5 py-1 text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
+                >
+                  <span className="min-w-0 flex-1 text-[13px] font-medium leading-snug text-cream/90 break-words [overflow-wrap:anywhere] group-hover:text-cream">
+                    {g.headline}
+                  </span>
+                  {hasDetail && (
+                    <svg
+                      width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+                      strokeLinecap="round" strokeLinejoin="round"
+                      className={`mt-[4px] shrink-0 text-muted transition-transform ${isOpen ? 'rotate-90' : ''}`}
+                      aria-hidden
+                    >
+                      <path d="M9 6l6 6-6 6" />
+                    </svg>
+                  )}
+                </button>
+                <AnimatePresence initial={false}>
+                  {isOpen && hasDetail && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.18 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="pb-1.5 pr-1 text-[12.5px] leading-relaxed text-muted whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                        {g.detail}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
+            )
+          }
+
+          // Tool-run group — collapsed into a Claude-Code-style "ran N steps" summary.
+          const single = g.tools.length === 1 ? g.tools[0] : null
+          const anyFailed = g.tools.some((t) => t.ok === false)
+          const d0 = single ? toolDisplay(single.name) : null
+          const target0 = single ? toolDetail(single.name, single.input) : null
+          const runLabel = single
+            ? null
+            : g.tools.map((t) => toolDisplay(t.name).label).slice(0, 3).join(', ') +
+              (g.tools.length > 3 ? ` +${g.tools.length - 3}` : '')
+          return (
+            <div key={i} className="relative pl-5">
+              <span className="absolute left-0 top-[9px] flex h-3 w-3 items-center justify-center" aria-hidden>
+                {g.live ? (
+                  <motion.span
+                    className="h-[8px] w-[8px] rounded-full border-[1.5px] border-[#E07A5F]/40 border-t-[#E07A5F]"
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
+                  />
+                ) : anyFailed ? (
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="3" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                ) : (
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+                )}
+              </span>
+              <button
+                type="button"
+                onClick={() => setOpenGroups((s) => ({ ...s, [i]: !isOpen }))}
+                className="group flex w-full items-start gap-1.5 py-1 text-left"
+              >
+                <span className="min-w-0 flex-1 text-[12.5px] leading-snug break-words [overflow-wrap:anywhere]">
+                  {single ? (
+                    <span className="text-muted-hi group-hover:text-cream">
+                      <span className="mr-1">{d0?.icon}</span>
+                      {d0?.label}
+                      {target0 && <span className="text-muted"> · {target0}</span>}
+                    </span>
+                  ) : (
+                    <span className="text-muted-hi group-hover:text-cream">
+                      <span className="mr-1">⚙️</span>
+                      {g.tools.length}টি ধাপ চালানো হয়েছে
+                      {runLabel && <span className="text-muted"> · {runLabel}</span>}
+                    </span>
+                  )}
+                </span>
+                <svg
+                  width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+                  strokeLinecap="round" strokeLinejoin="round"
+                  className={`mt-[4px] shrink-0 text-muted transition-transform ${isOpen ? 'rotate-90' : ''}`}
+                  aria-hidden
+                >
+                  <path d="M9 6l6 6-6 6" />
+                </svg>
+              </button>
+              <AnimatePresence initial={false}>
+                {isOpen && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.18 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="flex flex-col gap-1.5 pb-1.5">
+                      {g.tools.map((t, j) => {
+                        const d = toolDisplay(t.name)
+                        const target = toolDetail(t.name, t.input)
+                        const failed = t.ok === false
+                        return (
+                          <div key={j} className="rounded-xl border border-white/[0.05] bg-black/15 p-2">
+                            <div className="flex items-center gap-1.5 text-[12px] leading-snug">
+                              {t.live ? (
+                                <motion.span
+                                  className="inline-block h-[10px] w-[10px] shrink-0 rounded-full border-[1.5px] border-[#E07A5F]/40 border-t-[#E07A5F]"
+                                  animate={{ rotate: 360 }}
+                                  transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
+                                  aria-hidden
+                                />
+                              ) : failed ? (
+                                <svg className="shrink-0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="3" strokeLinecap="round" aria-hidden><path d="M18 6L6 18M6 6l12 12"/></svg>
+                              ) : (
+                                <svg className="shrink-0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6L9 17l-5-5"/></svg>
+                              )}
+                              <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere] text-muted-hi">
+                                <span className="mr-1">{d.icon}</span>
+                                {d.label}
+                                {target && <span className="text-muted"> · {target}</span>}
+                              </span>
+                            </div>
+                            <ToolIODetail input={t.input} result={t.result} failed={failed} />
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          )
+        })}
+      </div>
     </div>
   )
 }
