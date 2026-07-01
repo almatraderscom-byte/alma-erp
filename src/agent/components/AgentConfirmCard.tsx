@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import AgentSparkleLoader from './AgentSparkleLoader'
 import AgentWorkingDots from './AgentWorkingDots'
 import { notifyTodosChanged } from './AgentTodoContext'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 
 export interface PendingAction {
   id: string
@@ -34,7 +35,7 @@ const RESOLVED_RECORD: Record<string, { icon: string; label: string; tone: strin
   failed: { icon: '⚠️', label: 'ব্যর্থ', tone: 'border tone-amber', text: 'অনুমোদন করেছিলেন, কিন্তু কাজটি ব্যর্থ হয়েছে' },
 }
 
-type CardPhase = 'idle' | 'loading' | 'approved' | 'rejected' | 'editing' | 'settled'
+type CardPhase = 'idle' | 'loading' | 'approved' | 'rejected' | 'editing' | 'settled' | 'opinion'
 
 // Server guard responses that are NOT real failures — the card was already
 // handled, timed out, or is gone. Show a calm note, not a red error toast.
@@ -48,6 +49,12 @@ interface AgentConfirmCardProps {
   action: PendingAction
   onResolved: (status: 'approved' | 'rejected') => void
   onUpdated?: (summary: string, meta: Partial<PendingAction>) => void
+  /**
+   * Owner's "আমার মত" (my opinion) path: reject this pending action AND feed the
+   * owner's correction straight back to the agent so it redoes the task the right
+   * way — instead of a blunt approve/reject. Wired from AgentThread → handleSend.
+   */
+  onQuickSend?: (text: string) => void
 }
 
 const EDIT_FIELDS: Record<string, string> = {
@@ -59,7 +66,7 @@ const EDIT_FIELDS: Record<string, string> = {
   note: '📝 নোট',
 }
 
-export default function AgentConfirmCard({ action, onResolved, onUpdated }: AgentConfirmCardProps) {
+export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuickSend }: AgentConfirmCardProps) {
   const [phase, setPhase] = useState<CardPhase>('idle')
   const [loadingDecision, setLoadingDecision] = useState<'approve' | 'reject' | null>(null)
   const [summary, setSummary] = useState(action.summary)
@@ -68,6 +75,10 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
   const [editValue, setEditValue] = useState('')
   const [editFields, setEditFields] = useState<string[]>([])
   const [terminalNote, setTerminalNote] = useState('')
+  const [opinionText, setOpinionText] = useState('')
+  // Owner can tap the backdrop to tuck the sheet away and keep reading the thread;
+  // the pending action isn't lost — an inline pill re-opens it.
+  const [minimized, setMinimized] = useState(false)
 
   useEffect(() => {
     if (!action.isFinance) return
@@ -170,6 +181,28 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
       toast.success('কার্ড আপডেট হয়েছে')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  // "আমার মত" — the third path. Reject the pending action, then hand the owner's
+  // correction to the agent as a fresh message so it redoes the task correctly.
+  async function submitOpinion() {
+    const note = opinionText.trim()
+    if (!note) return
+    setPhase('loading')
+    setLoadingDecision('reject')
+    try {
+      // Best-effort reject so the pending action is cleared; ignore terminal guards.
+      await fetch(`/api/assistant/actions/${action.id}/reject`, { method: 'POST' }).catch(() => {})
+      onResolved('rejected')
+      notifyTodosChanged()
+      onQuickSend?.(note)
+      setPhase('settled')
+      setTerminalNote('আপনার মত এজেন্টকে পাঠানো হয়েছে — সে ঠিক করে দিচ্ছে')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+      setPhase('idle')
+      setLoadingDecision(null)
     }
   }
 
@@ -306,80 +339,157 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
     )
   }
 
+  // ── Interactive approval: a Claude-Code floating liquid-glass bottom-sheet ──
+  // Minimized → a slim inline pill in the thread that re-opens the sheet (so a
+  // backdrop tap never loses a pending decision).
+  if (minimized) {
+    return (
+      <motion.button
+        type="button"
+        onClick={() => setMinimized(false)}
+        initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+        className="mt-3 flex w-full items-center gap-2 rounded-2xl border tone-amber px-3.5 py-2.5 text-left text-xs font-medium shadow-float"
+      >
+        <span aria-hidden>⚠️</span>
+        <span className="min-w-0 flex-1 truncate">অনুমোদন প্রয়োজন — খুলতে ট্যাপ করুন</span>
+        <span aria-hidden className="text-[13px] leading-none opacity-70">›</span>
+      </motion.button>
+    )
+  }
+
   return (
-    <motion.div className="mt-3 w-full max-w-full overflow-hidden rounded-[18px] border tone-amber p-4 text-sm shadow-float"
-      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}>
-      <div className="mb-1 flex items-center gap-2 font-semibold">
-        <span>{isDelegation ? '🤝' : '⚠️'}</span>
-        <span>{isDelegation ? 'কে কাজটি করবে?' : 'অনুমোদন প্রয়োজন'}</span>
-      </div>
-      <pre className="mb-3 max-w-full overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-sans text-xs leading-relaxed text-cream">{summary}</pre>
-
-      {isDelegation && (
-        <p className="mb-3 rounded-lg border tone-amber px-3 py-2 text-[11px] leading-relaxed">
-          <strong>Worker করুক</strong> → সস্তা মডেল কাজটি করবে (কম খরচ)। <strong>Sonnet বলুক</strong> → আমি নিজে এখনই উত্তর দেব (বেশি খরচ)। আপনি বেছে নিন।
-        </p>
-      )}
-
-      {meta.actionType === 'oxylabs_spend' && meta.costEstimate != null && (
-        <p className="mb-3 rounded-lg border tone-amber px-3 py-2 text-xs">
-          Oxylabs prepaid credit: আনুমানিক <strong>{meta.costEstimate}</strong> ক্রেডিট খরচ হবে (USD নয়)।
-          Reject করলে কোনো ক্রেডিট খরচ হবে না।
-        </p>
-      )}
-
-      {meta.isBatch && (meta.entryCount ?? 0) > 0 && (
-        <div className="mb-3 flex flex-wrap gap-1">
-          {Array.from({ length: meta.entryCount! }, (_, i) => (
-            <button key={i} type="button" onClick={() => void removeBatchItem(i)}
-              className="rounded-lg border tone-red px-2 py-1 text-[10px] hover:bg-red-500/20">
-              🗑️ {i + 1}
-            </button>
-          ))}
+    <MobileModalPortal
+      open
+      aria-label="অনুমোদন প্রয়োজন"
+      onBackdropClick={() => setMinimized(true)}
+      className="agent-confirm-sheet-overlay"
+    >
+      <div className="mobile-modal-shell alma-glass-sheet w-full max-w-lg rounded-t-[26px] sm:rounded-[24px]">
+        {/* grab handle */}
+        <div className="flex shrink-0 justify-center pb-1 pt-2.5">
+          <span className="alma-sheet-grip" aria-hidden />
         </div>
-      )}
 
-      {phase === 'editing' && (
-        <div className="mb-3 space-y-2 rounded-lg border border-border-subtle bg-card/80 p-3">
-          {!editField ? (
-            <div className="flex flex-wrap gap-2">
-              {(editFields.length ? editFields : Object.keys(EDIT_FIELDS)).map((f) => (
-                <button key={f} type="button" onClick={() => setEditField(f)}
-                  className="rounded-lg border border-border-subtle bg-white/[0.04] px-2 py-1 text-[10px] text-cream hover:border-[#E07A5F]/25 hover:bg-[#E07A5F]/5">
-                  {EDIT_FIELDS[f] ?? f}
-                </button>
-              ))}
-              <button type="button" onClick={() => setPhase('idle')}
-                className="rounded-lg border border-border-subtle px-2 py-1 text-[10px] text-muted">বাতিল</button>
+        {/* header */}
+        <div className="mobile-modal-header flex items-center gap-2 px-5 pb-2 pt-1">
+          <span className="text-base" aria-hidden>⚠️</span>
+          <span className="text-[15px] font-semibold tracking-[-0.01em] text-cream">অনুমোদন প্রয়োজন</span>
+          <button
+            type="button"
+            onClick={() => setMinimized(true)}
+            aria-label="ছোট করুন"
+            className="ml-auto rounded-full p-1.5 text-muted transition-colors hover:bg-white/[0.06] hover:text-cream"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="M6 9l6 6 6-6" /></svg>
+          </button>
+        </div>
+
+        {/* body (scrollable) */}
+        <div className="mobile-modal-body px-5 pb-2">
+          <pre className="max-w-full overflow-x-hidden whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-sans text-[13px] leading-relaxed text-cream">{summary}</pre>
+
+          {meta.actionType === 'oxylabs_spend' && meta.costEstimate != null && (
+            <p className="mt-3 rounded-xl border tone-amber px-3 py-2 text-xs">
+              Oxylabs prepaid credit: আনুমানিক <strong>{meta.costEstimate}</strong> ক্রেডিট খরচ হবে (USD নয়)।
+              Reject করলে কোনো ক্রেডিট খরচ হবে না।
+            </p>
+          )}
+
+          {meta.isBatch && (meta.entryCount ?? 0) > 0 && phase !== 'opinion' && (
+            <div className="mt-3">
+              <p className="mb-1.5 text-[11px] text-muted">কোনো এন্ট্রি বাদ দিতে ট্যাপ করুন:</p>
+              <div className="flex flex-wrap gap-1.5">
+                {Array.from({ length: meta.entryCount! }, (_, i) => (
+                  <button key={i} type="button" onClick={() => void removeBatchItem(i)}
+                    className="rounded-lg border tone-red px-2 py-1 text-[11px] hover:bg-red-500/20">
+                    🗑️ {i + 1}
+                  </button>
+                ))}
+              </div>
             </div>
-          ) : (
-            <>
-              <p className="text-[10px] text-muted">{EDIT_FIELDS[editField] ?? editField} — নতুন মান:</p>
-              <input value={editValue} onChange={(e) => setEditValue(e.target.value)}
-                className="w-full rounded-lg border border-border bg-card/80 px-2 py-1.5 text-xs text-cream focus:outline-none focus:border-[#E07A5F]/40" />
-              <button type="button" onClick={() => void applyEdit()}
-                className="rounded-lg bg-[#E07A5F]/10 border border-[#E07A5F]/25 px-3 py-1.5 text-[10px] text-[#E07A5F] hover:bg-[#E07A5F]/20">সংরক্ষণ</button>
-            </>
+          )}
+
+          {phase === 'editing' && (
+            <div className="mt-3 space-y-2 rounded-xl border border-border-subtle bg-card/70 p-3">
+              {!editField ? (
+                <div className="flex flex-wrap gap-2">
+                  {(editFields.length ? editFields : Object.keys(EDIT_FIELDS)).map((f) => (
+                    <button key={f} type="button" onClick={() => setEditField(f)}
+                      className="rounded-lg border border-border-subtle bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-cream hover:border-[#E07A5F]/25 hover:bg-[#E07A5F]/5">
+                      {EDIT_FIELDS[f] ?? f}
+                    </button>
+                  ))}
+                  <button type="button" onClick={() => setPhase('idle')}
+                    className="rounded-lg border border-border-subtle px-2.5 py-1.5 text-[11px] text-muted">বাতিল</button>
+                </div>
+              ) : (
+                <>
+                  <p className="text-[11px] text-muted">{EDIT_FIELDS[editField] ?? editField} — নতুন মান:</p>
+                  <input value={editValue} onChange={(e) => setEditValue(e.target.value)}
+                    className="w-full rounded-lg border border-border bg-card/80 px-2.5 py-2 text-[13px] text-cream focus:outline-none focus:border-[#E07A5F]/40" />
+                  <button type="button" onClick={() => void applyEdit()}
+                    className="rounded-lg border border-[#E07A5F]/25 bg-[#E07A5F]/10 px-3 py-1.5 text-[11px] text-[#E07A5F] hover:bg-[#E07A5F]/20">সংরক্ষণ</button>
+                </>
+              )}
+            </div>
+          )}
+
+          {phase === 'opinion' && (
+            <div className="mt-3 space-y-2">
+              <p className="text-[12px] font-medium text-cream">আপনার মত লিখুন — এজেন্ট এটা অনুযায়ী কাজটা ঠিক করে দেবে:</p>
+              <textarea
+                value={opinionText}
+                onChange={(e) => setOpinionText(e.target.value)}
+                rows={3}
+                autoFocus
+                placeholder="যেমন: পরিমাণটা ৫০০ নয়, ৮০০ হবে…"
+                className="w-full resize-none rounded-xl border border-border bg-card/70 px-3 py-2.5 text-[13px] leading-relaxed text-cream placeholder:text-muted/60 focus:border-[#E07A5F]/40 focus:outline-none"
+              />
+            </div>
           )}
         </div>
-      )}
 
-      <div className="flex flex-wrap gap-2">
-        <button type="button" onClick={() => resolve('approve')}
-          className="min-w-0 flex-1 rounded-lg border tone-green px-3 py-2.5 text-xs font-medium transition-all hover:bg-green-500/20 hover:shadow-sm">
-          {isDelegation ? '✅ Worker করুক' : meta.isBatch ? '✅ সব Approve' : '✓ Approve'}
-        </button>
-        {meta.isFinance && (
-          <button type="button" onClick={() => setPhase('editing')}
-            className="min-w-0 flex-1 rounded-lg border tone-amber px-3 py-2.5 text-xs font-medium transition-all hover:bg-amber-500/20 hover:shadow-sm">
-            ✏️ সংশোধন
-          </button>
-        )}
-        <button type="button" onClick={() => resolve('reject')}
-          className={`min-w-0 flex-1 rounded-lg border px-3 py-2.5 text-xs font-medium transition-all hover:shadow-sm ${isDelegation ? 'tone-purple hover:bg-purple-500/20' : 'tone-red hover:bg-red-500/20'}`}>
-          {isDelegation ? '🧠 Sonnet বলুক' : '✗ Reject'}
-        </button>
+        {/* footer — action buttons */}
+        <div className="mobile-modal-footer alma-glass-sheet border-t-0 px-5 pb-4 pt-3">
+          {phase === 'opinion' ? (
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setPhase('idle')}
+                className="min-w-0 rounded-xl border border-border-subtle px-4 py-3 text-[13px] font-medium text-muted transition-colors hover:bg-white/[0.05]">
+                ফিরে যান
+              </button>
+              <button type="button" onClick={() => void submitOpinion()} disabled={!opinionText.trim()}
+                className="min-w-0 flex-1 rounded-xl border tone-amber px-4 py-3 text-[13px] font-semibold transition-all hover:bg-amber-500/20 disabled:opacity-40">
+                📩 এজেন্টকে পাঠান
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <button type="button" onClick={() => resolve('approve')}
+                className="w-full rounded-xl border tone-green px-4 py-3 text-[14px] font-semibold transition-all hover:bg-green-500/20 hover:shadow-sm">
+                {meta.isBatch ? '✅ সব Approve' : '✓ Approve'}
+              </button>
+              <div className="flex gap-2">
+                {meta.isFinance && (
+                  <button type="button" onClick={() => setPhase('editing')}
+                    className="min-w-0 flex-1 rounded-xl border tone-amber px-3 py-2.5 text-[12.5px] font-medium transition-all hover:bg-amber-500/20">
+                    ✏️ সংশোধন
+                  </button>
+                )}
+                {onQuickSend && (
+                  <button type="button" onClick={() => setPhase('opinion')}
+                    className="min-w-0 flex-1 rounded-xl border tone-purple px-3 py-2.5 text-[12.5px] font-medium transition-all hover:bg-purple-500/20">
+                    💬 আমার মত
+                  </button>
+                )}
+                <button type="button" onClick={() => resolve('reject')}
+                  className="min-w-0 flex-1 rounded-xl border tone-red px-3 py-2.5 text-[12.5px] font-medium transition-all hover:bg-red-500/20">
+                  ✗ Reject
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
-    </motion.div>
+    </MobileModalPortal>
   )
 }

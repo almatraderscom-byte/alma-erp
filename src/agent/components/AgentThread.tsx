@@ -18,6 +18,7 @@ import { PlanDriveInlineTurn } from './monitor/PlanDriveInlineTurn'
 import type { PlanDrivePanelData, PlanDriveAction } from './monitor/PlanDriveTimeline'
 import { AgentThinkingIndicator, ModelSpinner, type ModelVariant, type ThinkingMode } from './AgentThinkingIndicator'
 import { toolDisplay, toolDetail } from '@/agent/lib/tool-labels'
+import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { agentReplyHaptic } from '@/agent/lib/haptics'
 import { isHeartbeatWakeText } from '@/agent/lib/heartbeat/wake-marker'
 
@@ -592,33 +593,63 @@ function formatToolInput(input: unknown): string | null {
 }
 
 
-/**
- * Premium expandable input/result panel — shared by the unified timeline's tool
- * rows. Renders the tool's input and result in tidy, capped mono blocks (labelled
- * "ইনপুট" / "ফলাফল"), not a raw JSON dump.
- */
-function ToolIODetail({ input, result, failed }: { input?: unknown; result?: string; failed: boolean }) {
-  const inputStr = formatToolInput(input)
-  const resultStr = result && result.trim() ? result : null
-  if (!inputStr && !resultStr) return null
+/** Multi-pointed sparkle (4-point star) — the icon that shimmers/pulses on the
+ *  live "Running" tool row and grows on the completed "Ran …" status line. */
+function SparkleGlyph({ className, size = 14 }: { className?: string; size?: number }) {
   return (
-    <div className="mt-1.5 space-y-2 rounded-xl border border-white/[0.06] bg-black/20 p-2.5">
-      {inputStr && (
-        <div>
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">ইনপুট</div>
-          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[11px] leading-relaxed text-cream/80 [overflow-wrap:anywhere]">{inputStr}</pre>
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden>
+      <path d="M12 0c.4 5.7 2.3 9.6 12 12-9.7 2.4-11.6 6.3-12 12-.4-5.7-2.3-9.6-12-12C9.7 9.6 11.6 5.7 12 0z" />
+    </svg>
+  )
+}
+
+/**
+ * Claude-Code "Bash"-style floating I/O sheet. Tapping a tool row lifts a
+ * liquid-glass bottom-sheet with the tool's Input (Command) and Output — the
+ * same premium, iPhone-first surface the owner asked for, instead of an inline
+ * accordion. Reuses the shared MobileModalPortal (portal + iOS viewport sizing).
+ */
+function ToolIOSheet({ tool, onClose }: { tool: ToolRow | null; onClose: () => void }) {
+  const d = tool ? toolDisplay(tool.name) : null
+  const inputStr = tool ? formatToolInput(tool.input) : null
+  const resultStr = tool && tool.result && tool.result.trim() ? tool.result : null
+  const failed = tool ? tool.ok === false : false
+  return (
+    <MobileModalPortal open={!!tool} aria-label="টুল বিস্তারিত" onBackdropClick={onClose} className="agent-tool-io-sheet">
+      <div className="mobile-modal-shell alma-glass-sheet w-full max-w-lg rounded-t-[26px] sm:rounded-[24px]">
+        <div className="flex shrink-0 justify-center pb-1 pt-2.5">
+          <span className="alma-sheet-grip" aria-hidden />
         </div>
-      )}
-      {resultStr && (
-        <div>
-          <div className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">
-            <span>ফলাফল</span>
-            <span className="font-normal lowercase opacity-50">· result</span>
-          </div>
-          <pre className={`max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/30 p-2 text-[11px] leading-relaxed [overflow-wrap:anywhere] ${failed ? 'text-red-300/90' : 'text-cream/80'}`}>{resultStr}</pre>
+        <div className="mobile-modal-header flex items-center gap-2 px-5 pb-2.5 pt-1">
+          <span className="text-base" aria-hidden>{d?.icon ?? '🔧'}</span>
+          <span className="min-w-0 flex-1 truncate text-[15px] font-semibold tracking-[-0.01em] text-cream">{d?.label ?? tool?.name}</span>
+          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${failed ? 'tone-red' : 'tone-green'}`}>
+            {failed ? 'ব্যর্থ' : 'সম্পন্ন'}
+          </span>
+          <button type="button" onClick={onClose} aria-label="বন্ধ করুন"
+            className="rounded-full p-1.5 text-muted transition-colors hover:bg-white/[0.06] hover:text-cream">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="M18 6L6 18M6 6l12 12" /></svg>
+          </button>
         </div>
-      )}
-    </div>
+        <div className="mobile-modal-body space-y-3 px-5 pb-5 pt-1">
+          {inputStr && (
+            <div>
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">ইনপুট · input</div>
+              <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-white/[0.06] bg-black/25 p-3 text-[12px] leading-relaxed text-cream/85 [overflow-wrap:anywhere]">{inputStr}</pre>
+            </div>
+          )}
+          {resultStr && (
+            <div>
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">ফলাফল · output</div>
+              <pre className={`max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-white/[0.06] bg-black/25 p-3 text-[12px] leading-relaxed [overflow-wrap:anywhere] ${failed ? 'text-red-300/90' : 'text-cream/85'}`}>{resultStr}</pre>
+            </div>
+          )}
+          {!inputStr && !resultStr && (
+            <p className="py-6 text-center text-[12px] text-muted">এই টুলের কোনো ইনপুট/ফলাফল নেই।</p>
+          )}
+        </div>
+      </div>
+    </MobileModalPortal>
   )
 }
 
@@ -662,6 +693,8 @@ function ActivityTimeline({
   // g=tools pill, t=individual tool). Everything starts collapsed.
   const [open, setOpen] = useState<Record<string, boolean>>({})
   const toggle = (k: string) => setOpen((s) => ({ ...s, [k]: !s[k] }))
+  // Tapped tool → its I/O opens in the floating liquid-glass sheet (not inline).
+  const [ioSheet, setIoSheet] = useState<ToolRow | null>(null)
 
   // Effective timeline: the persisted/live ordered stream, or — for older messages
   // that predate the timeline — a fallback assembled from thinking + tool activity.
@@ -799,6 +832,18 @@ function ActivityTimeline({
                 )}
               </AnimatePresence>
 
+              {/* Part-3 "Ran …" beat: while this phase is still live but its last
+                  tool just finished, show a bright sweeping "সম্পন্ন · <tool>" line
+                  with a BIGGER pulsing sparkle — the owner's completed-state accent. */}
+              {p.live && isLast && !p.tools.some((t) => t.live) && p.tools.length > 0 && (
+                <div className="mb-1.5 mt-0.5 flex items-center gap-1.5">
+                  <SparkleGlyph className="alma-sparkle-pulse text-gold" size={17} />
+                  <span className="alma-run-shimmer text-[12.5px] font-semibold tracking-[-0.01em]">
+                    সম্পন্ন · {toolDisplay(p.tools[p.tools.length - 1].name).label}
+                  </span>
+                </div>
+              )}
+
               {/* 2 — TOOL PILL (quiet, secondary). One pill for the whole batch. */}
               {p.tools.length > 0 && (
                 <div className="mb-1.5 mt-0.5">
@@ -836,58 +881,37 @@ function ActivityTimeline({
                             const target = toolDetail(t.name, t.input)
                             const failed = t.ok === false
                             const hasIO = Boolean(formatToolInput(t.input) || (t.result && t.result.trim()))
-                            const tOpen = open[`t${i}-${j}`] ?? false
                             return (
                               <div key={j} className="rounded-lg border border-border-subtle bg-card/40">
-                                {/* 3 — tool row; tap to reveal input/output */}
+                                {/* 3 — tool row; tap opens the floating I/O sheet */}
                                 <button
                                   type="button"
-                                  onClick={() => hasIO && toggle(`t${i}-${j}`)}
+                                  onClick={() => hasIO && setIoSheet(t)}
                                   className={`flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[12px] leading-snug ${hasIO ? 'cursor-pointer' : 'cursor-default'}`}
                                 >
                                   {t.live ? (
-                                    <motion.span
-                                      className="inline-block h-[10px] w-[10px] shrink-0 rounded-full border-[1.5px] border-gold/40 border-t-gold"
-                                      animate={{ rotate: 360 }}
-                                      transition={{ duration: 0.8, repeat: Infinity, ease: 'linear' }}
-                                      aria-hidden
-                                    />
+                                    <SparkleGlyph className="alma-sparkle-pulse shrink-0 text-gold" size={13} />
                                   ) : failed ? (
                                     <svg className="shrink-0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" strokeWidth="3" strokeLinecap="round" aria-hidden><path d="M18 6L6 18M6 6l12 12"/></svg>
                                   ) : (
                                     <svg className="shrink-0" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--success)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6L9 17l-5-5"/></svg>
                                   )}
-                                  <span className="min-w-0 flex-1 break-words [overflow-wrap:anywhere] text-muted-hi">
+                                  <span className={`min-w-0 flex-1 break-words [overflow-wrap:anywhere] ${t.live ? 'alma-run-shimmer font-medium' : 'text-muted-hi'}`}>
                                     <span className="mr-1" aria-hidden>{d.icon}</span>
-                                    {d.label}
-                                    {target && <span className="text-muted"> · {target}</span>}
+                                    {t.live ? 'চলছে · ' : ''}{d.label}
+                                    {target && !t.live && <span className="text-muted"> · {target}</span>}
                                   </span>
                                   {hasIO && (
                                     <svg
                                       width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
                                       strokeLinecap="round" strokeLinejoin="round"
-                                      className={`shrink-0 text-muted/50 transition-transform ${tOpen ? 'rotate-90' : ''}`}
+                                      className="shrink-0 text-muted/50"
                                       aria-hidden
                                     >
                                       <path d="M9 6l6 6-6 6" />
                                     </svg>
                                   )}
                                 </button>
-                                <AnimatePresence initial={false}>
-                                  {tOpen && hasIO && (
-                                    <motion.div
-                                      initial={{ height: 0, opacity: 0 }}
-                                      animate={{ height: 'auto', opacity: 1 }}
-                                      exit={{ height: 0, opacity: 0 }}
-                                      transition={{ duration: 0.18 }}
-                                      className="overflow-hidden"
-                                    >
-                                      <div className="px-2 pb-2">
-                                        <ToolIODetail input={t.input} result={t.result} failed={failed} />
-                                      </div>
-                                    </motion.div>
-                                  )}
-                                </AnimatePresence>
                               </div>
                             )
                           })}
@@ -901,6 +925,9 @@ function ActivityTimeline({
           )
         })}
       </div>
+
+      {/* Floating liquid-glass I/O sheet — opened by tapping any tool row. */}
+      <ToolIOSheet tool={ioSheet} onClose={() => setIoSheet(null)} />
     </div>
   )
 }
@@ -1238,6 +1265,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                   {msg.pendingAction && (
                     <AgentConfirmCard
                       action={msg.pendingAction}
+                      onQuickSend={onQuickSend}
                       onResolved={(status) => {
                         // Approve always posts a result note. For a delegation,
                         // Reject ALSO posts one (Sonnet's own answer), so poll then too.
