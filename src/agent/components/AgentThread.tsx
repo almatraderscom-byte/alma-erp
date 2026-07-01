@@ -602,7 +602,7 @@ function ToolIODetail({ input, result, failed }: { input?: unknown; result?: str
   const resultStr = result && result.trim() ? result : null
   if (!inputStr && !resultStr) return null
   return (
-    <div className="mt-1.5 space-y-2 rounded-xl border border-white/[0.06] bg-black/20 p-2.5">
+    <div className="alma-glass mt-1.5 space-y-2 rounded-2xl p-2.5">
       {inputStr && (
         <div>
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">ইনপুট</div>
@@ -696,7 +696,7 @@ function ActivityTimeline({
   const header = tokenEst > 0 ? `${timeLabel} · ~${fmtTok(tokenEst)} টোকেন` : timeLabel
 
   return (
-    <div className="mb-3 overflow-hidden rounded-2xl border border-white/[0.07] bg-card/50 backdrop-blur-sm">
+    <div className="alma-glass mb-3 overflow-hidden rounded-2xl">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
