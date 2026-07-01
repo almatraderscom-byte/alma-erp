@@ -17,30 +17,33 @@ interface AgentAskCardProps {
   disabled?: boolean
 }
 
+/**
+ * Claude-app style question card: a clean floating card with the question on top,
+ * the options as divider-separated list rows (radio select — not chunky boxed
+ * buttons), and a rounded Submit pill. Owner asked for the exact same UI + feel as
+ * the assistant's own AskUserQuestion card.
+ */
 export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardProps) {
   const [phase, setPhase] = useState<AskPhase>('idle')
-  const [selected, setSelected] = useState<string | null>(null)
+  const [chosen, setChosen] = useState<string | null>(null)
 
-  function handleSelect(opt: string) {
-    if (phase !== 'idle' || disabled) return
-    setSelected(opt)
+  function submit() {
+    if (phase !== 'idle' || disabled || !chosen) return
     setPhase('answered')
-    onSelect(opt)
+    onSelect(chosen)
   }
 
-  if (phase === 'answered' && selected) {
+  if (phase === 'answered' && chosen) {
     return (
       <motion.div
         layout
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.18, ease: 'easeOut' }}
-        className="mt-3 rounded-[18px] border border-white/[0.07] bg-card/80 px-4 py-3 text-sm shadow-float"
+        className="mt-3 rounded-3xl border border-white/[0.08] bg-card/80 px-5 py-4 text-sm shadow-float"
       >
-        <p className="text-[12px] text-muted">{card.question}</p>
-        <p className="mt-1 text-[12px] font-medium text-[#E07A5F]">
-          ✓ নির্বাচন: {selected}
-        </p>
+        <p className="text-[13px] leading-snug text-muted">{card.question}</p>
+        <p className="mt-1.5 text-[13px] font-semibold text-[#E07A5F]">✓ {chosen}</p>
       </motion.div>
     )
   }
@@ -51,25 +54,48 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.18, ease: 'easeOut' }}
-      className="mt-3 rounded-[18px] border border-white/[0.07] bg-card/80 p-4 text-sm shadow-float"
+      className="mt-3 overflow-hidden rounded-3xl border border-white/[0.08] bg-card/80 shadow-float"
     >
-      <div className="mb-2 flex items-center gap-2 text-[13px] font-semibold text-cream">
-        <span>❓</span>
-        <span>একটি প্রশ্ন</span>
+      {/* Question title */}
+      <div className="px-5 pb-2 pt-5">
+        <p className="text-[15px] font-semibold leading-snug text-cream">{card.question}</p>
       </div>
-      <p className="mb-3 text-[13px] leading-relaxed text-muted-hi">{card.question}</p>
-      <div className="flex flex-col gap-2">
-        {card.options.map((opt) => (
-          <button
-            key={opt}
-            type="button"
-            onClick={() => handleSelect(opt)}
-            disabled={disabled}
-            className="rounded-xl border border-border bg-white/[0.02] px-4 py-2.5 text-left text-[13px] font-medium text-cream transition-all hover:border-[#E07A5F]/40 hover:bg-[#E07A5F]/[0.06] active:scale-[0.99] disabled:pointer-events-none disabled:opacity-40"
-          >
-            {opt}
-          </button>
-        ))}
+
+      {/* Options — divider-separated list rows with a radio dot (Claude-app feel) */}
+      <div className="mt-1 flex flex-col">
+        {card.options.map((opt) => {
+          const active = chosen === opt
+          return (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => { if (!disabled) setChosen(opt) }}
+              disabled={disabled}
+              className="flex items-center gap-3 border-t border-white/[0.06] px-5 py-3.5 text-left transition-colors hover:bg-white/[0.03] active:bg-white/[0.05] disabled:pointer-events-none disabled:opacity-40"
+            >
+              <span
+                className={`grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full border transition-colors ${
+                  active ? 'border-[#E07A5F]' : 'border-white/25'
+                }`}
+              >
+                {active && <span className="h-2.5 w-2.5 rounded-full bg-[#E07A5F]" />}
+              </span>
+              <span className="text-[14px] font-medium text-cream">{opt}</span>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Submit pill */}
+      <div className="flex justify-end px-5 py-4">
+        <button
+          type="button"
+          onClick={submit}
+          disabled={disabled || !chosen}
+          className="rounded-full bg-[#E07A5F] px-6 py-2.5 text-[13px] font-semibold text-white transition-all hover:brightness-110 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
+        >
+          Submit
+        </button>
       </div>
     </motion.div>
   )
