@@ -306,18 +306,40 @@ async function pageType(arg) {
   almaSetValue(el, value == null ? '' : String(value))
   if (submit) {
     await sleep(150)
+    // Synthetic Enter first — many SPA search boxes listen for keydown even though
+    // isTrusted is false. But sites like Google IGNORE untrusted keys, so if Enter
+    // wasn't swallowed we submit the enclosing FORM directly. requestSubmit() fires
+    // the submit event (so React/SPA handlers run + client routing works); if that's
+    // unavailable or throws we force a native form.submit() (hard GET navigation —
+    // exactly what a Google search needs). Clicking Google's btnK is deliberately
+    // avoided: it's flaky because the autocomplete dropdown intercepts the click.
     const kd = almaDispatchKey(el, 'Enter')
-    // If nothing swallowed Enter, submit the enclosing form like a human would.
-    const form = el.closest && el.closest('form')
-    if (form && !kd.defaultPrevented) {
-      const btn = form.querySelector('button[type=submit],input[type=submit],button:not([type])')
-      if (btn) btn.click()
-      else if (typeof form.requestSubmit === 'function') {
-        try {
-          form.requestSubmit()
-        } catch {
-          /* ignore */
+    if (!kd.defaultPrevented) {
+      const form = el.closest && el.closest('form')
+      if (form) {
+        if (typeof form.requestSubmit === 'function') {
+          try {
+            form.requestSubmit()
+          } catch {
+            try {
+              form.submit()
+            } catch {
+              /* ignore */
+            }
+          }
+        } else {
+          try {
+            form.submit()
+          } catch {
+            /* ignore */
+          }
         }
+      } else {
+        // No enclosing form — click the nearest submit/search button as a fallback.
+        const btn = document.querySelector(
+          'button[type=submit],input[type=submit],[aria-label*="search" i][role=button],button[aria-label*="search" i]',
+        )
+        if (btn) btn.click()
       }
     }
   }
@@ -357,14 +379,35 @@ function pageKey(arg) {
   el.dispatchEvent(kd)
   el.dispatchEvent(new KeyboardEvent('keypress', opts))
   el.dispatchEvent(new KeyboardEvent('keyup', opts))
-  if (key === 'Enter') {
-    const form = el.closest && el.closest('form')
-    if (form && !kd.defaultPrevented) {
-      const btn = form.querySelector('button[type=submit],input[type=submit],button:not([type])')
-      if (btn) btn.click()
-      else if (typeof form.requestSubmit === 'function') {
+  if (key === 'Enter' && !kd.defaultPrevented) {
+    // Sites like Google ignore untrusted synthetic Enter, so submit the FORM directly.
+    let form = el.closest && el.closest('form')
+    if (!form) {
+      // `press` is a separate command from `type`; focus may have moved off the field.
+      // Recover by finding the first visible text field that lives inside a form.
+      const cand = Array.from(document.querySelectorAll('input:not([type=hidden]),textarea')).find((e) => {
+        const r = e.getBoundingClientRect()
+        return r.width > 0 && r.height > 0 && e.closest('form')
+      })
+      form = cand && cand.closest('form')
+    }
+    if (form) {
+      // requestSubmit() runs the submit event (SPA handlers + client routing); if that
+      // is unavailable or throws, force a native submit (hard navigation). Never rely on
+      // clicking a specific submit button — that path is flaky on Google.
+      if (typeof form.requestSubmit === 'function') {
         try {
           form.requestSubmit()
+        } catch {
+          try {
+            form.submit()
+          } catch {
+            /* ignore */
+          }
+        }
+      } else {
+        try {
+          form.submit()
         } catch {
           /* ignore */
         }
