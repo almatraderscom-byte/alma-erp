@@ -103,10 +103,12 @@ describe('resolveHeadModelId — Rule 1 thread stickiness', () => {
       conversationId: CONV,
     })
     expect(decision.via).not.toBe('sticky_followup')
-    expect(decision.modelId).toBe('claude-sonnet-4-6')
+    // Re-triages UP to the heavy head — now Gemini 3.1 Pro (owner command, 2026-07).
+    expect(decision.tier).toBe('heavy')
+    expect(decision.modelId).toBe('gemini-3.1-pro')
   })
 
-  it('a money keyword still forces Sonnet even on a short cheap-thread follow-up', async () => {
+  it('a money keyword still forces the heavy head even on a short cheap-thread follow-up', async () => {
     stickyModel = 'or-deepseek-v4-flash'
     const decision = await resolveHeadModelId({
       requestedModelId: 'auto',
@@ -115,7 +117,10 @@ describe('resolveHeadModelId — Rule 1 thread stickiness', () => {
       businessId: 'ALMA_LIFESTYLE',
       conversationId: CONV,
     })
-    expect(decision.modelId).toBe('claude-sonnet-4-6')
+    // Owner command (2026-07): heavy head is Gemini 3.1 Pro. Invariant preserved:
+    // a money keyword never stays on the cheap DeepSeek head.
+    expect(decision.tier).toBe('heavy')
+    expect(decision.modelId).toBe('gemini-3.1-pro')
     expect(decision.via).toBe('deny_kw')
   })
 

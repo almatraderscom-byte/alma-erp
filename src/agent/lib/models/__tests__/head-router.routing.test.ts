@@ -41,14 +41,17 @@ describe('resolveHeadModelId — routine fast-path', () => {
     expect(decision.via).toBe('routine_kw')
   })
 
-  it('a money keyword still forces Sonnet even if it looks routine', async () => {
+  it('a money keyword still forces the heavy head, never the cheap DeepSeek head', async () => {
     const decision = await resolveHeadModelId({
       requestedModelId: 'auto',
       lastUserText: 'aj salary koto hisab koro',
       personalMode: false,
       businessId: 'ALMA_LIFESTYLE',
     })
-    expect(decision.modelId).toBe('claude-sonnet-4-6')
+    // Owner command (2026-07): heavy head is Gemini 3.1 Pro (Anthropic credits dead).
+    // The real invariant is the tier — money/sensitive must never fall to the cheap head.
+    expect(decision.tier).toBe('heavy')
+    expect(decision.modelId).toBe('gemini-3.1-pro')
   })
 })
 
