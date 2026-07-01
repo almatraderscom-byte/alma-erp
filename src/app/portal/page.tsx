@@ -606,6 +606,14 @@ const LEAVE_STATUS_LABEL: Record<string, string> = {
   CANCELLED: 'বাতিল',
 }
 
+/** Minutes-since-midnight → "2:00 PM" (for hourly / shifted-start leave display). */
+function minutesToClock(m: number): string {
+  const h = Math.floor(m / 60), mm = m % 60
+  const ap = h >= 12 ? 'PM' : 'AM'
+  const h12 = ((h + 11) % 12) + 1
+  return `${h12}:${String(mm).padStart(2, '0')} ${ap}`
+}
+
 function AttendanceCard({
   businessId,
   empLinked,
@@ -641,7 +649,7 @@ function AttendanceCard({
   const [leaveStartTime, setLeaveStartTime] = useState('')
   const [leaveEndTime, setLeaveEndTime] = useState('')
   const [leaveReason, setLeaveReason] = useState('')
-  const [leaveList, setLeaveList] = useState<Array<{ id: string; kind: string; status: string; startDate: string; endDate: string }>>([])
+  const [leaveList, setLeaveList] = useState<Array<{ id: string; kind: string; status: string; startDate: string; endDate: string; startMinutes?: number | null; endMinutes?: number | null }>>([])
   const desk = useMemo(
     () => (attendance ? normalizeMyAttendancePayload(attendance) : null),
     [attendance],
@@ -1136,6 +1144,11 @@ function AttendanceCard({
                       {lv.startDate.slice(0, 10)}
                       {lv.startDate.slice(0, 10) !== lv.endDate.slice(0, 10) ? ` – ${lv.endDate.slice(0, 10)}` : ''}
                       {' · '}{LEAVE_KIND_LABEL[lv.kind] || lv.kind}
+                      {(lv.kind === 'HOURS' && lv.startMinutes != null && lv.endMinutes != null)
+                        ? ` (${minutesToClock(lv.startMinutes)}–${minutesToClock(lv.endMinutes)})`
+                        : (lv.kind === 'SHIFTED_START' && lv.startMinutes != null)
+                          ? ` (${minutesToClock(lv.startMinutes)} থেকে)`
+                          : ''}
                     </span>
                     <span className={
                       lv.status === 'APPROVED' ? 'font-bold text-emerald-600'

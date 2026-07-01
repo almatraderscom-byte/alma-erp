@@ -239,6 +239,10 @@ export async function submitLeaveRequest(input: SubmitLeaveInput): Promise<Submi
       endDate: dateLabel(endDate),
       startMinutes,
       endMinutes,
+      // Pre-computed so both the owner approval card and the staff view can show
+      // "how many days / hours" without recomputing from formatted strings.
+      days: Math.round((endDate.getTime() - startDate.getTime()) / 86_400_000) + 1,
+      durationLabel: kindLabel(input.kind, startMinutes, endMinutes),
     },
   })
 

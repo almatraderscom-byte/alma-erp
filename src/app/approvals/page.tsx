@@ -376,6 +376,7 @@ function ApprovalsPageInner() {
                     ) : (
                       <>
                         <p className="font-bold text-muted-hi">{row.entityLabel || row.entityId}</p>
+                        {row.type === 'ATTENDANCE_LEAVE' && <LeaveInfo payloadSnapshot={row.payloadSnapshot} />}
                         <p className="mt-1 line-clamp-2 text-muted">{row.reason}</p>
                       </>
                     )}
@@ -479,6 +480,9 @@ function ApprovalsPageInner() {
                 ) : (
                   <>
                     <Info label="Entity / account affected" value={selected.entityLabel || selected.entityId} />
+                    {selected.type === 'ATTENDANCE_LEAVE' && (
+                      <Info label="ছুটির সময়কাল" value={<LeaveInfo payloadSnapshot={selected.payloadSnapshot} />} />
+                    )}
                     <Info label="Reason" value={selected.reason} />
                     {(selected.type === 'WALLET_ADVANCE' || selected.type === 'WALLET_WITHDRAWAL' || selected.type === 'SALARY_ADVANCE') && (
                       <div className="rounded-2xl border border-border bg-white/[0.04] p-3">
@@ -675,6 +679,40 @@ function RequesterIdentity({
 
 function Info({ label, value }: { label: string; value: React.ReactNode }) {
   return <div className="rounded-2xl border border-border bg-white/[0.04] p-3"><p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted">{label}</p><p className="mt-1 font-bold text-cream">{value}</p></div>
+}
+
+/** Minutes-since-midnight → "2:00 PM". */
+function fmtLeaveTime(m?: number | null): string {
+  if (m == null) return ''
+  const h = Math.floor(m / 60), mm = m % 60
+  const ap = h >= 12 ? 'PM' : 'AM'
+  const h12 = ((h + 11) % 12) + 1
+  return `${h12}:${String(mm).padStart(2, '0')} ${ap}`
+}
+
+/**
+ * Leave request duration/times — surfaced on the ATTENDANCE_LEAVE approval card so the
+ * owner (and staff, via the same snapshot) can see how many days / hours and the
+ * start–end time, not just the reason. Reads the payloadSnapshot the request already stores.
+ */
+export function LeaveInfo({ payloadSnapshot }: { payloadSnapshot: unknown }) {
+  const p = (payloadSnapshot && typeof payloadSnapshot === 'object' ? payloadSnapshot : {}) as {
+    kind?: string; startDate?: string; endDate?: string
+    startMinutes?: number | null; endMinutes?: number | null; days?: number
+  }
+  if (!p.startDate && p.kind == null) return null
+  const dateRange = p.startDate && p.endDate && p.startDate !== p.endDate
+    ? `${p.startDate} – ${p.endDate}` : (p.startDate ?? '')
+  let duration: string
+  if (p.kind === 'HOURS') duration = `⏰ ${fmtLeaveTime(p.startMinutes)} – ${fmtLeaveTime(p.endMinutes)} (ঘণ্টাভিত্তিক ছুটি)`
+  else if (p.kind === 'SHIFTED_START') duration = `⏰ ${fmtLeaveTime(p.startMinutes)} থেকে দেরিতে শুরু`
+  else duration = `🗓️ ${p.days ?? 1} দিন${p.kind === 'DATE_RANGE' ? ' (কয়েকদিন)' : ''}`
+  return (
+    <div className="mt-1.5 space-y-0.5 rounded-lg border border-amber-500/25 bg-amber-500/[0.07] px-2.5 py-1.5 text-[13px]">
+      {dateRange && <p className="font-bold text-cream">📅 {dateRange}</p>}
+      <p className="font-semibold text-amber-500">{duration}</p>
+    </div>
+  )
 }
 
 function IntegrityStat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
