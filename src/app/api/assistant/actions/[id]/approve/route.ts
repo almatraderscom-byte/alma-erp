@@ -432,16 +432,31 @@ async function runApprove(
         return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
       }
       const items = Array.isArray(payload.items)
-        ? (payload.items as Array<{ productId: string; slug: string; fields: { shortDescription?: string; description?: string } }>)
+        ? (payload.items as Array<{
+            productId: string
+            slug: string
+            fields: { shortDescription?: string; description?: string; title?: string }
+            imageAlts?: Array<{ url: string; alt: string }>
+          }>)
         : []
       if (items.length === 0) throw new Error('items missing from seo_fix_batch payload')
-      const { updateWebsiteProductFields } = await import('@/lib/website/write.service')
+      const { updateWebsiteProductFields, updateWebsiteProductImageAlts } = await import('@/lib/website/write.service')
       const applied: string[] = []
       const failed: Array<{ slug: string; error: string }> = []
       for (const it of items) {
-        const result = await updateWebsiteProductFields(String(it.productId), it.fields ?? {})
-        if (result.ok) applied.push(it.slug)
-        else failed.push({ slug: it.slug, error: result.error })
+        const hasFields = it.fields && Object.keys(it.fields).length > 0
+        let ok = true
+        let errMsg = ''
+        if (hasFields) {
+          const result = await updateWebsiteProductFields(String(it.productId), it.fields ?? {})
+          if (!result.ok) { ok = false; errMsg = result.error }
+        }
+        if (ok && it.imageAlts && it.imageAlts.length > 0) {
+          const altResult = await updateWebsiteProductImageAlts(String(it.productId), it.imageAlts)
+          if (!altResult.ok) { ok = false; errMsg = altResult.error }
+        }
+        if (ok) applied.push(it.slug)
+        else failed.push({ slug: it.slug, error: errMsg })
       }
       await db.agentPendingAction.update({
         where: { id: actionId },
