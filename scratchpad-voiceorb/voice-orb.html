@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-<title>Voice Orb — Premium AI Voice Mode</title>
+<title>Voice Orb — Soft Cloud (ChatGPT Voice style)</title>
 <style>
-  :root { color-scheme: dark; }
+  :root { color-scheme: light; }
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html, body { height: 100%; overflow: hidden; background: #05070d; }
+  html, body { height: 100%; overflow: hidden; background: #f4f8fd; }
   body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    color: #e8ecf4;
-    background: radial-gradient(120% 120% at 50% 30%, #0b1120 0%, #070a12 45%, #04060b 100%);
+    color: #2b3a52;
+    background: radial-gradient(120% 120% at 50% 32%, #ffffff 0%, #f1f6fc 55%, #e7eef7 100%);
     touch-action: none; user-select: none;
   }
   #app { position: fixed; inset: 0; }
@@ -19,72 +19,75 @@
 
   #vignette {
     position: fixed; inset: 0; pointer-events: none; z-index: 2;
-    background: radial-gradient(75% 75% at 50% 45%, transparent 55%, rgba(0,0,0,0.55) 100%);
+    background: radial-gradient(80% 80% at 50% 44%, transparent 60%, rgba(180,200,225,0.18) 100%);
   }
 
   .hud { position: fixed; z-index: 5; }
 
   #status {
-    top: max(22px, env(safe-area-inset-top)); left: 0; right: 0; text-align: center;
+    top: max(24px, env(safe-area-inset-top)); left: 0; right: 0; text-align: center;
     font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase;
-    color: rgba(200,215,240,0.55); font-weight: 500; transition: opacity .4s ease;
+    color: rgba(70,90,120,0.55); font-weight: 500; transition: opacity .4s ease;
   }
-  #status b { color: #9fd0ff; font-weight: 600; }
+  #status b { color: #2f7fe0; font-weight: 600; }
 
   #controls {
-    bottom: max(34px, env(safe-area-inset-bottom)); left: 0; right: 0;
-    display: flex; align-items: center; justify-content: center; gap: 46px;
+    bottom: max(40px, env(safe-area-inset-bottom)); left: 0; right: 0;
+    display: flex; align-items: center; justify-content: center; gap: 120px;
   }
   .btn {
-    width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
-    border: 1px solid rgba(255,255,255,0.10); background: rgba(255,255,255,0.05);
-    backdrop-filter: blur(14px) saturate(140%); -webkit-backdrop-filter: blur(14px) saturate(140%);
+    width: 62px; height: 62px; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+    border: 1px solid rgba(30,50,90,0.10); background: rgba(255,255,255,0.72);
+    backdrop-filter: blur(12px) saturate(130%); -webkit-backdrop-filter: blur(12px) saturate(130%);
+    box-shadow: 0 6px 22px rgba(80,110,160,0.14);
     transition: transform .18s cubic-bezier(.2,.8,.2,1), background .25s, border-color .25s, box-shadow .25s;
-    color: #dce6f7;
+    color: #33465f;
   }
-  .btn:hover { transform: translateY(-2px) scale(1.04); background: rgba(255,255,255,0.10); }
+  .btn:hover { transform: translateY(-2px) scale(1.04); background: rgba(255,255,255,0.92); }
   .btn:active { transform: scale(0.94); }
-  .btn svg { width: 26px; height: 26px; }
+  .btn svg { width: 25px; height: 25px; }
   .btn.mic.live {
-    background: rgba(96,165,250,0.22); border-color: rgba(120,180,255,0.65);
-    box-shadow: 0 0 0 3px rgba(96,165,250,0.12), 0 10px 40px rgba(56,120,255,0.35); color: #cfe4ff;
+    background: rgba(90,160,255,0.16); border-color: rgba(80,150,255,0.55);
+    box-shadow: 0 0 0 3px rgba(90,160,255,0.12), 0 10px 34px rgba(70,140,255,0.28); color: #1f6fe0;
   }
-  .btn.close { color: #f4c9c9; }
 
-  #panelToggle { top: max(20px, env(safe-area-inset-top)); right: max(18px, env(safe-area-inset-right)); width: 44px; height: 44px; }
-  #panelToggle svg { width: 20px; height: 20px; }
+  #panelToggle {
+    top: max(20px, env(safe-area-inset-top)); right: max(18px, env(safe-area-inset-right));
+    width: 42px; height: 42px; box-shadow: none; background: transparent; border: none; color: #9fb0c8;
+  }
+  #panelToggle:hover { background: rgba(255,255,255,0.6); }
+  #panelToggle svg { width: 22px; height: 22px; }
 
   #panel {
-    position: fixed; z-index: 6; top: max(72px, calc(env(safe-area-inset-top) + 56px)); right: 16px;
-    width: 260px; padding: 16px 18px; border-radius: 18px;
-    background: rgba(12,17,28,0.72); border: 1px solid rgba(255,255,255,0.08);
+    position: fixed; z-index: 6; top: max(70px, calc(env(safe-area-inset-top) + 54px)); right: 16px;
+    width: 258px; padding: 16px 18px; border-radius: 18px;
+    background: rgba(255,255,255,0.82); border: 1px solid rgba(30,50,90,0.08);
     backdrop-filter: blur(20px) saturate(150%); -webkit-backdrop-filter: blur(20px) saturate(150%);
-    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    box-shadow: 0 18px 50px rgba(90,120,170,0.22);
     transform: translateY(-8px) scale(.98); opacity: 0; pointer-events: none;
     transition: opacity .22s ease, transform .22s cubic-bezier(.2,.8,.2,1);
   }
   #panel.open { opacity: 1; transform: none; pointer-events: auto; }
-  #panel h3 { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: rgba(180,200,235,0.55); margin-bottom: 12px; font-weight: 600; }
-  .row { display: flex; align-items: center; justify-content: space-between; margin: 12px 0; font-size: 13px; color: #cbd6ea; }
+  #panel h3 { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: rgba(70,90,120,0.55); margin-bottom: 12px; font-weight: 600; }
+  .row { display: flex; align-items: center; justify-content: space-between; margin: 12px 0; font-size: 13px; color: #46587a; }
   .row label { flex: 0 0 auto; margin-right: 10px; }
-  .row input[type=range] { flex: 1; accent-color: #6aa8ff; height: 3px; }
-  .row .val { flex: 0 0 40px; text-align: right; font-variant-numeric: tabular-nums; color: #8fb6ef; font-size: 12px; }
+  .row input[type=range] { flex: 1; accent-color: #3f8dff; height: 3px; }
+  .row .val { flex: 0 0 40px; text-align: right; font-variant-numeric: tabular-nums; color: #3f8dff; font-size: 12px; }
   .swatches { display: flex; gap: 8px; margin-top: 6px; }
-  .sw { width: 26px; height: 26px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; transition: transform .15s, border-color .15s; }
+  .sw { width: 26px; height: 26px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; transition: transform .15s, border-color .15s; box-shadow: 0 2px 6px rgba(90,120,170,0.2); }
   .sw:hover { transform: scale(1.12); }
-  .sw.active { border-color: #fff; }
+  .sw.active { border-color: #2f7fe0; }
 
-  #fps { left: 12px; top: max(12px, env(safe-area-inset-top)); font-size: 11px; color: rgba(150,175,215,0.4); font-variant-numeric: tabular-nums; }
+  #fps { left: 12px; top: max(12px, env(safe-area-inset-top)); font-size: 11px; color: rgba(70,90,120,0.3); font-variant-numeric: tabular-nums; }
 
   .hint {
-    position: fixed; z-index: 4; bottom: max(112px, calc(env(safe-area-inset-bottom) + 78px));
-    left: 0; right: 0; text-align: center; font-size: 12px; color: rgba(170,190,225,0.35);
+    position: fixed; z-index: 4; bottom: max(120px, calc(env(safe-area-inset-bottom) + 84px));
+    left: 0; right: 0; text-align: center; font-size: 12px; color: rgba(70,90,120,0.32);
     letter-spacing: .04em; transition: opacity .5s ease;
   }
   #mode {
     position: fixed; z-index: 4; bottom: max(8px, env(safe-area-inset-bottom));
-    left: 0; right: 0; text-align: center; font-size: 10.5px; color: rgba(150,175,215,0.3);
-    letter-spacing: .05em;
+    left: 0; right: 0; text-align: center; font-size: 10.5px; color: rgba(70,90,120,0.28); letter-spacing: .05em;
   }
 </style>
 </head>
@@ -99,18 +102,17 @@
 
   <button id="panelToggle" class="btn hud" title="Settings" aria-label="Settings">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
-      <line x1="4" y1="8" x2="20" y2="8"/><circle cx="9" cy="8" r="2.4" fill="#05070d"/>
-      <line x1="4" y1="16" x2="20" y2="16"/><circle cx="15" cy="16" r="2.4" fill="#05070d"/>
+      <line x1="4" y1="8" x2="20" y2="8"/><circle cx="9" cy="8" r="2.4" fill="#f4f8fd"/>
+      <line x1="4" y1="16" x2="20" y2="16"/><circle cx="15" cy="16" r="2.4" fill="#f4f8fd"/>
     </svg>
   </button>
 
   <div id="panel">
     <h3>Orb Settings</h3>
-    <div class="row"><label>Deform</label><input id="s_deform" type="range" min="0" max="1.5" step="0.01" value="0.55"><span class="val" id="v_deform"></span></div>
-    <div class="row"><label>Speed</label><input id="s_speed" type="range" min="0" max="2" step="0.01" value="0.7"><span class="val" id="v_speed"></span></div>
-    <div class="row"><label>Detail</label><input id="s_detail" type="range" min="0.5" max="4" step="0.05" value="1.8"><span class="val" id="v_detail"></span></div>
-    <div class="row"><label>Bloom</label><input id="s_bloom" type="range" min="0" max="2.5" step="0.01" value="1.05"><span class="val" id="v_bloom"></span></div>
-    <div class="row"><label>Aura</label><input id="s_aura" type="range" min="0" max="2" step="0.01" value="1"><span class="val" id="v_aura"></span></div>
+    <div class="row"><label>Flow</label><input id="s_speed" type="range" min="0" max="2" step="0.01" value="0.75"><span class="val" id="v_speed"></span></div>
+    <div class="row"><label>Cloud</label><input id="s_detail" type="range" min="0.5" max="4" step="0.05" value="2.0"><span class="val" id="v_detail"></span></div>
+    <div class="row"><label>Wobble</label><input id="s_deform" type="range" min="0" max="1.5" step="0.01" value="0.5"><span class="val" id="v_deform"></span></div>
+    <div class="row"><label>Glow</label><input id="s_bloom" type="range" min="0" max="2.5" step="0.01" value="1.0"><span class="val" id="v_bloom"></span></div>
     <div class="row"><label>Mic gain</label><input id="s_mic" type="range" min="0" max="4" step="0.05" value="1.6"><span class="val" id="v_mic"></span></div>
     <div class="row" style="align-items:flex-start;flex-direction:column;">
       <label style="margin-bottom:6px;">Palette</label>
@@ -119,7 +121,7 @@
   </div>
 
   <div id="controls" class="hud">
-    <button id="mic" class="btn mic" title="Toggle microphone" aria-label="Microphone">
+    <button id="mic" class="btn mic" title="Microphone" aria-label="Microphone">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/>
       </svg>
@@ -136,45 +138,40 @@
     'use strict';
 
     /* ============================ shared config ============================ */
+    // Soft-cloud palettes: deep (base), mid (body), light (wash/highlight). Reference default = Sky.
     var PALETTES = [
-      { name:'Aqua',   a:'#2fa8ff', b:'#7fe0ff', c:'#0a63ff', bloom:'#8ecbff' },
-      { name:'Violet', a:'#8b5cf6', b:'#d8b4fe', c:'#5b21b6', bloom:'#c4b5fd' },
-      { name:'Ember',  a:'#ff7a45', b:'#ffd08a', c:'#c2410c', bloom:'#ffb27a' },
-      { name:'Mint',   a:'#22d3aa', b:'#b8ffe9', c:'#0f766e', bloom:'#8ff0d6' },
-      { name:'Rose',   a:'#ff5c8a', b:'#ffc2d6', c:'#be185d', bloom:'#ff9bbd' }
+      { name:'Sky',    a:'#4aa3ff', b:'#bfe4ff', deep:'#1f6fe0', mid:'#6fb8ff', light:'#eef7ff' },
+      { name:'Violet', a:'#8b5cf6', b:'#d8b4fe', deep:'#7c3aed', mid:'#b98cff', light:'#f3edff' },
+      { name:'Aqua',   a:'#22c1c3', b:'#b8fff2', deep:'#0f9b8e', mid:'#5fe0c8', light:'#e9fff8' },
+      { name:'Blush',  a:'#ff6f9c', b:'#ffc9da', deep:'#e11d63', mid:'#ff8fb4', light:'#ffeef3' },
+      { name:'Peach',  a:'#ff9a52', b:'#ffd9b0', deep:'#ea6a2b', mid:'#ffb27a', light:'#fff2e6' }
     ];
-    var params = { deform:0.55, speed:0.7, detail:1.8, bloom:1.05, aura:1.0, micGain:1.6, palette:0 };
+    var params = { speed:0.75, detail:2.0, deform:0.5, bloom:1.0, micGain:1.6, palette:0 };
     var isMobile = matchMedia('(pointer: coarse)').matches || Math.min(innerWidth, innerHeight) < 620;
     var mount = document.getElementById('app');
     var applyPalette = function () {};
 
-    function hexA(hex, a) {
-      var n = parseInt(hex.slice(1), 16);
-      return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
-    }
+    function hexRGB(hex) { var n = parseInt(hex.slice(1), 16); return [(n>>16)&255, (n>>8)&255, n&255]; }
+    function hexA(hex, a) { var c = hexRGB(hex); return 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' + a + ')'; }
 
     /* ============================ shared audio ============================ */
     var audio = { active:false, level:0, low:0, high:0, ctx:null, analyser:null, data:null, stream:null };
     function startMic() {
       var AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)
-        return Promise.reject(new Error('no-audio'));
+      if (!AC || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return Promise.reject(new Error('no-audio'));
       var ctx = new AC();
-      return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true } })
-        .then(function (stream) {
-          var src = ctx.createMediaStreamSource(stream);
-          var an = ctx.createAnalyser(); an.fftSize = 1024; an.smoothingTimeConstant = 0.8;
-          src.connect(an);
-          audio.ctx = ctx; audio.analyser = an; audio.stream = stream;
-          audio.data = new Uint8Array(an.frequencyBinCount); audio.active = true;
-          if (ctx.state === 'suspended') return ctx.resume();
-        });
+      return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:true, noiseSuppression:true } }).then(function (stream) {
+        var src = ctx.createMediaStreamSource(stream);
+        var an = ctx.createAnalyser(); an.fftSize = 1024; an.smoothingTimeConstant = 0.8; src.connect(an);
+        audio.ctx = ctx; audio.analyser = an; audio.stream = stream;
+        audio.data = new Uint8Array(an.frequencyBinCount); audio.active = true;
+        if (ctx.state === 'suspended') return ctx.resume();
+      });
     }
     function stopMic() {
       if (!audio.active) return;
       audio.stream.getTracks().forEach(function (t) { t.stop(); });
-      audio.ctx.close(); audio.active = false;
-      audio.level = audio.low = audio.high = 0;
+      audio.ctx.close(); audio.active = false; audio.level = audio.low = audio.high = 0;
     }
     function sampleAudio() {
       if (!audio.active) { audio.level *= 0.9; audio.low *= 0.9; audio.high *= 0.9; return; }
@@ -188,329 +185,245 @@
     }
 
     /* ============================ shared UI wiring ============================ */
-    var fpsEl = document.getElementById('fps');
-    var frames = 0, last = performance.now();
-    (function fpsLoop() {
-      frames++; var now = performance.now();
-      if (now - last >= 1000) { fpsEl.textContent = frames + ' FPS'; frames = 0; last = now; }
-      requestAnimationFrame(fpsLoop);
-    })();
+    var fpsEl = document.getElementById('fps'), frames = 0, last = performance.now();
+    (function fpsLoop() { frames++; var now = performance.now(); if (now - last >= 1000) { fpsEl.textContent = frames + ' FPS'; frames = 0; last = now; } requestAnimationFrame(fpsLoop); })();
 
-    var micBtn = document.getElementById('mic');
-    var statusEl = document.getElementById('status');
-    var hintEl = document.getElementById('hint');
+    var micBtn = document.getElementById('mic'), statusEl = document.getElementById('status'), hintEl = document.getElementById('hint');
     micBtn.addEventListener('click', function () {
-      if (audio.active) {
-        stopMic(); micBtn.classList.remove('live'); statusEl.innerHTML = 'Tap the mic to <b>speak</b>';
-      } else {
+      if (audio.active) { stopMic(); micBtn.classList.remove('live'); statusEl.innerHTML = 'Tap the mic to <b>speak</b>'; }
+      else {
         statusEl.innerHTML = '<b>Listening…</b>';
-        startMic().then(function () {
-          micBtn.classList.add('live'); hintEl.style.opacity = '0';
-        }).catch(function (e) {
-          statusEl.innerHTML = 'Microphone <b>unavailable</b> — orb still animates';
-          console.warn(e);
-        });
+        startMic().then(function () { micBtn.classList.add('live'); hintEl.style.opacity = '0'; })
+                  .catch(function (e) { statusEl.innerHTML = 'Microphone <b>unavailable</b> — orb still animates'; console.warn(e); });
       }
     });
-    document.getElementById('close').addEventListener('click', function () {
-      stopMic(); micBtn.classList.remove('live'); statusEl.innerHTML = 'Tap the mic to <b>speak</b>';
-    });
+    document.getElementById('close').addEventListener('click', function () { stopMic(); micBtn.classList.remove('live'); statusEl.innerHTML = 'Tap the mic to <b>speak</b>'; });
     setTimeout(function () { hintEl.style.opacity = '0'; }, 6000);
 
     var panel = document.getElementById('panel');
     document.getElementById('panelToggle').addEventListener('click', function () { panel.classList.toggle('open'); });
-
-    function bindSlider(id, key, valId) {
-      var el = document.getElementById(id), vEl = document.getElementById(valId);
-      function sync() { var v = parseFloat(el.value); params[key] = v; vEl.textContent = v.toFixed(2); }
-      el.addEventListener('input', sync); sync();
-    }
-    bindSlider('s_deform','deform','v_deform'); bindSlider('s_speed','speed','v_speed');
-    bindSlider('s_detail','detail','v_detail'); bindSlider('s_bloom','bloom','v_bloom');
-    bindSlider('s_aura','aura','v_aura');       bindSlider('s_mic','micGain','v_mic');
+    function bindSlider(id, key, valId) { var el = document.getElementById(id), vEl = document.getElementById(valId); function sync() { var v = parseFloat(el.value); params[key] = v; vEl.textContent = v.toFixed(2); } el.addEventListener('input', sync); sync(); }
+    bindSlider('s_speed','speed','v_speed'); bindSlider('s_detail','detail','v_detail'); bindSlider('s_deform','deform','v_deform');
+    bindSlider('s_bloom','bloom','v_bloom'); bindSlider('s_mic','micGain','v_mic');
 
     var sw = document.getElementById('swatches');
     PALETTES.forEach(function (p, i) {
       var el = document.createElement('div');
       el.className = 'sw' + (i === 0 ? ' active' : '');
-      el.style.background = 'linear-gradient(135deg, ' + p.a + ', ' + p.b + ')';
+      el.style.background = 'radial-gradient(circle at 35% 30%, ' + p.light + ', ' + p.mid + ' 55%, ' + p.deep + ')';
       el.title = p.name;
-      el.addEventListener('click', function () {
-        applyPalette(i);
-        Array.prototype.forEach.call(sw.children, function (c) { c.classList.remove('active'); });
-        el.classList.add('active');
-      });
+      el.addEventListener('click', function () { applyPalette(i); Array.prototype.forEach.call(sw.children, function (c) { c.classList.remove('active'); }); el.classList.add('active'); });
       sw.appendChild(el);
     });
 
     /* ============================ choose renderer ============================ */
     var ok = false;
-    if (typeof THREE !== 'undefined') {
-      try { ok = initWebGL(); } catch (e) { console.warn('WebGL orb unavailable, using 2D fallback:', e); }
-    }
+    if (typeof THREE !== 'undefined') { try { ok = initWebGL(); } catch (e) { console.warn('WebGL orb unavailable, using 2D fallback:', e); } }
     if (!ok) init2D();
 
-    /* ============================ WebGL orb (full 3D) ============================ */
+    /* ============================ WebGL cloud orb ============================ */
     function initWebGL() {
-      var GLSL_SIMPLEX = [
+      var SIMPLEX = [
         'vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x,289.0);}',
         'vec4 taylorInvSqrt(vec4 r){return 1.79284291400159 - 0.85373472095314 * r;}',
-        'float snoise(vec3 v){',
-        '  const vec2 C = vec2(1.0/6.0, 1.0/3.0); const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);',
-        '  vec3 i  = floor(v + dot(v, C.yyy)); vec3 x0 = v - i + dot(i, C.xxx);',
-        '  vec3 g = step(x0.yzx, x0.xyz); vec3 l = 1.0 - g;',
-        '  vec3 i1 = min(g.xyz, l.zxy); vec3 i2 = max(g.xyz, l.zxy);',
-        '  vec3 x1 = x0 - i1 + C.xxx; vec3 x2 = x0 - i2 + 2.0 * C.xxx; vec3 x3 = x0 - 1.0 + 3.0 * C.xxx;',
-        '  i = mod(i, 289.0);',
-        '  vec4 p = permute(permute(permute(i.z + vec4(0.0, i1.z, i2.z, 1.0))',
-        '           + i.y + vec4(0.0, i1.y, i2.y, 1.0)) + i.x + vec4(0.0, i1.x, i2.x, 1.0));',
-        '  float n_ = 1.0/7.0; vec3 ns = n_ * D.wyz - D.xzx;',
-        '  vec4 j = p - 49.0 * floor(p * ns.z * ns.z);',
-        '  vec4 x_ = floor(j * ns.z); vec4 y_ = floor(j - 7.0 * x_);',
-        '  vec4 x = x_ * ns.x + ns.yyyy; vec4 y = y_ * ns.x + ns.yyyy;',
-        '  vec4 h = 1.0 - abs(x) - abs(y); vec4 b0 = vec4(x.xy, y.xy); vec4 b1 = vec4(x.zw, y.zw);',
-        '  vec4 s0 = floor(b0)*2.0 + 1.0; vec4 s1 = floor(b1)*2.0 + 1.0; vec4 sh = -step(h, vec4(0.0));',
-        '  vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy; vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;',
-        '  vec3 p0 = vec3(a0.xy, h.x); vec3 p1 = vec3(a0.zw, h.y); vec3 p2 = vec3(a1.xy, h.z); vec3 p3 = vec3(a1.zw, h.w);',
-        '  vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));',
-        '  p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;',
-        '  vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0); m = m * m;',
-        '  return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));',
-        '}',
-        'float fbm(vec3 p){ float f=0.0,a=0.5; for(int i=0;i<5;i++){ f+=a*snoise(p); p*=2.02; a*=0.5; } return f; }'
+        'float snoise(vec3 v){ const vec2 C=vec2(1.0/6.0,1.0/3.0); const vec4 D=vec4(0.0,0.5,1.0,2.0);',
+        '  vec3 i=floor(v+dot(v,C.yyy)); vec3 x0=v-i+dot(i,C.xxx);',
+        '  vec3 g=step(x0.yzx,x0.xyz); vec3 l=1.0-g; vec3 i1=min(g.xyz,l.zxy); vec3 i2=max(g.xyz,l.zxy);',
+        '  vec3 x1=x0-i1+C.xxx; vec3 x2=x0-i2+2.0*C.xxx; vec3 x3=x0-1.0+3.0*C.xxx; i=mod(i,289.0);',
+        '  vec4 p=permute(permute(permute(i.z+vec4(0.0,i1.z,i2.z,1.0))+i.y+vec4(0.0,i1.y,i2.y,1.0))+i.x+vec4(0.0,i1.x,i2.x,1.0));',
+        '  float n_=1.0/7.0; vec3 ns=n_*D.wyz-D.xzx; vec4 j=p-49.0*floor(p*ns.z*ns.z);',
+        '  vec4 x_=floor(j*ns.z); vec4 y_=floor(j-7.0*x_); vec4 x=x_*ns.x+ns.yyyy; vec4 y=y_*ns.x+ns.yyyy;',
+        '  vec4 h=1.0-abs(x)-abs(y); vec4 b0=vec4(x.xy,y.xy); vec4 b1=vec4(x.zw,y.zw);',
+        '  vec4 s0=floor(b0)*2.0+1.0; vec4 s1=floor(b1)*2.0+1.0; vec4 sh=-step(h,vec4(0.0));',
+        '  vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy; vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;',
+        '  vec3 p0=vec3(a0.xy,h.x); vec3 p1=vec3(a0.zw,h.y); vec3 p2=vec3(a1.xy,h.z); vec3 p3=vec3(a1.zw,h.w);',
+        '  vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));',
+        '  p0*=norm.x;p1*=norm.y;p2*=norm.z;p3*=norm.w;',
+        '  vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0); m=m*m;',
+        '  return 42.0*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3))); }',
+        'float fbm(vec3 p){ float f=0.0,a=0.5; for(int i=0;i<5;i++){ f+=a*snoise(p); p*=2.03; a*=0.5; } return f; }'
       ].join('\n');
 
-      var renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+      var renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
       if (!renderer.getContext()) throw new Error('no-webgl-context');
-      renderer.setClearColor(0x05070d, 1);
+      renderer.setClearColor(0x000000, 0); // transparent -> CSS light gradient shows through
       var DPR = Math.min(window.devicePixelRatio || 1, 2);
-      renderer.setPixelRatio(DPR);
-      renderer.setSize(mount.clientWidth, mount.clientHeight);
+      renderer.setPixelRatio(DPR); renderer.setSize(mount.clientWidth, mount.clientHeight);
       mount.appendChild(renderer.domElement);
 
       var scene = new THREE.Scene();
       var camera = new THREE.PerspectiveCamera(45, mount.clientWidth / mount.clientHeight, 0.1, 100);
-      scene.add(new THREE.Mesh(new THREE.SphereGeometry(40, 32, 32),
-        new THREE.MeshBasicMaterial({ side: THREE.BackSide, color: 0x070b14 })));
 
       var uniforms = {
-        uTime:{value:0}, uDeform:{value:params.deform}, uDetail:{value:params.detail},
-        uAudio:{value:0}, uAudioLow:{value:0}, uAudioHigh:{value:0},
-        uColorA:{value:new THREE.Color()}, uColorB:{value:new THREE.Color()}, uColorC:{value:new THREE.Color()}
+        uTime:{value:0}, uDetail:{value:params.detail}, uDeform:{value:params.deform}, uAudio:{value:0},
+        uDeep:{value:new THREE.Color()}, uMid:{value:new THREE.Color()}, uLight:{value:new THREE.Color()}
       };
-      var orb = new THREE.Mesh(new THREE.IcosahedronGeometry(1.15, isMobile ? 24 : 48), new THREE.ShaderMaterial({
-        uniforms: uniforms,
-        vertexShader: GLSL_SIMPLEX + [
-          'uniform float uTime, uDeform, uDetail, uAudio, uAudioLow, uAudioHigh;',
-          'varying vec3 vNormal, vPos; varying float vDisp;',
-          'void main(){ vec3 p = position; float t = uTime * 0.55;',
-          '  float base = fbm(normalize(p) * uDetail + vec3(0.0, t, 0.0));',
-          '  float ripple = snoise(normalize(p) * (uDetail*2.3) + vec3(t*1.7));',
-          '  float disp = base * uDeform + ripple * (0.10 + uAudioHigh * 0.55) + uAudioLow * 0.45;',
-          '  disp += uAudio * 0.35 * (0.6 + 0.4*sin(t*3.0));',
-          '  vec3 displaced = p + normal * disp; vDisp = disp; vPos = displaced;',
-          '  vNormal = normalize(normalMatrix * normal);',
-          '  gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0); }'
+      var orb = new THREE.Mesh(new THREE.IcosahedronGeometry(1.2, isMobile ? 32 : 64), new THREE.ShaderMaterial({
+        uniforms: uniforms, transparent: true,
+        vertexShader: SIMPLEX + [
+          'uniform float uTime, uDeform; varying vec3 vPos, vNormal, vWorld;',
+          'void main(){ vPos = position; float t = uTime*0.12;',
+          '  float d = fbm(normalize(position)*1.6 + vec3(0.0,t,0.0));',
+          '  vec3 disp = position + normal * d * 0.06 * (0.4 + uDeform);',
+          '  vec4 world = modelMatrix * vec4(disp,1.0); vWorld = world.xyz;',
+          '  vNormal = normalize(mat3(modelMatrix) * normal);',
+          '  gl_Position = projectionMatrix * viewMatrix * world; }'
         ].join('\n'),
-        fragmentShader: [
-          'precision highp float; uniform vec3 uColorA, uColorB, uColorC; uniform float uAudio;',
-          'varying vec3 vNormal, vPos; varying float vDisp;',
-          'void main(){ vec3 viewDir = normalize(-vPos);',
-          '  float fres = pow(1.0 - max(dot(viewDir, normalize(vNormal)), 0.0), 2.4);',
-          '  float g = clamp(vDisp * 1.6 + 0.5, 0.0, 1.0);',
-          '  vec3 body = mix(uColorC, uColorA, smoothstep(0.0, 0.6, g));',
-          '  body = mix(body, uColorB, smoothstep(0.5, 1.0, g));',
-          '  vec3 col = body + uColorB * fres * (1.3 + uAudio*1.4);',
-          '  col += uColorB * 0.15; col *= 1.0 + uAudio * 0.6;',
-          '  gl_FragColor = vec4(col, 1.0); }'
+        fragmentShader: SIMPLEX + [
+          'precision highp float;',
+          'uniform float uTime, uDetail, uAudio; uniform vec3 uDeep, uMid, uLight;',
+          'varying vec3 vPos, vNormal, vWorld;',
+          'void main(){ vec3 p = normalize(vPos); float t = uTime*0.08;',
+          '  vec3 q = vec3(fbm(p*uDetail + vec3(0.0,t,0.0)), fbm(p*uDetail + vec3(3.2,1.3,t)), fbm(p*uDetail + vec3(1.7,t,4.1)));',
+          '  float f = fbm(p*(uDetail*1.15) + q*0.9 + vec3(t*0.5)); f = f*0.5 + 0.5;',
+          '  float vgrad = smoothstep(-0.85, 0.9, p.y);',        // top lighter
+          '  vec3 col = mix(uDeep, uMid, smoothstep(0.12, 0.65, f));',
+          '  col = mix(col, uLight, smoothstep(0.6, 1.0, f) * (0.5 + 0.5*vgrad));',
+          '  col = mix(col, uLight, vgrad*0.35);',
+          '  col = mix(col, uLight, uAudio*0.3);',
+          '  vec3 vdir = normalize(cameraPosition - vWorld);',
+          '  float fres = pow(1.0 - max(dot(normalize(vNormal), vdir), 0.0), 2.4);',
+          '  col = mix(col, uLight, fres*0.55);',               // soft edge blends toward white
+          '  float alpha = 1.0 - smoothstep(0.75, 1.0, fres)*0.35;',
+          '  gl_FragColor = vec4(col, alpha); }'
         ].join('\n')
       }));
       scene.add(orb);
 
-      var core = new THREE.Mesh(new THREE.SphereGeometry(0.95, 32, 32),
-        new THREE.MeshBasicMaterial({ color: 0x2a6bff, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending }));
-      scene.add(core);
-
-      var COUNT = isMobile ? 500 : 900;
-      var posArr = new Float32Array(COUNT * 3), rndArr = new Float32Array(COUNT), seed = 1;
-      function rand(){ seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
-      for (var k = 0; k < COUNT; k++) {
-        var r = 1.5 + rand() * 1.6, th = rand() * Math.PI * 2, ph = Math.acos(2 * rand() - 1);
-        posArr[k*3] = r*Math.sin(ph)*Math.cos(th); posArr[k*3+1] = r*Math.sin(ph)*Math.sin(th); posArr[k*3+2] = r*Math.cos(ph);
-        rndArr[k] = rand();
-      }
-      var auraGeo = new THREE.BufferGeometry();
-      auraGeo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
-      auraGeo.setAttribute('aRnd', new THREE.BufferAttribute(rndArr, 1));
-      var auraUniforms = { uTime:{value:0}, uAudio:{value:0}, uAura:{value:params.aura}, uColor:{value:new THREE.Color('#9fd0ff')}, uDpr:{value:DPR} };
-      var aura = new THREE.Points(auraGeo, new THREE.ShaderMaterial({
-        uniforms: auraUniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-        vertexShader: [
-          'uniform float uTime, uAudio, uAura, uDpr; attribute float aRnd; varying float vA;',
-          'void main(){ vec3 p = position; float t = uTime*0.3 + aRnd*6.28;',
-          '  float breathe = 1.0 + 0.06*sin(t*1.5) + uAudio*0.35; p *= breathe;',
-          '  p.xy *= mat2(cos(t*0.1), -sin(t*0.1), sin(t*0.1), cos(t*0.1));',
-          '  vec4 mv = modelViewMatrix * vec4(p, 1.0);',
-          '  float twinkle = 0.4 + 0.6*sin(uTime*2.0 + aRnd*20.0);',
-          '  vA = twinkle * uAura * (0.5 + uAudio*0.8);',
-          '  gl_PointSize = (1.5 + aRnd*3.0) * uDpr * (300.0 / -mv.z) * (0.6 + uAudio*0.9);',
-          '  gl_Position = projectionMatrix * mv; }'
-        ].join('\n'),
-        fragmentShader: [
-          'precision mediump float; uniform vec3 uColor; varying float vA;',
-          'void main(){ vec2 c = gl_PointCoord - 0.5; float d = length(c); if(d>0.5) discard;',
-          '  gl_FragColor = vec4(uColor, smoothstep(0.5, 0.0, d) * vA); }'
-        ].join('\n')
-      }));
-      scene.add(aura);
-
-      // bloom (bright -> separable gaussian -> ACES composite)
-      var fsCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-      var fsScene = new THREE.Scene();
-      var fsQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), null); fsScene.add(fsQuad);
-      var FS_VERT = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
-      function makeMat(frag, extra) {
-        var u = { tDiffuse:{value:null} }; if (extra) for (var kk in extra) u[kk] = extra[kk];
-        return new THREE.ShaderMaterial({ uniforms:u, vertexShader:FS_VERT, fragmentShader:frag, depthTest:false, depthWrite:false });
-      }
-      var brightMat = makeMat('precision highp float; uniform sampler2D tDiffuse; uniform float uThreshold; varying vec2 vUv; void main(){ vec3 c = texture2D(tDiffuse, vUv).rgb; float l = max(max(c.r,c.g),c.b); gl_FragColor = vec4(c*smoothstep(uThreshold, uThreshold+0.5, l), 1.0); }', { uThreshold:{value:0.55} });
-      var blurMat = makeMat('precision highp float; uniform sampler2D tDiffuse; uniform vec2 uTexel; uniform vec2 uDir; varying vec2 vUv; void main(){ vec2 o = uTexel * uDir; vec3 c = texture2D(tDiffuse, vUv).rgb * 0.2270270270; c += texture2D(tDiffuse, vUv + o*1.3846153846).rgb * 0.3162162162; c += texture2D(tDiffuse, vUv - o*1.3846153846).rgb * 0.3162162162; c += texture2D(tDiffuse, vUv + o*3.2307692308).rgb * 0.0702702703; c += texture2D(tDiffuse, vUv - o*3.2307692308).rgb * 0.0702702703; gl_FragColor = vec4(c, 1.0); }', { uTexel:{value:new THREE.Vector2()}, uDir:{value:new THREE.Vector2(1,0)} });
-      var compMat = makeMat('precision highp float; uniform sampler2D tDiffuse; uniform sampler2D tBloom; uniform float uStrength; varying vec2 vUv; vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14), 0.0, 1.0); } void main(){ vec3 base = texture2D(tDiffuse, vUv).rgb; vec3 bloom = texture2D(tBloom, vUv).rgb; gl_FragColor = vec4(aces((base + bloom * uStrength) * 1.05), 1.0); }', { tBloom:{value:null}, uStrength:{value:params.bloom} });
-
-      var rtScene, rtA, rtB, bloomOK = true, rtType = THREE.HalfFloatType;
-      function makeRT(w, h) { return new THREE.WebGLRenderTarget(Math.max(2, w), Math.max(2, h), { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, type: rtType, format: THREE.RGBAFormat, depthBuffer: true }); }
-      function buildTargets() {
-        var w = Math.floor(mount.clientWidth * DPR), h = Math.floor(mount.clientHeight * DPR);
-        if (rtScene) { rtScene.dispose(); rtA.dispose(); rtB.dispose(); }
-        rtScene = makeRT(w, h); rtA = makeRT(Math.floor(w/2), Math.floor(h/2)); rtB = makeRT(Math.floor(w/2), Math.floor(h/2));
-      }
-      buildTargets();
-      function blit(mat, target) { fsQuad.material = mat; renderer.setRenderTarget(target || null); renderer.render(fsScene, fsCam); }
+      // soft glow halo (sprite behind orb)
+      var gc = document.createElement('canvas'); gc.width = gc.height = 256;
+      var gx = gc.getContext('2d');
+      var gg = gx.createRadialGradient(128,128,10,128,128,128);
+      gg.addColorStop(0, 'rgba(255,255,255,0.65)'); gg.addColorStop(0.55, 'rgba(255,255,255,0.22)'); gg.addColorStop(1, 'rgba(255,255,255,0)');
+      gx.fillStyle = gg; gx.fillRect(0,0,256,256);
+      var glowTex = new THREE.CanvasTexture(gc);
+      var halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, transparent: true, depthTest: false, depthWrite: false, opacity: 0.6 }));
+      halo.scale.set(4.4, 4.4, 1); halo.renderOrder = -1; scene.add(halo);
 
       // controls
-      var ctrl = { radius:5.2, theta:0, phi:Math.PI/2, tRadius:5.2, tTheta:0, tPhi:Math.PI/2, min:3, max:9, autoSpeed:0.35, dragging:false, px:0, py:0, pinch:0, twoTouch:false };
+      var ctrl = { radius:4.6, theta:0, phi:Math.PI/2, tRadius:4.6, tTheta:0, tPhi:Math.PI/2, min:3, max:8, autoSpeed:0.28, dragging:false, px:0, py:0, pinch:0, twoTouch:false };
       var dom = renderer.domElement; dom.style.touchAction = 'none';
       dom.addEventListener('pointerdown', function (e) { if (ctrl.twoTouch) return; ctrl.dragging = true; ctrl.px = e.clientX; ctrl.py = e.clientY; try { dom.setPointerCapture(e.pointerId); } catch (_) {} });
-      dom.addEventListener('pointermove', function (e) { if (!ctrl.dragging || ctrl.twoTouch) return; var dx = e.clientX - ctrl.px, dy = e.clientY - ctrl.py; ctrl.px = e.clientX; ctrl.py = e.clientY; ctrl.tTheta -= dx * 0.005; ctrl.tPhi = Math.max(0.15, Math.min(Math.PI - 0.15, ctrl.tPhi - dy * 0.005)); });
+      dom.addEventListener('pointermove', function (e) { if (!ctrl.dragging || ctrl.twoTouch) return; ctrl.tTheta -= (e.clientX-ctrl.px)*0.005; ctrl.tPhi = Math.max(0.15, Math.min(Math.PI-0.15, ctrl.tPhi-(e.clientY-ctrl.py)*0.005)); ctrl.px = e.clientX; ctrl.py = e.clientY; });
       window.addEventListener('pointerup', function () { ctrl.dragging = false; });
-      dom.addEventListener('wheel', function (e) { e.preventDefault(); ctrl.tRadius = Math.max(ctrl.min, Math.min(ctrl.max, ctrl.tRadius * (1 + (e.deltaY > 0 ? 0.08 : -0.08)))); }, { passive: false });
-      function tdist(e) { var a = e.touches[0], b = e.touches[1]; return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY); }
-      dom.addEventListener('touchstart', function (e) { if (e.touches.length === 2) { ctrl.twoTouch = true; ctrl.dragging = false; ctrl.pinch = tdist(e); } }, { passive: false });
-      dom.addEventListener('touchmove', function (e) { if (e.touches.length === 2) { e.preventDefault(); var d = tdist(e); if (ctrl.pinch) ctrl.tRadius = Math.max(ctrl.min, Math.min(ctrl.max, ctrl.tRadius * (ctrl.pinch / d))); ctrl.pinch = d; } }, { passive: false });
-      dom.addEventListener('touchend', function (e) { if (e.touches.length < 2) { ctrl.twoTouch = false; ctrl.pinch = 0; } });
+      dom.addEventListener('wheel', function (e) { e.preventDefault(); ctrl.tRadius = Math.max(ctrl.min, Math.min(ctrl.max, ctrl.tRadius * (1 + (e.deltaY>0?0.08:-0.08)))); }, { passive:false });
+      function tdist(e){ var a=e.touches[0], b=e.touches[1]; return Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY); }
+      dom.addEventListener('touchstart', function (e) { if (e.touches.length===2){ ctrl.twoTouch=true; ctrl.dragging=false; ctrl.pinch=tdist(e); } }, { passive:false });
+      dom.addEventListener('touchmove', function (e) { if (e.touches.length===2){ e.preventDefault(); var d=tdist(e); if(ctrl.pinch) ctrl.tRadius=Math.max(ctrl.min,Math.min(ctrl.max,ctrl.tRadius*(ctrl.pinch/d))); ctrl.pinch=d; } }, { passive:false });
+      dom.addEventListener('touchend', function (e) { if (e.touches.length<2){ ctrl.twoTouch=false; ctrl.pinch=0; } });
 
-      function setPalette(idx) { params.palette = idx; var p = PALETTES[idx]; uniforms.uColorA.value.set(p.a); uniforms.uColorB.value.set(p.b); uniforms.uColorC.value.set(p.c); auraUniforms.uColor.value.set(p.bloom); core.material.color.set(p.c); }
+      function setPalette(idx) { params.palette = idx; var p = PALETTES[idx]; uniforms.uDeep.value.set(p.deep); uniforms.uMid.value.set(p.mid); uniforms.uLight.value.set(p.light); halo.material.color.set(p.mid); }
       applyPalette = setPalette; setPalette(0);
 
-      window.addEventListener('resize', function () { var w = mount.clientWidth, h = mount.clientHeight; camera.aspect = w / h; camera.updateProjectionMatrix(); renderer.setSize(w, h); buildTargets(); });
+      window.addEventListener('resize', function () { var w=mount.clientWidth, h=mount.clientHeight; camera.aspect=w/h; camera.updateProjectionMatrix(); renderer.setSize(w,h); });
 
       var clock = new THREE.Clock(), breath = 0;
       renderer.setAnimationLoop(function () {
-        var dt = Math.min(clock.getDelta(), 0.05), t = clock.elapsedTime;
+        var dt = Math.min(clock.getDelta(), 0.05);
         sampleAudio();
         breath += dt; var idle = audio.active ? 0 : 1;
-        var br = (Math.sin(breath * 0.9) * 0.5 + 0.5) * 0.12 * idle;
+        var br = (Math.sin(breath*0.8)*0.5 + 0.5) * 0.06 * idle;
+        var amp = audio.level + br;
 
-        uniforms.uTime.value += dt * params.speed * (1 + audio.level * 0.5);
-        uniforms.uDeform.value = params.deform; uniforms.uDetail.value = params.detail;
-        uniforms.uAudio.value = audio.level + br; uniforms.uAudioLow.value = audio.low; uniforms.uAudioHigh.value = audio.high;
+        uniforms.uTime.value += dt * params.speed * (1 + audio.level*0.6);
+        uniforms.uDetail.value = params.detail; uniforms.uDeform.value = params.deform; uniforms.uAudio.value = amp;
 
-        var s = 1 + audio.level * 0.10 + br * 0.6;
-        orb.scale.setScalar(s); core.scale.setScalar(s * 0.98); core.material.opacity = 0.30 + audio.level * 0.4;
+        var s = 1 + audio.level*0.08 + br;
+        orb.scale.setScalar(s);
+        halo.scale.setScalar(4.4 * (1 + amp*0.10) * params.bloom * 0.5 + 4.4*0.5);
+        halo.material.opacity = 0.5 + amp*0.25;
 
-        auraUniforms.uTime.value = t; auraUniforms.uAudio.value = audio.level + br * 0.5; auraUniforms.uAura.value = params.aura; aura.rotation.y += dt * 0.05;
-
-        if (!ctrl.dragging) ctrl.tTheta += ctrl.autoSpeed * dt * (idle ? 1 : 0.34);
-        ctrl.theta += (ctrl.tTheta - ctrl.theta) * 0.12; ctrl.phi += (ctrl.tPhi - ctrl.phi) * 0.12; ctrl.radius += (ctrl.tRadius - ctrl.radius) * 0.12;
+        if (!ctrl.dragging) ctrl.tTheta += ctrl.autoSpeed * dt * (idle ? 1 : 0.4);
+        ctrl.theta += (ctrl.tTheta-ctrl.theta)*0.1; ctrl.phi += (ctrl.tPhi-ctrl.phi)*0.1; ctrl.radius += (ctrl.tRadius-ctrl.radius)*0.1;
         var sp = Math.sin(ctrl.phi);
         camera.position.set(ctrl.radius*sp*Math.sin(ctrl.theta), ctrl.radius*Math.cos(ctrl.phi), ctrl.radius*sp*Math.cos(ctrl.theta));
-        camera.lookAt(0, 0, 0);
+        camera.lookAt(0,0,0);
 
-        if (bloomOK) {
-          try {
-            renderer.setRenderTarget(rtScene); renderer.render(scene, camera);
-            brightMat.uniforms.tDiffuse.value = rtScene.texture; blit(brightMat, rtA);
-            blurMat.uniforms.uTexel.value.set(1 / rtA.width, 1 / rtA.height);
-            blurMat.uniforms.tDiffuse.value = rtA.texture; blurMat.uniforms.uDir.value.set(1, 0); blit(blurMat, rtB);
-            blurMat.uniforms.tDiffuse.value = rtB.texture; blurMat.uniforms.uDir.value.set(0, 1); blit(blurMat, rtA);
-            blurMat.uniforms.tDiffuse.value = rtA.texture; blurMat.uniforms.uDir.value.set(2.2, 0); blit(blurMat, rtB);
-            blurMat.uniforms.tDiffuse.value = rtB.texture; blurMat.uniforms.uDir.value.set(0, 2.2); blit(blurMat, rtA);
-            compMat.uniforms.tDiffuse.value = rtScene.texture; compMat.uniforms.tBloom.value = rtA.texture;
-            compMat.uniforms.uStrength.value = params.bloom * (1 + audio.level * 0.5); blit(compMat, null);
-            renderer.setRenderTarget(null);
-          } catch (e) { console.warn('Bloom disabled:', e); bloomOK = false; }
-        } else { renderer.setRenderTarget(null); renderer.render(scene, camera); }
+        renderer.render(scene, camera);
       });
       return true;
     }
 
-    /* ============================ 2D fallback orb (no WebGL) ============================ */
+    /* ============================ 2D cloud fallback ============================ */
     function init2D() {
       document.getElementById('mode').textContent = 'Lite 2D mode — open in desktop Chrome for the full WebGL orb';
       var cv = document.createElement('canvas'); mount.appendChild(cv);
       var ctx = cv.getContext('2d');
+      var supportsFilter = (typeof ctx.filter !== 'undefined');
       var W, H, DPR2 = Math.min(window.devicePixelRatio || 1, 2);
-      function resize() { W = mount.clientWidth; H = mount.clientHeight; cv.width = W * DPR2; cv.height = H * DPR2; cv.style.width = W + 'px'; cv.style.height = H + 'px'; ctx.setTransform(DPR2, 0, 0, DPR2, 0, 0); }
+      function resize() { W = mount.clientWidth; H = mount.clientHeight; cv.width = W*DPR2; cv.height = H*DPR2; cv.style.width = W+'px'; cv.style.height = H+'px'; ctx.setTransform(DPR2,0,0,DPR2,0,0); }
       resize(); window.addEventListener('resize', resize);
 
       var pal = PALETTES[0];
       applyPalette = function (i) { pal = PALETTES[i]; params.palette = i; };
 
-      var N = isMobile ? 60 : 120, parts = [];
-      for (var i = 0; i < N; i++) parts.push({ a: Math.random() * 6.28, r: 0.7 + Math.random() * 1.1, s: 0.3 + Math.random() * 0.8, z: Math.random() });
+      // drifting cloud blobs (relative to orb centre/radius)
+      var blobs = [];
+      var NB = 9;
+      for (var i = 0; i < NB; i++) {
+        blobs.push({ ang: (i / NB) * 6.283 + Math.random(), dist: 0.15 + Math.random()*0.55, rad: 0.35 + Math.random()*0.5,
+                     spd: (Math.random()*0.5 + 0.15) * (Math.random()<0.5?-1:1), ph: Math.random()*6.283,
+                     tone: i % 4 }); // 0 light,1 white,2 mid,3 deep
+      }
 
       var t = 0, breath = 0;
       (function loop() {
         requestAnimationFrame(loop);
         sampleAudio();
-        var dt = 0.016; t += dt * params.speed * (1 + audio.level * 0.5); breath += dt;
+        var dt = 0.016; t += dt * params.speed * (1 + audio.level*0.6); breath += dt;
         var idle = audio.active ? 0 : 1;
-        var br = (Math.sin(breath * 0.9) * 0.5 + 0.5) * 0.12 * idle;
+        var br = (Math.sin(breath*0.8)*0.5 + 0.5) * 0.06 * idle;
         var amp = audio.level + br;
 
-        ctx.clearRect(0, 0, W, H);
-        var cx = W / 2, cy = H * 0.46, R = Math.min(W, H) * 0.19 * (1 + amp * 0.22);
+        // light background
+        var bg = ctx.createRadialGradient(W/2, H*0.34, 0, W/2, H*0.34, Math.max(W,H)*0.9);
+        bg.addColorStop(0, '#ffffff'); bg.addColorStop(0.6, '#f1f6fc'); bg.addColorStop(1, '#e7eef7');
+        ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
 
-        // outer volumetric glow
-        var og = ctx.createRadialGradient(cx, cy, R * 0.3, cx, cy, R * 3.4);
-        og.addColorStop(0, hexA(pal.b, (0.26 + amp * 0.3) * params.aura));
-        og.addColorStop(0.45, hexA(pal.a, 0.10 * params.aura));
-        og.addColorStop(1, 'rgba(0,0,0,0)');
+        var cx = W/2, cy = H*0.44, R = Math.min(W, H) * 0.17 * (1 + amp*0.14);
+
+        // soft outer glow
+        var og = ctx.createRadialGradient(cx, cy, R*0.55, cx, cy, R*2.0);
+        og.addColorStop(0, hexA(pal.mid, (0.22 + amp*0.22) * params.bloom));
+        og.addColorStop(1, hexA(pal.mid, 0));
         ctx.fillStyle = og; ctx.fillRect(0, 0, W, H);
 
-        // particle aura
-        for (var j = 0; j < N; j++) {
-          var p = parts[j]; p.a += dt * 0.15 * p.s;
-          var rr = R * (1.5 + p.r) * (1 + amp * 0.3);
-          var x = cx + Math.cos(p.a) * rr, y = cy + Math.sin(p.a) * rr * 0.92;
-          var tw = 0.4 + 0.6 * Math.sin(t * 2 + j);
-          ctx.beginPath(); ctx.arc(x, y, 0.7 + p.z * 1.9, 0, 6.283);
-          ctx.fillStyle = hexA(pal.bloom, (0.12 + tw * 0.35) * params.aura); ctx.fill();
-        }
-
-        // wobbling liquid blob
+        // orb interior (clipped)
         ctx.save();
-        ctx.shadowColor = hexA(pal.b, 0.9); ctx.shadowBlur = 35 + amp * 90 * params.bloom;
-        var grd = ctx.createRadialGradient(cx - R * 0.3, cy - R * 0.35, R * 0.1, cx, cy, R * 1.2);
-        grd.addColorStop(0, hexA(pal.b, 1)); grd.addColorStop(0.45, hexA(pal.a, 1)); grd.addColorStop(1, hexA(pal.c, 1));
-        ctx.fillStyle = grd; ctx.beginPath();
-        var steps = 90;
-        for (var s2 = 0; s2 <= steps; s2++) {
-          var ang = s2 / steps * 6.283185;
-          var w = Math.sin(ang * 3 + t * 1.7) * 0.5 + Math.sin(ang * 5 - t * 1.2) * 0.3 + Math.sin(ang * 2 + t * 0.6) * 0.4;
-          var rad = R * (1 + w * 0.05 * (params.deform * 1.8) + audio.high * 0.10 + amp * 0.05);
-          var x2 = cx + Math.cos(ang) * rad, y2 = cy + Math.sin(ang) * rad;
-          if (s2 === 0) ctx.moveTo(x2, y2); else ctx.lineTo(x2, y2);
-        }
-        ctx.closePath(); ctx.fill();
+        ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.283); ctx.clip();
 
-        // inner highlight
-        ctx.shadowBlur = 0; ctx.globalCompositeOperation = 'screen';
-        var hi = ctx.createRadialGradient(cx - R * 0.35, cy - R * 0.4, 0, cx - R * 0.35, cy - R * 0.4, R * 0.95);
-        hi.addColorStop(0, 'rgba(255,255,255,' + (0.34 + amp * 0.3) + ')');
-        hi.addColorStop(0.4, 'rgba(255,255,255,0.05)'); hi.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.fillStyle = hi; ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.283); ctx.fill();
+        // vertical base gradient (top light -> bottom deep)
+        var lg = ctx.createLinearGradient(cx, cy - R, cx, cy + R);
+        lg.addColorStop(0, pal.light); lg.addColorStop(0.5, pal.mid); lg.addColorStop(1, pal.deep);
+        ctx.fillStyle = lg; ctx.fillRect(cx - R, cy - R, R*2, R*2);
+
+        // watercolor cloud blobs
+        if (supportsFilter) ctx.filter = 'blur(' + (R * 0.26) + 'px)';
+        for (var j = 0; j < NB; j++) {
+          var bl = blobs[j];
+          var a = bl.ang + t * bl.spd * 0.4;
+          var bx = cx + Math.cos(a) * bl.dist * R + Math.sin(t*0.25 + bl.ph) * R * 0.12;
+          var by = cy + Math.sin(a) * bl.dist * R * 0.92 + Math.cos(t*0.2 + bl.ph) * R * 0.1;
+          var brad = R * bl.rad * (1 + 0.12*Math.sin(t + bl.ph) + amp*0.15);
+          var tone = bl.tone === 0 ? pal.light : bl.tone === 1 ? '#ffffff' : bl.tone === 2 ? pal.mid : pal.deep;
+          var alpha = bl.tone === 3 ? 0.35 : 0.5;
+          var bgrad = ctx.createRadialGradient(bx, by, 0, bx, by, brad);
+          bgrad.addColorStop(0, hexA(tone, alpha)); bgrad.addColorStop(1, hexA(tone, 0));
+          ctx.fillStyle = bgrad; ctx.beginPath(); ctx.arc(bx, by, brad, 0, 6.283); ctx.fill();
+        }
+        if (supportsFilter) ctx.filter = 'none';
+
+        // top-left highlight sheen
+        var hi = ctx.createRadialGradient(cx - R*0.32, cy - R*0.38, 0, cx - R*0.32, cy - R*0.38, R*1.0);
+        hi.addColorStop(0, 'rgba(255,255,255,' + (0.5 + amp*0.25) + ')');
+        hi.addColorStop(0.45, 'rgba(255,255,255,0.06)'); hi.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = hi; ctx.fillRect(cx - R, cy - R, R*2, R*2);
         ctx.restore();
+
+        // feather the circle edge into the background
+        var fe = ctx.createRadialGradient(cx, cy, R*0.9, cx, cy, R*1.06);
+        fe.addColorStop(0, 'rgba(244,248,253,0)'); fe.addColorStop(1, 'rgba(244,248,253,1)');
+        ctx.fillStyle = fe; ctx.beginPath(); ctx.arc(cx, cy, R*1.08, 0, 6.283); ctx.fill();
       })();
     }
   })();
