@@ -158,7 +158,13 @@ export async function processOwnerFollowupReply(
     /* fall through */
   }
 
-  if (DONE_PATTERN.test(trimmed) && ids.length > 0) {
+  // Auto-close ALL carried todos only on a SHORT, unambiguous "done" reply
+  // ("হয়ে গেছে", "sob shesh"). A longer message merely CONTAINING a done-word
+  // (e.g. "kalke 5ta order hoyeche, ar X ta baki") used to bulk-complete the
+  // owner's whole carried list — his todos silently vanished. Anything longer
+  // falls through to the head, which updates each item individually via tools.
+  const isShortDoneReply = trimmed.length <= 40 && DONE_PATTERN.test(trimmed)
+  if (isShortDoneReply && ids.length > 0) {
     await prisma.agentTodo.updateMany({
       where: { id: { in: ids }, status: { in: OPEN_STATUSES } },
       data: { status: 'completed', completedAt: new Date() },

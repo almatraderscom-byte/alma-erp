@@ -11,9 +11,8 @@ import AgentOpenTasksChip from './AgentOpenTasksChip'
 import type { Artifact } from './AgentArtifactsPanel'
 import toast from 'react-hot-toast'
 import AgentEmptyState from './AgentEmptyState'
-import { AgentTodoDock } from './AgentTodoDock'
+import { RelativeTime } from './RelativeTime'
 import { useAgentTodosOptional } from './AgentTodoContext'
-import { isFailedStatus, isInProgressStatus } from './todo-panel-utils'
 import { OfficeShiftThreadRenderer } from './OfficeShiftThreadBlocks'
 import { PlanDriveInlineTurn } from './monitor/PlanDriveInlineTurn'
 import type { PlanDrivePanelData, PlanDriveAction } from './monitor/PlanDriveTimeline'
@@ -105,6 +104,8 @@ export interface ChatMessage {
   streaming?: boolean
   /** True when the honesty guard caught a false completion claim and the agent rewrote its answer. */
   selfCorrected?: boolean
+  /** ISO timestamp — drives the Claude-app-style "৬ মিনিট আগে" label under each message. */
+  createdAt?: string
 }
 
 interface AgentThreadProps {
@@ -353,69 +354,6 @@ function DelegationCard({ d }: { d: NonNullable<ChatMessage['delegations']>[numb
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
-  )
-}
-
-/**
- * Inline Cursor-/Claude-style worklist. When the head agent breaks a multi-step
- * job into its own short todolist (manage_work_todos action=add source=agent), the
- * owner should SEE that list live inside the chat — not buried in the collapsed
- * top dock. This renders the agent's recent self-todos as a small checklist with
- * live status ticks, attached to the active (last) assistant turn. Kept short on
- * purpose: a recent window + a hard cap, so it stays a glanceable few lines.
- */
-function InlineAgentTodos() {
-  const ctx = useAgentTodosOptional()
-  const steps = useMemo(() => {
-    const all = ctx?.todos ?? []
-    const cutoff = Date.now() - 3 * 60 * 60 * 1000 // last 3h → this task, not all day
-    const agent = all.filter((t) => t.source === 'agent' && new Date(t.createdAt).getTime() >= cutoff)
-    // Take the most-recent batch (cap 6), then show oldest → newest like a plan.
-    return [...agent]
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, 6)
-      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-  }, [ctx?.todos])
-
-  if (steps.length === 0) return null
-  const done = steps.filter((t) => t.status === 'completed').length
-
-  return (
-    <div className="mb-3 overflow-hidden rounded-2xl border border-white/[0.07] bg-card/70 backdrop-blur-sm">
-      <div className="flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold text-muted">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#E07A5F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <rect x="3" y="4" width="18" height="18" rx="2" />
-          <path d="M9 12l2 2 4-4" />
-        </svg>
-        <span>কাজের ধাপ</span>
-        <span className="ml-auto font-normal tabular-nums text-muted">{done}/{steps.length}</span>
-      </div>
-      <ul className="flex flex-col px-2 pb-2">
-        {steps.map((t) => {
-          const completed = t.status === 'completed'
-          const failed = isFailedStatus(t.status)
-          const running = isInProgressStatus(t.status)
-          return (
-            <li key={t.id} className="flex items-start gap-2 rounded-lg px-1.5 py-1">
-              <span className="mt-[1px] shrink-0">
-                {running ? (
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#E07A5F" strokeWidth="3" strokeLinecap="round" className="animate-spin"><path d="M21 12a9 9 0 11-6.219-8.56"/></svg>
-                ) : completed ? (
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
-                ) : failed ? (
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="3" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                ) : (
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-muted opacity-50"><circle cx="12" cy="12" r="9"/></svg>
-                )}
-              </span>
-              <span className={`text-[12.5px] leading-snug break-words [overflow-wrap:anywhere] ${completed ? 'text-muted line-through' : failed ? 'text-red-500/80' : 'text-cream'}`}>
-                {t.title}
-              </span>
-            </li>
-          )
-        })}
-      </ul>
     </div>
   )
 }
@@ -1118,7 +1056,6 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
     // anchors to this relative wrapper instead of the viewport, so it's immune.
     <div className="relative flex min-h-0 flex-1 flex-col">
     <div ref={containerRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
-      <AgentTodoDock containerRef={containerRef} />
       <div className="mx-auto max-w-2xl overflow-x-hidden px-4 py-4 pb-6 md:px-6 md:py-6">
         {/* Plan-Drive autonomous follow-ups in the office thread — inline accordions
             (separate from the daily dock above), same Claude-Code step style. */}
@@ -1193,6 +1130,11 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                         <CollapsibleMessage collapsedMaxPx={260}>{msg.text}</CollapsibleMessage>
                       </div>
                     )}
+                    {msg.createdAt && (
+                      <div className="mt-1 text-right">
+                        <RelativeTime iso={msg.createdAt} className="text-[10px] text-muted" />
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -1214,10 +1156,6 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                         <DelegationCard key={d.id} d={d} />
                       ))}
                     </div>
-                  )}
-
-                  {!isOfficeShift && msg.id === messages[messages.length - 1]?.id && (
-                    <InlineAgentTodos />
                   )}
 
                   {/* Plan-Drive — inline accordion(s) for this conversation, attached
@@ -1328,6 +1266,9 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                         <span aria-hidden style={{ fontVariantEmoji: 'text' as const }}>✦</span>
                         ALMA
                       </span>
+                      {msg.createdAt && (
+                        <RelativeTime iso={msg.createdAt} className="mr-1 text-[10px] text-muted" />
+                      )}
                       <CopyButton text={msg.text} />
                       <TtsButton text={msg.text} messageId={msg.id} />
                       {detectArtifact(msg.text) && !artifactSaved.has(msg.id) && (
