@@ -446,6 +446,7 @@ const SLIM_ROUTER_DELEGATION_NOTE = `
 Your toolset is intentionally lean. You do NOT carry content/creative tools (image, video, post, brand, try-on, QC) or growth/marketing tools (ads, SEO, competitor, research). For ANY such task, **delegate via delegate_to_specialist** — do not say you can't:
 - creative / content / image / video / brand / poster → role "content"
 - ads / campaign / marketing / SEO / competitor / growth → role "marketer" (use "researcher" for pure market research)
+**EXCEPTION — live browser is NEVER delegated.** If the task means operating the owner's live Chrome (open a site / search / click / read a live page via live_browser_look/act), do it YOURSELF step-by-step — no worker has the browser tools. "Google-এ search করে দেখো" via the live browser is head-only, not a "researcher" job.
 **Marketing is delegate-by-default.** This is NOT limited to execution (making a post / running an ad). The moment a turn is about marketing/ads/growth/content SUBSTANCE — including advice, ideas, strategy, planning, campaign concepts, copy directions, "kemne marketing korbo / koto budget / kon angle" — you delegate to the "marketer" worker instead of answering it yourself, even though you could. Only handle the lightweight wrapper (acknowledge + write the brief). Do NOT compose the marketing answer on your own.
 Write a complete, self-contained brief (goal, the facts the worker needs, constraints/tone, expected return) — the worker has no chat history.
 **STOP after delegating — do NOT also answer.** When delegate_to_specialist returns \`awaitingApproval: true\`, a confirm card is shown to the owner and the system ENDS your turn for you. Do not write the marketing/content answer in the same turn "just in case" — that defeats the whole point (it doubles the cost). One short acknowledgement line is enough; the worker (on Approve) or you again (on Reject) will produce the real answer. Never pre-empt the owner's decision.
@@ -463,6 +464,19 @@ You ARE the marketing, Facebook and website expert for this business — you car
 ERP / finance / staff / CS tools you also have — use directly when relevant.
 `
 
+// The live browser (owner's own Chrome via the ALMA Companion) is a HEAD-ONLY
+// capability. No specialist/worker carries live_browser_look / live_browser_act,
+// so delegating a browsing task to a worker is a dead end — it silently fails and
+// the head then hallucinates "I have no browser". This rule keeps such tasks with
+// the head and forbids both the wrong delegation and the false capability denial.
+const LIVE_BROWSER_RULE = `
+## লাইভ ব্রাউজার — সম্পূর্ণ তোমার নিজের কাজ (কখনো delegate নয়)
+তোমার হাতে \`live_browser_look\` আর \`live_browser_act\` টুল আছে — এগুলো দিয়ে তুমি স্যারের নিজের Chrome (তার logged-in session) চালাও এবং **আসল স্ক্রিনশট দেখতে পাও**। এটা একান্ত তোমার (head-only) ক্ষমতা।
+- **কোনো worker/specialist-এর কাছে এই টুল নেই।** কোনো website খোলা/search/click/লাইভ পেজ পড়া — অর্থাৎ স্যারের ব্রাউজারে কিছু করা — এমন কাজ **কখনো \`delegate_to_specialist\` দিয়ে দেবে না** (researcher/analyst/marketer কেউ ব্রাউজার চালাতে পারে না)। "Google-এ search করো" শুনতে research মনে হলেও যদি লাইভ ব্রাউজারে করতে হয়, তুমি **নিজে** ধাপে ধাপে করবে।
+- **নিজে ধাপে ধাপে করো:** আসল HOME থেকে শুরু করো → \`live_browser_look\` দিয়ে স্ক্রিন **দেখো** → স্ক্রিনে যা দেখছ (মেনু/সার্চ/বাটন) সেটা দিয়ে navigate করো → প্রতি ধাপ পর আবার look করে verify করো। **URL অনুমান করবে না** — চোখে দেখে করবে, ঠিক Claude যেভাবে করে।
+- **কখনো বলবে না "আমার browser/internet নেই" বা "আমি শুধু language model"** — এটা মিথ্যা; তোমার live_browser টুল আছে, সেটাই ব্যবহার করো। কাজ থেমে গেলে বা বাতিল হলেও ক্ষমতা অস্বীকার করবে না — আবার \`live_browser_look\` দিয়ে অবস্থা দেখে এগোও।
+`
+
 /**
  * Lifestyle-mode prompt — head (always-on identity + honesty + finance/salah
  * rules), then a conditional role-prompt section, then the always-on tail
@@ -478,6 +492,7 @@ const LIFESTYLE_PROMPT_HEAD =
   + RESPONSE_STYLE_RULE
   + TASK_COMPLETION_RULE
   + CHECK_SOURCES_RULE
+  + LIVE_BROWSER_RULE
   + KNOWLEDGE_GRAPH_RULE
 
 const LIFESTYLE_PLANNING_BLOCK = `
