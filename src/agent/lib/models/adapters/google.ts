@@ -71,35 +71,94 @@ export class GoogleAdapter implements ProviderAdapter {
     signal?: AbortSignal
     thinking?: 'adaptive' | 'level' | 'none'
   }): AsyncGenerator<TurnEvent> {
-    const genModel = this.client.getGenerativeModel({
-      model: args.apiModel,
-      systemInstruction: args.system,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      tools: (args.tools.length
-        ? [{
-            functionDeclarations: args.tools.map((t) => ({
-              name: t.name,
-              description: t.description,
-              parameters: sanitizeSchemaForGemini(t.schema),
-            })),
-          }]
-        : undefined) as any,
-    })
+    // Gemini 3.x Pro is a THINKING model: left to its defaults it reasons
+    // SILENTLY (no streamed parts) for ~10s before emitting the first answer
+    // token, so the owner stares at a frozen spinner the whole time. Asking the
+    // API to `includeThoughts` makes it stream thought-summary parts, which we
+    // surface below as `thinking_delta` — the SAME live "ভাবছি…" progress the
+    // native Claude/DeepSeek heads already produce. Gated on `thinking !== 'none'`
+    // so a caller can still opt a turn out. Nested under `generationConfig` per
+    // the v1beta contract; typed loosely because the pinned SDK (0.24.x) predates
+    // the thinkingConfig type but forwards unknown generationConfig keys verbatim.
+    const wantThoughts = args.thinking !== 'none'
+    const functionDeclarations = args.tools.length
+      ? args.tools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          parameters: sanitizeSchemaForGemini(t.schema),
+        }))
+      : undefined
 
-    const result = await genModel.generateContentStream({
-      contents: toGeminiContents(args.messages),
-    })
+    // Build the streaming call with an optional `includeThoughts`. Returned as a
+    // thunk so we can retry WITHOUT thoughts if the preview model rejects the key.
+    const open = (withThoughts: boolean) => {
+      const genModel = this.client.getGenerativeModel({
+        model: args.apiModel,
+        systemInstruction: args.system,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        generationConfig: (withThoughts
+          ? { thinkingConfig: { includeThoughts: true } }
+          : undefined) as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        tools: (functionDeclarations ? [{ functionDeclarations }] : undefined) as any,
+      })
+      return genModel.generateContentStream({ contents: toGeminiContents(args.messages) })
+    }
 
-    for await (const chunk of result.stream) {
-      if (args.signal?.aborted) break
-      const parts = chunk.candidates?.[0]?.content?.parts ?? []
-      for (const part of parts) {
-        if (part.text) yield { type: 'text_delta', text: part.text }
-        if (part.functionCall?.name) {
-          const id = `gemini_${part.functionCall.name}_${Date.now()}`
-          const input = (part.functionCall.args ?? {}) as Record<string, unknown>
-          yield { type: 'tool_start', id, name: part.functionCall.name }
-          yield { type: 'tool_input', id, input }
+    // SAFETY: `includeThoughts` is untyped in the pinned SDK and this is a preview
+    // model — if the API 400s on it, retrying WITHOUT it must still answer, so the
+    // thinking-stream upgrade can never take the live head down. We only retry when
+    // nothing has been emitted yet (a mid-stream failure can't be safely restarted).
+    let result: Awaited<ReturnType<typeof open>>
+    try {
+      result = await open(wantThoughts)
+    } catch (err) {
+      if (!wantThoughts) throw err
+      console.warn('[google] includeThoughts rejected at open → retrying without it:', err instanceof Error ? err.message : err)
+      result = await open(false)
+    }
+
+    let emittedAny = false
+    try {
+      for await (const chunk of result.stream) {
+        if (args.signal?.aborted) break
+        const parts = chunk.candidates?.[0]?.content?.parts ?? []
+        for (const part of parts) {
+          if (part.text) {
+            // Thought-summary parts carry `thought: true` (untyped in SDK 0.24.x).
+            // Route them to the live thinking stream so they DON'T pollute the
+            // final answer text, and the UI shows them as "ভাবছি…" progress.
+            const isThought = (part as { thought?: boolean }).thought === true
+            emittedAny = true
+            yield isThought
+              ? { type: 'thinking_delta', text: part.text }
+              : { type: 'text_delta', text: part.text }
+          }
+          if (part.functionCall?.name) {
+            const id = `gemini_${part.functionCall.name}_${Date.now()}`
+            const input = (part.functionCall.args ?? {}) as Record<string, unknown>
+            emittedAny = true
+            yield { type: 'tool_start', id, name: part.functionCall.name }
+            yield { type: 'tool_input', id, input }
+          }
+        }
+      }
+    } catch (err) {
+      // Mid-stream failure with thoughts on and nothing emitted yet: retry clean.
+      if (!wantThoughts || emittedAny) throw err
+      console.warn('[google] stream failed with includeThoughts before output → retrying without it:', err instanceof Error ? err.message : err)
+      result = await open(false)
+      for await (const chunk of result.stream) {
+        if (args.signal?.aborted) break
+        const parts = chunk.candidates?.[0]?.content?.parts ?? []
+        for (const part of parts) {
+          if (part.text) yield { type: 'text_delta', text: part.text }
+          if (part.functionCall?.name) {
+            const id = `gemini_${part.functionCall.name}_${Date.now()}`
+            const input = (part.functionCall.args ?? {}) as Record<string, unknown>
+            yield { type: 'tool_start', id, name: part.functionCall.name }
+            yield { type: 'tool_input', id, input }
+          }
         }
       }
     }
