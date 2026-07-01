@@ -267,37 +267,68 @@ const live_browser_act: AgentTool = {
   name: 'live_browser_act',
   description:
     "Perform ONE action in the owner's live Chrome tab: click, type, press (a keyboard key), " +
-    'scroll, navigate, go_back, or wait. After acting it returns a fresh REAL SCREENSHOT you can ' +
-    'SEE, so you verify the effect with your own eyes before the next step.\n' +
+    'select_option, scroll, scroll_to, navigate, go_back, switch_tab, close_tab, or wait. After acting ' +
+    'it returns a fresh REAL SCREENSHOT you can SEE, so you verify the effect with your own eyes before ' +
+    'the next step.\n' +
     'HUMAN-LIKE OPERATION: prefer clicking the on-page UI (menus, search, buttons, tabs, links you can ' +
     'see in the screenshot/elements) over typing guessed URLs. Locate a target by its visible `text` ' +
-    'when you can; use a CSS `selector` only when you actually see it in the elements list. Always ' +
-    'live_browser_look after acting to confirm what happened, then decide the next single step.\n' +
+    'when you can; use a CSS `selector` only when you actually see it in the elements list. On big / ' +
+    'crowded pages, call live_browser_look (read_dom) first — each element comes back with a stable ' +
+    '`ref` (e.g. "e12"); pass that `ref` to click/type/select_option/scroll_to for a precise hit. Use ' +
+    'scroll_to to bring an element into view before clicking it. Always live_browser_look after acting ' +
+    'to confirm what happened, then decide the next single step.\n' +
     'TYPING is React/modern-app safe (it uses the native value setter, so controlled inputs like ' +
     'Facebook / Gmail / Twitter composers actually keep the text). To submit a search or form, either ' +
     'pass `submit: true` on the type action (presses Enter after typing) OR do a separate ' +
-    'action="press" with key="Enter". Use press for Enter / Tab / Escape / ArrowDown etc. — do NOT ' +
-    'report "press not supported"; it IS supported now.\n' +
+    'action="press" with key="Enter". Use press for Enter / Tab / Escape / ArrowDown etc.\n' +
+    'DROPDOWNS: for a native HTML <select>, use action="select_option" with `option` = the visible ' +
+    'option text (find the select by `ref`/`selector`/`text`). For a custom/ARIA dropdown (a div that ' +
+    'opens a menu), do NOT use select_option — click the trigger, then click the option by its text.\n' +
+    'TABS/POPUPS: if a click opens a new tab or popup window, action="switch_tab" moves control to the ' +
+    'newest tab so your next commands act there; action="close_tab" closes that popup and returns to ' +
+    'the main tab. Acting also works inside iframes automatically (embedded forms / checkout widgets).\n' +
     'SAFETY: never use this to press a final Send / Post / Pay / Buy / Transfer / Confirm / Delete — ' +
     'fill the form and navigate, but leave that last irreversible click to the owner and ask him. ' +
     '(A plain Enter to run a Google/search query or move to the next field is fine; the ban is on ' +
     'the final irreversible submit of a message / money / deletion.)\n' +
     'Params by action: ' +
-    'click → `selector` or `text`; type → (`selector` or `text` to find the field) + `value` ' +
-    '(+ optional `submit` to press Enter after); press → `key` (e.g. "Enter", "Tab", "Escape"); ' +
-    'scroll → `by` (pixels, negative = up); navigate → `url` (http(s), use a real HOME URL not a ' +
-    'guessed path); go_back → (none); wait → `ms`.',
+    'click → `selector`/`text`/`ref`; type → (`selector`/`text`/`ref` to find the field) + `value` ' +
+    '(+ optional `submit`); press → `key` (e.g. "Enter", "Tab", "Escape"); select_option → ' +
+    '(`selector`/`text`/`ref` to find the <select>) + `option` (visible option text); scroll → `by` ' +
+    '(pixels, negative = up); scroll_to → `selector`/`text`/`ref`; navigate → `url` (http(s), use a ' +
+    'real HOME URL not a guessed path); go_back / switch_tab / close_tab → (none); wait → `ms`.',
   input_schema: {
     type: 'object' as const,
     properties: {
       action: {
         type: 'string',
-        enum: ['click', 'type', 'press', 'scroll', 'navigate', 'go_back', 'wait'],
+        enum: [
+          'click',
+          'type',
+          'press',
+          'select_option',
+          'scroll',
+          'scroll_to',
+          'navigate',
+          'go_back',
+          'switch_tab',
+          'close_tab',
+          'wait',
+        ],
         description: 'What to do.',
       },
       selector: { type: 'string', description: 'CSS selector of the target element.' },
       text: { type: 'string', description: 'Visible text to locate the element/field by.' },
+      ref: {
+        type: 'string',
+        description:
+          'Stable element ref from live_browser_look read_dom (e.g. "e12"); most precise target.',
+      },
       value: { type: 'string', description: 'Text to type (for action=type).' },
+      option: {
+        type: 'string',
+        description: 'For action=select_option: the visible option text to choose in a native <select>.',
+      },
       submit: {
         type: 'boolean',
         description: 'For action=type: press Enter after typing (submit a search/form).',
@@ -315,7 +346,19 @@ const live_browser_act: AgentTool = {
   },
   handler: async (input) => {
     const action = String(input.action ?? '') as LiveBrowserAction
-    const allowed = new Set(['click', 'type', 'press', 'scroll', 'navigate', 'go_back', 'wait'])
+    const allowed = new Set([
+      'click',
+      'type',
+      'press',
+      'select_option',
+      'scroll',
+      'scroll_to',
+      'navigate',
+      'go_back',
+      'switch_tab',
+      'close_tab',
+      'wait',
+    ])
     if (!allowed.has(action)) return { success: false, error: `unsupported action: ${action}` }
 
     if (action === 'navigate' && !/^https?:\/\//i.test(String(input.url ?? ''))) {
@@ -332,7 +375,9 @@ const live_browser_act: AgentTool = {
       const params: Record<string, unknown> = {}
       if (input.selector) params.selector = input.selector
       if (input.text) params.text = input.text
+      if (input.ref) params.ref = input.ref
       if (input.value !== undefined) params.value = input.value
+      if (input.option !== undefined) params.option = input.option
       if (input.submit !== undefined) params.submit = Boolean(input.submit)
       if (input.key) params.key = input.key
       if (input.url) params.url = input.url

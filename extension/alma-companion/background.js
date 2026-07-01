@@ -36,10 +36,14 @@ const ALLOWED_ACTIONS = new Set([
   'click',
   'type',
   'press',
+  'select_option',
   'scroll',
+  'scroll_to',
   'wait',
   'screenshot',
   'go_back',
+  'switch_tab',
+  'close_tab',
 ])
 
 let looping = false
@@ -84,6 +88,35 @@ async function getAgentTab(createIfMissing = true) {
   return null
 }
 
+// Persist which tab/window the agent currently drives (used when following a
+// popup or a newly-opened tab so subsequent commands act on the right page).
+async function setAgentTab(tabId, windowId) {
+  const patch = { agentTabId: tabId }
+  if (windowId != null) patch.agentWindowId = windowId
+  await chrome.storage.local.set(patch)
+}
+
+// Find the tab the agent should follow to — a link/button often opens a new tab
+// or popup window. We pick the NEWEST http(s) tab that isn't the current agent
+// tab (Chrome assigns monotonically increasing tab ids, so the largest id is the
+// most recently opened). Returns null when there's nothing new to follow.
+async function pickFollowTab(currentTab) {
+  let tabs
+  try {
+    tabs = await chrome.tabs.query({})
+  } catch {
+    return null
+  }
+  const curId = currentTab && currentTab.id
+  let best = null
+  for (const t of tabs) {
+    if (!t || !t.id || t.id === curId) continue
+    if (!/^https?:\/\//i.test(t.url || '')) continue
+    if (!best || t.id > best.id) best = t
+  }
+  return best
+}
+
 // ---- injected page functions (run in the page, not here) -------------------
 
 function pageReadText() {
@@ -93,16 +126,35 @@ function pageReadText() {
 
 function pageReadDom() {
   const out = []
-  const sel = 'a,button,input,textarea,select,[role=button],[role=link],[contenteditable=true]'
-  const els = Array.from(document.querySelectorAll(sel)).slice(0, 200)
+  const sel =
+    'a,button,input,textarea,select,[role=button],[role=link],[role=combobox],[role=menuitem],[role=tab],[role=checkbox],[role=radio],[contenteditable=true]'
+  const els = Array.from(document.querySelectorAll(sel)).slice(0, 250)
+  let n = 0
   for (const el of els) {
     const r = el.getBoundingClientRect()
     if (r.width === 0 && r.height === 0) continue
+    // Stamp a STABLE ref onto the real DOM node. It survives across executeScript
+    // injections (same page), so click/type/select can target `ref` for a precise
+    // hit on crowded pages instead of re-matching fuzzy text.
+    const ref = 'e' + ++n
+    try {
+      el.setAttribute('data-alma-ref', ref)
+    } catch {
+      /* frozen node — ignore */
+    }
     out.push({
+      ref,
       tag: el.tagName.toLowerCase(),
-      type: el.getAttribute('type') || null,
+      type: el.getAttribute('type') || (el.tagName === 'SELECT' ? 'select' : null),
       name: el.getAttribute('name') || el.getAttribute('aria-label') || null,
       text: (el.innerText || el.value || el.placeholder || '').trim().slice(0, 80),
+      // For a <select>, surface its options so the model can pick one by exact text.
+      options:
+        el.tagName === 'SELECT'
+          ? Array.from(el.options)
+              .slice(0, 30)
+              .map((o) => (o.text || '').trim())
+          : undefined,
       id: el.id || null,
     })
   }
@@ -150,14 +202,21 @@ function pageOverlay(arg) {
 }
 
 async function pageClick(arg) {
-  const { selector, text } = arg
+  const { selector, text, ref } = arg
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const visible = (e) => {
     const r = e.getBoundingClientRect()
     return r.width > 0 && r.height > 0
   }
   let el = null
-  if (selector) {
+  if (ref) {
+    try {
+      el = document.querySelector('[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]')
+    } catch {
+      el = null
+    }
+  }
+  if (!el && selector) {
     try {
       el = document.querySelector(selector)
     } catch {
@@ -218,7 +277,7 @@ async function pageClick(arg) {
 }
 
 async function pageType(arg) {
-  const { selector, text, value, submit } = arg
+  const { selector, text, value, submit, ref } = arg
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const visible = (e) => {
     const r = e.getBoundingClientRect()
@@ -259,7 +318,14 @@ async function pageType(arg) {
     return kd
   }
   let el = null
-  if (selector) {
+  if (ref) {
+    try {
+      el = document.querySelector('[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]')
+    } catch {
+      el = null
+    }
+  }
+  if (!el && selector) {
     try {
       el = document.querySelector(selector)
     } catch {
@@ -417,6 +483,107 @@ function pageKey(arg) {
   return { ok: true, pressed: key }
 }
 
+// Pick a value in a native <select>. Custom (ARIA) dropdowns are NOT <select> —
+// for those the model should click the trigger then click the option instead.
+function pageSelect(arg) {
+  const { selector, text, ref, option, value } = arg
+  const want = String((option != null ? option : value) == null ? '' : option != null ? option : value)
+  const visible = (e) => {
+    const r = e.getBoundingClientRect()
+    return r.width > 0 && r.height > 0
+  }
+  let el = null
+  if (ref) {
+    try {
+      el = document.querySelector('[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]')
+    } catch {
+      el = null
+    }
+  }
+  if (!el && selector) {
+    try {
+      el = document.querySelector(selector)
+    } catch {
+      el = null
+    }
+  }
+  if (!el && text) {
+    const needle = String(text).toLowerCase()
+    el =
+      Array.from(document.querySelectorAll('select'))
+        .filter(visible)
+        .find((s) =>
+          (
+            (s.getAttribute('aria-label') || '') +
+            ' ' +
+            (s.name || '') +
+            ' ' +
+            (s.getAttribute('title') || '')
+          )
+            .toLowerCase()
+            .includes(needle),
+        ) || null
+  }
+  if (!el) el = Array.from(document.querySelectorAll('select')).filter(visible)[0] || null
+  if (!el) return { ok: false, error: 'select not found' }
+  if (el.tagName !== 'SELECT') {
+    return { ok: false, error: 'target is not a native <select> — click the dropdown, then click the option' }
+  }
+  const opts = Array.from(el.options)
+  const low = want.trim().toLowerCase()
+  const opt =
+    opts.find((o) => (o.text || '').trim().toLowerCase() === low) ||
+    opts.find((o) => String(o.value).toLowerCase() === low) ||
+    (low ? opts.find((o) => (o.text || '').trim().toLowerCase().includes(low)) : null)
+  if (!opt) {
+    return { ok: false, error: 'option not found: ' + want, options: opts.slice(0, 20).map((o) => (o.text || '').trim()) }
+  }
+  el.focus()
+  // React-safe: go through the prototype value setter, then fire input + change.
+  const desc = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')
+  if (desc && desc.set) desc.set.call(el, opt.value)
+  else el.value = opt.value
+  el.dispatchEvent(new Event('input', { bubbles: true }))
+  el.dispatchEvent(new Event('change', { bubbles: true }))
+  return { ok: true, selected: (opt.text || '').trim(), value: opt.value }
+}
+
+// Bring a specific element into view (center) so the next click/read is precise
+// on a long page. Targets by ref → selector → visible text.
+function pageScrollTo(arg) {
+  const { selector, text, ref } = arg
+  const visible = (e) => {
+    const r = e.getBoundingClientRect()
+    return r.width > 0 || r.height > 0
+  }
+  let el = null
+  if (ref) {
+    try {
+      el = document.querySelector('[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]')
+    } catch {
+      el = null
+    }
+  }
+  if (!el && selector) {
+    try {
+      el = document.querySelector(selector)
+    } catch {
+      el = null
+    }
+  }
+  if (!el && text) {
+    const needle = String(text).toLowerCase()
+    el =
+      Array.from(document.querySelectorAll('a,button,h1,h2,h3,h4,li,td,th,span,p,label,[role=button],[role=link]'))
+        .filter(visible)
+        .find((e) => (e.innerText || e.getAttribute('aria-label') || '').trim().toLowerCase().includes(needle)) ||
+      null
+  }
+  if (!el) return { ok: false, error: 'element not found to scroll to' }
+  el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' })
+  return { ok: true, scrolledTo: (el.innerText || el.getAttribute('aria-label') || '').trim().slice(0, 60) }
+}
+
 function pageScroll(arg) {
   const by = Number(arg && arg.by) || 600
   window.scrollBy({ top: by, behavior: 'smooth' })
@@ -428,6 +595,32 @@ function pageScroll(arg) {
 async function runInPage(tabId, func, arg) {
   const [res] = await chrome.scripting.executeScript({ target: { tabId }, func, args: arg ? [arg] : [] })
   return res ? res.result : null
+}
+
+// Run the same page function in EVERY frame of the tab (main doc + all iframes).
+// Chrome injects into each frame separately; we return the first frame whose
+// result is `ok`, otherwise the first defined result. Used as an automatic
+// fallback when the main-document lookup misses — the target element may live
+// inside an embedded iframe (checkout widgets, embedded forms, etc.).
+async function runInAllFrames(tabId, func, arg) {
+  let results
+  try {
+    results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func,
+      args: arg ? [arg] : [],
+    })
+  } catch {
+    return null
+  }
+  if (!Array.isArray(results)) return null
+  let firstDefined = null
+  for (const r of results) {
+    const val = r ? r.result : null
+    if (val && val.ok) return val
+    if (val && firstDefined === null) firstDefined = val
+  }
+  return firstDefined
 }
 
 // Wait until the tab finishes loading (status === 'complete') instead of a blind
@@ -515,18 +708,86 @@ async function executeCommand(cmd) {
   }
   if (action === 'click') {
     await showOverlay(tab.id, 'ক্লিক করছে: ' + String(cmd.text || cmd.selector || '').slice(0, 40))
-    return await runInPage(tab.id, pageClick, { selector: cmd.selector, text: cmd.text })
+    const arg = { selector: cmd.selector, text: cmd.text, ref: cmd.ref }
+    let r = await runInPage(tab.id, pageClick, arg)
+    if (!(r && r.ok)) {
+      const alt = await runInAllFrames(tab.id, pageClick, arg)
+      if (alt && alt.ok) r = alt
+    }
+    return r
   }
   if (action === 'type') {
     await showOverlay(tab.id, 'লিখছে: ' + String(cmd.value || '').slice(0, 40))
-    const r = await runInPage(tab.id, pageType, {
+    const arg = {
       selector: cmd.selector,
       text: cmd.text,
+      ref: cmd.ref,
       value: cmd.value,
       submit: Boolean(cmd.submit),
-    })
+    }
+    let r = await runInPage(tab.id, pageType, arg)
+    if (!(r && r.ok)) {
+      const alt = await runInAllFrames(tab.id, pageType, arg)
+      if (alt && alt.ok) r = alt
+    }
     if (r && r.ok && cmd.submit) await waitForTabLoad(tab.id, 12000)
     return r
+  }
+  if (action === 'select_option') {
+    await showOverlay(tab.id, 'অপশন বাছছে: ' + String(cmd.option || cmd.value || '').slice(0, 40))
+    const arg = {
+      selector: cmd.selector,
+      text: cmd.text,
+      ref: cmd.ref,
+      option: cmd.option,
+      value: cmd.value,
+    }
+    let r = await runInPage(tab.id, pageSelect, arg)
+    if (!(r && r.ok)) {
+      const alt = await runInAllFrames(tab.id, pageSelect, arg)
+      if (alt && alt.ok) r = alt
+    }
+    return r
+  }
+  if (action === 'scroll_to') {
+    await showOverlay(tab.id, 'স্ক্রল করছে: ' + String(cmd.text || cmd.selector || '').slice(0, 40))
+    let r = await runInPage(tab.id, pageScrollTo, { selector: cmd.selector, text: cmd.text, ref: cmd.ref })
+    if (!(r && r.ok)) {
+      const alt = await runInAllFrames(tab.id, pageScrollTo, { selector: cmd.selector, text: cmd.text, ref: cmd.ref })
+      if (alt && alt.ok) r = alt
+    }
+    return r
+  }
+  if (action === 'switch_tab') {
+    const picked = await pickFollowTab(tab)
+    if (!picked) return { ok: false, error: 'no other tab to switch to' }
+    try {
+      await chrome.tabs.update(picked.id, { active: true })
+      await chrome.windows.update(picked.windowId, { focused: true, drawAttention: true })
+    } catch {
+      return { ok: false, error: 'could not switch tab' }
+    }
+    await setAgentTab(picked.id, picked.windowId)
+    await waitForTabLoad(picked.id, 12000)
+    await showOverlay(picked.id, 'নতুন ট্যাবে গেছে')
+    return { ok: true, data: { url: picked.url || '', title: picked.title || '' } }
+  }
+  if (action === 'close_tab') {
+    // Close the newest extra tab (e.g. a popup) and fall back to the agent tab.
+    const extra = await pickFollowTab(tab)
+    if (!extra) return { ok: false, error: 'no extra tab to close' }
+    try {
+      await chrome.tabs.remove(extra.id)
+    } catch {
+      return { ok: false, error: 'could not close tab' }
+    }
+    await setAgentTab(tab.id, tab.windowId)
+    try {
+      await chrome.tabs.update(tab.id, { active: true })
+    } catch {
+      /* ignore */
+    }
+    return { ok: true, data: { closed: extra.url || extra.id } }
   }
   if (action === 'press') {
     await showOverlay(tab.id, 'কী চাপছে: ' + String(cmd.key || 'Enter').slice(0, 20))
