@@ -3,6 +3,7 @@ import { listWebsiteProducts, getWebsiteProduct } from '@/lib/website/catalog.se
 import { websiteSupabaseConfigured } from '@/lib/website/supabase-client'
 import { oxylabsSerpSearch, oxylabsConfigured, logOxylabsUsage } from '@/lib/oxylabs/client'
 import { verifyOxylabsSpendApproval, consumeOxylabsApproval } from '@/agent/lib/oxylabs-approval'
+import { RANK_TRACKING_MAX_KEYWORDS } from '@/agent/lib/growth/settings'
 import type { WebsiteProductDetail, WebsiteProductSummary } from '@/lib/website/types'
 import type { AgentTool } from './registry'
 
@@ -309,7 +310,101 @@ const draft_seo_fixes: AgentTool = {
   },
 }
 
-export const SEO_TOOLS: AgentTool[] = [audit_product_seo, research_seo_keywords, draft_seo_fixes]
+const track_keyword: AgentTool = {
+  name: 'track_keyword',
+  description:
+    'Add a keyword to weekly Google-rank tracking for almatraders.com. Adding costs nothing; the weekly ' +
+    'rank-tracker cron then pulls the SERP for every tracked keyword (Oxylabs, ~1 credit each) — but only ' +
+    'while the owner has rank-tracking turned ON. Use for terms the business wants to rank for, e.g. ' +
+    '"premium panjabi Dhaka". Optionally tie it to the product slug it should rank for.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      keyword: { type: 'string', description: 'Search term, e.g. "family matching panjabi set"' },
+      productSlug: { type: 'string', description: 'Optional product slug this keyword should rank for.' },
+    },
+    required: ['keyword'],
+  },
+  handler: async (input) => {
+    const keyword = String(input.keyword ?? '').trim()
+    if (!keyword) return { success: false, error: 'keyword দরকার।' }
+    const productSlug = input.productSlug ? String(input.productSlug).trim() : null
+    try {
+      const count = await db.agentTrackedKeyword.count({ where: { active: true } })
+      const existing = await db.agentTrackedKeyword.findFirst({ where: { keyword } })
+      if (!existing && count >= RANK_TRACKING_MAX_KEYWORDS) {
+        return { success: false, error: `সর্বোচ্চ ${RANK_TRACKING_MAX_KEYWORDS}টি keyword track করা যায় (খরচ নিয়ন্ত্রণে)। আগে একটা untrack করুন।` }
+      }
+      const row = await db.agentTrackedKeyword.upsert({
+        where: { businessId_keyword: { businessId: 'ALMA_LIFESTYLE', keyword } },
+        update: { active: true, productSlug },
+        create: { keyword, productSlug, active: true },
+      })
+      return {
+        success: true,
+        data: { id: row.id, keyword, productSlug, message: `"${keyword}" এখন সাপ্তাহিক rank tracking-এ। (rank tracking ON থাকলে প্রতি সপ্তাহে SERP টানা হবে।)` },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+const list_tracked_keywords: AgentTool = {
+  name: 'list_tracked_keywords',
+  description:
+    'List the keywords under weekly rank tracking, each with its latest known Google rank (from the last ' +
+    'SERP pull). Cost-free — reads stored history only.',
+  input_schema: { type: 'object' as const, properties: {} },
+  handler: async () => {
+    try {
+      const rows = await db.agentTrackedKeyword.findMany({ where: { active: true }, orderBy: { createdAt: 'asc' } })
+      const out: Array<{ keyword: string; productSlug: string | null; latestRank: number | null; checkedAt: string | null }> = []
+      for (const r of rows) {
+        const last = await db.agentKeywordRank.findFirst({ where: { keyword: r.keyword }, orderBy: { checkedAt: 'desc' } })
+        out.push({
+          keyword: r.keyword,
+          productSlug: r.productSlug ?? null,
+          latestRank: last?.rank ?? null,
+          checkedAt: last?.checkedAt ? new Date(last.checkedAt).toISOString() : null,
+        })
+      }
+      return { success: true, data: { count: out.length, keywords: out } }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+const untrack_keyword: AgentTool = {
+  name: 'untrack_keyword',
+  description: 'Stop weekly rank tracking for a keyword (deactivates it — history is kept). Cost-free.',
+  input_schema: {
+    type: 'object' as const,
+    properties: { keyword: { type: 'string' } },
+    required: ['keyword'],
+  },
+  handler: async (input) => {
+    const keyword = String(input.keyword ?? '').trim()
+    if (!keyword) return { success: false, error: 'keyword দরকার।' }
+    try {
+      const upd = await db.agentTrackedKeyword.updateMany({ where: { keyword, active: true }, data: { active: false } })
+      if (upd.count === 0) return { success: false, error: `"${keyword}" tracking-এ ছিল না।` }
+      return { success: true, data: { keyword, message: `"${keyword}" tracking বন্ধ করা হয়েছে।` } }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+export const SEO_TOOLS: AgentTool[] = [
+  audit_product_seo,
+  research_seo_keywords,
+  draft_seo_fixes,
+  track_keyword,
+  list_tracked_keywords,
+  untrack_keyword,
+]
 
 export const SEO_ROLE_PROMPT = `
 ## SEO
@@ -317,5 +412,6 @@ audit_product_seo দিয়ে on-page SEO check করুন (cost-free) —
 research_seo_keywords দিয়ে keyword ranking দেখুন — **আগে confirm_oxylabs_spend** (≈১ ক্রেডিট), owner Approve ছাড়া চালাবেন না।
 **একসাথে অনেক product ঠিক করতে:** আগে audit চালান → যেসব product-এর meta/description দুর্বল, তাদের জন্য নিজে উন্নত বাংলা কপি লিখুন (meta 50-160 chars, description 100+ chars, keyword-rich, on-brand, হালাল) → তারপর **draft_seo_fixes**-এ সব একসাথে দিন। এতে owner **একটাই approval card**-এ পুরো ব্যাচ অনুমোদন করেন, approve করলেই সব লাইভ আপডেট হয়।
 একটা মাত্র product-এর জন্য update_product_web-ও ব্যবহার করা যায় (price সহ)।
+**র‍্যাঙ্ক ট্র্যাকিং:** যে keyword-এ business rank করতে চায় সেটা track_keyword দিয়ে যোগ করুন (যোগ করা ফ্রি) — rank tracking ON থাকলে প্রতি সপ্তাহে নিজে থেকে SERP টেনে owner-কে র‍্যাঙ্ক জানাবে। list_tracked_keywords-এ সর্বশেষ র‍্যাঙ্ক, untrack_keyword-এ বন্ধ। এককালীন check-এ research_seo_keywords (Approve লাগে)।
 কখনোই নিজে থেকে content/meta change করবেন না — শুধু audit + draft + owner Approve।
 `
