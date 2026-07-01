@@ -742,6 +742,35 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
 
   const stableParts: string[] = []
   const volatileParts: string[] = []
+
+  // ── Current time + office-hours awareness ─────────────────────────────────
+  // VOLATILE (changes every minute → must never enter the cached stable prefix).
+  // Without this the head only knows the DATE, so at 2 AM it wrongly reports
+  // "office empty / nobody came" as a finding instead of understanding that staff
+  // simply aren't due yet. Injected every turn so time reasoning is always right.
+  {
+    const nowTs = new Date()
+    const p = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Dhaka', weekday: 'short', day: '2-digit', month: 'short',
+      year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
+    }).formatToParts(nowTs)
+    const gp = (t: string) => p.find((x) => x.type === t)?.value ?? ''
+    const hour24 = Number(
+      new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Dhaka', hour: '2-digit', hour12: false })
+        .format(nowTs).replace(/[^0-9]/g, '').slice(0, 2),
+    )
+    // Office window ≈ 08:00–22:00 Dhaka (matches the day-shift patrol window).
+    const inOfficeHours = Number.isFinite(hour24) && hour24 >= 8 && hour24 < 22
+    const nowStr = `${gp('weekday')}, ${gp('day')} ${gp('month')} ${gp('year')}, ${gp('hour')}:${gp('minute')} ${gp('dayPeriod')}`.trim()
+    let nowBlock =
+      `\n## ⏰ এখন (Asia/Dhaka)\n${nowStr}। এই মুহূর্তে অফিস **${inOfficeHours ? 'চলছে (office hours)' : 'বন্ধ (off-hours)'}** — অফিস টাইম মোটামুটি সকাল ৮টা–রাত ১০টা।`
+    if (!personalMode) {
+      nowBlock +=
+        `\nঅফিস/হাজিরা প্রশ্নে সময়টা অবশ্যই বিবেচনা করুন: off-hours-এ বা অফিস শুরুর আগে স্টাফ না থাকা সম্পূর্ণ স্বাভাবিক — "অফিস খালি / কেউ আসেনি" এমনভাবে বলবেন না যেন এটা সমস্যা বা কোনো আবিষ্কার। রাত/ভোর হলে বলুন স্টাফরা অফিস আওয়ারে আসবেন; শুধু office hours-এর মধ্যেই absence-কে দেরি/অনুপস্থিতি হিসেবে ধরুন।`
+    }
+    volatileParts.push(nowBlock)
+  }
+
   const tailSummaryBlock = tailSummary && tailSummary.trim()
     ? `\n## পুরোনো কথোপকথনের চলমান সারাংশ (folded — verbatim window-এর বাইরে)\n${tailSummary.trim()}`
     : null
