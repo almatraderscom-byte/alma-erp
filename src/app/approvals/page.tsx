@@ -695,7 +695,7 @@ function fmtLeaveTime(m?: number | null): string {
  * owner (and staff, via the same snapshot) can see how many days / hours and the
  * start–end time, not just the reason. Reads the payloadSnapshot the request already stores.
  */
-export function LeaveInfo({ payloadSnapshot }: { payloadSnapshot: unknown }) {
+function LeaveInfo({ payloadSnapshot }: { payloadSnapshot: unknown }) {
   const p = (payloadSnapshot && typeof payloadSnapshot === 'object' ? payloadSnapshot : {}) as {
     kind?: string; startDate?: string; endDate?: string
     startMinutes?: number | null; endMinutes?: number | null; days?: number
