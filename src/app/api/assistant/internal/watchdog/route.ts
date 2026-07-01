@@ -9,6 +9,7 @@ import { HEARTBEAT_STALE_MS } from '@/agent/lib/constants'
 import { captureAgentEvent } from '@/agent/lib/sentry'
 import { notifyOwner } from '@/agent/lib/notify-owner'
 import { scanStaffSendFailures } from '@/agent/lib/notif-failure-scan'
+import { runReminderFallbackDispatch } from '@/agent/lib/reminder-fallback'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -71,6 +72,19 @@ export async function GET(req: NextRequest) {
     await captureAgentEvent('warn', 'agent.watchdog.stale', { stale, status })
   }
 
+  // Reminder fallback: any reminder the worker ticker left unsent 3+ min past due
+  // fires from here (Telegram/ntfy), so a dead worker can never swallow a promised
+  // reminder. Isolated so a send/DB error never breaks the heartbeat check.
+  let reminderFallback: { sent: number; failed: number } = { sent: 0, failed: 0 }
+  try {
+    reminderFallback = await runReminderFallbackDispatch()
+    if (reminderFallback.sent > 0) {
+      await captureAgentEvent('warn', 'agent.watchdog.reminder_fallback_sent', { ...reminderFallback })
+    }
+  } catch (err) {
+    await captureAgentEvent('error', 'agent.watchdog.reminder_fallback_failed', { error: String(err) })
+  }
+
   // Staff send-failure detection: alert the owner when queued staff messages
   // exhaust every retry. Isolated so a queue/DB error never breaks the heartbeat check.
   let staffFailures: { failed: number; alerted: boolean } = { failed: 0, alerted: false }
@@ -90,6 +104,7 @@ export async function GET(req: NextRequest) {
     stale,
     status,
     staffFailures,
+    reminderFallback,
   })
 }
 

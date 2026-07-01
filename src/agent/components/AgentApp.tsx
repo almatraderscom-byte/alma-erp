@@ -78,6 +78,7 @@ type MessageRow = {
   thinkingMs?: number
   /** Ordered reasoning↔tool timeline — drives the unified stream after reload. */
   timeline?: TimelineEntry[]
+  createdAt?: string
 }
 
 function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
@@ -102,6 +103,7 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
       id: r.id,
       role: r.role as 'user' | 'assistant',
       text: textBlocks.map((b) => b.text ?? '').join(''),
+      createdAt: r.createdAt,
       thinking: r.thinking,
       thinkingMs: r.thinkingMs,
       timeline: Array.isArray(r.timeline) && r.timeline.length > 0 ? r.timeline : undefined,
@@ -686,6 +688,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         id: userMsgId,
         role: 'user',
         text,
+        createdAt: new Date().toISOString(),
         // Carry the uploaded storage `path` (same order as the upload results) so the
         // live image can recover via a signed URL if its local blob is revoked before
         // the background poll swaps in the persisted message.
@@ -704,7 +707,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     const assistantMsgId = nextId('streaming')
     setMessages((prev) => [
       ...prev,
-      { id: assistantMsgId, role: 'assistant', text: '', streaming: true, toolActivity: [] },
+      { id: assistantMsgId, role: 'assistant', text: '', streaming: true, toolActivity: [], createdAt: new Date().toISOString() },
     ])
 
     let finalConvId = convIdForUpload ?? activeConvId
@@ -1297,7 +1300,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     let attempts = 0
     let sawRunning = false
     const loaderId = nextId('streaming')
-    const loader = { id: loaderId, role: 'assistant' as const, text: '', streaming: true }
+    const loader = { id: loaderId, role: 'assistant' as const, text: '', streaming: true, createdAt: new Date().toISOString() }
 
     // Show the working animation the INSTANT the owner approves, so it's visually
     // obvious the agent picked the task back up. The continuation runs server-side

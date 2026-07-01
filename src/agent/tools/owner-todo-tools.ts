@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { formatReminderConfirmation } from '@/agent/lib/reminder-rrule'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -36,16 +37,23 @@ function buildDescription(detail?: unknown, dueHint?: unknown): string | null {
 const add_owner_todo: AgentTool = {
   name: 'add_owner_todo',
   description:
-    'Track an open-ended personal/business TODO that the OWNER himself needs to do (not a staff task, not a ' +
-    'timed reminder). Use for things like "Dubai shipment paperwork sort korte hobe", "X supplier ke call ' +
-    'korte hobe" — items with no fixed time that should be tracked until done and gently nudged if they ' +
-    'linger. For time-specific reminders use set_reminder instead; for staff work use add_staff_task_now.',
+    'Track a personal/business TODO that the OWNER himself needs to do (not a staff task). Use for things ' +
+    'like "Dubai shipment paperwork sort korte hobe", "X supplier ke call korte hobe". If the owner gives a ' +
+    'DAY or TIME ("agamikal", "kal shokale", "raat 9 tay") pass dueAtIso — the todo gets that due date AND a ' +
+    'real reminder is auto-set for that moment (never just SAY you will remind; this tool call IS the ' +
+    'reminder). For a pure timed reminder with no todo use set_reminder; for staff work use add_staff_task_now.',
   input_schema: {
     type: 'object' as const,
     properties: {
       title: { type: 'string', description: 'Short todo title' },
       detail: { type: 'string', description: 'Optional details' },
       priority: { type: 'string', enum: ['low', 'normal', 'high'], description: 'Default normal' },
+      dueAtIso: {
+        type: 'string',
+        description:
+          'Optional ISO 8601 datetime (resolve natural language like "agamikal same time" to Asia/Dhaka ' +
+          'time first). Sets the todo due date AND auto-creates a reminder at that moment.',
+      },
       dueHint: { type: 'string', description: 'Optional free-text timing hint, e.g. "এই সপ্তাহে" (not a hard timer)' },
       conversationId: { type: 'string' },
     },
@@ -54,6 +62,15 @@ const add_owner_todo: AgentTool = {
   handler: async (input) => {
     const title = String(input.title ?? '').trim()
     if (!title) return { success: false, error: 'title is required' }
+
+    let dueAt: Date | null = null
+    if (input.dueAtIso) {
+      dueAt = new Date(String(input.dueAtIso))
+      if (Number.isNaN(dueAt.getTime())) {
+        return { success: false, error: 'dueAtIso must be a valid ISO 8601 datetime' }
+      }
+    }
+
     try {
       const todo = await db.agentTodo.create({
         data: {
@@ -62,10 +79,39 @@ const add_owner_todo: AgentTool = {
           priority: ['low', 'normal', 'high'].includes(String(input.priority)) ? String(input.priority) : 'normal',
           source: 'owner',
           status: 'pending',
+          dueDate: dueAt,
           businessId: BUSINESS_ID,
         },
       })
-      return { success: true, data: { id: todo.id, title: todo.title, message: 'টুডু যুক্ত হয়েছে।' } }
+
+      // Time given → set a REAL reminder in the same call. The old flow relied on
+      // the head remembering a separate set_reminder call; when it forgot, the
+      // owner was promised a reminder that never existed anywhere.
+      let reminderNote = ''
+      if (dueAt && dueAt.getTime() > Date.now()) {
+        await db.agentReminder.create({
+          data: {
+            title,
+            body: input.detail ? String(input.detail).trim() : null,
+            dueAt,
+            tier: 1,
+            voice: true,
+            status: 'pending',
+            sourceConversationId: input.conversationId ? String(input.conversationId) : null,
+          },
+        })
+        reminderNote = ` ${formatReminderConfirmation(title, dueAt)}`
+      }
+
+      return {
+        success: true,
+        data: {
+          id: todo.id,
+          title: todo.title,
+          reminderSet: Boolean(reminderNote),
+          message: `টুডু যুক্ত হয়েছে।${reminderNote}`,
+        },
+      }
     } catch (err) {
       return { success: false, error: String(err) }
     }
@@ -240,9 +286,10 @@ export const OWNER_TODO_TOOLS: AgentTool[] = [add_owner_todo, list_owner_todos, 
 
 export const OWNER_TODO_ROLE_PROMPT = `
 ## OWNER টুডু ট্র্যাকার (Cursor/Claude-এর মতো নিজের todolist চালান)
-owner-এর নিজের কাজ (staff task নয়, timed reminder নয়) ট্র্যাক করতে add_owner_todo / list_owner_todos / update_owner_todo ব্যবহার করুন। এই তালিকাটাকে নিজের working list ভাবুন — কাজ শুরুর আগে list দেখুন, যোগ করুন, শেষ হলে mark করুন।
-- সময়-নির্দিষ্ট হলে → set_reminder। স্টাফের কাজ হলে → add_staff_task_now। owner নিজে করবেন এমন open কাজ → owner todo।
-- owner "X করতে হবে" বললে এবং কোনো নির্দিষ্ট সময় না দিলে → add_owner_todo।
+owner-এর নিজের কাজ (staff task নয়) ট্র্যাক করতে add_owner_todo / list_owner_todos / update_owner_todo ব্যবহার করুন। এই তালিকাটাকে নিজের working list ভাবুন — কাজ শুরুর আগে list দেখুন, যোগ করুন, শেষ হলে mark করুন।
+- owner "X করতে হবে" বললে → add_owner_todo। **দিন/সময় দিলে ("আগামীকাল", "কাল সকালে", "রাত ৯টায়") → dueAtIso-তে Asia/Dhaka সময় resolve করে দিন — টুডুর due date বসে এবং ওই মুহূর্তে reminder নিজে-নিজে সেট হয়।** "মনে করিয়ে দেব" শুধু মুখে বলবেন না — dueAtIso বা set_reminder call করলেই কেবল reminder বাস্তবে আছে।
+- টুডু ছাড়া শুধু timed reminder হলে → set_reminder। স্টাফের কাজ হলে → add_staff_task_now।
+- owner-এর টুডু এখন ERP-র সব পেজের উপরের "টুডু" বারে দেখা যায় (agent chat-এর পুরনো প্যানেল নেই) — টুডু done/remove না হওয়া পর্যন্ত তালিকায় থাকে, দিন পেরোলেও হারায় না।
 - কাজ হয়ে গেলে ("oita done", "hoye geche") → update_owner_todo status=done।
 - **সরাতে/বাদ দিতে বললে ("baad dao", "list theke soraw", "cancel") → update_owner_todo status=dropped।**
   এটা সাথে সাথে সরায় না — একটা **confirm card** ফেরত আসে। Sir Approve করলেই বাস্তবে সরে, তারপর সেই row লাল ক্রস + এজেন্টের নাম সহ দেখায়। **Approve হওয়ার আগে "সরিয়ে দিলাম" বলবেন না** — আগে বাস্তবে হোক, তারপর তালিকায় mark হবে (ঠিক যেমন Claude কাজ শেষ হলে তবেই todo done করে)।
