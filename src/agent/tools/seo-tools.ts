@@ -99,6 +99,12 @@ const audit_product_seo: AgentTool = {
             published: product.published,
             issueCount: issues.length,
             issues,
+            // Expose images so alt-text fixes can be drafted per image URL.
+            images: (product.images ?? []).map((img) => ({
+              url: img.url,
+              alt: img.alt ?? null,
+              hasAlt: Boolean(img.alt && img.alt.trim()),
+            })),
           },
         }
       }
@@ -216,11 +222,12 @@ const draft_seo_fixes: AgentTool = {
   name: 'draft_seo_fixes',
   description:
     'Package a BATCH of on-page SEO content fixes for almatraders.com products into ONE approval card. ' +
-    'Workflow: first run audit_product_seo to find products with weak meta/description, then YOU draft the improved ' +
-    'Bangla copy for each (meta description 50-160 chars, product description 100+ chars, keyword-rich, on-brand, ' +
-    'halal-compliant), then call this with the drafts. The owner approves the whole batch at once; on approval each ' +
-    'product\'s shortDescription/description is updated live. NEVER auto-apply — this only creates the pending card. ' +
-    'Only shortDescription (meta) and description are writable via SEO fixes; do not attempt alt-text/slug here.',
+    'Workflow: first run audit_product_seo to find products with weak title/meta/description/alt-text, then YOU draft the improved ' +
+    'Bangla copy for each (title 10-70 chars, meta description 50-160 chars, product description 100+ chars, image alt-text descriptive, ' +
+    'keyword-rich, on-brand, halal-compliant), then call this with the drafts. The owner approves the whole batch at once; on approval each ' +
+    'product\'s title/shortDescription/description and image alt-text are updated live. NEVER auto-apply — this only creates the pending card. ' +
+    'Writable via SEO fixes: title (name), shortDescription (meta), description, and imageAlts (per-image alt-text). ' +
+    'Slug changes are NOT supported here (they need a 301 redirect — coordinate with the owner separately).',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -233,8 +240,21 @@ const draft_seo_fixes: AgentTool = {
           type: 'object',
           properties: {
             slugOrId: { type: 'string', description: 'Product slug or UUID' },
+            title: { type: 'string', description: 'New SEO-friendly product title/name, 10-70 chars, Bangla, keyword-rich.' },
             shortDescription: { type: 'string', description: 'New meta description, 50-160 chars, Bangla, keyword-rich.' },
             description: { type: 'string', description: 'New/expanded product description, 100+ chars.' },
+            imageAlts: {
+              type: 'array',
+              description: 'Per-image alt-text. Use the exact image url from audit_product_seo. Alt = short descriptive Bangla phrase for the image.',
+              items: {
+                type: 'object',
+                properties: {
+                  url: { type: 'string', description: 'Exact image URL (from audit_product_seo images list).' },
+                  alt: { type: 'string', description: 'Descriptive Bangla alt-text, 5-125 chars.' },
+                },
+                required: ['url', 'alt'],
+              },
+            },
           },
           required: ['slugOrId'],
         },
@@ -258,7 +278,8 @@ const draft_seo_fixes: AgentTool = {
         productId: string
         slug: string
         name: string
-        fields: { shortDescription?: string; description?: string }
+        fields: { shortDescription?: string; description?: string; title?: string }
+        imageAlts?: Array<{ url: string; alt: string }>
         changes: Record<string, { before: unknown; after: unknown }>
       }> = []
 
@@ -269,9 +290,17 @@ const draft_seo_fixes: AgentTool = {
         const product = await getWebsiteProduct(slugOrId)
         if (!product) return { success: false, error: `ফিক্স #${i + 1}: product পাওয়া যায়নি (${slugOrId})।` }
 
-        const fields: { shortDescription?: string; description?: string } = {}
+        const fields: { shortDescription?: string; description?: string; title?: string } = {}
         const changes: Record<string, { before: unknown; after: unknown }> = {}
 
+        if (f.title != null) {
+          const title = String(f.title).trim()
+          if (title.length < 10 || title.length > 70) {
+            return { success: false, error: `ফিক্স #${i + 1} (${product.slug}): title ${title.length} chars — 10-70-এর মধ্যে দিন।` }
+          }
+          fields.title = title
+          changes.title = { before: product.name?.slice(0, 80) ?? null, after: title.slice(0, 80) }
+        }
         if (f.shortDescription != null) {
           const meta = String(f.shortDescription).trim()
           if (meta.length < 50 || meta.length > 160) {
@@ -289,14 +318,42 @@ const draft_seo_fixes: AgentTool = {
           changes.description = { before: product.description?.slice(0, 80) ?? null, after: desc.slice(0, 80) }
         }
 
-        if (Object.keys(fields).length === 0) {
-          return { success: false, error: `ফিক্স #${i + 1} (${product.slug}): shortDescription বা description অন্তত একটা দিন।` }
+        let imageAlts: Array<{ url: string; alt: string }> | undefined
+        if (f.imageAlts != null) {
+          const raw = Array.isArray(f.imageAlts) ? f.imageAlts : []
+          const validUrls = new Set((product.images ?? []).map((img) => img.url))
+          const parsed: Array<{ url: string; alt: string }> = []
+          for (let j = 0; j < raw.length; j++) {
+            const a = raw[j] as Record<string, unknown>
+            const url = String(a.url ?? '').trim()
+            const alt = String(a.alt ?? '').trim()
+            if (!url || !alt) {
+              return { success: false, error: `ফিক্স #${i + 1} (${product.slug}) alt #${j + 1}: url ও alt দুটোই দিন।` }
+            }
+            if (!validUrls.has(url)) {
+              return { success: false, error: `ফিক্স #${i + 1} (${product.slug}) alt #${j + 1}: এই product-এ এই image url নেই (audit_product_seo থেকে সঠিক url নিন)।` }
+            }
+            if (alt.length < 5 || alt.length > 125) {
+              return { success: false, error: `ফিক্স #${i + 1} (${product.slug}) alt #${j + 1}: alt ${alt.length} chars — 5-125-এর মধ্যে দিন।` }
+            }
+            parsed.push({ url, alt })
+          }
+          if (parsed.length > 0) {
+            imageAlts = parsed
+            changes.imageAlts = { before: `${(product.images ?? []).filter((im) => !im.alt || !im.alt.trim()).length}টি ছবিতে alt নেই`, after: `${parsed.length}টি ছবিতে alt যোগ` }
+          }
         }
-        items.push({ productId: product.id, slug: product.slug, name: product.name, fields, changes })
+
+        if (Object.keys(fields).length === 0 && !imageAlts) {
+          return { success: false, error: `ফিক্স #${i + 1} (${product.slug}): title / shortDescription / description / imageAlts অন্তত একটা দিন।` }
+        }
+        items.push({ productId: product.id, slug: product.slug, name: product.name, fields, imageAlts, changes })
       }
 
       const lines = items.map((it) => {
-        const parts = Object.keys(it.changes).map((k) => (k === 'shortDescription' ? 'meta' : k))
+        const parts = Object.keys(it.changes).map((k) =>
+          k === 'shortDescription' ? 'meta' : k === 'imageAlts' ? 'alt-text' : k,
+        )
         return `• ${it.name} (${it.slug}) — ${parts.join(', ')} আপডেট`
       })
       const summary =
@@ -573,7 +630,7 @@ export const SEO_ROLE_PROMPT = `
 audit_product_seo দিয়ে on-page SEO check করুন (cost-free) — title/meta description/description/alt-text/slug। scope="all_published" দিলে পুরো সাইট scan হয়।
 **আসল Google ডেটা (ফ্রি):** সাইট search-এ কেমন করছে জানতে **get_search_console_performance** ব্যবহার করুন — Google Search Console থেকে সত্যিকারের clicks/impressions/CTR/গড় position + top query ও top page (ডিফল্ট শেষ ২৮ দিন)। ইনডেক্সিং/কভারেজ দেখতে **get_indexing_status** (আর্গুমেন্ট ছাড়া sitemap সারাংশ, বা নির্দিষ্ট page URL দিলে সেটা ইনডেক্স হয়েছে কিনা)। এগুলো ফ্রি ও নির্ভরযোগ্য — Oxylabs-এর আগে এগুলোই দেখুন। (owner একবার Growth পেজ থেকে Search Console connect করলে চালু হবে।)
 research_seo_keywords দিয়ে keyword ranking দেখুন — **আগে confirm_oxylabs_spend** (≈১ ক্রেডিট), owner Approve ছাড়া চালাবেন না। GSC-তে যা পাওয়া যায় তার জন্য Oxylabs খরচ করবেন না।
-**একসাথে অনেক product ঠিক করতে:** আগে audit চালান → যেসব product-এর meta/description দুর্বল, তাদের জন্য নিজে উন্নত বাংলা কপি লিখুন (meta 50-160 chars, description 100+ chars, keyword-rich, on-brand, হালাল) → তারপর **draft_seo_fixes**-এ সব একসাথে দিন। এতে owner **একটাই approval card**-এ পুরো ব্যাচ অনুমোদন করেন, approve করলেই সব লাইভ আপডেট হয়।
+**একসাথে অনেক product ঠিক করতে:** আগে audit চালান → যেসব product-এর title/meta/description/alt-text দুর্বল, তাদের জন্য নিজে উন্নত বাংলা কপি লিখুন (title 10-70 chars, meta 50-160 chars, description 100+ chars, image alt-text সংক্ষিপ্ত বর্ণনামূলক, keyword-rich, on-brand, হালাল) → তারপর **draft_seo_fixes**-এ সব একসাথে দিন। title, shortDescription (meta), description, ও imageAlts (per-image alt-text, single-product audit-এ image url পাবেন) — এই ফিল্ডগুলো লেখা যায়। slug পরিবর্তন এখান থেকে হয় না (301 redirect লাগে — owner-এর সাথে আলাদা করে করবেন)। owner **একটাই approval card**-এ পুরো ব্যাচ অনুমোদন করেন, approve করলেই সব লাইভ আপডেট হয়।
 একটা মাত্র product-এর জন্য update_product_web-ও ব্যবহার করা যায় (price সহ)।
 **র‍্যাঙ্ক ট্র্যাকিং:** যে keyword-এ business rank করতে চায় সেটা track_keyword দিয়ে যোগ করুন (যোগ করা ফ্রি) — rank tracking ON থাকলে প্রতি সপ্তাহে নিজে থেকে SERP টেনে owner-কে র‍্যাঙ্ক জানাবে। list_tracked_keywords-এ সর্বশেষ র‍্যাঙ্ক, untrack_keyword-এ বন্ধ। এককালীন check-এ research_seo_keywords (Approve লাগে)।
 কখনোই নিজে থেকে content/meta change করবেন না — শুধু audit + draft + owner Approve।

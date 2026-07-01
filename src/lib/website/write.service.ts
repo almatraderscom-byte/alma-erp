@@ -111,6 +111,8 @@ export async function updateWebsiteProductFields(
     description?: string
     shortDescription?: string
     categoryId?: string
+    /** Product title/name — feeds the page <title> and product heading (SEO). */
+    title?: string
   },
 ): Promise<WebsiteWriteResult> {
   const sb = getWebsiteSupabaseAdmin()
@@ -119,6 +121,7 @@ export async function updateWebsiteProductFields(
   if (fields.description != null) update.description = fields.description
   if (fields.shortDescription != null) update.short_description = fields.shortDescription
   if (fields.categoryId) update.category_id = fields.categoryId
+  if (fields.title != null) update.title = fields.title
 
   const { data, error } = await sb
     .from('products')
@@ -133,6 +136,34 @@ export async function updateWebsiteProductFields(
 
   await logWebsiteAudit('website_update_product', productId, { slug: data.slug, fields })
   return { ok: true, productId, slug: data.slug as string }
+}
+
+/**
+ * Set alt-text on a product's images (image SEO + accessibility). Each update is
+ * matched by the image URL within this product, so a stale/removed image is
+ * skipped rather than mis-updated. Returns how many image rows were updated.
+ */
+export async function updateWebsiteProductImageAlts(
+  productId: string,
+  alts: Array<{ url: string; alt: string }>,
+): Promise<{ ok: true; updated: number } | { ok: false; error: string }> {
+  const sb = getWebsiteSupabaseAdmin()
+  let updated = 0
+  for (const a of alts) {
+    const url = String(a.url ?? '').trim()
+    const alt = String(a.alt ?? '').trim()
+    if (!url || !alt) continue
+    const { data, error } = await sb
+      .from('product_images')
+      .update({ alt_text: alt })
+      .eq('product_id', productId)
+      .eq('url', url)
+      .select('id')
+    if (error) return { ok: false, error: error.message }
+    updated += data?.length ?? 0
+  }
+  await logWebsiteAudit('website_update_image_alt', productId, { count: updated, alts })
+  return { ok: true, updated }
 }
 
 /** Resolve category slug → UUID for writes. */
