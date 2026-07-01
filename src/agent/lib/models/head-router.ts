@@ -47,6 +47,16 @@ const heavyHeadModelId = (): string => {
   return isKnownModelId(id) ? id : DEFAULT_MODEL_ID
 }
 
+// Anthropic head kill-switch. Owner command (2026-07): Anthropic credits are exhausted,
+// so every head turn that lands on an Anthropic model (the heavy tier OR an explicit
+// Sonnet/Opus pin in the model picker) 400s with a quota error and the owner's chat dies.
+// While this is truthy (DEFAULT — the credits are out right now), an explicitly-pinned
+// Anthropic head is transparently redirected to the heavy head (Gemini 3.1 Pro) so the
+// assistant keeps answering no matter what the picker says. Restore Claude by setting
+// ANTHROPIC_HEAD_DOWN=false (+ redeploy) once credits are topped up. Does NOT touch the
+// finance/CRITICAL sub-agent guard, which is a separate path.
+const anthropicHeadDown = (): boolean => process.env.ANTHROPIC_HEAD_DOWN !== 'false'
+
 // Marketing head: when the owner's message is marketing/content work, Qwen answers
 // DIRECTLY as the head (runs the full agent loop) — exactly like DeepSeek does for
 // "light" turns. No Sonnet→sub-agent hop, so no double token cost. Owner-tunable.
@@ -283,6 +293,12 @@ export async function resolveHeadModelId(opts: {
   //    behaviour: routine→DeepSeek, marketing→Qwen, sensitive→Sonnet).
   const requested = opts.requestedModelId?.trim()
   if (requested && requested !== AUTO_MODEL_ID && isKnownModelId(requested)) {
+    // While Anthropic credits are out, an explicitly-pinned Anthropic head would 400 on
+    // every turn. Transparently swap it for the heavy head (Gemini) so the pinned chat
+    // still answers; any non-Anthropic explicit pick is honoured exactly as before.
+    if (anthropicHeadDown() && getModel(requested).provider === 'anthropic') {
+      return heavy('anthropic_down_explicit_redirect')
+    }
     return { modelId: requested, tier: 'explicit', via: 'explicit' }
   }
 
