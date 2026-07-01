@@ -1,0 +1,85 @@
+/* ============================================================
+   Orb visual layers. Framer Motion drives the *scale* of .orb-stage
+   (breathing / audio pulse); CSS here owns the internal look and the
+   continuous cloud/sheen motion.
+   ============================================================ */
+
+.orb-stage {
+  position: relative;
+  width: clamp(210px, 60vw, 320px);
+  aspect-ratio: 1 / 1;
+  will-change: transform;
+}
+
+/* blurred halo behind the orb */
+.orb-glow {
+  position: absolute;
+  inset: -34%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, rgba(90, 170, 255, 0.55), rgba(70, 140, 255, 0.18) 45%, transparent 70%);
+  filter: blur(22px);
+  z-index: 0;
+}
+.dark .orb-glow {
+  background: radial-gradient(circle at 50% 50%, rgba(90, 170, 255, 0.7), rgba(60, 120, 255, 0.28) 45%, transparent 70%);
+}
+
+/* the orb itself: clips content to a circle AND runs the liquid displacement */
+.orb {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  z-index: 1;
+  filter: url(#liquid);
+  box-shadow: 0 26px 70px rgba(60, 120, 255, 0.3), inset 0 0 40px rgba(255, 255, 255, 0.25);
+  transition: filter 0.4s ease;
+}
+.orb-stage.thinking .orb {
+  filter: url(#liquidThinking);
+}
+
+/* blue body: sky -> cyan -> royal blue with a light top (soft white edge) */
+.orb-body {
+  position: absolute;
+  inset: -6%;
+  background: radial-gradient(circle at 50% 32%, #f2f9ff 0%, #bfe4ff 22%, #6fb8ff 48%, #2f7fe0 76%, #1b5fc4 100%);
+}
+
+/* fractal-noise cloud wisps, two layers drifting in opposite directions */
+.cloud-layer {
+  position: absolute;
+  inset: -25%;
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+.cloud-layer.c1 { opacity: 0.9; animation: drift1 26s linear infinite; }
+.cloud-layer.c2 { opacity: 0.55; animation: drift2 34s linear infinite; }
+.orb-stage.listening .cloud-layer.c1 { animation-duration: 18s; }
+.orb-stage.thinking .cloud-layer.c1 { animation-duration: 9s; }
+.orb-stage.thinking .cloud-layer.c2 { animation-duration: 12s; }
+@keyframes drift1 { from { transform: rotate(0)      scale(1.35) translate(-4%, -3%); } to { transform: rotate(360deg)  scale(1.35) translate(-4%, -3%); } }
+@keyframes drift2 { from { transform: rotate(0)      scale(1.55) translate(4%, 3%);   } to { transform: rotate(-360deg) scale(1.55) translate(4%, 3%);   } }
+
+/* rotating conic highlight = the slow "gradient rotation" */
+.orb-sheen {
+  position: absolute;
+  inset: -10%;
+  border-radius: 50%;
+  mix-blend-mode: screen;
+  opacity: 0.5;
+  background: conic-gradient(from 0deg, transparent 0%, rgba(255, 255, 255, 0.42) 16%, transparent 42%, transparent 100%);
+  animation: spin 16s linear infinite;
+}
+.orb-stage.listening .orb-sheen { animation-duration: 9s; }
+.orb-stage.thinking .orb-sheen { animation-duration: 3.4s; opacity: 0.7; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* fixed top-left specular sheen */
+.orb-hi {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 34% 30%, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0.12) 26%, transparent 46%);
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
