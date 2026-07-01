@@ -235,7 +235,16 @@ function isExecutable(module: string, type: string) {
   return (
     (module === 'ALMA_TRADING' && type === 'TRADE_DELETE') ||
     (module === 'ORDERS_CRM' && type === 'ORDER_DELETE') ||
-    (module === 'FINANCE' && type === 'EXPENSE_ADD') ||
+    (module === 'FINANCE' && [
+      'EXPENSE_ADD',
+      // These three FINANCE types already have full approve+reject executors in
+      // [id]/route.ts (processReimbursementApproval / processOfficeAdvanceApproval /
+      // processOfficeAdvanceReconcileApproval) but were missing here, so the owner
+      // only saw "Manual review" and could reject but never Approve (owner report).
+      APPROVAL_TYPES.EXPENSE_REIMBURSEMENT,
+      APPROVAL_TYPES.OFFICE_FUND_ADVANCE,
+      APPROVAL_TYPES.OFFICE_FUND_RECONCILE,
+    ].includes(type)) ||
     (module === 'PAYROLL' && [
       'SALARY_ADVANCE',
       'WALLET_ADVANCE',
