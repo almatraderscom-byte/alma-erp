@@ -88,7 +88,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
         initial={{ opacity: 0, y: 6 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.18, ease: 'easeOut' }}
-        className={`mt-3 w-full max-w-full overflow-hidden rounded-2xl border px-3.5 py-2.5 text-xs shadow-card ${rec.tone}`}
+        className={`mt-3 w-full max-w-full overflow-hidden rounded-2xl border px-3.5 py-2.5 text-xs shadow-float ${rec.tone}`}
       >
         <div className="flex items-center gap-1.5 font-semibold">
           <span aria-hidden>{rec.icon}</span>
@@ -195,7 +195,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
     if (phase === 'loading') {
       return (
         <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
-          className="mt-3 flex items-center gap-2.5 rounded-2xl border border-border-subtle bg-card/70 px-3.5 py-2.5 shadow-card backdrop-blur-sm">
+          className="mt-3 flex items-center gap-2.5 rounded-2xl border border-border-subtle bg-card/70 px-3.5 py-2.5 shadow-float backdrop-blur-sm">
           <AgentWorkingDots />
           <span className="text-xs font-medium text-cream/90">{loadingLabel}</span>
         </motion.div>
@@ -217,7 +217,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
           : 'border-border-subtle bg-card/70'
       return (
         <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
-          className={`mt-3 flex items-center gap-2.5 rounded-2xl border px-3.5 py-2.5 shadow-card ${tone}`}>
+          className={`mt-3 flex items-center gap-2.5 rounded-2xl border px-3.5 py-2.5 shadow-float ${tone}`}>
           <span className="shrink-0 text-base leading-none">{isApproved ? '🤝' : isRejected ? '🧠' : 'ℹ️'}</span>
           <span className="min-w-0 flex-1 text-xs font-medium text-cream/90">{note}</span>
           {ongoing && <AgentWorkingDots className="shrink-0" />}
@@ -226,7 +226,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
     }
     return (
       <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
-        className="mt-3 w-full max-w-full overflow-hidden rounded-2xl border tone-amber px-3 py-2.5 text-xs shadow-card">
+        className="mt-3 w-full max-w-full overflow-hidden rounded-2xl border tone-amber px-3 py-2.5 text-xs shadow-float">
         <div className="mb-1.5 flex items-center gap-1.5 font-semibold">
           <span>🤝</span><span>কে করবে?</span>
         </div>
@@ -248,7 +248,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
   if (phase === 'loading') {
     return (
       <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
-        className="mt-3 flex min-h-[140px] items-center justify-center rounded-[18px] border tone-amber p-6 shadow-card">
+        className="mt-3 flex min-h-[140px] items-center justify-center rounded-[18px] border tone-amber p-6 shadow-float">
         <AgentSparkleLoader label={loadingLabel} size="lg" />
       </motion.div>
     )
@@ -267,7 +267,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
         : 'ছবি তৈরি হচ্ছে… একটু সময় লাগবে, নিচে চলে আসবে'
       return (
         <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
-          className="mt-3 flex items-center justify-center gap-2.5 rounded-[18px] border tone-green px-4 py-5 text-sm shadow-card">
+          className="mt-3 flex items-center justify-center gap-2.5 rounded-[18px] border tone-green px-4 py-5 text-sm shadow-float">
           <AgentWorkingDots className="shrink-0" />
           <span className="font-semibold text-cream/90">{genLabel}</span>
         </motion.div>
@@ -275,7 +275,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
     }
     return (
       <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
-        className="mt-3 rounded-[18px] border tone-green px-4 py-5 text-center text-sm shadow-card">
+        className="mt-3 rounded-[18px] border tone-green px-4 py-5 text-center text-sm shadow-float">
         <span className="text-3xl">{isDelegation ? '🤝' : '✅'}</span>
         <p className="mt-2 text-sm font-semibold">
           {isDelegation ? 'Worker কাজটি করছে — উত্তর নিচে আসবে' : 'অনুমোদিত হয়েছে'}
@@ -287,7 +287,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
   if (phase === 'rejected') {
     return (
       <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
-        className={`mt-3 rounded-[18px] border px-4 py-5 text-center text-sm shadow-card ${isDelegation ? 'tone-amber' : 'tone-red'}`}>
+        className={`mt-3 rounded-[18px] border px-4 py-5 text-center text-sm shadow-float ${isDelegation ? 'tone-amber' : 'tone-red'}`}>
         <span className="text-3xl">{isDelegation ? '🧠' : '❌'}</span>
         <p className="mt-2 text-sm font-semibold">
           {isDelegation ? 'ঠিক আছে — Sonnet নিজে উত্তর দিচ্ছে, নিচে আসবে' : 'বাতিল করা হয়েছে'}
@@ -299,7 +299,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
   if (phase === 'settled') {
     return (
       <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18, ease: 'easeOut' }}
-        className="mt-3 rounded-[18px] border tone-slate px-4 py-5 text-center text-sm shadow-card">
+        className="mt-3 rounded-[18px] border tone-slate px-4 py-5 text-center text-sm shadow-float">
         <span className="text-3xl">ℹ️</span>
         <p className="mt-2 text-sm font-medium">{terminalNote}</p>
       </motion.div>
@@ -307,7 +307,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated }: Agen
   }
 
   return (
-    <motion.div className="mt-3 w-full max-w-full overflow-hidden rounded-[18px] border tone-amber p-4 text-sm shadow-card"
+    <motion.div className="mt-3 w-full max-w-full overflow-hidden rounded-[18px] border tone-amber p-4 text-sm shadow-float"
       initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}>
       <div className="mb-1 flex items-center gap-2 font-semibold">
         <span>{isDelegation ? '🤝' : '⚠️'}</span>
