@@ -846,6 +846,12 @@ startTwilioHttpServer()
 if (runSchedulerJobFn) setRetriggerHandler(runSchedulerJobFn)
 startDiagnosticHttpServer()
 
+// Two-way ConversationRelay bridge (Google Charon voice) — only when configured.
+if (process.env.VOICE_CALL_PROVIDER === 'relay') {
+  const { startVoiceRelayServer } = await import('./voice-relay/server.mjs')
+  startVoiceRelayServer()
+}
+
 console.log('[worker] ALMA Agent Worker started — polling every 30s for approved jobs')
 
 let shuttingDown = false
