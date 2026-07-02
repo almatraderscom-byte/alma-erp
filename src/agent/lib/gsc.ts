@@ -15,6 +15,14 @@ import { prisma } from '@/lib/prisma'
 
 export const GSC_OAUTH_KEY = 'gsc_oauth'
 export const GSC_SCOPE = 'https://www.googleapis.com/auth/webmasters.readonly'
+/**
+ * GA4 Data API scope (Growth Feature 5). Requested alongside GSC_SCOPE on the
+ * SAME OAuth consent so one refresh token drives both Search Console and
+ * Analytics. `include_granted_scopes=true` makes this incremental — owners who
+ * connected before this scope existed keep GSC working and just re-consent once
+ * to add Analytics.
+ */
+export const GA4_SCOPE = 'https://www.googleapis.com/auth/analytics.readonly'
 
 const WEBMASTERS_BASE = 'https://www.googleapis.com/webmasters/v3'
 const URL_INSPECTION_URL = 'https://searchconsole.googleapis.com/v1/urlInspection/index:inspect'
@@ -104,6 +112,18 @@ async function getAccessToken(refreshToken: string): Promise<string> {
   const data = (await res.json()) as { access_token?: string }
   if (!data.access_token) throw new Error('GSC token refresh returned no access_token')
   return data.access_token
+}
+
+/**
+ * Mint a fresh Google access token from the stored (shared) OAuth connection.
+ * Exported so sibling Google read-only integrations that reuse the same consent
+ * (e.g. GA4 — Growth Feature 5) don't duplicate the refresh flow. Throws
+ * `not_connected` when the owner hasn't connected Google yet.
+ */
+export async function getConnectedGoogleAccessToken(): Promise<string> {
+  const conn = await getGscConnection()
+  if (!conn) throw new Error('not_connected')
+  return getAccessToken(conn.refresh_token)
 }
 
 /**

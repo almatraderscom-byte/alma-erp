@@ -16,6 +16,7 @@ import { BRAND_TOOLS } from './brand-tools'
 import { TRYON_TOOLS } from './tryon-tools'
 import { ADS_TOOLS } from './ads-tools'
 import { SEO_TOOLS } from './seo-tools'
+import { ANALYTICS_TOOLS } from './analytics-tools'
 import { GROWTH_TOOLS } from './growth-tools'
 import { COMPETITOR_TOOLS } from './competitor-tools'
 import { RESEARCH_TOOLS } from './research-tools'
@@ -119,7 +120,7 @@ export const TOOL_GROUPS: Record<ToolGroupName, AgentTool[]> = {
   finance: [...FINANCE_TOOLS, ...SIMULATE_TOOLS, ...FINANCE_AUTONOMY_TOOLS],
   cs: [...OWNER_CUSTOMER_INTEL_TOOLS, ...CS_AUTONOMY_TOOLS],
   content: [...CONTENT_ENGINE_TOOLS, ...AD_CREATIVE_TOOLS, ...VIDEO_TOOLS, ...BRAND_TOOLS, ...TRYON_TOOLS, ...REFERENCE_TOOLS, ...QC_TOOLS],
-  growth: [...ADS_TOOLS, ...MARKETING_TOOLS, ...SEO_TOOLS, ...GROWTH_TOOLS, ...COMPETITOR_TOOLS, ...RESEARCH_TOOLS, ...ADVISOR_TOOLS, ...REFERENCE_TOOLS, ...SIMULATE_TOOLS],
+  growth: [...ADS_TOOLS, ...MARKETING_TOOLS, ...SEO_TOOLS, ...ANALYTICS_TOOLS, ...GROWTH_TOOLS, ...COMPETITOR_TOOLS, ...RESEARCH_TOOLS, ...ADVISOR_TOOLS, ...REFERENCE_TOOLS, ...SIMULATE_TOOLS],
   website: [...WEBSITE_TOOLS, ...CATALOG_TOOLS],
   salah: [...SALAH_TOOLS],
   diag: [...DIAGNOSTIC_TOOLS],
