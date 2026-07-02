@@ -2,10 +2,9 @@
  * Auto-compact conversations when cumulative cost exceeds threshold.
  * Uses agent_cost_events as source of truth (falls back to totalCostUsd).
  */
-import Anthropic from '@anthropic-ai/sdk'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { AGENT_MODEL } from '@/agent/config'
+import { agentSmartText } from '@/agent/lib/llm-text'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -51,10 +50,8 @@ async function summarizeForCompaction(messages: Array<{ role: string; content: u
 
   if (!transcript.trim()) return ''
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
-  const res = await client.messages.create({
-    model: AGENT_MODEL || 'claude-sonnet-4-6',
-    max_tokens: 400,
+  // Anthropic-or-Gemini (owner: Gemini replaces Sonnet for now).
+  const raw = await agentSmartText({
     system:
       'You are summarizing a conversation for continuity. Extract:\n' +
       '- The user\'s main goal/topic\n' +
@@ -62,14 +59,11 @@ async function summarizeForCompaction(messages: Array<{ role: string; content: u
       '- Important facts/numbers mentioned\n' +
       '- Any open action items or pending questions\n' +
       'Output a tight Bangla summary (5-8 bullets). This will be used as context for a fresh conversation so the agent can keep helping seamlessly.',
-    messages: [{
-      role: 'user',
-      content: 'Summarize this owner↔agent conversation for seamless continuation:\n\n' + transcript,
-    }],
+    prompt: 'Summarize this owner↔agent conversation for seamless continuation:\n\n' + transcript,
+    maxTokens: 400,
+    costLabel: 'conversation_compact',
   })
-
-  const block = res.content.find((b) => b.type === 'text')
-  return block && block.type === 'text' ? block.text.trim() : ''
+  return raw.trim()
 }
 
 export type CompactResult = {

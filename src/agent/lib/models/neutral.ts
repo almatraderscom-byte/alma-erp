@@ -67,6 +67,22 @@ export function dbRowsToNeutral(
   return out
 }
 
+// A tool result is re-shipped to the model on EVERY subsequent iteration of the
+// turn. Unbounded payloads (live_browser DOM dumps, big ERP lists) ballooned a
+// single multi-tool turn to 500k+ billed tokens on non-caching heads. 12k chars
+// (~3k tokens) keeps everything a model actually needs from a single result.
+const MAX_TOOL_RESULT_CHARS = 12_000
+
+function capToolResult(result: unknown): unknown {
+  try {
+    const s = typeof result === 'string' ? result : JSON.stringify(result)
+    if (s.length <= MAX_TOOL_RESULT_CHARS) return result
+    return `${s.slice(0, MAX_TOOL_RESULT_CHARS)}\n…[truncated ${s.length - MAX_TOOL_RESULT_CHARS} chars — result was too large; ask for a narrower slice if you need more]`
+  } catch {
+    return result
+  }
+}
+
 export function appendToolExchange(
   messages: NeutralMsg[],
   calls: Array<{ id: string; name: string; input: Record<string, unknown>; thoughtSignature?: string }>,
@@ -80,7 +96,7 @@ export function appendToolExchange(
       role: 'tool' as const,
       toolCallId: r.id,
       name: r.name,
-      result: r.result,
+      result: capToolResult(r.result),
     })),
   ]
 }

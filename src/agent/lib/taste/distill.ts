@@ -1,11 +1,8 @@
 /**
  * Distill taste_signal rows → design-domain playbook rules (weekly).
  */
-import Anthropic from '@anthropic-ai/sdk'
-import { AGENT_MODEL, isAnthropicConfigured } from '@/agent/config'
+import { agentSmartText } from '@/agent/lib/llm-text'
 import { prisma } from '@/lib/prisma'
-import { logCost } from '@/agent/lib/cost-events'
-import { calcAnthropicChatCostUsd } from '@/agent/lib/pricing'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -36,33 +33,15 @@ export async function runTasteDistill(opts?: { days?: number }): Promise<{
   const keeps = signals.filter((s: { verdict: string }) => s.verdict === 'keep')
   const rejects = signals.filter((s: { verdict: string }) => s.verdict === 'reject')
 
-  if (!isAnthropicConfigured()) {
-    return { created: 0, skipped: true }
-  }
-
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-  const res = await client.messages.create({
-    model: AGENT_MODEL || 'claude-sonnet-4-6',
-    max_tokens: 400,
+  // Anthropic-or-Gemini (owner: Gemini replaces Sonnet for now).
+  const raw = await agentSmartText({
     system: DISTILL_SYSTEM,
-    messages: [{
-      role: 'user',
-      content:
-        `Keep signals (${keeps.length}):\n${JSON.stringify(keeps.map((k: { attrs: unknown }) => k.attrs).slice(0, 8))}\n\n` +
-        `Reject signals (${rejects.length}):\n${JSON.stringify(rejects.map((r: { attrs: unknown }) => r.attrs).slice(0, 8))}`,
-    }],
+    prompt:
+      `Keep signals (${keeps.length}):\n${JSON.stringify(keeps.map((k: { attrs: unknown }) => k.attrs).slice(0, 8))}\n\n` +
+      `Reject signals (${rejects.length}):\n${JSON.stringify(rejects.map((r: { attrs: unknown }) => r.attrs).slice(0, 8))}`,
+    maxTokens: 400,
+    costLabel: 'taste_distill',
   })
-
-  void logCost({
-    provider: 'anthropic',
-    kind: 'chat',
-    units: { purpose: 'taste_distill', signalCount: signals.length },
-    costUsd: calcAnthropicChatCostUsd(res.usage),
-    dedupKey: `taste_distill:${since.toISOString().slice(0, 10)}`,
-  })
-
-  const block = res.content.find((b) => b.type === 'text')
-  const raw = block && block.type === 'text' ? block.text.trim() : ''
   const match = raw.match(/\{[\s\S]*\}/)
   if (!match) return { created: 0, skipped: true }
 
