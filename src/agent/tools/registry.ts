@@ -24,6 +24,7 @@ import { CATALOG_TOOLS } from './catalog-tools'
 import { WEBSITE_TOOLS } from './website-tools'
 import { RESEARCH_TOOLS } from './research-tools'
 import { SEO_TOOLS } from './seo-tools'
+import { ANALYTICS_TOOLS } from './analytics-tools'
 import { GROWTH_TOOLS } from './growth-tools'
 import { COMPETITOR_TOOLS } from './competitor-tools'
 import { ADVISOR_TOOLS } from './advisor-tools'
@@ -481,6 +482,9 @@ export const TOOLS: AgentTool[] = [
   ...WEBSITE_TOOLS,
   ...RESEARCH_TOOLS,
   ...SEO_TOOLS,
+  // GA4 analytics (get_ga4_report) — advertised via the `growth` tool-group, so it
+  // must be executable here too (the "sees it but Unknown tool" footgun below).
+  ...ANALYTICS_TOOLS,
   // Growth Autopilot calendar tools (schedule_content_batch, configure_growth_autopilot,
   // etc.). Advertised to the head via the `growth` tool-group (tool-groups.ts) — so they
   // MUST also live in this execution pool, otherwise the head sees them but a call returns
