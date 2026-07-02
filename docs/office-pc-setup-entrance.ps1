@@ -1,4 +1,4 @@
-# ALMA office PC — one-shot ENTRANCE setup (PowerShell 5.1 compatible, ASCII-only).
+# ALMA office PC - one-shot ENTRANCE setup (PowerShell 5.1 compatible, ASCII-only).
 #
 # Run this ONCE on the office PC (paste into a PowerShell window and press Enter).
 # It is self-contained and idempotent: it runs to completion locally even if the
@@ -6,7 +6,7 @@
 #
 # What it does:
 #   1. Reads the shared device password from the existing workroom RTSP line in
-#      go2rtc.yaml (entrance uses the SAME password as workroom — no secret in git).
+#      go2rtc.yaml (entrance uses the SAME password as workroom - no secret in git).
 #   2. Probes the entrance camera ONCE to confirm auth before changing anything.
 #   3. Backs up go2rtc.yaml and rewrites it with workroom + entrance streams
 #      (boss left commented, ready for when its device password is set).
@@ -14,7 +14,7 @@
 #   5. Restarts go2rtc so the new streams load.
 #   6. Registers the listener to auto-start at logon and starts it now.
 #
-# Boss Office Room (192.168.1.191) is intentionally NOT added — set its device
+# Boss Office Room (192.168.1.191) is intentionally NOT added - set its device
 # password later, then uncomment the boss block in go2rtc.yaml (or re-run a boss
 # variant of this script).
 
