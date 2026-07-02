@@ -176,7 +176,17 @@ cron, which runs even when the bridge PC is off). Backfilled old jobs as notifie
   (do NOT set `entrance_watch_enabled=off` until a real push is seen). Fixability test
   ready: `?fix=1` re-registers with `alarm,deviceStatus` → then power-cycle the entrance
   camera; a deviceStatus push proves delivery works at all.
-- Step 5 (AnyDesk unattended pw) + Step 6 (staff photos) still owner's physical steps.
+- Step 5 (AnyDesk unattended pw) DONE by owner 2026-07-03 morning. Step 6 (staff photos) still pending.
+- **FINAL STATE (2026-07-03 ~05:20 Dhaka, all verified live):** listener v2 on the PC
+  (12 s chunks + highpass/dynaudnorm voice boost on the SENT copy only — silence check
+  stays on the raw grab). Server STT domain-prompt bias (KV `camera_listen_stt_prompt`).
+  Field test PASSED: staff wake-word sentence transcribed correctly → owner Telegram.
+  Hardening (PR #205, all verified in prod): trivial-utterance filter (≥3 letters after
+  the wake word — kills the «.» hallucination forwards) + **echo guard** — audio
+  transcripts ignored for KV `camera_listen_echo_guard_sec` (60 s) after ANY speak job,
+  because the camera mic hears its own speaker (side effect: staff can't call within
+  ~60 s after an announcement — tune the KV if that bites). Owner→entrance speaker also
+  ear-confirmed. PRs this stretch: #200, #203, #204, #205.
 
 ## TOMORROW'S SESSION — exact task list (office PC needed for #3-5)
 
