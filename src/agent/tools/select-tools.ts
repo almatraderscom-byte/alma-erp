@@ -203,6 +203,15 @@ const HEAD_KEPT_GROWTH_TOOLS = [
   'schedule_content_batch',
   'draft_seo_fixes',
   'configure_growth_autopilot',
+  // audit_product_seo is the COST-FREE on-page read that feeds draft_seo_fixes:
+  // that write tool mandates the exact per-image URL, and audit_product_seo is the
+  // only tool that returns it. Keeping the write tool on the head WITHOUT its read
+  // partner is a dead-end — the head can stage an SEO card but can't fetch the URLs
+  // it needs to fill one. Same rationale as list_audiences above: a cheap read that
+  // lets the head run the whole owner-facing SEO fix flow (audit → approval card)
+  // self-contained, instead of a wasteful delegation hop just to fetch identifiers.
+  // Appended last so the existing cached-prefix bytes never shift.
+  'audit_product_seo',
 ] as const
 
 // Delegation approval test mode (DELEGATION_APPROVAL=true): force marketing work
