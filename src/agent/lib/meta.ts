@@ -617,12 +617,16 @@ type RawFbMessage = {
 type RawFbConversation = {
   id: string
   updated_time?: string
+  participants?: { data?: Array<{ id?: string; name?: string }> }
   messages?: { data?: RawFbMessage[] }
 }
 
 export interface FbMessengerThread {
   conversationId: string
   updatedTime: string | null
+  /** The customer's page-scoped ID (PSID) — pass this to send_customer_message to reply. */
+  customerPsid: string | null
+  customerName: string | null
   lastMessage: {
     from: 'customer' | 'page'
     senderName: string | null
@@ -667,9 +671,18 @@ export async function getMessengerInbox(opts: {
         ? Math.max(0, Math.round((now - createdMs) / 60_000))
         : null
 
+    // The customer participant (the non-page one) — their id is the PSID the
+    // send API needs. Without this the agent could READ a new message but had
+    // no handle to REPLY to it ("PSID nai" dead-end).
+    const customer =
+      (conv.participants?.data ?? []).find((pt) => pt.id && pt.id !== opts.pageId) ??
+      (fromCustomer && last?.from?.id ? { id: last.from.id, name: last.from.name } : undefined)
+
     return {
       conversationId: conv.id,
       updatedTime: conv.updated_time ?? null,
+      customerPsid: customer?.id ?? null,
+      customerName: customer?.name ?? null,
       lastMessage: last
         ? {
             from: fromCustomer ? 'customer' : 'page',
