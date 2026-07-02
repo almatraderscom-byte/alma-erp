@@ -611,7 +611,7 @@ type RawFbMessage = {
   from?: { id?: string; name?: string }
   message?: string
   created_time?: string
-  attachments?: { data?: unknown[] }
+  attachments?: { data?: Array<{ mime_type?: string; image_data?: { url?: string }; file_url?: string }> }
 }
 
 type RawFbConversation = {
@@ -629,6 +629,8 @@ export interface FbMessengerThread {
     text: string
     createdTime: string
     hasAttachment: boolean
+    /** Direct CDN URLs of image attachments on the last message (for vision). */
+    attachmentImageUrls?: string[]
   } | null
   unansweredMinutes: number | null
   needsReply: boolean
@@ -641,7 +643,7 @@ export async function getMessengerInbox(opts: {
   const token = tokenFor(opts.pageId)
   const limit = Math.min(Math.max(opts.limit ?? 15, 1), 25)
   const fields = encodeURIComponent(
-    'id,updated_time,messages{id,from,message,created_time,attachments}',
+    'id,updated_time,messages{id,from,message,created_time,attachments{mime_type,image_data,file_url}}',
   )
   const res = await resilientFetch(
     `${GRAPH_BASE}/${opts.pageId}/conversations?fields=${fields}&limit=${limit}&access_token=${token}`,
@@ -677,6 +679,10 @@ export async function getMessengerInbox(opts: {
             text: (last.message?.trim() || (last.attachments?.data?.length ? '(attachment)' : '(no text)')),
             createdTime: last.created_time ?? '',
             hasAttachment: Boolean(last.attachments?.data?.length),
+            attachmentImageUrls: (last.attachments?.data ?? [])
+              .map((a) => a.image_data?.url || (a.mime_type?.startsWith('image/') ? a.file_url : undefined))
+              .filter((u): u is string => Boolean(u))
+              .slice(0, 3),
           }
         : null,
       unansweredMinutes,

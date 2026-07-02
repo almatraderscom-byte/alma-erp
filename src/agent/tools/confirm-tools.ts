@@ -334,6 +334,42 @@ const get_fb_messenger_inbox: AgentTool = {
       const recentCustomer = threads.filter(t => t.lastMessage?.from === 'customer')
       const scannedNow = new Date()
 
+      // Owner rule: "1 pending message" is useless — the agent must SEE the
+      // actual content. Image attachments on awaiting-reply customer messages
+      // get a Bangla vision description (max 3 per scan; fail-open per image).
+      const withImages = needsReply
+        .filter(t => (t.lastMessage?.attachmentImageUrls?.length ?? 0) > 0)
+        .slice(0, 3)
+      const imageDescriptions: Record<string, string> = {}
+      for (const t of withImages) {
+        const url = t.lastMessage?.attachmentImageUrls?.[0]
+        if (!url) continue
+        try {
+          const imgRes = await fetch(url, { signal: AbortSignal.timeout(15_000) })
+          if (!imgRes.ok) continue
+          const mime = imgRes.headers.get('content-type')?.split(';')[0] || 'image/jpeg'
+          const buf = Buffer.from(await imgRes.arrayBuffer())
+          if (buf.length > 8_000_000) continue
+          const { geminiVisionJson } = await import('@/agent/lib/vision-analyze')
+          const out = await geminiVisionJson<{ description?: string }>({
+            prompt:
+              'This is an image a customer sent to a Bangladeshi clothing shop\'s Facebook page. ' +
+              'Describe in 1-2 Bangla sentences what it shows (product/panjabi/screenshot/payment slip/etc), so a sales agent can reply. ' +
+              'Return JSON: {"description": "..."}',
+            imageBase64: buf.toString('base64'),
+            mimeType: mime,
+            costKind: 'cs_inbox_image',
+            maxTokens: 200,
+          })
+          if (out.description) imageDescriptions[t.conversationId] = out.description
+        } catch { /* skip this image */ }
+      }
+      const threadsOut = threads.map(t =>
+        imageDescriptions[t.conversationId]
+          ? { ...t, lastMessage: { ...t.lastMessage!, imageDescription: imageDescriptions[t.conversationId] } }
+          : t,
+      )
+
       return {
         success: true,
         data: {
@@ -349,7 +385,7 @@ const get_fb_messenger_inbox: AgentTool = {
             lastFromCustomer: recentCustomer.length,
             openWorkerAlerts: openAlerts.length,
           },
-          threads,
+          threads: threadsOut,
           openAlerts: openAlerts.map(a => ({
             ...a,
             detectedAtDhaka: formatDateTimeDhaka(a.detectedAt),
