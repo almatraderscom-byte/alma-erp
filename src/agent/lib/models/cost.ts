@@ -39,7 +39,11 @@ export function calcModelTurnCostUsd(
     // rate. The adapter now surfaces inputTokens as uncached-only (to stop the UI
     // double-count), so re-add the cached tokens here at the input rate to keep
     // the billed cost unchanged.
-    cache = ((usage.cacheRead ?? 0) / 1_000_000) * model.inPerM
+    // OpenRouter providers bill cached input at a steep discount (DeepSeek ~0.1x,
+    // Alibaba/Qwen ~0.25x). We were re-adding cache reads at FULL input price,
+    // inflating the displayed per-turn cost ~3-4x vs what OpenRouter actually
+    // charges (the owner saw "$0.17" turns that really cost ~$0.05).
+    cache = ((usage.cacheRead ?? 0) / 1_000_000) * model.inPerM * 0.25
   }
 
   return roundUsd(input + output + cache)
