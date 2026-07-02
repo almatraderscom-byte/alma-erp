@@ -188,7 +188,10 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     contextWindow: 1_000_000,
     inPerM: 1.25,
     outPerM: 3.75,
-    thinking: 'none',
+    // 'level' asks OpenRouter for reasoning tokens so the owner sees the same
+    // live step-by-step thinking stream as the Gemini head. Models/providers
+    // that can't reason simply return none — the adapter degrades gracefully.
+    thinking: 'level',
   },
   {
     id: 'or-deepseek-v4-flash',
@@ -200,7 +203,8 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     contextWindow: 1_000_000,
     inPerM: 0.09,
     outPerM: 0.18,
-    thinking: 'none',
+    // Same live-thinking request as the Qwen head (see note above).
+    thinking: 'level',
   },
 ]
 

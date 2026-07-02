@@ -803,9 +803,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           const variant = (evt.variant as 'claude' | 'qwen' | 'deepseek' | 'default') ?? 'claude'
           setStreamVariant(variant)
           const label = typeof evt.label === 'string' ? evt.label : ''
-          // Cheap models don't stream a thinking trace, so seed a model-specific
-          // status line — that (plus the animation) is how the owner tells who is working.
-          setStreamStatus(variant === 'claude' ? `🧠 ${label || 'Sonnet'} ভাবছে…` : `⚡ ${label || 'Worker'} উত্তর দিচ্ছে…`)
+          // Every head now streams a live thinking trace (Gemini thoughts /
+          // OpenRouter reasoning) — seed the same "ভাবছে…" state for all of them;
+          // thinking_delta events take over the moment they arrive.
+          setStreamStatus(`🧠 ${label || 'ALMA'} ভাবছে…`)
         } else if (evt.type === 'thinking_delta') {
           setStreamMode('thinking')
           setStreamStatus('🤔 ভাবছি…')

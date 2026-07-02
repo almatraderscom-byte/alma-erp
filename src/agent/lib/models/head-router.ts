@@ -299,6 +299,14 @@ export async function resolveHeadModelId(opts: {
     if (anthropicHeadDown() && getModel(requested).provider === 'anthropic') {
       return heavy('anthropic_down_explicit_redirect')
     }
+    // Pinning the MARKETING head model (Qwen) must behave as the marketing head,
+    // not a generic 'explicit' head. Owner rule: Qwen does FB/ads/marketing work
+    // ITSELF — full growth+content toolset, self-serve prompt, no marketer
+    // sub-agent. With tier:'explicit' it got the slim toolset instead, truthfully
+    // said "ads tool nai" and delegated marketing to the DeepSeek specialist.
+    if (requested === marketingHeadModelId()) {
+      return { modelId: requested, tier: 'marketing', via: 'explicit_marketing' }
+    }
     return { modelId: requested, tier: 'explicit', via: 'explicit' }
   }
 

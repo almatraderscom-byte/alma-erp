@@ -1027,14 +1027,31 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
     return () => container.removeEventListener('scroll', checkScrollPosition)
   }, [checkScrollPosition])
 
+  // The owner's send must ALWAYS jump the view to the bottom — even from high up
+  // in a long thread. The old check looked only at the LAST message, but the send
+  // path appends the user message AND the assistant streaming placeholder in the
+  // same React batch, so the last message was never role='user' and the jump never
+  // fired unless he was already near the bottom. Track the newest user-message id
+  // instead: whenever a fresh one appears, force the jump and re-pin to bottom.
+  const lastUserIdRef = useRef<string | null>(null)
   useEffect(() => {
     const last = messages[messages.length - 1]
     if (!last) return
-    // Always scroll on the user's own send (block:end, instant).
-    if (last.role === 'user') {
-      bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
-      stickToBottomRef.current = true
-      return
+    let newestUser: ChatMessage | null = null
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') { newestUser = messages[i]; break }
+    }
+    if (newestUser && newestUser.id !== lastUserIdRef.current) {
+      lastUserIdRef.current = newestUser.id
+      // Only a FRESH send jumps (guard: the post-turn poll swaps optimistic ids
+      // for DB ids — that must not yank the owner down if he scrolled up while
+      // a long turn ran). Missing createdAt is treated as fresh.
+      const sentMs = newestUser.createdAt ? Date.parse(newestUser.createdAt) : Date.now()
+      if (Date.now() - sentMs < 15_000) {
+        bottomRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' })
+        stickToBottomRef.current = true
+        return
+      }
     }
     // During streaming, only auto-scroll if the user is already near bottom.
     if (last.streaming && stickToBottomRef.current) {

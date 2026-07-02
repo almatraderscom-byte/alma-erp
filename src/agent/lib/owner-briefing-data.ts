@@ -54,7 +54,8 @@ export type OwnerBriefingData = {
   reorderSuggestions: ReorderSuggestion[]
   csWaiting: { unrepliedCount: number; nearWindowCount: number; openAlerts: number } | null
   adsDigest: {
-    campaigns: Array<{ name: string; spend: number; ctr: number; cpc: number }>
+    /** spend = TODAY only; spend7d = last-7-day total (both USD, rounded). */
+    campaigns: Array<{ name: string; spend: number; spend7d: number; ctr: number; cpc: number }>
     anomalies: Array<{ campaign: string; dropPct: number }>
   } | null
   staffYesterday: {
@@ -169,18 +170,27 @@ async function gatherAdsDigest() {
   try {
     const today = new Date().toISOString().slice(0, 10)
     const sevenDaysAgo = daysAgoYmd(6)
+    // Fetch effective_status as a FIELD and filter client-side: Graph's
+    // server-side effective_status=["ACTIVE"] filter is unreliable (lets PAUSED
+    // campaigns through — see src/agent/lib/ads/insights.ts), which made the
+    // owner's briefing digest report paused campaigns as active.
     const campRes = await fetch(
-      `https://graph.facebook.com/v21.0/${accountId}/campaigns?effective_status=["ACTIVE"]&fields=id,name&limit=10&access_token=${token}`,
+      `https://graph.facebook.com/v21.0/${accountId}/campaigns?fields=id,name,effective_status&limit=25&access_token=${token}`,
       { signal: AbortSignal.timeout(20_000) },
     )
     if (!campRes.ok) return null
-    const campData = (await campRes.json()) as { data?: Array<{ id: string; name: string }> }
+    const campData = (await campRes.json()) as {
+      data?: Array<{ id: string; name: string; effective_status?: string }>
+    }
+    const activeCampaigns = (campData.data ?? [])
+      .filter((c) => c.effective_status === 'ACTIVE')
+      .slice(0, 10)
     const campaigns: OwnerBriefingData['adsDigest'] extends null ? never : NonNullable<OwnerBriefingData['adsDigest']>['campaigns'] = []
     const anomalies: Array<{ campaign: string; dropPct: number }> = []
 
-    for (const c of campData.data ?? []) {
+    for (const c of activeCampaigns) {
       const todayUrl = `https://graph.facebook.com/v21.0/${c.id}/insights?time_range=${encodeURIComponent(JSON.stringify({ since: today, until: today }))}&fields=spend,ctr,cpc&access_token=${token}`
-      const weekUrl = `https://graph.facebook.com/v21.0/${c.id}/insights?time_range=${encodeURIComponent(JSON.stringify({ since: sevenDaysAgo, until: today }))}&fields=ctr&access_token=${token}`
+      const weekUrl = `https://graph.facebook.com/v21.0/${c.id}/insights?time_range=${encodeURIComponent(JSON.stringify({ since: sevenDaysAgo, until: today }))}&fields=ctr,spend&access_token=${token}`
       const [todayIns, weekIns] = await Promise.all([
         fetch(todayUrl, { signal: AbortSignal.timeout(15_000) }),
         fetch(weekUrl, { signal: AbortSignal.timeout(15_000) }),
@@ -188,7 +198,7 @@ async function gatherAdsDigest() {
       if (!todayIns.ok) continue
       const todayData = (await todayIns.json()) as { data?: Array<{ spend?: string; ctr?: string; cpc?: string }> }
       const weekData = weekIns.ok
-        ? ((await weekIns.json()) as { data?: Array<{ ctr?: string }> })
+        ? ((await weekIns.json()) as { data?: Array<{ ctr?: string; spend?: string }> })
         : { data: [] }
       const t = todayData.data?.[0]
       const w = weekData.data?.[0]
@@ -197,6 +207,7 @@ async function gatherAdsDigest() {
       campaigns.push({
         name: c.name,
         spend: Math.round(safeNum(t?.spend)),
+        spend7d: Math.round(safeNum(w?.spend)),
         ctr: Math.round(ctr * 10000) / 100,
         cpc: Math.round(safeNum(t?.cpc) * 100) / 100,
       })
