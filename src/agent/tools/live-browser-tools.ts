@@ -16,6 +16,7 @@
  * The companion also has its own verb whitelist + local pause switch.
  */
 import type { AgentTool } from './registry'
+import { isFinalSubmitText, FINAL_SUBMIT_BLOCK_MESSAGE } from '@/agent/lib/browser/final-submit'
 import { agentStorageUpload, agentStorageSignedUrl } from '@/agent/lib/storage'
 import {
   isLiveBrowserEnabled,
@@ -337,7 +338,9 @@ const live_browser_act: AgentTool = {
     'SAFETY: never use this to press a final Send / Post / Pay / Buy / Transfer / Confirm / Delete — ' +
     'fill the form and navigate, but leave that last irreversible click to the owner and ask him. ' +
     '(A plain Enter to run a Google/search query or move to the next field is fine; the ban is on ' +
-    'the final irreversible submit of a message / money / deletion.)\n' +
+    'the final irreversible submit of a message / money / deletion.) This ban is ENFORCED IN CODE: ' +
+    'the tool and the extension both hard-block such clicks, so do not attempt them — hand the last ' +
+    'click to the owner.\n' +
     'Params by action: ' +
     'click → `selector`/`text`/`ref`; hover → `selector`/`text`/`ref`; type → (`selector`/`text`/`ref` ' +
     'to find the field) + `value` (+ optional `submit`); press → `key` (e.g. "Enter", "Tab", "Escape"); select_option → ' +
@@ -420,6 +423,15 @@ const live_browser_act: AgentTool = {
     }
     if (action === 'press' && !String(input.key ?? '').trim()) {
       return { success: false, error: 'press needs a key (e.g. "Enter")' }
+    }
+
+    // Feature 8 — final-submit ban IN CODE (server layer). The tool description's
+    // "leave the last irreversible click to the owner" rule is now enforced: a
+    // click whose target text/selector reads like Send/Post/Pay/Confirm/Delete is
+    // hard-blocked here, and the extension re-checks the resolved element's real
+    // label in-page (covers ref-targeted clicks this string check can't see).
+    if (action === 'click' && isFinalSubmitText(String(input.text ?? ''), String(input.selector ?? ''))) {
+      return { success: false, error: FINAL_SUBMIT_BLOCK_MESSAGE }
     }
 
     const dev = await requireActiveDevice(input.device as string | undefined)
