@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
 import { useMicLevel } from '@/agent/hooks/useMicLevel'
+import { useWakeWord, wakeWordSupported } from '@/agent/hooks/useWakeWord'
 import { fetchTtsAudio, unlockTtsAudio } from '@/agent/lib/voice-tts-client'
 import { toolDisplay } from '@/agent/lib/tool-labels'
 import type { VoiceState, VoiceTurnEvent } from '@/agent/lib/voice-types'
@@ -185,6 +186,18 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
   const micLevel = useMicLevel(recorder.stream, recorder.recording)
   useEffect(() => { recorderRef.current = recorder })
 
+  /* "ALMA" wake-word (hands-free start) — only where the browser supports
+     SpeechRecognition (Android/desktop Chrome; iOS gets conversation mode +
+     orb tap instead). Active only while idle so it never fights the recorder. */
+  const wakeAvailable = wakeWordSupported()
+  const [wakeMode, setWakeMode] = useState(true)
+  useWakeWord(
+    open && wakeAvailable && wakeMode && state === 'idle' && !recorder.recording,
+    () => {
+      if (openRef.current && stateRef.current === 'idle') recorderRef.current?.start()
+    },
+  )
+
   const handleTapOrb = useCallback(() => {
     // Inside the tap gesture: bless the persistent audio element so the reply
     // can actually sound on iOS WKWebView (autoplay policy).
@@ -290,7 +303,11 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
                 <p className="vc-caption">{reply}</p>
               ) : (
                 <p className="vc-caption dim">
-                  {state === 'idle' ? <>বলুন, <span className="sir">Sir</span> — অর্বে ট্যাপ করুন।</> : ' '}
+                  {state === 'idle'
+                    ? (wakeAvailable && wakeMode
+                        ? <>&ldquo;ALMA&rdquo; বললেই শুনব, <span className="sir">Sir</span> — বা অর্বে ট্যাপ করুন।</>
+                        : <>বলুন, <span className="sir">Sir</span> — অর্বে ট্যাপ করুন।</>)
+                    : ' '}
                 </p>
               )}
             </div>
@@ -333,6 +350,16 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
               >
                 <i />কথোপকথন {convoMode ? 'চালু' : 'বন্ধ'}
               </button>
+              {wakeAvailable && (
+                <button
+                  type="button"
+                  onClick={() => setWakeMode((v) => !v)}
+                  className={`vc-convo${wakeMode ? ' on' : ''}`}
+                  aria-pressed={wakeMode}
+                >
+                  <i />&ldquo;ALMA&rdquo; ডাক {wakeMode ? 'চালু' : 'বন্ধ'}
+                </button>
+              )}
               <button type="button" onClick={handleClose} className="vc-back">চ্যাটে ফিরুন</button>
             </div>
           </div>
