@@ -179,31 +179,43 @@ function buildHeartbeatDirective(pulse: HeartbeatPulse): string {
  * web/app conversation (his session pointer, else the most-recent main chat) — the
  * app's 12s message poll then floats the turn into his open session automatically.
  *
- * Two guards keep this safe:
+ * Three guards keep this safe AND visible:
+ *   • RECENCY: inline only if that chat saw activity in the last 30 minutes. The
+ *     owner now opens a fresh chat per task, so "most recent chat" is usually a
+ *     finished one-off he will never reopen — wake-ups injected there were simply
+ *     never seen (reported 2026-07-03). Stale chat → the per-day 💓 thread, which
+ *     shows up by name in his conversation list.
  *   • If he is mid-turn in that chat (a turn is `running`), we must NOT inject — it
- *     would interleave with his own conversation. We fall back to the per-day
- *     heartbeat thread so the tick is never lost and never collides.
+ *     would interleave with his own conversation. Same fallback.
  *   • Any lookup failure also falls back to the per-day heartbeat thread.
  */
+const INLINE_ACTIVE_WINDOW_MIN = 30
+
 async function resolveWakeConversation(now: Date): Promise<{ id: string; inOwnerChat: boolean }> {
   try {
     let convId = (await getOwnerSessionPointer()).conversationId
+    let lastActivity: Date | null = null
     if (convId) {
-      const exists = await prisma.agentConversation.findFirst({
+      const row = await prisma.agentConversation.findFirst({
         where: { id: convId, archived: false },
-        select: { id: true },
+        select: { id: true, updatedAt: true },
       })
-      if (!exists) convId = null
+      if (row) lastActivity = row.updatedAt
+      else convId = null
     }
     if (!convId) {
       const latest = await prisma.agentConversation.findFirst({
         where: { archived: false, projectId: null, source: 'web' },
         orderBy: { updatedAt: 'desc' },
-        select: { id: true },
+        select: { id: true, updatedAt: true },
       })
       convId = latest?.id ?? null
+      lastActivity = latest?.updatedAt ?? null
     }
-    if (convId) {
+    const freshEnough =
+      lastActivity !== null &&
+      now.getTime() - lastActivity.getTime() <= INLINE_ACTIVE_WINDOW_MIN * 60_000
+    if (convId && freshEnough) {
       const turn = await getLatestTurn(convId)
       if (turn?.status !== 'running') return { id: convId, inOwnerChat: true }
     }
