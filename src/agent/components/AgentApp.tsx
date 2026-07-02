@@ -242,8 +242,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   } | null>(null)
 
   const [voiceOpen, setVoiceOpen] = useState(false)
-  /** Set when a voice turn ran against a conversation — the thread reloads on console close. */
-  const voiceTurnConvRef = useRef<string | null>(null)
+  /** Set when a voice turn ran — the thread reloads on console close. projectId is
+   *  captured at send time: null for a conversation the voice turn itself created
+   *  (a fresh conv has no project), else the active conversation's project. */
+  const voiceTurnConvRef = useRef<{ id: string; projectId: string | null } | null>(null)
   const [planDrive, setPlanDrive] = useState<PlanDrivePanelData | null>(null)
   const [composerSeed, setComposerSeed] = useState('')
 
@@ -1224,6 +1226,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     onEvent?: (evt: VoiceTurnEvent) => void,
   ): Promise<string | null> => {
     const body: Record<string, unknown> = { message: text, voice: true }
+    // A voice turn on a fresh console creates a NEW conversation server-side —
+    // that conv has no project, so the close-reload must not inherit the
+    // previously-active conversation's projectId.
+    const turnProjectId = activeConvId ? activeConvProjectId : null
     if (activeConvId) body.conversationId = activeConvId
     else body.modelId = activeModelId // new conv: persist the owner's model choice
     const res = await fetch('/api/assistant/chat', {
@@ -1275,9 +1281,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     // The voice turn is persisted server-side but this thread's local state never
     // saw it — reload the conversation on next open so chat and voice stay one
     // continuous history for the owner.
-    if (convId) voiceTurnConvRef.current = convId
+    if (convId) voiceTurnConvRef.current = { id: convId, projectId: turnProjectId }
     return reply || null
-  }, [activeConvId, activeModelId])
+  }, [activeConvId, activeConvProjectId, activeModelId])
 
   async function stopGeneration() {
     const turnId = activeTurnIdRef.current
@@ -1615,10 +1621,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           setVoiceOpen(false)
           // Voice turns persist server-side but bypass local thread state —
           // reload so the chat shows what was said/done by voice.
-          const convId = voiceTurnConvRef.current
+          const turn = voiceTurnConvRef.current
           voiceTurnConvRef.current = null
-          if (convId) {
-            void loadConversation({ id: convId, title: null, projectId: activeConvProjectId, archived: false, updatedAt: '' })
+          if (turn) {
+            void loadConversation({ id: turn.id, title: null, projectId: turn.projectId, archived: false, updatedAt: '' })
           }
         }}
         onSendMessage={handleVoiceMessage}

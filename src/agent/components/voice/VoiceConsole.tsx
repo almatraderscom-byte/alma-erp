@@ -4,7 +4,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
 import { useMicLevel } from '@/agent/hooks/useMicLevel'
-import { fetchTtsAudio } from '@/agent/lib/voice-tts-client'
+import { fetchTtsAudio, unlockTtsAudio } from '@/agent/lib/voice-tts-client'
 import { toolDisplay } from '@/agent/lib/tool-labels'
 import type { VoiceState, VoiceTurnEvent } from '@/agent/lib/voice-types'
 import { FluidOrb } from './FluidOrb'
@@ -155,6 +155,9 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
   const micLevel = useMicLevel(recorder.stream, recorder.recording)
 
   const handleTapOrb = useCallback(() => {
+    // Inside the tap gesture: bless the persistent audio element so the reply
+    // can actually sound on iOS WKWebView (autoplay policy).
+    unlockTtsAudio()
     if (state === 'listening') {
       recorder.stop()
     } else if (state === 'speaking') {
@@ -435,9 +438,10 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
               padding: 12px 14px;
               border-radius: 16px;
               border: 1px solid rgba(160, 200, 240, 0.13);
-              background: linear-gradient(160deg, rgba(140, 190, 240, 0.085), rgba(140, 190, 240, 0.028));
-              backdrop-filter: blur(18px) saturate(1.35);
-              -webkit-backdrop-filter: blur(18px) saturate(1.35);
+              /* glass baked into the gradient — backdrop-filter inside an
+                 animating transform is a known iOS gray-box breaker, and over
+                 this near-black root a real blur buys nothing visually */
+              background: linear-gradient(160deg, rgba(140, 190, 240, 0.14), rgba(140, 190, 240, 0.05));
               box-shadow: 0 10px 32px rgba(1, 4, 10, 0.4);
             }
             .vc-card.approval { border-color: rgba(226, 179, 102, 0.4); }
