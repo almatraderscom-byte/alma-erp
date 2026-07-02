@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
+import { selection } from '@/lib/haptics'
 
 const NAV_ITEMS = [
   { href: '/', label: 'ERP', icon: ErpIcon, matchExact: true },
@@ -40,8 +41,9 @@ export function AgentBottomNav() {
             <Link
               key={item.href}
               href={item.href}
+              onClick={() => selection()}
               className={cn(
-                'relative flex flex-col items-center gap-0.5 px-2.5 py-1.5 transition-all',
+                'group relative flex flex-col items-center gap-0.5 px-2.5 py-1.5 transition-all',
                 isActive ? 'text-[#E07A5F]' : 'text-muted',
               )}
             >
@@ -52,7 +54,7 @@ export function AgentBottomNav() {
                   transition={{ type: 'spring', stiffness: 380, damping: 30 }}
                 />
               )}
-              <item.icon className="h-5 w-5" />
+              <item.icon className="h-5 w-5 transition-transform duration-150 group-active:scale-[0.82]" />
               <span className="text-[10px] font-medium">{item.label}</span>
             </Link>
           )

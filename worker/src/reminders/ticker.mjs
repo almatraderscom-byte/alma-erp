@@ -118,6 +118,7 @@ export async function processOutboundCall(payload) {
     toNumber: phone,
     force: true,
     skipAutoRetry: true,
+    playOnce: true, // full message spoken once, then hangup — no truncation/repetition
     ttsProvider: payload.ttsProvider === 'elevenlabs' ? 'elevenlabs' : 'google',
     voiceProfile: payload.voiceGender === 'female' ? 'female' : 'male',
   })

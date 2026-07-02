@@ -204,6 +204,7 @@ type StoredContentBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_result'; tool_use_id: string; content: string }
   | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string }
+  | { type: 'ask_card'; askCardId: string; question: string; options: string[] }
   | FileRefBlock
 
 // ── History loading with file reconstruction ───────────────────────────────
@@ -311,6 +312,11 @@ async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
         // must never be sent verbatim to the model — collapse it to a short note.
         const cc = block as Extract<StoredContentBlock, { type: 'confirm_card' }>
         apiBlocks.push({ type: 'text', text: `[অনুমোদনের কার্ড দেখানো হয়েছিল: ${cc.summary}]` })
+      } else if (block.type === 'ask_card') {
+        // Ask-card breadcrumb — same rule as confirm cards: a UI-only block that
+        // must never reach the API verbatim; collapse it to a short note.
+        const ac = block as Extract<StoredContentBlock, { type: 'ask_card' }>
+        apiBlocks.push({ type: 'text', text: `[প্রশ্ন কার্ড দেখানো হয়েছিল: ${ac.question}]` })
       } else {
         apiBlocks.push(block as unknown as Anthropic.Messages.ContentBlockParam)
       }
@@ -819,6 +825,10 @@ export async function* runAgentTurn(
   // Confirm cards emitted this turn — persisted into the assistant message so the
   // card (and later its approved/rejected outcome) survives a page reload.
   const emittedConfirmCards: Array<{ type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string }> = []
+  // Ask-user question cards emitted this turn — persisted as breadcrumbs (same
+  // pattern as confirm cards) so the card survives the message poll / reload
+  // instead of living only in the SSE stream.
+  const emittedAskCards: Array<{ type: 'ask_card'; askCardId: string; question: string; options: string[] }> = []
   // Interactive question cards surfaced this turn (owner-facing yes/no / choice).
   // Tracked alongside confirm cards so the card-detection rule knows whether ANY
   // card actually reached the owner before the head claimed one did.
@@ -1349,6 +1359,14 @@ export async function* runAgentTurn(
               question: typeof d.question === 'string' ? d.question : '',
               options: d.options as string[],
             }
+            // Breadcrumb so the question card re-renders after reload / poll (the
+            // durable agent_ask_cards row supplies live status at read time).
+            emittedAskCards.push({
+              type: 'ask_card',
+              askCardId: d.askCardId,
+              question: typeof d.question === 'string' ? d.question : '',
+              options: d.options.map(String),
+            })
           }
         }
 
@@ -1426,6 +1444,8 @@ export async function* runAgentTurn(
     // approved/rejected outcome) survives a page reload — issue: cards vanished
     // on refresh because only text blocks were persisted.
     for (const card of emittedConfirmCards) storedContent.push(card)
+    // Ask-card breadcrumbs — same reload-survival rationale as confirm cards.
+    for (const card of emittedAskCards) storedContent.push(card)
     const costUsd = calcModelTurnCostUsd(chatModel, {
       inputTokens: totalInputTokens,
       outputTokens: totalOutputTokens,

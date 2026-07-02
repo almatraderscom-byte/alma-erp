@@ -339,6 +339,10 @@ async function* runAlternateProviderTurn(
   let finalText = ''
   let delegationAwaiting = false
   let delegationRoleLabel = ''
+  // Ask-user question cards emitted this turn — persisted as breadcrumbs in the
+  // saved assistant message (mirrors the confirm-card pattern in core.ts) so the
+  // card survives the message poll / page reload, not just the live SSE stream.
+  const emittedAskCards: Array<{ type: 'ask_card'; askCardId: string; question: string; options: string[] }> = []
   // Accumulate the extended-thinking trace so it persists (in usage.reasoning) as a
   // "Thought for Ns" block instead of vanishing when the live stream ends. Stored in
   // usage metadata (display-only) so it survives reload on the cheap-head path too.
@@ -562,6 +566,14 @@ async function* runAlternateProviderTurn(
               question: typeof d.question === 'string' ? d.question : '',
               options: d.options as string[],
             }
+            // Breadcrumb so the question card re-renders after reload / poll (the
+            // durable agent_ask_cards row supplies live status at read time).
+            emittedAskCards.push({
+              type: 'ask_card',
+              askCardId: d.askCardId,
+              question: typeof d.question === 'string' ? d.question : '',
+              options: d.options.map(String),
+            })
           }
         }
 
@@ -592,13 +604,20 @@ async function* runAlternateProviderTurn(
       cacheWrite: totalCacheCreationTokens,
     })
 
+    // Ask-card breadcrumbs are appended after the text block — same reload-survival
+    // pattern as the confirm-card breadcrumbs on the native Claude path (core.ts).
+    const storedContent: Array<Record<string, unknown>> = [
+      { type: 'text', text: finalText },
+      ...emittedAskCards,
+    ]
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const db = prisma as any
     const savedMsg = await db.agentMessage.create({
       data: {
         conversationId,
         role: 'assistant',
-        content: [{ type: 'text', text: finalText }],
+        content: storedContent,
         tokensIn: totalInputTokens,
         tokensOut: totalOutputTokens,
         costUsd,

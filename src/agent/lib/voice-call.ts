@@ -14,6 +14,7 @@
  * pending-action card before it actually dials. Used sparingly — family / friends /
  * work, never bulk.
  */
+import { createHmac } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { normalizeOutboundPhone } from '@/lib/twilio/phone'
 
@@ -22,32 +23,75 @@ const db = prisma as any
 
 const ELEVEN_OUTBOUND_URL = 'https://api.elevenlabs.io/v1/convai/twilio/outbound-call'
 const DEFAULT_DAILY_CAP = 10
+/** The exact one-way voice the owner loves — now on two-way calls via ConversationRelay. */
+const RELAY_TTS_VOICE = 'bn-IN-Chirp3-HD-Charon'
+
+/** Which engine runs two-way calls: ElevenLabs ConvAI (legacy) or Twilio
+ * ConversationRelay + Gemini + Google Charon voice (better Bangla accent). */
+export type VoiceCallProvider = 'elevenlabs' | 'relay'
 
 export interface VoiceCallConfig {
   enabled: boolean
+  provider: VoiceCallProvider
   apiKey: string
   agentId: string
   agentPhoneNumberId: string
   dailyCap: number
   maxMinutes: number
+  /** relay provider only */
+  relayWssUrl: string
+  twilioAccountSid: string
+  twilioAuthToken: string
+  twilioFromNumber: string
+  internalToken: string
 }
 
 /** Read + validate config from env. `enabled` is false unless everything required is present. */
 export function getVoiceCallConfig(): VoiceCallConfig {
+  const provider: VoiceCallProvider = process.env.VOICE_CALL_PROVIDER === 'relay' ? 'relay' : 'elevenlabs'
   const apiKey = process.env.ELEVENLABS_API_KEY ?? ''
   const agentId = process.env.ELEVENLABS_AGENT_ID ?? ''
   const agentPhoneNumberId = process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID ?? ''
   const killSwitch = process.env.VOICE_CALL_ENABLED === 'true'
   const dailyCap = Number(process.env.VOICE_CALL_DAILY_CAP) || DEFAULT_DAILY_CAP
   const maxMinutes = Number(process.env.VOICE_CALL_MAX_MINUTES) || 10
-  const enabled = killSwitch && Boolean(apiKey && agentId && agentPhoneNumberId)
-  return { enabled, apiKey, agentId, agentPhoneNumberId, dailyCap, maxMinutes }
+  const relayWssUrl = (process.env.VOICE_RELAY_PUBLIC_WSS_URL ?? '').replace(/\/$/, '')
+  const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID ?? ''
+  const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN ?? ''
+  const twilioFromNumber = process.env.TWILIO_FROM_NUMBER ?? ''
+  const internalToken = process.env.AGENT_INTERNAL_TOKEN ?? ''
+  const enabled =
+    killSwitch &&
+    (provider === 'relay'
+      ? Boolean(relayWssUrl && twilioAccountSid && twilioAuthToken && twilioFromNumber && internalToken)
+      : Boolean(apiKey && agentId && agentPhoneNumberId))
+  return {
+    enabled,
+    provider,
+    apiKey,
+    agentId,
+    agentPhoneNumberId,
+    dailyCap,
+    maxMinutes,
+    relayWssUrl,
+    twilioAccountSid,
+    twilioAuthToken,
+    twilioFromNumber,
+    internalToken,
+  }
 }
 
 /** Human-readable reason the feature is unavailable, or null if it is ready. */
 export function voiceCallUnavailableReason(config = getVoiceCallConfig()): string | null {
   if (process.env.VOICE_CALL_ENABLED !== 'true') {
     return 'ভয়েস কল বন্ধ আছে (VOICE_CALL_ENABLED off)। চালু করতে owner সেটিং লাগবে।'
+  }
+  if (config.provider === 'relay') {
+    if (!config.relayWssUrl) return 'VOICE_RELAY_PUBLIC_WSS_URL সেট করা নেই — VPS relay-এর পাবলিক wss ঠিকানা বসান।'
+    if (!config.twilioAccountSid || !config.twilioAuthToken) return 'TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN সেট করা নেই।'
+    if (!config.twilioFromNumber) return 'TWILIO_FROM_NUMBER সেট করা নেই।'
+    if (!config.internalToken) return 'AGENT_INTERNAL_TOKEN সেট করা নেই।'
+    return null
   }
   if (!config.apiKey) return 'ELEVENLABS_API_KEY সেট করা নেই।'
   if (!config.agentId) return 'ELEVENLABS_AGENT_ID সেট করা নেই — ElevenLabs ড্যাশবোর্ডে Agent বানিয়ে আইডি বসান।'
@@ -122,6 +166,10 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
       conversationId: input.conversationId ?? null,
     },
   })
+
+  if (config.provider === 'relay') {
+    return placeRelayCall(config, record.id, toNumber, firstMessage, purpose, input.recipientName)
+  }
 
   try {
     const res = await fetch(ELEVEN_OUTBOUND_URL, {
@@ -206,5 +254,95 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
       data: { status: 'failed', summary: `কল দেওয়া যায়নি: ${msg}` },
     }).catch(() => {})
     return { ok: false, error: `কল দেওয়া যায়নি: ${msg}`, callRecordId: record.id }
+  }
+}
+
+function escapeXmlAttr(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+/**
+ * Two-way call via Twilio ConversationRelay: Twilio streams STT + speaks Gemini's
+ * replies in Google's bn-IN-Chirp3-HD-Charon voice (the same voice as one-way
+ * calls — far better Bangla than ElevenLabs realtime). The conversation brain is
+ * the VPS relay server (worker/src/voice-relay/server.mjs); the wss URL is signed
+ * with AGENT_INTERNAL_TOKEN so only our calls can connect. Transcript + summary
+ * come back via /api/assistant/voice-call/relay-report when the call ends.
+ */
+async function placeRelayCall(
+  config: VoiceCallConfig,
+  callRecordId: string,
+  toNumber: string,
+  firstMessage: string,
+  purpose: string,
+  recipientName?: string,
+): Promise<PlaceCallResult> {
+  try {
+    // Signature scheme mirrors worker/src/voice-relay/server.mjs signRelayToken().
+    const exp = Date.now() + 15 * 60_000
+    const t = createHmac('sha256', config.internalToken)
+      .update(`relay:${callRecordId}:${exp}`)
+      .digest('hex')
+    const base = config.relayWssUrl.endsWith('/relay') ? config.relayWssUrl : `${config.relayWssUrl}/relay`
+    const wssUrl = `${base}?id=${encodeURIComponent(callRecordId)}&exp=${exp}&t=${t}`
+
+    const twiml =
+      `<?xml version="1.0" encoding="UTF-8"?>` +
+      `<Response><Connect>` +
+      `<ConversationRelay url="${escapeXmlAttr(wssUrl)}"` +
+      ` welcomeGreeting="${escapeXmlAttr(firstMessage)}"` +
+      ` ttsProvider="Google" voice="${RELAY_TTS_VOICE}" ttsLanguage="bn-IN"` +
+      ` transcriptionProvider="Google" transcriptionLanguage="bn-IN">` +
+      `<Parameter name="callRecordId" value="${escapeXmlAttr(callRecordId)}"/>` +
+      `<Parameter name="purpose" value="${escapeXmlAttr(purpose)}"/>` +
+      `<Parameter name="recipientName" value="${escapeXmlAttr(recipientName ?? '')}"/>` +
+      `</ConversationRelay></Connect></Response>`
+
+    const body = new URLSearchParams({
+      To: toNumber,
+      From: config.twilioFromNumber,
+      Twiml: twiml,
+      Timeout: '45',
+    })
+    const auth = Buffer.from(`${config.twilioAccountSid}:${config.twilioAuthToken}`).toString('base64')
+    const res = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${config.twilioAccountSid}/Calls.json`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Authorization: `Basic ${auth}`,
+        },
+        body,
+        signal: AbortSignal.timeout(30_000),
+      },
+    )
+    const data = (await res.json().catch(() => ({}))) as { sid?: string; message?: string }
+    if (!res.ok || !data.sid) {
+      const err = `Twilio ${res.status}: ${data.message ?? 'call create failed'}`
+      await db.agentVoiceCall.update({
+        where: { id: callRecordId },
+        data: { status: 'failed', summary: err },
+      })
+      return { ok: false, error: err, callRecordId }
+    }
+
+    await db.agentVoiceCall.update({
+      where: { id: callRecordId },
+      data: { status: 'ringing', callSid: data.sid },
+    })
+    return { ok: true, callRecordId, callSid: data.sid }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await db.agentVoiceCall.update({
+      where: { id: callRecordId },
+      data: { status: 'failed', summary: `কল দেওয়া যায়নি: ${msg}` },
+    }).catch(() => {})
+    return { ok: false, error: `কল দেওয়া যায়নি: ${msg}`, callRecordId }
   }
 }

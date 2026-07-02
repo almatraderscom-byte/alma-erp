@@ -13,8 +13,11 @@ import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics'
  *   landed, risky confirm, failed action.
  *
  * Routing: native app (iPhone Taptic Engine / Android) via the Capacitor
- * Haptics plugin; web falls back to navigator.vibrate (Android browsers) and
- * silently no-ops on iOS Safari/desktop. Never throws.
+ * Haptics plugin; web falls back to navigator.vibrate (Android browsers).
+ * iOS Safari/PWA has no navigator.vibrate, but iOS 18+ fires a real Taptic
+ * tick when an <input type="checkbox" switch> is toggled — even from a
+ * programmatic label.click() inside a user gesture, and even in home-screen
+ * PWAs. A hidden switch shim routes every haptic through that. Never throws.
  */
 
 function isNativePlatform(): boolean {
@@ -23,8 +26,41 @@ function isNativePlatform(): boolean {
   return Boolean(cap?.isNativePlatform?.())
 }
 
+// Hidden <label><input type="checkbox" switch></label> — clicking the label on
+// iOS 18+ produces the system switch haptic. Older iOS ignores the attribute
+// and the click is a silent no-op on the invisible checkbox.
+let switchShim: HTMLLabelElement | null = null
+
+function iosSwitchTick(): boolean {
+  if (typeof document === 'undefined' || !document.body) return false
+  try {
+    if (!switchShim || !switchShim.isConnected) {
+      const label = document.createElement('label')
+      label.setAttribute('aria-hidden', 'true')
+      label.style.cssText =
+        'position:fixed;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;'
+      const input = document.createElement('input')
+      input.type = 'checkbox'
+      input.setAttribute('switch', '')
+      input.tabIndex = -1
+      label.appendChild(input)
+      document.body.appendChild(label)
+      switchShim = label
+    }
+    switchShim.click()
+    return true
+  } catch {
+    return false
+  }
+}
+
 function webVibrate(ms: number): void {
-  if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') return
+  if (typeof navigator === 'undefined') return
+  if (typeof navigator.vibrate !== 'function') {
+    // iOS Safari/PWA path — no Vibration API; use the iOS 18 switch haptic.
+    iosSwitchTick()
+    return
+  }
   try {
     navigator.vibrate(ms)
   } catch {
@@ -70,18 +106,21 @@ export function selection(): void {
   webVibrate(8)
 }
 
-function notify(type: NotificationType, webPattern: number | number[]): void {
-  if (isNativePlatform()) {
-    Haptics.notification({ type }).catch(() => {
-      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-        try { navigator.vibrate(webPattern) } catch { /* ignore */ }
-      }
-    })
+function webNotifyVibrate(webPattern: number | number[]): void {
+  if (typeof navigator === 'undefined') return
+  if (typeof navigator.vibrate !== 'function') {
+    iosSwitchTick()
     return
   }
-  if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
-    try { navigator.vibrate(webPattern) } catch { /* ignore */ }
+  try { navigator.vibrate(webPattern) } catch { /* ignore */ }
+}
+
+function notify(type: NotificationType, webPattern: number | number[]): void {
+  if (isNativePlatform()) {
+    Haptics.notification({ type }).catch(() => webNotifyVibrate(webPattern))
+    return
   }
+  webNotifyVibrate(webPattern)
 }
 
 export function notifySuccess(): void {

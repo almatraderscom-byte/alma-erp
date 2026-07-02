@@ -37,14 +37,46 @@ export function buildSalahCallSayTwiml(text: string): string {
   )
 }
 
-export function buildTwimlCallbackUrl(appUrl: string, audioUrl: string, sayText?: string): string {
+/**
+ * Message-delivery call (playOnce): audio played exactly once, then hangup.
+ * No double-play, no <Say> repetition. Without an audio URL (say-only retry
+ * case) a single <Say> + <Hangup/> is returned instead.
+ */
+export function buildMessageCallTwiml(audioUrl?: string, sayFallback?: string): string {
+  if (audioUrl) {
+    return (
+      `<?xml version="1.0" encoding="UTF-8"?>` +
+      `<Response><Play>${escapeXml(audioUrl)}</Play><Hangup/></Response>`
+    )
+  }
+  const say = sayFallback?.trim() ?? ''
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<Response><Say voice="Polly.Aditi" language="bn-IN">${escapeXml(say.slice(0, 400))}</Say><Hangup/></Response>`
+  )
+}
+
+/** opts.once=true → single play + hangup (message-delivery call) */
+export function buildTwimlCallbackUrl(
+  appUrl: string,
+  audioUrl: string,
+  sayText?: string,
+  opts: { once?: boolean } = {},
+): string {
   const base = appUrl.replace(/\/$/, '')
   const params = new URLSearchParams({ audio: audioUrl })
   if (sayText?.trim()) params.set('say', sayText.slice(0, 400))
+  if (opts.once) params.set('once', '1')
   return `${base}/api/twilio/twiml/salah-call?${params.toString()}`
 }
 
-export function buildTwimlSayOnlyUrl(appUrl: string, sayText: string): string {
+/** opts.once=true → single say + hangup (message-delivery call) */
+export function buildTwimlSayOnlyUrl(
+  appUrl: string,
+  sayText: string,
+  opts: { once?: boolean } = {},
+): string {
   const base = appUrl.replace(/\/$/, '')
-  return `${base}/api/twilio/twiml/salah-call?say=${encodeURIComponent(sayText.slice(0, 400))}`
+  const onceParam = opts.once ? '&once=1' : ''
+  return `${base}/api/twilio/twiml/salah-call?say=${encodeURIComponent(sayText.slice(0, 400))}${onceParam}`
 }

@@ -970,6 +970,27 @@ async function runApprove(
       message: `Task "${title}" added and queued for dispatch to staff.` })
   }
 
+  if (action.type === 'memory_cleanup') {
+    // Weekly memory revision: the owner approved removing the listed stale
+    // memories. Deletion happens ONLY here — never silently. pinned:false guard
+    // repeated defensively (pinned rows are standing instructions).
+    const { memoryIds } = payload as { memoryIds?: string[] }
+    const ids = Array.isArray(memoryIds) ? memoryIds.filter((x) => typeof x === 'string') : []
+    const deleted = ids.length
+      ? await db.agentMemory.deleteMany({ where: { id: { in: ids }, pinned: false } })
+      : { count: 0 }
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: { status: 'executed', resolvedAt: new Date(), result: { deleted: deleted.count } },
+    })
+    await appendConversationNote(
+      db,
+      action,
+      `🧹 মেমরি রিভিশন সম্পন্ন — মালিকের অনুমোদনে ${deleted.count}টি পুরোনো স্মৃতি মুছে ফেলা হয়েছে।`,
+    )
+    return Response.json({ success: true, deleted: deleted.count })
+  }
+
   if (action.type === 'update_setting') {
     const { key, value } = payload as { key: string; value: string }
     await db.agentKvSetting.upsert({

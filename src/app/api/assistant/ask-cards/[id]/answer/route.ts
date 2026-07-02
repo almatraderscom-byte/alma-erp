@@ -38,6 +38,7 @@ export async function POST(
 
   const option = typeof body.option === 'string' ? body.option.trim() : ''
   if (!option) return Response.json({ error: 'option_required' }, { status: 400 })
+  if (option.length > 500) return Response.json({ error: 'option_too_long' }, { status: 400 })
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
@@ -47,10 +48,10 @@ export async function POST(
     return Response.json({ error: 'already_answered', selectedOption: card.selectedOption }, { status: 409 })
   }
 
-  const options: string[] = JSON.parse(card.options)
-  if (!options.includes(option)) {
-    return Response.json({ error: 'invalid_option' }, { status: 400 })
-  }
+  // Free-text answers are FIRST-CLASS: the card always shows an "Other (write your
+  // own)" row, so the owner's own words are a valid answer — record them verbatim
+  // instead of rejecting anything outside the preset options (old bug: 400
+  // invalid_option silently dropped every free-text answer).
 
   await db.agentAskCard.update({
     where: { id: params.id },

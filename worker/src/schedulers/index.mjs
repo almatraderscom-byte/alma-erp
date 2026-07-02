@@ -50,6 +50,7 @@ const lazy = {
   csMessengerPoll:    () => import('../cs/messenger-poll.mjs'),
   tokenHealth:        () => import('../cs/token-health.mjs'),
   sessionSummarizer:  () => import('../memory/session-summarizer.mjs'),
+  memoryRevision:     () => import('../memory/memory-revision.mjs'),
   ownerBriefing:      () => import('../reports/owner-briefing-run.mjs'),
   customerIntel:      () => import('../reports/customer-intel.mjs'),
   marketingWeekly:    () => import('../reports/marketing-weekly.mjs'),
@@ -105,6 +106,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'session-summarizer',     cronUtc: '*/15 * * * *', description: 'Summarize ended owner chats into memory (every 15 min)' },
   { name: 'weekly-review',          cronUtc: '30 15 * * 5',  description: 'Friday weekly review (21:30 Dhaka)' },
   { name: 'weekly-reflection',      cronUtc: '0 16 * * 5',   description: 'Weekly self-reflection → playbook proposals (22:00 Fri Dhaka)' },
+  { name: 'memory-revision',        cronUtc: '15 15 * * 5',  description: 'Weekly memory revision — stale memories → owner confirm card (21:15 Fri Dhaka)' },
   { name: 'daily-summary',          cronUtc: '30 17 * * *',  description: 'Daily summary + salah scorecard (23:30 Dhaka)' },
   { name: 'customer-intel',         cronUtc: '0 4 * * 6',    description: 'Weekly customer win-back + loyalty digest (Sat 10:00 Dhaka)' },
   { name: 'marketing-weekly',       cronUtc: '0 4 * * 6',    description: 'Weekly marketing report (Sat 10:00 Dhaka)' },
@@ -298,6 +300,11 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'session-summarizer': {
       const { runSessionSummarizer } = await lazy.sessionSummarizer()
       dutyResult = await runSessionSummarizer() ?? { dutyStatus: 'done' }
+      break
+    }
+    case 'memory-revision': {
+      const { runMemoryRevision } = await lazy.memoryRevision()
+      dutyResult = await runMemoryRevision() ?? { dutyStatus: 'done' }
       break
     }
     case 'night-report': {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { buildSalahCallSayTwiml, buildSalahCallTwiml } from '@/lib/twilio/twiml'
+import { buildMessageCallTwiml, buildSalahCallSayTwiml, buildSalahCallTwiml } from '@/lib/twilio/twiml'
 import { verifyTwilioRequest } from '@/lib/twilio/verify-signature'
 
 export const runtime = 'nodejs'
@@ -18,7 +18,12 @@ export async function GET(req: NextRequest) {
   }
   const audio = req.nextUrl.searchParams.get('audio')?.trim()
   const say = req.nextUrl.searchParams.get('say')?.trim()
+  const once = req.nextUrl.searchParams.get('once') === '1'
 
+  // Message-delivery call: play/say exactly once, then hang up (no repetition).
+  if (once && (audio || say)) {
+    return twiml(buildMessageCallTwiml(audio || undefined, say))
+  }
   if (say && !audio) {
     return twiml(buildSalahCallSayTwiml(say))
   }

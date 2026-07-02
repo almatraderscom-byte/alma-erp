@@ -22,23 +22,28 @@ import { isOwnerCallLocked } from '../owner-call-lock.mjs'
 import { isSalahCallBlocked } from '../salah-confirmed.mjs'
 
 const CALL_TEXT_LIMIT = 200
+/** playOnce (message-delivery) calls: full message, pure safety bound only */
+const MESSAGE_CALL_TEXT_LIMIT = 2000
 /** Min gap between general outbound calls — reduces carrier spam-blocking */
 
 async function synthesizeCallAudio(speechText, opts = {}) {
   const isSalah = Boolean(opts.salah || opts.purpose === 'salah')
   const callOpts = { purpose: 'phone_call' }
+  // Always ≥ the actual text so synthesizeSpeech never re-truncates it
+  // (its internal 200-char chunking is per-request splitting, not truncation).
+  const ttsMaxChars = speechText.length + 20
   if (isSalah || opts.ttsProvider === 'google') {
-    return synthesizeSpeech(speechText, CALL_TEXT_LIMIT + 20, callOpts)
+    return synthesizeSpeech(speechText, ttsMaxChars, callOpts)
   }
   if (opts.ttsProvider === 'elevenlabs' || opts.useElevenLabs) {
     const { synthesizeElevenLabs, isElevenLabsAvailable } = await import('../tts-elevenlabs.mjs')
     if (!isElevenLabsAvailable()) {
-      return synthesizeSpeech(speechText, CALL_TEXT_LIMIT + 20, callOpts)
+      return synthesizeSpeech(speechText, ttsMaxChars, callOpts)
     }
     const voiceProfile = opts.voiceProfile === 'female' ? 'female' : 'male'
     return synthesizeElevenLabs(speechText, { voiceProfile, ...callOpts })
   }
-  return synthesizeSpeech(speechText, CALL_TEXT_LIMIT + 20, callOpts)
+  return synthesizeSpeech(speechText, ttsMaxChars, callOpts)
 }
 const MIN_CALL_GAP_MS = 90 * 1000
 /** Salah retries: wait after failed connect, then call again (owner may be on another line) */
@@ -322,11 +327,16 @@ async function scheduleSalahCallRetries({
 
 /**
  * @param {string} text
- * @param {{ force?: boolean, salah?: boolean, purpose?: 'salah', skipAutoRetry?: boolean, toNumber?: string, salahDate?: string, salahWaqt?: string }} opts
+ * @param {{ force?: boolean, salah?: boolean, purpose?: 'salah', skipAutoRetry?: boolean, playOnce?: boolean, toNumber?: string, salahDate?: string, salahWaqt?: string }} opts
+ *   - playOnce: message-delivery call — speak the FULL message exactly once, then hang up.
+ *     No 200-char truncation, no "বিস্তারিত Telegram-এ" suffix (receiver may be a third
+ *     party without the owner's Telegram), no double-play/<Say> repetition, and no
+ *     ghost-connect auto-retry (a short message legitimately finishes in <12s).
  * @returns {Promise<{ok:boolean, callSid?:string, error?:string, skipped?:boolean}>}
  */
 export async function makeTwilioCall(text, opts = {}) {
   const force = Boolean(opts.force)
+  const playOnce = Boolean(opts.playOnce)
   const salah = Boolean(opts.salah || opts.purpose === 'salah')
   const salahDate = opts.salahDate
   const salahWaqt = opts.salahWaqt
@@ -366,8 +376,14 @@ export async function makeTwilioCall(text, opts = {}) {
     return { ok: false, error: 'call_cooldown', skipped: true }
   }
 
-  let speechText = text.slice(0, CALL_TEXT_LIMIT)
-  if (text.length > CALL_TEXT_LIMIT) speechText += '... বিস্তারিত Telegram-এ।'
+  let speechText
+  if (playOnce) {
+    // Full message, safety-bounded only — no Telegram suffix for third-party receivers.
+    speechText = text.slice(0, MESSAGE_CALL_TEXT_LIMIT)
+  } else {
+    speechText = text.slice(0, CALL_TEXT_LIMIT)
+    if (text.length > CALL_TEXT_LIMIT) speechText += '... বিস্তারিত Telegram-এ।'
+  }
 
   try {
     const mp3Buffer = await synthesizeCallAudio(speechText, opts)
@@ -381,7 +397,7 @@ export async function makeTwilioCall(text, opts = {}) {
     if (uploadErr) throw new Error(`Supabase upload: ${uploadErr.message}`)
 
     const audioUrl = buildProxiedAudioUrl(publicBase, storagePath)
-    const twimlUrl = buildTwimlCallbackUrl(publicBase, audioUrl, speechText)
+    const twimlUrl = buildTwimlCallbackUrl(publicBase, audioUrl, speechText, { once: playOnce })
     const statusCallbackUrl = appUrl
       ? `${appUrl}/api/twilio/call-status`
       : `${publicBase}/call-status`
@@ -407,7 +423,9 @@ export async function makeTwilioCall(text, opts = {}) {
       dedupKey: `twilio:${result.callSid}`,
     })
 
-    if (!opts.skipAutoRetry) {
+    // playOnce implies skipAutoRetry: a short message-delivery call legitimately
+    // completes in <12s, which would look like a ghost connect and trigger a retry.
+    if (!opts.skipAutoRetry && !playOnce) {
       const retryCtx = {
         callSid: result.callSid,
         sayText: speechText,

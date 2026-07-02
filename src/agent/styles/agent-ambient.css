@@ -353,6 +353,44 @@ body.kb-open .agent-composer-wrap {
   to { --neon-angle: 360deg; }
 }
 
+/* Composer focus glow — a soft coral ring rises while typing (Claude feel). */
+.agent-composer-box {
+  transition: border-color 0.2s ease, box-shadow 0.25s ease;
+}
+.agent-composer-box:focus-within {
+  border-color: rgba(224, 122, 95, 0.35);
+  box-shadow: 0 0 0 3px rgba(224, 122, 95, 0.10), 0 8px 32px rgba(0, 0, 0, 0.25);
+}
+
+/* Message-bubble press: slight shrink + coral glow while the finger is down —
+ * the Claude-app signature touch. Pure CSS so it costs nothing at rest. */
+.agent-bubble-press {
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.25s ease;
+  will-change: transform;
+}
+@media (pointer: coarse) {
+  .agent-bubble-press:active {
+    transform: scale(0.965);
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.22),
+      0 4px 24px rgba(224, 122, 95, 0.45),
+      0 0 40px rgba(224, 122, 95, 0.22);
+  }
+  /* Assistant bubbles glow softer + neutral (they sit on the page background). */
+  .agent-bubble-press--assistant:active {
+    transform: scale(0.985);
+    box-shadow:
+      0 4px 20px rgba(224, 122, 95, 0.18),
+      0 0 32px rgba(224, 122, 95, 0.10);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-bubble-press,
+  .agent-bubble-press:active {
+    transform: none;
+  }
+}
+
 /* Today's-Tasks pill — soft, slow neon halo so the persistent dock catches the
  * eye without shouting. Same conic-border technique as the composer, but slower
  * (7s) and lower opacity. The host wrapper must NOT clip overflow (the inner pill

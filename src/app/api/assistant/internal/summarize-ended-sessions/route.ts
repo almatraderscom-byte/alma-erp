@@ -43,16 +43,27 @@ async function summarizeConversation(messages: Array<{ role: string; content: un
   if (!transcript.trim()) return 'SKIP'
 
   const text = await agentSmartText({
-    system: 'Extract durable owner decisions/preferences/facts only. 2-5 Bangla bullets or exactly SKIP.',
+    system:
+      'You are the memory-keeper of a personal AI agent. Extract durable owner ' +
+      'facts/preferences only. 2-8 Bangla bullets or exactly SKIP. NEVER miss a ' +
+      'like/dislike — the owner audited the agent brain and found his ভালো লাগা / ' +
+      'খারাপ লাগা were not being captured; that is the #1 failure to avoid.',
     prompt:
-      'Summarize this owner↔agent business chat. Extract ONLY:\n' +
-      '- Owner\'s key decisions / instructions\n' +
-      '- Preferences expressed\n' +
-      '- Important business facts mentioned\n' +
-      '- Open action items\n' +
-      'Output 2-5 short Bangla bullet points. If nothing durable, output exactly: SKIP\n\n' +
+      'Summarize this owner↔agent chat for long-term memory. Extract ONLY durable items:\n' +
+      '- ভালো লাগা / খারাপ লাগা: ANYTHING the owner liked, disliked, praised, or complained ' +
+      'about (agent behavior, designs, products, people, routines) — capture these FIRST, ' +
+      'verbatim-ish ("স্যারের ভালো লেগেছে: …" / "স্যারের পছন্দ না: …")\n' +
+      '- Standing instructions / preferences ("এভাবে কর", "daily এটা করবি", "আর করবা না")\n' +
+      '- Owner\'s key decisions and corrections (including corrections of the agent\'s mistakes ' +
+      '— note the RIGHT behavior)\n' +
+      '- Important business facts, numbers, people (নাম/সম্পর্ক/নম্বর), dates, habits\n' +
+      '- Open action items / promises\n' +
+      '- Things the owner said he STOPPED doing (mark with prefix "বাদ:") — the weekly memory ' +
+      'revision uses these to flag stale memories\n' +
+      'Do NOT include small talk, one-off queries, or transient data (live sales numbers etc.).\n' +
+      'Output 2-8 short Bangla bullet points. If nothing durable, output exactly: SKIP\n\n' +
       transcript,
-    maxTokens: 500,
+    maxTokens: 700,
     costLabel: 'session_summary',
   })
   return text.trim() || 'SKIP'

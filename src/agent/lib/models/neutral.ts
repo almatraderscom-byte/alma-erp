@@ -2,7 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk'
 import type { AgentTool } from '@/agent/tools/registry'
 import type { NeutralMsg, NeutralTool } from '@/agent/lib/models/types'
 
-type StoredBlock = { type: string; text?: string; tool_use_id?: string; content?: string; path?: string; summary?: string; status?: string }
+type StoredBlock = { type: string; text?: string; tool_use_id?: string; content?: string; path?: string; summary?: string; status?: string; question?: string }
 
 export function toolsToNeutral(tools: AgentTool[]): NeutralTool[] {
   return tools.map((t) => ({
@@ -58,8 +58,14 @@ export function dbRowsToNeutral(
         return `[অনুমোদনের কার্ড দেখানো হয়েছিল: ${b.summary ?? ''}${status}]`
       })
       .join('\n')
+    // Ask-card breadcrumbs — same rationale as confirm cards: keep a short note so
+    // the head remembers a question card was shown (never ship the raw block).
+    const askParts = blocks
+      .filter((b) => b.type === 'ask_card')
+      .map((b) => `[প্রশ্ন কার্ড দেখানো হয়েছিল: ${b.question ?? ''}]`)
+      .join('\n')
 
-    const combined = [fileParts, textParts, cardParts].filter(Boolean).join('\n').trim()
+    const combined = [fileParts, textParts, cardParts, askParts].filter(Boolean).join('\n').trim()
     if (combined) {
       out.push({ role: row.role as 'user' | 'assistant', content: combined })
     }

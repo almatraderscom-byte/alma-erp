@@ -51,10 +51,12 @@ export async function GET(
   // CURRENT pending-action status, so resolve those live (a card approved earlier
   // must render as "✅ অনুমোদিত", not a fresh actionable card).
   const cardIds = new Set<string>()
+  const askCardIds = new Set<string>()
   for (const m of messages) {
     const blocks = Array.isArray(m.content) ? (m.content as Array<Record<string, unknown>>) : []
     for (const b of blocks) {
       if (b?.type === 'confirm_card' && typeof b.pendingActionId === 'string') cardIds.add(b.pendingActionId)
+      if (b?.type === 'ask_card' && typeof b.askCardId === 'string') askCardIds.add(b.askCardId)
     }
   }
 
@@ -111,6 +113,56 @@ export async function GET(
     syntheticByMsg.set(target.id, list)
   }
 
+  // ASK-CARD RECONSTRUCTION (mirrors the confirm-card pattern above): the ask_user
+  // question card used to live only in client memory (SSE event), so the 12s
+  // message poll / visibilitychange resync / reload wiped it within seconds. The
+  // durable source of truth is the agent_ask_cards table — pull every card for
+  // this conversation; it supplies live status/answer for breadcrumbed cards AND
+  // lets us synthesize cards that were never breadcrumbed into a saved message.
+  const askRows: Array<{
+    id: string
+    question: string
+    options: string
+    status: string
+    selectedOption: string | null
+    createdAt: Date
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }> = await (prisma as any).agentAskCard.findMany({
+    where: { conversationId: id },
+    select: { id: true, question: true, options: true, status: true, selectedOption: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  })
+
+  const parseOptions = (raw: string): string[] => {
+    try {
+      const parsed = JSON.parse(raw)
+      return Array.isArray(parsed) ? parsed.map(String) : []
+    } catch { return [] }
+  }
+  const askById = new Map(askRows.map((a) => [a.id, a]))
+
+  // For any ask card with no breadcrumb anywhere in the saved messages, attach a
+  // synthetic ask_card block to the earliest assistant message at/after the card's
+  // creation time (the turn that asked). Fallback: the last assistant message.
+  const syntheticAskByMsg = new Map<string, Array<Record<string, unknown>>>()
+  for (const a of askRows) {
+    if (askCardIds.has(a.id)) continue
+    const target =
+      assistantMsgs.find((m) => m.createdAt >= a.createdAt) ??
+      assistantMsgs[assistantMsgs.length - 1]
+    if (!target) continue
+    const list = syntheticAskByMsg.get(target.id) ?? []
+    list.push({
+      type: 'ask_card',
+      askCardId: a.id,
+      question: decodeUnicodeEscapes(a.question ?? ''),
+      options: parseOptions(a.options),
+      status: a.status,
+      selectedOption: a.selectedOption ?? undefined,
+    })
+    syntheticAskByMsg.set(target.id, list)
+  }
+
   // Reconstruct the per-message tool activity (Claude-style expandable cards) from
   // the durable agent_tool_calls rows, so the cards survive the background message
   // poll / page reload instead of only existing during the live stream.
@@ -139,25 +191,43 @@ export async function GET(
     // action row (purged) is treated as 'expired' so the card settles, never
     // re-arming an approve/reject for an action that no longer exists.
     const baseContent = Array.isArray(m.content)
-      ? (m.content as Array<Record<string, unknown>>).map((b) =>
-          b?.type === 'confirm_card' && typeof b.pendingActionId === 'string'
-            ? {
-                ...b,
-                status: statusById.get(b.pendingActionId) ?? 'expired',
-                failReason: failReasonById.get(b.pendingActionId),
-                // Heal any escaped astral emoji in a persisted breadcrumb summary.
-                ...(typeof b.summary === 'string'
-                  ? { summary: decodeUnicodeEscapes(b.summary) }
-                  : {}),
-              }
-            : b,
-        )
+      ? (m.content as Array<Record<string, unknown>>).map((b) => {
+          if (b?.type === 'confirm_card' && typeof b.pendingActionId === 'string') {
+            return {
+              ...b,
+              status: statusById.get(b.pendingActionId) ?? 'expired',
+              failReason: failReasonById.get(b.pendingActionId),
+              // Heal any escaped astral emoji in a persisted breadcrumb summary.
+              ...(typeof b.summary === 'string'
+                ? { summary: decodeUnicodeEscapes(b.summary) }
+                : {}),
+            }
+          }
+          if (b?.type === 'ask_card' && typeof b.askCardId === 'string') {
+            // Inject the CURRENT ask-card state onto the persisted breadcrumb. A
+            // missing row (purged) settles as 'superseded' so the card can never
+            // re-arm a question that no longer exists.
+            const row = askById.get(b.askCardId)
+            return {
+              ...b,
+              status: row?.status ?? 'superseded',
+              selectedOption: row?.selectedOption ?? undefined,
+              ...(typeof b.question === 'string'
+                ? { question: decodeUnicodeEscapes(b.question) }
+                : {}),
+            }
+          }
+          return b
+        })
       : m.content
-    // Append any synthetic cards reconstructed from agent_pending_actions for
-    // actions that were never breadcrumbed into this message's saved content.
-    const synthetic = syntheticByMsg.get(m.id)
+    // Append any synthetic cards reconstructed from agent_pending_actions /
+    // agent_ask_cards for cards never breadcrumbed into this message's content.
+    const synthetic = [
+      ...(syntheticByMsg.get(m.id) ?? []),
+      ...(syntheticAskByMsg.get(m.id) ?? []),
+    ]
     const content =
-      synthetic && Array.isArray(baseContent)
+      synthetic.length > 0 && Array.isArray(baseContent)
         ? [...baseContent, ...synthetic]
         : baseContent
     return {

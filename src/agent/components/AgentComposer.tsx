@@ -2,8 +2,9 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react'
 import toast from 'react-hot-toast'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { cn } from '@/lib/utils'
-import { impactMedium } from '@/lib/haptics'
+import { impactLight, impactMedium } from '@/lib/haptics'
 import AgentModelSelector from './AgentModelSelector'
 import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
 
@@ -209,6 +210,11 @@ export default function AgentComposer({
 
   const anyUploading = files.some((f) => f.status === 'uploading')
   const canSend = (text.trim().length > 0 || files.length > 0) && !disabled && !streaming && !anyUploading
+  const reduceMotion = useReducedMotion()
+  // One spring for every composer micro-interaction — snappy, iOS-feeling.
+  const springPop = reduceMotion
+    ? { duration: 0 }
+    : { type: 'spring' as const, stiffness: 500, damping: 28, mass: 0.7 }
 
   return (
     <>
@@ -246,8 +252,16 @@ export default function AgentComposer({
             thumbnails sit attached to the input, not floating above it). */}
         {files.length > 0 && (
           <div className="flex gap-2 overflow-x-auto px-1 pt-1 pb-0.5">
+            <AnimatePresence initial={false}>
             {files.map((f, i) => (
-              <div key={f.id ?? i} className="group relative shrink-0">
+              <motion.div
+                key={f.id ?? i}
+                initial={reduceMotion ? false : { scale: 0.7, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={reduceMotion ? { opacity: 0 } : { scale: 0.7, opacity: 0 }}
+                transition={springPop}
+                className="group relative shrink-0"
+              >
                 {f.file.type.startsWith('image/') ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={f.previewUrl} alt="" className="h-16 w-16 rounded-xl border border-border-subtle object-cover" />
@@ -276,12 +290,13 @@ export default function AgentComposer({
 
                 <button
                   type="button"
-                  onClick={() => removeFile(i)}
+                  onClick={() => { impactLight(); removeFile(i) }}
                   aria-label="সরান"
-                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-cream text-[11px] leading-none shadow-md ring-1 ring-white/20 transition-transform hover:scale-110"
+                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/70 text-cream text-[11px] leading-none shadow-md ring-1 ring-white/20 transition-transform hover:scale-110 active:scale-90"
                 >×</button>
-              </div>
+              </motion.div>
             ))}
+            </AnimatePresence>
           </div>
         )}
 
@@ -303,9 +318,9 @@ export default function AgentComposer({
           {/* Left: circular "+" (attach/add) */}
           <button
             type="button"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => { impactLight(); fileInputRef.current?.click() }}
             disabled={disabled || streaming}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted transition-all hover:bg-white/[0.05] hover:text-cream disabled:opacity-30"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted transition-all hover:bg-white/[0.05] hover:text-cream active:scale-90 active:bg-white/[0.08] disabled:opacity-30"
             aria-label="যোগ করুন"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>
@@ -328,13 +343,13 @@ export default function AgentComposer({
           {!streaming && (
             <button
               type="button"
-              onClick={toggleDictation}
+              onClick={() => { impactLight(); toggleDictation() }}
               disabled={disabled}
               className={cn(
-                'flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all disabled:opacity-30',
+                'flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all active:scale-90 disabled:opacity-30',
                 recording
                   ? 'bg-[#E07A5F] text-white'
-                  : 'text-muted hover:bg-[#E07A5F]/10 hover:text-[#E07A5F]',
+                  : 'text-muted hover:bg-[#E07A5F]/10 hover:text-[#E07A5F] active:bg-[#E07A5F]/15',
               )}
               aria-label={recording ? 'ভয়েস থামান' : 'ভয়েসে লিখুন'}
             >
@@ -349,34 +364,52 @@ export default function AgentComposer({
           {!streaming && onVoiceStart && (
             <button
               type="button"
-              onClick={onVoiceStart}
+              onClick={() => { impactLight(); onVoiceStart() }}
               disabled={disabled}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted transition-all hover:bg-[#81B29A]/10 hover:text-[#81B29A] disabled:opacity-30"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted transition-all hover:bg-[#81B29A]/10 hover:text-[#81B29A] active:scale-90 active:bg-[#81B29A]/15 disabled:opacity-30"
               aria-label="ভয়েস টু ভয়েস"
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z" opacity="0"/><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>
             </button>
           )}
 
-          {/* Right: coral circular send (or stop while streaming) */}
-          {streaming ? (
-            <button type="button" onClick={onStop} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-muted" aria-label="থামান">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={send}
-              disabled={!canSend}
-              className={cn(
-                'flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all',
-                canSend ? 'bg-[#E07A5F] text-white shadow-[0_2px_10px_rgba(224,122,95,0.35)] active:scale-95' : 'bg-white/[0.06] text-muted',
-              )}
-              aria-label="পাঠান"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
-            </button>
-          )}
+          {/* Right: coral circular send ↔ stop — springy icon swap (Claude feel) */}
+          <AnimatePresence mode="popLayout" initial={false}>
+            {streaming ? (
+              <motion.button
+                key="stop"
+                type="button"
+                onClick={() => { impactLight(); onStop() }}
+                initial={reduceMotion ? false : { scale: 0.6, rotate: -90, opacity: 0 }}
+                animate={{ scale: 1, rotate: 0, opacity: 1 }}
+                exit={reduceMotion ? { opacity: 0 } : { scale: 0.6, rotate: 90, opacity: 0 }}
+                transition={springPop}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-muted active:scale-90"
+                aria-label="থামান"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+              </motion.button>
+            ) : (
+              <motion.button
+                key="send"
+                type="button"
+                onClick={send}
+                disabled={!canSend}
+                initial={reduceMotion ? false : { scale: 0.6, rotate: -90, opacity: 0 }}
+                animate={{ scale: canSend ? 1 : 0.94, rotate: 0, opacity: 1 }}
+                exit={reduceMotion ? { opacity: 0 } : { scale: 0.6, rotate: 90, opacity: 0 }}
+                whileTap={canSend && !reduceMotion ? { scale: 0.85 } : undefined}
+                transition={springPop}
+                className={cn(
+                  'flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors duration-200',
+                  canSend ? 'bg-[#E07A5F] text-white shadow-[0_2px_10px_rgba(224,122,95,0.35)]' : 'bg-white/[0.06] text-muted',
+                )}
+                aria-label="পাঠান"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+              </motion.button>
+            )}
+          </AnimatePresence>
         </div>
         </>
         )}

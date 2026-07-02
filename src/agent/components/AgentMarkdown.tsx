@@ -4,6 +4,7 @@ import React, { useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
+import { impactLight } from '@/lib/haptics'
 
 interface AgentMarkdownProps {
   content: string
@@ -14,6 +15,7 @@ interface AgentMarkdownProps {
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = React.useState(false)
   const copy = useCallback(() => {
+    impactLight()
     void navigator.clipboard.writeText(text).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
@@ -22,7 +24,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={copy}
-      className="absolute right-2 top-2 rounded-full bg-card/82 backdrop-blur-md border border-border px-2.5 py-1 text-[10px] font-semibold text-muted transition-all hover:bg-[#E07A5F]/10 hover:text-[#E07A5F] hover:border-[#E07A5F]/25"
+      className="absolute right-2 top-2 rounded-full bg-card/82 backdrop-blur-md border border-border px-2.5 py-1 text-[10px] font-semibold text-muted transition-all hover:bg-[#E07A5F]/10 hover:text-[#E07A5F] hover:border-[#E07A5F]/25 active:scale-90"
     >
       {copied ? '✓' : 'কপি'}
     </button>
@@ -71,7 +73,7 @@ function ImageWithDownload({ src, alt }: { src?: string; alt?: string }) {
       <button
         onClick={download}
         disabled={busy}
-        className="absolute right-2 top-2 rounded-full bg-card/82 backdrop-blur-md border border-border px-2.5 py-1 text-[10px] font-semibold text-muted transition-all hover:bg-[#E07A5F]/10 hover:text-[#E07A5F] hover:border-[#E07A5F]/25 disabled:opacity-60"
+        className="absolute right-2 top-2 rounded-full bg-card/82 backdrop-blur-md border border-border px-2.5 py-1 text-[10px] font-semibold text-muted transition-all hover:bg-[#E07A5F]/10 hover:text-[#E07A5F] hover:border-[#E07A5F]/25 active:scale-90 disabled:opacity-60"
       >
         {busy ? '…' : '⬇ ডাউনলোড'}
       </button>
