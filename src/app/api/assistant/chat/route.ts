@@ -4,7 +4,6 @@ import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled, requireAnthropicApiKey, requireModelProviderKey } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { runAgentTurn } from '@/agent/lib/core'
 import { runOwnerTurn } from '@/agent/lib/models/run-owner-turn'
 import { assertModelOverrideNotAllowed } from '@/agent/lib/models/guard'
 import { AUTO_MODEL_ID, DEFAULT_MODEL_ID, isSelectableModelId, isKnownModelId } from '@/agent/lib/models/registry'
@@ -472,11 +471,17 @@ export async function POST(req: NextRequest) {
   }
 
   async function* runTurn() {
-    if (isInternalCall) {
-      yield* runAgentTurn(conversationId!, turnOptions)
-    } else {
-      yield* runOwnerTurn(conversationId!, turnOptions)
-    }
+    // ALL turns — owner web AND internal (Telegram / VPS-worker continuation) — go
+    // through runOwnerTurn so the head-router's safeties always apply. Internal
+    // calls used to invoke runAgentTurn (the native Claude path) directly with
+    // DEFAULT_MODEL_ID (Sonnet), which skipped the ANTHROPIC_HEAD_DOWN redirect —
+    // every approval-continuation / Telegram turn was still billed at Sonnet rates
+    // while the head was supposed to run on Gemini. With a concrete pinned modelId
+    // runOwnerTurn does NO triage: it resolves 'explicit' and, when Anthropic is
+    // up, delegates to the same runAgentTurn with the same options (behavior
+    // preserved); when ANTHROPIC_HEAD_DOWN it transparently redirects to the heavy
+    // head (Gemini 3.1 Pro) and applies the owner's model-enabled fallback.
+    yield* runOwnerTurn(conversationId!, turnOptions)
   }
 
   const streamMode = req.nextUrl.searchParams.get('stream') !== 'false'

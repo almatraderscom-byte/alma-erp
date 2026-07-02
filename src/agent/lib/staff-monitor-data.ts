@@ -660,12 +660,28 @@ export async function getStaffMonitorData(opts: { historyDays?: number } = {}): 
     })
   }
 
-  for (const m of unackedMessages) {
-    warnings.push({
-      severity: 'critical',
-      kind: 'unacked_message',
-      message: `${m.staffName ?? 'স্টাফ'} ১০+ মিনিট মেসেজ দেখেননি (${typeLabelShort(m.type)})`,
-    })
+  // Group per staff — 9 separate "unseen" rows for one person buried the
+  // Monitor in duplicate banners (owner complaint). One line per staff with
+  // the count and the distinct message types.
+  {
+    const byStaff = new Map<string, { count: number; types: Set<string> }>()
+    for (const m of unackedMessages) {
+      const name = m.staffName ?? 'স্টাফ'
+      const g = byStaff.get(name) ?? { count: 0, types: new Set<string>() }
+      g.count += 1
+      g.types.add(typeLabelShort(m.type))
+      byStaff.set(name, g)
+    }
+    for (const [name, g] of byStaff) {
+      warnings.push({
+        severity: 'critical',
+        kind: 'unacked_message',
+        message:
+          g.count === 1
+            ? `${name} ১০+ মিনিট মেসেজ দেখেননি (${[...g.types][0]})`
+            : `${name} — ${g.count}টা মেসেজ ১০+ মিনিট দেখেননি (${[...g.types].join(', ')})`,
+      })
+    }
   }
 
   for (const d of agentDuties.filter((x) => x.status === 'missed' || x.status === 'failed')) {

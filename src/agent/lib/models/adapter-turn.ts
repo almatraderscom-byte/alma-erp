@@ -11,6 +11,11 @@ export type AdapterTurnResult = {
   text: string
   inputTokens: number
   outputTokens: number
+  /** Cached-prompt tokens read this turn. Adapters report inputTokens as
+   *  uncached-only, so dropping these made sub-agent cost math miss the cached
+   *  share entirely — callers must pass them to calcModelTurnCostUsd. */
+  cacheRead: number
+  cacheWrite: number
   toolsUsed: string[]
 }
 
@@ -29,6 +34,8 @@ export async function runAdapterToolLoop(args: {
   const toolsUsed: string[] = []
   let inputTokens = 0
   let outputTokens = 0
+  let cacheRead = 0
+  let cacheWrite = 0
   let finalText = ''
   const adapter = adapterFor(args.model.provider)
 
@@ -54,6 +61,8 @@ export async function runAdapterToolLoop(args: {
       } else if (ev.type === 'usage') {
         inputTokens += ev.inputTokens
         outputTokens += ev.outputTokens
+        cacheRead += ev.cacheRead ?? 0
+        cacheWrite += ev.cacheWrite ?? 0
       }
     }
 
@@ -82,6 +91,8 @@ export async function runAdapterToolLoop(args: {
     text: finalText,
     inputTokens,
     outputTokens,
+    cacheRead,
+    cacheWrite,
     toolsUsed: Array.from(new Set(toolsUsed)),
   }
 }
