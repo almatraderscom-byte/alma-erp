@@ -731,6 +731,24 @@ export async function* runOwnerTurn(
     businessId,
     conversationId,
   })
+
+  // Owner's Monitor kill-switch per model: a model toggled OFF is unusable even
+  // when this chat has it pinned — swap to the enabled fallback IN this same
+  // session and tell the owner why in one visible line (never a silent switch,
+  // never a manual re-pick).
+  let disabledSwitchNote: string | null = null
+  try {
+    const { resolveEnabledFallback } = await import('@/agent/lib/models/model-enabled')
+    const fallbackId = await resolveEnabledFallback(decision.modelId)
+    if (fallbackId) {
+      const offModel = getModel(decision.modelId)
+      const onModel = getModel(fallbackId)
+      disabledSwitchNote = `⚙️ Sir, **${offModel.label}** Monitor-এ OFF করা আছে — এই মেসেজটা **${onModel.label}** দিয়ে চালাচ্ছি।\n\n`
+      decision.modelId = fallbackId
+      decision.via = `${decision.via}+disabled_fallback`
+    }
+  } catch { /* fail-open: enabled-map glitch must never block the turn */ }
+
   const model = getModel(decision.modelId)
 
   // ── Model-upgrade approval gate ───────────────────────────────────────────
@@ -769,6 +787,10 @@ export async function* runOwnerTurn(
     label: model.label,
     variant: modelVariant(model),
     tier: decision.tier,
+  }
+
+  if (disabledSwitchNote) {
+    yield { type: 'text_delta', delta: disabledSwitchNote }
   }
 
   if (model.provider === 'anthropic') {

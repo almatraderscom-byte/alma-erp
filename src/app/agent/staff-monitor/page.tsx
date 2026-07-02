@@ -5,6 +5,7 @@ import { isAgentEnabled } from '@/agent/config'
 import { isSystemOwner } from '@/lib/roles'
 import AgentStaffMonitor from '@/agent/components/AgentStaffMonitor'
 import AgentControlCenter from '@/agent/components/monitor/AgentControlCenter'
+import ModelTogglePanel from '@/agent/components/monitor/ModelTogglePanel'
 import HeartbeatPanel from '@/agent/components/monitor/HeartbeatPanel'
 import { AgentSubHeader } from '@/agent/components/AgentSubHeader'
 import { StaffMonitorScrollWrapper } from './StaffMonitorScrollWrapper'
@@ -24,6 +25,7 @@ export default async function StaffMonitorPage() {
     <StaffMonitorScrollWrapper>
       <AgentSubHeader title="LIVE" accent="Business" subtitle="কন্ট্রোল • হার্টবিট • স্টাফ মনিটর" />
       <AgentControlCenter />
+      <ModelTogglePanel />
       <HeartbeatPanel />
       <AgentStaffMonitor />
     </StaffMonitorScrollWrapper>
