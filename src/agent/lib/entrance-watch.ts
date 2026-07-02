@@ -304,6 +304,7 @@ export async function runEntranceWatchTest(deviceIdOverride?: string): Promise<{
   hadReferences?: boolean
   summaryBn?: string
   telegramSent?: boolean
+  telegramError?: string
 }> {
   try {
     const deviceId = deviceIdOverride?.trim() || (await getEntranceDeviceId())
@@ -323,7 +324,13 @@ export async function runEntranceWatchTest(deviceIdOverride?: string): Promise<{
       (unknownCount ? ` | অচেনা: ${unknownCount}` : '') +
       (match.hadReferences ? '' : '\n⚠️ এখনো কোনো রেফারেন্স ছবি যোগ করা হয়নি — শনাক্তকরণ হয়নি।') +
       (match.summaryBn ? `\nAI (${match.model}): ${match.summaryBn}` : '')
-    const res = await sendOwnerPhoto(snap.url, caption)
+    let res = await sendOwnerPhoto(snap.url, caption)
+    // Same resilience as the live watch: Telegram sometimes can't fetch the
+    // signed snapshot URL — fall back to text so the test still proves the chain.
+    if (!res.ok) {
+      console.warn('[entrance-watch] test photo send failed:', res.error)
+      res = await sendOwnerText(caption)
+    }
 
     return {
       ran: true,
@@ -333,6 +340,7 @@ export async function runEntranceWatchTest(deviceIdOverride?: string): Promise<{
       hadReferences: match.hadReferences,
       summaryBn: match.summaryBn,
       telegramSent: res.ok,
+      telegramError: res.ok ? undefined : res.error,
     }
   } catch (err) {
     return { ran: false, error: err instanceof Error ? err.message : String(err) }

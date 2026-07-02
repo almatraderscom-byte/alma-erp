@@ -44,6 +44,7 @@ interface TestResult {
   hadReferences?: boolean
   summaryBn?: string
   telegramSent?: boolean
+  telegramError?: string
 }
 
 const ROLES: Array<{ value: string; label: string }> = [
@@ -78,7 +79,9 @@ async function fileToSmallBase64(file: File): Promise<{ base64: string; mimeType
 }
 
 const cardCls = 'rounded-2xl border border-border-subtle bg-card/70 p-4 backdrop-blur-xl'
-const btnCls = 'rounded-xl bg-coral/90 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40'
+// Explicit palette colors (not theme tokens) so the buttons stay visible on both
+// the light and dark agent themes.
+const btnCls = 'rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40'
 const btnGhostCls = 'rounded-xl border border-border-subtle px-3 py-1.5 text-xs text-cream/80'
 const inputCls = 'w-full rounded-xl border border-border-subtle bg-black/20 px-3 py-2 text-sm text-cream outline-none'
 
@@ -311,7 +314,11 @@ export default function KnownPeopleManager() {
                     {testResult.strangerPresent ? <div>⚠️ অচেনা কেউ আছে</div> : null}
                     {testResult.hadReferences === false ? <div>⚠️ আগে নিচে ছবি যোগ করুন — তখন চেনা/অচেনা আলাদা হবে</div> : null}
                     {testResult.summaryBn ? <div className="text-cream/70">AI: {testResult.summaryBn}</div> : null}
-                    <div>{testResult.telegramSent ? '📨 Telegram-এ ছবিসহ কার্ড গেছে — দেখুন' : '⚠️ Telegram পাঠানো যায়নি'}</div>
+                    <div>
+                      {testResult.telegramSent
+                        ? '📨 Telegram-এ কার্ড গেছে — দেখুন'
+                        : `⚠️ Telegram পাঠানো যায়নি${testResult.telegramError ? ` (${testResult.telegramError})` : ''}`}
+                    </div>
                   </>
                 ) : (
                   <div>টেস্ট ব্যর্থ: {testResult.error}</div>
