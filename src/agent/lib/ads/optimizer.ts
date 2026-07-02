@@ -108,6 +108,7 @@ function metricsTable(metrics: CampaignMetrics[]): string {
       id: m.campaignId,
       name: m.name,
       spendWeek: Math.round(m.spendWeek),
+      currency: m.currency,
       roasWeek: Number(m.roasWeek.toFixed(2)),
       ctrTodayPct: Number((m.ctrToday * 100).toFixed(2)),
       ctrWeekPct: Number((m.ctrWeek * 100).toFixed(2)),
@@ -131,7 +132,7 @@ async function enrichWithSonnet(
     system:
       'You are ALMA Lifestyle Meta Ads optimizer (Bangladesh, COD/Messenger funnel). ' +
       'Output ONLY JSON array matching input campaigns. Each item: {"campaignId","verdict","reason","confidence"}. ' +
-      'reason = Bangla, cite numbers (ROAS, CTR, spend). Never recommend manual targeting/bidding — Advantage+ only. ' +
+      'reason = Bangla, cite numbers (ROAS, CTR, spend). Spend numbers are in each campaign\'s `currency` field (this account bills in USD) — ALWAYS write spend with that currency symbol, NEVER ৳ unless currency is BDT. Never recommend manual targeting/bidding — Advantage+ only. ' +
       'If insufficient data, verdict MUST be hold. Do not override hold guardrails to scale/kill.',
     prompt:
       `Metrics:\n${metricsTable(metrics)}\n\n` +
@@ -170,6 +171,10 @@ async function enrichWithSonnet(
   }
 }
 
+function curSym(m: CampaignMetrics): string {
+  return m.currency === 'BDT' ? '৳' : m.currency === 'USD' ? '$' : `${m.currency} `
+}
+
 function draftReason(m: CampaignMetrics, verdict: AdVerdict): string {
   const roas = m.roasWeek.toFixed(1)
   const ctrT = (m.ctrToday * 100).toFixed(2)
@@ -182,13 +187,13 @@ function draftReason(m: CampaignMetrics, verdict: AdVerdict): string {
     case 'refresh_creative':
       return `ROAS ${roas}x কিন্তু CTR ${ctrT}% vs গড় ${ctrW}% — creative fatigue; File 10 দিয়ে নতুন angle।`
     case 'reduce':
-      return `ROAS ${roas}x (লক্ষ্য ${OPTIMIZER_THRESHOLDS.TARGET_ROAS}x-এর নিচে), spend ৳${Math.round(m.spendWeek)} — বাজেট ${OPTIMIZER_THRESHOLDS.REDUCE_DELTA_PCT}% কমান।`
+      return `ROAS ${roas}x (লক্ষ্য ${OPTIMIZER_THRESHOLDS.TARGET_ROAS}x-এর নিচে), spend ${curSym(m)}${Math.round(m.spendWeek)} — বাজেট ${OPTIMIZER_THRESHOLDS.REDUCE_DELTA_PCT}% কমান।`
     case 'kill':
-      return `ROAS ${roas}x, spend ৳${Math.round(m.spendWeek)} — breakeven-এর নিচে; pause করুন।`
+      return `ROAS ${roas}x, spend ${curSym(m)}${Math.round(m.spendWeek)} — breakeven-এর নিচে; pause করুন।`
     default:
       return m.hasEnoughData
         ? `ROAS ${roas}x — এখন hold; আরও ডেটা দেখুন।`
-        : `Spend/ impression কম (৳${Math.round(m.spendWeek)} / ${Math.round(m.impressionsWeek)}) — noise-এ action নয়, hold।`
+        : `Spend/ impression কম (${curSym(m)}${Math.round(m.spendWeek)} / ${Math.round(m.impressionsWeek)}) — noise-এ action নয়, hold।`
   }
 }
 
