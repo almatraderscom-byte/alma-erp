@@ -96,6 +96,16 @@ function verifyToken(token) {
   }
 }
 
+/** Bearer Authorization OR X-Internal-Token — some egress proxies (e.g. the
+ * Claude Code sandbox relay) strip the Authorization header on plain HTTP,
+ * so a custom header carries the same secret with the same constant-time check. */
+function tokenFromRequest(req) {
+  const auth = req.headers.authorization ?? ''
+  if (auth.startsWith('Bearer ')) return auth.slice(7)
+  const custom = req.headers['x-internal-token']
+  return typeof custom === 'string' ? custom : ''
+}
+
 export function getDiagnosticPublicBase() {
   const configured = process.env.AGENT_WORKER_DIAGNOSTIC_PUBLIC_URL?.replace(/\/$/, '')
   if (configured) return configured
@@ -121,8 +131,7 @@ export function startDiagnosticHttpServer() {
       const pathname = url.pathname.replace(/\/$/, '') || '/'
 
       if (pathname === '/health') {
-        const auth = req.headers.authorization ?? ''
-        const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
+        const token = tokenFromRequest(req)
         if (verifyToken(token)) {
           res.writeHead(200, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ ok: true, uptime: process.uptime(), pid: process.pid, ts: Date.now(), publicBase, repo, bootCommit: BOOT_COMMIT }))
@@ -133,8 +142,7 @@ export function startDiagnosticHttpServer() {
         return
       }
 
-      const auth = req.headers.authorization ?? ''
-      const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
+      const token = tokenFromRequest(req)
 
       if (req.method === 'POST' && pathname === '/retrigger') {
         if (!verifyToken(token)) {
