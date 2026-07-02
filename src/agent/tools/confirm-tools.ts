@@ -305,6 +305,7 @@ const get_fb_messenger_inbox: AgentTool = {
   description:
     'Reads recent Facebook Page Messenger inbox threads (read-only). ' +
     'Use when the owner asks about page DMs, inbox, customer messages, or unanswered chats — NOT for public posts. ' +
+    'Each thread includes customerPsid + customerName — to REPLY to a thread, pass that customerPsid straight to send_customer_message (works even if the customer is not in the ERP DB). ' +
     'page: "lifestyle" | "onlineshop". limit: 1–25 conversations (default 15).',
   input_schema: {
     type: 'object' as const,
