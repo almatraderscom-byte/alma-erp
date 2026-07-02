@@ -95,7 +95,6 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
     const taskDesc = `${body.taskTitle ?? 'Task'}${body.taskDetail ? `. ${body.taskDetail}` : ''}`
 
     const userContent: Anthropic.Messages.ContentBlockParam[] = [
@@ -128,14 +127,48 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    const res = await client.messages.create({
-      model: AGENT_MODEL,
-      max_tokens: 200,
-      messages: [{ role: 'user', content: userContent }],
-    })
+    // Anthropic only when the owner's Monitor toggle + env allow it; otherwise
+    // (the current default) the same assessment runs on Gemini vision — the
+    // proof check must never depend on Claude being on.
+    const { isAnthropicAllowed } = await import('@/agent/lib/models/model-enabled')
+    const anthropicAllowed = await isAnthropicAllowed(AGENT_MODEL || 'claude-sonnet-4-6').catch(() => false)
 
-    const textBlock = res.content.find((b) => b.type === 'text')
-    const raw = textBlock && textBlock.type === 'text' ? textBlock.text : '{}'
+    let raw = '{}'
+    if (anthropicAllowed && process.env.ANTHROPIC_API_KEY) {
+      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+      const res = await client.messages.create({
+        model: AGENT_MODEL,
+        max_tokens: 200,
+        messages: [{ role: 'user', content: userContent }],
+      })
+      const textBlock = res.content.find((b) => b.type === 'text')
+      raw = textBlock && textBlock.type === 'text' ? textBlock.text : '{}'
+    } else {
+      const promptText = userContent
+        .filter((b): b is Anthropic.Messages.TextBlockParam => b.type === 'text')
+        .map((b) => b.text)
+        .join('\n')
+      if (cachedImage) {
+        const { geminiVisionJson } = await import('@/agent/lib/vision-analyze')
+        const out = await geminiVisionJson<Record<string, unknown>>({
+          prompt: promptText,
+          imageBase64: cachedImage.buf.toString('base64'),
+          mimeType: cachedImage.mime,
+          costKind: 'task_proof_assess',
+          maxTokens: 200,
+        })
+        raw = JSON.stringify(out)
+      } else {
+        const { geminiGenerateText } = await import('@/agent/lib/gemini-text')
+        raw = await geminiGenerateText({
+          prompt: promptText,
+          costLabel: 'task_proof_assess_text',
+          maxTokens: 200,
+          temperature: 0.1,
+        })
+      }
+    }
+
     const json = JSON.parse(raw.match(/\{[\s\S]*\}/)?.[0] ?? '{}') as {
       matches?: boolean
       confidence?: string
