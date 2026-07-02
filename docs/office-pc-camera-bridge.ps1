@@ -39,7 +39,7 @@ Write-Host "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') camera bridge started (pol
 while ($true) {
     try {
         # 1. Ask the server for the next queued announcement.
-        $r = Invoke-RestMethod -Method GET "$Api/api/assistant/camera-bridge" -Headers $Headers -TimeoutSec 20
+        $r = Invoke-RestMethod -Method GET "$Api/api/assistant/internal/camera-bridge" -Headers $Headers -TimeoutSec 20
 
         # 2. Nothing queued -> just wait and poll again.
         if ($null -eq $r.job) {
@@ -62,7 +62,7 @@ while ($true) {
 
         # 4. Ack the job so the server marks it played (or failed).
         $ackBody = @{ id = $r.job.id; ok = $ok; error = $errMsg } | ConvertTo-Json
-        Invoke-RestMethod -Method POST "$Api/api/assistant/camera-bridge" -Headers $Headers -ContentType 'application/json' -Body $ackBody -TimeoutSec 20 | Out-Null
+        Invoke-RestMethod -Method POST "$Api/api/assistant/internal/camera-bridge" -Headers $Headers -ContentType 'application/json' -Body $ackBody -TimeoutSec 20 | Out-Null
 
         # 5. Log one line per job so problems are visible at a glance.
         $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
