@@ -65,17 +65,44 @@ describe('calcModelTurnCostUsd — bills each model at its own rate', () => {
     expect(cost).toBeCloseTo(0.27, 6) // 0.09 + 0.18
   })
 
-  it('OpenRouter cached reads are billed at the ~0.25x provider discount, not full input rate', () => {
+  it('DeepSeek cached reads are billed at the 0.1x provider discount, not full input rate', () => {
     const model = getModel('or-deepseek-v4-flash')
-    // Providers bill cached input at a steep discount (DeepSeek ~0.1x, Qwen
-    // ~0.25x). Billing them at the FULL input rate inflated displayed turn cost
-    // ~3-4x vs the real OpenRouter charge (owner bug report 2026-07).
+    // Providers bill cached input at a steep, PER-PROVIDER discount (DeepSeek
+    // ~0.1x, Qwen/Gemini ~0.25x, OpenAI 0.5x). A flat 0.25x still overbilled
+    // DeepSeek cache reads 2.5x (owner bug report 2026-07).
     const split = calcModelTurnCostUsd(model, {
       inputTokens: 0.4 * ONE_M,
       outputTokens: ONE_M,
       cacheRead: 0.6 * ONE_M,
     })
-    // 0.4M × 0.09 + 0.6M × 0.09 × 0.25 + 1M × 0.18 = 0.036 + 0.0135 + 0.18
-    expect(split).toBeCloseTo(0.2295, 6)
+    // 0.4M × 0.09 + 0.6M × 0.09 × 0.1 + 1M × 0.18 = 0.036 + 0.0054 + 0.18
+    expect(split).toBeCloseTo(0.2214, 6)
+  })
+
+  it('Qwen cached reads use the 0.25x Alibaba discount', () => {
+    const cost = calcModelTurnCostUsd(getModel('or-qwen3-max'), {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheRead: ONE_M,
+    })
+    expect(cost).toBeCloseTo(1.25 * 0.25, 6) // 0.3125
+  })
+
+  it('Gemini (google) cached reads use the 0.25x implicit-cache discount', () => {
+    const cost = calcModelTurnCostUsd(getModel('gemini-3.1-pro'), {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheRead: ONE_M,
+    })
+    expect(cost).toBeCloseTo(2 * 0.25, 6) // 0.5
+  })
+
+  it('OpenAI cached reads use the 0.5x cached-prompt rate', () => {
+    const cost = calcModelTurnCostUsd(getModel('gpt-5.4'), {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheRead: ONE_M,
+    })
+    expect(cost).toBeCloseTo(2.5 * 0.5, 6) // 1.25
   })
 })

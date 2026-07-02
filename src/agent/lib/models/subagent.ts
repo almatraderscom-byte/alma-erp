@@ -159,11 +159,16 @@ async function runWithModel(
   toolsUsed: string[]
   inputTokens: number
   outputTokens: number
+  /** Cached-prompt tokens (adapter path reports inputTokens as uncached-only). */
+  cacheRead: number
+  cacheWrite: number
 }> {
   const system = buildSystemPrompt(def)
   const rawTools = assembleSelectedTools(def.toolGroups).filter((t) => t.name !== 'delegate_to_specialist')
 
   if (model.provider === 'anthropic') {
+    // The native sub-agent loop sends no cache_control breakpoint, so its cache
+    // token counts are genuinely zero — not merely unreported.
     return runAnthropicSubAgent({
       model,
       system,
@@ -173,7 +178,7 @@ async function runWithModel(
       businessId: params.businessId,
       conversationId: params.conversationId,
       signal: params.signal,
-    })
+    }).then((r) => ({ ...r, cacheRead: 0, cacheWrite: 0 }))
   }
 
   if (!model.supportsTools) {
@@ -195,6 +200,8 @@ async function runWithModel(
     toolsUsed: r.toolsUsed,
     inputTokens: r.inputTokens,
     outputTokens: r.outputTokens,
+    cacheRead: r.cacheRead,
+    cacheWrite: r.cacheWrite,
   }))
 }
 
@@ -246,6 +253,8 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
     const costUsd = calcModelTurnCostUsd(model, {
       inputTokens: result.inputTokens,
       outputTokens: result.outputTokens,
+      cacheRead: result.cacheRead,
+      cacheWrite: result.cacheWrite,
     })
 
     void logCost({
@@ -254,6 +263,7 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
       units: {
         input_tokens: result.inputTokens,
         output_tokens: result.outputTokens,
+        cache_read_input_tokens: result.cacheRead,
         model: model.id,
         model_label: model.label,
         apiModel: model.apiModel,
@@ -295,6 +305,8 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
         const costUsd = calcModelTurnCostUsd(model, {
           inputTokens: result.inputTokens,
           outputTokens: result.outputTokens,
+          cacheRead: result.cacheRead,
+          cacheWrite: result.cacheWrite,
         })
         void logCost({
           provider: costProviderForModel(model),
@@ -302,6 +314,7 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
           units: {
             input_tokens: result.inputTokens,
             output_tokens: result.outputTokens,
+            cache_read_input_tokens: result.cacheRead,
             model: model.id,
             subagent: params.role,
             task_tier: tier,

@@ -9,6 +9,25 @@ const ANTHROPIC_CACHE_WRITE_MULT = 1.25
 const ANTHROPIC_CACHE_READ_MULT = 0.1
 
 /**
+ * Non-Anthropic cache-READ discount, per model (relative to its own input rate).
+ * Providers bill cached input very differently — a flat 0.25x mispriced DeepSeek
+ * (real ~0.1x) and OpenAI (real ~0.5x) turns:
+ *   - DeepSeek: cached input ~0.1x ($0.009 vs $0.09 per Mtok on V4 Flash)
+ *   - Qwen (Alibaba): ~0.25x
+ *   - Google Gemini implicit cache: ~0.25x
+ *   - OpenAI: cached prompt tokens billed at 0.5x input
+ * Matched on the apiModel slug first (OpenRouter routes many vendors), then provider.
+ */
+function nonAnthropicCacheReadMult(model: ModelEntry): number {
+  const slug = model.apiModel.toLowerCase()
+  if (slug.includes('deepseek')) return 0.1
+  if (slug.includes('qwen')) return 0.25
+  if (model.provider === 'google') return 0.25
+  if (model.provider === 'openai') return 0.5
+  return 0.25
+}
+
+/**
  * Per-turn cost for ANY head/worker model, billed at that model's OWN registry rate.
  *
  * Bug this fixes: every Anthropic model used to be funnelled through Sonnet's fixed
@@ -43,7 +62,7 @@ export function calcModelTurnCostUsd(
     // Alibaba/Qwen ~0.25x). We were re-adding cache reads at FULL input price,
     // inflating the displayed per-turn cost ~3-4x vs what OpenRouter actually
     // charges (the owner saw "$0.17" turns that really cost ~$0.05).
-    cache = ((usage.cacheRead ?? 0) / 1_000_000) * model.inPerM * 0.25
+    cache = ((usage.cacheRead ?? 0) / 1_000_000) * model.inPerM * nonAnthropicCacheReadMult(model)
   }
 
   return roundUsd(input + output + cache)

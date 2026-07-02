@@ -223,6 +223,8 @@ async function composeOpsShiftSummary(args: {
     const costUsd = calcModelTurnCostUsd(model, {
       inputTokens: result.inputTokens,
       outputTokens: result.outputTokens,
+      cacheRead: result.cacheRead,
+      cacheWrite: result.cacheWrite,
     })
 
     void logCost({
