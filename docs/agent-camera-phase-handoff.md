@@ -154,6 +154,30 @@ cron, which runs even when the bridge PC is off). Backfilled old jobs as notifie
 
 ---
 
+## SESSION 2026-07-03 UPDATE (steps 1-8 run — read this before the list below)
+
+- **Step 3 DONE+verified:** PC rebooted → go2rtc+bridge auto-started (HKCU Run works); test
+  announcement played (bridge console `played job d170caa9…`) + ✅ বেজেছে Telegram.
+- **Step 4 entrance DONE+verified:** `docs/office-pc-setup-entrance.ps1` ran on the PC
+  (one-shot: probe → yaml → restart → listener). go2rtc streams now `entrance, workroom`;
+  entrance test announcement job `9fa5134f` done in 8 s + ✅. **Boss camera PENDING** —
+  owner forgot its device password (safety code errored); he resets it at the office, then
+  uncomment the boss block in `C:\go2rtc\go2rtc.yaml` (placeholder `REPLACE_BOSS_PASS`).
+- **Step 7 (Feature 3) SHIPPED:** PR #200 — `/api/assistant/internal/camera-listen`
+  (bridge-token auth; audio→Whisper or JSON {text}; wake word KV `camera_wake_words`
+  default "আলমা শোনো,আলমা,alma"; cooldown KV `camera_listen_cooldown_sec` 15;
+  kill switch KV `camera_listen_enabled`). Forward → owner Telegram verified live
+  (forwarded:true). **Office-PC listener deployed + running** (`C:\go2rtc\camera-listen.ps1`,
+  HKCU Run `alma-camera-listen`, entrance mic, 6s chunks, silence-skip at −45 dB) —
+  POSTing speech chunks, all 200. Field test (staff says wake word) pending.
+- **Steps 1/2 PARKED — Imou webhook does NOT deliver:** receiver + registration verified
+  correct (`?diag=1` getMessageCallback: status on, right URL) but 0 real pushes in 3+ h
+  despite walk-ins + app notifications. External Imou-cloud issue. **Polling stays ON**
+  (do NOT set `entrance_watch_enabled=off` until a real push is seen). Fixability test
+  ready: `?fix=1` re-registers with `alarm,deviceStatus` → then power-cycle the entrance
+  camera; a deviceStatus push proves delivery works at all.
+- Step 5 (AnyDesk unattended pw) + Step 6 (staff photos) still owner's physical steps.
+
 ## TOMORROW'S SESSION — exact task list (office PC needed for #3-5)
 
 1. **Verify webhook (no PC needed):** morning, after staff move around — Vercel
