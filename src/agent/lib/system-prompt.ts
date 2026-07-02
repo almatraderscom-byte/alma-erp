@@ -760,14 +760,25 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
       new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Dhaka', hour: '2-digit', hour12: false })
         .format(nowTs).replace(/[^0-9]/g, '').slice(0, 2),
     )
-    // Office window ≈ 08:00–22:00 Dhaka (matches the day-shift patrol window).
-    const inOfficeHours = Number.isFinite(hour24) && hour24 >= 8 && hour24 < 22
+    // TWO distinct windows (the owner corrected the agent for mixing them up):
+    //  • STAFF office hours: 09:30–20:00 Dhaka (matches office-supervisor.ts) —
+    //    this is what "অফিস খোলা/স্টাফ থাকার কথা" means.
+    //  • The AGENT's own duty/patrol window: 08:00–22:00 (day-shift) — the agent
+    //    works longer than the staff; never quote 8–10 as the staff office time.
+    const minsNow = Number.isFinite(hour24)
+      ? hour24 * 60 +
+        Number(
+          new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Dhaka', minute: '2-digit' })
+            .format(nowTs).replace(/[^0-9]/g, ''),
+        )
+      : NaN
+    const inStaffHours = Number.isFinite(minsNow) && minsNow >= 9 * 60 + 30 && minsNow < 20 * 60
     const nowStr = `${gp('weekday')}, ${gp('day')} ${gp('month')} ${gp('year')}, ${gp('hour')}:${gp('minute')} ${gp('dayPeriod')}`.trim()
     let nowBlock =
-      `\n## ⏰ এখন (Asia/Dhaka)\n${nowStr}। এই মুহূর্তে অফিস **${inOfficeHours ? 'চলছে (office hours)' : 'বন্ধ (off-hours)'}** — অফিস টাইম মোটামুটি সকাল ৮টা–রাত ১০টা।`
+      `\n## ⏰ এখন (Asia/Dhaka)\n${nowStr}। **স্টাফদের অফিস টাইম সকাল ৯:৩০–রাত ৮টা** — এই মুহূর্তে স্টাফ অফিস **${inStaffHours ? 'চলছে (স্টাফদের থাকার কথা)' : 'বন্ধ (স্টাফদের থাকার কথা নয়)'}**। তোমার (এজেন্টের) নিজের duty window সকাল ৮টা–রাত ১০টা — এটা স্টাফদের অফিস টাইম নয়, দুটো গুলিয়ো না।`
     if (!personalMode) {
       nowBlock +=
-        `\nঅফিস/হাজিরা প্রশ্নে সময়টা অবশ্যই বিবেচনা করুন: off-hours-এ বা অফিস শুরুর আগে স্টাফ না থাকা সম্পূর্ণ স্বাভাবিক — "অফিস খালি / কেউ আসেনি" এমনভাবে বলবেন না যেন এটা সমস্যা বা কোনো আবিষ্কার। রাত/ভোর হলে বলুন স্টাফরা অফিস আওয়ারে আসবেন; শুধু office hours-এর মধ্যেই absence-কে দেরি/অনুপস্থিতি হিসেবে ধরুন।`
+        `\nঅফিস/হাজিরা প্রশ্নে সময়টা অবশ্যই বিবেচনা করুন: স্টাফ-অফিস-আওয়ারের (৯:৩০–২০:০০) বাইরে স্টাফ না থাকা সম্পূর্ণ স্বাভাবিক — "অফিস খালি / কেউ আসেনি" এমনভাবে বলবেন না যেন এটা সমস্যা বা কোনো আবিষ্কার। রাত/ভোর হলে বলুন স্টাফরা ৯:৩০-এ আসবেন; শুধু স্টাফ office hours-এর মধ্যেই absence-কে দেরি/অনুপস্থিতি হিসেবে ধরুন।`
     }
     volatileParts.push(nowBlock)
   }
