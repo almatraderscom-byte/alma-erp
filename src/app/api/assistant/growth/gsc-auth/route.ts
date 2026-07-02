@@ -2,7 +2,7 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { getGscClientCreds, getGscRedirectUri, GSC_SCOPE, GA4_SCOPE } from '@/agent/lib/gsc'
+import { getGscClientCreds, getGscRedirectUri, GSC_SCOPE, GA4_SCOPE, GBP_SCOPE } from '@/agent/lib/gsc'
 
 export const runtime = 'nodejs'
 
@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
   authUrl.searchParams.set('client_id', creds.clientId)
   authUrl.searchParams.set('redirect_uri', getGscRedirectUri(req.nextUrl.origin))
   authUrl.searchParams.set('response_type', 'code')
-  authUrl.searchParams.set('scope', `${GSC_SCOPE} ${GA4_SCOPE} https://www.googleapis.com/auth/userinfo.email`)
+  authUrl.searchParams.set('scope', `${GSC_SCOPE} ${GA4_SCOPE} ${GBP_SCOPE} https://www.googleapis.com/auth/userinfo.email`)
   authUrl.searchParams.set('access_type', 'offline')
   authUrl.searchParams.set('prompt', 'consent')
   authUrl.searchParams.set('include_granted_scopes', 'true')

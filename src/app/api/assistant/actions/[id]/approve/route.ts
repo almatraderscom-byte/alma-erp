@@ -548,6 +548,52 @@ async function runApprove(
     }
   }
 
+  // Growth Feature 7: owner approved a PUBLIC Google Business Profile action —
+  // post the review reply / local post now via the shared Google OAuth.
+  if (action.type === 'gbp_reply' || action.type === 'gbp_post') {
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        const current = await db.agentPendingAction.findUnique({ where: { id: actionId } })
+        return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+      }
+      const { replyToGbpReview, createGbpPost } = await import('@/agent/lib/gbp')
+      const r =
+        action.type === 'gbp_reply'
+          ? await replyToGbpReview(String(payload.reviewId ?? ''), String(payload.reply ?? ''))
+          : await createGbpPost({ summary: String(payload.summary ?? ''), ctaUrl: payload.ctaUrl ? String(payload.ctaUrl) : undefined })
+      if (!r.ok) {
+        await db.agentPendingAction.update({
+          where: { id: actionId },
+          data: { status: 'failed', result: { error: r.error, kind: r.kind } },
+        })
+        return Response.json({ error: r.error }, { status: 502 })
+      }
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'executed', result: { posted: true } },
+      })
+      await appendConversationNote(
+        db,
+        action,
+        action.type === 'gbp_reply'
+          ? '✅ রিভিউর জবাব Google-এ পোস্ট হয়েছে (public)।'
+          : '✅ Business Profile পোস্ট Google-এ পাবলিশ হয়েছে (public)।',
+      )
+      return Response.json({ success: true })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
   if (action.type === 'content_gate1') {
     try {
       const claimed = await db.agentPendingAction.updateMany({

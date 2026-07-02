@@ -26,6 +26,7 @@ import { RESEARCH_TOOLS } from './research-tools'
 import { SEO_TOOLS } from './seo-tools'
 import { ANALYTICS_TOOLS } from './analytics-tools'
 import { CAMPAIGN_TOOLS } from './campaign-tools'
+import { GBP_TOOLS } from './gbp-tools'
 import { GROWTH_TOOLS } from './growth-tools'
 import { COMPETITOR_TOOLS } from './competitor-tools'
 import { ADVISOR_TOOLS } from './advisor-tools'
@@ -489,6 +490,9 @@ export const TOOLS: AgentTool[] = [
   // Email/SMS campaign drafts (draft_marketing_campaign) — advertised via `growth`,
   // must be executable here (guarded by tool-pool-coverage.test.ts).
   ...CAMPAIGN_TOOLS,
+  // Google Business Profile (reviews read + approval-gated reply/post drafts) —
+  // advertised via `growth`, must be executable here (pool-coverage test enforces).
+  ...GBP_TOOLS,
   // Growth Autopilot calendar tools (schedule_content_batch, configure_growth_autopilot,
   // etc.). Advertised to the head via the `growth` tool-group (tool-groups.ts) — so they
   // MUST also live in this execution pool, otherwise the head sees them but a call returns

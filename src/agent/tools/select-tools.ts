@@ -231,6 +231,13 @@ const HEAD_KEPT_GROWTH_TOOLS = [
   // above, so it lives on the head rather than behind a delegation hop.
   // Appended last so the existing cached-prefix bytes never shift.
   'draft_marketing_campaign',
+  // GBP local-reputation trio: reviews read (cheap, owner asks directly) plus the
+  // two public-facing approval-staging drafts — same head-resident rationale as
+  // draft_seo_fixes / draft_marketing_campaign above.
+  // Appended last so the existing cached-prefix bytes never shift.
+  'get_gbp_reviews',
+  'draft_gbp_reply',
+  'draft_gbp_post',
 ] as const
 
 // Delegation approval test mode (DELEGATION_APPROVAL=true): force marketing work

@@ -7,6 +7,7 @@ import { RESEARCH_ROLE_PROMPT } from '@/agent/tools/research-tools'
 import { SEO_ROLE_PROMPT } from '@/agent/tools/seo-tools'
 import { ANALYTICS_ROLE_PROMPT } from '@/agent/tools/analytics-tools'
 import { CAMPAIGN_ROLE_PROMPT } from '@/agent/tools/campaign-tools'
+import { GBP_ROLE_PROMPT } from '@/agent/tools/gbp-tools'
 import { GROWTH_ROLE_PROMPT } from '@/agent/tools/growth-tools'
 import { COMPETITOR_ROLE_PROMPT } from '@/agent/tools/competitor-tools'
 import { ADVISOR_ROLE_PROMPT } from '@/agent/tools/advisor-tools'
@@ -554,7 +555,7 @@ function buildLifestyleRolePrompts(groups?: ToolGroupName[]): string {
   parts.push(OWNER_TODO_ROLE_PROMPT, WORK_TODO_PROMPT, PLAYBOOK_ROLE_PROMPT, BILLS_ROLE_PROMPT, IMPORTANT_DATE_ROLE_PROMPT, APPOINTMENT_ROLE_PROMPT, HEALTH_ROLE_PROMPT, DOCUMENT_ROLE_PROMPT)
 
   if (has('website')) parts.push(WEBSITE_ROLE_PROMPT)
-  if (has('growth')) parts.push(RESEARCH_ROLE_PROMPT, SEO_ROLE_PROMPT, ANALYTICS_ROLE_PROMPT, CAMPAIGN_ROLE_PROMPT, GROWTH_ROLE_PROMPT, COMPETITOR_ROLE_PROMPT, ADVISOR_ROLE_PROMPT, ADS_ROLE_PROMPT)
+  if (has('growth')) parts.push(RESEARCH_ROLE_PROMPT, SEO_ROLE_PROMPT, ANALYTICS_ROLE_PROMPT, CAMPAIGN_ROLE_PROMPT, GBP_ROLE_PROMPT, GROWTH_ROLE_PROMPT, COMPETITOR_ROLE_PROMPT, ADVISOR_ROLE_PROMPT, ADS_ROLE_PROMPT)
   if (has('content')) parts.push(CONTENT_ENGINE_ROLE_PROMPT, AD_CREATIVE_ROLE_PROMPT, VIDEO_ROLE_PROMPT, BRAND_ROLE_PROMPT, TRYON_ROLE_PROMPT)
   if (has('diag')) parts.push(DIAGNOSTIC_ROLE_PROMPT)
   if (has('vision')) parts.push(VISION_ROLE_PROMPT)

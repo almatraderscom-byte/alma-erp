@@ -23,6 +23,13 @@ export const GSC_SCOPE = 'https://www.googleapis.com/auth/webmasters.readonly'
  * to add Analytics.
  */
 export const GA4_SCOPE = 'https://www.googleapis.com/auth/analytics.readonly'
+/**
+ * Google Business Profile scope (Growth Feature 7). GBP has no read-only scope —
+ * business.manage is the only one Google offers, so review READS and the
+ * approval-gated reply/post writes share it. Same incremental-consent story as
+ * GA4_SCOPE above: owner re-clicks Connect once to add it.
+ */
+export const GBP_SCOPE = 'https://www.googleapis.com/auth/business.manage'
 
 const WEBMASTERS_BASE = 'https://www.googleapis.com/webmasters/v3'
 const URL_INSPECTION_URL = 'https://searchconsole.googleapis.com/v1/urlInspection/index:inspect'
