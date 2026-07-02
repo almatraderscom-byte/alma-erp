@@ -306,12 +306,17 @@ export function FluidOrb({
           inset: -12%;
           width: 124%;
           height: 124%;
+          /* Tailwind preflight sets canvas{max-width:100%}, which caps the 124%
+             width while the -12% left offset stays → the whole orb shifts left
+             (owner-reported, measured exactly). Never cap these canvases. */
+          max-width: none;
         }
         .fo-ring {
           position: absolute;
           inset: -18%;
           width: 136%;
           height: 136%;
+          max-width: none;
           pointer-events: none;
         }
         .fo-fallback {
