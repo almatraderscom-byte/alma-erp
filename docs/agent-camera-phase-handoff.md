@@ -129,6 +129,34 @@ Camera facts learned the hard way:
 
 ---
 
+## 4b. Imou event webhook (BUILT + REGISTERED 2026-07-03 ~01:15, verification pending)
+
+PR #195. The camera's own human/motion detection now drives the entrance watch:
+- Receiver: `/api/assistant/internal/imou-event?k=<KV imou_webhook_key>` — ALWAYS
+  answers 200 (repeated non-200s make Imou blacklist the URL), lenient body parsing,
+  logs `[imou-event] received did=… msgType=…` for every push, acts only on the
+  entrance deviceId + msgTypes in KV `imou_event_types`
+  (default videoMotion,human,humanDetect,aiHuman,pir — TUNE from real log lines).
+- Registration: POST `/api/assistant/known-people/webhook` {enable:true|false}
+  (owner session) → Imou `setMessageCallback` (callbackFlag alarm, basePush '1'
+  keeps the owner's own app notifications). Registered & accepted 2026-07-03.
+- Event path: `runEntranceEvent()` in entrance-watch.ts — no time window (24h),
+  20 s min gap between event snapshots, SHARES alert state with the polling cron
+  (both can run without double alerts).
+- KV switches: `entrance_webhook_enabled` (default on) for the event path;
+  `entrance_watch_enabled` for the polling cron.
+
+**FIRST TASK NEXT SESSION — verify + flip:**
+1. Check Vercel runtime logs (query "imou-event") for received events once staff
+   moved around in the morning. Confirm entrance events trigger a Telegram alert.
+2. Note the real msgType names from the logs; tighten KV `imou_event_types` to the
+   human-detection type if the camera sends one (cuts pure-motion noise).
+3. Then set KV `entrance_watch_enabled='off'` (polling off) — webhook becomes the
+   sole driver: 24h coverage, Imou quota drops to event-only (~2-5K/month),
+   Gemini ~$1-2/month. If webhook proves unreliable, turn polling back on (KV).
+
+---
+
 ## 5. Next phase (not started) — pick up here
 
 **Phase 3 — Feature 3: staff talks to the camera → owner's Telegram**
@@ -143,8 +171,6 @@ Camera facts learned the hard way:
 3. Optional hardening carried over:
    - "✅ বেজে গেছে" confirmation: after camera_speak, poll the job row (done/failed) for
      ~20 s and push the result to the owner (all data already in `agent_camera_speak_jobs`).
-   - Entrance watch upgrade: Imou `setMessageCallback` webhook → instant event-driven
-     alerts instead of 1-min polling (research verdict: works; account capped ~5 devices).
    - Staff reference photos for known/stranger split (owner adds via /agent/known-people).
 
 **Verification checklist for any camera change:** queue a test announcement → bridge console
