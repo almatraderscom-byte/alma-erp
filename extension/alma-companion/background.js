@@ -245,6 +245,50 @@ async function pageClick(arg) {
     el = cand.find((e) => hay(e) === needle) || cand.find((e) => hay(e).includes(needle)) || null
   }
   if (!el) return { ok: false, error: 'element not found' }
+  // FINAL-SUBMIT BAN (enforced in code — mirrors src/agent/lib/browser/final-submit.ts;
+  // keep the two regexes in sync). The agent may fill forms and navigate, but the last
+  // irreversible Send/Post/Pay/Publish/Confirm/Delete click is the OWNER's. This checks
+  // the RESOLVED element's real label, so ref/selector targeting can't slip past it.
+  const finalSubmitRe = new RegExp(
+    [
+      '\\b(send|post|publish|pay|buy|purchase|confirm|delete|transfer|submit|checkout)\\b',
+      '\\bplace\\s+order\\b',
+      '\\border\\s+now\\b',
+      'পাঠান',
+      'পাঠিয়ে\\s*দিন',
+      'পোস্ট\\s*করুন',
+      'পাবলিশ',
+      'প্রকাশ\\s*করুন',
+      'কিনুন',
+      'অর্ডার\\s*করুন',
+      'নিশ্চিত\\s*করুন',
+      'কনফার্ম',
+      'ডিলিট',
+      'মুছে\\s*ফেলুন',
+      'সাবমিট',
+      'পেমেন্ট\\s*করুন',
+    ].join('|'),
+    'i',
+  )
+  const elLabel = (
+    (el.innerText || el.value || '') +
+    ' ' +
+    (el.getAttribute('aria-label') || '') +
+    ' ' +
+    (el.getAttribute('title') || '')
+  )
+    .trim()
+    .slice(0, 120)
+  if (finalSubmitRe.test(elLabel)) {
+    return {
+      ok: false,
+      blocked: true,
+      error:
+        'final_submit_blocked: "' +
+        elLabel.slice(0, 60) +
+        '" — এই শেষ অপরিবর্তনীয় বাটনটা owner নিজ হাতে চাপবেন (কোড-লেভেল নিরাপত্তা)।',
+    }
+  }
   el.scrollIntoView({ block: 'center', behavior: 'smooth' })
   await sleep(350)
   const rect = el.getBoundingClientRect()
