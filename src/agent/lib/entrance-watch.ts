@@ -184,6 +184,53 @@ export async function runEntranceWatch(deviceIdOverride?: string): Promise<Entra
     const deviceId = deviceIdOverride?.trim() || (await getEntranceDeviceId())
     if (!deviceId) return { ran: false, skipped: 'no_entrance_device' }
 
+    return await captureAnalyzeAlert(deviceId, now)
+  } catch (err) {
+    return { ran: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+// Webhook path: min gap between event-triggered snapshots (Imou can fire a burst
+// of alarms for one visit — one snapshot per ~20s is plenty and protects quota).
+const EVENT_MIN_GAP_SEC = 20
+const EVENT_LAST_KEY = 'entrance_event_last_at'
+const WEBHOOK_ENABLED_KEY = 'entrance_webhook_enabled'
+
+/**
+ * Event-driven entry (Imou alarm webhook): no time window — the whole point is
+ * 24h coverage at near-zero polling cost — but rate-limited per EVENT_MIN_GAP_SEC.
+ * Shares ALL alert state with the polling path, so running both never double-alerts.
+ * Never throws.
+ */
+export async function runEntranceEvent(deviceId: string): Promise<EntranceWatchResult> {
+  const now = new Date()
+  try {
+    const enabled = ((await kvGet(WEBHOOK_ENABLED_KEY)) ?? 'on').trim().toLowerCase()
+    if (enabled === 'off' || enabled === 'false' || enabled === '0') {
+      return { ran: false, skipped: 'webhook_disabled' }
+    }
+    if (!deviceId) return { ran: false, skipped: 'no_device' }
+
+    const last = await kvGet(EVENT_LAST_KEY)
+    if (last && (now.getTime() - Date.parse(last)) / 1000 < EVENT_MIN_GAP_SEC) {
+      return { ran: false, skipped: 'rate_limited' }
+    }
+    await kvSetEntrance(EVENT_LAST_KEY, now.toISOString())
+
+    return await captureAnalyzeAlert(deviceId, now)
+  } catch (err) {
+    return { ran: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
+ * Shared core: capture one frame → presence gate → identify against the
+ * known-people registry → fire transition alerts. State (who was recently seen,
+ * per-person/stranger alert cooldowns) lives in KV and is shared by the 1-min
+ * cron AND the Imou event webhook.
+ */
+async function captureAnalyzeAlert(deviceId: string, now: Date): Promise<EntranceWatchResult> {
+  {
     const snap = await captureImouSnapshot(deviceId)
     const { base64, mimeType } = await downloadSnapshot(snap.url)
 
@@ -271,8 +318,6 @@ export async function runEntranceWatch(deviceIdOverride?: string): Promise<Entra
       strangerPresent: match.strangerPresent,
       alerts,
     }
-  } catch (err) {
-    return { ran: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
 

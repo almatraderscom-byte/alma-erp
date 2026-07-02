@@ -36,7 +36,12 @@ function buildBody(appId: string, appSecret: string, params: Record<string, unkn
   }
 }
 
-async function call<T>(endpoint: string, params: Record<string, unknown>): Promise<T> {
+async function call<T>(
+  endpoint: string,
+  params: Record<string, unknown>,
+  // Some endpoints (setMessageCallback) legitimately return no data on success.
+  allowEmptyData = false,
+): Promise<T> {
   const appId = process.env.IMOU_APP_ID
   const appSecret = process.env.IMOU_APP_SECRET
   if (!appId || !appSecret) throw new Error('IMOU_APP_ID / IMOU_APP_SECRET not configured')
@@ -52,7 +57,10 @@ async function call<T>(endpoint: string, params: Record<string, unknown>): Promi
   if (json.result?.code !== '0') {
     throw new Error(`Imou ${endpoint} error ${json.result?.code}: ${json.result?.msg ?? 'unknown'}`)
   }
-  if (json.result?.data === undefined) throw new Error(`Imou ${endpoint} returned no data`)
+  if (json.result?.data === undefined) {
+    if (allowEmptyData) return undefined as T
+    throw new Error(`Imou ${endpoint} returned no data`)
+  }
   return json.result.data
 }
 
@@ -110,6 +118,31 @@ export async function captureImouSnapshot(
   const data = await call<{ url: string }>('setDeviceSnapEnhanced', { token, deviceId, channelId })
   if (!data.url) throw new Error('Imou snapshot returned no url')
   return { url: data.url, capturedAt: new Date(), deviceId }
+}
+
+/**
+ * Register (or disable) the developer-account event callback. Imou then POSTs
+ * alarm events (videoMotion / human etc.) to callbackUrl — the event-driven
+ * upgrade that replaces 1-minute snapshot polling for the entrance watch.
+ * basePush '1' keeps Imou's own app notifications flowing to the owner's phone.
+ */
+export async function setImouMessageCallback(opts: {
+  enable: boolean
+  callbackUrl?: string
+  callbackFlag?: string
+}): Promise<void> {
+  const token = await getAccessToken()
+  await call<void>(
+    'setMessageCallback',
+    {
+      token,
+      status: opts.enable ? 'on' : 'off',
+      ...(opts.enable
+        ? { callbackUrl: opts.callbackUrl, callbackFlag: opts.callbackFlag ?? 'alarm', basePush: '1' }
+        : {}),
+    },
+    true,
+  )
 }
 
 /** Download a snapshot URL to a base64 string + mime, for vision analysis. */
