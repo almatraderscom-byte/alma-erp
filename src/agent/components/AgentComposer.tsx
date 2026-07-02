@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import toast from 'react-hot-toast'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { cn } from '@/lib/utils'
-import { impactLight, impactMedium, selection } from '@/lib/haptics'
+import { impactLight, impactMedium } from '@/lib/haptics'
 import AgentModelSelector from './AgentModelSelector'
 import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
 

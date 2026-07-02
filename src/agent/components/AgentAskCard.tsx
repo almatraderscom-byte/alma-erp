@@ -2,11 +2,18 @@
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
+import { impactMedium, selection } from '@/lib/haptics'
 
 export interface AskCard {
   id: string
   question: string
   options: string[]
+  /** Durable state from agent_ask_cards (poll/reload path). Absent on the live SSE path. */
+  status?: string
+  /** The answer recorded in the DB (tap or free text), when already answered. */
+  selectedOption?: string | null
+  /** Still 'pending' in the DB but the owner already replied by typing — render settled. */
+  staleInChat?: boolean
 }
 
 type AskPhase = 'idle' | 'answered'
@@ -33,13 +40,22 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
   const answer = otherActive ? otherText.trim() : chosen
   const canSubmit = !disabled && !!answer
 
+  // Durable state (poll/reload path): the card may arrive already settled — either
+  // answered (tap/free text recorded in agent_ask_cards) or superseded, or still
+  // 'pending' in the DB while the owner already replied by typing (staleInChat).
+  // These render as a settled breadcrumb instead of re-arming an old question.
+  const settledByServer =
+    (card.status != null && card.status !== 'pending') || card.selectedOption != null
+
   function submit() {
     if (phase !== 'idle' || !canSubmit || !answer) return
+    impactMedium()
     setPhase('answered')
     onSelect(answer)
   }
 
-  if (phase === 'answered' && answer) {
+  if (settledByServer || (phase === 'answered' && answer)) {
+    const shownAnswer = settledByServer ? card.selectedOption : answer
     return (
       <motion.div
         layout
@@ -49,7 +65,28 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
         className="mt-3 rounded-3xl border border-white/[0.08] bg-card/80 px-5 py-4 text-sm shadow-float"
       >
         <p className="text-[13px] leading-snug text-muted">{card.question}</p>
-        <p className="mt-1.5 text-[13px] font-semibold text-[#E07A5F]">✓ {answer}</p>
+        {shownAnswer ? (
+          <p className="mt-1.5 text-[13px] font-semibold text-[#E07A5F]">✓ {shownAnswer}</p>
+        ) : (
+          <p className="mt-1.5 text-[13px] text-muted">উত্তর দেওয়া হয়েছে চ্যাটে</p>
+        )}
+      </motion.div>
+    )
+  }
+
+  // Pending-but-stale: the owner already answered by typing in the chat. Show the
+  // question as a quiet settled breadcrumb — never a live Submit for an old ask.
+  if (card.staleInChat) {
+    return (
+      <motion.div
+        layout
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.18, ease: 'easeOut' }}
+        className="mt-3 rounded-3xl border border-white/[0.08] bg-card/80 px-5 py-4 text-sm shadow-float"
+      >
+        <p className="text-[13px] leading-snug text-muted">{card.question}</p>
+        <p className="mt-1.5 text-[13px] text-muted">উত্তর দেওয়া হয়েছে চ্যাটে</p>
       </motion.div>
     )
   }
@@ -75,7 +112,7 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
             <button
               key={opt}
               type="button"
-              onClick={() => { if (!disabled) { setChosen(opt); setOtherActive(false) } }}
+              onClick={() => { if (!disabled) { selection(); setChosen(opt); setOtherActive(false) } }}
               disabled={disabled}
               className="flex items-center gap-3 border-t border-white/[0.06] px-5 py-3.5 text-left transition-colors hover:bg-white/[0.03] active:bg-white/[0.05] disabled:pointer-events-none disabled:opacity-40"
             >
@@ -84,7 +121,14 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
                   active ? 'border-[#E07A5F]' : 'border-white/25'
                 }`}
               >
-                {active && <span className="h-2.5 w-2.5 rounded-full bg-[#E07A5F]" />}
+                {active && (
+                  <motion.span
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+                    className="h-2.5 w-2.5 rounded-full bg-[#E07A5F]"
+                  />
+                )}
               </span>
               <span className="text-[14px] font-medium text-cream">{opt}</span>
             </button>
@@ -94,7 +138,7 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
         {/* Always-present "Other" row — owner can share his own opinion in free text */}
         <button
           type="button"
-          onClick={() => { if (!disabled) { setOtherActive(true); setChosen(null) } }}
+          onClick={() => { if (!disabled) { selection(); setOtherActive(true); setChosen(null) } }}
           disabled={disabled}
           className="flex items-center gap-3 border-t border-white/[0.06] px-5 py-3.5 text-left transition-colors hover:bg-white/[0.03] active:bg-white/[0.05] disabled:pointer-events-none disabled:opacity-40"
         >
@@ -103,7 +147,14 @@ export default function AgentAskCard({ card, onSelect, disabled }: AgentAskCardP
               otherActive ? 'border-[#E07A5F]' : 'border-white/25'
             }`}
           >
-            {otherActive && <span className="h-2.5 w-2.5 rounded-full bg-[#E07A5F]" />}
+            {otherActive && (
+              <motion.span
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+                className="h-2.5 w-2.5 rounded-full bg-[#E07A5F]"
+              />
+            )}
           </span>
           <span className={`text-[14px] font-medium ${otherActive ? 'text-cream' : 'text-muted'}`}>
             অন্য কিছু (নিজে লিখুন)

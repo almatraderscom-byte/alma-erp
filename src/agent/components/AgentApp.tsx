@@ -60,6 +60,10 @@ type MessageRow = {
     status?: string
     failReason?: string
     durationMs?: number
+    askCardId?: string
+    question?: string
+    options?: string[]
+    selectedOption?: string
   }>
   toolCalls?: Array<{
     id: string
@@ -83,13 +87,21 @@ type MessageRow = {
 }
 
 function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
-  return rows.map((r) => {
+  return rows.map((r, rowIdx) => {
     const textBlocks = r.content.filter((b) => b.type === 'text')
     const fileBlocks = r.content.filter((b) => b.type === 'file_ref')
     // A single turn can create several pending actions (e.g. an expense AND a
     // post) — collect ALL of them so the approval card matches the agent's text
     // instead of only showing the last one.
     const confirmBlocks = r.content.filter((b) => b.type === 'confirm_card' && b.pendingActionId)
+    // Ask-user question card, reconstructed from the durable agent_ask_cards row
+    // (server injects a synthetic/breadcrumbed `ask_card` block) so it survives the
+    // 12s poll / reload instead of only living in the SSE stream. Staleness rule:
+    // the card stays interactive ONLY while it is still 'pending' AND the owner has
+    // not already replied by typing (i.e. no user message after this row).
+    const askBlocks = r.content.filter((b) => b.type === 'ask_card' && b.askCardId)
+    const askBlock = askBlocks.length > 0 ? askBlocks[askBlocks.length - 1] : undefined
+    const hasLaterUserMsg = rows.slice(rowIdx + 1).some((x) => x.role === 'user')
     // Persisted extended-thinking trace (usage.reasoning) + tool cards, reconstructed
     // so they survive the message poll / reload instead of only living in the stream.
     const toolActivity = (r.toolCalls ?? []).map((t) => ({
@@ -132,6 +144,18 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
             resolvedStatus: cb.status,
             failReason: cb.failReason,
           }))
+        : undefined,
+      askCard: askBlock
+        ? {
+            id: askBlock.askCardId as string,
+            question: askBlock.question ?? '',
+            options: Array.isArray(askBlock.options) ? askBlock.options : [],
+            status: askBlock.status,
+            selectedOption: askBlock.selectedOption,
+            // Pending in the DB but the owner already answered by typing — render
+            // it settled (non-interactive) instead of re-arming an old question.
+            staleInChat: askBlock.status === 'pending' && hasLaterUserMsg,
+          }
         : undefined,
     }
   })
@@ -522,11 +546,19 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       return
     }
     async function pollMessages() {
+      // Same guard as the main-thread poll: never clobber an in-flight stream's
+      // optimistic messages (ask/confirm cards, streaming text) with a server
+      // snapshot that doesn't contain them yet.
+      if (streamingRef.current) return
       try {
         const res = await fetch(`/api/assistant/conversations/${dayShift!.conversationId}/messages`)
         if (!res.ok) return
         const rows: MessageRow[] = await res.json()
-        setMessages(mapMessageRows(rows))
+        if (streamingRef.current) return
+        setMessages((prev) => {
+          const next = mapMessageRows(rows)
+          return next.length >= prev.length ? next : prev
+        })
       } catch { /* ignore */ }
     }
     void pollMessages()

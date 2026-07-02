@@ -20,6 +20,7 @@ import { AgentThinkingIndicator, ModelSpinner, type ModelVariant, type ThinkingM
 import { toolDisplay, toolDetail } from '@/agent/lib/tool-labels'
 import { GlassSheet, GlassSheetGrip } from '@/components/ui/GlassSheet'
 import { agentReplyHaptic } from '@/agent/lib/haptics'
+import { impactLight, selection } from '@/lib/haptics'
 import { isHeartbeatWakeText } from '@/agent/lib/heartbeat/wake-marker'
 
 /**
@@ -311,8 +312,8 @@ function DelegationCard({ d }: { d: NonNullable<ChatMessage['delegations']>[numb
     <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-card/80 backdrop-blur-sm">
       <button
         type="button"
-        onClick={() => hasSummary && setOpen((o) => !o)}
-        className={`flex w-full items-start gap-2.5 px-3 py-2.5 text-left ${hasSummary ? 'cursor-pointer hover:bg-white/[0.02]' : 'cursor-default'}`}
+        onClick={() => { if (hasSummary) { selection(); setOpen((o) => !o) } }}
+        className={`flex w-full items-start gap-2.5 px-3 py-2.5 text-left transition-all ${hasSummary ? 'cursor-pointer hover:bg-white/[0.02] active:bg-white/[0.04] active:scale-[0.99]' : 'cursor-default'}`}
       >
         <span className="mt-0.5 text-[15px] leading-none">{ROLE_ICON[d.role] ?? '🤝'}</span>
         <span className="min-w-0 flex-1">
@@ -363,16 +364,24 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={() => {
+        impactLight()
         void navigator.clipboard.writeText(text).then(() => {
           setCopied(true)
           setTimeout(() => setCopied(false), 1500)
         })
       }}
-      className="rounded-lg p-1.5 text-muted transition-all hover:bg-white/[0.05] hover:text-muted-hi"
+      className="rounded-lg p-1.5 text-muted transition-all hover:bg-white/[0.05] hover:text-muted-hi active:scale-90"
       title={copied ? 'কপি হয়েছে' : 'কপি করুন'}
     >
       {copied ? (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+        <motion.span
+          initial={{ scale: 0.5 }}
+          animate={{ scale: 1 }}
+          transition={{ type: 'spring', stiffness: 500, damping: 22 }}
+          className="block"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+        </motion.span>
       ) : (
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
       )}
@@ -437,10 +446,10 @@ function TtsButton({ text, messageId }: { text: string; messageId: string }) {
 
   return (
     <button
-      onClick={speak}
+      onClick={() => { impactLight(); void speak() }}
       disabled={loading}
       data-message-id={messageId}
-      className={`rounded-lg p-1.5 transition-all disabled:opacity-50 ${playing ? 'bg-[#E07A5F]/10 text-[#E07A5F]' : 'text-muted hover:bg-white/[0.05] hover:text-muted-hi'}`}
+      className={`rounded-lg p-1.5 transition-all active:scale-90 disabled:opacity-50 ${playing ? 'bg-[#E07A5F]/10 text-[#E07A5F]' : 'text-muted hover:bg-white/[0.05] hover:text-muted-hi'}`}
       title={playing ? 'থামান' : 'শুনুন'}
     >
       {loading ? (
@@ -500,8 +509,8 @@ function CollapsibleMessage({
       {overflowing && (
         <button
           type="button"
-          onClick={() => setExpanded((e) => !e)}
-          className="mt-1.5 inline-flex items-center gap-1 text-[12px] font-medium text-[#E07A5F]/80 transition-colors hover:text-[#E07A5F]"
+          onClick={() => { selection(); setExpanded((e) => !e) }}
+          className="mt-1.5 inline-flex items-center gap-1 text-[12px] font-medium text-[#E07A5F]/80 transition-all hover:text-[#E07A5F] active:scale-95"
         >
           <svg
             width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -740,8 +749,8 @@ function ActivityTimeline({
               {/* 1 — HEADLINE (loud, theme-aware). Tap to reveal reasoning. */}
               <button
                 type="button"
-                onClick={() => hasDetail && toggle(`h${i}`)}
-                className={`group flex w-full items-start gap-1.5 py-1 text-left ${hasDetail ? 'cursor-pointer' : 'cursor-default'}`}
+                onClick={() => { if (hasDetail) { selection(); toggle(`h${i}`) } }}
+                className={`group flex w-full items-start gap-1.5 py-1 text-left transition-transform ${hasDetail ? 'cursor-pointer active:scale-[0.99]' : 'cursor-default'}`}
               >
                 <span className="min-w-0 flex-1 text-[13.5px] font-semibold leading-snug tracking-[-0.01em] text-cream break-words [overflow-wrap:anywhere]">
                   {headline}
@@ -790,8 +799,8 @@ function ActivityTimeline({
                 <div className="mb-1.5 mt-0.5">
                   <button
                     type="button"
-                    onClick={() => toggle(`g${i}`)}
-                    className="group inline-flex max-w-full items-center gap-1.5 rounded-full border border-border-subtle bg-card/60 px-2.5 py-1 text-[11.5px] text-muted transition-colors hover:text-muted-hi"
+                    onClick={() => { selection(); toggle(`g${i}`) }}
+                    className="group inline-flex max-w-full items-center gap-1.5 rounded-full border border-border-subtle bg-card/60 px-2.5 py-1 text-[11.5px] text-muted transition-all hover:text-muted-hi active:scale-[0.97] active:bg-white/[0.04]"
                   >
                     <span aria-hidden className="text-[11px]">🔧</span>
                     <span className="truncate tabular-nums">
@@ -827,8 +836,8 @@ function ActivityTimeline({
                                 {/* 3 — tool row; tap opens the floating I/O sheet */}
                                 <button
                                   type="button"
-                                  onClick={() => hasIO && setIoSheet(t)}
-                                  className={`group/tool flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[12px] leading-snug ${hasIO ? 'cursor-pointer' : 'cursor-default'}`}
+                                  onClick={() => { if (hasIO) { selection(); setIoSheet(t) } }}
+                                  className={`group/tool flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-[12px] leading-snug transition-all ${hasIO ? 'cursor-pointer active:bg-white/[0.04]' : 'cursor-default'}`}
                                 >
                                   {t.live ? (
                                     <SparkleGlyph className="alma-sparkle-pulse shrink-0 text-gold" size={13} />
@@ -925,19 +934,21 @@ function AgentModelSwitchCard({
           <div className="mt-2.5 flex gap-2">
             <button
               onClick={() => {
+                impactLight()
                 setResolved('yes')
                 onResolve({ approve: true, rememberChoice: remember })
               }}
-              className="rounded-lg bg-[#E07A5F] px-3 py-1.5 text-[12px] font-semibold text-white transition-all hover:bg-[#d36a4f]"
+              className="rounded-lg bg-[#E07A5F] px-3 py-1.5 text-[12px] font-semibold text-white transition-all hover:bg-[#d36a4f] active:scale-95"
             >
               হ্যাঁ, চালাও
             </button>
             <button
               onClick={() => {
+                impactLight()
                 setResolved('no')
                 onResolve({ approve: false, fallbackModelId: card.fallbackModelId })
               }}
-              className="rounded-lg border border-white/10 px-3 py-1.5 text-[12px] font-medium text-muted transition-all hover:bg-white/[0.05] hover:text-muted-hi"
+              className="rounded-lg border border-white/10 px-3 py-1.5 text-[12px] font-medium text-muted transition-all hover:bg-white/[0.05] hover:text-muted-hi active:scale-95"
             >
               না, সস্তাতেই থাক
             </button>
@@ -1127,9 +1138,13 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
           {(isOfficeShift ? messages.filter((m) => m.streaming) : messages).map((msg, index) => (
             <motion.div
               key={msg.id}
-              initial={reduceMotion ? false : { opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={reduceMotion ? { duration: 0 } : { duration: 0.18, ease: 'easeOut', delay: index < 10 ? index * 0.02 : 0 }}
+              initial={reduceMotion ? false : { opacity: 0, y: 12, scale: msg.role === 'user' ? 0.96 : 1 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={
+                reduceMotion
+                  ? { duration: 0 }
+                  : { type: 'spring', stiffness: 380, damping: 30, mass: 0.8, delay: index < 10 ? index * 0.02 : 0 }
+              }
               className={msg.role === 'user' ? 'mb-6' : 'mb-8'}
             >
               {msg.role === 'user' && isHeartbeatWakeText(msg.text) ? (
@@ -1155,7 +1170,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       </div>
                     )}
                     {msg.text && (
-                      <div className="rounded-2xl rounded-br-sm bg-gradient-to-br from-[#E07A5F] to-[#C45A3C] px-4 py-3 text-[15px] leading-relaxed text-white shadow-sm shadow-[#E07A5F]/20 whitespace-pre-wrap break-words select-text">
+                      <div className="agent-bubble-press rounded-2xl rounded-br-sm bg-gradient-to-br from-[#E07A5F] to-[#C45A3C] px-4 py-3 text-[15px] leading-relaxed text-white shadow-sm shadow-[#E07A5F]/20 whitespace-pre-wrap break-words select-text">
                         <CollapsibleMessage collapsedMaxPx={260}>{msg.text}</CollapsibleMessage>
                       </div>
                     )}
@@ -1252,7 +1267,16 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json' },
                           body: JSON.stringify({ option: opt }),
-                        }).catch(() => {})
+                        }).then((res) => {
+                          // Non-silent failure: the answer still reaches the agent via
+                          // onQuickSend below, but a failed record means the durable
+                          // card row stays 'pending' — log it so it's diagnosable.
+                          if (!res.ok) {
+                            console.warn(`[ask-card] answer POST failed (HTTP ${res.status}) for card ${msg.askCard!.id}`)
+                          }
+                        }).catch((err) => {
+                          console.warn('[ask-card] answer POST failed:', err)
+                        })
                         onQuickSend(opt)
                       }}
                     />
