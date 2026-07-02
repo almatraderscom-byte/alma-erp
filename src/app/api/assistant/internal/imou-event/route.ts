@@ -123,6 +123,34 @@ export async function POST(req: NextRequest) {
 }
 
 // Imou (or its console) may probe the URL with GET — answer politely.
-export async function GET() {
-  return NextResponse.json({ ok: true })
+// With ?diag=1 and the correct key, also report what callback config Imou's
+// cloud actually has stored (getMessageCallback) — for debugging missing pushes.
+export async function GET(req: NextRequest) {
+  const diag = req.nextUrl.searchParams.get('diag') === '1'
+  if (!diag) return NextResponse.json({ ok: true })
+
+  const expectedKey = ((await kvGet('imou_webhook_key')) ?? '').trim()
+  const presentedKey = (req.nextUrl.searchParams.get('k') ?? '').trim()
+  if (!expectedKey || presentedKey !== expectedKey) {
+    return NextResponse.json({ ok: true, ignored: 'bad_key' })
+  }
+  try {
+    const { getImouMessageCallback, setImouMessageCallback } = await import('@/agent/lib/imou-camera')
+    // ?fix=1 → re-register, adding deviceStatus so a camera reboot produces a
+    // controllable delivery test (alarm-only left us with no way to force a push).
+    if (req.nextUrl.searchParams.get('fix') === '1') {
+      await setImouMessageCallback({
+        enable: true,
+        callbackUrl: `https://alma-erp-six.vercel.app/api/assistant/internal/imou-event?k=${expectedKey}`,
+        callbackFlag: 'alarm,deviceStatus',
+      })
+    }
+    const config = await getImouMessageCallback()
+    return NextResponse.json({ ok: true, config })
+  } catch (err) {
+    return NextResponse.json({
+      ok: true,
+      error: err instanceof Error ? err.message : 'getMessageCallback failed',
+    })
+  }
 }

@@ -145,6 +145,18 @@ export async function setImouMessageCallback(opts: {
   )
 }
 
+export interface ImouCallbackConfig {
+  status?: string
+  callbackUrl?: string
+  callbackFlag?: string
+}
+
+/** Read back the developer-account callback config Imou actually has stored. */
+export async function getImouMessageCallback(): Promise<ImouCallbackConfig> {
+  const token = await getAccessToken()
+  return call<ImouCallbackConfig>('getMessageCallback', { token })
+}
+
 /** Download a snapshot URL to a base64 string + mime, for vision analysis. */
 export async function downloadSnapshot(url: string): Promise<{ base64: string; mimeType: string }> {
   const res = await fetch(url, { signal: AbortSignal.timeout(15_000) })
