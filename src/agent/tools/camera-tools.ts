@@ -166,4 +166,63 @@ const get_office_camera_snapshot: AgentTool = {
   },
 }
 
-export const CAMERA_TOOLS: AgentTool[] = [get_office_camera_snapshot]
+// Camera speaker announcement — the head speaks TO the office, not just looks at it.
+// TTS synthesis + queueing live in @/agent/lib/camera-say (dynamic import keeps the
+// module out of contexts that never speak); an office bridge PC polls the queue and
+// pushes the audio into go2rtc → camera speaker, so this tool only confirms "queued",
+// never "played".
+const camera_speak: AgentTool = {
+  name: 'camera_speak',
+  description:
+    "Speak a short Bangla announcement OUT LOUD through an office camera's speaker. " +
+    'Use when the owner asks to say/announce something to the office (e.g. "অফিসে বলো ...", ' +
+    '"স্টাফদের শুনিয়ে দাও ..."). text is the exact Bangla to speak (max 300 chars — keep ' +
+    'announcements short). camera optional: "work" (default), "entrance", or "boss". ' +
+    "The audio is synthesized in the agent's own Bangla voice and played within ~10 seconds " +
+    'IF the office bridge PC is online; the tool returns as soon as the announcement is queued. Owner only.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      text: {
+        type: 'string',
+        description: 'Exact Bangla text to speak through the camera speaker (max 300 chars).',
+      },
+      camera: {
+        type: 'string',
+        description: 'Optional room name: "work" (default), "entrance", or "boss".',
+      },
+    },
+    required: ['text'],
+  },
+  handler: async (input) => {
+    const text = String(input.text ?? '').trim().slice(0, 300)
+    if (!text) {
+      return { success: false, error: 'কী বলতে হবে সেটা text-এ দিন' }
+    }
+
+    try {
+      const { queueCameraSpeak } = await import('@/agent/lib/camera-say')
+      const { jobId, stream } = await queueCameraSpeak({
+        text,
+        camera: input.camera ? String(input.camera) : undefined,
+      })
+      return {
+        success: true,
+        data: {
+          jobId,
+          stream,
+          note:
+            'ঘোষণাটা কিউতে গেছে — অফিসের ব্রিজ PC চালু থাকলে ~১০ সেকেন্ডের মধ্যে ক্যামেরার স্পিকারে বাজবে। ' +
+            'ওনারকে জানাও যে বলা হয়েছে/হচ্ছে; বাজলো কিনা নিশ্চিত জানতে চাইলে স্টাফকে জিজ্ঞেস করতে বলো।',
+        },
+      }
+    } catch (err) {
+      return {
+        success: false,
+        error: `ঘোষণা কিউ করা গেল না: ${err instanceof Error ? err.message : String(err)}`,
+      }
+    }
+  },
+}
+
+export const CAMERA_TOOLS: AgentTool[] = [get_office_camera_snapshot, camera_speak]
