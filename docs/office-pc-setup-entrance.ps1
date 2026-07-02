@@ -18,7 +18,10 @@
 # password later, then uncomment the boss block in go2rtc.yaml (or re-run a boss
 # variant of this script).
 
-$ErrorActionPreference = 'Stop'
+# NOTE: keep this 'Continue', not 'Stop' - ffmpeg writes its banner to stderr,
+# and under 'Stop' PowerShell turns that into a fatal NativeCommandError. All
+# real failures below are handled with explicit checks + return.
+$ErrorActionPreference = 'Continue'
 $Go2rtcDir = 'C:\go2rtc'
 $Yaml   = Join-Path $Go2rtcDir 'go2rtc.yaml'
 $Ffmpeg = Join-Path $Go2rtcDir 'ffmpeg.exe'
@@ -37,8 +40,8 @@ $EntranceUrl = "rtsp://admin:$Pass@192.168.1.147:554/cam/realmonitor?channel=1&s
 
 # --- 2. Probe entrance ONCE (single attempt; abort on auth failure) ---------
 Write-Host "Probing entrance camera (192.168.1.147)..."
-$probe = & $Ffmpeg -rtsp_transport tcp -i $EntranceUrl -t 1 -f null - 2>&1
-if ($probe -match '401|Unauthorized|Invalid data|Server returned 4|denied') {
+$probe = (& $Ffmpeg -rtsp_transport tcp -i $EntranceUrl -t 1 -f null - 2>&1 | Out-String)
+if ($probe -match '401 Unauthorized|method DESCRIBE failed|Invalid data found') {
     Write-Host "ERROR: entrance auth failed. No changes made. (Check the device password.)"
     return
 }
