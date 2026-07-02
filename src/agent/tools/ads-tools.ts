@@ -299,6 +299,10 @@ const recommend_ad_actions: AgentTool = {
         success: true,
         data: {
           summary,
+          // Every spend/budget figure in metrics is in the AD ACCOUNT's billing
+          // currency below — report them with THIS currency symbol, never ৳
+          // unless the currency is BDT.
+          accountCurrency: metrics[0]?.currency ?? 'USD',
           campaignCount: activeCampaignCount,
           activeCampaignCount,
           activeCampaignNames: activeNames,
