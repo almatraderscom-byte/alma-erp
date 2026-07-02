@@ -177,10 +177,20 @@ export class GoogleAdapter implements ProviderAdapter {
 
     const response = await result.response
     const meta = response.usageMetadata
+    // Gemini applies IMPLICIT context caching automatically: repeated prompt
+    // prefixes (our byte-stable system block + history) come back in
+    // cachedContentTokenCount and Google bills them at a steep discount. We
+    // ignored the field, so every turn displayed (and cost-logged) the FULL
+    // prompt at $2/M — the owner saw $0.21-0.32 "Gemini" turns that Google
+    // actually bills far lower. Surface cached tokens as cacheRead; cost.ts
+    // prices non-Anthropic cache reads at the ~0.25x discount.
+    const cached = (meta as { cachedContentTokenCount?: number } | undefined)?.cachedContentTokenCount ?? 0
+    const prompt = meta?.promptTokenCount ?? 0
     yield {
       type: 'usage',
-      inputTokens: meta?.promptTokenCount ?? 0,
+      inputTokens: Math.max(0, prompt - cached),
       outputTokens: meta?.candidatesTokenCount ?? 0,
+      cacheRead: cached,
     }
     yield { type: 'done' }
   }
