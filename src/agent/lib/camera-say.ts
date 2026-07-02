@@ -7,7 +7,7 @@
  *   1. HERE (Vercel): owner/head agent queues an announcement → Bangla text is
  *      synthesized with the agent voice (google-tts.ts) → MP3 goes to the
  *      agent-files bucket → an AgentCameraSpeakJob row is created ('queued').
- *   2. OFFICE PC: a tiny bridge script polls /api/assistant/camera-bridge with
+ *   2. OFFICE PC: a tiny bridge script polls /api/assistant/internal/camera-bridge with
  *      a bearer token (KV 'camera_bridge_token'), claims the oldest queued job
  *      (signed MP3 URL, 10 min validity), pushes the audio into the chosen
  *      go2rtc stream (camera two-way-audio backchannel), then POSTs an ack.

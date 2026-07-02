@@ -2,13 +2,13 @@
  * Camera bridge endpoint — polled by the OFFICE PC, not by a browser session.
  *
  * Contract for the office-PC poller (small script next to go2rtc):
- *   • Every few seconds:  GET /api/assistant/camera-bridge
+ *   • Every few seconds:  GET /api/assistant/internal/camera-bridge
  *       Authorization: Bearer <token>       (KV 'camera_bridge_token')
  *       → { job: null }                     nothing to play
  *       → { job: { id, stream, text, audioUrl } }
  *         Download audioUrl (signed MP3, ~10 min validity) and play it into
  *         the go2rtc stream named `stream` (camera two-way-audio backchannel).
- *   • After playback:     POST /api/assistant/camera-bridge
+ *   • After playback:     POST /api/assistant/internal/camera-bridge
  *       body { id, ok, error? } → { ok: true }
  *
  * Auth is a shared bearer token (NOT the owner session — the office PC has no
