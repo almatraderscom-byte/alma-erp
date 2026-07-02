@@ -1,12 +1,11 @@
 /**
  * POST /api/assistant/internal/generate-report
- * Generates AI-powered reports using Anthropic. Worker sends data context.
+ * Generates AI-powered reports via agentSmartText (Anthropic when up, else Gemini). Worker sends data context.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyAgentInternalToken } from '@/lib/agent-internal-auth'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import Anthropic from '@anthropic-ai/sdk'
-import { enforceClaudeOnlyModel } from '@/agent/lib/models/guard'
+import { agentSmartText } from '@/agent/lib/llm-text'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -51,21 +50,13 @@ export async function POST(req: NextRequest) {
   const promptFn = PROMPTS[type]
   if (!promptFn) return NextResponse.json({ error: `Unknown report type: ${type}` }, { status: 400 })
 
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) return NextResponse.json({ report: null, error: 'no_api_key' })
-
   try {
-    const anthropic = new Anthropic({ apiKey, timeout: 25_000 })
-    const response = await anthropic.messages.create({
-      model: enforceClaudeOnlyModel(),
-      max_tokens: 800,
-      messages: [{
-        role: 'user',
-        content: promptFn(String(data), anomalyList),
-      }],
+    const report = await agentSmartText({
+      system: 'You are an internal report writer for ALMA ERP. Follow the prompt instructions exactly.',
+      prompt: promptFn(String(data), anomalyList),
+      maxTokens: 800,
+      costLabel: 'weekly_bi_report',
     })
-
-    const report = response.content[0]?.type === 'text' ? response.content[0].text : ''
     return NextResponse.json({ report })
   } catch (err) {
     return NextResponse.json({ report: null, error: String(err) })

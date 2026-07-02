@@ -21,12 +21,12 @@ describe('calcModelTurnCostUsd — bills each model at its own rate', () => {
     expect(cost).toBeCloseTo(18, 6) // 3 + 15
   })
 
-  it('Opus is billed at Opus rate, NOT Sonnet ($15 / $75 per Mtok)', () => {
+  it('Opus is billed at Opus rate, NOT Sonnet ($5 / $25 per Mtok, corrected 2026-07)', () => {
     const cost = calcModelTurnCostUsd(getModel('claude-opus-4-8'), {
       inputTokens: ONE_M,
       outputTokens: ONE_M,
     })
-    expect(cost).toBeCloseTo(90, 6) // 15 + 75 — would have been 18 under the old bug
+    expect(cost).toBeCloseTo(30, 6) // 5 + 25
   })
 
   it('Haiku is billed at Haiku rate ($1 / $5 per Mtok)', () => {
@@ -47,14 +47,14 @@ describe('calcModelTurnCostUsd — bills each model at its own rate', () => {
     expect(cost).toBeCloseTo(3.75 + 0.3, 6)
   })
 
-  it('Opus cache tokens scale with Opus input rate (write 18.75, read 1.5)', () => {
+  it('Opus cache tokens scale with Opus input rate (write 6.25, read 0.5)', () => {
     const cost = calcModelTurnCostUsd(getModel('claude-opus-4-8'), {
       inputTokens: 0,
       outputTokens: 0,
       cacheWrite: ONE_M,
       cacheRead: ONE_M,
     })
-    expect(cost).toBeCloseTo(18.75 + 1.5, 6)
+    expect(cost).toBeCloseTo(6.25 + 0.5, 6)
   })
 
   it('OpenRouter model uses its own rate (DeepSeek $0.09 / $0.18)', () => {

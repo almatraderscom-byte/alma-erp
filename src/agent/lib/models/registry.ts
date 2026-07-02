@@ -61,8 +61,10 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     supportsTools: true,
     supportsCaching: true,
     contextWindow: 200_000,
-    inPerM: 15,
-    outPerM: 75,
+    // Corrected 2026-07: list price is $5/$25 (was written 3x high, which
+    // inflated Opus escalation cost estimates and the opus-gate budget math).
+    inPerM: 5,
+    outPerM: 25,
     thinking: 'adaptive',
   },
   {
