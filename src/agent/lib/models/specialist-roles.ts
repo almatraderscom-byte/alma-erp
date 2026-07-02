@@ -129,6 +129,7 @@ export const SPECIALIST_ROLES: Record<SpecialistRole, SpecialistRoleDef> = {
       'improved keyword-rich, on-brand, halal-compliant Bangla copy and package it with draft_seo_fixes (one approval card ' +
       'for the whole batch) — never rewrite live content yourself. Manage weekly Google-rank tracking with ' +
       'track_keyword / list_tracked_keywords. Only use paid research_seo_keywords when the owner has approved the spend. ' +
+      'After a fix is approved and applied, call submit_to_indexnow with the changed product URL(s) so Bing/Yandex re-crawl fast (FREE). ' +
       'Return a concise Bangla summary of what you audited, what you drafted, and what is awaiting the owner\'s approval.',
     // Non-critical → cheap DeepSeek worker (owner cost rule). SEO involves no money
     // decisions; every live change stays behind an owner-approval card regardless.
