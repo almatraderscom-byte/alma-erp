@@ -6,14 +6,14 @@ export interface NeutralTool {
 
 export type NeutralMsg =
   | { role: 'user' | 'assistant'; content: string }
-  | { role: 'assistant'; toolCalls: { id: string; name: string; input: Record<string, unknown> }[] }
+  | { role: 'assistant'; toolCalls: { id: string; name: string; input: Record<string, unknown>; thoughtSignature?: string }[] }
   | { role: 'tool'; toolCallId: string; name: string; result: unknown }
 
 export type TurnEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'thinking_delta'; text: string }
   | { type: 'tool_start'; id: string; name: string }
-  | { type: 'tool_input'; id: string; input: Record<string, unknown> }
+  | { type: 'tool_input'; id: string; input: Record<string, unknown>; thoughtSignature?: string }
   | {
       type: 'usage'
       inputTokens: number

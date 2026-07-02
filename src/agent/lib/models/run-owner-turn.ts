@@ -356,7 +356,7 @@ async function* runAlternateProviderTurn(
       // Owner hit Stop — cross-instance cancel flag (see core.ts for rationale).
       if (await isTurnCancelRequested(turnId)) { canceled = true; break }
 
-      const calls: Array<{ id: string; name: string; input: Record<string, unknown> }> = []
+      const calls: Array<{ id: string; name: string; input: Record<string, unknown>; thoughtSignature?: string }> = []
       const toolNames = new Map<string, string>()
       let iterationText = ''
       // Reasoning produced in THIS round only — one timeline segment before this
@@ -399,7 +399,7 @@ async function* runAlternateProviderTurn(
           toolNames.set(ev.id, ev.name)
           yield { type: 'tool_start', id: ev.id, name: ev.name }
         } else if (ev.type === 'tool_input') {
-          calls.push({ id: ev.id, name: toolNames.get(ev.id) ?? '', input: ev.input })
+          calls.push({ id: ev.id, name: toolNames.get(ev.id) ?? '', input: ev.input, thoughtSignature: ev.thoughtSignature })
         } else if (ev.type === 'usage') {
           totalInputTokens += ev.inputTokens
           totalOutputTokens += ev.outputTokens
@@ -637,6 +637,12 @@ async function* runAlternateProviderTurn(
           `[run-owner-turn] head ${model.id} failed pre-answer → falling back to ${cheapId}:`,
           err instanceof Error ? err.message : err,
         )
+        // Persist the REAL head error before we swallow it into the fallback —
+        // otherwise the only trace is this console.warn in runtime logs, and the
+        // final cost event shows DeepSeek, hiding that Gemini threw. Diagnosing
+        // multi-round head failures (e.g. Gemini thought-signature 400s) needs the
+        // actual message in Sentry/agent errors, not just "answer served by cheap".
+        await captureAgentError(err, 'agent.head.fallback', { conversationId, modelId: model.id })
         yield {
           type: 'model_info',
           modelId: cheap.id,

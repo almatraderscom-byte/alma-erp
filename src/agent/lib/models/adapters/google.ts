@@ -2,7 +2,7 @@ import { GoogleGenerativeAI, type Content, type Part } from '@google/generative-
 import type { NeutralMsg, NeutralTool, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
 import { sanitizeSchemaForGemini } from '@/agent/lib/models/adapters/gemini-schema'
 
-function toGeminiContents(messages: NeutralMsg[]): Content[] {
+export function toGeminiContents(messages: NeutralMsg[]): Content[] {
   const out: Content[] = []
 
   for (const msg of messages) {
@@ -15,9 +15,19 @@ function toGeminiContents(messages: NeutralMsg[]): Content[] {
     }
 
     if ('toolCalls' in msg) {
-      const parts: Part[] = msg.toolCalls.map((tc) => ({
-        functionCall: { name: tc.name, args: tc.input },
-      }))
+      // Gemini 3.x is a THINKING model: every functionCall it returns carries an
+      // encrypted `thoughtSignature`. When we send the tool results back for the
+      // NEXT round, that signature MUST be echoed on the same functionCall part —
+      // omit it and the API 400s the follow-up request ("function call ... must be
+      // accompanied by a thought signature"), which was silently kicking the head
+      // to the DeepSeek fallback whenever Gemini engaged thinking before a tool
+      // call. Re-attach it exactly as received, per part. `thoughtSignature` is
+      // untyped in the pinned SDK (0.24.x) but forwarded verbatim, so cast loosely.
+      const parts: Part[] = msg.toolCalls.map((tc) => {
+        const part: Record<string, unknown> = { functionCall: { name: tc.name, args: tc.input } }
+        if (tc.thoughtSignature) part.thoughtSignature = tc.thoughtSignature
+        return part as unknown as Part
+      })
       if (parts.length > 0) out.push({ role: 'model', parts })
       continue
     }
@@ -137,9 +147,10 @@ export class GoogleAdapter implements ProviderAdapter {
           if (part.functionCall?.name) {
             const id = `gemini_${part.functionCall.name}_${Date.now()}`
             const input = (part.functionCall.args ?? {}) as Record<string, unknown>
+            const thoughtSignature = (part as { thoughtSignature?: string }).thoughtSignature
             emittedAny = true
             yield { type: 'tool_start', id, name: part.functionCall.name }
-            yield { type: 'tool_input', id, input }
+            yield { type: 'tool_input', id, input, thoughtSignature }
           }
         }
       }
@@ -156,8 +167,9 @@ export class GoogleAdapter implements ProviderAdapter {
           if (part.functionCall?.name) {
             const id = `gemini_${part.functionCall.name}_${Date.now()}`
             const input = (part.functionCall.args ?? {}) as Record<string, unknown>
+            const thoughtSignature = (part as { thoughtSignature?: string }).thoughtSignature
             yield { type: 'tool_start', id, name: part.functionCall.name }
-            yield { type: 'tool_input', id, input }
+            yield { type: 'tool_input', id, input, thoughtSignature }
           }
         }
       }
