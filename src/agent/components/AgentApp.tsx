@@ -8,8 +8,9 @@ import AgentThread, { type ChatMessage, type TimelineEntry } from './AgentThread
 import AgentComposer, { type PendingFile } from './AgentComposer'
 import AgentArtifactsPanel, { type Artifact } from './AgentArtifactsPanel'
 import { notifyTodosChanged } from './AgentTodoContext'
-const VoiceSession = dynamic(() => import('./voice/VoiceSession'), { ssr: false })
+const VoiceConsole = dynamic(() => import('./voice/VoiceConsole'), { ssr: false })
 import toast from 'react-hot-toast'
+import type { VoiceTurnEvent } from '@/agent/lib/voice-types'
 import { useMediaQuery } from '@/agent/hooks/useMediaQuery'
 import { AgentConversationSkeleton } from '@/agent/components/AgentThinkingIndicator'
 import { toolDisplay } from '@/agent/lib/tool-labels'
@@ -241,6 +242,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   } | null>(null)
 
   const [voiceOpen, setVoiceOpen] = useState(false)
+  /** Set when a voice turn ran against a conversation — the thread reloads on console close. */
+  const voiceTurnConvRef = useRef<string | null>(null)
   const [planDrive, setPlanDrive] = useState<PlanDrivePanelData | null>(null)
   const [composerSeed, setComposerSeed] = useState('')
 
@@ -1216,7 +1219,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     }
   }, [streaming, activeConvId, activeModelId, resyncActiveConversation])
 
-  const handleVoiceMessage = useCallback(async (text: string): Promise<string | null> => {
+  const handleVoiceMessage = useCallback(async (
+    text: string,
+    onEvent?: (evt: VoiceTurnEvent) => void,
+  ): Promise<string | null> => {
     const body: Record<string, unknown> = { message: text, voice: true }
     if (activeConvId) body.conversationId = activeConvId
     else body.modelId = activeModelId // new conv: persist the owner's model choice
@@ -1245,11 +1251,31 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             setActiveConvId(convId)
           } else if (evt.type === 'text_delta') {
             reply += evt.delta as string
+            onEvent?.({ type: 'text_delta', delta: evt.delta as string })
+          } else if (evt.type === 'tool_start') {
+            onEvent?.({ type: 'tool_start', id: evt.id as string, name: evt.name as string })
+          } else if (evt.type === 'tool_end') {
+            onEvent?.({
+              type: 'tool_end',
+              id: evt.id as string,
+              success: evt.success as boolean,
+              resultPreview: typeof evt.resultPreview === 'string' ? evt.resultPreview : undefined,
+            })
+          } else if (evt.type === 'subagent_start') {
+            onEvent?.({ type: 'subagent_start', id: evt.id as string, roleLabel: String(evt.roleLabel ?? 'সহকারী') })
+          } else if (evt.type === 'subagent_end') {
+            onEvent?.({ type: 'subagent_end', id: evt.id as string, success: evt.success !== false })
+          } else if (evt.type === 'confirm_card') {
+            onEvent?.({ type: 'confirm_card' })
           }
         } catch { /* skip */ }
       }
       if (done) break
     }
+    // The voice turn is persisted server-side but this thread's local state never
+    // saw it — reload the conversation on next open so chat and voice stay one
+    // continuous history for the owner.
+    if (convId) voiceTurnConvRef.current = convId
     return reply || null
   }, [activeConvId, activeModelId])
 
@@ -1582,10 +1608,19 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         />
       </div>
 
-      {/* Voice Session — fullscreen overlay, outside normal flow */}
-      <VoiceSession
+      {/* Voice Console — fullscreen overlay, outside normal flow */}
+      <VoiceConsole
         open={voiceOpen}
-        onClose={() => setVoiceOpen(false)}
+        onClose={() => {
+          setVoiceOpen(false)
+          // Voice turns persist server-side but bypass local thread state —
+          // reload so the chat shows what was said/done by voice.
+          const convId = voiceTurnConvRef.current
+          voiceTurnConvRef.current = null
+          if (convId) {
+            void loadConversation({ id: convId, title: null, projectId: activeConvProjectId, archived: false, updatedAt: '' })
+          }
+        }}
         onSendMessage={handleVoiceMessage}
       />
     </div>

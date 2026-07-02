@@ -7,7 +7,8 @@ import { getToken } from 'next-auth/jwt'
 import OpenAI from 'openai'
 
 export const runtime = 'nodejs'
-export const maxDuration = 60
+// Long voice notes (up to 3 min from the console) need transcription headroom.
+export const maxDuration = 120
 
 const globalForOpenAI = globalThis as unknown as { openaiWhisper: OpenAI | undefined }
 function getClient(): OpenAI {
