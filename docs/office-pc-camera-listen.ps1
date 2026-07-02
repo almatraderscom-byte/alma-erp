@@ -24,9 +24,10 @@ $Room       = 'entrance'                 # which room this listener covers
 $TokenFile  = 'C:\go2rtc\bridge-token.txt'
 $RtspFile   = 'C:\go2rtc\listen-rtsp.txt'
 $Ffmpeg     = 'C:\go2rtc\ffmpeg.exe'
-$ChunkSec   = 6                          # length of each audio grab
+$ChunkSec   = 12                         # length of each audio grab (long enough for a full sentence)
 $SilenceDb  = -45                        # mean volume below this = silence, skip
-$Chunk      = "$env:TEMP\alma-listen.wav"
+$Chunk      = "$env:TEMP\alma-listen.wav"      # raw grab (silence check runs on this)
+$SendChunk  = "$env:TEMP\alma-listen-send.wav" # filtered copy actually sent (voice boosted)
 
 # --- Startup: load token + rtsp url -----------------------------------------
 if (-not (Test-Path $TokenFile)) { Write-Host "ERROR: token file not found: $TokenFile"; exit 1 }
@@ -71,8 +72,14 @@ while ($true) {
             continue
         }
 
-        # 3. Speech present — send the chunk to the server for STT + wake word.
-        $bytes = [System.IO.File]::ReadAllBytes($Chunk)
+        # 3. Speech present — boost the distant voice (highpass kills hum,
+        #    dynaudnorm lifts far-field speech) and send THAT copy for STT.
+        #    The silence check above ran on the RAW grab, so normalization
+        #    cannot trick it into transcribing an empty room.
+        & $Ffmpeg -hide_banner -loglevel error -i $Chunk `
+            -af "highpass=f=100,dynaudnorm=f=150:g=15" -ac 1 -ar 16000 -y $SendChunk 2>&1 | Out-Null
+        $sendPath = if (Test-Path $SendChunk) { $SendChunk } else { $Chunk }
+        $bytes = [System.IO.File]::ReadAllBytes($sendPath)
         $uri = "$Api/api/assistant/internal/camera-listen?room=$Room"
         $resp = Invoke-RestMethod -Method POST $uri -Headers $Headers `
             -ContentType 'audio/wav' -Body $bytes -TimeoutSec 40

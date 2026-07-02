@@ -43,6 +43,17 @@ export const maxDuration = 60
 const db = prisma as any
 
 const DEFAULT_WAKE_WORDS = 'আলমা শোনো,আলমা,alma'
+
+/**
+ * Domain prompt for the camera mic — biases STT toward the wake word and the
+ * phrases staff actually say at the office, which matters a lot for distant,
+ * echoey CCTV audio. Owner-tunable via KV 'camera_listen_stt_prompt'.
+ */
+const DEFAULT_STT_PROMPT =
+  'অফিসের সিসিটিভি ক্যামেরার মাইক থেকে দূরের বাংলা কথা। ' +
+  'প্রায়ই বলা হয়: "আলমা শোনো", "স্যার", "একজন কাস্টমার এসেছে", "একটু আসবেন", ' +
+  '"ডেলিভারি এসেছে", "প্যাকেট রেডি"। ' +
+  'Bangladeshi Bangla only — not Hindi, not Devanagari.'
 const DEFAULT_COOLDOWN_SEC = 15
 const COOLDOWN_KEY = 'camera_listen_last_forward_at'
 
@@ -175,7 +186,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, ignored: 'audio_too_large' })
     }
     try {
-      const t = await transcribeVoiceBangla(openai(), input.audio)
+      const sttPrompt = (await kvGet('camera_listen_stt_prompt')) ?? DEFAULT_STT_PROMPT
+      const t = await transcribeVoiceBangla(openai(), input.audio, sttPrompt)
       transcript = (t.text ?? '').trim()
       const durationSec = estimateAudioDurationSeconds(input.audio.size)
       void logCost({

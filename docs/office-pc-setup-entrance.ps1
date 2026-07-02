@@ -73,9 +73,10 @@ $Room       = 'entrance'
 $TokenFile  = 'C:\go2rtc\bridge-token.txt'
 $RtspFile   = 'C:\go2rtc\listen-rtsp.txt'
 $Ffmpeg     = 'C:\go2rtc\ffmpeg.exe'
-$ChunkSec   = 6
+$ChunkSec   = 12
 $SilenceDb  = -45
 $Chunk      = "$env:TEMP\alma-listen.wav"
+$SendChunk  = "$env:TEMP\alma-listen-send.wav"
 
 if (-not (Test-Path $TokenFile)) { Write-Host "ERROR: token file not found: $TokenFile"; exit 1 }
 if (-not (Test-Path $RtspFile))  { Write-Host "ERROR: rtsp file not found: $RtspFile";   exit 1 }
@@ -101,7 +102,9 @@ while ($true) {
         if (-not (Test-Path $Chunk)) { Write-Host "$(Get-Date -Format 'HH:mm:ss') no audio captured - retry"; Start-Sleep 5; continue }
         $vol = Get-MeanVolumeDb $Chunk
         if ($vol -lt $SilenceDb) { continue }
-        $bytes = [System.IO.File]::ReadAllBytes($Chunk)
+        & $Ffmpeg -hide_banner -loglevel error -i $Chunk -af "highpass=f=100,dynaudnorm=f=150:g=15" -ac 1 -ar 16000 -y $SendChunk 2>&1 | Out-Null
+        $sendPath = if (Test-Path $SendChunk) { $SendChunk } else { $Chunk }
+        $bytes = [System.IO.File]::ReadAllBytes($sendPath)
         $uri = "$Api/api/assistant/internal/camera-listen?room=$Room"
         $resp = Invoke-RestMethod -Method POST $uri -Headers $Headers -ContentType 'audio/wav' -Body $bytes -TimeoutSec 40
         $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
