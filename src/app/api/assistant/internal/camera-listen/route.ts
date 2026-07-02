@@ -205,12 +205,37 @@ export async function POST(req: NextRequest) {
 
   if (!transcript) return NextResponse.json({ ok: true, ignored: 'empty' })
 
+  // Echo guard: right after an announcement plays, the camera mic hears the
+  // camera's own speaker — and STT (biased toward the wake word) can
+  // hallucinate a match from that echo. Ignore AUDIO-derived transcripts for a
+  // short window after any speak job was created (text input is unaffected).
+  if (input.audio) {
+    const echoSec = Number((await kvGet('camera_listen_echo_guard_sec')) ?? 60) || 60
+    try {
+      const recentSpeak = await db.agentCameraSpeakJob.findFirst({
+        where: { createdAt: { gte: new Date(Date.now() - echoSec * 1000) } },
+        select: { id: true },
+      })
+      if (recentSpeak) {
+        return NextResponse.json({ ok: true, heard: transcript, ignored: 'echo_guard' })
+      }
+    } catch { /* guard is best-effort */ }
+  }
+
   const wakeWords = ((await kvGet('camera_wake_words')) ?? DEFAULT_WAKE_WORDS)
     .split(',').map((s) => s.trim()).filter(Boolean)
   const utterance = matchWake(transcript, wakeWords)
   if (utterance === null) {
     // No wake word — heard speech but not addressed to us. Silent + cheap.
     return NextResponse.json({ ok: true, heard: transcript, matched: false })
+  }
+
+  // Trivial-utterance filter: noise chunks transcribe to just the wake word,
+  // "." or similar — a real request has actual words after the wake phrase.
+  // (Costs the rare "staff only called, said nothing" ping; worth it.)
+  const letters = utterance.replace(/[^\p{L}\p{N}]/gu, '')
+  if (letters.length < 3) {
+    return NextResponse.json({ ok: true, heard: transcript, matched: true, forwarded: false, reason: 'trivial' })
   }
 
   // Cooldown: a burst of chunks around one sentence should ping the owner once.
@@ -225,8 +250,7 @@ export async function POST(req: NextRequest) {
   }
 
   const label = roomLabel(input.room)
-  const spoken = utterance || '(শুধু ডাকলো, কিছু বললো না)'
-  const msg = `🎤 ${label} ক্যামেরায় স্টাফ ডাকলো:\n\n«${spoken}»\n\nউত্তর দিলে বলুন — "${input.room ?? 'work'} ক্যামেরায় বলো: …" — আমি স্পিকারে বলে দেবো, Sir।`
+  const msg = `🎤 ${label} ক্যামেরায় স্টাফ ডাকলো:\n\n«${utterance}»\n\nউত্তর দিলে বলুন — "${input.room ?? 'work'} ক্যামেরায় বলো: …" — আমি স্পিকারে বলে দেবো, Sir।`
 
   const res = await sendOwnerText(msg)
   if (res.ok) await kvSet(COOLDOWN_KEY, new Date(now).toISOString())
