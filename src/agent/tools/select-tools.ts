@@ -219,6 +219,13 @@ const HEAD_KEPT_GROWTH_TOOLS = [
   // off the head would force a delegation hop just to fire one HTTP ping.
   // Appended last so the existing cached-prefix bytes never shift.
   'submit_to_indexnow',
+  // get_ga4_report is a cost-free, read-only Google Analytics read the owner asks
+  // for directly ("which marketing drives sales / how's traffic") — an owner-facing
+  // ROI question that lands on the head, not a delegable content/growth sub-task.
+  // Same rationale as audit_product_seo above: a cheap read with no approval card
+  // that lets the head answer the owner in one hop instead of a delegation detour.
+  // Appended last so the existing cached-prefix bytes never shift.
+  'get_ga4_report',
 ] as const
 
 // Delegation approval test mode (DELEGATION_APPROVAL=true): force marketing work
