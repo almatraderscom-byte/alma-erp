@@ -217,9 +217,14 @@ const camera_speak: AgentTool = {
         },
       }
     } catch (err) {
+      // Log loudly — a silent tool failure here once left the owner believing an
+      // announcement was queued when nothing reached the DB (no job row, no log line).
+      console.warn('[camera_speak] queue failed:', err instanceof Error ? err.message : err)
       return {
         success: false,
-        error: `ঘোষণা কিউ করা গেল না: ${err instanceof Error ? err.message : String(err)}`,
+        error:
+          `ঘোষণা কিউ করা যায়নি — কিছুই বাজবে না: ${err instanceof Error ? err.message : String(err)}। ` +
+          'ওনারকে স্পষ্ট বলো যে ঘোষণাটা যায়নি; ভুলেও "পাঠানো হয়েছে" দাবি করবে না।',
       }
     }
   },
