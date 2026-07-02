@@ -42,6 +42,8 @@ export interface AdRecommendation {
     ctrWeek: number
     dailyBudgetBdt: number
     status: string
+    objective?: string
+    currency?: string
   }
 }
 
@@ -109,6 +111,7 @@ function metricsTable(metrics: CampaignMetrics[]): string {
       name: m.name,
       spendWeek: Math.round(m.spendWeek),
       currency: m.currency,
+      objective: m.objective,
       roasWeek: Number(m.roasWeek.toFixed(2)),
       ctrTodayPct: Number((m.ctrToday * 100).toFixed(2)),
       ctrWeekPct: Number((m.ctrWeek * 100).toFixed(2)),
@@ -132,7 +135,7 @@ async function enrichWithSonnet(
     system:
       'You are ALMA Lifestyle Meta Ads optimizer (Bangladesh, COD/Messenger funnel). ' +
       'Output ONLY JSON array matching input campaigns. Each item: {"campaignId","verdict","reason","confidence"}. ' +
-      'reason = Bangla, cite numbers (ROAS, CTR, spend). Spend numbers are in each campaign\'s `currency` field (this account bills in USD) — ALWAYS write spend with that currency symbol, NEVER ৳ unless currency is BDT. Never recommend manual targeting/bidding — Advantage+ only. ' +
+      'reason = Bangla, cite numbers (ROAS, CTR, spend). Spend numbers are in each campaign\'s `currency` field (this account bills in USD) — ALWAYS write spend with that currency symbol, NEVER ৳ unless currency is BDT. Never recommend manual targeting/bidding — Advantage+ only. Each campaign has an `objective`: for MESSAGES/ENGAGEMENT campaigns there is NO purchase ROAS or Pixel funnel — judge by messaging conversations/engagement and NEVER advise Pixel/website/conversion fixes for them; reserve ROAS/Pixel talk for SALES/CONVERSIONS objectives. If a metric is missing, say so honestly instead of guessing. ' +
       'If insufficient data, verdict MUST be hold. Do not override hold guardrails to scale/kill.',
     prompt:
       `Metrics:\n${metricsTable(metrics)}\n\n` +
@@ -222,6 +225,8 @@ export async function analyzeAdCampaigns(): Promise<{
         ctrWeek: m.ctrWeek,
         dailyBudgetBdt: m.dailyBudgetBdt,
         status: m.effectiveStatus,
+        objective: m.objective,
+        currency: m.currency,
       },
     }
   })

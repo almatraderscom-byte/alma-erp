@@ -64,6 +64,8 @@ export type CampaignMetrics = {
   hasEnoughData: boolean
   /** Ad-account billing currency (e.g. USD) — every spend/budget number above is in THIS currency. */
   currency: string
+  /** Campaign objective (e.g. OUTCOME_ENGAGEMENT / MESSAGES / OUTCOME_SALES) — judge performance by THIS, not always purchases. */
+  objective: string
 }
 
 export const INSIGHT_MIN_SPEND_BDT = 500
@@ -77,10 +79,10 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
   // and decide here. This also lets us surface the true status to the agent so
   // it can never mislabel a live campaign as paused.
   const campaignsRes = await adsApi<{
-    data?: Array<{ id: string; name: string; daily_budget?: string; effective_status?: string }>
+    data?: Array<{ id: string; name: string; daily_budget?: string; effective_status?: string; objective?: string }>
   }>(
     `${accountId}/campaigns`,
-    { fields: 'id,name,daily_budget,effective_status', limit: '100' },
+    { fields: 'id,name,daily_budget,effective_status,objective', limit: '100' },
   )
 
   const activeCampaigns = (campaignsRes.data ?? []).filter(
@@ -140,12 +142,29 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
         ? purchaseValueFromActions(weekInsight.actions as Array<{ action_type?: string; value?: string }>) / spendWeek
         : 0
 
-      const dailyBudgetBdt = campaign.daily_budget
+      // Budget often lives at AD SET level ("Using ad set budget" in Ads
+      // Manager) — the campaign field is then empty and we wrongly reported
+      // "no daily budget". Fall back to summing the active ad sets' budgets.
+      let dailyBudgetBdt = campaign.daily_budget
         ? Math.round(safeNum(campaign.daily_budget) / 100)
         : 0
+      if (dailyBudgetBdt === 0) {
+        try {
+          const adsets = await adsApi<{ data?: Array<{ daily_budget?: string; effective_status?: string }> }>(
+            `${campaign.id}/adsets`,
+            { fields: 'daily_budget,effective_status', limit: '25' },
+          )
+          dailyBudgetBdt = Math.round(
+            (adsets.data ?? [])
+              .filter((a) => a.effective_status === 'ACTIVE')
+              .reduce((sum, a) => sum + safeNum(a.daily_budget), 0) / 100,
+          )
+        } catch { /* keep 0 */ }
+      }
 
       rows.push({
         currency: accountCurrency,
+        objective: campaign.objective ?? 'UNKNOWN',
         campaignId: campaign.id,
         name: campaign.name,
         spendToday,
