@@ -17,11 +17,15 @@ const STATUS_URL = '/api/assistant/growth/gsc-status'
 const FEATURE_STATUS_URL = '/api/assistant/growth/feature-status'
 
 type FeatureStatus = {
+  generatedAt?: string
   gscConnected: boolean
   ga4: { state: string; propertyId: string | null; sessions7d: number | null; error?: string }
   gbp: { state: string; location?: string; error?: string }
   indexnow: { state: string; keyFileLive: boolean }
-  campaigns: { sms: boolean; email: boolean; emailNote: string }
+  campaigns: {
+    sms: { state: string; balance: string | null; error?: string }
+    email: { state: string; domain: string | null }
+  }
   finalSubmitBan: { serverLayer: boolean }
 }
 
@@ -253,7 +257,9 @@ export default function GrowthConnections() {
                       ? 'Analytics permission নেই — আবার connect করুন।'
                       : features.ga4.state === 'needs_connect'
                         ? 'Google connect করা নেই।'
-                        : `সমস্যা: ${features.ga4.error ?? 'অজানা'}`
+                        : features.ga4.state === 'timeout'
+                          ? 'Google সাড়া দিচ্ছে না (timeout) — একটু পরে রিফ্রেশ করুন।'
+                          : `সমস্যা: ${features.ga4.error ?? 'অজানা'}`
               }
             />
             <StatusRow
@@ -271,7 +277,9 @@ export default function GrowthConnections() {
                         ? 'এই Google account-এ কোনো Business Profile নেই।'
                         : features.gbp.state === 'needs_connect'
                           ? 'Google connect করা নেই।'
-                          : `সমস্যা: ${features.gbp.error ?? 'অজানা'}`
+                          : features.gbp.state === 'timeout'
+                            ? 'Google সাড়া দিচ্ছে না (timeout) — একটু পরে রিফ্রেশ করুন।'
+                            : `সমস্যা: ${features.gbp.error ?? 'অজানা'}`
               }
               action={features.gbp.state === 'pending_google' ? 'Google-এর access form (project 207682606576)' : undefined}
               actionHref={features.gbp.state === 'pending_google' ? 'https://support.google.com/business/contact/api_default' : undefined}
@@ -289,14 +297,36 @@ export default function GrowthConnections() {
               }
             />
             <StatusRow
-              tone={features.campaigns.sms ? 'ok' : 'warn'}
-              icon="📣"
-              title="ক্যাম্পেইন চ্যানেল (SMS + Email)"
+              tone={features.campaigns.sms.state === 'ok' ? 'ok' : 'warn'}
+              icon="📱"
+              title="SMS ক্যাম্পেইন (sms.net.bd)"
               detail={
-                (features.campaigns.sms ? 'SMS চলছে (sms.net.bd) ✓' : 'SMS_API_KEY সেট নেই ✗') +
-                (features.campaigns.email ? ' · Email কনফিগার করা ✓ — ' : ' · Email কনফিগার নেই ✗ — ') +
-                features.campaigns.emailNote
+                features.campaigns.sms.state === 'ok'
+                  ? `চলছে — key যাচাই হয়েছে${features.campaigns.sms.balance != null ? `, ব্যালেন্স ৳${features.campaigns.sms.balance}` : ''}।`
+                  : features.campaigns.sms.state === 'needs_env'
+                    ? 'SMS_API_KEY সেট করা নেই।'
+                    : features.campaigns.sms.state === 'bad_key'
+                      ? `Key কাজ করছে না: ${features.campaigns.sms.error ?? 'provider error'}`
+                      : 'Provider সাড়া দিচ্ছে না (timeout) — একটু পরে রিফ্রেশ করুন।'
               }
+            />
+            <StatusRow
+              tone={features.campaigns.email.state === 'ok' ? 'ok' : features.campaigns.email.state === 'sandbox' ? 'warn' : 'warn'}
+              icon="📧"
+              title="Email ক্যাম্পেইন (Resend)"
+              detail={
+                features.campaigns.email.state === 'ok'
+                  ? `চলছে — domain verified (${features.campaigns.email.domain}), কাস্টমারদের পাঠানো যাবে।`
+                  : features.campaigns.email.state === 'sandbox'
+                    ? 'Sandbox mode — শুধু নিজের ঠিকানায় যায়। কাস্টমারদের পাঠাতে Resend-এ almatraders.com verify করুন।'
+                    : features.campaigns.email.state === 'needs_env'
+                      ? 'RESEND_API_KEY সেট করা নেই।'
+                      : features.campaigns.email.state === 'bad_key'
+                        ? 'Resend key কাজ করছে না।'
+                        : 'Resend সাড়া দিচ্ছে না (timeout) — একটু পরে রিফ্রেশ করুন।'
+              }
+              action={features.campaigns.email.state === 'sandbox' ? 'Resend → Domains → Add almatraders.com' : undefined}
+              actionHref={features.campaigns.email.state === 'sandbox' ? 'https://resend.com/domains' : undefined}
             />
             <StatusRow
               tone="ok"
