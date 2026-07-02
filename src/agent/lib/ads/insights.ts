@@ -62,6 +62,8 @@ export type CampaignMetrics = {
   dailyBudgetBdt: number
   effectiveStatus: string
   hasEnoughData: boolean
+  /** Ad-account billing currency (e.g. USD) — every spend/budget number above is in THIS currency. */
+  currency: string
 }
 
 export const INSIGHT_MIN_SPEND_BDT = 500
@@ -85,6 +87,17 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
     (c) => c.effective_status === 'ACTIVE',
   )
   if (!activeCampaigns.length) return []
+
+  // Meta returns `spend` in the AD ACCOUNT'S OWN currency. This account bills in
+  // USD, but the tool used to hardcode ৳ — the owner saw "৳947" where Ads
+  // Manager showed dollars. Fetch the real currency once and label every number.
+  let accountCurrency = 'USD'
+  try {
+    const acct = await adsApi<{ currency?: string }>(accountId, { fields: 'currency' })
+    if (acct.currency) accountCurrency = acct.currency
+  } catch {
+    /* keep default */
+  }
 
   const today = new Date().toISOString().slice(0, 10)
   const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
@@ -132,6 +145,7 @@ export async function fetchActiveCampaignMetrics(): Promise<CampaignMetrics[]> {
         : 0
 
       rows.push({
+        currency: accountCurrency,
         campaignId: campaign.id,
         name: campaign.name,
         spendToday,
