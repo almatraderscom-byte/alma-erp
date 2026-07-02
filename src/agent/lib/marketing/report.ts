@@ -2,17 +2,14 @@
  * Weekly / on-demand marketing funnel report — paid + Messenger + COD.
  * Directional attribution; honest about thin data.
  */
-import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
-import { AGENT_MODEL, isAnthropicConfigured } from '@/agent/config'
+import { agentSmartText } from '@/agent/lib/llm-text'
 import { fetchActiveCampaignMetrics } from '@/agent/lib/ads/insights'
 import { getTopCreativeAngles } from '@/agent/lib/ads/creative-performance'
 import { getCsAnalyticsSummary } from '@/agent/lib/cs/analytics'
 import { buildMarketingIntel } from '@/lib/content-intelligence'
 import { getAgentOrdersSummary } from '@/lib/agent-api/orders.service'
 import { roundMoney } from '@/lib/money'
-import { logCost } from '@/agent/lib/cost-events'
-import { calcAnthropicChatCostUsd } from '@/agent/lib/pricing'
 import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -179,39 +176,16 @@ export async function buildMarketingReportText(days = 7): Promise<{
 }> {
   const data = await gatherMarketingReportData(days)
 
-  if (!isAnthropicConfigured()) {
-    return {
-      report: formatMarketingReportFallback(data),
-      data,
-      recommendations: [],
-    }
-  }
-
-  // maxRetries:0 is the real timeout fix. The SDK retries twice by default, so a
-  // 35s per-attempt timeout silently became 35s×3 ≈ 105s — past the worker's fetch
-  // budget, which surfaced to the owner as "operation aborted due to timeout". With
-  // no retries the call fails once and we ship the deterministic fallback instead.
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 0 })
   let report: string
   try {
-    const res = await client.messages.create({
-      model: AGENT_MODEL || 'claude-sonnet-4-6',
-      max_tokens: 2000,
+    // Anthropic-or-Gemini (owner: Gemini replaces Sonnet for now).
+    const raw = await agentSmartText({
       system: REPORT_SYSTEM,
-      messages: [{
-        role: 'user',
-        content: `Weekly marketing report (${days} days). Today: ${todayYmdDhaka()}\n\nData:\n${JSON.stringify(data, null, 0).slice(0, 14000)}`,
-      }],
-    }, { timeout: 30_000, maxRetries: 0 })
-    const block = res.content.find((b) => b.type === 'text')
-    report = block && block.type === 'text' ? block.text.trim() : formatMarketingReportFallback(data)
-    void logCost({
-      provider: 'anthropic',
-      kind: 'chat',
-      units: { purpose: 'marketing_report', days },
-      costUsd: calcAnthropicChatCostUsd(res.usage),
-      dedupKey: `marketing_report:${todayYmdDhaka()}:${days}`,
+      prompt: `Weekly marketing report (${days} days). Today: ${todayYmdDhaka()}\n\nData:\n${JSON.stringify(data, null, 0).slice(0, 14000)}`,
+      maxTokens: 2000,
+      costLabel: 'marketing_report',
     })
+    report = raw || formatMarketingReportFallback(data)
   } catch (err) {
     // A slow/failed LLM must not blow the caller's timeout — ship the deterministic report.
     console.warn('[marketing-report] LLM call failed/timed out — using fallback:', err instanceof Error ? err.message : String(err))
