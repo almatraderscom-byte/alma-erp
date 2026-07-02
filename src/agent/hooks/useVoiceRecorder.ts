@@ -58,6 +58,10 @@ export function useVoiceRecorder(opts: {
   // Voice-activity-detection (auto-stop) — Web Audio analyser on the same mic stream.
   const audioCtxRef = useRef<AudioContext | null>(null)
   const rafRef = useRef<number | null>(null)
+  // rAF freezes when the app backgrounds/screen locks — these two keep the mic
+  // from recording forever in that state (privacy + a 3-min blob nobody wanted).
+  const maxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const visHandlerRef = useRef<(() => void) | null>(null)
   const vadRef = useRef<{ hasSpoken: boolean; silenceStart: number; startedAt: number }>({
     hasSpoken: false, silenceStart: 0, startedAt: 0,
   })
@@ -67,6 +71,11 @@ export function useVoiceRecorder(opts: {
   const teardownVad = useCallback(() => {
     if (rafRef.current != null) { cancelAnimationFrame(rafRef.current); rafRef.current = null }
     if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); audioCtxRef.current = null }
+    if (maxTimerRef.current) { clearTimeout(maxTimerRef.current); maxTimerRef.current = null }
+    if (visHandlerRef.current) {
+      document.removeEventListener('visibilitychange', visHandlerRef.current)
+      visHandlerRef.current = null
+    }
   }, [])
 
   const cleanup = useCallback(() => {
@@ -142,6 +151,21 @@ export function useVoiceRecorder(opts: {
       setRecordSecs(0)
       callbacksRef.current.onRecordingStart?.()
       timerRef.current = setInterval(() => setRecordSecs(s => s + 1), 1000)
+
+      // Screen lock / app background: rAF (and the VAD below) freezes but the
+      // mic keeps capturing. Stop cleanly — what was said still transcribes.
+      const onVis = () => {
+        if (document.hidden && mrRef.current?.state === 'recording') mrRef.current.stop()
+      }
+      document.addEventListener('visibilitychange', onVis)
+      visHandlerRef.current = onVis
+      // Hard cap on a timer, not rAF — timers survive backgrounding, rAF doesn't.
+      const capMs = callbacksRef.current.autoStop === true
+        ? (callbacksRef.current.maxMs ?? 20000)
+        : 300000 // manual mode: 5-min absolute safety stop
+      maxTimerRef.current = setTimeout(() => {
+        if (mrRef.current?.state === 'recording') mrRef.current.stop()
+      }, capMs)
 
       // ── Siri-style auto-stop: listen to the mic level and stop once the speaker
       // has spoken and then gone quiet for `silenceMs` (or hits the hard cap). ──
