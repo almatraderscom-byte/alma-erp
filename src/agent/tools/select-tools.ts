@@ -226,6 +226,11 @@ const HEAD_KEPT_GROWTH_TOOLS = [
   // that lets the head answer the owner in one hop instead of a delegation detour.
   // Appended last so the existing cached-prefix bytes never shift.
   'get_ga4_report',
+  // draft_marketing_campaign stages the owner-approval card for Email/SMS
+  // campaigns — owner-facing approval staging exactly like draft_seo_fixes
+  // above, so it lives on the head rather than behind a delegation hop.
+  // Appended last so the existing cached-prefix bytes never shift.
+  'draft_marketing_campaign',
 ] as const
 
 // Delegation approval test mode (DELEGATION_APPROVAL=true): force marketing work

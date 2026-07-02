@@ -481,6 +481,73 @@ async function runApprove(
     }
   }
 
+  // Growth Feature 6: owner approved an Email/SMS marketing campaign — send it
+  // now, sequentially, via the providers the ERP already uses (sms.net.bd /
+  // Resend). Recipients were resolved and capped at draft time; nothing was
+  // sent before this approval.
+  if (action.type === 'marketing_campaign') {
+    try {
+      const claimed = await db.agentPendingAction.updateMany({
+        where: { id: actionId, status: 'pending' },
+        data: { status: 'approved', resolvedAt: new Date() },
+      })
+      if (claimed.count === 0) {
+        const current = await db.agentPendingAction.findUnique({ where: { id: actionId } })
+        return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+      }
+      const channel = String(payload.channel ?? '')
+      const message = String(payload.message ?? '')
+      const subject = String(payload.subject ?? '')
+      const recipients = Array.isArray(payload.recipients)
+        ? (payload.recipients as Array<{ to: string; name?: string | null }>)
+        : []
+      if (!message || recipients.length === 0) throw new Error('campaign payload missing message/recipients')
+
+      const sent: string[] = []
+      const failed: Array<{ to: string; error: string }> = []
+      if (channel === 'sms') {
+        const { sendSmsViaProvider } = await import('@/lib/sms/provider')
+        for (const r of recipients) {
+          const res = await sendSmsViaProvider({ to: r.to, message })
+          if (res.ok) sent.push(r.to)
+          else failed.push({ to: r.to, error: res.errorMessage ?? res.errorCode ?? 'send failed' })
+        }
+      } else if (channel === 'email') {
+        const { sendEmail } = await import('@/lib/resend')
+        for (const r of recipients) {
+          const res = await sendEmail({ to: r.to, subject, text: message })
+          if (res.ok) sent.push(r.to)
+          else failed.push({ to: r.to, error: String((res as { error?: unknown }).error ?? 'send failed') })
+        }
+      } else {
+        throw new Error(`unknown campaign channel: ${channel}`)
+      }
+
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: {
+          status: failed.length === 0 ? 'executed' : sent.length > 0 ? 'partial' : 'failed',
+          result: { sent, failed },
+        },
+      })
+      await appendConversationNote(
+        db,
+        action,
+        `✅ ক্যাম্পেইন অনুমোদিত — ${sent.length}/${recipients.length} জনকে ${channel.toUpperCase()} পাঠানো হয়েছে` +
+          (failed.length ? `, ${failed.length}টি ব্যর্থ` : '') +
+          '।',
+      )
+      return Response.json({ success: failed.length === 0, sentCount: sent.length, failed })
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err)
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { status: 'failed', result: { error: errMsg } },
+      })
+      return Response.json({ error: errMsg }, { status: 502 })
+    }
+  }
+
   if (action.type === 'content_gate1') {
     try {
       const claimed = await db.agentPendingAction.updateMany({
