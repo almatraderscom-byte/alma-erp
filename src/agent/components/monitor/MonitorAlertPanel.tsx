@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import type { MonitorWarning, StaffMonitorRow, StaffMonitorData } from '@/agent/lib/staff-monitor-types'
@@ -17,22 +17,41 @@ function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-GB', { timeZone: 'Asia/Dhaka', hour: '2-digit', minute: '2-digit' })
 }
 
+const DISMISSED_KEY = 'alma_monitor_dismissed_v1'
+
+function loadDismissed(): Set<string> {
+  if (typeof sessionStorage === 'undefined') return new Set()
+  try {
+    return new Set(JSON.parse(sessionStorage.getItem(DISMISSED_KEY) ?? '[]') as string[])
+  } catch {
+    return new Set()
+  }
+}
+
 export function MonitorAlertPanel({ data, isLive, onEscalate, escalating }: {
   data: StaffMonitorData
   isLive: boolean
   onEscalate: (m: StaffMonitorRow) => void
   escalating: string | null
 }) {
-  const [dismissed, setDismissed] = useState<Set<string>>(new Set())
+  // Dismissals key on the alert CONTENT (kind+message), not the list index —
+  // index-based ids shifted every 10s refresh, so a closed alert popped right
+  // back. Persisted in sessionStorage so a reload doesn't resurrect them.
+  const [dismissed, setDismissed] = useState<Set<string>>(loadDismissed)
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(DISMISSED_KEY, JSON.stringify([...dismissed].slice(-300)))
+    } catch { /* ignore */ }
+  }, [dismissed])
 
   const alerts: Alert[] = []
 
   const systemErrors = (data.warnings ?? []).filter(w => w.kind.startsWith('duty_') || w.kind === 'worker_heartbeat')
   const otherWarnings = (data.warnings ?? []).filter(w => !w.kind.startsWith('duty_') && w.kind !== 'worker_heartbeat')
 
-  systemErrors.forEach((w, i) => {
+  systemErrors.forEach((w) => {
     alerts.push({
-      id: `sys-${w.kind}-${i}`,
+      id: `sys-${w.kind}-${w.message}`,
       severity: w.severity === 'critical' ? 'critical' : 'warn',
       title: w.message,
       detail: w.kind === 'worker_heartbeat' ? 'Fix: SSH to VPS → pm2 restart agent-worker' :
@@ -41,9 +60,9 @@ export function MonitorAlertPanel({ data, isLive, onEscalate, escalating }: {
     })
   })
 
-  otherWarnings.forEach((w, i) => {
+  otherWarnings.forEach((w) => {
     alerts.push({
-      id: `warn-${w.kind}-${i}`,
+      id: `warn-${w.kind}-${w.message}`,
       severity: w.severity === 'critical' ? 'critical' : 'warn',
       title: w.message,
     })
@@ -78,6 +97,17 @@ export function MonitorAlertPanel({ data, isLive, onEscalate, escalating }: {
       transition={{ duration: 0.3 }}
       className="space-y-1.5"
     >
+      {visibleAlerts.length > 1 && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setDismissed(prev => new Set([...prev, ...visibleAlerts.map(a => a.id)]))}
+            className="rounded-full border border-border-subtle bg-card/70 px-3 py-1 text-[11px] font-semibold text-muted transition-colors hover:text-cream"
+          >
+            ✕ সব বন্ধ করুন ({visibleAlerts.length})
+          </button>
+        </div>
+      )}
       <AnimatePresence>
         {visibleAlerts.map(alert => (
           <motion.div
