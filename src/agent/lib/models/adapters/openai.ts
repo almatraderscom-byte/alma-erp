@@ -109,22 +109,44 @@ export class OpenAiAdapter implements ProviderAdapter {
     thinking?: 'adaptive' | 'level' | 'none'
   }): AsyncGenerator<TurnEvent> {
     // `reasoning` is an OpenRouter extension (not in the OpenAI SDK types) that
-    // asks reasoning-capable models (DeepSeek-reasoner, Qwen-thinking) to stream
-    // their thinking tokens in `delta.reasoning`. Cast through unknown; providers
-    // that don't support it ignore the field safely.
-    const reasoningParam = this.streamReasoning ? { reasoning: { enabled: true } } : {}
-    // Cast to the streaming params type so the `reasoning` extension is accepted
-    // and the create() overload still resolves to a Stream (not a single reply).
-    const stream = await this.client.chat.completions.create({
+    // asks reasoning-capable models (DeepSeek, Qwen-thinking) to stream their
+    // thinking tokens in `delta.reasoning`. `{ enabled: true }` alone was too weak
+    // for many providers — an explicit effort level is what reliably turns the
+    // stream on, so the owner gets the same live step-by-step thinking as the
+    // Gemini head. Gated on the model's registry `thinking` flag; if a
+    // provider rejects the extension outright, retry once without it so the
+    // head never goes down over a cosmetic feature.
+    const wantReasoning = this.streamReasoning && args.thinking !== 'none'
+    const reasoningParam = wantReasoning
+      ? { reasoning: { enabled: true, effort: 'medium' } }
+      : {}
+    const baseParams = {
       model: args.apiModel,
       messages: toOpenAiMessages(args.system, args.messages, this.cachePrefix),
       tools: args.tools.length ? toOpenAiTools(args.tools) : undefined,
-      stream: true,
+      stream: true as const,
       stream_options: { include_usage: true },
-      ...reasoningParam,
-    } as ChatCompletionCreateParamsStreaming)
+    }
+    // Cast to the streaming params type so the `reasoning` extension is accepted
+    // and the create() overload still resolves to a Stream (not a single reply).
+    let stream
+    try {
+      stream = await this.client.chat.completions.create({
+        ...baseParams,
+        ...reasoningParam,
+      } as ChatCompletionCreateParamsStreaming)
+    } catch (err) {
+      if (!wantReasoning) throw err
+      console.warn(
+        `[openai-adapter] ${args.apiModel} rejected the reasoning param — retrying without it:`,
+        err instanceof Error ? err.message : err,
+      )
+      stream = await this.client.chat.completions.create(
+        baseParams as ChatCompletionCreateParamsStreaming,
+      )
+    }
 
-    const toolBuffers = new Map<number, { id: string; name: string; args: string }>()
+    const toolBuffers = new Map<number, { id: string; name: string; args: string; started: boolean }>()
 
     for await (const chunk of stream) {
       if (args.signal?.aborted) break
@@ -153,13 +175,20 @@ export class OpenAiAdapter implements ProviderAdapter {
           const idx = tc.index ?? 0
           let buf = toolBuffers.get(idx)
           if (!buf) {
-            buf = { id: tc.id ?? `openai_${idx}_${Date.now()}`, name: tc.function?.name ?? '', args: '' }
+            buf = { id: tc.id ?? `openai_${idx}_${Date.now()}`, name: tc.function?.name ?? '', args: '', started: false }
             toolBuffers.set(idx, buf)
-            if (buf.name) yield { type: 'tool_start', id: buf.id, name: buf.name }
           }
           if (tc.id) buf.id = tc.id
           if (tc.function?.name) buf.name = tc.function.name
           if (tc.function?.arguments) buf.args += tc.function.arguments
+          // Some providers stream the function NAME in a later delta than the
+          // first (index-only) chunk — emit tool_start whenever the name first
+          // becomes known, not only at buffer creation, so the live step
+          // timeline gets a properly-labelled chip.
+          if (!buf.started && buf.name) {
+            buf.started = true
+            yield { type: 'tool_start', id: buf.id, name: buf.name }
+          }
         }
       }
 
