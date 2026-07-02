@@ -146,14 +146,33 @@ PR #195. The camera's own human/motion detection now drives the entrance watch:
 - KV switches: `entrance_webhook_enabled` (default on) for the event path;
   `entrance_watch_enabled` for the polling cron.
 
-**FIRST TASK NEXT SESSION — verify + flip:**
-1. Check Vercel runtime logs (query "imou-event") for received events once staff
-   moved around in the morning. Confirm entrance events trigger a Telegram alert.
-2. Note the real msgType names from the logs; tighten KV `imou_event_types` to the
-   human-detection type if the camera sends one (cuts pure-motion noise).
-3. Then set KV `entrance_watch_enabled='off'` (polling off) — webhook becomes the
-   sole driver: 24h coverage, Imou quota drops to event-only (~2-5K/month),
-   Gemini ~$1-2/month. If webhook proves unreliable, turn polling back on (KV).
+**Also done cloud-side (2026-07-03 ~02:00): announcement outcome notifications.**
+`sweepAndNotifySpeakJobs()` (camera-say.ts, `notified_at` column) tells the owner
+exactly once per announcement: "✅ বেজেছে" (seconds after the bridge ack) or
+"⚠️ বাজেনি — PC বন্ধ / error" (expired jobs are swept by the 1-min entrance-watch
+cron, which runs even when the bridge PC is off). Backfilled old jobs as notified.
+
+---
+
+## TOMORROW'S SESSION — exact task list (office PC needed for #3-5)
+
+1. **Verify webhook (no PC needed):** morning, after staff move around — Vercel
+   runtime logs, query "imou-event": expect `received did=… msgType=…` lines and an
+   entrance Telegram alert. Note the REAL msgType names; tighten KV `imou_event_types`
+   (keep human-detection, consider dropping pure videoMotion if noisy).
+2. **Flip polling off (no PC needed):** KV `entrance_watch_enabled='off'` →
+   webhook-only: 24h coverage, quota ~2-5K/month. Polling window KV stays as
+   rollback (`on` + 09:00–22:00).
+3. **Office PC on → verify auto-start survived the shutdown:** on Windows logon the
+   HKCU Run keys must start go2rtc + bridge. Check http://localhost:1984 and the
+   bridge console. Then queue a test announcement → expect BOTH the sound (staff)
+   and the new "✅ বেজেছে" Telegram confirmation.
+4. **Add entrance + boss cameras to go2rtc** (owner sets their Device Passwords
+   first): append two streams to `C:\go2rtc\go2rtc.yaml` (same URL pattern, IPs
+   .147/.191), restart go2rtc, test `camera_speak` with camera:"entrance"/"boss".
+5. **AnyDesk Unattended Access password** on the office PC (Settings → Security) —
+   ends the staff-accept dance for future sessions.
+6. Owner adds staff reference photos on /agent/known-people (phone/web, no PC).
 
 ---
 

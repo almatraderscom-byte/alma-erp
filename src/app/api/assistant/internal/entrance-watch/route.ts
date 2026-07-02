@@ -27,6 +27,16 @@ export async function GET(req: NextRequest) {
     const result = await runEntranceWatchTest(deviceId)
     return NextResponse.json({ ok: true, test: true, ...result })
   }
+
+  // Piggyback: camera-announcement outcome sweep. This cron is the only thing
+  // guaranteed to run when the office bridge PC is OFF — it expires stuck jobs
+  // and tells the owner "বাজেনি" instead of leaving silence. Cheap (one indexed
+  // query when idle) and never throws.
+  try {
+    const { sweepAndNotifySpeakJobs } = await import('@/agent/lib/camera-say')
+    await sweepAndNotifySpeakJobs()
+  } catch { /* never block the entrance watch */ }
+
   const result = await runEntranceWatch(deviceId)
   return NextResponse.json({ ok: true, ...result })
 }
