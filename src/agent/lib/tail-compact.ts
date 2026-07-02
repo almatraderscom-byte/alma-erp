@@ -36,9 +36,14 @@ export const TAIL_COMPACT_DEFAULTS: TailCompactConfig = {
   // older turns into the cached summary sooner, roughly halving the worst-case
   // history shipped each turn while B2 recall keeps the older facts retrievable.
   // Hysteresis invariant preserved: keepTurns < triggerTurns.
-  triggerTurns: 16,
-  triggerTokens: 32_000,
-  keepTurns: 10,
+  // Tightened 16/32k/10 → 10/20k/6 (owner cost complaint 2026-07): with NO
+  // provider cache on the Qwen head and Gemini at $2/M input, even 10 verbatim
+  // turns of the owner's table-heavy ads replies kept turns at ~$0.15. Six
+  // recent turns is plenty for continuity; older context lives in the summary
+  // and B2 recall. All three knobs stay owner-tunable via agent_kv_settings.
+  triggerTurns: 10,
+  triggerTokens: 20_000,
+  keepTurns: 6,
 }
 
 const KEYS = {
