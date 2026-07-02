@@ -23,8 +23,10 @@ export async function agentSmartText(opts: {
   costLabel: string
   conversationId?: string | null
 }): Promise<string> {
-  const anthropicDown = process.env.ANTHROPIC_HEAD_DOWN !== 'false'
-  if (!anthropicDown && process.env.ANTHROPIC_API_KEY) {
+  // Env kill-switch AND the owner's per-model Monitor toggle both gate Claude.
+  const { isAnthropicAllowed } = await import('@/agent/lib/models/model-enabled')
+  const anthropicAllowed = await isAnthropicAllowed(AGENT_MODEL || 'claude-sonnet-4-6').catch(() => false)
+  if (anthropicAllowed && process.env.ANTHROPIC_API_KEY) {
     try {
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
       const res = await client.messages.create({

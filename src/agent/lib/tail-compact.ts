@@ -140,8 +140,9 @@ async function summarizeTail(
   // heads too (run-owner-turn applies tail compaction) — with Anthropic credits
   // out, an Anthropic-only summarizer failed every time, compaction never ran,
   // and every Qwen turn re-shipped the full history at full price.
-  const anthropicDown = process.env.ANTHROPIC_HEAD_DOWN !== 'false'
-  if (!anthropicDown) {
+  const { isAnthropicAllowed } = await import('@/agent/lib/models/model-enabled')
+  const anthropicAllowed = await isAnthropicAllowed(AGENT_MODEL || 'claude-sonnet-4-6').catch(() => false)
+  if (anthropicAllowed) {
     try {
       const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
       const res = await client.messages.create({
