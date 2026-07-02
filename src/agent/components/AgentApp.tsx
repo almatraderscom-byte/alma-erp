@@ -58,6 +58,7 @@ type MessageRow = {
     actionType?: string
     costEstimate?: number
     status?: string
+    failReason?: string
     durationMs?: number
   }>
   toolCalls?: Array<{
@@ -129,6 +130,7 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
             // Persisted/reloaded cards carry their resolved status so the card
             // renders as a settled breadcrumb (✅/❌) instead of a fresh prompt.
             resolvedStatus: cb.status,
+            failReason: cb.failReason,
           }))
         : undefined,
     }

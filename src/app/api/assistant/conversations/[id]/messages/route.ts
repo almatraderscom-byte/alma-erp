@@ -66,12 +66,22 @@ export async function GET(
   // breadcrumbs AND lets us synthesize cards that were never breadcrumbed.
   const allActions = await prisma.agentPendingAction.findMany({
     where: { conversationId: id },
-    select: { id: true, type: true, summary: true, costEstimate: true, status: true, createdAt: true },
+    select: { id: true, type: true, summary: true, costEstimate: true, status: true, createdAt: true, result: true },
     orderBy: { createdAt: 'asc' },
   })
 
   const statusById = new Map<string, string>()
-  for (const a of allActions) statusById.set(a.id, a.status)
+  // Failure reason (owner rule: a failed approval must NEVER be silent — always
+  // show WHY). Executors store their error in result.error / result.message.
+  const failReasonById = new Map<string, string>()
+  for (const a of allActions) {
+    statusById.set(a.id, a.status)
+    if (a.status === 'failed' && a.result && typeof a.result === 'object') {
+      const r = a.result as Record<string, unknown>
+      const reason = [r.error, r.message, r.detail].find((v) => typeof v === 'string' && v.trim())
+      if (reason) failReasonById.set(a.id, String(reason).slice(0, 300))
+    }
+  }
 
   // For any action with no breadcrumb anywhere in the saved messages, attach a
   // synthetic confirm-card block to the earliest assistant message at/after the
@@ -93,6 +103,7 @@ export async function GET(
       summary: decodeUnicodeEscapes(a.summary ?? ''),
       actionType: a.type,
       status: a.status,
+      failReason: a.status === 'failed' ? failReasonById.get(a.id) : undefined,
     }
     if (a.costEstimate != null) block.costEstimate = a.costEstimate
     const list = syntheticByMsg.get(target.id) ?? []
@@ -133,6 +144,7 @@ export async function GET(
             ? {
                 ...b,
                 status: statusById.get(b.pendingActionId) ?? 'expired',
+                failReason: failReasonById.get(b.pendingActionId),
                 // Heal any escaped astral emoji in a persisted breadcrumb summary.
                 ...(typeof b.summary === 'string'
                   ? { summary: decodeUnicodeEscapes(b.summary) }
