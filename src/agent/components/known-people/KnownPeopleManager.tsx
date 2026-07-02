@@ -101,6 +101,10 @@ export default function KnownPeopleManager() {
   const [name, setName] = useState('')
   const [role, setRole] = useState('staff')
   const [files, setFiles] = useState<File[]>([])
+  // Shown right under the save button — the top-of-page banner is off-screen
+  // when the user is at the form, which made a failed save look like "nothing
+  // happened".
+  const [formMsg, setFormMsg] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -160,12 +164,16 @@ export default function KnownPeopleManager() {
   }
 
   async function addPerson() {
-    if (!name.trim() || files.length === 0) {
-      setMsg('নাম আর অন্তত ১টা ছবি দিন')
+    if (!name.trim()) {
+      setFormMsg('⚠️ উপরে নামটা লিখুন — নাম ছাড়া সেভ হবে না')
+      return
+    }
+    if (files.length === 0) {
+      setFormMsg('⚠️ অন্তত ১টা ছবি বাছাই করুন')
       return
     }
     setBusy(true)
-    setMsg('')
+    setFormMsg('সেভ হচ্ছে…')
     try {
       const photos = []
       for (const f of files.slice(0, 3)) photos.push(await fileToSmallBase64(f))
@@ -178,11 +186,16 @@ export default function KnownPeopleManager() {
       if (res.ok) {
         setName('')
         setFiles([])
-        setMsg(`✅ ${data.person?.name ?? ''} যোগ হয়েছে`)
+        setFormMsg(`✅ ${data.person?.name ?? ''} যোগ হয়েছে`)
         await load()
-      } else setMsg(data.error ?? 'যোগ করা যায়নি')
-    } catch {
-      setMsg('যোগ করা যায়নি')
+      } else setFormMsg(`⚠️ ${data.error ?? 'যোগ করা যায়নি'}`)
+    } catch (err) {
+      // Most common cause: the browser can't decode the picked file (e.g. HEIC).
+      setFormMsg(
+        err instanceof Error && /decode/.test(err.message)
+          ? '⚠️ এই ছবির ফরম্যাট পড়া যাচ্ছে না — JPG বা PNG ছবি দিন'
+          : '⚠️ যোগ করা যায়নি — আবার চেষ্টা করুন',
+      )
     } finally {
       setBusy(false)
     }
@@ -364,6 +377,11 @@ export default function KnownPeopleManager() {
           <button className={btnCls} onClick={() => void addPerson()} disabled={busy} data-testid="person-save">
             সেভ করুন
           </button>
+          {formMsg ? (
+            <div className="rounded-xl bg-black/30 px-3 py-2 text-sm text-cream/90" data-testid="form-msg">
+              {formMsg}
+            </div>
+          ) : null}
         </div>
       </section>
 
