@@ -2,12 +2,8 @@
  * Daily cross-domain strategist — proposes owner-gated high-leverage moves.
  * Propose-only; never auto-executes.
  */
-import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
-import { AGENT_MODEL, isAnthropicConfigured } from '@/agent/config'
-import { enforceClaudeOnlyModel } from '@/agent/lib/models/guard'
-import { calcAnthropicChatCostUsd } from '@/agent/lib/pricing'
-import { logCost } from '@/agent/lib/cost-events'
+import { agentSmartText } from '@/agent/lib/llm-text'
 import { notifyOwner } from '@/agent/lib/notify-owner'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { getActivePlaybook } from '@/agent/lib/playbook'
@@ -128,42 +124,16 @@ function parseMoves(raw: string): StrategistMove[] {
 }
 
 async function proposeMoves(context: Awaited<ReturnType<typeof gatherStrategistContext>>): Promise<StrategistMove[]> {
-  if (!isAnthropicConfigured()) return []
-
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
   const factsJson = JSON.stringify(context, null, 0).slice(0, 14000)
 
-  const res = await client.messages.create({
-    model: enforceClaudeOnlyModel(),
-    max_tokens: 1800,
-    thinking: { type: 'adaptive' },
-    system: [{ type: 'text', text: STRATEGIST_SYSTEM, cache_control: { type: 'ephemeral' } }],
-    messages: [{
-      role: 'user',
-      content:
-        'আজকের cross-domain strategist pass — JSON array of moves (max 3) বা []।\n' +
-        '≥২ domain ছাড়া কিছু propose করবেন না। Obvious daily-report items skip।\n\n' +
-        `DATA:\n${factsJson}`,
-    }],
-  })
-
-  const block = res.content.find((b) => b.type === 'text')
-  const text = block && block.type === 'text' ? block.text : ''
-
-  void logCost({
-    provider: 'anthropic',
-    kind: 'chat',
-    units: {
-      input_tokens: res.usage.input_tokens,
-      output_tokens: res.usage.output_tokens,
-      model: enforceClaudeOnlyModel(),
-      purpose: 'daily_strategist',
-    },
-    costUsd: calcAnthropicChatCostUsd({
-      input_tokens: res.usage.input_tokens,
-      output_tokens: res.usage.output_tokens,
-    }),
-    dedupKey: `strategist:${context.date}`,
+  const text = await agentSmartText({
+    system: STRATEGIST_SYSTEM,
+    prompt:
+      'আজকের cross-domain strategist pass — JSON array of moves (max 3) বা []।\n' +
+      '≥২ domain ছাড়া কিছু propose করবেন না। Obvious daily-report items skip।\n\n' +
+      `DATA:\n${factsJson}`,
+    maxTokens: 1800,
+    costLabel: 'daily_strategist',
   })
 
   return parseMoves(text)

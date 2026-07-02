@@ -2,12 +2,8 @@
  * Weekly reflection — distill candidate heuristics from outcomes + decisions.
  * Proposals stay `proposed` until owner approves via playbook tools.
  */
-import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
-import { AGENT_MODEL, isAnthropicConfigured } from '@/agent/config'
-import { enforceClaudeOnlyModel } from '@/agent/lib/models/guard'
-import { calcAnthropicChatCostUsd } from '@/agent/lib/pricing'
-import { logCost } from '@/agent/lib/cost-events'
+import { agentSmartText } from '@/agent/lib/llm-text'
 import { notifyOwner } from '@/agent/lib/notify-owner'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { PLAYBOOK_DOMAINS } from '@/agent/lib/playbook'
@@ -147,42 +143,17 @@ function parseCandidates(raw: string): ReflectionCandidate[] {
 }
 
 async function proposeHeuristics(context: Awaited<ReturnType<typeof gatherReflectionContext>>): Promise<ReflectionCandidate[]> {
-  if (!isAnthropicConfigured()) return []
-
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
   const factsJson = JSON.stringify(context, null, 0).slice(0, 12000)
 
-  const res = await client.messages.create({
-    model: enforceClaudeOnlyModel(),
-    max_tokens: 1200,
-    system: [{ type: 'text', text: REFLECTION_SYSTEM, cache_control: { type: 'ephemeral' } }],
-    messages: [{
-      role: 'user',
-      content:
-        'গত ৭ দিনের observation থেকে ≤৫টি candidate heuristic JSON array দিন।\n' +
-        'Format: [{"businessId":"ALMA_LIFESTYLE","domain":"content","heuristic":"...","evidence":"...","confidence":3}]\n' +
-        'ডেটা যথেষ্ট না হলে [] দিন।\n\n' +
-        `DATA:\n${factsJson}`,
-    }],
-  })
-
-  const block = res.content.find((b) => b.type === 'text')
-  const text = block && block.type === 'text' ? block.text : ''
-
-  void logCost({
-    provider: 'anthropic',
-    kind: 'chat',
-    units: {
-      input_tokens: res.usage.input_tokens,
-      output_tokens: res.usage.output_tokens,
-      model: enforceClaudeOnlyModel(),
-      purpose: 'weekly_reflection',
-    },
-    costUsd: calcAnthropicChatCostUsd({
-      input_tokens: res.usage.input_tokens,
-      output_tokens: res.usage.output_tokens,
-    }),
-    dedupKey: `reflection:${todayYmdDhaka()}`,
+  const text = await agentSmartText({
+    system: REFLECTION_SYSTEM,
+    prompt:
+      'গত ৭ দিনের observation থেকে ≤৫টি candidate heuristic JSON array দিন।\n' +
+      'Format: [{"businessId":"ALMA_LIFESTYLE","domain":"content","heuristic":"...","evidence":"...","confidence":3}]\n' +
+      'ডেটা যথেষ্ট না হলে [] দিন।\n\n' +
+      `DATA:\n${factsJson}`,
+    maxTokens: 1200,
+    costLabel: 'weekly_reflection',
   })
 
   return parseCandidates(text)

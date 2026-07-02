@@ -4,9 +4,8 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
-import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
-import { AGENT_MODEL } from '@/agent/config'
+import { agentSmartText } from '@/agent/lib/llm-text'
 import { createOrUpdateAgentMemory } from '@/agent/lib/agent-memory'
 import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
 
@@ -43,26 +42,20 @@ async function summarizeConversation(messages: Array<{ role: string; content: un
 
   if (!transcript.trim()) return 'SKIP'
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
-  const res = await client.messages.create({
-    model: AGENT_MODEL,
-    max_tokens: 500,
+  const text = await agentSmartText({
     system: 'Extract durable owner decisions/preferences/facts only. 2-5 Bangla bullets or exactly SKIP.',
-    messages: [{
-      role: 'user',
-      content:
-        'Summarize this owner↔agent business chat. Extract ONLY:\n' +
-        '- Owner\'s key decisions / instructions\n' +
-        '- Preferences expressed\n' +
-        '- Important business facts mentioned\n' +
-        '- Open action items\n' +
-        'Output 2-5 short Bangla bullet points. If nothing durable, output exactly: SKIP\n\n' +
-        transcript,
-    }],
+    prompt:
+      'Summarize this owner↔agent business chat. Extract ONLY:\n' +
+      '- Owner\'s key decisions / instructions\n' +
+      '- Preferences expressed\n' +
+      '- Important business facts mentioned\n' +
+      '- Open action items\n' +
+      'Output 2-5 short Bangla bullet points. If nothing durable, output exactly: SKIP\n\n' +
+      transcript,
+    maxTokens: 500,
+    costLabel: 'session_summary',
   })
-
-  const block = res.content.find((b) => b.type === 'text')
-  return block && block.type === 'text' ? block.text.trim() : 'SKIP'
+  return text.trim() || 'SKIP'
 }
 
 export async function POST(req: NextRequest) {
