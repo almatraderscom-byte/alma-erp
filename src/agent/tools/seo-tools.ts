@@ -4,6 +4,7 @@ import { websiteSupabaseConfigured } from '@/lib/website/supabase-client'
 import { oxylabsSerpSearch, oxylabsConfigured, logOxylabsUsage } from '@/lib/oxylabs/client'
 import { verifyOxylabsSpendApproval, consumeOxylabsApproval } from '@/agent/lib/oxylabs-approval'
 import { RANK_TRACKING_MAX_KEYWORDS } from '@/agent/lib/growth/settings'
+import { submitToIndexNow } from '@/agent/lib/growth/indexnow'
 import {
   isGscConnected,
   resolveSiteUrl,
@@ -603,13 +604,61 @@ const get_indexing_status: AgentTool = {
           siteUrl,
           sitemapCount: out.length,
           sitemaps: out,
-          message: out.length === 0 ? 'কোনো sitemap submit করা নেই — Feature 4 (sitemap/IndexNow)-এ এটা ঠিক হবে।' : undefined,
+          message:
+            out.length === 0
+              ? 'GSC-তে কোনো sitemap submit দেখা যাচ্ছে না। storefront live sitemap.xml দেয় (' +
+                'https://www.almatraders.com/sitemap.xml — product page সহ); owner চাইলে Search Console-এ একবার ' +
+                'sitemap URL টা submit করলেই coverage ট্র্যাক হবে। পেজ বদলালে দ্রুত re-crawl-এর জন্য submit_to_indexnow।'
+              : undefined,
         },
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (msg.includes('not_connected')) return GSC_NOT_CONNECTED
       return { success: false, error: `Indexing status failed: ${msg}` }
+    }
+  },
+}
+
+const submit_to_indexnow: AgentTool = {
+  name: 'submit_to_indexnow',
+  description:
+    'Ping IndexNow to tell search engines a storefront page just changed, so they re-crawl it fast (FREE, ' +
+    'no OAuth). IndexNow broadcasts to Bing, Yandex, Naver, Seznam etc. — NOT Google (Google indexing still ' +
+    'relies on the live sitemap + Search Console). Call this right AFTER an SEO fix is applied (e.g. after the ' +
+    'owner approves draft_seo_fixes), passing the changed product(s). Accepts full almatraders.com URLs, ' +
+    '"/products/slug" paths, or bare product slugs. Off-host URLs are ignored. Requires INDEXNOW_KEY in env ' +
+    'and the matching <key>.txt file hosted on the storefront root — without the key file the ping is accepted ' +
+    '(HTTP 202) but engines will not crawl until the file is live.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      urls: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          'Changed page targets — full almatraders.com URLs, "/products/slug" paths, or bare product slugs. Max 100.',
+      },
+    },
+    required: ['urls'],
+  },
+  handler: async (input) => {
+    const raw = Array.isArray(input.urls) ? input.urls.map((u) => String(u)) : []
+    if (raw.length === 0) {
+      return { success: false, error: 'কোন URL/slug সাবমিট করতে হবে সেটা urls-এ দিন।' }
+    }
+    const result = await submitToIndexNow(raw)
+    if (!result.ok) return { success: false, error: result.error }
+    return {
+      success: true,
+      data: {
+        status: result.status,
+        submittedCount: result.submitted.length,
+        submitted: result.submitted,
+        keyLocation: result.keyLocation,
+        keyValidationPending: result.keyValidationPending,
+        message: result.message,
+      },
     }
   },
 }
@@ -623,6 +672,7 @@ export const SEO_TOOLS: AgentTool[] = [
   untrack_keyword,
   get_search_console_performance,
   get_indexing_status,
+  submit_to_indexnow,
 ]
 
 export const SEO_ROLE_PROMPT = `
@@ -634,4 +684,5 @@ research_seo_keywords দিয়ে keyword ranking দেখুন — **আ�
 একটা মাত্র product-এর জন্য update_product_web-ও ব্যবহার করা যায় (price সহ)।
 **র‍্যাঙ্ক ট্র্যাকিং:** যে keyword-এ business rank করতে চায় সেটা track_keyword দিয়ে যোগ করুন (যোগ করা ফ্রি) — rank tracking ON থাকলে প্রতি সপ্তাহে নিজে থেকে SERP টেনে owner-কে র‍্যাঙ্ক জানাবে। list_tracked_keywords-এ সর্বশেষ র‍্যাঙ্ক, untrack_keyword-এ বন্ধ। এককালীন check-এ research_seo_keywords (Approve লাগে)।
 কখনোই নিজে থেকে content/meta change করবেন না — শুধু audit + draft + owner Approve।
+**দ্রুত re-crawl (IndexNow):** কোনো product-এর SEO ঠিক হওয়ার পর (owner draft_seo_fixes approve করলে) **submit_to_indexnow**-এ ওই product-এর slug/URL দিন — Bing/Yandex ইত্যাদি সাথে সাথে re-crawl করবে (ফ্রি, Google এতে নেই — Google-এর জন্য sitemap + Search Console)। INDEXNOW_KEY env + storefront root-এ <key>.txt ফাইল লাগে; ফাইল না থাকলে ping গৃহীত হয় (202) কিন্তু crawl হয় না — সেটা owner-কে জানাবেন।
 `

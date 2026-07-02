@@ -212,6 +212,13 @@ const HEAD_KEPT_GROWTH_TOOLS = [
   // self-contained, instead of a wasteful delegation hop just to fetch identifiers.
   // Appended last so the existing cached-prefix bytes never shift.
   'audit_product_seo',
+  // submit_to_indexnow closes the SEO fix loop: after the owner approves an
+  // alt-text/meta fix via draft_seo_fixes, the head pings IndexNow for the
+  // changed product URL so Bing/Yandex re-crawl fast. Cost-free, owner-facing,
+  // and part of the same self-contained flow as audit_product_seo — keeping it
+  // off the head would force a delegation hop just to fire one HTTP ping.
+  // Appended last so the existing cached-prefix bytes never shift.
+  'submit_to_indexnow',
 ] as const
 
 // Delegation approval test mode (DELEGATION_APPROVAL=true): force marketing work
