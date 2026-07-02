@@ -225,6 +225,14 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
     return fail(err instanceof Error ? err.message : String(err), getModel(DEFAULT_MODEL_ID), 'critical')
   }
 
+  // Owner's Monitor per-model kill-switch applies to specialists too: an OFF
+  // model is swapped for the enabled fallback (Gemini → DeepSeek preference).
+  try {
+    const { resolveEnabledFallback } = await import('@/agent/lib/models/model-enabled')
+    const fallbackId = await resolveEnabledFallback(model.id)
+    if (fallbackId) model = getModel(fallbackId)
+  } catch { /* fail-open */ }
+
   let fallbackUsed = false
 
   try {
