@@ -48,6 +48,11 @@ export function useVoiceRecorder(opts: {
   silenceMs?: number
   /** Hard cap (ms) on a single utterance. Default 20000. */
   maxMs?: number
+  /** If the speaker never says anything within this window, abort WITHOUT
+   *  transcribing and fire onNoSpeech (conversation-mode auto-listen must not
+   *  loop a hot mic forever, nor upload silence). Only with autoStop. */
+  noSpeechMs?: number
+  onNoSpeech?: () => void
 }) {
   const [recording, setRecording] = useState(false)
   const [recordSecs, setRecordSecs] = useState(0)
@@ -188,6 +193,7 @@ export function useVoiceRecorder(opts: {
             const maxMs = callbacksRef.current.maxMs ?? 20000
             vadRef.current = { hasSpoken: false, silenceStart: 0, startedAt: performance.now() }
 
+            const noSpeechMs = callbacksRef.current.noSpeechMs
             const tick = () => {
               if (!audioCtxRef.current || mrRef.current?.state !== 'recording') return
               analyser.getByteTimeDomainData(buf)
@@ -196,6 +202,19 @@ export function useVoiceRecorder(opts: {
               const rms = Math.sqrt(sum / buf.length)
               const now = performance.now()
               const vad = vadRef.current
+
+              // Auto-listen woke the mic but nobody spoke — abort quietly, no upload.
+              if (noSpeechMs && !vad.hasSpoken && now - vad.startedAt >= noSpeechMs) {
+                const mr2 = mrRef.current
+                if (mr2) {
+                  mr2.ondataavailable = null
+                  mr2.onstop = null
+                  try { if (mr2.state === 'recording') mr2.stop() } catch { /* ignore */ }
+                }
+                cleanup()
+                callbacksRef.current.onNoSpeech?.()
+                return
+              }
 
               if (rms > SPEECH) { vad.hasSpoken = true; vad.silenceStart = 0 }
               else if (rms < SILENCE && vad.hasSpoken) {

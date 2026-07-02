@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react'
 import { motion } from 'framer-motion'
-import { VoiceOrb } from './voice/VoiceOrb'
+import { FluidOrb } from './voice/FluidOrb'
 
 type Suggestion = { text: string; icon: string }
 type DayPart = 'morning' | 'afternoon' | 'evening' | 'night'
@@ -86,14 +86,18 @@ export default function AgentEmptyState({ onSuggestion, onStartVoiceSession }: A
             whileTap={{ scale: 0.95 }}
             aria-label="ভয়েস মোড শুরু করুন"
           >
-            <VoiceOrb state="idle" size={132}>
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))' }}>
+            {/* The same fluid orb as the voice console — one consciousness,
+                one identity. FluidOrb falls back to the CSS VoiceOrb itself
+                when WebGL is unavailable. */}
+            <FluidOrb state="idle" size={148} />
+            <span className="pointer-events-none absolute inset-0 z-[2] flex items-center justify-center">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.35))' }}>
                 <rect x="9" y="1" width="6" height="11" rx="3" />
                 <path d="M19 10v2a7 7 0 01-14 0v-2" />
                 <line x1="12" y1="19" x2="12" y2="23" />
                 <line x1="8" y1="23" x2="16" y2="23" />
               </svg>
-            </VoiceOrb>
+            </span>
           </motion.button>
         </motion.div>
 

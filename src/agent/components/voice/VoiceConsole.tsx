@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useCallback, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
 import { useMicLevel } from '@/agent/hooks/useMicLevel'
@@ -56,6 +57,11 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
   const [transcript, setTranscript] = useState('')
   const [reply, setReply] = useState('')
   const [cards, setCards] = useState<FeedCard[]>([])
+  /** Conversation mode (Siri+): when the reply finishes speaking, the mic
+   *  re-opens by itself — no tap between turns. Silence for 8s ends the loop. */
+  const [convoMode, setConvoMode] = useState(true)
+  const convoModeRef = useRef(convoMode)
+  useEffect(() => { convoModeRef.current = convoMode }, [convoMode])
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const stateRef = useRef(state)
   useEffect(() => { stateRef.current = state }, [state])
@@ -105,12 +111,33 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
     }
   }, [cards.length])
 
+  // Conversation mode: when a spoken reply finishes, re-open the mic after a
+  // beat — turn after turn with zero taps, like talking to a person. The 8s
+  // no-speech abort below is the loop's exit so the mic never stays hot alone.
+  const recorderRef = useRef<{ start: () => Promise<void> | void } | null>(null)
+  const autoListenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const scheduleAutoListen = useCallback(() => {
+    if (!convoModeRef.current || !openRef.current) return
+    if (autoListenTimerRef.current) clearTimeout(autoListenTimerRef.current)
+    autoListenTimerRef.current = setTimeout(() => {
+      if (openRef.current && convoModeRef.current && stateRef.current === 'idle') {
+        recorderRef.current?.start()
+      }
+    }, 450)
+  }, [])
+
   const recorder = useVoiceRecorder({
     // Generous silence window + 3-minute cap: long instructions never get cut
     // mid-thought (the owner's #1 voice complaint — repeating himself).
     autoStop: true,
     silenceMs: 2600,
     maxMs: 180000,
+    // Conversation-mode wake with nobody speaking: give up quietly after 8s.
+    noSpeechMs: 8000,
+    onNoSpeech: () => {
+      if (!openRef.current) return
+      setState('idle')
+    },
     onTranscribed: async (text) => {
       setTranscript(text)
       setReply('')
@@ -127,7 +154,10 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
             audioRef.current = audio
             audio.onended = () => {
               audioRef.current = null
-              if (openRef.current) setState('idle')
+              if (openRef.current) {
+                setState('idle')
+                scheduleAutoListen()
+              }
             }
             await audio.play()
           } catch {
@@ -153,6 +183,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
   })
 
   const micLevel = useMicLevel(recorder.stream, recorder.recording)
+  useEffect(() => { recorderRef.current = recorder })
 
   const handleTapOrb = useCallback(() => {
     // Inside the tap gesture: bless the persistent audio element so the reply
@@ -190,6 +221,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
 
   useEffect(() => {
     if (!open) {
+      if (autoListenTimerRef.current) { clearTimeout(autoListenTimerRef.current); autoListenTimerRef.current = null }
       recorder.cancel()
       stopTts()
       setState('idle')
@@ -197,9 +229,25 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
       setReply('')
       setCards([])
     }
+    // Animation-timeline rescue: on machines where the document animation
+    // timeline is frozen (seen live: Chrome with hardware acceleration off),
+    // the framer fade never completes — enter sticks semi-transparent and exit
+    // never unmounts. 600ms after any open/close flip, force-finish the fade;
+    // on healthy devices the 250ms fade is long done and this is a no-op.
+    const t = setTimeout(() => {
+      document.querySelectorAll('.vc-root').forEach((el) => {
+        el.getAnimations?.().forEach((a) => { try { a.finish() } catch { /* infinite anims */ } })
+      })
+    }, 600)
+    return () => clearTimeout(t)
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  return (
+  // Portal to <body>: the app shell's stacking contexts trap the overlay's
+  // z-index below the fixed bottom nav (z-50 at root level) — on the phone the
+  // nav rendered ON TOP of the console and hid the dock. Escaping to body plus
+  // a root-level z-index puts the console above everything, as designed.
+  if (typeof document === 'undefined') return null
+  return createPortal(
     <AnimatePresence>
       {open && (
         <motion.div
@@ -218,7 +266,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
           </button>
 
-          <div className="vc-main">
+          <div className={`vc-main${cards.length === 0 ? ' centered' : ''}`}>
             {/* state badge */}
             <div className="vc-badge" data-state={state}><i />{STATUS[state]}</div>
 
@@ -276,7 +324,17 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
           <div className="vc-dock">
             {state === 'speaking' && <p className="hint">ট্যাপ করে থামান ও কথা বলুন</p>}
             {state === 'listening' && <p className="hint">চুপ করলেই পাঠিয়ে দেব — তাড়া নেই, {Math.floor(recorder.recordSecs / 60)}:{String(recorder.recordSecs % 60).padStart(2, '0')}</p>}
-            <button type="button" onClick={handleClose} className="vc-back">চ্যাটে ফিরুন</button>
+            <div className="vc-dockrow">
+              <button
+                type="button"
+                onClick={() => setConvoMode((v) => !v)}
+                className={`vc-convo${convoMode ? ' on' : ''}`}
+                aria-pressed={convoMode}
+              >
+                <i />কথোপকথন {convoMode ? 'চালু' : 'বন্ধ'}
+              </button>
+              <button type="button" onClick={handleClose} className="vc-back">চ্যাটে ফিরুন</button>
+            </div>
           </div>
 
           {/* `jsx global` is required: framer-motion elements (vc-root, vc-card,
@@ -286,7 +344,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
             .vc-root {
               position: fixed;
               inset: 0;
-              z-index: 100;
+              z-index: 1000; /* above the app's fixed bottom nav (z-50) */
               display: flex;
               flex-direction: column;
               align-items: center;
@@ -347,6 +405,9 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
               gap: 6px;
               min-height: 0;
             }
+            /* No cards yet → the orb group floats centered on the tall phone
+               screen instead of huddling at the top over a void. */
+            .vc-main.centered { justify-content: center; padding-bottom: 10vh; }
             .vc-badge {
               display: inline-flex;
               align-items: center;
@@ -495,6 +556,28 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
               padding: 10px 18px calc(24px + env(safe-area-inset-bottom));
             }
             .vc-dock .hint { font-size: 12px; color: #55708c; font-variant-numeric: tabular-nums; }
+            .vc-dockrow { display: flex; align-items: center; gap: 10px; }
+            .vc-convo {
+              display: inline-flex;
+              align-items: center;
+              gap: 7px;
+              border-radius: 9999px;
+              border: 1px solid rgba(160, 200, 240, 0.13);
+              background: rgba(140, 190, 240, 0.06);
+              padding: 9px 16px;
+              font-size: 12.5px;
+              font-weight: 500;
+              color: #7c92a9;
+            }
+            .vc-convo i {
+              width: 7px;
+              height: 7px;
+              border-radius: 9999px;
+              background: #55708c;
+              transition: background 0.3s, box-shadow 0.3s;
+            }
+            .vc-convo.on { color: #9db2c9; border-color: rgba(59, 224, 143, 0.3); }
+            .vc-convo.on i { background: #3be08f; box-shadow: 0 0 8px #3be08f; }
             .vc-back {
               border-radius: 9999px;
               border: 1px solid rgba(160, 200, 240, 0.13);
@@ -509,6 +592,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
           `}</style>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body,
   )
 }
