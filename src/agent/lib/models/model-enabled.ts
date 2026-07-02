@@ -39,6 +39,21 @@ export async function getModelEnabledMap(): Promise<ModelEnabledMap> {
   }
 }
 
+export async function isModelEnabled(modelId: string): Promise<boolean> {
+  return isModelEnabledSync(modelId, await getModelEnabledMap())
+}
+
+/**
+ * The single question every direct-Anthropic caller must ask: is Claude usable
+ * right now? False when ANTHROPIC_HEAD_DOWN is on (env, default) OR the owner
+ * switched the model OFF on the Monitor. The Monitor toggle is the owner's
+ * kill-switch — it must win everywhere until he flips it back on.
+ */
+export async function isAnthropicAllowed(modelId = 'claude-sonnet-4-6'): Promise<boolean> {
+  if (process.env.ANTHROPIC_HEAD_DOWN !== 'false') return false
+  return isModelEnabled(modelId)
+}
+
 export async function setModelEnabled(modelId: string, enabled: boolean): Promise<ModelEnabledMap> {
   const map = await getModelEnabledMap()
   const next: ModelEnabledMap = { ...map }
