@@ -279,7 +279,10 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
             <button type="button" onClick={handleClose} className="vc-back">চ্যাটে ফিরুন</button>
           </div>
 
-          <style jsx>{`
+          {/* `jsx global` is required: framer-motion elements (vc-root, vc-card,
+              vc-orbbtn) never receive styled-jsx's scope class, so scoped rules
+              silently don't match them. Class names are vc- prefixed + unique. */}
+          <style jsx global>{`
             .vc-root {
               position: fixed;
               inset: 0;
@@ -418,8 +421,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
               color: #eaf2fb;
             }
             .vc-caption.dim { color: #7c92a9; font-size: 15px; }
-            .vc-caption .sir,
-            .vc-caption :global(.sir) { color: #e2b366; }
+            .vc-caption .sir { color: #e2b366; }
             .vc-feed {
               width: 100%;
               display: flex;
