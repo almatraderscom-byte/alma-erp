@@ -116,7 +116,15 @@ export async function GET(req: NextRequest) {
           signal: AbortSignal.timeout(6000),
           cache: 'no-store',
         })
-        if (res.status === 401 || res.status === 403) return { state: 'bad_key' as const, domain: null }
+        if (res.status === 401 || res.status === 403) {
+          // A send-only ("restricted") Resend key CAN send mail but CANNOT list
+          // domains — that's a working key, not a broken one. Only a genuinely
+          // invalid key gets bad_key.
+          const body = await res.text().catch(() => '')
+          return /restricted|only.*send/i.test(body)
+            ? { state: 'send_only' as const, domain: null }
+            : { state: 'bad_key' as const, domain: null }
+        }
         if (!res.ok) return { state: 'error' as const, domain: null }
         const data = (await res.json().catch(() => ({}))) as { data?: Array<{ name?: string; status?: string }> }
         const verified = (data.data ?? []).find((d) => d.status === 'verified')

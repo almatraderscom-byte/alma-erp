@@ -319,14 +319,24 @@ export default function GrowthConnections() {
                   ? `চলছে — domain verified (${features.campaigns.email.domain}), কাস্টমারদের পাঠানো যাবে।`
                   : features.campaigns.email.state === 'sandbox'
                     ? 'Sandbox mode — শুধু নিজের ঠিকানায় যায়। কাস্টমারদের পাঠাতে Resend-এ almatraders.com verify করুন।'
-                    : features.campaigns.email.state === 'needs_env'
-                      ? 'RESEND_API_KEY সেট করা নেই।'
-                      : features.campaigns.email.state === 'bad_key'
-                        ? 'Resend key কাজ করছে না।'
-                        : 'Resend সাড়া দিচ্ছে না (timeout) — একটু পরে রিফ্রেশ করুন।'
+                    : features.campaigns.email.state === 'send_only'
+                      ? 'Key কাজ করছে (send-only) — পাঠানো যায়, তবে domain state check করা যায় না। কাস্টমারদের পাঠাতে Resend-এ almatraders.com verify করুন।'
+                      : features.campaigns.email.state === 'needs_env'
+                        ? 'RESEND_API_KEY সেট করা নেই।'
+                        : features.campaigns.email.state === 'bad_key'
+                          ? 'Resend key কাজ করছে না।'
+                          : 'Resend সাড়া দিচ্ছে না (timeout) — একটু পরে রিফ্রেশ করুন।'
               }
-              action={features.campaigns.email.state === 'sandbox' ? 'Resend → Domains → Add almatraders.com' : undefined}
-              actionHref={features.campaigns.email.state === 'sandbox' ? 'https://resend.com/domains' : undefined}
+              action={
+                features.campaigns.email.state === 'sandbox' || features.campaigns.email.state === 'send_only'
+                  ? 'Resend → Domains → Add almatraders.com'
+                  : undefined
+              }
+              actionHref={
+                features.campaigns.email.state === 'sandbox' || features.campaigns.email.state === 'send_only'
+                  ? 'https://resend.com/domains'
+                  : undefined
+              }
             />
             <StatusRow
               tone="ok"
