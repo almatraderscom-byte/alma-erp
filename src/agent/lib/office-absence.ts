@@ -209,6 +209,37 @@ async function sendPhotoResilient(
   return res
 }
 
+// ── Name identification (best-effort) ─────────────────────────────────────────
+/**
+ * If the owner has registered reference photos (known-people), identify WHO is
+ * visible in the frame and which known staff are missing, as extra caption
+ * lines. Empty string on any failure / when no references exist — the absence
+ * alert itself never depends on this.
+ */
+async function knownFacesLines(snapshotUrl: string): Promise<string> {
+  try {
+    const { downloadSnapshot } = await import('@/agent/lib/imou-camera')
+    const { identifyPeopleInFrame } = await import('@/agent/lib/face-match')
+    const { listKnownPeople } = await import('@/agent/lib/known-people')
+
+    const frame = await downloadSnapshot(snapshotUrl)
+    const match = await identifyPeopleInFrame(frame)
+    if (!match.hadReferences) return ''
+
+    const present = match.people.filter((p) => p.known && p.name).map((p) => p.name!)
+    const staff = (await listKnownPeople()).filter((p) => p.role === 'staff')
+    const missing = staff.map((s) => s.name).filter((n) => !present.includes(n))
+
+    let out = ''
+    if (present.length) out += `\n👀 চেনা মুখ: ${present.join(', ')}`
+    if (missing.length) out += `\n❓ দেখা যাচ্ছে না: ${missing.join(', ')}`
+    return out
+  } catch (err) {
+    console.warn('[office-absence] known-faces line failed:', err instanceof Error ? err.message : err)
+    return ''
+  }
+}
+
 // ── The owner alert (Card 1) ──────────────────────────────────────────────────
 async function alertOwnerAbsence(opts: {
   peopleCount: number
@@ -254,12 +285,15 @@ async function alertOwnerAbsence(opts: {
     : undefined
 
   const when = `${bnTime(opts.now)} — একটানা ~${toBnNum(opts.sustainedMin)} মিনিট`
+  // Name who IS visible / which known staff are not (best-effort, empty when the
+  // owner hasn't registered reference photos). Only runs on the rare alert frame.
+  const facesLines = opts.peopleCount > 0 ? await knownFacesLines(opts.snapshotUrl) : ''
   const caption =
     opts.peopleCount === 0
       ? `🚨 অফিস খালি! ক্যামেরায় কাউকে দেখা যাচ্ছে না।\nWork Room (${when})\n\n` +
         (actionId ? '👇 আপনি কি সবাইকে বাইরে পাঠিয়েছেন?' : '(পাইলট — বাটন তৈরি হয়নি)')
       : `⚠️ ${toBnNum(opts.absent)} জন স্টাফ অফিসে নেই — ${toBnNum(opts.peopleCount)}/${toBnNum(opts.expected)} জন আছে।\n` +
-        `Work Room (${when})\n\n` +
+        `Work Room (${when})${facesLines}\n\n` +
         (actionId ? '👇 আপনি কি কাউকে বাইরে পাঠিয়েছেন?' : '(পাইলট — বাটন তৈরি হয়নি)')
 
   let res = await sendOwnerPhoto(opts.snapshotUrl, caption, reply_markup)

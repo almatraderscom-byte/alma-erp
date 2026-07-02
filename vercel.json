@@ -104,6 +104,10 @@
     {
       "path": "/api/assistant/internal/idle-watch",
       "schedule": "*/5 3-14 * * *"
+    },
+    {
+      "path": "/api/assistant/internal/entrance-watch",
+      "schedule": "* * * * *"
     }
   ],
   "headers": [
