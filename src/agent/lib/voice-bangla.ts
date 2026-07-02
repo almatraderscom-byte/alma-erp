@@ -46,11 +46,14 @@ type WhisperFile = Parameters<OpenAI['audio']['transcriptions']['create']>[0]['f
 export async function transcribeVoiceBangla(
   client: OpenAI,
   file: WhisperFile,
+  // Optional domain prompt — biases recognition toward expected phrases
+  // (e.g. the camera wake word). Defaults to the generic Bangla steer.
+  promptOverride?: string,
 ): Promise<{ text: string; model: string }> {
   const base = {
     file,
     response_format: 'json' as const,
-    prompt: WHISPER_BANGLA_PROMPT,
+    prompt: promptOverride?.trim() || WHISPER_BANGLA_PROMPT,
     temperature: 0,
   }
 
