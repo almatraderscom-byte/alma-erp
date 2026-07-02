@@ -38,6 +38,25 @@ function buildSalahCallSayTwiml(text) {
   )
 }
 
+/**
+ * Message-delivery call (playOnce): speak the audio exactly once, then hang up.
+ * No double-play, no <Say> repetition. If there is no audio URL (say-only
+ * retry case) a single <Say> + <Hangup/> is returned instead.
+ */
+export function buildMessageCallTwiml(audioUrl, sayFallback) {
+  if (audioUrl) {
+    return (
+      `<?xml version="1.0" encoding="UTF-8"?>` +
+      `<Response><Play>${escapeXml(audioUrl)}</Play><Hangup/></Response>`
+    )
+  }
+  const say = sayFallback?.trim() ?? ''
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<Response><Say voice="Polly.Aditi" language="bn-IN">${escapeXml(say.slice(0, 400))}</Say><Hangup/></Response>`
+  )
+}
+
 function signingSecret() {
   return process.env.AGENT_INTERNAL_TOKEN ?? process.env.TWILIO_AUTH_TOKEN ?? ''
 }
@@ -67,15 +86,22 @@ export function buildProxiedAudioUrl(publicBase, storagePath, ttlSec = 900) {
   return `${base}/audio?path=${encodeURIComponent(storagePath)}&exp=${exp}&t=${t}`
 }
 
-function signTwimlQuery(audio, say, expMs) {
-  const payload = `${audio ?? ''}:${say ?? ''}:${expMs}`
+/**
+ * `once` flag is part of the signed payload when set. Backward compatible:
+ * when once is falsy the payload is exactly the legacy shape, so in-flight
+ * salah URLs (no once flag) keep verifying unchanged.
+ */
+function signTwimlQuery(audio, say, expMs, once = false) {
+  const payload = once
+    ? `${audio ?? ''}:${say ?? ''}:${expMs}:once`
+    : `${audio ?? ''}:${say ?? ''}:${expMs}`
   return createHmac('sha256', signingSecret()).update(payload).digest('hex')
 }
 
-function verifyTwimlToken(audio, say, expMs, token) {
+function verifyTwimlToken(audio, say, expMs, token, once = false) {
   if (!token || !Number.isFinite(expMs)) return false
   if (Date.now() > expMs) return false
-  const expected = signTwimlQuery(audio, say, expMs)
+  const expected = signTwimlQuery(audio, say, expMs, once)
   try {
     const a = Buffer.from(expected, 'utf8')
     const b = Buffer.from(token, 'utf8')
@@ -86,22 +112,30 @@ function verifyTwimlToken(audio, say, expMs, token) {
   }
 }
 
-export function buildTwimlCallbackUrl(publicBase, audioUrl, sayText) {
+/** @param {{ once?: boolean }} [opts]  once=true → single play + hangup (message-delivery call) */
+export function buildTwimlCallbackUrl(publicBase, audioUrl, sayText, opts = {}) {
   const base = publicBase.replace(/\/$/, '')
+  const once = Boolean(opts.once)
   const exp = Date.now() + 900_000
-  const say = sayText?.trim() ? sayText.slice(0, 400) : ''
-  const t = signTwimlQuery(audioUrl, say, exp)
+  // Trim after slicing: the verifier trims the query value, so a slice ending in
+  // whitespace would otherwise sign a different payload than it verifies (403).
+  const say = sayText?.trim() ? sayText.slice(0, 400).trim() : ''
+  const t = signTwimlQuery(audioUrl, say, exp, once)
   const params = new URLSearchParams({ audio: audioUrl, exp: String(exp), t })
   if (say) params.set('say', say)
+  if (once) params.set('once', '1')
   return `${base}/twiml/salah-call?${params.toString()}`
 }
 
-export function buildTwimlSayOnlyUrl(publicBase, sayText) {
+/** @param {{ once?: boolean }} [opts]  once=true → single say + hangup (message-delivery call) */
+export function buildTwimlSayOnlyUrl(publicBase, sayText, opts = {}) {
   const base = publicBase.replace(/\/$/, '')
+  const once = Boolean(opts.once)
   const exp = Date.now() + 900_000
-  const say = sayText.slice(0, 400)
-  const t = signTwimlQuery('', say, exp)
-  return `${base}/twiml/salah-call?say=${encodeURIComponent(say)}&exp=${exp}&t=${t}`
+  const say = sayText.slice(0, 400).trim()
+  const t = signTwimlQuery('', say, exp, once)
+  const onceParam = once ? '&once=1' : ''
+  return `${base}/twiml/salah-call?say=${encodeURIComponent(say)}&exp=${exp}&t=${t}${onceParam}`
 }
 
 function verifyTwilioSignature(authToken, signature, url, params) {
@@ -158,16 +192,21 @@ export function startTwilioHttpServer() {
         const say = url.searchParams.get('say')?.trim()
         const exp = Number(url.searchParams.get('exp'))
         const token = url.searchParams.get('t')?.trim() ?? ''
-        if (!verifyTwimlToken(audio ?? '', say ?? '', exp, token)) {
+        const once = url.searchParams.get('once') === '1'
+        if (!verifyTwimlToken(audio ?? '', say ?? '', exp, token, once)) {
           res.writeHead(403)
           res.end('forbidden')
           return
         }
-        const xml = say && !audio
-          ? buildSalahCallSayTwiml(say)
-          : audio
-            ? buildSalahCallTwiml(audio, say ?? undefined)
-            : '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
+        const xml = once
+          ? (audio || say
+              ? buildMessageCallTwiml(audio || undefined, say ?? undefined)
+              : '<?xml version="1.0" encoding="UTF-8"?><Response></Response>')
+          : say && !audio
+            ? buildSalahCallSayTwiml(say)
+            : audio
+              ? buildSalahCallTwiml(audio, say ?? undefined)
+              : '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
         res.writeHead(200, { 'Content-Type': 'text/xml; charset=utf-8' })
         res.end(xml)
         return
