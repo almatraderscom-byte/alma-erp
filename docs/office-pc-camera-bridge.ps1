@@ -47,13 +47,20 @@ while ($true) {
             continue
         }
 
-        # 3. Tell go2rtc to play the MP3 into the camera's backchannel stream.
-        #    pcma (G.711 a-law) is what the camera's speaker expects.
+        # 3. Download the MP3 to a LOCAL file first, then play the local file.
+        #    go2rtc accepts a remote-URL ffmpeg source without error, but the
+        #    fetch inside ffmpeg proved unreliable in practice (job acked ok,
+        #    no sound) -- the local-file path is the one verified by ear on
+        #    this camera, so the bridge always plays from disk.
         $ok = $true
         $errMsg = ''
-        $src = 'ffmpeg:' + $r.job.audioUrl + '#audio=pcma'
-        $enc = [uri]::EscapeDataString($src)
+        $localMp3 = 'C:\go2rtc\job.mp3'
         try {
+            Invoke-WebRequest -Uri $r.job.audioUrl -OutFile $localMp3 -TimeoutSec 30
+            $len = (Get-Item $localMp3).Length
+            if ($len -lt 500) { throw "downloaded mp3 too small ($len bytes)" }
+            $src = 'ffmpeg:C:/go2rtc/job.mp3#audio=pcma'
+            $enc = [uri]::EscapeDataString($src)
             Invoke-RestMethod -Method POST "$Go2rtc/api/streams?dst=$($r.job.stream)&src=$enc" -TimeoutSec 30 | Out-Null
         } catch {
             $ok = $false
