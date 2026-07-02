@@ -135,7 +135,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ ok: true, ignored: 'bad_key' })
   }
   try {
-    const { getImouMessageCallback } = await import('@/agent/lib/imou-camera')
+    const { getImouMessageCallback, setImouMessageCallback } = await import('@/agent/lib/imou-camera')
+    // ?fix=1 → re-register, adding deviceStatus so a camera reboot produces a
+    // controllable delivery test (alarm-only left us with no way to force a push).
+    if (req.nextUrl.searchParams.get('fix') === '1') {
+      await setImouMessageCallback({
+        enable: true,
+        callbackUrl: `https://alma-erp-six.vercel.app/api/assistant/internal/imou-event?k=${expectedKey}`,
+        callbackFlag: 'alarm,deviceStatus',
+      })
+    }
     const config = await getImouMessageCallback()
     return NextResponse.json({ ok: true, config })
   } catch (err) {
