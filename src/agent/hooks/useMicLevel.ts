@@ -14,10 +14,24 @@ export function useMicLevel(stream: MediaStream | null, active: boolean): number
       return
     }
 
-    const ctx = new AudioContext()
+    // iOS WKWebView: construction can throw once the page's AudioContext budget
+    // (~4-6 live contexts) is spent, and a context born outside a direct gesture
+    // stays 'suspended' (analyser reads all-zero → dead waveform) unless resumed.
+    let ctx: AudioContext
+    let source: MediaStreamAudioSourceNode
+    let analyser: AnalyserNode
+    try {
+      const AC: typeof AudioContext =
+        window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      ctx = new AC()
+      if (ctx.state === 'suspended') void ctx.resume().catch(() => {})
+      source = ctx.createMediaStreamSource(stream)
+      analyser = ctx.createAnalyser()
+    } catch {
+      setLevel(0.4) // mic works even if metering doesn't — keep the orb gently alive
+      return
+    }
     ctxRef.current = ctx
-    const source = ctx.createMediaStreamSource(stream)
-    const analyser = ctx.createAnalyser()
     analyser.fftSize = 256
     analyser.smoothingTimeConstant = 0.75
     source.connect(analyser)

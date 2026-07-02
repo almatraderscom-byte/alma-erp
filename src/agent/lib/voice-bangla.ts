@@ -4,9 +4,17 @@
 
 import type OpenAI from 'openai'
 
-/** Steer the model away from Hindi auto-detect (Whisper had no official `bn` ISO code). */
+/**
+ * Steer the model away from Hindi auto-detect (Whisper had no official `bn` ISO
+ * code) AND prime it with the owner's domain vocabulary — brand names, ERP words
+ * and crypto tickers the owner actually says. STT prompts bias recognition toward
+ * these spellings, which is the single cheapest accuracy win for messy speech.
+ */
 export const WHISPER_BANGLA_PROMPT =
-  'বাংলায় কথা বলা হচ্ছে। Bangladeshi Bangla and Banglish only — not Hindi, not Devanagari.'
+  'বাংলায় কথা বলা হচ্ছে। Bangladeshi Bangla and Banglish only — not Hindi, not Devanagari. ' +
+  'প্রসঙ্গ: ALMA Lifestyle, ALMA Trading, CDIT, almatraders.com, অর্ডার, ডেলিভারি, স্টক, ইনভেন্টরি, ' +
+  'খরচ, বেতন, ওয়ালেট, কাস্টমার, ফেসবুক পেজ, ওয়েবসাইট, স্টাফ, নামাজ, টাকা, SUI, BTC, crypto, ' +
+  'Telegram, WhatsApp, মার্কেটিং, পোস্টার, ক্যাটালগ।'
 
 /**
  * STT model. `whisper-1` (the old default) is notoriously poor at Bangladeshi
