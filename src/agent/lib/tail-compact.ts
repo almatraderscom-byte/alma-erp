@@ -7,9 +7,11 @@
  * between folds (hysteresis: trigger > keep). Old turns remain recallable via B2
  * (`retrieveRelevantOldTurns`), so folding loses precision, not the facts.
  *
- * Scope: applied on the native Claude head path (core.ts) — the cache-cost lever
- * B3 targets. The alternate cheap-model path (run-owner-turn.ts) ships full
- * history as before; it has no native cache-write cost and runs less often.
+ * Scope: applied on BOTH head paths — the native Claude path (core.ts) and the
+ * alternate multi-provider path (run-owner-turn.ts). The alternate path used to
+ * ship full history "because it has no cache-write cost", but OpenRouter heads
+ * whose provider ignores our cache breakpoint (Qwen/Alibaba) re-bill the whole
+ * prefix as uncached input EVERY turn — folding is the primary cost lever there.
  */
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
@@ -120,23 +122,44 @@ async function summarizeTail(
     .slice(0, 16000)
   if (!transcript.trim() && !previousSummary) return ''
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
-  const res = await client.messages.create({
-    model: AGENT_MODEL || 'claude-sonnet-4-6',
-    max_tokens: 500,
-    system:
-      'You maintain a rolling memory summary of an owner↔agent conversation so the agent keeps continuity after old turns scroll out of the live window. ' +
-      'Merge the PRIOR SUMMARY with the NEW older turns into ONE updated summary. Keep: the owner\'s goals/topics, decisions made, important facts/numbers, and open action items. ' +
-      'Drop chit-chat. Output a tight Bangla summary (max ~10 bullets). Do not invent anything.',
-    messages: [{
-      role: 'user',
-      content:
-        `PRIOR SUMMARY (may be empty):\n${previousSummary || '(none)'}\n\n` +
-        `NEW OLDER TURNS to fold in:\n${transcript}`,
-    }],
+  const instruction =
+    'You maintain a rolling memory summary of an owner↔agent conversation so the agent keeps continuity after old turns scroll out of the live window. ' +
+    'Merge the PRIOR SUMMARY with the NEW older turns into ONE updated summary. Keep: the owner\'s goals/topics, decisions made, important facts/numbers, and open action items. ' +
+    'Drop chit-chat. Output a tight Bangla summary (max ~10 bullets). Do not invent anything.'
+  const body =
+    `PRIOR SUMMARY (may be empty):\n${previousSummary || '(none)'}\n\n` +
+    `NEW OLDER TURNS to fold in:\n${transcript}`
+
+  // Anthropic first (when it has credits), Gemini as the always-available
+  // fallback. This summarizer is now the PRIMARY cost lever for the OpenRouter
+  // heads too (run-owner-turn applies tail compaction) — with Anthropic credits
+  // out, an Anthropic-only summarizer failed every time, compaction never ran,
+  // and every Qwen turn re-shipped the full history at full price.
+  const anthropicDown = process.env.ANTHROPIC_HEAD_DOWN !== 'false'
+  if (!anthropicDown) {
+    try {
+      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
+      const res = await client.messages.create({
+        model: AGENT_MODEL || 'claude-sonnet-4-6',
+        max_tokens: 500,
+        system: instruction,
+        messages: [{ role: 'user', content: body }],
+      })
+      const block = res.content.find((b) => b.type === 'text')
+      const text = block && block.type === 'text' ? block.text.trim() : ''
+      if (text) return text
+    } catch (err) {
+      console.warn('[tail-compact] anthropic summarize failed, falling back to gemini:', err instanceof Error ? err.message : err)
+    }
+  }
+  const { geminiGenerateText } = await import('@/agent/lib/gemini-text')
+  const text = await geminiGenerateText({
+    prompt: `${instruction}\n\n${body}`,
+    costLabel: 'tail_compact_summary',
+    maxTokens: 600,
+    temperature: 0.2,
   })
-  const block = res.content.find((b) => b.type === 'text')
-  return block && block.type === 'text' ? block.text.trim() : ''
+  return text.trim()
 }
 
 export type TailCompactResult = {

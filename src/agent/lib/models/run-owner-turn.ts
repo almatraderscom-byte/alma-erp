@@ -8,6 +8,7 @@ import { MAX_TOOL_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET } from '@/agent/config'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { buildOwnerActiveTasksContextBlock, buildStaffActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
+import { applyTailCompaction } from '@/agent/lib/tail-compact'
 import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
 import { detectInstructionConflicts } from '@/agent/lib/intelligence/counter-propose'
 import { buildBusinessContext } from '@/agent/lib/business-brain'
@@ -182,11 +183,30 @@ async function* runAlternateProviderTurn(
   let totalCacheCreationTokens = 0
   let totalCacheReadTokens = 0
 
-  const rows = await prisma.agentMessage.findMany({
+  const allRows = await prisma.agentMessage.findMany({
     where: { conversationId },
     orderBy: { createdAt: 'asc' },
     select: { role: true, content: true },
   })
+
+  // B3 tail compaction — the PRIMARY cost lever on this path. This used to run
+  // only on the native Claude head (core.ts); the alternate path shipped the
+  // FULL history every turn. That was ruinous for the OpenRouter heads: Qwen
+  // (Alibaba) ignores our cache_control breakpoint, so cacheRead is always 0 and
+  // the whole ~100k-token prefix was re-billed as uncached input on EVERY
+  // message (~$0.14/turn on a "cheap" model). Fold the old turns into the
+  // running summary and keep only the recent window. Row order is createdAt asc,
+  // so dropOldest lines up with rows.slice(). Fail-open keeps everything.
+  let tailSummary: string | undefined
+  let rows = allRows
+  try {
+    const tail = await applyTailCompaction(conversationId)
+    if (tail.dropOldest > 0) rows = allRows.slice(tail.dropOldest)
+    if (tail.tailSummary) tailSummary = tail.tailSummary
+  } catch (err) {
+    console.warn('[run-owner-turn] tail compaction failed:', err instanceof Error ? err.message : String(err))
+  }
+
   let messages: NeutralMsg[] = dbRowsToNeutral(rows)
 
   const recentUserTexts: string[] = []
@@ -276,6 +296,7 @@ async function* runAlternateProviderTurn(
     activeGroups: toolSelection.groups,
     businessSnapshot,
     headTier,
+    tailSummary,
   }
 
   const { stable, volatile } = buildSystemPromptBlocks(promptArgs)
