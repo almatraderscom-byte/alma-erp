@@ -2,8 +2,7 @@
  * Closed-loop ad optimizer — read metrics, classify, Sonnet-ranked Bangla recommendations.
  * Execution stays owner-approved via pause_campaign / update_campaign_budget / duplicate_campaign / make_ad_creatives.
  */
-import Anthropic from '@anthropic-ai/sdk'
-import { AGENT_MODEL } from '@/agent/config'
+import { agentSmartText } from '@/agent/lib/llm-text'
 import { prisma } from '@/lib/prisma'
 import { roundMoney } from '@/lib/money'
 import { sendOwnerApprovalCard } from '@/agent/lib/telegram-owner-notify'
@@ -123,30 +122,25 @@ async function enrichWithSonnet(
   metrics: CampaignMetrics[],
   draft: AdRecommendation[],
 ): Promise<AdRecommendation[]> {
-  if (!process.env.ANTHROPIC_API_KEY || draft.length === 0) return draft
+  if (draft.length === 0) return draft
 
   const topAngles = await getTopCreativeAngles(3)
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-  const res = await client.messages.create({
-    model: AGENT_MODEL || 'claude-sonnet-4-6',
-    max_tokens: 1800,
+  // Anthropic-or-Gemini (owner: Gemini replaces Sonnet for now). The old direct
+  // Anthropic call 400'd on exhausted credits and killed recommend_ad_actions.
+  const raw = await agentSmartText({
     system:
       'You are ALMA Lifestyle Meta Ads optimizer (Bangladesh, COD/Messenger funnel). ' +
       'Output ONLY JSON array matching input campaigns. Each item: {"campaignId","verdict","reason","confidence"}. ' +
       'reason = Bangla, cite numbers (ROAS, CTR, spend). Never recommend manual targeting/bidding — Advantage+ only. ' +
       'If insufficient data, verdict MUST be hold. Do not override hold guardrails to scale/kill.',
-    messages: [{
-      role: 'user',
-      content:
-        `Metrics:\n${metricsTable(metrics)}\n\n` +
-        `Draft recommendations:\n${JSON.stringify(draft.map((d) => ({ campaignId: d.campaignId, verdict: d.verdict })))}\n\n` +
-        `Winning creative angles from history: ${JSON.stringify(topAngles)}\n` +
-        'Rank by priority (scale winners first, then refresh, reduce, kill). Bangla reasons.',
-    }],
+    prompt:
+      `Metrics:\n${metricsTable(metrics)}\n\n` +
+      `Draft recommendations:\n${JSON.stringify(draft.map((d) => ({ campaignId: d.campaignId, verdict: d.verdict })))}\n\n` +
+      `Winning creative angles from history: ${JSON.stringify(topAngles)}\n` +
+      'Rank by priority (scale winners first, then refresh, reduce, kill). Bangla reasons.',
+    maxTokens: 1800,
+    costLabel: 'ads_optimizer_enrich',
   })
-
-  const block = res.content.find((b) => b.type === 'text')
-  const raw = block && block.type === 'text' ? block.text.trim() : ''
   try {
     const match = raw.match(/\[[\s\S]*\]/)
     const parsed = JSON.parse(match?.[0] ?? '[]') as Array<{
@@ -227,7 +221,12 @@ export async function analyzeAdCampaigns(): Promise<{
     }
   })
 
-  const enriched = await enrichWithSonnet(metrics, draft)
+  // Fail-open: if BOTH LLM paths are down, the deterministic guardrail draft is
+  // still a valid answer — the tool must never die on an enrichment failure.
+  const enriched = await enrichWithSonnet(metrics, draft).catch((err) => {
+    console.warn('[ads-optimizer] enrichment failed, using guardrail draft:', err instanceof Error ? err.message : err)
+    return draft
+  })
   const actionable = enriched.filter((r) => r.verdict !== 'hold')
   const hold = enriched.filter((r) => r.verdict === 'hold')
   const ranked = [...actionable.sort((a, b) => b.confidence - a.confidence), ...hold]

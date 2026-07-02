@@ -3,9 +3,8 @@
  * Reuses advisor bundle, retail calendar, ads monitor metrics, playbook, creative angles.
  * Propose-only — owner approves before any creative/task orchestration.
  */
-import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
-import { AGENT_MODEL, isAnthropicConfigured } from '@/agent/config'
+import { agentSmartText } from '@/agent/lib/llm-text'
 import { buildAdvisorDataBundle } from '@/lib/advisor-data-bundle'
 import { eventsInLeadWindow, upcomingEvents } from '@/agent/lib/retail-calendar'
 import { fetchActiveCampaignMetrics } from '@/agent/lib/ads/insights'
@@ -13,8 +12,6 @@ import { getTopCreativeAngles } from '@/agent/lib/ads/creative-performance'
 import { getActivePlaybook } from '@/agent/lib/playbook'
 import { getInventoryWithSales } from '@/lib/inventory-with-sales'
 import { sendOwnerApprovalCard } from '@/agent/lib/telegram-owner-notify'
-import { logCost } from '@/agent/lib/cost-events'
-import { calcAnthropicChatCostUsd } from '@/agent/lib/pricing'
 import { todayYmdDhaka, addDaysYmd } from '@/lib/agent-api/dhaka-date'
 import type { BrandTheme } from '@/lib/content-engine/brand-identity'
 
@@ -179,35 +176,17 @@ export async function buildMarketingPlan(weeks = 2): Promise<{
     context.stockHighlights.length === 0 &&
     context.calendar.inLeadWindow.length === 0
 
-  if (!isAnthropicConfigured()) {
-    return { items: [], context, thinData: true }
-  }
-
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-  const res = await client.messages.create({
-    model: AGENT_MODEL || 'claude-sonnet-4-6',
-    max_tokens: 2400,
+  // Anthropic-or-Gemini (owner: Gemini replaces Sonnet for now).
+  const raw = await agentSmartText({
     system: PLANNER_SYSTEM,
-    messages: [{
-      role: 'user',
-      content:
-        `Plan marketing for next ${weeks} week(s) (${context.today} → ${context.horizonEnd}).\n\n` +
-        `Context JSON:\n${JSON.stringify(context, null, 0).slice(0, 12000)}\n\n` +
-        'Output JSON array only.',
-    }],
+    prompt:
+      `Plan marketing for next ${weeks} week(s) (${context.today} → ${context.horizonEnd}).\n\n` +
+      `Context JSON:\n${JSON.stringify(context, null, 0).slice(0, 12000)}\n\n` +
+      'Output JSON array only.',
+    maxTokens: 2400,
+    costLabel: 'marketing_planner',
   })
-
-  const block = res.content.find((b) => b.type === 'text')
-  const raw = block && block.type === 'text' ? block.text : ''
   const items = parsePlanItems(raw, context.horizonEnd)
-
-  void logCost({
-    provider: 'anthropic',
-    kind: 'chat',
-    units: { purpose: 'marketing_planner', weeks, itemCount: items.length },
-    costUsd: calcAnthropicChatCostUsd(res.usage),
-    dedupKey: `marketing_plan:${context.today}:${weeks}`,
-  })
 
   return { items, context, thinData }
 }

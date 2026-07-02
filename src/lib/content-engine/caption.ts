@@ -1,5 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk'
-import { AGENT_MODEL } from '@/agent/config'
+import { agentSmartText } from '@/agent/lib/llm-text'
 import { upcomingSeasons } from '@/lib/marketing-calendar'
 import { buildMarketingIntel } from '@/lib/content-intelligence'
 import type { ProductAsset } from '@/lib/content-engine/generate-variants'
@@ -20,35 +19,29 @@ export async function generateCaption(
   const intel = await buildMarketingIntel(product.category ?? undefined).catch(() => null)
   const learned = intel?.bestApproaches?.[0]?.approach ?? null
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
-  const res = await client.messages.create({
-    model: AGENT_MODEL || 'claude-sonnet-4-6',
-    max_tokens: 300,
+  // Anthropic-or-Gemini (owner: Gemini replaces Sonnet for now).
+  const raw = await agentSmartText({
     system:
       'You write Bangla Facebook captions for ALMA Lifestyle (family fashion, Bangladesh). ' +
       'Warm, modern, trustworthy. Output ONLY valid JSON: {"hook":"...","caption":"...","footer":"..."}. ' +
       'hook = short punchy Bangla headline (festival-aware if relevant). ' +
       'caption = 3-6 lines product highlights (fabric, family-matching, style). No emoji spam. ' +
       'footer = order CTA (inbox message, delivery note) — plain text.',
-    messages: [{
-      role: 'user',
-      content: JSON.stringify({
-        productCode: product.productCode,
-        name: product.name,
-        category: product.category,
-        fabric: product.fabric,
-        familyMatch: product.familyMatch,
-        theme: opts?.theme ?? 'default',
-        suggestedHook: opts?.hook,
-        activeSeason: activeSeason?.name ?? null,
-        learnedApproach: learned,
-        page: opts?.page ?? 'lifestyle',
-      }),
-    }],
+    prompt: JSON.stringify({
+      productCode: product.productCode,
+      name: product.name,
+      category: product.category,
+      fabric: product.fabric,
+      familyMatch: product.familyMatch,
+      theme: opts?.theme ?? 'default',
+      suggestedHook: opts?.hook,
+      activeSeason: activeSeason?.name ?? null,
+      learnedApproach: learned,
+      page: opts?.page ?? 'lifestyle',
+    }),
+    maxTokens: 300,
+    costLabel: 'caption_generate',
   })
-
-  const block = res.content.find((b) => b.type === 'text')
-  const raw = block && block.type === 'text' ? block.text.trim() : ''
   try {
     const parsed = JSON.parse(raw) as { hook?: string; caption?: string; footer?: string }
     const hook = String(parsed.hook ?? opts?.hook ?? 'নতুন কালেকশন').trim()
@@ -101,36 +94,30 @@ export async function generateAdCopySet(
   const activeSeason = seasons.find((s) => s.inLeadWindow)
   const intel = await buildMarketingIntel(product.category ?? undefined).catch(() => null)
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
-  const res = await client.messages.create({
-    model: AGENT_MODEL || 'claude-sonnet-4-6',
-    max_tokens: 1200,
+  // Anthropic-or-Gemini (owner: Gemini replaces Sonnet for now).
+  const raw = await agentSmartText({
     system:
       'You write Bangla Meta ad copy angles for ALMA Lifestyle (Bangladesh family fashion). ' +
       'Each angle must use a DIFFERENT psychological hook — not mere rephrasing. ' +
       'Output ONLY a JSON array: [{"angle":"value/price","hookBn":"...","primaryTextBn":"...","ctaBn":"..."}, ...]. ' +
       'hookBn = short headline for the visual overlay. primaryTextBn = 2-3 lines ad primary text. ctaBn = inbox order CTA. ' +
       'Warm, trustworthy, no emoji spam. Use exact offer numbers when provided.',
-    messages: [{
-      role: 'user',
-      content: JSON.stringify({
-        productCode: product.productCode,
-        name: product.name,
-        category: product.category,
-        fabric: product.fabric,
-        familyMatch: product.familyMatch,
-        theme: opts?.theme ?? 'default',
-        offer: opts?.offer ?? null,
-        activeSeason: activeSeason?.name ?? null,
-        learnedApproach: intel?.bestApproaches?.[0]?.approach ?? null,
-        requestedAngles: AD_ANGLES.slice(0, count),
-        count,
-      }),
-    }],
+    prompt: JSON.stringify({
+      productCode: product.productCode,
+      name: product.name,
+      category: product.category,
+      fabric: product.fabric,
+      familyMatch: product.familyMatch,
+      theme: opts?.theme ?? 'default',
+      offer: opts?.offer ?? null,
+      activeSeason: activeSeason?.name ?? null,
+      learnedApproach: intel?.bestApproaches?.[0]?.approach ?? null,
+      requestedAngles: AD_ANGLES.slice(0, count),
+      count,
+    }),
+    maxTokens: 1200,
+    costLabel: 'ad_copy_set',
   })
-
-  const block = res.content.find((b) => b.type === 'text')
-  const raw = block && block.type === 'text' ? block.text.trim() : ''
   try {
     const match = raw.match(/\[[\s\S]*\]/)
     const parsed = JSON.parse(match?.[0] ?? '[]') as AdCopyAngle[]
