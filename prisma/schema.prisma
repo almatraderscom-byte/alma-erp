@@ -2573,6 +2573,8 @@ model AgentCameraSpeakJob {
   createdAt   DateTime  @default(now()) @map("created_at")
   deliveredAt DateTime? @map("delivered_at")
   doneAt      DateTime? @map("done_at")
+  /// Owner has been told the outcome (✅ বেজেছে / ⚠️ বাজেনি) — set by the sweep.
+  notifiedAt  DateTime? @map("notified_at")
 
   @@index([status, createdAt])
   @@map("agent_camera_speak_jobs")

@@ -131,6 +131,60 @@ export async function ackSpeakJob(id: string, ok: boolean, error?: string): Prom
 }
 
 /**
+ * Outcome sweep — tell the owner what actually happened to each announcement,
+ * exactly once (notifiedAt). Runs from two cheap call sites: the camera-bridge
+ * poll (bridge alive → "✅ বেজেছে" lands seconds after playback) and the 1-min
+ * entrance-watch cron (bridge DEAD → queued jobs are expired here and the owner
+ * learns "⚠️ বাজেনি — অফিসের PC বন্ধ" instead of silence). This exists because
+ * a queued-but-never-played announcement once looked identical to success.
+ * Never throws; caps at 5 notifications per run.
+ */
+export async function sweepAndNotifySpeakJobs(): Promise<void> {
+  try {
+    // Expire stale queued jobs even when the bridge never polls (PC off).
+    await db.agentCameraSpeakJob.updateMany({
+      where: { status: 'queued', createdAt: { lt: new Date(Date.now() - QUEUE_TTL_MS) } },
+      data: { status: 'failed', error: 'expired', doneAt: new Date() },
+    })
+
+    const jobs = (await db.agentCameraSpeakJob.findMany({
+      where: {
+        status: { in: ['done', 'failed'] },
+        notifiedAt: null,
+        // Only recent history — never resurface ancient jobs after downtime.
+        createdAt: { gt: new Date(Date.now() - 2 * 60 * 60 * 1000) },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 5,
+      select: { id: true, status: true, error: true, text: true, stream: true },
+    })) as Array<{ id: string; status: string; error: string | null; text: string; stream: string }>
+
+    if (jobs.length === 0) return
+    const { sendOwnerText } = await import('@/agent/lib/telegram-owner-notify')
+
+    for (const job of jobs) {
+      const snippet = job.text.length > 60 ? `${job.text.slice(0, 60)}…` : job.text
+      const message =
+        job.status === 'done'
+          ? `✅ ঘোষণাটা ক্যামেরার স্পিকারে বেজেছে (${job.stream}):\n"${snippet}"`
+          : job.error === 'expired'
+            ? `⚠️ ঘোষণাটা বাজেনি — অফিসের PC/ব্রিজ বন্ধ ছিল, তাই ১০ মিনিট পর নিরাপদে বাতিল হয়েছে:\n"${snippet}"`
+            : `⚠️ ঘোষণাটা বাজানো যায়নি (${job.error ?? 'unknown'}):\n"${snippet}"`
+      const res = await sendOwnerText(message)
+      // Mark notified even if Telegram failed once — better one missed note than
+      // a retry loop spamming the owner every minute.
+      if (!res.ok) console.warn('[camera-say] outcome notify failed:', res.error)
+      await db.agentCameraSpeakJob.update({
+        where: { id: job.id },
+        data: { notifiedAt: new Date() },
+      })
+    }
+  } catch (err) {
+    console.warn('[camera-say] sweep failed:', err instanceof Error ? err.message : err)
+  }
+}
+
+/**
  * Shared secret the office-PC bridge must present (Bearer token). Lives in KV
  * (agent_kv_settings key 'camera_bridge_token') so the owner can rotate it
  * without a redeploy. Empty string = bridge auth impossible → all polls 401.
