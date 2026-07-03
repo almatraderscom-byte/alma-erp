@@ -5,6 +5,7 @@ import { BiometricLockGate } from '@/components/layout/BiometricLockGate'
 import { DeepLinkManager } from '@/components/layout/DeepLinkManager'
 import { DeveloperWatermark } from '@/components/layout/DeveloperWatermark'
 import { ForcedUpdateGate } from '@/components/layout/ForcedUpdateGate'
+import { LivePulseManager } from '@/components/layout/LivePulseManager'
 import { LocalRemindersManager } from '@/components/layout/LocalRemindersManager'
 import { PlatformDiagnostics } from '@/components/layout/PlatformDiagnostics'
 
@@ -21,6 +22,7 @@ export function GlobalPlatformChrome() {
       <BiometricLockGate />
       <AppShortcutsManager />
       <LocalRemindersManager />
+      <LivePulseManager />
       <DeepLinkManager />
     </>
   )
