@@ -121,3 +121,43 @@ npm run mobile:open:ios
 
 - `.p8` push key **git-এ commit করবেন না** — শুধু `~/Documents/ALMA-secrets/`-এ backup
 - Apple থেকে `.p8` re-download হয় না — backup হারালে নতুন key বানাতে হবে
+
+---
+
+## Face ID App Lock (iOS)
+
+iOS app খুললে **Face ID / Touch ID** দিয়ে unlock — যাতে ফোন হারালেও কেউ ERP-তে ঢুকতে না পারে।  
+Native iOS shell-এই কাজ করে (Android-এ নয়) এবং **fail-open** ডিজাইন — কখনো owner-কে lock-out করে না।
+
+### Plugin
+
+| জিনিস | মান |
+|-------|-----|
+| Plugin | `@aparajita/capacitor-biometric-auth@9.0.0` |
+| Platform | **শুধু iOS native** (Android / web-এ কিছুই হয় না) |
+| Fallback | Face ID fail করলে device **passcode** (`allowDeviceCredential`) |
+
+### Design — কখনো lock-out হবে না (fail-open)
+
+- হার্ডওয়্যার নেই / Face ID enroll করা নেই / passcode set নেই → app **normally খুলে যায়** (lock skip)।
+- Plugin error বা অজানা কোনো error → app খুলে যায় (never trapped)।
+- শুধু user নিজে **cancel** করলে বা face **fail** করলে lock ধরে রাখে ও আবার try করতে দেয়।
+- The whole point: একটা failed face scan যেন owner-কে কখনো ভেতরে আটকে না ফেলে।
+
+### Default ON + কীভাবে বন্ধ করবেন
+
+- Default: iOS native-এ **ON** (এটাই feature-এর মূল উদ্দেশ্য)।
+- বন্ধ করতে: **Settings → Notifications → "অ্যাপ লক (Face ID)"** toggle off করুন।
+- Preference থাকে `localStorage` key `alma_biometric_lock_enabled`-এ (`0` = off) — নতুন build লাগে না।
+
+### কখন আবার lock চায়
+
+- **Cold start** — app পুরোপুরি নতুন করে খুললে।
+- **Resume** — background-এ **৬০ সেকেন্ডের বেশি** থাকার পর আবার foreground-এ এলে।
+- অল্প সময়ের জন্য অন্য app-এ গেলে (৬০s-এর কম) আবার Face ID চাইবে না।
+
+### Files (code)
+
+- `src/lib/biometric-lock.ts` — platform detect, enable-state, unlock logic (fail-open mapping)
+- `src/components/layout/BiometricLockGate.tsx` — cold-start + resume-after-60s gate
+- `src/components/settings/BiometricLockToggle.tsx` — Settings-এর on/off toggle

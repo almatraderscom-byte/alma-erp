@@ -1,5 +1,6 @@
 'use client'
 
+import { BiometricLockGate } from '@/components/layout/BiometricLockGate'
 import { DeveloperWatermark } from '@/components/layout/DeveloperWatermark'
 import { ForcedUpdateGate } from '@/components/layout/ForcedUpdateGate'
 import { PlatformDiagnostics } from '@/components/layout/PlatformDiagnostics'
@@ -14,6 +15,7 @@ export function GlobalPlatformChrome() {
       <DeveloperWatermark />
       <PlatformDiagnostics />
       <ForcedUpdateGate />
+      <BiometricLockGate />
     </>
   )
 }

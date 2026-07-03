@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { PageHeader, Card, Button, Input, Select, KpiCard, Skeleton } from '@/components/ui'
+import { BiometricLockToggle } from '@/components/settings/BiometricLockToggle'
 import { BUSINESS_LIST } from '@/lib/businesses'
 import { ALMA_ROLE_OPTIONS } from '@/lib/roles'
 
@@ -92,6 +93,10 @@ export default function NotificationSettingsPage() {
           <KpiCard label="Delivered" value={loading ? '—' : stats?.totals.delivered ?? 0} loading={loading} />
           <KpiCard label="Open rate" value={loading ? '—' : `${stats?.totals.openRate ?? 0}%`} loading={loading} />
           <KpiCard label="Ack rate" value={loading ? '—' : `${stats?.totals.ackRate ?? 0}%`} loading={loading} />
+        </motion.div>
+
+        <motion.div variants={fadeUp}>
+          <BiometricLockToggle />
         </motion.div>
 
         <motion.div variants={fadeUp} className="grid lg:grid-cols-[420px_1fr] gap-4">
