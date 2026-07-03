@@ -121,25 +121,36 @@ export function useKeyboardInset() {
     }
 
     // iOS native-frame shell (plain WKWebView, NOT Capacitor): the shell already
-    // shrinks the WebView above the keyboard via keyboardLayoutGuide. Running the
-    // visualViewport path here made the two fight — the measured inset settled near
-    // 0 (the view had already shrunk) so `kb-open` never latched, leaving the agent
-    // bottom-nav wedged between the composer and the keyboard and flickering during
-    // the animation. So mirror the Capacitor branch instead: pin --kb-inset at 0,
-    // set cap-native-resize (so .agent-main-height fills the shrunk viewport), and
-    // drive kb-open purely from focus (the keyboard is up iff an editable is focused).
+    // shrinks the WebView above the keyboard via keyboardLayoutGuide, exactly like
+    // Capacitor's resize:Native. Running the visualViewport INSET path here made the
+    // two fight — with the view already shrunk the measured inset settled near 0, so
+    // `kb-open` never latched and the agent bottom-nav stayed wedged between composer
+    // and keyboard, flickering during the animation. So mirror the Capacitor branch:
+    // pin --kb-inset at 0 and set cap-native-resize (so .agent-main-height fills the
+    // shrunk viewport).
+    //
+    // Detect the keyboard from the WebView's own resize, NOT from focus: the shell
+    // shrinks the view only when the keyboard is actually on-screen, whereas iOS
+    // suppresses the keyboard on programmatic focus — so a focus-based toggle would
+    // wrongly hide the nav when the agent auto-focuses its composer with no keyboard.
+    // Keyboard is up iff the viewport shrank meaningfully below its tallest (no-kb)
+    // height; the threshold + max-baseline give hysteresis so it latches once, cleanly.
     function setupNativeShell() {
       document.documentElement.classList.add('cap-native-resize')
       setInset(0)
-      const openNav = (e: FocusEvent) => {
-        if (!disposed && isEditableTarget(e.target)) document.body.classList.add('kb-open')
+      const viewportHeight = () => window.visualViewport?.height ?? window.innerHeight
+      let baseline = viewportHeight() // tallest height seen = keyboard-down
+      const update = () => {
+        if (disposed) return
+        const h = viewportHeight()
+        if (h > baseline) baseline = h
+        document.body.classList.toggle('kb-open', baseline - h > 120)
       }
-      const closeNav = () => { if (!disposed) document.body.classList.remove('kb-open') }
-      document.addEventListener('focusin', openNav)
-      document.addEventListener('focusout', closeNav)
+      window.addEventListener('resize', update)
+      window.visualViewport?.addEventListener('resize', update)
       cleanups.push(() => {
-        document.removeEventListener('focusin', openNav)
-        document.removeEventListener('focusout', closeNav)
+        window.removeEventListener('resize', update)
+        window.visualViewport?.removeEventListener('resize', update)
         document.documentElement.classList.remove('cap-native-resize')
       })
     }
