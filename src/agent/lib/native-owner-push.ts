@@ -161,6 +161,10 @@ export async function pushNativeToOwner(opts: {
       ...resolveAndroidChannelFields(process.env.ONESIGNAL_ANDROID_CHANNEL_ID),
       android_visibility: 1, // PUBLIC — show on lock screen
       android_led_color: 'FFC9A84C', // gold LED (matches ERP)
+      // iOS (APNs): bump the app icon badge on each push. Custom ios_sound is left
+      // default — a matching .caf/.wav must be added to the Xcode bundle before we can set it.
+      ios_badgeType: 'Increase',
+      ios_badgeCount: 1,
       small_icon: 'ic_stat_onesignal_default',
       data: {
         source: 'agent',
