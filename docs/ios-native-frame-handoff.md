@@ -19,7 +19,7 @@
 - **Native branch (all the iOS shell work): `claude/ios-s0-native-shell-spike`.** This is where you continue. It is off the N5 tag (so it carries all of N1–N5's native features).
 - **Web "embed mode" is MERGED TO PRODUCTION `main`** (gated — zero effect on web/desktop users). Files: `src/lib/native-shell.ts`, `src/components/layout/NativeShellBridge.tsx` (mounted in `GlobalPlatformChrome`), embed CSS in `src/app/globals.css` (`html.alma-native …`), and the agent banner tag in `src/agent/components/AgentApp.tsx`.
 - The app loads **live production** (`alma-erp-six.vercel.app`) in native WebViews, so a web merge to main changes the native app immediately (no new build for web-only fixes).
-- TestFlight builds so far: **14 (S0 spike) → 19 (latest)**, all VALID. Build/sign/upload recipe (ASC key `T875C2865Y`, cloud signing) is in `docs/agent-ios-native-handoff.md` §5 and memory `project_apple_developer_enroll`.
+- TestFlight builds so far: **14 (S0 spike) → 20 (latest)**, all VALID. Build/sign/upload recipe (ASC key `T875C2865Y`, cloud signing) is in `docs/agent-ios-native-handoff.md` §5 and memory `project_apple_developer_enroll`.
 
 ## 2. Architecture (native side = `ios/App/App/SpikeNativeShell.swift`)
 
@@ -38,14 +38,19 @@
 - **build 16:** More = native menu (fixed a `/settings` 404).
 - **S2 (build 17):** native headers + title-sync + back on Orders/Approvals.
 - **S2.1 (build 18):** keyboard + tab-bar overlap fixed (`keyboardLayoutGuide`); double-top-header fixed (`hideWebHeader` + `html.alma-native-hdr .page-header`); header restyled.
-- **build 19 (latest):** native header retinted to translucent **violet** (was reading black); agent's cream "N tasks awaiting decision" banner (`.agent-attention-banner`) hidden in native.
+- **build 19:** native header retinted to translucent **violet** (was reading black); agent's cream "N tasks awaiting decision" banner (`.agent-attention-banner`) hidden in native.
+- **build 20 (latest, self-tested in sim + Chrome, 2026-07-03):**
+  - **Assistant bottom-nav flicker FIXED** (open item #1 — the real pain point). Root cause confirmed live in the sim: the Assistant is a plain (non-Capacitor) WKWebView whose bottom is pinned to `keyboardLayoutGuide`, so native already shrinks it above the keyboard — but the agent's web keyboard manager ran the *visualViewport* path, measured inset ≈ 0, so `kb-open` never latched and the sub-nav stayed wedged between composer and keyboard, flickering. Fix is **web-side** (`src/agent/hooks/useKeyboardInset.ts`, on **main**): in the native shell (detected via the `almaShell` bridge, absent in normal browsers and even `?native=1`) mirror the Capacitor branch — pin `--kb-inset` 0, set `cap-native-resize`, and drive `kb-open` from the **WebView's own resize** (keyboard up ⟺ viewport shrank >120px below its tallest height), NOT from focus. (A first focus-based attempt was a regression — iOS suppresses the keyboard on the agent's programmatic auto-focus, so it hid the nav with no keyboard; caught in the sim, corrected.) Verified in the sim across keyboard **up → nav hidden, composer flush; down → nav returns**. Two commits on main: `f4d17ee9` then `3785782d`.
+  - **Native header → aurora-frosted:** thin blur material (`.systemThinMaterialDark`) + light violet veil (0.42) so content/aurora shows through, title readable over light (Orders) + dark (Approvals). Appearance-only. (native branch)
+  - **Dropped after self-test (correctly):** native pull-to-refresh (the ERP web already ships its own "RELEASE TO REFRESH"); tab-retap scroll-to-top (the list scrolls an inner element `webView.scrollView` can't reach). Both are web-owned content behaviours — see open items.
 
 ## 4. OPEN items — verify in sim/Chrome, batch, ONE build
 
-1. **Agent bottom sub-nav "flickers"** (Assistant tab, sometimes visible/not) — likely native `keyboardLayoutGuide` resize fighting the agent's own `AgentKeyboardManager` (`src/agent/components/`). Reproduce in the sim; decide whether the Assistant tab should skip the native keyboard resize.
-2. **Native header still not "aurora blur"** — build 19 is a violet translucent tint (safe). True aurora-showing-through needs the WebView to extend *under* the nav bar (top→`view.topAnchor` + content inset) — validate carefully in the simulator before shipping (it's a layout change).
+1. ~~Agent bottom sub-nav flickers~~ **DONE in build 20** (see above).
+2. **Native header still not full "aurora blur"** — build 20 is a real frosted thin-material veil (better than 19's slab), but the dramatic aurora-showing-through still needs the WebView to extend *under* the nav bar (top→`view.topAnchor` + content inset) — a layout change; validate carefully in the sim before shipping.
 3. **`.page-header` hides its filters/actions** on native-header pages (e.g. Finance Expenses/Office-Fund/Payroll pills). If the owner wants them, resurface natively or keep a slim sub-bar.
 4. **Agent sub-nav (Chat/Studio/WhatsApp/Monitor/Costs) → native mapping** (kept visible for now to preserve access; a second bottom bar on Assistant).
+5. **Native pull-to-refresh + tab-retap scroll-to-top** — both need **web cooperation** (a native→web `scrollTop`/`reload` message the web handles on its own scroller), since native can't reach the ERP pages' inner scroller and the web already owns pull-to-refresh. Do web-side if wanted.
 
 ## 5. Remaining roadmap (owner has the visual roadmap artifact)
 
@@ -59,5 +64,7 @@
 - A Mac reboot clears git identity → `git config user.name "Maruf Billah"` / `user.email "marufbillah@Marufs-Mac-mini.local"` before committing.
 - `gh` CLI isn't authed non-interactively; to land a gated web change on `main`, fast-forward push a branch: `git push origin <branch>:main` (main is usually a clean FF from a branch cut off origin/main).
 - Simulator webviews are logged OUT (separate from the owner's Chrome). For logged-in *content* use Chrome `?native=1`; use the sim for native chrome. Passcode `Maruf@123` (in memory) unlocks the app's Face-ID gate in the sim.
-- `CURRENT_PROJECT_VERSION` lives in 4 places in `ios/App/App.xcodeproj/project.pbxproj` — bump all 4 per build. Next build = **20**.
+- `CURRENT_PROJECT_VERSION` lives in 4 places in `ios/App/App.xcodeproj/project.pbxproj` — bump all 4 per build. Next build = **21**.
+- **SW-cache gotcha for web-fix self-test:** the native WebViews run a service worker, so a web fix pushed to main is NOT picked up until the SW updates. In the sim, tap the agent's in-app refresh (or the "নতুন আপডেট" banner's "এখনই রিফ্রেশ করুন") to force the newest JS before verifying a web change. The sim IS logged in (session persists) — so the Assistant tab can be tested logged-in for real.
+- **Sim self-test recipe that worked:** boot udid `94E0186B-…`; build for sim (`-derivedDataPath /tmp/alma-sim-dd`); `simctl install/launch`; unlock past the app's passcode gate by typing `Maruf@123` (memory `reference_ios_sim_access`) via computer-use (`request_access` Simulator → `left_click` field → `type` → Return); drive tabs with computer-use `left_click`; toggle the software keyboard with **⌘K** (hardware keyboard otherwise suppresses it).
 - Never merge to main / deploy production without cause; the embed-mode web changes are gated + owner-approved, which is why they were merged.
