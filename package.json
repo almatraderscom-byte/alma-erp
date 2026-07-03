@@ -36,6 +36,8 @@
     "mobile:icons": "node scripts/generate-mobile-icons.mjs",
     "mobile:sync": "npm run mobile:icons && npx cap sync android",
     "mobile:open": "npx cap open android",
+    "mobile:sync:ios": "npm run mobile:icons && npx cap sync ios",
+    "mobile:open:ios": "npx cap open ios",
     "mobile:apk:debug": "node scripts/build-android-apk.mjs debug",
     "mobile:apk:release": "node scripts/build-android-apk.mjs release"
   },
