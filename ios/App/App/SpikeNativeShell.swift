@@ -386,10 +386,10 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
     init(dashboard: UIViewController) {
         super.init(nibName: nil, bundle: nil)
 
-        dashboard.tabBarItem = UITabBarItem(
-            title: "Dashboard",
-            image: UIImage(systemName: "square.grid.2x2"),
-            selectedImage: UIImage(systemName: "square.grid.2x2.fill"))
+        // The Dashboard (Capacitor) tab gets a native header too (S3) — give the VC a
+        // title for that header and wrap it in a dark nav controller below, like the
+        // other content tabs. Its web page-header is hidden via AlmaBridgeViewController.
+        dashboard.title = "Dashboard"
 
         let pool = WKProcessPool()
 
@@ -413,7 +413,7 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
                                    tabTitle: "More", icon: "ellipsis.circle", largeTitles: true)
 
         viewControllers = [
-            dashboard,
+            Self.darkNav(root: dashboard, tabTitle: "Dashboard", icon: "square.grid.2x2", largeTitles: false),
             webNavTab("/orders",    "Orders",    "shippingbox"),
             plainTab ("/agent",     "Assistant", "sparkles"),
             webNavTab("/approvals", "Approvals", "checkmark.seal"),
