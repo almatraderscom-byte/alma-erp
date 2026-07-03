@@ -296,21 +296,23 @@ async function placeRelayCall(
       `<Response><Connect>` +
       `<ConversationRelay url="${escapeXmlAttr(wssUrl)}"` +
       ` welcomeGreeting="${escapeXmlAttr(firstMessage)}"` +
-      // STT: Google's telephony (default) model has NO Bengali; bn-IN only exists
-      // on chirp models Twilio doesn't expose. bn-BD + "long" is supported in the
-      // global region (verified against Google's STT language matrix) — and callers
-      // are Bangladeshi anyway. Env-tunable in case Twilio's matrix shifts.
       // TTS: Twilio validates (provider, ttsLanguage, voice) as a triple — omitting
       // ttsLanguage defaults it to en-US, which rejects the bn-IN voice (64101,
       // live-verified). Twilio's voice list documents bn-IN + bn-IN-Chirp3-HD-Charon.
+      // STT: Deepgram nova-3 (Bengali `bn` is in its language list) — live call #9
+      // proved Google bn-BD/long near-deaf on telephony audio (2 words heard in
+      // 89s), and the forced 1.2s speechTimeout made it worse (now default-auto
+      // by omission). Deepgram's realtime endpointing is also much faster. All
+      // env-tunable; the Google path stays reachable via VOICE_RELAY_STT_*.
       ` ttsProvider="Google" voice="${RELAY_TTS_VOICE}"` +
       ` ttsLanguage="${process.env.VOICE_RELAY_TTS_LANGUAGE ?? 'bn-IN'}"` +
-      ` transcriptionProvider="${process.env.VOICE_RELAY_STT_PROVIDER ?? 'Google'}"` +
-      ` transcriptionLanguage="${process.env.VOICE_RELAY_STT_LANGUAGE ?? 'bn-BD'}"` +
-      ` speechModel="${process.env.VOICE_RELAY_STT_MODEL ?? 'long'}"` +
-      // End-of-speech after 1.2s silence instead of Twilio's slow 'auto' — the
-      // caller's turn reaches the brain sooner (live complaint: 10s+ replies).
-      ` speechTimeout="${process.env.VOICE_RELAY_SPEECH_TIMEOUT_MS ?? '1200'}">` +
+      ` transcriptionProvider="${process.env.VOICE_RELAY_STT_PROVIDER ?? 'Deepgram'}"` +
+      ` transcriptionLanguage="${process.env.VOICE_RELAY_STT_LANGUAGE ?? 'bn'}"` +
+      ` speechModel="${process.env.VOICE_RELAY_STT_MODEL ?? 'nova-3-general'}"` +
+      (process.env.VOICE_RELAY_SPEECH_TIMEOUT_MS
+        ? ` speechTimeout="${process.env.VOICE_RELAY_SPEECH_TIMEOUT_MS}"`
+        : '') +
+      `>` +
       `<Parameter name="callRecordId" value="${escapeXmlAttr(callRecordId)}"/>` +
       `<Parameter name="purpose" value="${escapeXmlAttr(purpose)}"/>` +
       `<Parameter name="recipientName" value="${escapeXmlAttr(recipientName ?? '')}"/>` +
