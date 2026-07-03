@@ -48,6 +48,25 @@ function isEditableTarget(el: EventTarget | null): boolean {
   return tag === 'textarea' || tag === 'input' || node.isContentEditable === true
 }
 
+/**
+ * True only inside the iOS native-frame shell (SpikeNativeShell): the app hosts the
+ * agent in a plain WKWebView whose bottom is pinned to the keyboard via
+ * `keyboardLayoutGuide`, so NATIVE already shrinks the viewport above the keyboard —
+ * exactly like Capacitor's resize:Native, but without the Capacitor bridge. Detected
+ * by the `almaShell` message handler the shell injects; absent in normal browsers and
+ * even under `?native=1` (only the real app registers it).
+ */
+function inNativeShellWebView(): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    return !!(window as unknown as {
+      webkit?: { messageHandlers?: { almaShell?: unknown } }
+    }).webkit?.messageHandlers?.almaShell
+  } catch {
+    return false
+  }
+}
+
 export function useKeyboardInset() {
   useEffect(() => {
     let disposed = false
@@ -101,23 +120,55 @@ export function useKeyboardInset() {
       cleanups.push(unsub)
     }
 
+    // iOS native-frame shell (plain WKWebView, NOT Capacitor): the shell already
+    // shrinks the WebView above the keyboard via keyboardLayoutGuide. Running the
+    // visualViewport path here made the two fight — the measured inset settled near
+    // 0 (the view had already shrunk) so `kb-open` never latched, leaving the agent
+    // bottom-nav wedged between the composer and the keyboard and flickering during
+    // the animation. So mirror the Capacitor branch instead: pin --kb-inset at 0,
+    // set cap-native-resize (so .agent-main-height fills the shrunk viewport), and
+    // drive kb-open purely from focus (the keyboard is up iff an editable is focused).
+    function setupNativeShell() {
+      document.documentElement.classList.add('cap-native-resize')
+      setInset(0)
+      const openNav = (e: FocusEvent) => {
+        if (!disposed && isEditableTarget(e.target)) document.body.classList.add('kb-open')
+      }
+      const closeNav = () => { if (!disposed) document.body.classList.remove('kb-open') }
+      document.addEventListener('focusin', openNav)
+      document.addEventListener('focusout', closeNav)
+      cleanups.push(() => {
+        document.removeEventListener('focusin', openNav)
+        document.removeEventListener('focusout', closeNav)
+        document.documentElement.classList.remove('cap-native-resize')
+      })
+    }
+
     // Optimistic lift: the moment an input/textarea is focused, raise the
     // composer to the last measured keyboard height instead of waiting for the
     // native keyboardWillShow event (which can lag 2-5s on some Android shells).
     // Safe on desktop: lastKnownKbHeight stays 0 there, so this is a no-op.
+    // Skipped in the native-frame shell, where native owns the lift and any inset
+    // would double-lift the composer.
     function onFocusIn(e: FocusEvent) {
       if (disposed || !isEditableTarget(e.target)) return
       if (document.body.classList.contains('kb-open')) return
       const h = lastKnownKbHeight()
       if (h > 0) setInset(h)
     }
-    document.addEventListener('focusin', onFocusIn)
-    cleanups.push(() => document.removeEventListener('focusin', onFocusIn))
 
-    void setupNative().then((isNative) => {
-      if (disposed) return
-      if (!isNative) setupWeb()
-    })
+    // The native-frame shell webview takes precedence over both the Capacitor and
+    // the web/visualViewport paths (it is neither): native handles the resize.
+    if (inNativeShellWebView()) {
+      setupNativeShell()
+    } else {
+      document.addEventListener('focusin', onFocusIn)
+      cleanups.push(() => document.removeEventListener('focusin', onFocusIn))
+      void setupNative().then((isNative) => {
+        if (disposed) return
+        if (!isNative) setupWeb()
+      })
+    }
 
     return () => {
       disposed = true
