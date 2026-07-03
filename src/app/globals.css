@@ -1075,8 +1075,12 @@ html.cap-native .alma-glass-portal {
    When the app runs inside the native iOS tab-bar shell, hide the web's own
    bottom chrome so it doesn't stack under the native tab bar. Gated entirely on
    the `alma-native` class, which is only ever added inside the native shell —
-   zero effect for desktop / mobile-web users. */
-html.alma-native .mobile-app-chrome,
-html.alma-native .agent-bottom-nav {
+   zero effect for desktop / mobile-web users.
+
+   NOTE: hide the main ERP bottom nav (the native tab bar replaces it) but KEEP the
+   agent's own sub-nav (Chat / Studio / WhatsApp / Monitor / Costs) — those are real
+   in-section destinations; hiding them would strand the user. Mapping the agent
+   sub-sections into native navigation is a later task. */
+html.alma-native .mobile-app-chrome {
   display: none !important;
 }
