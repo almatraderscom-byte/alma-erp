@@ -7,7 +7,7 @@ import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
 import { useMicLevel } from '@/agent/hooks/useMicLevel'
 import { useWakeWord, useLiveTranscript, wakeWordSupported } from '@/agent/hooks/useWakeWord'
 import { useBargeIn } from '@/agent/hooks/useBargeIn'
-import { unlockTtsAudio, primeSpokenAcks, playInstantAck, playMicChime, speakLine } from '@/agent/lib/voice-tts-client'
+import { unlockTtsAudio, primeSpokenAcks, playInstantAck, playMicChime, playMicCloseChime, speakLine } from '@/agent/lib/voice-tts-client'
 import { createTtsChunkPlayer, type TtsChunkPlayer } from '@/agent/lib/tts-chunk-player'
 import { toolDisplay } from '@/agent/lib/tool-labels'
 import { voiceHaptic, agentReplyHaptic } from '@/agent/lib/haptics'
@@ -30,7 +30,11 @@ interface VoiceConsoleProps {
   open: boolean
   onClose: () => void
   /** Streams the turn; emits live events for the card feed; resolves to the reply text. */
-  onSendMessage: (text: string, onEvent?: (evt: VoiceTurnEvent) => void) => Promise<string | null>
+  onSendMessage: (
+    text: string,
+    onEvent?: (evt: VoiceTurnEvent) => void,
+    resumeOpts?: { approve: boolean },
+  ) => Promise<string | null>
 }
 
 const STATUS: Record<VoiceState, string> = {
@@ -44,7 +48,7 @@ const STATUS: Record<VoiceState, string> = {
 
 interface FeedCard {
   id: string
-  kind: 'tool' | 'subagent' | 'approval'
+  kind: 'tool' | 'subagent' | 'approval' | 'ask' | 'model_switch'
   icon: string
   title: string
   sub?: string
@@ -55,6 +59,9 @@ interface FeedCard {
   pendingActionId?: string
   busy?: boolean
   resolution?: 'approved' | 'rejected' | 'settled'
+  /** ask cards only */
+  askCardId?: string
+  options?: string[]
 }
 
 const bnTime = () =>
@@ -77,9 +84,16 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
   const [convoMode, setConvoMode] = useState(true)
   const convoModeRef = useRef(convoMode)
   useEffect(() => { convoModeRef.current = convoMode }, [convoMode])
+  /** Last moment ANY audio line queued/sounded — drives the long-task keepalive. */
+  const lastAudioRef = useRef(0)
   const playerRef = useRef<TtsChunkPlayer | null>(null)
   const currentLineRef = useRef<string | null>(null)
   const ackPlayedRef = useRef(false)
+  /** Last exchanges kept on screen (Siri loses them; we don't). */
+  const [history, setHistory] = useState<{ q: string; a: string }[]>([])
+  const lastTextRef = useRef('')
+  /** Stream died while the app was hidden — announce when the owner returns. */
+  const hiddenAbortRef = useRef(false)
   const stateRef = useRef(state)
   useEffect(() => { stateRef.current = state }, [state])
   const openRef = useRef(open)
@@ -147,89 +161,159 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
     }, 450)
   }, [])
 
+  /**
+   * One full voice turn. Everything a human assistant would SAY out loud is
+   * said here: ack, tool narration, self-correction notes, clarifying
+   * questions (ask cards), premium-model permission, errors, keepalives on
+   * long tool chains. Silence is the enemy (owner audit 2026-07-03).
+   */
+  const runTurn = useCallback(async (text: string, resumeOpts?: { approve: boolean }) => {
+    lastTextRef.current = text
+    setTranscript(text)
+    setReply('')
+    setSpoken([])
+    setCurrentLine(null)
+    setState('thinking')
+    // Streaming TTS: sentences start SOUNDING while the head is still
+    // writing — 2-4s faster to first word than waiting for the whole reply.
+    const player = createTtsChunkPlayer({
+      onFirstPlay: () => {
+        if (!openRef.current) return
+        agentReplyHaptic()
+        setState('speaking')
+      },
+      onChunkStart: (line, sys) => {
+        lastAudioRef.current = Date.now()
+        if (!openRef.current || sys) return
+        // live subtitle: the sentence being SPOKEN right now lights up
+        setSpoken((prev) => (currentLineRef.current ? [...prev, currentLineRef.current] : prev))
+        currentLineRef.current = line
+        setCurrentLine(line)
+      },
+      onDone: () => {
+        playerRef.current = null
+        currentLineRef.current = null
+        if (openRef.current) {
+          setCurrentLine(null)
+          setState('idle')
+          scheduleAutoListen()
+        }
+      },
+    })
+    playerRef.current = player
+    // Human feel: the instant ack already played when the mic closed (cached
+    // audio, zero wait); only fall back to the queue if the cache missed.
+    if (!resumeOpts && !ackPlayedRef.current) {
+      player.say(SPOKEN_ACKS[Math.floor(Math.random() * SPOKEN_ACKS.length)])
+    }
+    ackPlayedRef.current = false
+    lastAudioRef.current = Date.now()
+
+    // Long tool-chains must never go acoustically dark: if nothing has sounded
+    // for ~14s while still thinking, say a keepalive.
+    const heartbeat = setInterval(() => {
+      if (!openRef.current || stateRef.current !== 'thinking') return
+      if (Date.now() - lastAudioRef.current >= 14000) {
+        lastAudioRef.current = Date.now()
+        player.say('এখনো কাজ চলছে স্যার, একটু সময় দিন…')
+      }
+    }, 4000)
+
+    let replyStarted = false
+    let lastNarration = 0
+    let sawInteraction = false // ask card / model switch — empty reply is then EXPECTED
+    let verificationSaid = false
+    try {
+      const replyText = await onSendMessage(text, (evt) => {
+        onTurnEvent(evt)
+        if (evt.type === 'text_delta') {
+          replyStarted = true
+          player.feed(evt.delta)
+        } else if (evt.type === 'tool_start' && !replyStarted) {
+          // Narrate the work as it happens — first tool always, then at most
+          // one line per ~6s so multi-tool turns don't become a monologue.
+          if (Date.now() - lastNarration >= 6000) {
+            lastNarration = Date.now()
+            lastAudioRef.current = Date.now()
+            player.say(`${toolDisplay(evt.name).label}, স্যার…`)
+          }
+        } else if (evt.type === 'ask_card') {
+          // The head is ASKING — speak the question and show tappable options.
+          sawInteraction = true
+          lastAudioRef.current = Date.now()
+          player.say(evt.question)
+          if (evt.options.length > 0) {
+            player.say(`${evt.options.join(', নাকি ')} — কোনটা, স্যার?`)
+          }
+          setCards((prev) => [...prev, {
+            id: `ask-${evt.askCardId || prev.length}`, kind: 'ask', icon: '❓',
+            title: evt.question.slice(0, 120), options: evt.options,
+            askCardId: evt.askCardId, done: false, at: bnTime(),
+          }])
+        } else if (evt.type === 'model_switch_required') {
+          sawInteraction = true
+          lastAudioRef.current = Date.now()
+          player.say('এটার জন্য আরও শক্তিশালী মডেল দরকার, স্যার — অনুমতি দিলে এগিয়ে যাই।')
+          setCards((prev) => [...prev, {
+            id: `modelswitch-${prev.length}`, kind: 'model_switch', icon: '🧠',
+            title: 'শক্তিশালী মডেলের অনুমতি দরকার', done: false, at: bnTime(),
+          }])
+        } else if (evt.type === 'verification_retry') {
+          if (!verificationSaid) {
+            verificationSaid = true
+            lastAudioRef.current = Date.now()
+            player.say('একটু যাচাই করে ঠিক করে নিচ্ছি, স্যার…')
+          }
+        } else if (evt.type === 'error') {
+          lastAudioRef.current = Date.now()
+          player.say('দুঃখিত স্যার, একটা সমস্যা হয়েছে — একটু পরে আরেকবার বলুন।')
+        }
+      })
+      clearInterval(heartbeat)
+      if (!openRef.current) { player.dispose(); return }
+      if (replyText?.trim()) {
+        setReply(replyText)
+        setHistory((prev) => [...prev.slice(-2), { q: text, a: replyText }])
+        player.finish() // flush the tail; onDone → idle → auto-listen
+      } else {
+        // No reply text — but if we spoke a question/apology/permission line,
+        // let it finish sounding instead of hard-cutting to silence.
+        if (sawInteraction) setHistory((prev) => [...prev.slice(-2), { q: text, a: '' }])
+        player.finish()
+      }
+    } catch {
+      clearInterval(heartbeat)
+      if (document.hidden) {
+        // Stream died because the app went to background — announce on return.
+        hiddenAbortRef.current = true
+        player.dispose()
+        playerRef.current = null
+        if (openRef.current) setState('idle')
+      } else {
+        toast.error('উত্তর পেতে ব্যর্থ')
+        player.say('দুঃখিত স্যার, সংযোগে সমস্যা হলো — আরেকবার বলুন।')
+        player.finish() // onDone → idle → auto-listen keeps the loop alive
+      }
+    }
+  }, [onSendMessage, onTurnEvent, scheduleAutoListen])
+
   const recorder = useVoiceRecorder({
     // Generous silence window + 3-minute cap: long instructions never get cut
     // mid-thought (the owner's #1 voice complaint — repeating himself).
+    // (Short utterances end faster — adaptive endpointing in the hook.)
     autoStop: true,
     silenceMs: 2600,
     maxMs: 180000,
-    // Conversation-mode wake with nobody speaking: give up quietly after 8s.
+    // Conversation-mode wake with nobody speaking: give up quietly after 8s —
+    // but SAY so with a closing chime, or the owner thinks it's still listening.
     noSpeechMs: 8000,
     onNoSpeech: () => {
       if (!openRef.current) return
+      playMicCloseChime()
+      voiceHaptic(false)
       setState('idle')
     },
-    onTranscribed: async (text) => {
-      setTranscript(text)
-      setReply('')
-      setSpoken([])
-      setCurrentLine(null)
-      setState('thinking')
-      // Streaming TTS: sentences start SOUNDING while the head is still
-      // writing — 2-4s faster to first word than waiting for the whole reply.
-      const player = createTtsChunkPlayer({
-        onFirstPlay: () => {
-          if (!openRef.current) return
-          agentReplyHaptic()
-          setState('speaking')
-        },
-        onChunkStart: (line, sys) => {
-          if (!openRef.current || sys) return
-          // live subtitle: the sentence being SPOKEN right now lights up
-          setSpoken((prev) => (currentLineRef.current ? [...prev, currentLineRef.current] : prev))
-          currentLineRef.current = line
-          setCurrentLine(line)
-        },
-        onDone: () => {
-          playerRef.current = null
-          currentLineRef.current = null
-          if (openRef.current) {
-            setCurrentLine(null)
-            setState('idle')
-            scheduleAutoListen()
-          }
-        },
-      })
-      playerRef.current = player
-      // Human feel: the instant ack already played when the mic closed (cached
-      // audio, zero wait); only fall back to the queue if the cache missed.
-      if (!ackPlayedRef.current) {
-        player.say(SPOKEN_ACKS[Math.floor(Math.random() * SPOKEN_ACKS.length)])
-      }
-      ackPlayedRef.current = false
-      let replyStarted = false
-      let lastNarration = 0
-      try {
-        const replyText = await onSendMessage(text, (evt) => {
-          onTurnEvent(evt)
-          if (evt.type === 'text_delta') {
-            replyStarted = true
-            player.feed(evt.delta)
-          } else if (evt.type === 'tool_start' && !replyStarted) {
-            // Narrate the work as it happens — first tool always, then at most
-            // one line per ~6s so multi-tool turns don't become a monologue.
-            if (Date.now() - lastNarration >= 6000) {
-              lastNarration = Date.now()
-              player.say(`${toolDisplay(evt.name).label}, স্যার…`)
-            }
-          }
-        })
-        if (!openRef.current) { player.dispose(); return }
-        if (replyText?.trim()) {
-          setReply(replyText)
-          player.finish() // flush the tail; onDone → idle → auto-listen
-        } else {
-          player.dispose()
-          playerRef.current = null
-          setState('idle')
-        }
-      } catch {
-        player.dispose()
-        playerRef.current = null
-        toast.error('উত্তর পেতে ব্যর্থ')
-        setState('error')
-      }
-    },
+    onTranscribed: (text) => { void runTurn(text) },
     onError: (msg) => {
       toast.error(msg)
       setState('error')
@@ -286,6 +370,58 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
   useEffect(() => {
     if (open) void primeSpokenAcks(SPOKEN_ACKS)
   }, [open])
+
+  /* Spoken greeting the moment the console opens — presence from second one.
+     (iOS may block audio before the first tap; then it fails silently and the
+     caption carries the greeting instead.) */
+  useEffect(() => {
+    if (!open) return
+    const hour = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Dhaka', hour: 'numeric', hour12: false }).format(new Date()), 10)
+    const daypart = hour >= 5 && hour < 12 ? 'সুপ্রভাত' : hour >= 12 && hour < 17 ? 'শুভ দুপুর' : hour >= 17 && hour < 21 ? 'শুভ সন্ধ্যা' : 'শুভ রাত্রি'
+    const t = setTimeout(() => {
+      void speakLine(`${daypart} স্যার — বলুন, কী করতে হবে।`, () => openRef.current && stateRef.current === 'idle')
+    }, 500)
+    return () => clearTimeout(t)
+  }, [open])
+
+  /* The stream died while the app was hidden — tell the owner when he returns
+     instead of leaving a mystery (partial fix for backgrounded-turn loss). */
+  useEffect(() => {
+    if (!open) return
+    const onVis = () => {
+      if (!document.hidden && hiddenAbortRef.current) {
+        hiddenAbortRef.current = false
+        void speakLine('স্যার, মাঝপথে অ্যাপ ব্যাকগ্রাউন্ডে চলে গিয়েছিল — উত্তরটা চ্যাটে রেখে দিয়েছি।', () => openRef.current)
+      }
+    }
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [open])
+
+  /** Ask-card answer: record it AND continue the conversation with the choice. */
+  const answerAskCard = useCallback((cardId: string, askCardId: string, option: string) => {
+    setCards((prev) => prev.map((c) => c.id === cardId ? { ...c, done: true, success: true, sub: `✓ ${option}` } : c))
+    if (askCardId) {
+      void fetch(`/api/assistant/ask-cards/${askCardId}/answer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ option }),
+      }).catch(() => { /* the runTurn below still carries the answer */ })
+    }
+    stopTts()
+    void runTurn(option)
+  }, [runTurn, stopTts])
+
+  /** Premium-model permission: approve re-runs the SAME question with resume. */
+  const resolveModelSwitch = useCallback((cardId: string, approve: boolean) => {
+    setCards((prev) => prev.map((c) => c.id === cardId ? { ...c, done: true, success: approve, sub: approve ? '✓ অনুমতি দেওয়া হয়েছে' : 'বাতিল' } : c))
+    if (approve && lastTextRef.current) {
+      stopTts()
+      void runTurn(lastTextRef.current, { approve: true })
+    } else {
+      void speakLine('আচ্ছা স্যার, তাহলে বাদ দিলাম।', () => openRef.current)
+    }
+  }, [runTurn, stopTts])
 
   const handleTapOrb = useCallback(() => {
     // Inside the tap gesture: bless the persistent audio element so the reply
@@ -411,6 +547,13 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
 
             {/* transcript + reply */}
             <div className="vc-voicezone">
+              {/* previous exchange stays readable — glancing away must not erase it */}
+              {history.length > 0 && state !== 'speaking' && !reply && (
+                <div className="vc-history">
+                  <p className="q">{history[history.length - 1].q}</p>
+                  {history[history.length - 1].a && <p className="a">{history[history.length - 1].a}</p>}
+                </div>
+              )}
               {transcript && (
                 <div className="vc-transcript"><span className="mic">MIC</span>{transcript}</div>
               )}
@@ -449,7 +592,23 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
                       {c.title}
                       {c.sub ? <small>{c.sub}</small> : null}
                     </span>
-                    {c.kind === 'approval' && c.pendingActionId && !c.done ? (
+                    {c.kind === 'ask' && !c.done && (c.options?.length ?? 0) > 0 ? (
+                      <span className="acts wrap">
+                        {c.options!.slice(0, 4).map((opt) => (
+                          <button
+                            key={opt}
+                            type="button"
+                            className="rejectbtn"
+                            onClick={() => answerAskCard(c.id, c.askCardId ?? '', opt)}
+                          >{opt}</button>
+                        ))}
+                      </span>
+                    ) : c.kind === 'model_switch' && !c.done ? (
+                      <span className="acts">
+                        <button type="button" className="approve" onClick={() => resolveModelSwitch(c.id, true)}>অনুমতি দিন</button>
+                        <button type="button" className="rejectbtn" onClick={() => resolveModelSwitch(c.id, false)}>থাক</button>
+                      </span>
+                    ) : c.kind === 'approval' && c.pendingActionId && !c.done ? (
                       <span className="acts">
                         <button
                           type="button"
@@ -654,6 +813,21 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
             .vc-caption.dim { color: #7c92a9; font-size: 15px; }
             .vc-caption .said { color: #55708c; }
             .vc-caption .now { color: #eaf2fb; text-shadow: 0 0 18px rgba(120, 200, 255, 0.25); }
+            .vc-history {
+              max-width: 480px;
+              text-align: center;
+              opacity: 0.55;
+            }
+            .vc-history .q { font-size: 12px; color: #55708c; }
+            .vc-history .a {
+              font-size: 13px;
+              color: #7c92a9;
+              display: -webkit-box;
+              -webkit-line-clamp: 2;
+              -webkit-box-orient: vertical;
+              overflow: hidden;
+            }
+            .vc-card .acts.wrap { flex-wrap: wrap; justify-content: flex-end; max-width: 55%; }
             .vc-caption .sir { color: #e2b366; }
             .vc-feed {
               width: 100%;
