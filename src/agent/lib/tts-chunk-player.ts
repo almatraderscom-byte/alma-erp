@@ -18,6 +18,9 @@ const MIN_CHUNK = 24
 export interface TtsChunkPlayer {
   /** Stream in raw reply text as it arrives. */
   feed: (delta: string) => void
+  /** Speak a short SYSTEM line right away (ack / process narration) — jumps the
+   *  sentence buffer, does not count as the reply for onFirstPlay. */
+  say: (text: string) => void
   /** No more text is coming — flush the remainder; onDone fires after the last chunk ends. */
   finish: () => void
   /** Stop immediately (barge-in / console closed). Safe to call repeatedly. */
@@ -31,13 +34,13 @@ export function createTtsChunkPlayer(handlers: {
   onDone?: () => void
 }): TtsChunkPlayer {
   let buffer = ''
-  const queue: string[] = []
+  const queue: { text: string; sys: boolean }[] = []
   let fetching = false
   let playing = false
   let finished = false
   let disposed = false
   let firstPlayed = false
-  let prefetched: { text: string; url: string } | null = null
+  let prefetched: { sys: boolean; url: string } | null = null
 
   const el = getTtsElement()
 
@@ -47,9 +50,11 @@ export function createTtsChunkPlayer(handlers: {
     }
   }
 
-  const playUrl = (url: string) => {
+  const playUrl = (url: string, sys: boolean) => {
     playing = true
-    if (!firstPlayed) { firstPlayed = true; handlers.onFirstPlay?.() }
+    // System lines (ack/narration) don't flip the console to "speaking" —
+    // only the real reply does.
+    if (!sys && !firstPlayed) { firstPlayed = true; handlers.onFirstPlay?.() }
     el.onended = () => {
       URL.revokeObjectURL(url)
       playing = false
@@ -77,7 +82,7 @@ export function createTtsChunkPlayer(handlers: {
     if (prefetched) {
       const p = prefetched
       prefetched = null
-      playUrl(p.url)
+      playUrl(p.url, p.sys)
       void prefetchNext()
       return
     }
@@ -86,10 +91,10 @@ export function createTtsChunkPlayer(handlers: {
     if (next === undefined) { done(); return }
     fetching = true
     try {
-      const url = await fetchTtsUrl(next)
+      const url = await fetchTtsUrl(next.text)
       fetching = false
       if (disposed) { URL.revokeObjectURL(url); return }
-      playUrl(url)
+      playUrl(url, next.sys)
       void prefetchNext()
     } catch {
       fetching = false
@@ -103,10 +108,10 @@ export function createTtsChunkPlayer(handlers: {
     if (next === undefined) return
     fetching = true
     try {
-      const url = await fetchTtsUrl(next)
+      const url = await fetchTtsUrl(next.text)
       fetching = false
       if (disposed) { URL.revokeObjectURL(url); return }
-      prefetched = { text: next, url }
+      prefetched = { sys: next.sys, url }
       if (!playing) void pump()
     } catch {
       fetching = false
@@ -123,7 +128,7 @@ export function createTtsChunkPlayer(handlers: {
     if (lastBoundary >= 0) {
       const head = buffer.slice(0, lastBoundary + 1).trim()
       if (head.length >= MIN_CHUNK) {
-        queue.push(head)
+        queue.push({ text: head, sys: false })
         buffer = buffer.slice(lastBoundary + 1)
         void pump()
       }
@@ -136,12 +141,19 @@ export function createTtsChunkPlayer(handlers: {
       buffer += delta
       cutSentences()
     },
+    say(text: string) {
+      if (disposed || finished) return
+      const clean = text.trim()
+      if (!clean) return
+      queue.push({ text: clean, sys: true })
+      void pump()
+    },
     finish() {
       if (disposed || finished) return
       finished = true
       const rest = buffer.trim()
       buffer = ''
-      if (rest) queue.push(rest)
+      if (rest) queue.push({ text: rest, sys: false })
       void pump()
     },
     dispose() {

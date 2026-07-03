@@ -55,6 +55,10 @@ interface FeedCard {
 const bnTime = () =>
   new Intl.DateTimeFormat('bn-BD', { timeZone: 'Asia/Dhaka', hour: 'numeric', minute: '2-digit' }).format(new Date())
 
+/** Short spoken acknowledgements — the agent responds the moment it has HEARD,
+ *  like a person would, instead of dead air until the full answer. */
+const SPOKEN_ACKS = ['জি স্যার।', 'আচ্ছা স্যার, দেখছি।', 'ঠিক আছে স্যার।', 'জি, এক্ষুনি দেখছি।']
+
 export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceConsoleProps) {
   const [state, setState] = useState<VoiceState>('idle')
   const [transcript, setTranscript] = useState('')
@@ -159,10 +163,21 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
         },
       })
       playerRef.current = player
+      // Human feel: speak an instant ack, then narrate the first tool while the
+      // head is still working — the owner hears the PROCESS, not just a result.
+      player.say(SPOKEN_ACKS[Math.floor(Math.random() * SPOKEN_ACKS.length)])
+      let replyStarted = false
+      let narrated = false
       try {
         const replyText = await onSendMessage(text, (evt) => {
           onTurnEvent(evt)
-          if (evt.type === 'text_delta') player.feed(evt.delta)
+          if (evt.type === 'text_delta') {
+            replyStarted = true
+            player.feed(evt.delta)
+          } else if (evt.type === 'tool_start' && !narrated && !replyStarted) {
+            narrated = true
+            player.say(`${toolDisplay(evt.name).label}, স্যার…`)
+          }
         })
         if (!openRef.current) { player.dispose(); return }
         if (replyText?.trim()) {
