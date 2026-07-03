@@ -22,10 +22,12 @@ class AlmaBridgeViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(NativeSpeechBridgePlugin())
         bridge?.registerPluginInstance(EntityCacheBridgePlugin())
 
-        // PHASE S1: this Capacitor web view is now tab 0 of the native tab bar, so
-        // hide the web's own bottom nav (as the other tabs do). The user-script runs
-        // on the next document load — the ERP loads after the bootstrap redirect, so
-        // the nav is hidden by the time the dashboard renders.
-        bridge?.webView?.configuration.userContentController.addUserScript(AlmaEmbed.userScript())
+        // PHASE S1/S2: this Capacitor web view is now tab 0 of the native tab bar.
+        // Set the native-shell flag (activates the ERP's embed mode) and hide the
+        // web's own bottom nav. Scripts run on the next document load — the ERP loads
+        // after the bootstrap redirect, so this applies by the time it renders.
+        if let content = bridge?.webView?.configuration.userContentController {
+            AlmaEmbed.install(into: content)
+        }
     }
 }

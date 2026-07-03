@@ -28,10 +28,20 @@
 import UIKit
 import WebKit
 
-/// The embed user-script shared by every tab (and the Capacitor web view): hide the
-/// web's own bottom nav so the native tab bar is the only chrome. Idempotent.
+/// Scripts shared by every tab (and the Capacitor web view).
 enum AlmaEmbed {
-    static func userScript() -> WKUserScript {
+    /// Runs at document START, before the web app's JS: sets the flag the ERP's
+    /// native embed mode (Lane 2) reads to hide its own chrome and report navigation.
+    /// Until that web code deploys this flag is simply ignored — safe either way.
+    static func flagScript() -> WKUserScript {
+        let js = "window.__almaNative = true;"
+        return WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+    }
+
+    /// Belt-and-suspenders CSS at document END: hide the web's own bottom nav so the
+    /// native tab bar is the only chrome, even on builds where the web embed mode
+    /// isn't live yet. Idempotent.
+    static func hideChromeScript() -> WKUserScript {
         let js = """
         (function(){var id='__alma_native_embed';
         if(document.getElementById(id))return;
@@ -40,6 +50,12 @@ enum AlmaEmbed {
         (document.head||document.documentElement).appendChild(s);})();
         """
         return WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
+    }
+
+    /// Add both scripts to a content controller.
+    static func install(into content: WKUserContentController) {
+        content.addUserScript(flagScript())
+        content.addUserScript(hideChromeScript())
     }
 }
 
@@ -66,7 +82,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate {
 
     override func loadView() {
         let content = WKUserContentController()
-        content.addUserScript(AlmaEmbed.userScript())
+        AlmaEmbed.install(into: content)
 
         let config = WKWebViewConfiguration()
         config.processPool = sharedProcessPool
