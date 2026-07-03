@@ -27,6 +27,24 @@ import {
 
 const RELOCK_AFTER_MS = 60_000
 
+/**
+ * Native builds below this number ship WITHOUT NSFaceIDUsageDescription in
+ * Info.plist — on those, invoking Face ID makes iOS kill the app instantly
+ * (TCC privacy violation; the 2026-07-03 build-2 crash). The web code deploys
+ * to every existing install, so we must never arm the lock on an old binary.
+ */
+const MIN_NATIVE_BUILD = 4
+
+async function nativeBuildNumber(): Promise<number | null> {
+  try {
+    const info = await CapApp.getInfo()
+    const build = parseInt(String(info?.build ?? ''), 10)
+    return Number.isFinite(build) ? build : null
+  } catch {
+    return null
+  }
+}
+
 export function BiometricLockGate() {
   const [armed, setArmed] = useState(false) // feature usable on this device?
   const [locked, setLocked] = useState(false)
@@ -49,6 +67,9 @@ export function BiometricLockGate() {
     let cancelled = false
     void (async () => {
       if (!biometricLockPlatform() || !isBiometricLockEnabled()) return
+      // Hard safety: never arm on a binary that lacks the Face ID plist key.
+      const build = await nativeBuildNumber()
+      if (build == null || build < MIN_NATIVE_BUILD) return
       const ok = await biometryAvailable()
       if (cancelled || !ok) return
       setArmed(true)
