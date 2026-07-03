@@ -11,6 +11,23 @@ const AUTO_ERRORS: Record<string, string> = {
   product_image_required: 'Product ছবি upload করুন।',
 }
 
+const ROLE_BN: Record<string, string> = {
+  father: 'বাবা',
+  mother: 'মা',
+  son: 'ছেলে',
+  daughter: 'মেয়ে',
+}
+
+/** family accuracy chain needs saved role models — turn missing_models:son,... into a clear Bangla instruction */
+function mapRunError(msg: string): string {
+  if (msg.startsWith('missing_models:')) {
+    const roles = msg.slice('missing_models:'.length).split(',').filter(Boolean)
+    const bn = roles.map((r) => ROLE_BN[r] ?? r).join(', ')
+    return `ফ্যামিলি শটের জন্য Models ট্যাবে ${bn} মডেল সেভ করুন — একবার সেভ করলেই প্রতিবার একই মুখ আসবে।`
+  }
+  return AUTO_ERRORS[msg] ?? msg
+}
+
 export const runtime = 'nodejs'
 export const maxDuration = 60
 
@@ -54,7 +71,7 @@ export async function POST(req: NextRequest) {
       })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      return Response.json({ error: AUTO_ERRORS[msg] ?? msg }, { status: 422 })
+      return Response.json({ error: mapRunError(msg) }, { status: 422 })
     }
   }
 
@@ -81,6 +98,6 @@ export async function POST(req: NextRequest) {
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
-    return Response.json({ error: msg }, { status: 422 })
+    return Response.json({ error: mapRunError(msg) }, { status: 422 })
   }
 }

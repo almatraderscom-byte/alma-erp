@@ -5,19 +5,17 @@ import type { StudioModeId, StudioProvider, FamilyPresetId } from '@/lib/creativ
 import { STUDIO_MODES } from '@/lib/creative-studio/constants'
 import { queueTryOnBatch, type ChatTryOnVariant } from '@/lib/tryon/tryon-batch'
 import { getDefaultModel, getModelByRole } from '@/lib/tryon/model-library'
+import {
+  startFamilyChain,
+  startSingleRescueChain,
+  FamilyChainModelError,
+  type FamilyChainVariant,
+} from '@/lib/tryon/family-chain'
+import { pickScene } from '@/lib/tryon/scene-pool'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
-
-// Rotated through per-image on a multi-image FASHN run so the outputs vary in pose
-// instead of all rendering the same front shot.
-const STUDIO_POSE_ROTATION: string[] = [
-  'Pose: facing camera, relaxed confident full-front posture, full outfit clearly visible.',
-  'Pose: three-quarter angle showing the garment silhouette and side drape.',
-  'Pose: mid-stride walking toward camera, natural movement, fabric in motion.',
-  'Pose: seated naturally and elegantly, garment arranged to show fit and detail.',
-]
 
 export type CreativeStudioRunInput = {
   mode: StudioModeId
@@ -155,6 +153,32 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     return { jobs, provider: 'gemini', fashnReady: isFashnConfigured() }
   }
 
+  // FAMILY ACCURACY CHAIN — the assembly line (adult FASHN shot → child garment →
+  // child FASHN shot → Gemini merge). Replaces the one-shot Gemini invention whenever
+  // FASHN is configured; each person's garment is rendered by the accurate engine and
+  // the saved child models keep the same face on every run. Missing role models throw
+  // FamilyChainModelError so the owner gets a clear "add the model" message instead of
+  // a silent adult-for-child substitution.
+  if (
+    fashnReady
+    && input.productImagePath
+    && input.familyPreset
+    && input.familyPreset !== 'single'
+    && (input.mode === 'try_on' || input.mode === 'product_to_model')
+  ) {
+    const chain = await startFamilyChain({
+      variant: input.familyPreset as FamilyChainVariant,
+      productImagePath: input.productImagePath,
+      aspectRatio: input.aspectRatio,
+      resolution: input.resolution,
+      generationMode: input.generationMode,
+      extraPrompt: [input.prompt, input.backgroundPrompt].filter(Boolean).join('. ') || undefined,
+      conversationId: null,
+    })
+    for (const j of chain.jobs) jobs.push(j)
+    return { jobs, provider: 'fashn', fashnReady }
+  }
+
   const extraPrompt = [input.prompt, input.backgroundPrompt, input.familyPreset ? familyPrompt(input.familyPreset) : '']
     .filter(Boolean)
     .join('. ')
@@ -228,14 +252,42 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     if (!input.modelImagePath && modeDef.needsModel) throw new Error('model_image_required')
     if (!input.sourceImagePath && modeDef.needsSource) throw new Error('source_image_required')
 
+    const count = Math.min(Math.max(input.numImages ?? 1, 1), 4)
+
+    // Try-on with a model photo: run the 2-step chain (FASHN garment accuracy →
+    // Bangladeshi background swap). Each image picks its own random scene + pose,
+    // so no two outputs share the same look — a raw FASHN render would otherwise
+    // reuse the model photo's background every single time.
+    const tryOnModelPath = input.modelImagePath ?? input.sourceImagePath
+    if (input.mode === 'try_on' && input.productImagePath && tryOnModelPath) {
+      for (let i = 0; i < count; i++) {
+        const job = await startSingleRescueChain({
+          productImagePath: input.productImagePath,
+          modelImagePath: tryOnModelPath,
+          aspectRatio: input.aspectRatio,
+          resolution: input.resolution,
+          generationMode: input.generationMode,
+          extraPrompt: extraPrompt || undefined,
+          conversationId: null,
+        })
+        jobs.push({ pendingActionId: job.pendingActionId, label: modeDef.label, type: 'image_gen' })
+      }
+      return { jobs, provider: 'fashn', fashnReady }
+    }
+
     const fashnInputs: Record<string, string> = {}
     if (input.productImagePath) fashnInputs.product_image = input.productImagePath
     if (input.modelImagePath) fashnInputs.model_image = input.modelImagePath
     if (input.sourceImagePath) fashnInputs.model_image = input.sourceImagePath
     if (input.faceReferencePath) fashnInputs.face_reference = input.faceReferencePath
 
-    const count = Math.min(Math.max(input.numImages ?? 1, 1), 4)
+    // product_to_model has no model photo to inherit a background from — vary the
+    // look per image with a random pose + fully-Bangladeshi scene in the prompt.
+    // Owner-driven modes (edit / model_swap / face_to_model) keep the prompt as-is.
+    const injectScene = input.mode === 'product_to_model'
     for (let i = 0; i < count; i++) {
+      const picked = injectScene ? pickScene() : null
+      const sceneLine = picked ? `Pose: ${picked.adultPose}. ${picked.scene.prompt}` : ''
       const id = await createApprovedAction({
         type: 'image_gen',
         payload: {
@@ -243,9 +295,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           fashnModel: modeDef.fashnModel,
           fashnInputs,
           fashnOptions: {
-            prompt: (count > 1
-              ? [extraPrompt, STUDIO_POSE_ROTATION[i % STUDIO_POSE_ROTATION.length]].filter(Boolean).join(' ')
-              : extraPrompt) || undefined,
+            prompt: [extraPrompt, sceneLine].filter(Boolean).join(' ') || undefined,
             resolution: input.resolution ?? '2k',
             generationMode: input.generationMode ?? 'balanced',
             numImages: 1,
@@ -343,28 +393,22 @@ export async function runAutoStudio(input: {
 
   const useFashn = isFashnConfigured()
   const jobs: CreativeStudioJobRef[] = []
+  /** variants rendered via the legacy Gemini batch (no-FASHN fallback) */
   const variants: ChatTryOnVariant[] = []
+  /** variants rendered via the accuracy chain (reported to the UI alongside `variants`) */
+  const chainedVariants: ChatTryOnVariant[] = []
 
-  // Solo on-model shot: FASHN best-realism when available, else Gemini try-on.
+  // Solo on-model shot: FASHN accuracy + a Bangladeshi background swap (2-step
+  // chain) so every Auto run comes back with a different pose/scene. Falls back
+  // to the Gemini try-on batch without a FASHN key.
   if (useFashn) {
-    const id = await createApprovedAction({
-      type: 'image_gen',
-      payload: {
-        provider: 'fashn',
-        fashnModel: 'tryon-max',
-        fashnInputs: { product_image: productImagePath, model_image: defaultModel.imagePath },
-        fashnOptions: { resolution: '2k', generationMode: 'quality', numImages: 1, outputFormat: 'png' },
-        aspectRatio: '4:5',
-        studioMode: 'try_on',
-        auto: true,
-        familyPreset: 'single',
-        productImagePath,
-        modelImagePath: defaultModel.imagePath,
-      },
-      summary: '🎨 Auto Studio — On-model (FASHN best realism)',
-      costEstimate: 0.25,
+    const job = await startSingleRescueChain({
+      productImagePath,
+      modelImagePath: defaultModel.imagePath,
+      generationMode: 'quality',
+      conversationId: null,
     })
-    jobs.push({ pendingActionId: id, label: 'On-model (best realism)', type: 'image_gen' })
+    jobs.push({ pendingActionId: job.pendingActionId, label: 'On-model (best realism)', type: 'image_gen' })
   } else {
     variants.push('single')
   }
@@ -376,9 +420,30 @@ export async function runAutoStudio(input: {
       getModelByRole('son'),
       getModelByRole('daughter'),
     ])
-    if (father && son) variants.push('father_son')
-    if (mother && son) variants.push('mother_son')
-    if (mother && daughter) variants.push('mother_daughter')
+    const pairs: FamilyChainVariant[] = []
+    if (father && son) pairs.push('father_son')
+    if (mother && son) pairs.push('mother_son')
+    if (mother && daughter) pairs.push('mother_daughter')
+
+    if (useFashn) {
+      // Accuracy chain per pair — saved child models keep the same face every run.
+      for (const v of pairs) {
+        try {
+          const chain = await startFamilyChain({
+            variant: v,
+            productImagePath,
+            generationMode: 'quality',
+            conversationId: null,
+          })
+          for (const j of chain.jobs) jobs.push(j)
+          chainedVariants.push(v as ChatTryOnVariant)
+        } catch (err) {
+          if (!(err instanceof FamilyChainModelError)) throw err
+        }
+      }
+    } else {
+      for (const v of pairs) variants.push(v as ChatTryOnVariant)
+    }
   }
 
   if (variants.length > 0) {
@@ -429,7 +494,7 @@ export async function runAutoStudio(input: {
     jobs,
     provider: useFashn ? 'fashn' : 'gemini',
     modelName: defaultModel.name,
-    variants,
+    variants: [...chainedVariants, ...variants],
     reelQueued,
   }
 }

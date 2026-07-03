@@ -96,6 +96,21 @@ export async function POST(req: NextRequest) {
   })
 
   const payload = action.payload as Record<string, unknown>
+
+  // Family-chain assembly line: a finished step queues the next one (adult shot →
+  // child garment → child shot → merge). Best-effort — a chain problem must never
+  // fail the worker callback; the chain simply stalls and the tracker shows it.
+  if (payload.familyChain && status === 'success') {
+    try {
+      const { advanceFamilyChain } = await import('@/lib/tryon/family-chain')
+      const storagePath = typeof data?.storagePath === 'string' ? data.storagePath : undefined
+      const nextId = await advanceFamilyChain(action, storagePath)
+      if (nextId) console.log(`[job-result] family chain advanced ${pendingActionId} → ${nextId}`)
+    } catch (chainErr) {
+      console.error('[job-result] family chain advance failed:', chainErr)
+    }
+  }
+
   const convId = resolveConversationId(action)
   let messageText: string | null = null
   let pushTelegram = false

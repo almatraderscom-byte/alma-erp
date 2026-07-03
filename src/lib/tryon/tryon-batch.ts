@@ -36,6 +36,15 @@ const VARIANT_LABELS: Record<ChatTryOnVariant, string> = {
   full_family: 'পুরো ফ্যামিলি',
 }
 
+// Owner's rule: no two runs may look the same — when the caller doesn't pin a
+// style/pose, pick one at random ('detail' crop excluded as a default look).
+const RANDOM_STYLES: TryOnStyle[] = ['studio', 'outdoor_bd', 'festival', 'lifestyle']
+const RANDOM_POSES: TryOnPose[] = ['front', 'three_quarter', 'walking', 'sitting']
+
+function randomOf<T>(arr: readonly T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)]
+}
+
 function primaryRoleForVariant(variant: ChatTryOnVariant): ModelRole {
   if (variant === 'single') return 'single'
   if (variant === 'mother_son' || variant === 'mother_daughter') return 'mother'
@@ -129,6 +138,8 @@ export async function queueTryOnBatch(opts: {
   const variants = (opts.variants?.length ? opts.variants : ['single']) as ChatTryOnVariant[]
   const attrs = await getOrClassifyGarment(productImagePath)
   const fabricNote = attrs.fabricGuess ? `Garment fabric: ${attrs.fabricGuess}.` : undefined
+  const style = opts.style ?? randomOf(RANDOM_STYLES)
+  const pose = opts.pose ?? randomOf(RANDOM_POSES)
 
   const overrideModel = opts.modelId ? await resolveModel(opts.modelId) : null
   const items: TryOnQueueItem[] = []
@@ -161,8 +172,8 @@ export async function queueTryOnBatch(opts: {
         : 'family_matching_set'
 
     const prompt = buildTryOnPrompt({
-      style: opts.style,
-      pose: opts.pose,
+      style,
+      pose,
       modelNotes,
       garmentType,
       attrs,
@@ -174,7 +185,7 @@ export async function queueTryOnBatch(opts: {
       `🧍 On-model try-on — ${label}\n` +
       `মডেল: ${primary.name}${primary.role ? ` (${primary.role})` : ''}\n` +
       `গার্মেন্ট: ${garmentType}\n` +
-      `স্টাইল: ${opts.style ?? 'studio'} | পোজ: ${opts.pose ?? 'front'}`
+      `স্টাইল: ${style} | পোজ: ${pose}`
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const action = await (prisma as any).agentPendingAction.create({
