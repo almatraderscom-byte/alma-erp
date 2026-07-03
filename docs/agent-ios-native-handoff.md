@@ -27,7 +27,7 @@ Everything below is LIVE on TestFlight build 8 and verified in code (CI + device
 | 3 App Intents (basic) | ✅ Done | 3 open-intents shipped (build 7) | |
 | 3+11 App Intents **entities** + Spotlight semantic index | ❌ Missing | **Phase N3** | Orders/products as `AppEntity`, parameterized intents, iOS 27 entity schemas behind `#available`. |
 | 4 Foundation Models (on-device LLM) | 🚧 Code done (build 9) | **Phase N1** | Bridge plugin → web falls back to server LLM when unavailable. Zero-cost offline summarize/classify. **Awaiting device verification.** |
-| 5 SpeechAnalyzer (on-device STT) | ❌ Missing | **Phase N2** | Today voice uses Whisper API (server, costs money). On-device STT bridge = cost cut + offline. |
+| 5 SpeechAnalyzer (on-device STT) | 🚧 Code done (build 10) | **Phase N2** | On-device `SFSpeechRecognizer` engine shipped (free + offline); iOS 26 `SpeechAnalyzer` is a documented upgrade. Owner-opt-in flag, **awaiting device verification.** |
 | 6 Writing Tools | ✅ Mostly free | WKWebView text fields inherit system Writing Tools on supported iOS — verify, don't build. |
 | 7 StoreKit / subscriptions | — | **N/A** | Internal business app; no monetization. Skip. |
 | 8 Background Tasks API | ❌ Missing | **Phase N4** | Background refresh of local reminders + Business Pulse. |
@@ -51,9 +51,17 @@ Everything below is LIVE on TestFlight build 8 and verified in code (CI + device
 - iOS 27 stretch (`#available(iOS 27, *)`): token-count API + `PrivateCloudComputeLanguageModel` for 32K context. (Not done — future.)
 
 ### Phase N2 — On-device speech (SpeechAnalyzer)
-- New local plugin `NativeSpeechBridgePlugin`: `transcribe({audioBase64 | start/stop streaming}, locale)` — iOS 26+ `SpeechAnalyzer`; fallback `SFSpeechRecognizer` (iOS 16+, needs `NSSpeechRecognitionUsageDescription` — **add the plist key in the same PR**, remember the Face ID incident).
-- Web: wire into `src/agent/hooks/useVoiceRecorder.ts` behind a KV/localStorage flag `alma_native_stt` (default OFF until owner A/B-tests vs Whisper for Bangla accuracy). Build gate ≥ 10.
-- Success metric: Whisper API spend drops; Bangla accuracy owner-verified.
+
+**Status (build 10): code complete, pending device verification.** Shipped in this phase:
+- `ios/App/App/NativeSpeechBridge.swift` — local `NativeSpeechBridgePlugin`: `availability({locale})`, `transcribe({audioBase64, locale})`. Engine is `SFSpeechRecognizer` with `requiresOnDeviceRecognition = true` (iOS 16+, free/offline) via `SFSpeechURLRecognitionRequest` on the recorded clip — the exact drop-in for the record-then-transcribe flow. Fail-open (resolves `{text:"",onDevice:false}` below iOS 16 / unauthorized / any error — never traps).
+- Registered in `AlmaBridgeViewController.capacitorDidLoad()` (3rd `registerPluginInstance`).
+- **`NSSpeechRecognitionUsageDescription` added to `App/Info.plist`** in this same phase (the authorization prompt would otherwise crash — Face ID lesson). Mic key already present.
+- pbxproj surgery, prefix `E1AA55` (documented in `INTEGRATION.md` → "Phase N2 additions"); `CURRENT_PROJECT_VERSION` 9 → 10 in all 4 places.
+- `src/lib/native-speech.ts` — feature-detect + **build gate `MIN_NATIVE_BUILD = 10`** + **owner-opt-in flag `alma_native_stt` (localStorage, default OFF)** + `availability()` probe. `maybeTranscribeOnDevice(blob, locale)` returns the transcript or `null` (→ caller uses Whisper). `isNativeSttEnabled` / `setNativeSttEnabled` for a settings toggle.
+- Wired into `src/agent/hooks/useVoiceRecorder.ts` (`mr.onstop`): tries on-device first, falls through to the existing `/api/assistant/transcribe` (Whisper) POST unchanged. Additive — the Whisper path is untouched when on-device returns null.
+- Vitest: `src/lib/__tests__/native-speech.test.ts` (flag-off / off-native / old-build / plugin-absent / unavailable / empty / reject → all fall back; flag round-trip).
+- ⚠️ **iOS 26 `SpeechAnalyzer`/`SpeechTranscriber` deliberately NOT written blind** — its async asset-installation API is easy to mis-code and would break the device build. Business goal (free offline Bangla STT) is met by the on-device recognizer now; SpeechAnalyzer is the next-session upgrade once accuracy is device-verified.
+- Success metric: Whisper API spend drops; Bangla accuracy owner-verified (flip `alma_native_stt` ON and A/B-test on device).
 
 ### Phase N3 — App Intents entities + Spotlight
 - `OrderEntity` (id, title, status) + `ProductEntity` as `AppEntity` with `EntityQuery`. Data source: native cannot read the web session — add a tiny App Group cache: the web app POSTs recent entities to the bridge (`EntityCacheBridgePlugin.setEntities`), plugin persists to App Group `group.com.almatraders.erp` (add the entitlement to BOTH targets), queries read the cache.

@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useState, useCallback, useEffect } from 'react'
+import { maybeTranscribeOnDevice } from '@/lib/native-speech'
 
 /**
  * Pick a recording mimeType the platform actually supports. Chrome/Firefox give us
@@ -137,6 +138,17 @@ export function useVoiceRecorder(opts: {
           callbacksRef.current.onError?.('অডিও খুব ছোট — আবার বলুন।')
           return
         }
+
+        // Phase N2: try ON-DEVICE speech-to-text first (free + offline, Apple's
+        // recognizer). Native-only, owner-opt-in (flag `alma_native_stt`, default
+        // OFF), build-gated (≥10), fully fail-open — returns null when unavailable
+        // or empty, so we transparently fall back to the Whisper path below.
+        const nativeText = await maybeTranscribeOnDevice(blob, 'bn-BD')
+        if (nativeText) {
+          callbacksRef.current.onTranscribed(nativeText)
+          return
+        }
+
         const fd = new FormData()
         fd.append('audio', blob, `recording.${ext}`)
         try {

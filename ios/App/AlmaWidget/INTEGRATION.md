@@ -625,3 +625,61 @@ the plugin is never probed on a binary that lacks it.
   an off-list answer falls back rather than being trusted.
 - ⚠️ Bangla output quality is UNVERIFIED on-device — do not wire this to
   customer-facing / Bangla output until the owner A/B-tests it on his iPhone.
+
+---
+
+## Phase N2 additions — NativeSpeechBridge (on-device STT)
+
+Build 10. Adds one **App-target-only** Swift file — a third local Capacitor plugin
+(`NativeSpeechBridgePlugin`) exposing Apple's on-device speech recognition so
+dictation transcribes for free + offline instead of the Whisper API. No new target,
+no widget change.
+
+### A. New file and target
+
+| File                             | App target | Widget target |
+|----------------------------------|:----------:|:-------------:|
+| `App/NativeSpeechBridge.swift`   | ✅          | —             |
+
+Registered at runtime in `AlmaBridgeViewController.capacitorDidLoad()` via a third
+`bridge?.registerPluginInstance(NativeSpeechBridgePlugin())` line.
+
+### B. `project.pbxproj` additions — reserved IDs (prefix `E1AA55`)
+
+| ID                         | Object kind      | Represents                                   |
+|----------------------------|------------------|----------------------------------------------|
+| `E1AA5500000000000000A001` | PBXFileReference | `App/NativeSpeechBridge.swift`               |
+| `E1AA5500000000000000B001` | PBXBuildFile     | NativeSpeechBridge.swift in **App** Sources  |
+
+Placement: same four spots as the N1 file — PBXBuildFile row, PBXFileReference row,
+App group `504EC3061FED79650016851F` children, App Sources phase
+`504EC3001FED79650016851F` files.
+
+### C. Info.plist — `NSSpeechRecognitionUsageDescription` (REQUIRED)
+
+`SFSpeechRecognizer.requestAuthorization` triggers the OS permission prompt; without
+this key the app **crashes** the first time STT is used (same class of failure as
+the Face ID build-2 incident). Added to `App/Info.plist` in this same phase. The
+mic key (`NSMicrophoneUsageDescription`) was already present.
+
+### D. Build number
+
+`CURRENT_PROJECT_VERSION` bumped `9 → 10` in all **4** App-target/project places.
+Web gate `MIN_NATIVE_BUILD = 10` in `src/lib/native-speech.ts` matches.
+
+### E. Engine + availability caveats
+
+- Wrapped in `#if canImport(Speech)` + `#available(iOS 16, *)`. Engine is
+  `SFSpeechRecognizer` with `requiresOnDeviceRecognition = true` (no network, no
+  cost, offline) via `SFSpeechURLRecognitionRequest` on the recorded clip — the
+  exact drop-in for useVoiceRecorder's record-then-transcribe flow.
+- iOS 26 `SpeechAnalyzer` / `SpeechTranscriber` is a **documented future upgrade**,
+  deliberately NOT written blind (its async-asset API is easy to mis-code and would
+  break the device build). The business goal — free, offline, Bangla STT — is met
+  by the on-device recognizer now; SpeechAnalyzer layers on after device
+  verification. See handoff §Phase N2.
+- Below iOS 16, unauthorized, recognizer-unavailable, or on any error, `transcribe`
+  resolves `{ text:"", onDevice:false }` and never traps — the web layer then uses
+  Whisper.
+- ⚠️ On-device STT is **owner-opt-in** (web flag `alma_native_stt`, default OFF) so
+  the owner A/B-tests Bangla accuracy vs Whisper before switching over.

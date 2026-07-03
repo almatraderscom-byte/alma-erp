@@ -51,6 +51,8 @@
 	<string>ALMA ERP saves generated images and reports to your photo library when you choose to.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>ALMA ERP needs photo library access to attach images to the assistant and product records.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>ALMA ERP transcribes your voice on-device so you can talk to the AI assistant without sending audio to a server.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
