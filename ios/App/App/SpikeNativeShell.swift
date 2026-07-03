@@ -127,6 +127,9 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         let bg = UIColor(red: 0.047, green: 0.043, blue: 0.071, alpha: 1) // #0c0b12
         webView.backgroundColor = bg
         webView.scrollView.backgroundColor = bg
+        // NOTE: no native UIRefreshControl here — the ERP web pages already ship their
+        // own styled pull-to-refresh ("RELEASE TO REFRESH"). A native one on top would
+        // double-fire. Web owns content behaviors; native owns the chrome.
 
         let root = UIView()
         root.backgroundColor = bg
@@ -340,11 +343,14 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         let nav = UINavigationController(rootViewController: root)
         nav.navigationBar.prefersLargeTitles = largeTitles
         nav.overrideUserInterfaceStyle = .dark
-        // "Shadow type" header: a translucent VIOLET blur (matches the app's purple
-        // aurora, not a flat black slab) with a soft drop shadow so it floats.
+        // Aurora-frosted header: a genuine thin blur material so the app's purple
+        // aurora + content scroll THROUGH the bar (not a flat violet slab), with just
+        // a light violet tint on top so the white title stays readable over both the
+        // light (Orders) and dark (Approvals) pages. Soft drop shadow so it floats.
         let a = UINavigationBarAppearance()
-        a.configureWithDefaultBackground()          // system blur material
-        a.backgroundColor = UIColor(red: 0.16, green: 0.12, blue: 0.30, alpha: 0.82) // dark violet
+        a.configureWithDefaultBackground()
+        a.backgroundEffect = UIBlurEffect(style: .systemThinMaterialDark) // stronger see-through blur
+        a.backgroundColor = UIColor(red: 0.20, green: 0.14, blue: 0.38, alpha: 0.42) // light violet veil
         a.shadowColor = .clear                       // no hard hairline; soft layer shadow instead
         a.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
         a.titleTextAttributes = [.foregroundColor: UIColor.white]
