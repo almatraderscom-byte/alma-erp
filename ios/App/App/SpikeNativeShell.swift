@@ -52,9 +52,18 @@ enum AlmaEmbed {
         return WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
     }
 
-    /// Add both scripts to a content controller.
-    static func install(into content: WKUserContentController) {
+    /// Sets `window.__almaNativeHeader = true` so the ERP hides its OWN page header
+    /// (a native header replaces it) — only for tabs/screens that get one.
+    static func headerFlagScript() -> WKUserScript {
+        WKUserScript(source: "window.__almaNativeHeader = true;",
+                     injectionTime: .atDocumentStart, forMainFrameOnly: false)
+    }
+
+    /// Add the scripts to a content controller. `hideWebHeader` additionally tells
+    /// the web to drop its own page header where a native header is shown.
+    static func install(into content: WKUserContentController, hideWebHeader: Bool = false) {
         content.addUserScript(flagScript())
+        if hideWebHeader { content.addUserScript(headerFlagScript()) }
         content.addUserScript(hideChromeScript())
     }
 }
@@ -79,11 +88,15 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     private var webView: WKWebView!
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let baseTitle: String
+    /// When true the web hides its OWN page header (this VC shows a native one), so
+    /// there is no double header. Off for Assistant (keeps its in-page header).
+    private let hideWebHeader: Bool
 
-    init(url: URL, processPool: WKProcessPool, tabTitle: String, systemImage: String) {
+    init(url: URL, processPool: WKProcessPool, tabTitle: String, systemImage: String, hideWebHeader: Bool = false) {
         self.url = url
         self.sharedProcessPool = processPool
         self.baseTitle = tabTitle
+        self.hideWebHeader = hideWebHeader
         super.init(nibName: nil, bundle: nil)
         title = tabTitle   // shown in the nav bar when this VC is pushed (e.g. from More)
         tabBarItem = UITabBarItem(
@@ -96,7 +109,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
 
     override func loadView() {
         let content = WKUserContentController()
-        AlmaEmbed.install(into: content)
+        AlmaEmbed.install(into: content, hideWebHeader: hideWebHeader)
         // Native header title-sync: the web posts {type:'route', path, title} here.
         content.add(WeakScriptMessageHandler(self), name: "almaShell")
 
@@ -123,7 +136,11 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
             webView.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor),
             webView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: root.bottomAnchor)
+            // keyboardLayoutGuide handles BOTH: with no keyboard its top sits at the
+            // safe-area bottom (above the native tab bar → content no longer hides
+            // under it); when the keyboard shows it rides up to the keyboard top (so
+            // the web composer lifts with it). Fixes tab-bar overlap AND typing.
+            webView.bottomAnchor.constraint(equalTo: root.keyboardLayoutGuide.topAnchor)
         ])
 
         spinner.color = UIColor(white: 1, alpha: 0.7)
@@ -263,7 +280,7 @@ final class MoreMenuViewController: UITableViewController {
         let base = "https://alma-erp-six.vercel.app"
         let vc = AlmaWebTabViewController(
             url: URL(string: base + item.path)!, processPool: sharedPool,
-            tabTitle: item.title, systemImage: item.icon)
+            tabTitle: item.title, systemImage: item.icon, hideWebHeader: true)
         vc.hidesBottomBarWhenPushed = false
         navigationController?.pushViewController(vc, animated: true)
     }
@@ -292,7 +309,7 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         // the Capacitor VC, so those two are not wrapped.
         func webNavTab(_ path: String, _ title: String, _ icon: String) -> UINavigationController {
             let vc = AlmaWebTabViewController(url: URL(string: Self.base + path)!, processPool: pool,
-                                              tabTitle: title, systemImage: icon)
+                                              tabTitle: title, systemImage: icon, hideWebHeader: true)
             return Self.darkNav(root: vc, tabTitle: title, icon: icon, largeTitles: false)
         }
         func plainTab(_ path: String, _ title: String, _ icon: String) -> AlmaWebTabViewController {
@@ -323,14 +340,21 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         let nav = UINavigationController(rootViewController: root)
         nav.navigationBar.prefersLargeTitles = largeTitles
         nav.overrideUserInterfaceStyle = .dark
+        // "Shadow type" header: a translucent dark blur (content scrolls under it)
+        // with a soft drop shadow — floating, not a heavy solid black slab.
         let a = UINavigationBarAppearance()
-        a.configureWithOpaqueBackground()
-        a.backgroundColor = UIColor(red: 0.055, green: 0.047, blue: 0.078, alpha: 1)
+        a.configureWithDefaultBackground()          // system dark blur material
+        a.backgroundColor = UIColor(red: 0.055, green: 0.047, blue: 0.078, alpha: 0.72)
+        a.shadowColor = .clear                       // no hard hairline; use a soft shadow instead
         a.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
         a.titleTextAttributes = [.foregroundColor: UIColor.white]
         nav.navigationBar.standardAppearance = a
         nav.navigationBar.scrollEdgeAppearance = a
         nav.navigationBar.tintColor = UIColor(red: 0.655, green: 0.545, blue: 0.980, alpha: 1)
+        nav.navigationBar.layer.shadowColor = UIColor.black.cgColor
+        nav.navigationBar.layer.shadowOpacity = 0.28
+        nav.navigationBar.layer.shadowRadius = 10
+        nav.navigationBar.layer.shadowOffset = CGSize(width: 0, height: 3)
         nav.tabBarItem = UITabBarItem(
             title: tabTitle,
             image: UIImage(systemName: icon),
