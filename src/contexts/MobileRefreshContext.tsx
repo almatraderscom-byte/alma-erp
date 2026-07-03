@@ -13,7 +13,6 @@ import {
 import { useSession } from 'next-auth/react'
 import toast from 'react-hot-toast'
 import { invalidateQueryCache } from '@/hooks/useQuery'
-import { isNativeShell } from '@/lib/native-shell'
 import {
   mobileRefreshHaptic,
   performMobileRefresh,
@@ -51,12 +50,10 @@ function useMobileRefreshEnabled() {
 
   useEffect(() => {
     const check = () => {
-      // Inside the native iOS shell the app provides its own native pull-to-refresh,
-      // so the web gesture is fully disabled there. Non-native web is unaffected.
-      if (isNativeShell()) {
-        setEnabled(false)
-        return
-      }
+      // The native iOS shell now uses THIS web pull-to-refresh (with the robot mascot)
+      // as its ONLY refresh gesture — the native UIRefreshControl was removed — so it
+      // stays enabled in the shell too (it's a touch device at phone width, so the
+      // checks below pass). Non-native web is unaffected.
       const narrow = window.matchMedia('(max-width: 767px)').matches
       const touch =
         'ontouchstart' in window

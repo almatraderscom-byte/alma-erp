@@ -8,6 +8,7 @@ import {
   mobileRefreshHaptic,
 } from '@/lib/mobile-refresh'
 import { cn } from '@/lib/utils'
+import { RobotRefreshMascot } from './RobotRefreshMascot'
 
 type PullPhase = 'idle' | 'pulling' | 'ready' | 'refreshing' | 'success'
 
@@ -147,13 +148,13 @@ export function MobilePullToRefresh({
           height: Math.max(56, pullPx + 8),
         }}
       >
-        <div className="flex flex-col items-center gap-1 pb-2 pt-[max(0.25rem,env(safe-area-inset-top))]">
-          <SpinnerRing spinning={phase === 'refreshing'} progress={phase === 'refreshing' ? 1 : progress} />
+        <div className="flex flex-col items-center gap-0.5 pb-2 pt-[max(0.25rem,env(safe-area-inset-top))]">
+          <RobotRefreshMascot phase={phase} progress={phase === 'refreshing' ? 1 : progress} />
           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gold-lt/90">
             {phase === 'refreshing'
               ? 'Refreshing…'
               : phase === 'success'
-                ? 'Updated'
+                ? 'All set'
                 : phase === 'ready'
                   ? 'Release to refresh'
                   : 'Pull to refresh'}
@@ -174,19 +175,3 @@ export function MobilePullToRefresh({
   )
 }
 
-function SpinnerRing({ spinning, progress }: { spinning: boolean; progress: number }) {
-  const deg = Math.round(progress * 300)
-  return (
-    <div
-      className={cn(
-        'relative h-7 w-7 rounded-full border-2 border-gold-dim/25',
-        spinning && 'animate-spin border-t-gold',
-      )}
-      style={
-        !spinning
-          ? { transform: `rotate(${deg}deg)`, borderTopColor: 'rgba(201, 168, 76, 0.85)' }
-          : undefined
-      }
-    />
-  )
-}
