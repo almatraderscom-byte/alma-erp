@@ -344,7 +344,13 @@ async function placeRelayCall(
 
     await db.agentVoiceCall.update({
       where: { id: callRecordId },
-      data: { status: 'ringing', callSid: data.sid },
+      data: {
+        status: 'ringing',
+        callSid: data.sid,
+        // Diagnostic breadcrumb (token redacted): the exact ws endpoint Twilio was
+        // told to dial — readable from the DB when a 64102 needs root-causing.
+        summary: `relay ws: ${base}`,
+      },
     })
     return { ok: true, callRecordId, callSid: data.sid }
   } catch (err) {
