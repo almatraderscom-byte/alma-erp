@@ -107,13 +107,29 @@ Only after image + video quality is proven to the owner.
 - Product auto-pick from ERP data (new arrivals / best-sellers) proposed as a weekly content calendar; owner approves the calendar, system executes it.
 - Publishing: Facebook pages via existing direct Meta Graph API path; Instagram optional if the page's IG account is linked (same API family). WhatsApp status/catalog — optional later, existing `wa` lib.
 
-## 4. Cost notes (owner is cost-sensitive)
+### Two items that belong INSIDE scheduled phases (added on review)
+- **Product-code linkage (V1 + CS4):** every studio run (image/video/audio) can be tagged with a productCode picked from ERP data — gallery becomes searchable by product, and captions/finishing auto-fill name/price from the ERP instead of retyping. The content-engine already does product lookups; reuse it.
+- **Performance feedback loop (extends A2):** published creatives already get tracked (`trackPublishedContent`, content-intelligence). Close the loop: pull post reach/engagement back, show a simple "কোনটা চলেছে" view, and let winners bump their scene/style weights (deterministic — data, not LLM opinion). This is the engine of "business aro fast and growth".
+
+## 4. Backlog — parked ideas (NOT scheduled; owner decides if/when)
+
+Valuable ideas noticed during planning that the owner has NOT requested. Park here so they're never lost; do not build without his go-ahead.
+
+- **Print Studio:** shop/packaging materials from the same brand system — poster, X-banner, packaging thank-you card, price tag sheets (print-resolution export). Same Finishing UX, print presets.
+- **Seasonal campaign presets (A2 extension):** ঈদ-উল-ফিতর / ঈদ-উল-আযহা / winter / Boishakh calendar templates with countdown creatives.
+- **Customer delight (E1 × CRM):** occasion wish songs/voice notes sent to TOP customers via WhatsApp on their occasions — owner-approved batch, never automatic.
+- **UGC repost flow:** customers' photos wearing products (with consent) → brand-framed repost creatives. Strong social proof lever.
+- **Multi-business branding:** BrandAsset is single-brand (ALMA Lifestyle) today; if CDIT/Trading ever need creatives, brand profiles become per-business (`business_id` already exists in the schema).
+- **Staff access tier:** studio is owner-only (`isSystemOwner`); later a marketing staff role could draft creatives that queue for owner approval (reuse pending-action gates).
+- **Model-library backup:** brand model photos live only in Supabase storage — include them in the Drive archive sweep (tiny task, do with CS4).
+
+## 5. Cost notes (owner is cost-sensitive)
 
 - Family chain ≈ $0.50–0.70 per finished pair (2× FASHN + 1–2 Gemini), child garment cached after first run; far cheaper than repeated one-shot retries.
 - V1/V2/V3 editing & rendering = ffmpeg/Remotion on VPS → ~zero marginal cost; Whisper pennies/min; TTS pennies/run.
 - Veo reels (V4) stay owner-initiated with cost preview; AI-assist toggle costs shown before enabling.
 
-## 5. Gotchas
+## 6. Gotchas
 
 - FASHN try-on keeps the **model photo's background** — that's why singles need the rescene step; never remove it thinking it's redundant.
 - The merge step must reuse the SAME `SceneRef` as its inputs (one scene per chain) or lighting won't match.
