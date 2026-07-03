@@ -32,6 +32,7 @@ Every requirement the owner stated, and which phase owns it:
 | 9 | Short generated videos (Veo reels) — better/longer than today's 4–8s | V4 |
 | 10 | Agent does everything itself when asked in chat ("agent nijei shob bujhe kore felbe") | A1 |
 | 11 | Business grows faster: content produced + posted on schedule with minimal owner effort | A2 |
+| 12 | ElevenLabs entertainment/audio lab: text→music, birthday/occasion wish songs, songs & voiceovers in the OWNER'S cloned voice, voice notes cleaned to studio quality — "one word to the agent and it's done accurately" | E1 (+A1 for the one-line agent command) |
 
 If a future session finds a requirement here that no phase covers — STOP and flag it to the owner; do not silently drop it.
 
@@ -81,6 +82,18 @@ The owner shoots 1–2 min videos on his phone; the system cuts them into reels.
 - Child-garment cache management: view/regenerate a cached child garment from the gallery if a bad one ever gets cached.
 - **Expose the QC level control** (kv `agent_qc_level`: off/normal/strict — already exists worker-side) as a simple studio setting.
 - Housekeeping: retire the old `/agent/creative-studio-demo` page.
+
+### Phase E1 — Audio Lab (ElevenLabs entertainment section) — independent, can slot anywhere after V1
+A separate Studio section for everything ElevenLabs can do. **Foundation already exists:** ElevenLabs is integrated on the worker (`worker/src/tts-elevenlabs.mjs`, `worker/src/elevenlabs-voices.mjs`) — API key + client patterns are in place.
+- **Owner voice clone (one-time setup):** owner records/uploads consented samples → ElevenLabs voice clone saved as "Sir's voice". Guardrail: the cloned voice is usable ONLY by the owner from the studio/agent — never in autonomous or customer-facing flows.
+- **Text → music:** ElevenLabs Music API — owner types a line/mood, picks a style preset (hard presets again: celebration / calm / nasheed-style vocals-only for the Islamic-guardrail option), gets a track. Generated tracks can feed V2's music-bed library too.
+- **Occasion wish songs:** birthday/anniversary/Eid greeting songs — template lyric sheets (Bangla) the owner fills or approves (name, occasion), rendered as song; optionally in the owner's cloned voice.
+- **Songs/voiceovers in the owner's voice:** text → sung/spoken in the cloned voice (speech-to-speech / voice-changer for style transfer).
+- **Voice note → studio quality:** owner sends any voice recording (chat upload or Telegram) → ElevenLabs Audio Isolation + enhancement → clean "studio" audio back; usable as V2 voiceover directly.
+- **Sound effects generator:** short SFX for reels (whoosh, chime) — feeds V3 templates.
+- Jobs run as worker `audio_gen` pending-actions (same queue pattern); outputs in Gallery (audio player tile) + Drive archive.
+- **Agent one-liner (with A1):** "আমার ভয়েসে এই লাইনটা গান বানাও" / "এই voice note টা studio করো" → the `run_creative_studio` tool covers Audio Lab actions; claim-verifier confirms the artifact before replying.
+- Cost: ElevenLabs credits per generation — show estimate before run, log via cost-events like FASHN/Gemini.
 
 ### Phase A1 — Agent chat access + Brand Recipes
 Only after image + video quality is proven to the owner.
