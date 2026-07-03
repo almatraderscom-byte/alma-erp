@@ -233,6 +233,9 @@ class RelaySession {
       message: t.text,
     }))
 
+    // Summary is best-effort and must NEVER block/kill the report: hard 8s cap,
+    // no thinking pass (an uncapped call here hung once and a worker restart
+    // killed the pending report — owner got no post-call summary at all).
     let summary = null
     if (this.history.length) {
       try {
@@ -242,6 +245,7 @@ class RelaySession {
         const res = await this.genai.models.generateContent({
           model: RELAY_MODEL(),
           contents: `এই ফোন কথোপকথনের ২-৩ বাক্যের বাংলা সারাংশ লেখো (মূল তথ্য/সিদ্ধান্তসহ):\n\n${convoText}`,
+          config: { abortSignal: AbortSignal.timeout(8_000), thinkingConfig: { thinkingBudget: 0 }, maxOutputTokens: 200 },
         })
         summary = res.text?.trim() || null
       } catch { /* summary is best-effort */ }
@@ -256,20 +260,32 @@ class RelaySession {
       dedupKey: `relay:${this.callRecordId}`,
     })
 
-    const res = await fetch(`${appUrl}/api/assistant/voice-call/relay-report`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        callRecordId: this.callRecordId,
-        callSid: this.callSid,
-        transcript,
-        summary,
-        durationSecs,
-        status: this.history.length ? 'completed' : 'no_answer',
-      }),
-      signal: AbortSignal.timeout(20_000),
+    const body = JSON.stringify({
+      callRecordId: this.callRecordId,
+      callSid: this.callSid,
+      transcript,
+      summary,
+      durationSecs,
+      status: this.history.length ? 'completed' : 'no_answer',
     })
-    if (!res.ok) throw new Error(`relay-report HTTP ${res.status}`)
+    // One retry — the owner's post-call summary must survive a transient blip.
+    let lastErr
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetch(`${appUrl}/api/assistant/voice-call/relay-report`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body,
+          signal: AbortSignal.timeout(20_000),
+        })
+        if (res.ok) return
+        lastErr = new Error(`relay-report HTTP ${res.status}`)
+      } catch (err) {
+        lastErr = err
+      }
+      await new Promise((r) => setTimeout(r, 2000))
+    }
+    throw lastErr
   }
 }
 
