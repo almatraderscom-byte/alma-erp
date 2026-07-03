@@ -180,7 +180,7 @@ public class NativeIntelligenceBridgePlugin: CAPPlugin, CAPBridgedPlugin {
     /// against `labels` above, so the guarantee is enforced on our side too).
     @available(iOS 26, *)
     @Generable
-    private struct Classification {
+    fileprivate struct Classification {
         @Guide(description: "The single chosen label, copied exactly from the provided list.")
         var label: String
     }
