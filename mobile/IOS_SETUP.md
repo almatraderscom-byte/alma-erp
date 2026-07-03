@@ -198,3 +198,37 @@ Long-press the app icon to jump straight into a key page.
 
 - `src/lib/app-shortcuts.ts` — shortcut definition (`QUICK_ACTIONS`), register (`registerAppShortcuts`), id→route (`shortcutPath`)
 - `src/components/layout/AppShortcutsManager.tsx` — mount-এ shortcut register করে; `GlobalPlatformChrome`-এ mounted
+
+---
+
+## Offline Reminders (iOS)
+
+Push/network বন্ধ থাকলেও owner-এর আসন্ন agent reminder-গুলো যাতে মিস না হয় — native app **LOCAL notification** schedule করে রাখে, যা lock-screen-এ **অফলাইনেও** নিজে থেকে fire করে।
+The native app pre-schedules local notifications for upcoming agent reminders, so they fire on the lock screen even when push or network is down.
+
+### Plugin
+
+| জিনিস | মান |
+|-------|-----|
+| Plugin | `@capacitor/local-notifications@7.0.6` |
+| Platform | **শুধু iOS native** (web / non-native-এ কিছুই হয় না) |
+| Build gate | **build ≥ 5** — পুরনো binary-তে pod নেই, তাই plugin **কখনো ছোঁয়া হয় না** (Face ID build-2 crash-এর মতো safety) |
+
+### কীভাবে কাজ করে
+
+- **Permission:** প্রথমবার notification permission চায় (একবারই); না দিলে চুপচাপ কিছুই করে না।
+- **Feed:** `GET /api/assistant/device-reminders` — owner-only (chat route-এর মতোই auth)। শুধু **status = pending**, **এখন → পরের ৭ দিন**-এর মধ্যে due, `dueAt asc`, সর্বোচ্চ **৩২টি** (iOS-এর ৬৪ pending-limit-এর নিচে headroom রাখতে)।
+- **Schedule:** প্রতিটি reminder-এর uuid থেকে stable numeric id বানিয়ে future-due-গুলো schedule করে; আগের sync-এ schedule করা id-গুলো (localStorage `alma_local_reminder_ids`) আগে cancel করে — তাই duplicate হয় না।
+- **কখন sync হয়:** app **খোলার সময়** + প্রতিবার **resume** (foreground-এ ফেরার সময়) — কিন্তু **১০ মিনিটে সর্বোচ্চ একবার** (throttle, localStorage timestamp)।
+- **Tap:** notification-এ ট্যাপ করলে app-এর **`/agent`** page-এ (reminder-এর `actionUrl`) নিয়ে যায়।
+
+### Design — fail-open, native-only
+
+- **Native-only:** `isCapacitorNative()` false হলে register-ই হয় না — কোনো side-effect নেই।
+- **Fail-open:** যেকোনো error (permission, fetch, plugin) চুপচাপ swallow — offline reminder একটা nice-to-have, app-কে কখনো ভাঙতে পারে না।
+
+### Files (code)
+
+- `src/app/api/assistant/device-reminders/route.ts` — owner-only feed (upcoming pending reminders, ৭-দিন window, ৩২ cap)
+- `src/lib/local-reminders.ts` — `syncLocalReminders()` (build-gate, permission, cancel-old + schedule-new, id-hash)
+- `src/components/layout/LocalRemindersManager.tsx` — mount + resume-এ sync (১০-মিনিট throttle) + tap→`/agent`; `GlobalPlatformChrome`-এ mounted
