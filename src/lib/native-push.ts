@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core'
 import { isCapacitorNative } from '@/lib/capacitor-native'
 
 export type NativePushRegisterInput = {
@@ -67,7 +68,7 @@ export async function registerNativePushSubscription(input: NativePushRegisterIn
       businessId: input.businessId,
       role: input.role,
       employeeIdGas: input.employeeIdGas || null,
-      platform: 'android-native',
+      platform: Capacitor.getPlatform() === 'ios' ? 'ios-native' : 'android-native',
       userAgent: navigator.userAgent,
       enabled: true,
     }),
