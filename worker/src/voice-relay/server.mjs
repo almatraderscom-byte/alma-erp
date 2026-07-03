@@ -269,11 +269,20 @@ export function startVoiceRelayServer() {
 
   const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY })
 
+  // Rolling log of the last upgrade attempts — surfaced on /health so a remote
+  // session can SEE whether Twilio's connection ever arrived and why it was
+  // accepted/rejected, without VPS shell access.
+  const recentUpgrades = []
+  const noteUpgrade = (entry) => {
+    recentUpgrades.push({ ts: new Date().toISOString(), ...entry })
+    if (recentUpgrades.length > 10) recentUpgrades.shift()
+  }
+
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
     if (url.pathname === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, service: 'voice-relay' }))
+      res.end(JSON.stringify({ ok: true, service: 'voice-relay', recentUpgrades }))
       return
     }
     res.writeHead(404)
@@ -287,11 +296,16 @@ export function startVoiceRelayServer() {
     const id = url.searchParams.get('id')?.trim()
     const exp = Number(url.searchParams.get('exp'))
     const t = url.searchParams.get('t')?.trim() ?? ''
+    const from = req.headers['x-forwarded-for'] ?? req.socket?.remoteAddress ?? '?'
     if (url.pathname !== '/relay' || !verifyRelayToken(id, exp, t)) {
+      const reason = url.pathname !== '/relay' ? `bad path ${url.pathname}` : 'token verify failed'
+      noteUpgrade({ ok: false, reason, id: id ?? null, from })
+      console.warn(`[voice-relay] upgrade rejected (${reason}) from ${from}`)
       socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
       socket.destroy()
       return
     }
+    noteUpgrade({ ok: true, id, from })
     wss.handleUpgrade(req, socket, head, (ws) => {
       const session = new RelaySession(ws, id, genai)
       console.log(`[voice-relay] session open — call ${id}`)
