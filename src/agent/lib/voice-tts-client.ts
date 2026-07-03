@@ -39,6 +39,31 @@ export function unlockTtsAudio(): void {
   } catch { /* unlock is best-effort */ }
 }
 
+/** The persistent (gesture-unlocked) element, for sequential chunk playback. */
+export function getTtsElement(): HTMLAudioElement {
+  return getElement()
+}
+
+/**
+ * Fetch TTS for one chunk of text and return a blob URL — does NOT touch the
+ * shared element, so the next chunk can be fetched while the current one plays.
+ * Caller owns revocation.
+ */
+export async function fetchTtsUrl(text: string): Promise<string> {
+  const clean = text.replace(/\s+/g, ' ').trim().slice(0, 1200)
+  if (!clean) throw new Error('empty text')
+  const res = await fetch('/api/assistant/tts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: clean }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({})) as { error?: string }
+    throw new Error(data.error ?? `TTS HTTP ${res.status}`)
+  }
+  return URL.createObjectURL(await res.blob())
+}
+
 /** Fetch TTS audio from server, return an HTMLAudioElement ready to play. */
 export async function fetchTtsAudio(text: string): Promise<HTMLAudioElement> {
   const clean = text.replace(/\s+/g, ' ').trim().slice(0, 1200)

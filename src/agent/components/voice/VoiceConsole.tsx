@@ -6,8 +6,10 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
 import { useMicLevel } from '@/agent/hooks/useMicLevel'
 import { useWakeWord, wakeWordSupported } from '@/agent/hooks/useWakeWord'
-import { fetchTtsAudio, unlockTtsAudio } from '@/agent/lib/voice-tts-client'
+import { unlockTtsAudio } from '@/agent/lib/voice-tts-client'
+import { createTtsChunkPlayer, type TtsChunkPlayer } from '@/agent/lib/tts-chunk-player'
 import { toolDisplay } from '@/agent/lib/tool-labels'
+import { voiceHaptic, agentReplyHaptic } from '@/agent/lib/haptics'
 import type { VoiceState, VoiceTurnEvent } from '@/agent/lib/voice-types'
 import { FluidOrb } from './FluidOrb'
 import toast from 'react-hot-toast'
@@ -63,7 +65,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
   const [convoMode, setConvoMode] = useState(true)
   const convoModeRef = useRef(convoMode)
   useEffect(() => { convoModeRef.current = convoMode }, [convoMode])
-  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const playerRef = useRef<TtsChunkPlayer | null>(null)
   const stateRef = useRef(state)
   useEffect(() => { stateRef.current = state }, [state])
   const openRef = useRef(open)
@@ -71,11 +73,8 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
   const feedRef = useRef<HTMLDivElement | null>(null)
 
   const stopTts = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause()
-      audioRef.current.onended = null
-      audioRef.current = null
-    }
+    playerRef.current?.dispose()
+    playerRef.current = null
   }, [])
 
   const onTurnEvent = useCallback((evt: VoiceTurnEvent) => {
@@ -143,31 +142,40 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
       setTranscript(text)
       setReply('')
       setState('thinking')
+      // Streaming TTS: sentences start SOUNDING while the head is still
+      // writing — 2-4s faster to first word than waiting for the whole reply.
+      const player = createTtsChunkPlayer({
+        onFirstPlay: () => {
+          if (!openRef.current) return
+          agentReplyHaptic()
+          setState('speaking')
+        },
+        onDone: () => {
+          playerRef.current = null
+          if (openRef.current) {
+            setState('idle')
+            scheduleAutoListen()
+          }
+        },
+      })
+      playerRef.current = player
       try {
-        const replyText = await onSendMessage(text, onTurnEvent)
-        if (!openRef.current) return
+        const replyText = await onSendMessage(text, (evt) => {
+          onTurnEvent(evt)
+          if (evt.type === 'text_delta') player.feed(evt.delta)
+        })
+        if (!openRef.current) { player.dispose(); return }
         if (replyText?.trim()) {
           setReply(replyText)
-          setState('speaking')
-          try {
-            const audio = await fetchTtsAudio(replyText)
-            if (!openRef.current) return
-            audioRef.current = audio
-            audio.onended = () => {
-              audioRef.current = null
-              if (openRef.current) {
-                setState('idle')
-                scheduleAutoListen()
-              }
-            }
-            await audio.play()
-          } catch {
-            setState('idle')
-          }
+          player.finish() // flush the tail; onDone → idle → auto-listen
         } else {
+          player.dispose()
+          playerRef.current = null
           setState('idle')
         }
       } catch {
+        player.dispose()
+        playerRef.current = null
         toast.error('উত্তর পেতে ব্যর্থ')
         setState('error')
       }
@@ -177,8 +185,11 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
       setState('error')
       setTimeout(() => { if (openRef.current) setState('idle') }, 2000)
     },
-    onRecordingStart: () => setState('listening'),
+    // Feel the mic like Siri: unmistakable medium tap when it opens, light
+    // tick when it closes, light pulse when the reply starts speaking.
+    onRecordingStart: () => { voiceHaptic(true); setState('listening') },
     onRecordingStop: () => {
+      voiceHaptic(false)
       if (stateRef.current === 'listening') setState('transcribing')
     },
   })
