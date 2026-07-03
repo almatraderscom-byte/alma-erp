@@ -8,6 +8,7 @@ import { useMicLevel } from '@/agent/hooks/useMicLevel'
 import { useWakeWord, wakeWordSupported } from '@/agent/hooks/useWakeWord'
 import { fetchTtsAudio, unlockTtsAudio } from '@/agent/lib/voice-tts-client'
 import { toolDisplay } from '@/agent/lib/tool-labels'
+import { voiceHaptic, agentReplyHaptic } from '@/agent/lib/haptics'
 import type { VoiceState, VoiceTurnEvent } from '@/agent/lib/voice-types'
 import { FluidOrb } from './FluidOrb'
 import toast from 'react-hot-toast'
@@ -148,6 +149,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
         if (!openRef.current) return
         if (replyText?.trim()) {
           setReply(replyText)
+          agentReplyHaptic()
           setState('speaking')
           try {
             const audio = await fetchTtsAudio(replyText)
@@ -177,8 +179,11 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
       setState('error')
       setTimeout(() => { if (openRef.current) setState('idle') }, 2000)
     },
-    onRecordingStart: () => setState('listening'),
+    // Feel the mic like Siri: unmistakable medium tap when it opens, light
+    // tick when it closes, light pulse when the reply starts speaking.
+    onRecordingStart: () => { voiceHaptic(true); setState('listening') },
     onRecordingStop: () => {
+      voiceHaptic(false)
       if (stateRef.current === 'listening') setState('transcribing')
     },
   })
