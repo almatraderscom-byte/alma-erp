@@ -21,13 +21,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // this method returns, per BGTaskScheduler requirements.
         BackgroundRefresh.register()
 
-        // PHASE S0 SPIKE: swap the window root to the native tab-bar shell so the
-        // owner can feel a native frame on device. This replaces the storyboard
-        // (Capacitor) root for THIS build only. To revert, delete this block —
-        // the Capacitor root returns unchanged.
-        if window == nil { window = UIWindow(frame: UIScreen.main.bounds) }
-        window?.rootViewController = SpikeTabBarController()
-        window?.makeKeyAndVisible()
+        // PHASE S1: wrap the app in a native tab bar. The storyboard already created
+        // the Capacitor bridge VC as the window root; we REUSE that same instance as
+        // tab 0 so Capacitor keeps running (push / Live Pulse / reminders / on-device
+        // plugins stay live) and only reparent it under a native tab bar. The other
+        // tabs are session-sharing content web views. Revert = delete this block.
+        if let capacitorRoot = window?.rootViewController {
+            window?.rootViewController = AlmaTabBarController(dashboard: capacitorRoot)
+            window?.makeKeyAndVisible()
+        }
 
         return true
     }

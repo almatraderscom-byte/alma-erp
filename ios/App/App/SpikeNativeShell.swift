@@ -2,33 +2,50 @@
 //  SpikeNativeShell.swift
 //  App
 //
-//  PHASE S0 — throwaway SPIKE to let the owner FEEL a native app frame on device.
+//  PHASE S1 — the real native app frame (graduated from the S0 spike).
 //
-//  What it proves (and nothing more):
-//    • a real native UITabBarController at the bottom — instant tab switching,
-//      each tab's WKWebView stays alive (scroll/state preserved), haptic on switch;
-//    • ONE shared login — both tabs use the default WKWebsiteDataStore, so a sign-in
-//      in one tab carries to the other (and cookies persist across launches);
-//    • NO double navigation — a tiny CSS user-script hides the web's own bottom nav
-//      (`.mobile-app-chrome`) so only the native tab bar shows. This is done from the
-//      NATIVE side, so NO web deploy and NO change to production is required.
+//  A native UITabBarController is the app root. Unlike S0, the Capacitor bridge is
+//  KEPT ALIVE as tab 0, so every native feature from N1–N5 keeps working:
+//    • Tab 0 "Dashboard" = the storyboard's AlmaBridgeViewController (Capacitor).
+//      Because `isCapacitorNative()` is true there, the web app's managers run —
+//      OneSignal push, Live Pulse, local reminders, on-device plugins — exactly as
+//      before. Widgets / Background refresh / Siri are native (AppDelegate) and are
+//      untouched.
+//    • Tabs 1–4 "Orders / Assistant / Approvals / More" = plain WKWebViews that
+//      SHARE the login (default WKWebsiteDataStore cookies) but are not Capacitor,
+//      so the native managers no-op there (they self-gate on isCapacitorNative) and
+//      do no duplicate work. They are pure content views.
 //
-//  Deliberately NOT wired to Capacitor: this spike is two plain web views, so the
-//  Capacitor plugins (push, Face ID, widgets, Live Activity, background refresh)
-//  are inert in THIS build only. That is the accepted cost of a cheap feel-test;
-//  Phase S1 rebuilds the same native frame WITH the full Capacitor bridge intact.
+//  Each tab hides the web's own bottom nav (`.mobile-app-chrome`) via a small CSS
+//  user-script, so ONLY the native tab bar shows — no double navigation. This is
+//  done natively, so no ERP web deploy and zero production change (the formal
+//  `?native=1` embed mode lands in S2 when native title-sync needs it).
 //
-//  Reachable because AppDelegate makes this the window root for the spike build.
-//  To revert: delete this file's use in AppDelegate — the storyboard root
-//  (AlmaBridgeViewController) returns unchanged.
+//  Root is installed by AppDelegate, which reparents the storyboard's Capacitor VC
+//  into tab 0. Revert = delete that block; the storyboard root returns unchanged.
 //
 
 import UIKit
 import WebKit
 
-/// One tab = one full-screen web view onto an ERP route, with the web's own
-/// bottom nav hidden so the native tab bar is the only chrome.
-final class SpikeWebTabViewController: UIViewController, WKNavigationDelegate {
+/// The embed user-script shared by every tab (and the Capacitor web view): hide the
+/// web's own bottom nav so the native tab bar is the only chrome. Idempotent.
+enum AlmaEmbed {
+    static func userScript() -> WKUserScript {
+        let js = """
+        (function(){var id='__alma_native_embed';
+        if(document.getElementById(id))return;
+        var s=document.createElement('style');s.id=id;
+        s.textContent='.mobile-app-chrome{display:none !important}';
+        (document.head||document.documentElement).appendChild(s);})();
+        """
+        return WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
+    }
+}
+
+/// One content tab = a full-screen web view onto an ERP route, sharing the session
+/// and hiding the web's own bottom nav.
+final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate {
     private let url: URL
     private let sharedProcessPool: WKProcessPool
     private var webView: WKWebView!
@@ -47,23 +64,12 @@ final class SpikeWebTabViewController: UIViewController, WKNavigationDelegate {
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
 
     override func loadView() {
-        // Inject the "embed mode" CSS from the native side, at document end, on every
-        // navigation. Hiding `.mobile-app-chrome` removes the web bottom nav so it
-        // can't stack under our native tab bar. Idempotent (guarded by an id).
-        let css = ".mobile-app-chrome{display:none !important}"
-        let js = """
-        (function(){var id='__alma_native_embed';var s=document.getElementById(id);
-        if(!s){s=document.createElement('style');s.id=id;s.textContent=\(cssLiteral(css));
-        (document.head||document.documentElement).appendChild(s);}})();
-        """
-        let script = WKUserScript(source: js, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
-
         let content = WKUserContentController()
-        content.addUserScript(script)
+        content.addUserScript(AlmaEmbed.userScript())
 
         let config = WKWebViewConfiguration()
-        config.processPool = sharedProcessPool                 // shared session across tabs
-        config.websiteDataStore = .default()                    // shared cookies -> shared login
+        config.processPool = sharedProcessPool
+        config.websiteDataStore = .default()   // shared cookies -> shared login with Capacitor tab
         config.userContentController = content
         config.allowsInlineMediaPlayback = true
 
@@ -72,11 +78,12 @@ final class SpikeWebTabViewController: UIViewController, WKNavigationDelegate {
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.isOpaque = false
-        webView.backgroundColor = UIColor(red: 0.047, green: 0.043, blue: 0.071, alpha: 1) // #0c0b12
-        webView.scrollView.backgroundColor = webView.backgroundColor
+        let bg = UIColor(red: 0.047, green: 0.043, blue: 0.071, alpha: 1) // #0c0b12
+        webView.backgroundColor = bg
+        webView.scrollView.backgroundColor = bg
 
         let root = UIView()
-        root.backgroundColor = webView.backgroundColor
+        root.backgroundColor = bg
         root.addSubview(webView)
         webView.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -87,8 +94,8 @@ final class SpikeWebTabViewController: UIViewController, WKNavigationDelegate {
         ])
 
         spinner.color = UIColor(white: 1, alpha: 0.7)
-        spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.hidesWhenStopped = true
+        spinner.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(spinner)
         NSLayoutConstraint.activate([
             spinner.centerXAnchor.constraint(equalTo: root.centerXAnchor),
@@ -97,8 +104,13 @@ final class SpikeWebTabViewController: UIViewController, WKNavigationDelegate {
         view = root
     }
 
-    override func viewDidLoad() {
-        super.viewDidLoad()
+    private var loadedOnce = false
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // Lazy first load: only fetch a tab's page when the owner first opens it,
+        // so four background web views don't all hit the network at launch.
+        guard !loadedOnce else { return }
+        loadedOnce = true
         spinner.startAnimating()
         webView.load(URLRequest(url: url))
     }
@@ -106,39 +118,44 @@ final class SpikeWebTabViewController: UIViewController, WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { spinner.stopAnimating() }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { spinner.stopAnimating() }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { spinner.stopAnimating() }
-
-    /// Encode a CSS string as a safe JS string literal.
-    private func cssLiteral(_ s: String) -> String {
-        let escaped = s.replacingOccurrences(of: "\\", with: "\\\\")
-                       .replacingOccurrences(of: "'", with: "\\'")
-        return "'\(escaped)'"
-    }
 }
 
-/// The spike root: a native tab bar hosting the two web tabs, with a dark
-/// appearance that matches the app and a haptic tick on every tab switch.
-final class SpikeTabBarController: UITabBarController, UITabBarControllerDelegate {
+/// The native app root: a tab bar hosting the Capacitor dashboard (tab 0) and four
+/// session-sharing content tabs, with a dark appearance and a haptic tick on switch.
+final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate {
     private let selection = UISelectionFeedbackGenerator()
+    private static let base = "https://alma-erp-six.vercel.app"
 
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        delegate = self
+    /// - Parameter dashboard: the storyboard's Capacitor bridge VC, reused as tab 0.
+    init(dashboard: UIViewController) {
+        super.init(nibName: nil, bundle: nil)
+
+        dashboard.tabBarItem = UITabBarItem(
+            title: "Dashboard",
+            image: UIImage(systemName: "square.grid.2x2"),
+            selectedImage: UIImage(systemName: "square.grid.2x2.fill"))
 
         let pool = WKProcessPool()
-        let base = "https://alma-erp-six.vercel.app"
-        let dashboard = SpikeWebTabViewController(
-            url: URL(string: base + "/")!, processPool: pool,
-            tabTitle: "Dashboard", systemImage: "square.grid.2x2")
-        let assistant = SpikeWebTabViewController(
-            url: URL(string: base + "/agent")!, processPool: pool,
-            tabTitle: "Assistant", systemImage: "sparkles")
-        viewControllers = [dashboard, assistant]
+        func tab(_ path: String, _ title: String, _ icon: String) -> AlmaWebTabViewController {
+            AlmaWebTabViewController(url: URL(string: Self.base + path)!, processPool: pool,
+                                     tabTitle: title, systemImage: icon)
+        }
+        viewControllers = [
+            dashboard,
+            tab("/orders",    "Orders",    "shippingbox"),
+            tab("/agent",     "Assistant", "sparkles"),
+            tab("/approvals", "Approvals", "checkmark.seal"),
+            tab("/settings",  "More",      "ellipsis.circle"),
+        ]
 
+        delegate = self
         applyDarkAppearance()
         selection.prepare()
     }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
 
     private func applyDarkAppearance() {
+        overrideUserInterfaceStyle = .dark
         let appearance = UITabBarAppearance()
         appearance.configureWithOpaqueBackground()
         appearance.backgroundColor = UIColor(red: 0.055, green: 0.047, blue: 0.078, alpha: 1) // ~#0e0c14
@@ -153,7 +170,6 @@ final class SpikeTabBarController: UITabBarController, UITabBarControllerDelegat
         tabBar.standardAppearance = appearance
         tabBar.scrollEdgeAppearance = appearance
         tabBar.tintColor = violet
-        overrideUserInterfaceStyle = .dark
     }
 
     func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
