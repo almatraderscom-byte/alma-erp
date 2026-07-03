@@ -60,6 +60,7 @@ The owner shoots 1–2 min videos on his phone; the system cuts them into reels.
 - Music beds: owner uploads 5–10 approved tracks tagged by vibe; recipe picks one (round-robin/random — variety rule), audio ducking under speech. Islamic guardrail: owner-approved tracks only.
 - Logo intro/outro stings: pre-rendered clips concatenated (ffmpeg concat), no per-run rendering.
 - **Bangla TTS voiceover (optional per recipe):** owner types/approves the line; existing Google TTS (bn Chirp3-HD-Charon, already integrated for the agent) renders it; ffmpeg mixes over the music bed. Text comes from the owner or a fixed template — never LLM-written silently.
+- **Reel cover/thumbnail picker:** FB/IG reels need a cover frame — let the owner pick a frame (or auto-pick the recipe's hero cut's first sharp frame) and optionally run it through the image brand-frame.
 
 ### Phase V3 — Motion templates ("After Effects" layer)
 - **Remotion** renderer on the VPS worker (React-based video templates — fits the stack).
@@ -69,17 +70,24 @@ The owner shoots 1–2 min videos on his phone; the system cuts them into reels.
 ### Phase V4 — Generated-reel upgrades (Veo) — owner-initiated only
 - **Longer generated reels:** multi-clip Veo 3.1 stitching (2–3 × 6–8s scenes from the same product, ffmpeg concat with recipe transitions) → 15–20s reels; per-scene scene-pool variety; cost shown before run (existing `estimateReelCostUsd`).
 - **AI-assist toggle (OFF by default):** optional Gemini video-understanding pass that suggests highlight timestamps for V1's cut-planner on his shot videos — owner enables per run; the deterministic scdet path stays the default. (This is requirement #6's "Google Omni/better model" idea, gated behind the no-LLM rule.)
+- **Family reel:** image_to_video (Veo) straight from a finished MERGED family photo in the gallery — the family set as a moving reel, one tap from the gallery item.
 
 ### Phase CS4 — Image polish + taste weighting (small, can ride along any phase)
 - **New pair presets on the chain:** couple (husband+wife — two adults, no child-garment step), বাবা+মেয়ে (father_daughter). Trivial with the existing chain machinery.
+- **Model Creator helper:** generate the brand's fictional models ONCE (child boy/girl, mother, daughter — consistent identity portrait, neutral clothes, front-facing) and save straight into the Models library. Solves "where do I get a child model photo" without using real children's photos; generated once, reused forever (same one-time pattern as the child-garment cache).
 - "আবার চালাও" (retry) button on a failed chain step (re-create that step's action, keep artifacts).
+- **Optional Telegram ping when a chain/video finishes** ("Sir, বাবা+ছেলে সেট রেডি — Gallery-তে দেখুন") — kv toggle; studio jobs are currently silent by design (`skipTelegramCard`).
 - Owner feedback on gallery items (ভালো/বাদ) → **deterministic weighting** of scene-pool entries (favour liked scenes/poses; still random, never LLM-scored); per-scene enable/disable sheet (kv `studio_scene_weights`).
 - Child-garment cache management: view/regenerate a cached child garment from the gallery if a bad one ever gets cached.
+- **Expose the QC level control** (kv `agent_qc_level`: off/normal/strict — already exists worker-side) as a simple studio setting.
+- Housekeeping: retire the old `/agent/creative-studio-demo` page.
 
 ### Phase A1 — Agent chat access + Brand Recipes
 Only after image + video quality is proven to the owner.
 - Head tool `run_creative_studio` (thin wrapper over `runCreativeStudio`/`startFamilyChain`/video recipes) so chat like *"ei panjabir baba-chele set banao"* or *"ei video ta offer reel banao"* works; self-verify via claim-verifier before replying (never claim success without the artifact).
 - **Brand Recipe** store (kv, owner-tunable, no redeploy): preferred scenes subset, default model set, finishing theme, caption tone, music vibe — the agent picks the recipe, not its own taste.
+- The existing reference/taste libs (`src/agent/lib/reference/library.ts` — competitor winners via Meta Ad Library, own winners; `src/agent/lib/taste/`) feed Brand Recipe defaults — data-driven, not LLM-imagined.
+- **Unify `/agent/catalog-images` into the Studio** (owner's "one central place" vision) — at minimum cross-link, ideally fold it in as a Studio view.
 
 ### Phase A2 — One-tap Campaign packs (endgame)
 - Campaign = images (family set) + reels + captions + posting schedule in ONE tap, reusing content-engine approval gates (`gate1/gate2`) — nothing auto-posts without the owner.
@@ -100,3 +108,4 @@ Only after image + video quality is proven to the owner.
 - Native iOS app loads live production in WebViews — studio changes reach the app on web deploy (service-worker refresh caveat; see `docs/ios-native-frame-handoff.md` §6).
 - Worker deploy is auto via `deploy-worker.yml` on main; pm2 app `alma-agent-worker`. ffmpeg + (V3) Remotion must be provisioned on the VPS — check before first video phase ships.
 - iPhone videos are HEVC/HDR — always transcode to H.264/SDR first or captions/filters will shift colours.
+- **Storage lifecycle:** videos are big — after Drive archive confirms, trim old Supabase originals (keep outputs + thumbs); add a retention setting before storage bills surprise the owner.
