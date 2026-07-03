@@ -300,7 +300,11 @@ async function placeRelayCall(
       // on chirp models Twilio doesn't expose. bn-BD + "long" is supported in the
       // global region (verified against Google's STT language matrix) — and callers
       // are Bangladeshi anyway. Env-tunable in case Twilio's matrix shifts.
+      // TTS: Twilio validates (provider, ttsLanguage, voice) as a triple — omitting
+      // ttsLanguage defaults it to en-US, which rejects the bn-IN voice (64101,
+      // live-verified). Twilio's voice list documents bn-IN + bn-IN-Chirp3-HD-Charon.
       ` ttsProvider="Google" voice="${RELAY_TTS_VOICE}"` +
+      ` ttsLanguage="${process.env.VOICE_RELAY_TTS_LANGUAGE ?? 'bn-IN'}"` +
       ` transcriptionProvider="${process.env.VOICE_RELAY_STT_PROVIDER ?? 'Google'}"` +
       ` transcriptionLanguage="${process.env.VOICE_RELAY_STT_LANGUAGE ?? 'bn-BD'}"` +
       ` speechModel="${process.env.VOICE_RELAY_STT_MODEL ?? 'long'}">` +
