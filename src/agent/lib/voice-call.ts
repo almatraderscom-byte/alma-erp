@@ -296,7 +296,7 @@ async function placeRelayCall(
       `<Response><Connect>` +
       `<ConversationRelay url="${escapeXmlAttr(wssUrl)}"` +
       ` welcomeGreeting="${escapeXmlAttr(firstMessage)}"` +
-      ` ttsProvider="Google" voice="${RELAY_TTS_VOICE}" ttsLanguage="bn-IN"` +
+      ` ttsProvider="Google" voice="${RELAY_TTS_VOICE}"` +
       ` transcriptionProvider="Google" transcriptionLanguage="bn-IN">` +
       `<Parameter name="callRecordId" value="${escapeXmlAttr(callRecordId)}"/>` +
       `<Parameter name="purpose" value="${escapeXmlAttr(purpose)}"/>` +
