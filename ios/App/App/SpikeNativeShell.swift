@@ -132,6 +132,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         let bg = UIColor(red: 0.949, green: 0.941, blue: 0.972, alpha: 1) // #F2F0F8
         webView.backgroundColor = bg
         webView.scrollView.backgroundColor = bg
+        webView.alpha = 0 // S3: fade the content in on first paint (see didFinish) — no pop-in.
         // Pull-to-refresh is now the web robot mascot (MobilePullToRefresh) — no native
         // UIRefreshControl (it would double up and can't show the robot). Web owns it.
 
@@ -212,12 +213,25 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         webView.load(URLRequest(url: url))
     }
 
+    private var firstPaintDone = false
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         spinner.stopAnimating()
+        // S3: on the FIRST paint, fade the content in over the light placeholder instead
+        // of it popping in abruptly. Later navigations/reloads are instant (alpha == 1).
+        if !firstPaintDone {
+            firstPaintDone = true
+            UIView.animate(withDuration: 0.28, delay: 0, options: [.curveEaseOut]) {
+                webView.alpha = 1
+            }
+        }
         updateBackButton()
     }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { spinner.stopAnimating() }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { spinner.stopAnimating() }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        spinner.stopAnimating(); firstPaintDone = true; webView.alpha = 1
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        spinner.stopAnimating(); firstPaintDone = true; webView.alpha = 1
+    }
 
     // MARK: - almaShell bridge (web → native)
 
