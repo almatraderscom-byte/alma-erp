@@ -61,7 +61,7 @@ function buildSystemPrompt({ purpose, recipientName }) {
     `তুমি মালিকের ব্যক্তিগত সহকারী — ${recipientName ? recipientName + ' কে' : 'একজনকে'} ` +
     `মালিকের পক্ষ থেকে ফোন করেছ। উদ্দেশ্য: ${purpose || 'মালিকের বার্তা পৌঁছে দেওয়া'}।\n` +
     `নিয়ম:\n` +
-    `- শুধুই সহজ, বিনয়ী, কথ্য বাংলায় কথা বলো। এটা ফোন কল — ছোট ছোট বাক্য, কোনো markdown/emoji/তালিকা নয়।\n` +
+    `- শুধুই সহজ, বিনয়ী, কথ্য বাংলায় কথা বলো। এটা ফোন কল — প্রতিটা উত্তর ১-৩টা ছোট বাক্যে, কোনো markdown/emoji/তালিকা নয়।\n` +
     `- অন্য পক্ষের কথা মন দিয়ে শোনো, প্রয়োজনীয় তথ্য আদায় করো।\n` +
     `- উদ্দেশ্য পূরণ হয়ে গেলে ভদ্রভাবে বিদায় নাও এবং বিদায়-বাক্যের একদম শেষে ${END_MARKER} লেখো (ওটা উচ্চারিত হবে না)।\n` +
     `- অপ্রাসঙ্গিক/হারাম বিষয়ে যেও না; না জানলে বলো মালিককে জিজ্ঞেস করে জানানো হবে।`
@@ -126,10 +126,17 @@ class RelaySession {
     const ac = new AbortController()
     this.abort = ac
 
-    const contents = this.history.map((t) => ({
+    // Phone latency: cap history (old turns add tokens = slower first byte).
+    const contents = this.history.slice(-16).map((t) => ({
       role: t.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: t.text }],
     }))
+
+    // Watchdog: a hung LLM call used to mean dead silence on the line. Abort
+    // hard at 12s — the catch block speaks a fallback so the caller always
+    // hears SOMETHING.
+    const watchdog = setTimeout(() => ac.abort(new Error('llm_timeout')), 12_000)
+    const startedAt = Date.now()
 
     let full = ''
     let sawEnd = false
@@ -144,6 +151,11 @@ class RelaySession {
           }),
           abortSignal: ac.signal,
           temperature: 0.6,
+          // Spoken replies must be short and START fast: no hidden reasoning
+          // pass (flash "thinks" by default — that was the 10s dead air), and
+          // a hard cap keeps answers conversation-sized.
+          maxOutputTokens: 300,
+          thinkingConfig: { thinkingBudget: 0 },
         },
       })
       for await (const chunk of stream) {
@@ -163,15 +175,20 @@ class RelaySession {
         if (sawEnd) break
       }
     } catch (err) {
-      if (ac.signal.aborted) return
+      // Barge-in / newer prompt aborted us — the newer respond() owns the floor.
+      if (ac.signal.aborted && String(ac.signal.reason?.message) !== 'llm_timeout') return
       console.warn('[voice-relay] LLM stream failed:', err?.message ?? err)
       this.send({
         type: 'text',
-        token: 'দুঃখিত, একটু সমস্যা হচ্ছে। মালিক পরে আবার যোগাযোগ করবেন। আসসালামু আলাইকুম।',
+        token: full
+          ? ' — দুঃখিত স্যার, লাইনে একটু সমস্যা হলো। আবার বলুন?'
+          : 'দুঃখিত স্যার, বুঝতে একটু সমস্যা হলো — আরেকবার বলবেন?',
         last: false,
       })
-      sawEnd = true
+    } finally {
+      clearTimeout(watchdog)
     }
+    console.log(`[voice-relay] turn ${Date.now() - startedAt}ms — call ${this.callRecordId}`)
 
     this.send({ type: 'text', token: '', last: true })
     const spokenText = full.replace(END_MARKER, '').trim()

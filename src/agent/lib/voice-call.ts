@@ -307,7 +307,10 @@ async function placeRelayCall(
       ` ttsLanguage="${process.env.VOICE_RELAY_TTS_LANGUAGE ?? 'bn-IN'}"` +
       ` transcriptionProvider="${process.env.VOICE_RELAY_STT_PROVIDER ?? 'Google'}"` +
       ` transcriptionLanguage="${process.env.VOICE_RELAY_STT_LANGUAGE ?? 'bn-BD'}"` +
-      ` speechModel="${process.env.VOICE_RELAY_STT_MODEL ?? 'long'}">` +
+      ` speechModel="${process.env.VOICE_RELAY_STT_MODEL ?? 'long'}"` +
+      // End-of-speech after 1.2s silence instead of Twilio's slow 'auto' — the
+      // caller's turn reaches the brain sooner (live complaint: 10s+ replies).
+      ` speechTimeout="${process.env.VOICE_RELAY_SPEECH_TIMEOUT_MS ?? '1200'}">` +
       `<Parameter name="callRecordId" value="${escapeXmlAttr(callRecordId)}"/>` +
       `<Parameter name="purpose" value="${escapeXmlAttr(purpose)}"/>` +
       `<Parameter name="recipientName" value="${escapeXmlAttr(recipientName ?? '')}"/>` +
