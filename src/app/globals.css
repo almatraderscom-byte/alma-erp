@@ -1070,3 +1070,13 @@ html.cap-native .alma-glass-portal {
     filter: blur(18px);
   }
 }
+
+/* ---- Native iOS shell "embed mode" (added by NativeShellBridge) ----
+   When the app runs inside the native iOS tab-bar shell, hide the web's own
+   bottom chrome so it doesn't stack under the native tab bar. Gated entirely on
+   the `alma-native` class, which is only ever added inside the native shell —
+   zero effect for desktop / mobile-web users. */
+html.alma-native .mobile-app-chrome,
+html.alma-native .agent-bottom-nav {
+  display: none !important;
+}
