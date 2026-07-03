@@ -52,16 +52,17 @@ function isEditableTarget(el: EventTarget | null): boolean {
  * True only inside the iOS native-frame shell (SpikeNativeShell): the app hosts the
  * agent in a plain WKWebView whose bottom is pinned to the keyboard via
  * `keyboardLayoutGuide`, so NATIVE already shrinks the viewport above the keyboard —
- * exactly like Capacitor's resize:Native, but without the Capacitor bridge. Detected
- * by the `almaShell` message handler the shell injects; absent in normal browsers and
- * even under `?native=1` (only the real app registers it).
+ * exactly like Capacitor's resize:Native, but without the Capacitor bridge.
+ *
+ * Detected by `window.__almaNative`, which the shell injects at document-start on
+ * EVERY native tab (more reliable than a specific message handler). It is set ONLY by
+ * the real app's injected script — NOT by `?native=1` in a browser (which has a real
+ * keyboard the web must handle itself), so the browser test path is unaffected.
  */
 function inNativeShellWebView(): boolean {
   if (typeof window === 'undefined') return false
   try {
-    return !!(window as unknown as {
-      webkit?: { messageHandlers?: { almaShell?: unknown } }
-    }).webkit?.messageHandlers?.almaShell
+    return (window as unknown as { __almaNative?: boolean }).__almaNative === true
   } catch {
     return false
   }
@@ -120,37 +121,24 @@ export function useKeyboardInset() {
       cleanups.push(unsub)
     }
 
-    // iOS native-frame shell (plain WKWebView, NOT Capacitor): the shell already
-    // shrinks the WebView above the keyboard via keyboardLayoutGuide, exactly like
-    // Capacitor's resize:Native. Running the visualViewport INSET path here made the
-    // two fight — with the view already shrunk the measured inset settled near 0, so
-    // `kb-open` never latched and the agent bottom-nav stayed wedged between composer
-    // and keyboard, flickering during the animation. So mirror the Capacitor branch:
-    // pin --kb-inset at 0 and set cap-native-resize (so .agent-main-height fills the
-    // shrunk viewport).
-    //
-    // Detect the keyboard from the WebView's own resize, NOT from focus: the shell
-    // shrinks the view only when the keyboard is actually on-screen, whereas iOS
-    // suppresses the keyboard on programmatic focus — so a focus-based toggle would
-    // wrongly hide the nav when the agent auto-focuses its composer with no keyboard.
-    // Keyboard is up iff the viewport shrank meaningfully below its tallest (no-kb)
-    // height; the threshold + max-baseline give hysteresis so it latches once, cleanly.
+    // iOS native-frame shell (plain WKWebView, NOT Capacitor): the shell physically
+    // shrinks the WebView above the keyboard via keyboardLayoutGuide — exactly like
+    // Capacitor's resize:Native. So the web must do NOTHING to reposition on the
+    // keyboard: native already handles the lift. We ONLY declare that fact —
+    //   • pin --kb-inset at 0 (any web inset would double-lift the composer → the
+    //     "composer floats with a big gap" bug), and
+    //   • set cap-native-resize so `.agent-main-height` fills the shrunk viewport
+    //     (100dvh) instead of subtracting a keyboard height.
+    // Crucially we add NO resize/focus/visualViewport listeners here: earlier attempts
+    // that toggled `kb-open`/inset on every viewport change thrashed the layout while
+    // typing (the predictive bar resizes the view), which remounted/blurred the
+    // composer — the keyboard dismissed on the first keystroke. Doing nothing is the
+    // robust fix. (The agent sub-nav therefore stays visible above the keyboard until
+    // it's mapped to native nav — a cosmetic trade for a rock-solid composer.)
     function setupNativeShell() {
       document.documentElement.classList.add('cap-native-resize')
       setInset(0)
-      const viewportHeight = () => window.visualViewport?.height ?? window.innerHeight
-      let baseline = viewportHeight() // tallest height seen = keyboard-down
-      const update = () => {
-        if (disposed) return
-        const h = viewportHeight()
-        if (h > baseline) baseline = h
-        document.body.classList.toggle('kb-open', baseline - h > 120)
-      }
-      window.addEventListener('resize', update)
-      window.visualViewport?.addEventListener('resize', update)
       cleanups.push(() => {
-        window.removeEventListener('resize', update)
-        window.visualViewport?.removeEventListener('resize', update)
         document.documentElement.classList.remove('cap-native-resize')
       })
     }
