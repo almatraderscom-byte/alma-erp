@@ -167,16 +167,20 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
       // head is still working — the owner hears the PROCESS, not just a result.
       player.say(SPOKEN_ACKS[Math.floor(Math.random() * SPOKEN_ACKS.length)])
       let replyStarted = false
-      let narrated = false
+      let lastNarration = 0
       try {
         const replyText = await onSendMessage(text, (evt) => {
           onTurnEvent(evt)
           if (evt.type === 'text_delta') {
             replyStarted = true
             player.feed(evt.delta)
-          } else if (evt.type === 'tool_start' && !narrated && !replyStarted) {
-            narrated = true
-            player.say(`${toolDisplay(evt.name).label}, স্যার…`)
+          } else if (evt.type === 'tool_start' && !replyStarted) {
+            // Narrate the work as it happens — first tool always, then at most
+            // one line per ~6s so multi-tool turns don't become a monologue.
+            if (Date.now() - lastNarration >= 6000) {
+              lastNarration = Date.now()
+              player.say(`${toolDisplay(evt.name).label}, স্যার…`)
+            }
           }
         })
         if (!openRef.current) { player.dispose(); return }
