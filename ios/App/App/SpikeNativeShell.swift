@@ -59,17 +59,31 @@ enum AlmaEmbed {
     }
 }
 
+/// Breaks the retain cycle WKUserContentController → messageHandler → webView by
+/// pointing back at the real handler only weakly.
+final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var delegate: WKScriptMessageHandler?
+    init(_ delegate: WKScriptMessageHandler) { self.delegate = delegate }
+    func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
+        delegate?.userContentController(ucc, didReceive: message)
+    }
+}
+
 /// One content tab = a full-screen web view onto an ERP route, sharing the session
-/// and hiding the web's own bottom nav.
-final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate {
+/// and hiding the web's own bottom nav. When hosted in a UINavigationController it
+/// shows a NATIVE header whose title tracks the web app's current route (via the
+/// `almaShell` bridge), with a back button that drives web history.
+final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler {
     private let url: URL
     private let sharedProcessPool: WKProcessPool
     private var webView: WKWebView!
     private let spinner = UIActivityIndicatorView(style: .medium)
+    private let baseTitle: String
 
     init(url: URL, processPool: WKProcessPool, tabTitle: String, systemImage: String) {
         self.url = url
         self.sharedProcessPool = processPool
+        self.baseTitle = tabTitle
         super.init(nibName: nil, bundle: nil)
         title = tabTitle   // shown in the nav bar when this VC is pushed (e.g. from More)
         tabBarItem = UITabBarItem(
@@ -83,6 +97,8 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate {
     override func loadView() {
         let content = WKUserContentController()
         AlmaEmbed.install(into: content)
+        // Native header title-sync: the web posts {type:'route', path, title} here.
+        content.add(WeakScriptMessageHandler(self), name: "almaShell")
 
         let config = WKWebViewConfiguration()
         config.processPool = sharedProcessPool
@@ -132,9 +148,44 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate {
         webView.load(URLRequest(url: url))
     }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { spinner.stopAnimating() }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        spinner.stopAnimating()
+        updateBackButton()
+    }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { spinner.stopAnimating() }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { spinner.stopAnimating() }
+
+    // MARK: - almaShell bridge (web → native)
+
+    /// Receives the web app's route events and updates the native header title.
+    func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any] else { return }
+        let type = body["type"] as? String
+        if type == "route" || type == "title" {
+            if let t = (body["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
+                title = t
+            }
+            updateBackButton()
+        }
+    }
+
+    /// Show a native back chevron whenever the web view has history to pop; tapping
+    /// it (or swiping from the edge) drives the web app's own back navigation.
+    private func updateBackButton() {
+        // Only relevant when hosted in a nav controller as that stack's root.
+        guard navigationController?.viewControllers.first === self else { return }
+        if webView?.canGoBack == true {
+            navigationItem.leftBarButtonItem = UIBarButtonItem(
+                image: UIImage(systemName: "chevron.backward"),
+                style: .plain, target: self, action: #selector(goBackTapped))
+        } else {
+            navigationItem.leftBarButtonItem = nil
+        }
+    }
+
+    @objc private func goBackTapped() {
+        if webView?.canGoBack == true { webView.goBack() }
+    }
 }
 
 /// PHASE S1.1 — the "More" tab as a NATIVE menu (not a web page). Fixes the earlier
@@ -234,33 +285,30 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
             selectedImage: UIImage(systemName: "square.grid.2x2.fill"))
 
         let pool = WKProcessPool()
-        func tab(_ path: String, _ title: String, _ icon: String) -> AlmaWebTabViewController {
+
+        // Content tabs that get a NATIVE header (title synced from the web route via
+        // the almaShell bridge) + back button + swipe-back — wrapped in a dark nav
+        // controller. Assistant keeps its own in-page header, and the Dashboard is
+        // the Capacitor VC, so those two are not wrapped.
+        func webNavTab(_ path: String, _ title: String, _ icon: String) -> UINavigationController {
+            let vc = AlmaWebTabViewController(url: URL(string: Self.base + path)!, processPool: pool,
+                                              tabTitle: title, systemImage: icon)
+            return Self.darkNav(root: vc, tabTitle: title, icon: icon, largeTitles: false)
+        }
+        func plainTab(_ path: String, _ title: String, _ icon: String) -> AlmaWebTabViewController {
             AlmaWebTabViewController(url: URL(string: Self.base + path)!, processPool: pool,
                                      tabTitle: title, systemImage: icon)
         }
-        // "More" is a NATIVE menu wrapped in a nav controller so its rows push web
-        // screens with a native slide + swipe-back (fixes the old /settings 404).
-        let moreNav = UINavigationController(rootViewController: MoreMenuViewController(processPool: pool))
-        moreNav.navigationBar.prefersLargeTitles = true
-        moreNav.overrideUserInterfaceStyle = .dark
-        let navA = UINavigationBarAppearance()
-        navA.configureWithOpaqueBackground()
-        navA.backgroundColor = UIColor(red: 0.055, green: 0.047, blue: 0.078, alpha: 1)
-        navA.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
-        navA.titleTextAttributes = [.foregroundColor: UIColor.white]
-        moreNav.navigationBar.standardAppearance = navA
-        moreNav.navigationBar.scrollEdgeAppearance = navA
-        moreNav.navigationBar.tintColor = UIColor(red: 0.655, green: 0.545, blue: 0.980, alpha: 1)
-        moreNav.tabBarItem = UITabBarItem(
-            title: "More",
-            image: UIImage(systemName: "ellipsis.circle"),
-            selectedImage: UIImage(systemName: "ellipsis.circle.fill"))
+
+        // "More" is a NATIVE menu whose rows push web screens with a native slide.
+        let moreNav = Self.darkNav(root: MoreMenuViewController(processPool: pool),
+                                   tabTitle: "More", icon: "ellipsis.circle", largeTitles: true)
 
         viewControllers = [
             dashboard,
-            tab("/orders",    "Orders",    "shippingbox"),
-            tab("/agent",     "Assistant", "sparkles"),
-            tab("/approvals", "Approvals", "checkmark.seal"),
+            webNavTab("/orders",    "Orders",    "shippingbox"),
+            plainTab ("/agent",     "Assistant", "sparkles"),
+            webNavTab("/approvals", "Approvals", "checkmark.seal"),
             moreNav,
         ]
 
@@ -269,6 +317,26 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         selection.prepare()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
+
+    /// A dark, violet-tinted UINavigationController wrapping `root`, with a tab item.
+    static func darkNav(root: UIViewController, tabTitle: String, icon: String, largeTitles: Bool) -> UINavigationController {
+        let nav = UINavigationController(rootViewController: root)
+        nav.navigationBar.prefersLargeTitles = largeTitles
+        nav.overrideUserInterfaceStyle = .dark
+        let a = UINavigationBarAppearance()
+        a.configureWithOpaqueBackground()
+        a.backgroundColor = UIColor(red: 0.055, green: 0.047, blue: 0.078, alpha: 1)
+        a.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
+        a.titleTextAttributes = [.foregroundColor: UIColor.white]
+        nav.navigationBar.standardAppearance = a
+        nav.navigationBar.scrollEdgeAppearance = a
+        nav.navigationBar.tintColor = UIColor(red: 0.655, green: 0.545, blue: 0.980, alpha: 1)
+        nav.tabBarItem = UITabBarItem(
+            title: tabTitle,
+            image: UIImage(systemName: icon),
+            selectedImage: UIImage(systemName: icon + ".fill") ?? UIImage(systemName: icon))
+        return nav
+    }
 
     private func applyDarkAppearance() {
         overrideUserInterfaceStyle = .dark
