@@ -33,6 +33,11 @@ const AgentSalahTimesSettings = dynamic(
   { ssr: false, loading: () => null },
 )
 
+const AgentVoiceSettings = dynamic(
+  () => import('@/agent/components/AgentVoiceSettings'),
+  { ssr: false, loading: () => null },
+)
+
 /* ───────── Helpers ───────── */
 
 function fmtTime(iso: string) {
@@ -1207,8 +1212,9 @@ export default function AgentStaffMonitor() {
         )}
 
         {monitorTab === 'system' && !viewingHistory && (
-          <div className="mt-4">
+          <div className="mt-4 space-y-4">
             <AgentSalahTimesSettings />
+            <AgentVoiceSettings />
           </div>
         )}
       </div>
