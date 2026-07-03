@@ -1085,6 +1085,13 @@ html.alma-native .mobile-app-chrome {
   display: none !important;
 }
 
+/* The agent's cream/amber "N tasks awaiting your decision" attention banner reads
+   as an out-of-place light bar at the top of the Assistant tab in the dark native
+   shell — hide it there (the Approvals tab surfaces the same items natively). */
+html.alma-native .agent-attention-banner {
+  display: none !important;
+}
+
 /* On native web views that carry a NATIVE header (Orders / Approvals / modules
    opened from More), hide the web's own sticky page header so there is no double
    title bar. Gated on `alma-native-hdr`, set only for those web views — pages

@@ -1527,7 +1527,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                 id: top.conversationId, title: null, projectId: null, archived: false, updatedAt: new Date().toISOString(),
               })}
               className={cn(
-                'safe-x shrink-0 border-b px-4 py-2 text-left text-[11px] font-medium transition-colors',
+                'agent-attention-banner safe-x shrink-0 border-b px-4 py-2 text-left text-[11px] font-medium transition-colors',
                 decisions > 0
                   ? 'border-red-200/60 bg-red-50/90 text-red-800 hover:bg-red-100/90'
                   : 'border-amber-200/60 bg-amber-50/90 text-amber-800 hover:bg-amber-100/90',
