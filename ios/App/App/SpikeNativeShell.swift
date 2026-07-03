@@ -55,6 +55,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate {
         self.url = url
         self.sharedProcessPool = processPool
         super.init(nibName: nil, bundle: nil)
+        title = tabTitle   // shown in the nav bar when this VC is pushed (e.g. from More)
         tabBarItem = UITabBarItem(
             title: tabTitle,
             image: UIImage(systemName: systemImage),
@@ -120,6 +121,87 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate {
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { spinner.stopAnimating() }
 }
 
+/// PHASE S1.1 — the "More" tab as a NATIVE menu (not a web page). Fixes the earlier
+/// 404 (`/settings` has no index) and gives the first taste of native content: a
+/// grouped list that pushes each module as a web screen with a native slide + a
+/// swipe-back gesture (a preview of the S2 native navigation, scoped to More).
+final class MoreMenuViewController: UITableViewController {
+    private struct Item { let title: String; let icon: String; let path: String }
+    private struct Section { let header: String; let items: [Item] }
+    private let sharedPool: WKProcessPool
+
+    private let sections: [Section] = [
+        Section(header: "Money", items: [
+            Item(title: "Finance",   icon: "banknote",           path: "/finance"),
+            Item(title: "Expenses",  icon: "creditcard",         path: "/expenses"),
+            Item(title: "Payroll",   icon: "dollarsign.circle",  path: "/payroll"),
+            Item(title: "Invoices",  icon: "doc.text",           path: "/invoice"),
+        ]),
+        Section(header: "Operations", items: [
+            Item(title: "Inventory", icon: "shippingbox",        path: "/inventory"),
+            Item(title: "Trading",   icon: "arrow.left.arrow.right", path: "/trading"),
+            Item(title: "Digital",   icon: "globe",              path: "/digital"),
+            Item(title: "Activity",  icon: "bolt",               path: "/activity"),
+        ]),
+        Section(header: "People", items: [
+            Item(title: "Employees",  icon: "person.2",          path: "/employees"),
+            Item(title: "Attendance", icon: "calendar.badge.clock", path: "/attendance"),
+            Item(title: "CRM",        icon: "person.crop.circle.badge.checkmark", path: "/crm"),
+        ]),
+        Section(header: "Insights", items: [
+            Item(title: "Analytics", icon: "chart.bar",          path: "/analytics"),
+            Item(title: "Insights",  icon: "lightbulb",          path: "/insights"),
+            Item(title: "Briefing",  icon: "newspaper",          path: "/briefing"),
+            Item(title: "Audit",     icon: "checklist",          path: "/audit"),
+        ]),
+    ]
+
+    init(processPool: WKProcessPool) {
+        self.sharedPool = processPool
+        super.init(style: .insetGrouped)
+        title = "More"
+        tabBarItem = UITabBarItem(
+            title: "More",
+            image: UIImage(systemName: "ellipsis.circle"),
+            selectedImage: UIImage(systemName: "ellipsis.circle.fill"))
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        navigationItem.largeTitleDisplayMode = .always
+        tableView.backgroundColor = UIColor(red: 0.043, green: 0.039, blue: 0.063, alpha: 1) // #0b0a10
+    }
+
+    override func numberOfSections(in tableView: UITableView) -> Int { sections.count }
+    override func tableView(_ t: UITableView, numberOfRowsInSection s: Int) -> Int { sections[s].items.count }
+    override func tableView(_ t: UITableView, titleForHeaderInSection s: Int) -> String? { sections[s].header }
+
+    override func tableView(_ t: UITableView, cellForRowAt ip: IndexPath) -> UITableViewCell {
+        let item = sections[ip.section].items[ip.row]
+        let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
+        var cfg = cell.defaultContentConfiguration()
+        cfg.text = item.title
+        cfg.image = UIImage(systemName: item.icon)
+        cfg.imageProperties.tintColor = UIColor(red: 0.655, green: 0.545, blue: 0.980, alpha: 1)
+        cell.contentConfiguration = cfg
+        cell.backgroundColor = UIColor(red: 0.086, green: 0.078, blue: 0.122, alpha: 1) // #16141f
+        cell.accessoryType = .disclosureIndicator
+        return cell
+    }
+
+    override func tableView(_ t: UITableView, didSelectRowAt ip: IndexPath) {
+        t.deselectRow(at: ip, animated: true)
+        let item = sections[ip.section].items[ip.row]
+        let base = "https://alma-erp-six.vercel.app"
+        let vc = AlmaWebTabViewController(
+            url: URL(string: base + item.path)!, processPool: sharedPool,
+            tabTitle: item.title, systemImage: item.icon)
+        vc.hidesBottomBarWhenPushed = false
+        navigationController?.pushViewController(vc, animated: true)
+    }
+}
+
 /// The native app root: a tab bar hosting the Capacitor dashboard (tab 0) and four
 /// session-sharing content tabs, with a dark appearance and a haptic tick on switch.
 final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate {
@@ -140,12 +222,30 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
             AlmaWebTabViewController(url: URL(string: Self.base + path)!, processPool: pool,
                                      tabTitle: title, systemImage: icon)
         }
+        // "More" is a NATIVE menu wrapped in a nav controller so its rows push web
+        // screens with a native slide + swipe-back (fixes the old /settings 404).
+        let moreNav = UINavigationController(rootViewController: MoreMenuViewController(processPool: pool))
+        moreNav.navigationBar.prefersLargeTitles = true
+        moreNav.overrideUserInterfaceStyle = .dark
+        let navA = UINavigationBarAppearance()
+        navA.configureWithOpaqueBackground()
+        navA.backgroundColor = UIColor(red: 0.055, green: 0.047, blue: 0.078, alpha: 1)
+        navA.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
+        navA.titleTextAttributes = [.foregroundColor: UIColor.white]
+        moreNav.navigationBar.standardAppearance = navA
+        moreNav.navigationBar.scrollEdgeAppearance = navA
+        moreNav.navigationBar.tintColor = UIColor(red: 0.655, green: 0.545, blue: 0.980, alpha: 1)
+        moreNav.tabBarItem = UITabBarItem(
+            title: "More",
+            image: UIImage(systemName: "ellipsis.circle"),
+            selectedImage: UIImage(systemName: "ellipsis.circle.fill"))
+
         viewControllers = [
             dashboard,
             tab("/orders",    "Orders",    "shippingbox"),
             tab("/agent",     "Assistant", "sparkles"),
             tab("/approvals", "Approvals", "checkmark.seal"),
-            tab("/settings",  "More",      "ellipsis.circle"),
+            moreNav,
         ]
 
         delegate = self
