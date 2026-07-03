@@ -43,6 +43,48 @@ export function wakeWordSupported(): boolean {
 /** Matches "ALMA" the ways Bangla/Banglish STT actually hears it. */
 const WAKE_RE = /\b(alma|আলমা|আল্মা|আলমা|অালমা)\b|আলমা/i
 
+/**
+ * Live transcript while RECORDING — interim SpeechRecognition text so the
+ * owner sees his words appear as he speaks (Siri-style). Purely cosmetic:
+ * the real transcript still comes from the recorded audio via the STT
+ * backend. No-ops silently where SpeechRecognition doesn't exist (iOS).
+ */
+export function useLiveTranscript(active: boolean, onText: (text: string) => void) {
+  const onTextRef = useRef(onText)
+  useEffect(() => { onTextRef.current = onText }, [onText])
+
+  useEffect(() => {
+    const Ctor = getRecognitionCtor()
+    if (!active || !Ctor) return
+    let disposed = false
+    let rec: SpeechRecognitionLike | null = null
+    try {
+      rec = new Ctor()
+      rec.lang = 'bn-BD'
+      rec.continuous = true
+      rec.interimResults = true
+      rec.onresult = (e) => {
+        if (disposed) return
+        let text = ''
+        for (let i = 0; i < e.results.length; i++) text += e.results[i]?.[0]?.transcript ?? ''
+        if (text.trim()) onTextRef.current(text.trim())
+      }
+      rec.onend = () => { rec = null }
+      rec.onerror = () => { /* cosmetic — stay quiet */ }
+      rec.start()
+    } catch { rec = null }
+    return () => {
+      disposed = true
+      if (rec) {
+        rec.onresult = null
+        rec.onend = null
+        rec.onerror = null
+        try { rec.abort() } catch { /* fine */ }
+      }
+    }
+  }, [active])
+}
+
 export function useWakeWord(enabled: boolean, onWake: () => void) {
   const onWakeRef = useRef(onWake)
   useEffect(() => { onWakeRef.current = onWake }, [onWake])

@@ -1318,7 +1318,13 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           } else if (evt.type === 'subagent_end') {
             onEvent?.({ type: 'subagent_end', id: evt.id as string, success: evt.success !== false })
           } else if (evt.type === 'confirm_card') {
-            onEvent?.({ type: 'confirm_card' })
+            onEvent?.({
+              type: 'confirm_card',
+              pendingActionId: typeof evt.pendingActionId === 'string' ? evt.pendingActionId : undefined,
+              summary: typeof evt.summary === 'string' ? evt.summary : undefined,
+              costEstimate: typeof evt.costEstimate === 'number' ? evt.costEstimate : undefined,
+              actionType: typeof evt.actionType === 'string' ? evt.actionType : undefined,
+            })
           }
         } catch { /* skip */ }
       }
