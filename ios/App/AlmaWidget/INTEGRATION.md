@@ -760,3 +760,64 @@ entitlements file is added to the `AlmaWidget` group and referenced by
   catalog yet) — populate later when a product source exists.
 - iOS 27 Spotlight semantic-index schemas + View Annotations are a documented future
   stretch, not built here.
+
+---
+
+## Phase N4 additions — Background refresh (BGAppRefreshTask)
+
+Build 12. Adds one **App-target** Swift file plus two Info.plist keys and two tiny
+AppDelegate hooks. No new plugin, no entitlement, no web code.
+
+### A. New file + wiring
+
+| File                              | App target |
+|-----------------------------------|:----------:|
+| `App/BackgroundRefresh.swift`     | ✅          |
+
+- `AppDelegate.didFinishLaunching` → `BackgroundRefresh.register()` (BEFORE `return true`).
+- `AppDelegate.applicationDidEnterBackground` → `BackgroundRefresh.schedule()`.
+
+### B. `project.pbxproj` — reserved IDs (prefix `A2BB77`)
+
+Hex-safe prefix (the natural next letter `G` is not a hex digit, so `A2BB77`).
+
+| ID                         | Object kind      | Represents                                 |
+|----------------------------|------------------|--------------------------------------------|
+| `A2BB7700000000000000A001` | PBXFileReference | `App/BackgroundRefresh.swift`              |
+| `A2BB7700000000000000B001` | PBXBuildFile     | BackgroundRefresh.swift in **App** Sources |
+
+Into the App group + App Sources phase (same four spots as prior single-file phases).
+
+### C. Info.plist (REQUIRED for BGTaskScheduler)
+
+```xml
+<key>UIBackgroundModes</key>
+<array>
+    <string>remote-notification</string>
+    <string>fetch</string>           <!-- ADDED -->
+</array>
+<key>BGTaskSchedulerPermittedIdentifiers</key>   <!-- ADDED -->
+<array>
+    <string>com.almatraders.erp.refresh</string>
+</array>
+```
+
+Without `BGTaskSchedulerPermittedIdentifiers` the `BGTaskScheduler.register` call
+throws at launch — the identifier MUST be declared here.
+
+### D. Build number
+
+`CURRENT_PROJECT_VERSION` `11 → 12` in all 4 lockstep places. No web gate (this phase
+adds no native-dependent web feature — it drives existing endpoints).
+
+### E. Behaviour + caveats
+
+- Reuses the WKWebView NextAuth cookie (`WKWebsiteDataStore.default().httpCookieStore`)
+  for a native `URLSession` GET to `/api/assistant/device-reminders`, then schedules
+  local notifications via `UNUserNotificationCenter`. No device token, no DB change.
+- Notification ids match the web's `reminderNotificationId` 31-hash so web-scheduled
+  and background-scheduled reminders DEDUPE (same `UNNotificationRequest` identifier).
+- Background tasks run on **device only** (never the simulator). To force a run while
+  debugging, use the LLDB `_simulateLaunchForTaskWithIdentifier` trick on device.
+- Fully fail-open: no cookie / 401 / offline / decode failure → clean no-op, retried
+  next window.

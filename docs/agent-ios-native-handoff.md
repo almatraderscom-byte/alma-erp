@@ -30,7 +30,7 @@ Everything below is LIVE on TestFlight build 8 and verified in code (CI + device
 | 5 SpeechAnalyzer (on-device STT) | 🚧 Code done (build 10) | **Phase N2** | On-device `SFSpeechRecognizer` engine shipped (free + offline); iOS 26 `SpeechAnalyzer` is a documented upgrade. Owner-opt-in flag, **awaiting device verification.** |
 | 6 Writing Tools | ✅ Mostly free | WKWebView text fields inherit system Writing Tools on supported iOS — verify, don't build. |
 | 7 StoreKit / subscriptions | — | **N/A** | Internal business app; no monetization. Skip. |
-| 8 Background Tasks API | ❌ Missing | **Phase N4** | Background refresh of local reminders + Business Pulse. |
+| 8 Background Tasks API | 🚧 Code done (build 12) | **Phase N4** | `BGAppRefreshTask` refreshes reminders via WKWebView session cookie → native local notifications. **Awaiting device verification.** |
 | 9 Visual Intelligence / semantic deep links | ❌ Missing | Rides on Phase N3 entities. |
 | 10 FM upgrades (multimodal, cloud-backed LanguageModel) | ❌ Missing | Phase N1 stretch, `#available(iOS 27, *)`. |
 | 12 App Intents Testing/Evaluations | ❌ Missing | Phase N3 stretch. |
@@ -76,9 +76,15 @@ Everything below is LIVE on TestFlight build 8 and verified in code (CI + device
 - iOS 27 Spotlight semantic-index schemas + View Annotations: documented future stretch, not built.
 
 ### Phase N4 — Background refresh
-- `BGAppRefreshTask` (id `com.almatraders.erp.refresh`, `UIBackgroundModes: fetch` + `BGTaskSchedulerPermittedIdentifiers` in Info.plist) scheduled from AppDelegate.
-- Research step first: reuse the WKWebView session cookie from `HTTPCookieStorage`/`WKWebsiteDataStore` for a native `URLSession` call to `/api/assistant/device-reminders` + `/live-pulse`; if cookies aren't reachable, mint a device token instead (new column on PushSubscription, issued at registration) — decide in-session, document the choice here.
-- Effect: reminders + pulse stay fresh even if the app isn't opened for days.
+
+**Status (build 12): code complete, pending device verification.** Shipped:
+- `ios/App/App/BackgroundRefresh.swift` — `BGAppRefreshTask` (id `com.almatraders.erp.refresh`). `register()` from `AppDelegate.didFinishLaunching`, `schedule()` from `applicationDidEnterBackground` (earliest +1h; iOS decides real cadence). On wake it reuses the WKWebView session cookie, calls `/api/assistant/device-reminders`, and re-schedules local notifications natively via `UNUserNotificationCenter`. Fail-open (no cookie / 401 / offline → clean no-op).
+- **AUTH DECISION (resolved in-session):** reuse the existing NextAuth session cookie from `WKWebsiteDataStore.default().httpCookieStore` — **NOT** a minted device token. Rationale: no DB change (stays additive per project rules), nothing new to revoke, and the cookie is already valid for the owner-only endpoints. If it expires, the task 401s and no-ops until the owner next opens the app (which re-syncs via the web local-reminders path).
+- **Notification-id dedupe:** `BackgroundRefresh.reminderNotificationId` is a 31-hash matching `src/lib/local-reminders.ts` EXACTLY, and the `@capacitor/local-notifications` plugin schedules under `String(id)` — so a reminder scheduled by the web path and the background path lands under the SAME `UNNotificationRequest` identifier and dedupes instead of double-firing. (Confirm on device.)
+- Info.plist: `UIBackgroundModes` gains `fetch`; `BGTaskSchedulerPermittedIdentifiers` = `com.almatraders.erp.refresh`.
+- pbxproj surgery, prefix `A2BB77` (hex-safe; `G1AA77` would be invalid); `CURRENT_PROJECT_VERSION` 11 → 12 (all 4 lockstep places).
+- No web code changes (uses existing endpoints) → no new web gate / vitest for this phase.
+- Effect: reminders stay fresh even if the app isn't opened for days. (Live Pulse refresh needs ActivityKit from the app process; kept to the foreground `LivePulseManager` tick for now — a background pulse push is a future add via APNs-driven Live Activity.)
 
 ### Phase N5 — Liquid Glass + iOS 27 polish
 - Widget + Live Activity: adopt glass materials/`glassEffect` behind `#available(iOS 26,*)`/27 checks with current flat-dark fallback; scroll-minimized accessory styles where applicable.
