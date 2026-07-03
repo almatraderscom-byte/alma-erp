@@ -38,7 +38,7 @@ export function useBargeIn(active: boolean, onBarge: () => void) {
         src.connect(analyser)
         const buf = new Uint8Array(analyser.fftSize)
         const SPEECH = 0.08 // deliberately higher than the recorder's VAD — must be a real voice
-        const HOLD_MS = 450
+        const HOLD_MS = 600 // long hold: speaker bleed on weak-AEC devices must not self-interrupt
         let speechStart = 0
 
         const tick = () => {

@@ -93,10 +93,14 @@ export function playInstantAck(text: string): boolean {
   } catch { return false }
 }
 
-/** Speak one standalone line right now (approval confirmations etc.). */
-export async function speakLine(text: string): Promise<void> {
+/** Speak one standalone line right now (approval confirmations etc.).
+ *  `stillValid` re-checks after the network fetch — if the console closed or
+ *  the mic took over meanwhile, the line is dropped instead of resurrecting
+ *  over whatever now owns the element. */
+export async function speakLine(text: string, stillValid?: () => boolean): Promise<void> {
   try {
     const url = await fetchTtsUrl(text)
+    if (stillValid && !stillValid()) { URL.revokeObjectURL(url); return }
     const el = getElement()
     el.onended = () => URL.revokeObjectURL(url)
     el.onerror = () => URL.revokeObjectURL(url)

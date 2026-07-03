@@ -326,12 +326,16 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
       ? { ...c, busy: false, done: !failed, success: !failed, resolution: failed ? undefined : resolution }
       : c))
     if (failed) { toast.error('অনুমোদন পাঠানো যায়নি — আবার চেষ্টা করুন'); return }
+    // A reply may still be speaking on the SAME audio element — hand it over
+    // cleanly first, or the player's chain is severed and auto-listen dies.
+    if (playerRef.current) stopTts()
     void speakLine(
       resolution === 'approved' ? 'অনুমোদন করে দিয়েছি স্যার, কাজ এগোচ্ছে।'
         : resolution === 'rejected' ? 'বাতিল করে দিয়েছি, স্যার।'
           : 'এটা আগেই নিষ্পত্তি হয়ে গেছে, স্যার।',
+      () => openRef.current && stateRef.current !== 'listening',
     )
-  }, [])
+  }, [stopTts])
 
   const handleClose = useCallback(() => {
     recorder.cancel()
