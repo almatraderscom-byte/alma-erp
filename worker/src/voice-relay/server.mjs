@@ -68,6 +68,17 @@ function buildSystemPrompt({ purpose, recipientName }) {
   )
 }
 
+// Diagnostics visible on /health — per-turn latency/errors and report outcomes,
+// so failures are readable remotely instead of guessed at.
+export const relayDiag = {
+  lastTurns: [],
+  lastReports: [],
+  note(list, entry) {
+    list.push({ ts: new Date().toISOString(), ...entry })
+    if (list.length > 12) list.shift()
+  },
+}
+
 /** One live call session — history, streaming state, reporting. */
 class RelaySession {
   constructor(ws, callRecordId, genai) {
@@ -176,8 +187,16 @@ class RelaySession {
       }
     } catch (err) {
       // Barge-in / newer prompt aborted us — the newer respond() owns the floor.
-      if (ac.signal.aborted && String(ac.signal.reason?.message) !== 'llm_timeout') return
+      if (ac.signal.aborted && String(ac.signal.reason?.message) !== 'llm_timeout') {
+        relayDiag.note(relayDiag.lastTurns, { call: this.callRecordId, ms: Date.now() - startedAt, aborted: true })
+        return
+      }
       console.warn('[voice-relay] LLM stream failed:', err?.message ?? err)
+      relayDiag.note(relayDiag.lastTurns, {
+        call: this.callRecordId,
+        ms: Date.now() - startedAt,
+        error: String(err?.message ?? err).slice(0, 160),
+      })
       this.send({
         type: 'text',
         token: full
@@ -187,6 +206,9 @@ class RelaySession {
       })
     } finally {
       clearTimeout(watchdog)
+    }
+    if (full) {
+      relayDiag.note(relayDiag.lastTurns, { call: this.callRecordId, ms: Date.now() - startedAt, chars: full.length })
     }
     console.log(`[voice-relay] turn ${Date.now() - startedAt}ms — call ${this.callRecordId}`)
 
@@ -217,8 +239,18 @@ class RelaySession {
     this.abort?.abort()
     if (this.reported) return
     this.reported = true
-    await this.report().catch((err) =>
-      console.warn('[voice-relay] report failed:', err?.message ?? err))
+    try {
+      await this.report()
+      relayDiag.note(relayDiag.lastReports, { call: this.callRecordId, ok: true, turns: this.history.length })
+    } catch (err) {
+      console.warn('[voice-relay] report failed:', err?.message ?? err)
+      relayDiag.note(relayDiag.lastReports, {
+        call: this.callRecordId,
+        ok: false,
+        turns: this.history.length,
+        error: String(err?.message ?? err).slice(0, 160),
+      })
+    }
   }
 
   /** Post transcript + Gemini summary back to the app → owner notification. */
@@ -315,7 +347,13 @@ export function startVoiceRelayServer() {
     const url = new URL(req.url ?? '/', `http://127.0.0.1:${port}`)
     if (url.pathname === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ ok: true, service: 'voice-relay', recentUpgrades }))
+      res.end(JSON.stringify({
+        ok: true,
+        service: 'voice-relay',
+        recentUpgrades,
+        lastTurns: relayDiag.lastTurns,
+        lastReports: relayDiag.lastReports,
+      }))
       return
     }
     res.writeHead(404)
