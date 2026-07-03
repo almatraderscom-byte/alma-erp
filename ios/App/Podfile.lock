@@ -1,4 +1,6 @@
 PODS:
+  - AparajitaCapacitorBiometricAuth (9.0.0):
+    - Capacitor
   - Capacitor (7.6.6):
     - CapacitorCordova
   - CapacitorApp (7.1.2):
@@ -70,6 +72,7 @@ PODS:
     - OneSignalXCFramework/OneSignalOutcomes
 
 DEPENDENCIES:
+  - "AparajitaCapacitorBiometricAuth (from `../../node_modules/@aparajita/capacitor-biometric-auth`)"
   - "Capacitor (from `../../node_modules/@capacitor/ios`)"
   - "CapacitorApp (from `../../node_modules/@capacitor/app`)"
   - "CapacitorCordova (from `../../node_modules/@capacitor/ios`)"
@@ -86,6 +89,8 @@ SPEC REPOS:
     - OneSignalXCFramework
 
 EXTERNAL SOURCES:
+  AparajitaCapacitorBiometricAuth:
+    :path: "../../node_modules/@aparajita/capacitor-biometric-auth"
   Capacitor:
     :path: "../../node_modules/@capacitor/ios"
   CapacitorApp:
@@ -106,6 +111,7 @@ EXTERNAL SOURCES:
     :path: "../../node_modules/@onesignal/capacitor-plugin"
 
 SPEC CHECKSUMS:
+  AparajitaCapacitorBiometricAuth: 927af2690bc39fbebac98e58ce4e4d2d6178f335
   Capacitor: 05a1e43920a77b2607b6d7502734f70d182b01a8
   CapacitorApp: 6b89831465d6bc99bc89779b1b7f5327e33011ce
   CapacitorCordova: 3a4e0027a89a59421c918d19aee9d6ba1c7a3556
@@ -118,6 +124,6 @@ SPEC CHECKSUMS:
   OnesignalCapacitorPlugin: 4fa3fe705beed7295290b24025e12b7f5bc1ba7e
   OneSignalXCFramework: 2f46ff87ccefd9afe8e3b5f9fe357072191205ff
 
-PODFILE CHECKSUM: 4757ffa172b825697896675ef66c2dbbcd522241
+PODFILE CHECKSUM: 7e6d20019fe270d59b94bcf99ccc636cabb6bd5b
 
 COCOAPODS: 1.12.1
