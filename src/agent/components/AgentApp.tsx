@@ -1270,8 +1270,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   const handleVoiceMessage = useCallback(async (
     text: string,
     onEvent?: (evt: VoiceTurnEvent) => void,
+    resumeOpts?: { approve: boolean },
   ): Promise<string | null> => {
     const body: Record<string, unknown> = { message: text, voice: true }
+    if (resumeOpts) body.resume = resumeOpts
     // A voice turn on a fresh console creates a NEW conversation server-side —
     // that conv has no project, so the close-reload must not inherit the
     // previously-active conversation's projectId.
@@ -1325,6 +1327,21 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               costEstimate: typeof evt.costEstimate === 'number' ? evt.costEstimate : undefined,
               actionType: typeof evt.actionType === 'string' ? evt.actionType : undefined,
             })
+          } else if (evt.type === 'ask_card') {
+            // The head is ASKING the owner something — in voice this must be
+            // spoken, or the turn dies in silence (owner-reported gap #1).
+            onEvent?.({
+              type: 'ask_card',
+              askCardId: String(evt.askCardId ?? ''),
+              question: String(evt.question ?? ''),
+              options: Array.isArray(evt.options) ? (evt.options as unknown[]).map(String) : [],
+            })
+          } else if (evt.type === 'error') {
+            onEvent?.({ type: 'error', message: typeof evt.message === 'string' ? evt.message : undefined })
+          } else if (evt.type === 'verification_retry') {
+            onEvent?.({ type: 'verification_retry' })
+          } else if (evt.type === 'model_switch_required') {
+            onEvent?.({ type: 'model_switch_required' })
           }
         } catch { /* skip */ }
       }

@@ -6,6 +6,8 @@
  * orb-tap gesture, then reused for every reply.
  */
 
+import { normalizeForTts } from './tts-normalize'
+
 /** 1-sample silent WAV — enough for a gesture-credit play() on iOS. */
 const SILENT_WAV =
   'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA=='
@@ -138,6 +140,31 @@ export function playMicChime(): void {
   } catch { /* an earcon is never worth an error */ }
 }
 
+/** Descending two-note — the mic CLOSED without hearing anything (auto-listen
+ *  gave up). Without this the hands-free owner thinks it's still listening. */
+export function playMicCloseChime(): void {
+  try {
+    if (!_ttsCtx || _ttsCtx.state !== 'running') return
+    const ctx = _ttsCtx
+    const g = ctx.createGain()
+    g.gain.value = 0
+    g.connect(ctx.destination)
+    const note = (freq: number, at: number, dur: number) => {
+      const o = ctx.createOscillator()
+      o.type = 'sine'
+      o.frequency.value = freq
+      o.connect(g)
+      g.gain.setValueAtTime(0, ctx.currentTime + at)
+      g.gain.linearRampToValueAtTime(0.07, ctx.currentTime + at + 0.02)
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + at + dur)
+      o.start(ctx.currentTime + at)
+      o.stop(ctx.currentTime + at + dur + 0.02)
+    }
+    note(1174.7, 0, 0.12)
+    note(784, 0.09, 0.16)
+  } catch { /* best-effort */ }
+}
+
 /**
  * Live amplitude (0..1) of whatever the TTS element is speaking right now,
  * or -1 when no analyser is available (caller falls back to its envelope).
@@ -180,10 +207,12 @@ export function getTtsElement(): HTMLAudioElement {
 /**
  * Fetch TTS for one chunk of text and return a blob URL — does NOT touch the
  * shared element, so the next chunk can be fetched while the current one plays.
- * Caller owns revocation.
+ * Caller owns revocation. Text passes the deterministic Bangla normalizer so
+ * numbers/brands/URLs are pronounced, not letter-salad (prompt steering alone
+ * is not a guard).
  */
 export async function fetchTtsUrl(text: string): Promise<string> {
-  const clean = text.replace(/\s+/g, ' ').trim().slice(0, 1200)
+  const clean = normalizeForTts(text).replace(/\s+/g, ' ').trim().slice(0, 1200)
   if (!clean) throw new Error('empty text')
   const res = await fetch('/api/assistant/tts', {
     method: 'POST',

@@ -67,8 +67,8 @@ export function useVoiceRecorder(opts: {
   // from recording forever in that state (privacy + a 3-min blob nobody wanted).
   const maxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const visHandlerRef = useRef<(() => void) | null>(null)
-  const vadRef = useRef<{ hasSpoken: boolean; silenceStart: number; startedAt: number }>({
-    hasSpoken: false, silenceStart: 0, startedAt: 0,
+  const vadRef = useRef<{ hasSpoken: boolean; silenceStart: number; startedAt: number; firstSpeechAt: number }>({
+    hasSpoken: false, silenceStart: 0, startedAt: 0, firstSpeechAt: 0,
   })
   const callbacksRef = useRef(opts)
   useEffect(() => { callbacksRef.current = opts }, [opts])
@@ -151,7 +151,9 @@ export function useVoiceRecorder(opts: {
           callbacksRef.current.onError?.('ট্রান্সক্রিপশন ব্যর্থ।')
         }
       }
-      mr.start()
+      // Timeslice: chunks flush during recording, so the blob is ready the
+      // instant recording stops (no assemble delay on long dictation).
+      mr.start(500)
       setRecording(true)
       setRecordSecs(0)
       callbacksRef.current.onRecordingStart?.()
@@ -191,7 +193,7 @@ export function useVoiceRecorder(opts: {
             const SILENCE = 0.025  // RMS below this = quiet
             const silenceMs = callbacksRef.current.silenceMs ?? 1400
             const maxMs = callbacksRef.current.maxMs ?? 20000
-            vadRef.current = { hasSpoken: false, silenceStart: 0, startedAt: performance.now() }
+            vadRef.current = { hasSpoken: false, silenceStart: 0, startedAt: performance.now(), firstSpeechAt: 0 }
 
             const noSpeechMs = callbacksRef.current.noSpeechMs
             const tick = () => {
@@ -216,10 +218,17 @@ export function useVoiceRecorder(opts: {
                 return
               }
 
-              if (rms > SPEECH) { vad.hasSpoken = true; vad.silenceStart = 0 }
-              else if (rms < SILENCE && vad.hasSpoken) {
+              if (rms > SPEECH) {
+                vad.hasSpoken = true
+                vad.silenceStart = 0
+                if (!vad.firstSpeechAt) vad.firstSpeechAt = now
+              } else if (rms < SILENCE && vad.hasSpoken) {
+                // Adaptive endpointing: a short utterance ("হ্যাঁ", one clause)
+                // ends fast; only long dictation earns the full pause window.
+                const speechSpan = vad.firstSpeechAt ? now - vad.firstSpeechAt : 0
+                const effSilence = speechSpan < 3000 ? Math.min(1400, silenceMs) : silenceMs
                 if (!vad.silenceStart) vad.silenceStart = now
-                else if (now - vad.silenceStart >= silenceMs) {
+                else if (now - vad.silenceStart >= effSilence) {
                   if (mrRef.current?.state === 'recording') mrRef.current.stop()
                   return
                 }
