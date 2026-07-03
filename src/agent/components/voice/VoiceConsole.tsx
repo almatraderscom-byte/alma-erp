@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
+import { useStreamingStt } from '@/agent/hooks/useStreamingStt'
 import { useMicLevel } from '@/agent/hooks/useMicLevel'
 import { useWakeWord, useLiveTranscript, wakeWordSupported } from '@/agent/hooks/useWakeWord'
 import { useBargeIn } from '@/agent/hooks/useBargeIn'
@@ -150,13 +151,14 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
   // beat — turn after turn with zero taps, like talking to a person. The 8s
   // no-speech abort below is the loop's exit so the mic never stays hot alone.
   const recorderRef = useRef<{ start: () => Promise<void> | void } | null>(null)
+  const startListeningLateRef = useRef<() => void>(() => {})
   const autoListenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scheduleAutoListen = useCallback(() => {
     if (!convoModeRef.current || !openRef.current) return
     if (autoListenTimerRef.current) clearTimeout(autoListenTimerRef.current)
     autoListenTimerRef.current = setTimeout(() => {
       if (openRef.current && convoModeRef.current && stateRef.current === 'idle') {
-        recorderRef.current?.start()
+        startListeningLateRef.current()
       }
     }, 450)
   }, [])
@@ -316,6 +318,8 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
     onTranscribed: (text) => { void runTurn(text) },
     onError: (msg) => {
       toast.error(msg)
+      // Hands-free owner can't read a toast — say it (owner audit gap #5).
+      void speakLine('শুনতে পাইনি স্যার — আরেকবার বলুন।', () => openRef.current)
       setState('error')
       setTimeout(() => { if (openRef.current) setState('idle') }, 2000)
     },
@@ -331,6 +335,54 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
     },
   })
 
+  /* TRUE streaming STT (gap #12): words appear AS the owner speaks and the
+     final text lands ~1-2s sooner than record-then-upload. Any start failure
+     falls back to the recorder for that turn — streaming is an upgrade,
+     never a dependency. */
+  const sst = useStreamingStt({
+    onFinal: (text) => { void runTurn(text) },
+    onPartial: (liveText) => {
+      if (openRef.current && stateRef.current === 'listening') setTranscript(liveText)
+    },
+    onNoSpeech: () => {
+      if (!openRef.current) return
+      playMicCloseChime()
+      voiceHaptic(false)
+      setState('idle')
+    },
+    onError: (msg) => {
+      toast.error(msg)
+      void speakLine('শুনতে পাইনি স্যার — আরেকবার বলুন।', () => openRef.current)
+      setState('error')
+      setTimeout(() => { if (openRef.current) setState('idle') }, 2000)
+    },
+    onStart: () => { playMicChime(); voiceHaptic(true); setState('listening') },
+    onStop: () => {
+      voiceHaptic(false)
+      if (stateRef.current === 'listening') {
+        setState('transcribing')
+        ackPlayedRef.current = playInstantAck(SPOKEN_ACKS[Math.floor(Math.random() * SPOKEN_ACKS.length)])
+      }
+    },
+    silenceMs: 2600,
+    maxMs: 180000,
+    noSpeechMs: 8000,
+  })
+  const sstRef = useRef(sst)
+  useEffect(() => { sstRef.current = sst })
+
+  /** One entry point for "open the mic": streaming first, recorder fallback. */
+  const startListening = useCallback(() => {
+    void sstRef.current.start().catch(() => {
+      if (openRef.current) void recorderRef.current?.start()
+    })
+  }, [])
+  const startListeningRef = useRef(startListening)
+  useEffect(() => {
+    startListeningRef.current = startListening
+    startListeningLateRef.current = startListening // auto-listen loop uses the same door
+  })
+
   const micLevel = useMicLevel(recorder.stream, recorder.recording)
   useEffect(() => { recorderRef.current = recorder })
 
@@ -340,15 +392,15 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
   const wakeAvailable = wakeWordSupported()
   const [wakeMode, setWakeMode] = useState(true)
   useWakeWord(
-    open && wakeAvailable && wakeMode && state === 'idle' && !recorder.recording,
+    open && wakeAvailable && wakeMode && state === 'idle' && !recorder.recording && !sst.active,
     () => {
-      if (openRef.current && stateRef.current === 'idle') recorderRef.current?.start()
+      if (openRef.current && stateRef.current === 'idle') startListeningRef.current()
     },
   )
 
-  /* Live transcript while recording — the owner sees his words appear as he
-     speaks (where the browser supports it; cosmetic, STT stays authoritative). */
-  useLiveTranscript(open && state === 'listening', (liveText) => {
+  /* Live transcript while recording — SpeechRecognition path only matters on
+     the recorder fallback; the streaming path gets real partials from STT. */
+  useLiveTranscript(open && state === 'listening' && !sst.active, (liveText) => {
     if (openRef.current && stateRef.current === 'listening') setTranscript(liveText)
   })
 
@@ -361,7 +413,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
       if (openRef.current && stateRef.current === 'idle') {
         setTranscript('')
         setReply('')
-        recorderRef.current?.start()
+        startListeningRef.current()
       }
     }, 150)
   })
@@ -428,7 +480,8 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
     // can actually sound on iOS WKWebView (autoplay policy).
     unlockTtsAudio()
     if (state === 'listening') {
-      recorder.stop()
+      if (sst.active) sst.stop()
+      else recorder.stop()
     } else if (state === 'speaking') {
       // barge-in: stop the reply, start listening again
       stopTts()
@@ -437,15 +490,15 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
         if (openRef.current) {
           setTranscript('')
           setReply('')
-          recorder.start()
+          startListening()
         }
       }, 200)
     } else if (state === 'idle' || state === 'error') {
       setTranscript('')
       setReply('')
-      recorder.start()
+      startListening()
     }
-  }, [state, recorder, stopTts])
+  }, [state, recorder, sst, stopTts, startListening])
 
   /** Approve/reject a pending action right here — no trip back to the chat.
    *  409/410/404 mean "already settled elsewhere/expired" — calm, never red. */
@@ -475,18 +528,20 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
 
   const handleClose = useCallback(() => {
     recorder.cancel()
+    sst.cancel()
     stopTts()
     setState('idle')
     setTranscript('')
     setReply('')
     setCards([])
     onClose()
-  }, [recorder, stopTts, onClose])
+  }, [recorder, sst, stopTts, onClose])
 
   useEffect(() => {
     if (!open) {
       if (autoListenTimerRef.current) { clearTimeout(autoListenTimerRef.current); autoListenTimerRef.current = null }
       recorder.cancel()
+      sst.cancel()
       stopTts()
       setState('idle')
       setTranscript('')
@@ -542,7 +597,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
               whileTap={{ scale: 0.95 }}
               aria-label="ভয়েস কন্ট্রোল"
             >
-              <FluidOrb state={state} micLevel={micLevel} size={Math.min(280, typeof window !== 'undefined' ? window.innerWidth * 0.62 : 280)} />
+              <FluidOrb state={state} micLevel={sst.active ? sst.level : micLevel} size={Math.min(280, typeof window !== 'undefined' ? window.innerWidth * 0.62 : 280)} />
             </motion.button>
 
             {/* transcript + reply */}
@@ -642,7 +697,9 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
           {/* bottom dock */}
           <div className="vc-dock">
             {state === 'speaking' && <p className="hint">ট্যাপ করে থামান ও কথা বলুন</p>}
-            {state === 'listening' && <p className="hint">চুপ করলেই পাঠিয়ে দেব — তাড়া নেই, {Math.floor(recorder.recordSecs / 60)}:{String(recorder.recordSecs % 60).padStart(2, '0')}</p>}
+            {state === 'listening' && (() => { const s = sst.active ? sst.seconds : recorder.recordSecs; return (
+              <p className="hint">চুপ করলেই পাঠিয়ে দেব — তাড়া নেই, {Math.floor(s / 60)}:{String(s % 60).padStart(2, '0')}</p>
+            ) })()}
             <div className="vc-dockrow">
               <button
                 type="button"
