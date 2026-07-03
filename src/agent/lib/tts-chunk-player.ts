@@ -1,6 +1,6 @@
 'use client'
 
-import { fetchTtsUrl, getTtsElement } from './voice-tts-client'
+import { fetchTtsUrl, getTtsElement, resumeTtsRoute } from './voice-tts-client'
 
 /**
  * Sentence-chunked streaming TTS — the reply starts SOUNDING as soon as its
@@ -67,6 +67,7 @@ export function createTtsChunkPlayer(handlers: {
     }
     el.src = url
     el.muted = false
+    resumeTtsRoute() // a suspended WebAudio route would mute the reply
     el.play().catch(() => {
       // Autoplay refused (shouldn't happen on the unlocked element) — skip audio,
       // keep the pipeline draining so onDone still fires and the loop continues.

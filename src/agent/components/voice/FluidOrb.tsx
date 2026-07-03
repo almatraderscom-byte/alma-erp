@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import type { VoiceState } from '@/agent/lib/voice-types'
+import { getTtsLevel } from '@/agent/lib/voice-tts-client'
 import { VoiceOrb } from './VoiceOrb'
 
 /**
@@ -30,13 +31,15 @@ const HUES: Record<VoiceState, number> = {
   error: 8,
 }
 
-/** Target "aliveness" per state; listening additionally rides the live mic level. */
-function activityTarget(state: VoiceState, micLevel: number, env: number): number {
+/** Target "aliveness" per state; listening rides the live mic level and
+ *  speaking rides the LIVE TTS amplitude (real voice↔orb sync, like Siri) —
+ *  `env` is only the fallback when no analyser is available. */
+function activityTarget(state: VoiceState, micLevel: number, env: number, ttsLevel: number): number {
   switch (state) {
     case 'listening': return 0.3 + Math.min(Math.max(micLevel, 0), 1) * 0.6
     case 'transcribing': return 0.6
     case 'thinking': return 0.85
-    case 'speaking': return 0.25 + env * 0.65
+    case 'speaking': return ttsLevel >= 0 ? 0.18 + ttsLevel * 0.75 : 0.25 + env * 0.65
     case 'error': return 0.3
     default: return 0.12
   }
@@ -208,7 +211,8 @@ export function FluidOrb({
       hue += (hueTarget - hue) * Math.min(1, dt * 4.2)
 
       const env = Math.max(0, Math.sin(t * 3.4)) * Math.max(0, Math.sin(t * 1.24 + 1.6))
-      const actTarget = activityTarget(st, micRef.current, env)
+      const ttsLevel = st === 'speaking' ? getTtsLevel() : -1
+      const actTarget = activityTarget(st, micRef.current, env, ttsLevel)
       activity += (actTarget - activity) * Math.min(1, dt * 5.5)
 
       /* waveform ring */
@@ -226,7 +230,10 @@ export function FluidOrb({
               // real mic level shapes the ring; per-bar noise keeps it organic
               target = 2 + mic * 22 * Math.abs(Math.sin(t * 2.1 + i * 0.7)) + Math.random() * 3
             } else if (st === 'speaking') {
-              target = 2 + env * (7 + Math.abs(Math.sin(i * 1.3 + t * 5)) * 13)
+              // real spoken-audio amplitude when the analyser is routed;
+              // synthetic envelope only as fallback
+              const lv = ttsLevel >= 0 ? ttsLevel : env
+              target = 2 + lv * (6 + Math.abs(Math.sin(i * 1.3 + t * 5)) * 18)
             } else {
               target = 1.2 + Math.sin(t * 0.9 + i * 0.35) * 0.8
             }

@@ -22,6 +22,61 @@ function getElement(): HTMLAudioElement {
   return _ttsAudio
 }
 
+/* ---- real voice↔orb sync ----------------------------------------------
+ * Siri's orb dances to the ACTUAL audio. We route the persistent element
+ * through a WebAudio analyser so the orb/waveform read the live amplitude of
+ * the spoken reply instead of a simulated envelope. createMediaElementSource
+ * is once-per-element and reroutes output through the context, so this must
+ * only ever run inside a user gesture (unlockTtsAudio) and always reconnects
+ * to destination — if anything fails we leave the element untouched and the
+ * orb falls back to the envelope. */
+let _ttsCtx: AudioContext | null = null
+let _ttsAnalyser: AnalyserNode | null = null
+let _ttsBuf: Uint8Array | null = null
+let _routeAttempted = false
+
+function ensureTtsAnalyser(): void {
+  if (_routeAttempted || typeof window === 'undefined') return
+  _routeAttempted = true
+  try {
+    const AC: typeof AudioContext =
+      window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+    if (!AC) return
+    const el = getElement()
+    const ctx = new AC()
+    const src = ctx.createMediaElementSource(el)
+    const analyser = ctx.createAnalyser()
+    analyser.fftSize = 256
+    analyser.smoothingTimeConstant = 0.55
+    src.connect(analyser)
+    analyser.connect(ctx.destination)
+    _ttsCtx = ctx
+    _ttsAnalyser = analyser
+    _ttsBuf = new Uint8Array(analyser.frequencyBinCount)
+  } catch {
+    _ttsCtx = null
+    _ttsAnalyser = null
+  }
+}
+
+/** Keep the routed context running — a suspended context would mute the reply. */
+export function resumeTtsRoute(): void {
+  if (_ttsCtx && _ttsCtx.state === 'suspended') void _ttsCtx.resume().catch(() => {})
+}
+
+/**
+ * Live amplitude (0..1) of whatever the TTS element is speaking right now,
+ * or -1 when no analyser is available (caller falls back to its envelope).
+ */
+export function getTtsLevel(): number {
+  if (!_ttsAnalyser || !_ttsBuf) return -1
+  resumeTtsRoute()
+  _ttsAnalyser.getByteFrequencyData(_ttsBuf)
+  let sum = 0
+  for (let i = 0; i < _ttsBuf.length; i++) sum += _ttsBuf[i]
+  return Math.min(1, (sum / _ttsBuf.length / 255) * 2.4)
+}
+
 /**
  * Call from a REAL user gesture (the orb tap). Plays a silent wav muted on the
  * persistent element so WKWebView marks it gesture-activated; later play()
@@ -30,6 +85,10 @@ function getElement(): HTMLAudioElement {
 export function unlockTtsAudio(): void {
   if (typeof window === 'undefined') return
   try {
+    // Inside the tap gesture: also build the analyser route (once) and keep
+    // its context running — both need gesture credit on iOS.
+    ensureTtsAnalyser()
+    resumeTtsRoute()
     const el = getElement()
     // Don't clobber an actively-playing reply (barge-in taps land here too).
     if (!el.paused) return
