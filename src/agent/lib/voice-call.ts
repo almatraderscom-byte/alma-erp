@@ -296,8 +296,14 @@ async function placeRelayCall(
       `<Response><Connect>` +
       `<ConversationRelay url="${escapeXmlAttr(wssUrl)}"` +
       ` welcomeGreeting="${escapeXmlAttr(firstMessage)}"` +
+      // STT: Google's telephony (default) model has NO Bengali; bn-IN only exists
+      // on chirp models Twilio doesn't expose. bn-BD + "long" is supported in the
+      // global region (verified against Google's STT language matrix) — and callers
+      // are Bangladeshi anyway. Env-tunable in case Twilio's matrix shifts.
       ` ttsProvider="Google" voice="${RELAY_TTS_VOICE}"` +
-      ` transcriptionProvider="Google" transcriptionLanguage="bn-IN">` +
+      ` transcriptionProvider="${process.env.VOICE_RELAY_STT_PROVIDER ?? 'Google'}"` +
+      ` transcriptionLanguage="${process.env.VOICE_RELAY_STT_LANGUAGE ?? 'bn-BD'}"` +
+      ` speechModel="${process.env.VOICE_RELAY_STT_MODEL ?? 'long'}">` +
       `<Parameter name="callRecordId" value="${escapeXmlAttr(callRecordId)}"/>` +
       `<Parameter name="purpose" value="${escapeXmlAttr(purpose)}"/>` +
       `<Parameter name="recipientName" value="${escapeXmlAttr(recipientName ?? '')}"/>` +
