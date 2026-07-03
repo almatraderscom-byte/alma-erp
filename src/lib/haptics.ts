@@ -33,6 +33,19 @@ let switchShim: HTMLLabelElement | null = null
 
 function iosSwitchTick(): boolean {
   if (typeof document === 'undefined' || !document.body) return false
+  // CRITICAL: the tick fires by clicking a hidden <input type=checkbox switch>.
+  // Clicking a form control moves focus to it — so while the user is typing (the
+  // keyboard-typing haptic fires on EVERY keystroke via HapticBridge), this would
+  // blur the field and DISMISS THE KEYBOARD on the first keystroke, dropping the
+  // character. In the native-frame shell the plain WebViews aren't Capacitor, so
+  // every haptic falls through to this shim — which made typing impossible in every
+  // webview input (composer, search, forms). When an editable element is focused,
+  // skip the tick (the OS keyboard has its own key feedback) rather than steal focus.
+  const active = document.activeElement as HTMLElement | null
+  if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' ||
+                 active.tagName === 'SELECT' || active.isContentEditable)) {
+    return false
+  }
   try {
     if (!switchShim || !switchShim.isConnected) {
       const label = document.createElement('label')
