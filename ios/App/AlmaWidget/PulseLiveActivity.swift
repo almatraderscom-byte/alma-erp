@@ -92,7 +92,24 @@ private struct PulseLockScreenView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(PulsePalette.background)
+        .background(PulseGlassBackground())
+    }
+}
+
+/// Phase N5 — "glass-ready" lock-screen backdrop. On iOS 16.1+ a faint material is
+/// layered over the near-black brand background for subtle depth (a step toward
+/// Liquid Glass); the flat fill remains the base. Swap the material for
+/// `.glassEffect(...)` on the iOS 26 SDK to adopt true Liquid Glass — see
+/// ios/App/FEATURES.md. Material keeps this compiling on any modern SDK.
+@available(iOS 16.1, *)
+private struct PulseGlassBackground: View {
+    var body: some View {
+        ZStack {
+            PulsePalette.background
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(0.28)
+        }
     }
 }
 

@@ -117,12 +117,30 @@ private struct DestinationTile: View {
                 .minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AlmaPalette.tile)
+        .background(AlmaGlassSurface())
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(AlmaPalette.gold.opacity(0.18), lineWidth: 1)
         )
+    }
+}
+
+/// Phase N5 — a translucent, "glass-ready" tile surface. On iOS 16+ a faint
+/// material is layered over the tile tint for depth (a step toward Liquid Glass);
+/// below that it degrades to the flat tint. To adopt TRUE Liquid Glass, swap the
+/// material line for `.glassEffect(...)` when building against the iOS 26 SDK — see
+/// ios/App/FEATURES.md. Kept as material so the widget compiles on any modern SDK.
+private struct AlmaGlassSurface: View {
+    var body: some View {
+        ZStack {
+            AlmaPalette.tile
+            if #available(iOS 16.0, *) {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.35)
+            }
+        }
     }
 }
 

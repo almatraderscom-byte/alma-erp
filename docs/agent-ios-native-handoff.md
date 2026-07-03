@@ -23,7 +23,7 @@ Everything below is LIVE on TestFlight build 8 and verified in code (CI + device
 | # | Wishlist item | Status | Note |
 |---|---|---|---|
 | Xcode/Swift6/SwiftUI/MVVM scaffold | — | **N/A** | App is a Capacitor WebView shell by design (UI = live Next.js site). Native SwiftUI exists only in widget/Live Activity — keep it that way. |
-| 1–2 Liquid Glass / layered UI | Partial | **Phase N5** | Applies only to native surfaces (widget, Live Activity, future lock screens). Adopt glass materials behind `#available`. Web UI unaffected. |
+| 1–2 Liquid Glass / layered UI | 🚧 Code done (build 13) | **Phase N5** | Translucent material surfaces on widget + Live Activity behind `#available`; true `glassEffect` is a documented one-line swap on the iOS 26 SDK (FEATURES.md). |
 | 3 App Intents (basic) | ✅ Done | 3 open-intents shipped (build 7) | |
 | 3+11 App Intents **entities** + Spotlight semantic index | 🚧 Code done (build 11) | **Phase N3** | `OrderEntity`/`ProductEntity` + `OpenOrderIntent(order:)` via App Group cache. **Needs App Group provisioned; awaiting device verification.** |
 | 4 Foundation Models (on-device LLM) | 🚧 Code done (build 9) | **Phase N1** | Bridge plugin → web falls back to server LLM when unavailable. Zero-cost offline summarize/classify. **Awaiting device verification.** |
@@ -87,8 +87,14 @@ Everything below is LIVE on TestFlight build 8 and verified in code (CI + device
 - Effect: reminders stay fresh even if the app isn't opened for days. (Live Pulse refresh needs ActivityKit from the app process; kept to the foreground `LivePulseManager` tick for now — a background pulse push is a future add via APNs-driven Live Activity.)
 
 ### Phase N5 — Liquid Glass + iOS 27 polish
-- Widget + Live Activity: adopt glass materials/`glassEffect` behind `#available(iOS 26,*)`/27 checks with current flat-dark fallback; scroll-minimized accessory styles where applicable.
-- Add `FEATURES.md` (repo root of `ios/App/`) tracking baseline-vs-enhanced per the owner's rules; keep availability checks at module level (the codebase already follows this — keep it).
+
+**Status (build 13): code complete, pending device verification.** Shipped:
+- `ios/App/AlmaWidget/AlmaWidget.swift` — `AlmaGlassSurface` layers `.ultraThinMaterial` over the tile tint (iOS 16+) for the medium-widget destination tiles, flat-dark fallback underneath.
+- `ios/App/AlmaWidget/PulseLiveActivity.swift` — `PulseGlassBackground` layers material over the lock-screen banner backdrop (iOS 16.1+), flat fill base.
+- `ios/App/FEATURES.md` — baseline-vs-enhanced capability matrix per the owner's rule, with the exact `glassEffect` upgrade snippet.
+- `CURRENT_PROJECT_VERSION` 12 → 13 (all 4 lockstep). No new source files → no pbxproj file additions; no web change → no gate/vitest.
+- ⚠️ **True Liquid Glass (`glassEffect`) intentionally deferred** — it only compiles against the iOS 26 SDK and, unlike the `#if canImport`-guarded FoundationModels/Speech code, a bare SwiftUI call can't be per-SDK excluded, so writing it blind risks breaking the device build on an older Xcode. Shipped material now; FEATURES.md has the one-line swap to adopt `glassEffect` once the build Mac is confirmed on the iOS 26 SDK.
+- iOS 27 stretch (scroll-minimized accessory styles, status-tinted glass, View Annotations): documented in FEATURES.md, not built.
 
 ## 4. Non-negotiable conventions (learned the hard way today)
 
