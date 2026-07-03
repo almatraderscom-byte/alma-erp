@@ -607,10 +607,12 @@ row (end of that section), added to the **App** group `504EC3061FED79650016851F`
 
 ### C. Build number
 
-`CURRENT_PROJECT_VERSION` bumped `8 → 9` in all **4** App-target/project places
-(the widget target's own `CURRENT_PROJECT_VERSION = 6` is separate and untouched).
-The web gate `MIN_NATIVE_BUILD = 9` in `src/lib/native-intelligence.ts` matches, so
-the plugin is never probed on a binary that lacks it.
+`CURRENT_PROJECT_VERSION` bumped `8 → 9` in all **4** places. NOTE: those 4 are the
+App target Debug/Release **and** the widget extension Debug/Release — they move in
+**lockstep** (an app extension's `CFBundleVersion` must equal the host app's or App
+Store Connect rejects the upload). The web gate `MIN_NATIVE_BUILD = 9` in
+`src/lib/native-intelligence.ts` matches, so the plugin is never probed on a binary
+that lacks it.
 
 ### D. API / availability caveats
 
@@ -683,3 +685,78 @@ Web gate `MIN_NATIVE_BUILD = 10` in `src/lib/native-speech.ts` matches.
   Whisper.
 - ⚠️ On-device STT is **owner-opt-in** (web flag `alma_native_stt`, default OFF) so
   the owner A/B-tests Bangla accuracy vs Whisper before switching over.
+
+---
+
+## Phase N3 additions — App Intents entities + Spotlight (App Group)
+
+Build 11. Adds two **App-target** Swift files, an **App Group** shared between the
+App and Widget targets, and a fourth local plugin. This is the first phase to touch
+**entitlements + signing**, so read §C carefully.
+
+### A. New files
+
+| File                             | App target | Widget target |
+|----------------------------------|:----------:|:-------------:|
+| `App/AlmaEntities.swift`         | ✅          | —             |
+| `App/EntityCacheBridge.swift`    | ✅          | —             |
+| `AlmaWidget/AlmaWidget.entitlements` | —      | ✅ (signing)  |
+
+- `AlmaEntities.swift` — `OrderEntity` + `ProductEntity` (`AppEntity` + `EntityQuery`
+  reading the App Group cache) and a parameterized `OpenOrderIntent(order:)` that
+  deep-links `almaerp://orders/<id>` (DeepLinkManager already routes it — no web
+  routing change).
+- `EntityCacheBridge.swift` — `EntityCacheBridgePlugin.setEntities({orders,products})`
+  writes JSON into `UserDefaults(suiteName: "group.com.almatraders.erp")` and calls
+  `AlmaShortcuts.updateAppShortcutParameters()`.
+- Registered in `AlmaBridgeViewController.capacitorDidLoad()` (4th `registerPluginInstance`).
+
+### B. `project.pbxproj` additions — reserved IDs (prefix `F1AA66`)
+
+| ID                         | Object kind      | Represents                                     |
+|----------------------------|------------------|------------------------------------------------|
+| `F1AA6600000000000000A001` | PBXFileReference | `App/AlmaEntities.swift`                       |
+| `F1AA6600000000000000A002` | PBXFileReference | `App/EntityCacheBridge.swift`                  |
+| `F1AA6600000000000000A003` | PBXFileReference | `AlmaWidget/AlmaWidget.entitlements`           |
+| `F1AA6600000000000000B001` | PBXBuildFile     | AlmaEntities.swift in **App** Sources          |
+| `F1AA6600000000000000B002` | PBXBuildFile     | EntityCacheBridge.swift in **App** Sources     |
+
+The two `.swift` files go into the App group + App Sources phase; the widget
+entitlements file is added to the `AlmaWidget` group and referenced by
+`CODE_SIGN_ENTITLEMENTS` (below), not compiled.
+
+### C. Entitlements + signing (⚠️ the risky part for the device build)
+
+- App Group `group.com.almatraders.erp` added to **both** targets:
+  - `App/App.entitlements` gains a `com.apple.security.application-groups` array.
+  - New `AlmaWidget/AlmaWidget.entitlements` with the same group;
+    `CODE_SIGN_ENTITLEMENTS = AlmaWidget/AlmaWidget.entitlements` added to the
+    widget's **Debug and Release** build configs (`D002`/`D003`). The App target
+    already pointed at `App/App.entitlements`.
+- **Automatic signing must provision the App Group.** With
+  `-allowProvisioningUpdates` Xcode usually registers the "App Groups" capability
+  and the `group.com.almatraders.erp` identifier for BOTH app IDs
+  (`com.almatraders.erp` and `com.almatraders.erp.widget`) on first build. If it
+  does NOT (some accounts require it), the owner enables **App Groups →
+  `group.com.almatraders.erp`** for both App IDs in the Apple Developer portal, then
+  rebuilds. The plugin is fail-open — if the group isn't provisioned it resolves
+  `{saved:false}` and nothing breaks — but entities won't populate until it is.
+
+### D. Build number
+
+`CURRENT_PROJECT_VERSION` `10 → 11` in all 4 lockstep places. Web gate
+`MIN_NATIVE_BUILD = 11` in `src/lib/native-entities.ts` matches.
+
+### E. Data path + availability caveats
+
+- Native can't read the web session: the web POSTs recent orders to the bridge via
+  `syncNativeEntities()` (`src/lib/native-entities.ts`, wired into `LivePulseManager`
+  on the same throttled open/resume tick), fed by `/api/assistant/native-entities`
+  (owner-only, no money exposed).
+- `AppEntity`/`EntityQuery`/parameterized intents are iOS 16+ and compile against the
+  current SDK. Everything reads the cache read-only and yields an empty list on a
+  missing/malformed cache — never traps.
+- `ProductEntity` is wired but the feed returns `products: []` (no separate product
+  catalog yet) — populate later when a product source exists.
+- iOS 27 Spotlight semantic-index schemas + View Annotations are a documented future
+  stretch, not built here.

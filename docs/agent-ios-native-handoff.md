@@ -25,7 +25,7 @@ Everything below is LIVE on TestFlight build 8 and verified in code (CI + device
 | Xcode/Swift6/SwiftUI/MVVM scaffold | — | **N/A** | App is a Capacitor WebView shell by design (UI = live Next.js site). Native SwiftUI exists only in widget/Live Activity — keep it that way. |
 | 1–2 Liquid Glass / layered UI | Partial | **Phase N5** | Applies only to native surfaces (widget, Live Activity, future lock screens). Adopt glass materials behind `#available`. Web UI unaffected. |
 | 3 App Intents (basic) | ✅ Done | 3 open-intents shipped (build 7) | |
-| 3+11 App Intents **entities** + Spotlight semantic index | ❌ Missing | **Phase N3** | Orders/products as `AppEntity`, parameterized intents, iOS 27 entity schemas behind `#available`. |
+| 3+11 App Intents **entities** + Spotlight semantic index | 🚧 Code done (build 11) | **Phase N3** | `OrderEntity`/`ProductEntity` + `OpenOrderIntent(order:)` via App Group cache. **Needs App Group provisioned; awaiting device verification.** |
 | 4 Foundation Models (on-device LLM) | 🚧 Code done (build 9) | **Phase N1** | Bridge plugin → web falls back to server LLM when unavailable. Zero-cost offline summarize/classify. **Awaiting device verification.** |
 | 5 SpeechAnalyzer (on-device STT) | 🚧 Code done (build 10) | **Phase N2** | On-device `SFSpeechRecognizer` engine shipped (free + offline); iOS 26 `SpeechAnalyzer` is a documented upgrade. Owner-opt-in flag, **awaiting device verification.** |
 | 6 Writing Tools | ✅ Mostly free | WKWebView text fields inherit system Writing Tools on supported iOS — verify, don't build. |
@@ -64,10 +64,16 @@ Everything below is LIVE on TestFlight build 8 and verified in code (CI + device
 - Success metric: Whisper API spend drops; Bangla accuracy owner-verified (flip `alma_native_stt` ON and A/B-test on device).
 
 ### Phase N3 — App Intents entities + Spotlight
-- `OrderEntity` (id, title, status) + `ProductEntity` as `AppEntity` with `EntityQuery`. Data source: native cannot read the web session — add a tiny App Group cache: the web app POSTs recent entities to the bridge (`EntityCacheBridgePlugin.setEntities`), plugin persists to App Group `group.com.almatraders.erp` (add the entitlement to BOTH targets), queries read the cache.
-- Parameterized intent `OpenOrderIntent(order: OrderEntity)` → `almaerp://orders/<id>`.
-- iOS 27 stretch: entity/intent schemas for the Spotlight semantic index; View Annotations.
-- This phase also unlocks wishlist #9 (system-suggested contextual actions).
+
+**Status (build 11): code complete, pending App Group provisioning + device verification.** Shipped:
+- `ios/App/App/AlmaEntities.swift` — `OrderEntity` (id, title, status) + `ProductEntity` as `AppEntity` with `EntityQuery` reading the App Group cache; parameterized `OpenOrderIntent(order:)` → `almaerp://orders/<id>` (DeepLinkManager already routes `/orders/<id>` — no web routing change). Unlocks wishlist #9 (system-suggested contextual actions via `suggestedEntities`).
+- `ios/App/App/EntityCacheBridge.swift` — `EntityCacheBridgePlugin.setEntities({orders,products})` persists JSON to App Group `group.com.almatraders.erp` and refreshes `AlmaShortcuts.updateAppShortcutParameters()`. Registered in `AlmaBridgeViewController` (4th plugin). Fail-open (`{saved:false}` if the group isn't provisioned).
+- **App Group entitlement on BOTH targets:** `App/App.entitlements` + new `AlmaWidget/AlmaWidget.entitlements`; `CODE_SIGN_ENTITLEMENTS` wired for the widget's Debug/Release configs. ⚠️ Automatic signing must provision the group for both app IDs — if it doesn't, enable **App Groups → `group.com.almatraders.erp`** for `com.almatraders.erp` and `com.almatraders.erp.widget` in the Apple Developer portal, then rebuild (see INTEGRATION.md §C).
+- pbxproj surgery, prefix `F1AA66`; `CURRENT_PROJECT_VERSION` 10 → 11 (all 4 lockstep places — app + widget move together, required by App Store Connect).
+- `/api/assistant/native-entities` — owner-only feed of recent orders (id, customer+product title, status; **no money**), `products: []` for now.
+- `src/lib/native-entities.ts` — feature-detect + **build gate 11** + `syncNativeEntities()`; wired into `LivePulseManager` on the same native-only throttled open/resume tick. Fail-open.
+- Vitest: `src/lib/__tests__/native-entities.test.ts` (gate / plugin-absent / non-OK / reject → all no-op; happy path pushes to bridge).
+- iOS 27 Spotlight semantic-index schemas + View Annotations: documented future stretch, not built.
 
 ### Phase N4 — Background refresh
 - `BGAppRefreshTask` (id `com.almatraders.erp.refresh`, `UIBackgroundModes: fetch` + `BGTaskSchedulerPermittedIdentifiers` in Info.plist) scheduled from AppDelegate.

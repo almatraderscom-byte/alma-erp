@@ -20,5 +20,6 @@ class AlmaBridgeViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(LiveActivityBridgePlugin())
         bridge?.registerPluginInstance(NativeIntelligenceBridgePlugin())
         bridge?.registerPluginInstance(NativeSpeechBridgePlugin())
+        bridge?.registerPluginInstance(EntityCacheBridgePlugin())
     }
 }
