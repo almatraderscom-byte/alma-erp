@@ -18,5 +18,6 @@ import UIKit
 class AlmaBridgeViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(LiveActivityBridgePlugin())
+        bridge?.registerPluginInstance(NativeIntelligenceBridgePlugin())
     }
 }

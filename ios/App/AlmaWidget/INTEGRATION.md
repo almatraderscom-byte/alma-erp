@@ -571,3 +571,57 @@ the widget plist needs it so the extension advertises Live Activity rendering.
 - Everything is additionally wrapped in `#if canImport(ActivityKit)` and
   `@available(iOS 16.1, *)`; on unsupported OS the bridge resolves `started:false` /
   `ended:false` and never traps.
+
+---
+
+## Phase N1 additions — NativeIntelligenceBridge (Foundation Models)
+
+Build 9. Adds one **App-target-only** Swift file — a second local Capacitor plugin
+(`NativeIntelligenceBridgePlugin`) exposing Apple's on-device Foundation Models to
+the web layer for free/offline summarize + classify. No new target, no widget
+change, no new plist keys (Foundation Models needs no `NS*UsageDescription`).
+
+### A. New file and target
+
+| File                                    | App target | Widget target |
+|-----------------------------------------|:----------:|:-------------:|
+| `App/NativeIntelligenceBridge.swift`    | ✅          | —             |
+
+Registered at runtime in `AlmaBridgeViewController.capacitorDidLoad()` via a second
+`bridge?.registerPluginInstance(NativeIntelligenceBridgePlugin())` line — same
+mechanism as `LiveActivityBridgePlugin`.
+
+### B. `project.pbxproj` additions — reserved IDs (prefix `D1AA44`)
+
+New, 24-hex-char, non-colliding with existing `504EC3…` / `A1AA11…` / `B1AA22…` /
+`C1AA33…` IDs.
+
+| ID                         | Object kind      | Represents                                        |
+|----------------------------|------------------|---------------------------------------------------|
+| `D1AA4400000000000000A001` | PBXFileReference | `App/NativeIntelligenceBridge.swift`              |
+| `D1AA4400000000000000B001` | PBXBuildFile     | NativeIntelligenceBridge.swift in **App** Sources |
+
+Placement: one `PBXBuildFile` row (end of that section), one `PBXFileReference`
+row (end of that section), added to the **App** group `504EC3061FED79650016851F`
+`children`, and to the **App** Sources phase `504EC3001FED79650016851F` `files`.
+
+### C. Build number
+
+`CURRENT_PROJECT_VERSION` bumped `8 → 9` in all **4** App-target/project places
+(the widget target's own `CURRENT_PROJECT_VERSION = 6` is separate and untouched).
+The web gate `MIN_NATIVE_BUILD = 9` in `src/lib/native-intelligence.ts` matches, so
+the plugin is never probed on a binary that lacks it.
+
+### D. API / availability caveats
+
+- Wrapped in `#if canImport(FoundationModels)` + `#available(iOS 26, *)`. Below
+  iOS 26, on non-eligible hardware, or when Apple Intelligence isn't
+  enabled/ready, every method resolves a falsy result (`available:false` /
+  `onDevice:false`) and never traps — the web layer then uses its server fallback.
+- FoundationModels requires **no** privacy-usage plist key (unlike Face ID / mic /
+  camera), so there is nothing to add to `Info.plist` for this phase.
+- `classify` uses guided generation (`@Generable` `Classification`) and the Swift
+  side additionally post-validates the chosen label against the caller's list, so
+  an off-list answer falls back rather than being trusted.
+- ⚠️ Bangla output quality is UNVERIFIED on-device — do not wire this to
+  customer-facing / Bangla output until the owner A/B-tests it on his iPhone.
