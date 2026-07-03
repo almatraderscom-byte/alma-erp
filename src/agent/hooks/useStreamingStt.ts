@@ -162,9 +162,11 @@ export function useStreamingStt(opts: {
     const node = new AudioWorkletNode(ctx, 'alma-pcm-tap')
     source.connect(node)
 
-    // 3 — realtime socket (browser auth rides the subprotocols; GA shape —
-    // model in the query string, no beta protocol)
-    const ws = new WebSocket('wss://api.openai.com/v1/realtime?model=gpt-4o-transcribe', [
+    // 3 — realtime socket (browser auth rides the subprotocols). NO ?model=
+    // query: the ephemeral token already binds the transcription session, and
+    // a model param is rejected in transcription mode (verified live —
+    // 'invalid_model'; bare URL answers session.created).
+    const ws = new WebSocket('wss://api.openai.com/v1/realtime', [
       'realtime',
       `openai-insecure-api-key.${key}`,
     ])
