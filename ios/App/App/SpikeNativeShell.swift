@@ -91,19 +91,13 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     /// When true the web hides its OWN page header (this VC shows a native one), so
     /// there is no double header. Off for Assistant (keeps its in-page header).
     private let hideWebHeader: Bool
-    /// Native pull-to-refresh (deliberate over-pull reloads the page). The web's own
-    /// pull-to-refresh is disabled inside the native shell (it fired on light scroll),
-    /// so this replaces it with iOS's standard, higher-threshold gesture. Off for
-    /// Assistant (its scroll is locked + it has an in-page refresh button).
-    private let pullToRefresh: Bool
 
     init(url: URL, processPool: WKProcessPool, tabTitle: String, systemImage: String,
-         hideWebHeader: Bool = false, pullToRefresh: Bool = false) {
+         hideWebHeader: Bool = false) {
         self.url = url
         self.sharedProcessPool = processPool
         self.baseTitle = tabTitle
         self.hideWebHeader = hideWebHeader
-        self.pullToRefresh = pullToRefresh
         super.init(nibName: nil, bundle: nil)
         title = tabTitle   // shown in the nav bar when this VC is pushed (e.g. from More)
         tabBarItem = UITabBarItem(
@@ -131,23 +125,15 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.isOpaque = false
-        let bg = UIColor(red: 0.047, green: 0.043, blue: 0.071, alpha: 1) // #0c0b12
+        // S3 first-paint: the ERP pages are LIGHT, so paint the placeholder LIGHT (was a
+        // dark slab that flashed dark→light on every first load). Matched to the ERP's
+        // pale lavender so the content fades in without a flash. (The dark native header
+        // sits above this in its own bar.)
+        let bg = UIColor(red: 0.949, green: 0.941, blue: 0.972, alpha: 1) // #F2F0F8
         webView.backgroundColor = bg
         webView.scrollView.backgroundColor = bg
-
-        // Native pull-to-refresh on the ERP content tabs. The web's own PTR is disabled
-        // in the native shell (it fired on light scroll — annoying), so this is the only
-        // refresh gesture and uses iOS's standard, more deliberate over-pull threshold.
-        if pullToRefresh {
-            // contentInsetAdjustmentBehavior is .never (we manage insets ourselves), so
-            // give the refresh control an explicit top inset region + a high-contrast
-            // white spinner so it's clearly visible over the light ERP pages.
-            let rc = UIRefreshControl()
-            rc.tintColor = .white
-            rc.addTarget(self, action: #selector(pullToReload), for: .valueChanged)
-            webView.scrollView.refreshControl = rc
-            webView.scrollView.alwaysBounceVertical = true
-        }
+        // Pull-to-refresh is now the web robot mascot (MobilePullToRefresh) — no native
+        // UIRefreshControl (it would double up and can't show the robot). Web owns it.
 
         let root = UIView()
         root.backgroundColor = bg
@@ -169,7 +155,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         ])
         startObservingKeyboard()
 
-        spinner.color = UIColor(white: 1, alpha: 0.7)
+        spinner.color = UIColor(red: 0.42, green: 0.36, blue: 0.62, alpha: 0.75) // violet-gray on the light placeholder
         spinner.hidesWhenStopped = true
         spinner.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(spinner)
@@ -228,17 +214,10 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         spinner.stopAnimating()
-        webView.scrollView.refreshControl?.endRefreshing()
         updateBackButton()
     }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        spinner.stopAnimating(); webView.scrollView.refreshControl?.endRefreshing()
-    }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        spinner.stopAnimating(); webView.scrollView.refreshControl?.endRefreshing()
-    }
-
-    @objc private func pullToReload() { webView?.reload() }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { spinner.stopAnimating() }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { spinner.stopAnimating() }
 
     // MARK: - almaShell bridge (web → native)
 
@@ -302,8 +281,6 @@ final class MoreMenuViewController: UITableViewController {
         ]),
         Section(header: "Operations", items: [
             Item(title: "Inventory",      icon: "shippingbox",            path: "/inventory"),
-            Item(title: "Trading",        icon: "arrow.left.arrow.right", path: "/trading"),
-            Item(title: "Digital",        icon: "globe",                  path: "/digital"),
             Item(title: "Activity",       icon: "bolt",                   path: "/activity"),
             Item(title: "Task Spotlight", icon: "target",                 path: "/operations/task-spotlight"),
             Item(title: "Archive",        icon: "archivebox",             path: "/operations/business-archive"),
@@ -330,6 +307,18 @@ final class MoreMenuViewController: UITableViewController {
         ]),
     ]
 
+    /// The owner's 3 businesses. Switching is just navigation: the ERP derives the
+    /// active business from the route (`/trading` → Trading, `/digital` → CDIT, `/` →
+    /// Lifestyle) in BusinessContext, so opening a business's home switches it — no
+    /// native/web state plumbing needed. They live in their OWN "Switch business"
+    /// section (top), not as flat operation buttons.
+    private struct Biz { let name: String; let tagline: String; let symbol: String; let color: UIColor; let path: String }
+    private let businesses: [Biz] = [
+        Biz(name: "Alma Lifestyle",     tagline: "Lifestyle",      symbol: "a.circle.fill", color: UIColor(red: 0.79, green: 0.66, blue: 0.30, alpha: 1), path: "/"),
+        Biz(name: "Alma Trading",       tagline: "P2P Operations", symbol: "t.circle.fill", color: UIColor(red: 0.51, green: 0.70, blue: 0.60, alpha: 1), path: "/trading"),
+        Biz(name: "Creative Digital IT", tagline: "Digital Agency", symbol: "c.circle.fill", color: UIColor(red: 0.42, green: 0.56, blue: 0.88, alpha: 1), path: "/digital"),
+    ]
+
     init(processPool: WKProcessPool) {
         self.sharedPool = processPool
         super.init(style: .insetGrouped)
@@ -347,30 +336,59 @@ final class MoreMenuViewController: UITableViewController {
         tableView.backgroundColor = UIColor(red: 0.043, green: 0.039, blue: 0.063, alpha: 1) // #0b0a10
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int { sections.count }
-    override func tableView(_ t: UITableView, numberOfRowsInSection s: Int) -> Int { sections[s].items.count }
-    override func tableView(_ t: UITableView, titleForHeaderInSection s: Int) -> String? { sections[s].header }
+    // Section 0 = the business switcher; sections 1… = the module groups.
+    override func numberOfSections(in tableView: UITableView) -> Int { sections.count + 1 }
+    override func tableView(_ t: UITableView, numberOfRowsInSection s: Int) -> Int {
+        s == 0 ? businesses.count : sections[s - 1].items.count
+    }
+    override func tableView(_ t: UITableView, titleForHeaderInSection s: Int) -> String? {
+        s == 0 ? "Switch business" : sections[s - 1].header
+    }
 
     override func tableView(_ t: UITableView, cellForRowAt ip: IndexPath) -> UITableViewCell {
-        let item = sections[ip.section].items[ip.row]
+        let rowBg = UIColor(red: 0.086, green: 0.078, blue: 0.122, alpha: 1) // #16141f
+        if ip.section == 0 {
+            let biz = businesses[ip.row]
+            let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
+            var cfg = cell.defaultContentConfiguration()
+            cfg.text = biz.name
+            cfg.secondaryText = biz.tagline
+            cfg.secondaryTextProperties.color = UIColor(white: 1, alpha: 0.5)
+            cfg.image = UIImage(systemName: biz.symbol,
+                                withConfiguration: UIImage.SymbolConfiguration(pointSize: 26))
+            cfg.imageProperties.tintColor = biz.color
+            cfg.imageToTextPadding = 12
+            cell.contentConfiguration = cfg
+            cell.backgroundColor = rowBg
+            cell.accessoryType = .disclosureIndicator
+            return cell
+        }
+        let item = sections[ip.section - 1].items[ip.row]
         let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
         var cfg = cell.defaultContentConfiguration()
         cfg.text = item.title
         cfg.image = UIImage(systemName: item.icon)
         cfg.imageProperties.tintColor = UIColor(red: 0.655, green: 0.545, blue: 0.980, alpha: 1)
         cell.contentConfiguration = cfg
-        cell.backgroundColor = UIColor(red: 0.086, green: 0.078, blue: 0.122, alpha: 1) // #16141f
+        cell.backgroundColor = rowBg
         cell.accessoryType = .disclosureIndicator
         return cell
     }
 
     override func tableView(_ t: UITableView, didSelectRowAt ip: IndexPath) {
         t.deselectRow(at: ip, animated: true)
-        let item = sections[ip.section].items[ip.row]
         let base = "https://alma-erp-six.vercel.app"
+        let path: String, tabTitle: String, symbol: String
+        if ip.section == 0 {
+            let biz = businesses[ip.row]
+            path = biz.path; tabTitle = biz.name; symbol = biz.symbol
+        } else {
+            let item = sections[ip.section - 1].items[ip.row]
+            path = item.path; tabTitle = item.title; symbol = item.icon
+        }
         let vc = AlmaWebTabViewController(
-            url: URL(string: base + item.path)!, processPool: sharedPool,
-            tabTitle: item.title, systemImage: item.icon, hideWebHeader: true, pullToRefresh: true)
+            url: URL(string: base + path)!, processPool: sharedPool,
+            tabTitle: tabTitle, systemImage: symbol, hideWebHeader: true)
         vc.hidesBottomBarWhenPushed = false
         navigationController?.pushViewController(vc, animated: true)
     }
@@ -400,7 +418,7 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         func webNavTab(_ path: String, _ title: String, _ icon: String) -> UINavigationController {
             let vc = AlmaWebTabViewController(url: URL(string: Self.base + path)!, processPool: pool,
                                               tabTitle: title, systemImage: icon,
-                                              hideWebHeader: true, pullToRefresh: true)
+                                              hideWebHeader: true)
             return Self.darkNav(root: vc, tabTitle: title, icon: icon, largeTitles: false)
         }
         func plainTab(_ path: String, _ title: String, _ icon: String) -> AlmaWebTabViewController {
