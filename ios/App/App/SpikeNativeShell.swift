@@ -214,8 +214,10 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     }
 
     private var firstPaintDone = false
+    private var offlineView: UIView?
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         spinner.stopAnimating()
+        hideOffline() // a successful load clears any lingering offline screen
         // S3: on the FIRST paint, fade the content in over the light placeholder instead
         // of it popping in abruptly. Later navigations/reloads are instant (alpha == 1).
         if !firstPaintDone {
@@ -227,10 +229,93 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         updateBackButton()
     }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        spinner.stopAnimating(); firstPaintDone = true; webView.alpha = 1
+        handleLoadFailure(error)
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        spinner.stopAnimating(); firstPaintDone = true; webView.alpha = 1
+        handleLoadFailure(error)
+    }
+
+    // MARK: - S4: native offline screen
+
+    private func handleLoadFailure(_ error: Error) {
+        spinner.stopAnimating()
+        firstPaintDone = true
+        webView?.alpha = 1
+        // Only show the offline screen for genuine connectivity failures. NSURLErrorCancelled
+        // (-999) fires routinely when a new navigation supersedes an in-flight one (e.g. the
+        // owner taps a link before the page finished) — that is NOT an error to surface.
+        let connectivity: Set<Int> = [
+            NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost,
+            NSURLErrorTimedOut, NSURLErrorCannotConnectToHost, NSURLErrorCannotFindHost,
+            NSURLErrorDNSLookupFailed, NSURLErrorDataNotAllowed, NSURLErrorInternationalRoamingOff,
+        ]
+        if connectivity.contains((error as NSError).code) { showOffline() }
+    }
+
+    @objc private func retryLoad() {
+        hideOffline()
+        spinner.startAnimating()
+        webView.load(URLRequest(url: url))
+    }
+
+    private func showOffline() {
+        guard offlineView == nil else { return }
+        let card = UIView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.backgroundColor = UIColor(red: 0.949, green: 0.941, blue: 0.972, alpha: 1) // #F2F0F8
+
+        let icon = UIImageView(image: UIImage(systemName: "wifi.slash"))
+        icon.tintColor = UIColor(red: 0.42, green: 0.36, blue: 0.62, alpha: 0.85)
+        icon.contentMode = .scaleAspectFit
+        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 44, weight: .regular)
+
+        let title = UILabel()
+        title.text = "ইন্টারনেট সংযোগ নেই"
+        title.font = .systemFont(ofSize: 19, weight: .semibold)
+        title.textColor = UIColor(red: 0.20, green: 0.17, blue: 0.32, alpha: 1)
+        title.textAlignment = .center
+
+        let subtitle = UILabel()
+        subtitle.text = "সংযোগ পরীক্ষা করে আবার চেষ্টা করুন।"
+        subtitle.font = .systemFont(ofSize: 14, weight: .regular)
+        subtitle.textColor = UIColor(red: 0.42, green: 0.38, blue: 0.52, alpha: 1)
+        subtitle.textAlignment = .center
+        subtitle.numberOfLines = 0
+
+        var btnCfg = UIButton.Configuration.filled()
+        btnCfg.title = "আবার চেষ্টা করুন"
+        btnCfg.baseBackgroundColor = UIColor(red: 0.42, green: 0.36, blue: 0.62, alpha: 1)
+        btnCfg.baseForegroundColor = .white
+        btnCfg.cornerStyle = .large
+        btnCfg.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 26, bottom: 12, trailing: 26)
+        let retry = UIButton(configuration: btnCfg)
+        retry.addTarget(self, action: #selector(retryLoad), for: .touchUpInside)
+
+        let stack = UIStackView(arrangedSubviews: [icon, title, subtitle, retry])
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 12
+        stack.setCustomSpacing(20, after: subtitle)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(stack)
+        view.addSubview(card)
+        offlineView = card
+
+        NSLayoutConstraint.activate([
+            card.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            card.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            card.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            stack.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: card.centerYAnchor, constant: -24),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: card.leadingAnchor, constant: 32),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -32),
+        ])
+    }
+
+    private func hideOffline() {
+        offlineView?.removeFromSuperview()
+        offlineView = nil
     }
 
     // MARK: - almaShell bridge (web → native)
