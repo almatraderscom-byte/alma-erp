@@ -105,6 +105,10 @@ async function sendOneSignal(
     ...resolveAndroidChannelFields(process.env.ONESIGNAL_ANDROID_CHANNEL_ID),
     android_visibility: 1, // PUBLIC — show on lock screen
     android_led_color: 'FFC9A84C', // gold LED
+    // iOS (APNs): bump the app icon badge on each push. Custom ios_sound is left
+    // default — a matching .caf/.wav must be added to the Xcode bundle before we can set it.
+    ios_badgeType: 'Increase',
+    ios_badgeCount: 1,
     chrome_web_icon: `${absoluteActionUrl('/icon.svg')}`,
     chrome_web_badge: `${absoluteActionUrl('/maskable-icon.svg')}`,
     small_icon: 'ic_stat_onesignal_default',
