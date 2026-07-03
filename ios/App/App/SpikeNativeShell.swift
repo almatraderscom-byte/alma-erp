@@ -340,12 +340,12 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         let nav = UINavigationController(rootViewController: root)
         nav.navigationBar.prefersLargeTitles = largeTitles
         nav.overrideUserInterfaceStyle = .dark
-        // "Shadow type" header: a translucent dark blur (content scrolls under it)
-        // with a soft drop shadow — floating, not a heavy solid black slab.
+        // "Shadow type" header: a translucent VIOLET blur (matches the app's purple
+        // aurora, not a flat black slab) with a soft drop shadow so it floats.
         let a = UINavigationBarAppearance()
-        a.configureWithDefaultBackground()          // system dark blur material
-        a.backgroundColor = UIColor(red: 0.055, green: 0.047, blue: 0.078, alpha: 0.72)
-        a.shadowColor = .clear                       // no hard hairline; use a soft shadow instead
+        a.configureWithDefaultBackground()          // system blur material
+        a.backgroundColor = UIColor(red: 0.16, green: 0.12, blue: 0.30, alpha: 0.82) // dark violet
+        a.shadowColor = .clear                       // no hard hairline; soft layer shadow instead
         a.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
         a.titleTextAttributes = [.foregroundColor: UIColor.white]
         nav.navigationBar.standardAppearance = a
