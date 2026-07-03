@@ -232,3 +232,43 @@ The native app pre-schedules local notifications for upcoming agent reminders, s
 - `src/app/api/assistant/device-reminders/route.ts` — owner-only feed (upcoming pending reminders, ৭-দিন window, ৩২ cap)
 - `src/lib/local-reminders.ts` — `syncLocalReminders()` (build-gate, permission, cancel-old + schedule-new, id-hash)
 - `src/components/layout/LocalRemindersManager.tsx` — mount + resume-এ sync (১০-মিনিট throttle) + tap→`/agent`; `GlobalPlatformChrome`-এ mounted
+
+---
+
+## Live Activity — Business Pulse (iOS)
+
+আজকের ব্যবসার **live pulse** — অর্ডার সংখ্যা + সর্বশেষ অর্ডারের status — সরাসরি iPhone-এর **lock screen** ও **Dynamic Island**-এ দেখায়, app খোলা না রেখেও এক নজরে।
+Shows today's business pulse — order count + latest order status — right on the iPhone lock screen and Dynamic Island, at a glance.
+
+### Plugin
+
+| জিনিস | মান |
+|-------|-----|
+| Plugin | `LiveActivityBridge` — **native-এ registered একটি local Capacitor plugin** (npm package নেই); runtime-এ `window.Capacitor.Plugins.LiveActivityBridge` হিসেবে expose হয় |
+| Methods | `update({ title, ordersToday, statusLine })` → Promise · `end()` → Promise |
+| Platform | **শুধু iOS native** (web / non-native-এ কিছুই হয় না) |
+| Build gate | **build ≥ 8** — পুরনো binary-তে plugin নেই, তাই **কখনো ছোঁয়া হয় না** (Face ID build-2 crash-এর মতো safety) |
+
+### কীভাবে কাজ করে
+
+- **Feature-detect:** build-gate পার হওয়ার পর `window.Capacitor.Plugins.LiveActivityBridge` আছে কিনা দেখে; না থাকলে চুপচাপ return।
+- **Feed:** `GET /api/assistant/live-pulse` — owner-only (device-reminders route-এর মতোই auth)। আজকের (**Asia/Dhaka** দিন-window, UTC থেকে সঠিকভাবে গোনা) অর্ডার stat: `{ ordersToday, statusLine }`। `statusLine` = `"সর্বশেষ: <Bangla status>"` অথবা অর্ডার না থাকলে `"আজ এখনো অর্ডার নেই"`।
+- **Update:** fetch করা value দিয়ে `LiveActivityBridge.update({ title: 'ALMA ERP', ordersToday, statusLine })` ডাকে।
+- **কখন sync হয়:** app **খোলার সময়** + প্রতিবার **resume** (foreground-এ ফেরার সময়) — কিন্তু **৫ মিনিটে সর্বোচ্চ একবার** (throttle, localStorage timestamp `alma_live_pulse_last_sync`)।
+- **Foreground update:** Live Activity শুধু **app foreground-এ থাকার সময়** আপডেট হয় (কোনো push-driven update নেই) — তবে একবার সেট হলে lock screen + Dynamic Island-এ **দৃশ্যমানই থাকে**।
+
+### Privacy — lock screen public
+
+- **কোনো টাকার অঙ্ক নেই (v1):** lock screen public, তাই ডিজাইন করেই **কোনো money amount দেখানো হয় না** — শুধু অর্ডার সংখ্যা ও status।
+- No money amounts on the lock screen — by design, since the lock screen is public.
+
+### Design — fail-open, native-only
+
+- **Native-only:** `isCapacitorNative()` false হলে কিছুই হয় না — কোনো side-effect নেই।
+- **Fail-open:** যেকোনো error (build read, plugin absent, fetch, `update()` reject) চুপচাপ swallow — Live Activity একটা nice-to-have, app-কে কখনো ভাঙতে পারে না।
+
+### Files (code)
+
+- `src/app/api/assistant/live-pulse/route.ts` — owner-only feed (আজকের Dhaka-day অর্ডার count + Bangla status line, no money)
+- `src/lib/live-pulse.ts` — `syncLivePulse()` + `endLivePulse()` (build-gate ≥ 8, plugin feature-detect, fetch + `update`/`end`)
+- `src/components/layout/LivePulseManager.tsx` — mount + resume-এ sync (৫-মিনিট throttle); `GlobalPlatformChrome`-এ `LocalRemindersManager`-এর পরে mounted

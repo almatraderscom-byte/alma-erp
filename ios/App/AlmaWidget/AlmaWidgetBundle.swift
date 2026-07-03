@@ -16,5 +16,15 @@ import SwiftUI
 struct AlmaWidgetBundle: WidgetBundle {
     var body: some Widget {
         AlmaWidget()
+        // Live Activity — iOS 16.1+ only. WidgetBundle bodies can't hold a bare
+        // `if #available`, so the availability check lives in a builder member.
+        pulseLiveActivity
+    }
+
+    @WidgetBundleBuilder
+    private var pulseLiveActivity: some Widget {
+        if #available(iOS 16.1, *) {
+            PulseLiveActivity()
+        }
     }
 }
