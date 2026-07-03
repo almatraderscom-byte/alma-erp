@@ -171,20 +171,25 @@ export function FluidOrb({
     }
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    // offsetWidth (layout size), NEVER getBoundingClientRect: ancestors animate
+    // transform scale on mount (home orb: framer 0.85→1) and a rect measured
+    // mid-animation bakes the shrink into the bitmap — the ring then draws
+    // scaled/offset for good (owner-reported). Layout size ignores transforms.
     const sizeAll = () => {
-      const rr = ringCanvas.getBoundingClientRect()
-      ringCanvas.width = rr.width * dpr
-      ringCanvas.height = rr.height * dpr
+      ringCanvas.width = Math.max(1, ringCanvas.offsetWidth * dpr)
+      ringCanvas.height = Math.max(1, ringCanvas.offsetHeight * dpr)
       ctx?.setTransform(dpr, 0, 0, dpr, 0, 0)
       if (gl) {
-        const gr = glCanvas.getBoundingClientRect()
-        glCanvas.width = Math.max(1, gr.width * dpr)
-        glCanvas.height = Math.max(1, gr.height * dpr)
+        glCanvas.width = Math.max(1, glCanvas.offsetWidth * dpr)
+        glCanvas.height = Math.max(1, glCanvas.offsetHeight * dpr)
         gl.viewport(0, 0, glCanvas.width, glCanvas.height)
       }
     }
     sizeAll()
     window.addEventListener('resize', sizeAll)
+    // Container-driven size changes (not just window resizes) re-size the bitmaps.
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(sizeAll) : null
+    ro?.observe(ringCanvas)
 
     let raf = 0
     let t = 0
@@ -208,7 +213,7 @@ export function FluidOrb({
 
       /* waveform ring */
       if (ctx) {
-        const w = ringCanvas.getBoundingClientRect().width
+        const w = ringCanvas.offsetWidth
         const cx = w / 2
         const base = w * 0.335
         ctx.clearRect(0, 0, w, w)
@@ -258,6 +263,7 @@ export function FluidOrb({
     return () => {
       cancelAnimationFrame(raf)
       window.removeEventListener('resize', sizeAll)
+      ro?.disconnect()
       const lose = gl?.getExtension('WEBGL_lose_context')
       lose?.loseContext()
     }
