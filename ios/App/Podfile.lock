@@ -17,6 +17,8 @@ PODS:
     - Capacitor
   - CapacitorStatusBar (7.0.6):
     - Capacitor
+  - CapawesomeCapacitorAppShortcuts (7.5.0):
+    - Capacitor
   - IONGeolocationLib (1.0.1)
   - OnesignalCapacitorPlugin (1.1.0):
     - Capacitor
@@ -81,6 +83,7 @@ DEPENDENCIES:
   - "CapacitorKeyboard (from `../../node_modules/@capacitor/keyboard`)"
   - "CapacitorSplashScreen (from `../../node_modules/@capacitor/splash-screen`)"
   - "CapacitorStatusBar (from `../../node_modules/@capacitor/status-bar`)"
+  - "CapawesomeCapacitorAppShortcuts (from `../../node_modules/@capawesome/capacitor-app-shortcuts`)"
   - "OnesignalCapacitorPlugin (from `../../node_modules/@onesignal/capacitor-plugin`)"
 
 SPEC REPOS:
@@ -107,6 +110,8 @@ EXTERNAL SOURCES:
     :path: "../../node_modules/@capacitor/splash-screen"
   CapacitorStatusBar:
     :path: "../../node_modules/@capacitor/status-bar"
+  CapawesomeCapacitorAppShortcuts:
+    :path: "../../node_modules/@capawesome/capacitor-app-shortcuts"
   OnesignalCapacitorPlugin:
     :path: "../../node_modules/@onesignal/capacitor-plugin"
 
@@ -120,10 +125,11 @@ SPEC CHECKSUMS:
   CapacitorKeyboard: c94c84755e1500d2c6dccd74bad018bb359e3543
   CapacitorSplashScreen: b3d12b4324d93ce605fe57f05a199ade7f26189e
   CapacitorStatusBar: a3acb591ff56301e28aa1a01791ba74a8e1faabb
+  CapawesomeCapacitorAppShortcuts: af1efcc8a7cdc5cbf4e5e51f1d4b8776edf10015
   IONGeolocationLib: 20f9d0248a0b5264511fb57a37e25dd2badf797a
   OnesignalCapacitorPlugin: 4fa3fe705beed7295290b24025e12b7f5bc1ba7e
   OneSignalXCFramework: 2f46ff87ccefd9afe8e3b5f9fe357072191205ff
 
-PODFILE CHECKSUM: 7e6d20019fe270d59b94bcf99ccc636cabb6bd5b
+PODFILE CHECKSUM: c543eb74e49ef516baf93ea22149c45ebc827258
 
 COCOAPODS: 1.12.1

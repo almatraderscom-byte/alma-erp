@@ -161,3 +161,40 @@ Native iOS shell-এই কাজ করে (Android-এ নয়) এবং **
 - `src/lib/biometric-lock.ts` — platform detect, enable-state, unlock logic (fail-open mapping)
 - `src/components/layout/BiometricLockGate.tsx` — cold-start + resume-after-60s gate
 - `src/components/settings/BiometricLockToggle.tsx` — Settings-এর on/off toggle
+
+---
+
+## Home-Screen Quick Actions (iOS)
+
+App icon-এ **long-press** করলে একটা quick-action menu আসে — সরাসরি গুরুত্বপূর্ণ page-এ ঢুকে যাওয়ার শর্টকাট। Home screen থেকে দুই ট্যাপে অর্ডার/স্টক/বেতন/অ্যাসিস্ট্যান্ট।
+Long-press the app icon to jump straight into a key page.
+
+### Plugin
+
+| জিনিস | মান |
+|-------|-----|
+| Plugin | `@capawesome/capacitor-app-shortcuts@7.5.0` |
+| Platform | **শুধু iOS native** (web / non-native-এ কিছুই হয় না) |
+| Type | **Static** shortcuts — app চালু হওয়ার সময় একবার register হয় |
+
+### 4টি shortcut (deep-link)
+
+| Shortcut | Route | iOS icon (SF Symbol) |
+|----------|-------|----------------------|
+| অর্ডার (Orders) | `/orders` | `bag.fill` |
+| ইনভেন্টরি (Inventory) | `/inventory` | `archivebox.fill` |
+| পেরোল (Payroll) | `/payroll` | `creditcard.fill` |
+| অ্যাসিস্ট্যান্ট (Assistant) | `/agent` | `sparkles` |
+
+- Icon-গুলো Apple-এর **SF Symbol** নাম — iOS নিজেই render করে, আলাদা image লাগে না।
+- Shortcut ট্যাপ করলে shell-এর WebView same-origin route-এ navigate করে (নতুন window নয়)।
+
+### Design — fail-open, native-only
+
+- **Native-only:** `isCapacitorNative()` false হলে (browser / Android) register-ই হয় না — কোনো side-effect নেই।
+- **Fail-open:** plugin error হলে চুপচাপ swallow করে — শর্টকাট একটা nice-to-have, app startup-কে কখনো ভাঙতে পারে না।
+
+### Files (code)
+
+- `src/lib/app-shortcuts.ts` — shortcut definition (`QUICK_ACTIONS`), register (`registerAppShortcuts`), id→route (`shortcutPath`)
+- `src/components/layout/AppShortcutsManager.tsx` — mount-এ shortcut register করে; `GlobalPlatformChrome`-এ mounted
