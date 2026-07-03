@@ -270,6 +270,20 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
    *  captured at send time: null for a conversation the voice turn itself created
    *  (a fresh conv has no project), else the active conversation's project. */
   const voiceTurnConvRef = useRef<{ id: string; projectId: string | null } | null>(null)
+
+  // Deep link: /agent?voice=1 (or #voice) jumps straight into the voice console —
+  // the target for the iPhone Action Button / Siri Shortcut and Android shortcuts.
+  // The param is consumed (stripped) so refresh/back doesn't re-open the console.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const url = new URL(window.location.href)
+    if (url.searchParams.get('voice') === '1' || url.hash === '#voice') {
+      setVoiceOpen(true)
+      url.searchParams.delete('voice')
+      url.hash = ''
+      window.history.replaceState(null, '', url.pathname + url.search)
+    }
+  }, [])
   const [planDrive, setPlanDrive] = useState<PlanDrivePanelData | null>(null)
   const [composerSeed, setComposerSeed] = useState('')
 
