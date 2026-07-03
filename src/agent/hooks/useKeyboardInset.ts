@@ -48,26 +48,6 @@ function isEditableTarget(el: EventTarget | null): boolean {
   return tag === 'textarea' || tag === 'input' || node.isContentEditable === true
 }
 
-/**
- * True only inside the iOS native-frame shell (SpikeNativeShell): the app hosts the
- * agent in a plain WKWebView whose bottom is pinned to the keyboard via
- * `keyboardLayoutGuide`, so NATIVE already shrinks the viewport above the keyboard —
- * exactly like Capacitor's resize:Native, but without the Capacitor bridge.
- *
- * Detected by `window.__almaNative`, which the shell injects at document-start on
- * EVERY native tab (more reliable than a specific message handler). It is set ONLY by
- * the real app's injected script — NOT by `?native=1` in a browser (which has a real
- * keyboard the web must handle itself), so the browser test path is unaffected.
- */
-function inNativeShellWebView(): boolean {
-  if (typeof window === 'undefined') return false
-  try {
-    return (window as unknown as { __almaNative?: boolean }).__almaNative === true
-  } catch {
-    return false
-  }
-}
-
 export function useKeyboardInset() {
   useEffect(() => {
     let disposed = false
@@ -121,34 +101,10 @@ export function useKeyboardInset() {
       cleanups.push(unsub)
     }
 
-    // iOS native-frame shell (plain WKWebView, NOT Capacitor): the shell physically
-    // shrinks the WebView above the keyboard via keyboardLayoutGuide — exactly like
-    // Capacitor's resize:Native. So the web must do NOTHING to reposition on the
-    // keyboard: native already handles the lift. We ONLY declare that fact —
-    //   • pin --kb-inset at 0 (any web inset would double-lift the composer → the
-    //     "composer floats with a big gap" bug), and
-    //   • set cap-native-resize so `.agent-main-height` fills the shrunk viewport
-    //     (100dvh) instead of subtracting a keyboard height.
-    // Crucially we add NO resize/focus/visualViewport listeners here: earlier attempts
-    // that toggled `kb-open`/inset on every viewport change thrashed the layout while
-    // typing (the predictive bar resizes the view), which remounted/blurred the
-    // composer — the keyboard dismissed on the first keystroke. Doing nothing is the
-    // robust fix. (The agent sub-nav therefore stays visible above the keyboard until
-    // it's mapped to native nav — a cosmetic trade for a rock-solid composer.)
-    function setupNativeShell() {
-      document.documentElement.classList.add('cap-native-resize')
-      setInset(0)
-      cleanups.push(() => {
-        document.documentElement.classList.remove('cap-native-resize')
-      })
-    }
-
     // Optimistic lift: the moment an input/textarea is focused, raise the
     // composer to the last measured keyboard height instead of waiting for the
     // native keyboardWillShow event (which can lag 2-5s on some Android shells).
     // Safe on desktop: lastKnownKbHeight stays 0 there, so this is a no-op.
-    // Skipped in the native-frame shell, where native owns the lift and any inset
-    // would double-lift the composer.
     function onFocusIn(e: FocusEvent) {
       if (disposed || !isEditableTarget(e.target)) return
       if (document.body.classList.contains('kb-open')) return
@@ -156,11 +112,14 @@ export function useKeyboardInset() {
       if (h > 0) setInset(h)
     }
 
-    // The native-frame shell webview takes precedence over both the Capacitor and
-    // the web/visualViewport paths (it is neither): native handles the resize.
-    if (inNativeShellWebView()) {
-      setupNativeShell()
-    } else {
+    // In the iOS native-frame shell the plain WKWebView is now a STABLE full height
+    // (it is no longer pinned to keyboardLayoutGuide — that resize-on-focus was
+    // dismissing the keyboard on the first keystroke) and the keyboard OVERLAPS it.
+    // That is exactly the standard mobile-web case: visualViewport shrinks and the
+    // web lifts the composer via --kb-inset. So the shell needs NO special path — it
+    // falls through to setupWeb like normal mobile web. (setupNative still wins on
+    // Capacitor, e.g. the Dashboard tab.)
+    {
       document.addEventListener('focusin', onFocusIn)
       cleanups.push(() => document.removeEventListener('focusin', onFocusIn))
       void setupNative().then((isNative) => {
