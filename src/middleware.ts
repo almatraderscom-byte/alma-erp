@@ -24,6 +24,9 @@ function isPublicApiOrShare(pathname: string) {
   // ElevenLabs ConvAI post-call webhook — self-protects via HMAC-SHA256 signature
   // (ElevenLabs-Signature header) + replay window in the route handler; no session cookie.
   if (pathname === '/api/assistant/voice-call/webhook') return true
+  // ConversationRelay post-call report from the VPS relay — self-protects via
+  // AGENT_INTERNAL_TOKEN Bearer in the route handler; no session cookie.
+  if (pathname === '/api/assistant/voice-call/relay-report') return true
   if (/^\/api\/trading\/screenshots\/[^/]+\/telegram$/.test(pathname)) return true
   if (pathname === '/api/health') return true
   if (pathname === '/api/build-info') return true
