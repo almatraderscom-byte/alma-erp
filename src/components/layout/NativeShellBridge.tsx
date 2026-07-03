@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 import { usePathname } from 'next/navigation'
-import { isNativeShell } from '@/lib/native-shell'
+import { isNativeShell, isNativeHeaderMode } from '@/lib/native-shell'
 
 /**
  * Bridges the web app to the native iOS shell when running inside it (embed mode).
@@ -22,13 +22,15 @@ import { isNativeShell } from '@/lib/native-shell'
 export function NativeShellBridge() {
   const pathname = usePathname()
 
-  // Toggle the embed-mode class once, on mount.
+  // Toggle the embed-mode class(es) once, on mount.
   useEffect(() => {
     if (!isNativeShell()) return
     const root = document.documentElement
     root.classList.add('alma-native')
+    // Pages shown under a native header hide their own .page-header (no double bar).
+    if (isNativeHeaderMode()) root.classList.add('alma-native-hdr')
     post({ type: 'ready' })
-    return () => root.classList.remove('alma-native')
+    return () => root.classList.remove('alma-native', 'alma-native-hdr')
   }, [])
 
   // Report route (path + best-effort title) on every navigation.

@@ -20,3 +20,19 @@ export function isNativeShell(): boolean {
     return false
   }
 }
+
+/**
+ * True only in native web views that show a NATIVE header (the app sets
+ * `window.__almaNativeHeader`). Those pages hide their own `.page-header` so there
+ * is no double title bar. Assistant / Dashboard don't set this, so they keep their
+ * own header.
+ */
+export function isNativeHeaderMode(): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    if ((window as unknown as { __almaNativeHeader?: boolean }).__almaNativeHeader) return true
+    return new URLSearchParams(window.location.search).has('nativehdr')
+  } catch {
+    return false
+  }
+}

@@ -1084,3 +1084,11 @@ html.cap-native .alma-glass-portal {
 html.alma-native .mobile-app-chrome {
   display: none !important;
 }
+
+/* On native web views that carry a NATIVE header (Orders / Approvals / modules
+   opened from More), hide the web's own sticky page header so there is no double
+   title bar. Gated on `alma-native-hdr`, set only for those web views — pages
+   without a native header (Assistant, Dashboard) keep their own header. */
+html.alma-native-hdr .page-header {
+  display: none !important;
+}
