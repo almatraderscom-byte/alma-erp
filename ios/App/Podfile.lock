@@ -13,6 +13,8 @@ PODS:
     - Capacitor
   - CapacitorKeyboard (7.0.6):
     - Capacitor
+  - CapacitorLocalNotifications (7.0.6):
+    - Capacitor
   - CapacitorSplashScreen (7.0.5):
     - Capacitor
   - CapacitorStatusBar (7.0.6):
@@ -81,6 +83,7 @@ DEPENDENCIES:
   - "CapacitorGeolocation (from `../../node_modules/@capacitor/geolocation`)"
   - "CapacitorHaptics (from `../../node_modules/@capacitor/haptics`)"
   - "CapacitorKeyboard (from `../../node_modules/@capacitor/keyboard`)"
+  - "CapacitorLocalNotifications (from `../../node_modules/@capacitor/local-notifications`)"
   - "CapacitorSplashScreen (from `../../node_modules/@capacitor/splash-screen`)"
   - "CapacitorStatusBar (from `../../node_modules/@capacitor/status-bar`)"
   - "CapawesomeCapacitorAppShortcuts (from `../../node_modules/@capawesome/capacitor-app-shortcuts`)"
@@ -106,6 +109,8 @@ EXTERNAL SOURCES:
     :path: "../../node_modules/@capacitor/haptics"
   CapacitorKeyboard:
     :path: "../../node_modules/@capacitor/keyboard"
+  CapacitorLocalNotifications:
+    :path: "../../node_modules/@capacitor/local-notifications"
   CapacitorSplashScreen:
     :path: "../../node_modules/@capacitor/splash-screen"
   CapacitorStatusBar:
@@ -123,6 +128,7 @@ SPEC CHECKSUMS:
   CapacitorGeolocation: de4b0ccf90140528184e31676dd5e3a328eb589a
   CapacitorHaptics: ec024a10130c230743219149c76a02da5cff6aed
   CapacitorKeyboard: c94c84755e1500d2c6dccd74bad018bb359e3543
+  CapacitorLocalNotifications: ae0b5008877d68731d693156fe21d786d30a4feb
   CapacitorSplashScreen: b3d12b4324d93ce605fe57f05a199ade7f26189e
   CapacitorStatusBar: a3acb591ff56301e28aa1a01791ba74a8e1faabb
   CapawesomeCapacitorAppShortcuts: af1efcc8a7cdc5cbf4e5e51f1d4b8776edf10015
@@ -130,6 +136,6 @@ SPEC CHECKSUMS:
   OnesignalCapacitorPlugin: 4fa3fe705beed7295290b24025e12b7f5bc1ba7e
   OneSignalXCFramework: 2f46ff87ccefd9afe8e3b5f9fe357072191205ff
 
-PODFILE CHECKSUM: c543eb74e49ef516baf93ea22149c45ebc827258
+PODFILE CHECKSUM: 2411b60673d1dc618d5190c11d7d81a87a5dad45
 
 COCOAPODS: 1.12.1

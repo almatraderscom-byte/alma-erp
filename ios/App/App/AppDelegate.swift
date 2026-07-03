@@ -1,5 +1,6 @@
 import UIKit
 import Capacitor
+import CapawesomeCapacitorAppShortcuts
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -7,8 +8,26 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // Home-screen quick action on COLD START: forward to the AppShortcuts
+        // plugin (it retains the event until the JS listener attaches).
+        if let shortcutItem = launchOptions?[.shortcutItem] as? UIApplicationShortcutItem {
+            NotificationCenter.default.post(
+                name: NSNotification.Name(AppShortcutsPlugin.notificationName),
+                object: nil,
+                userInfo: [AppShortcutsPlugin.userInfoShortcutItemKey: shortcutItem]
+            )
+        }
         return true
+    }
+
+    // Home-screen quick action while the app is RUNNING/backgrounded.
+    func application(_ application: UIApplication, performActionFor shortcutItem: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
+        NotificationCenter.default.post(
+            name: NSNotification.Name(AppShortcutsPlugin.notificationName),
+            object: nil,
+            userInfo: [AppShortcutsPlugin.userInfoShortcutItemKey: shortcutItem]
+        )
+        completionHandler(true)
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
