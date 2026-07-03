@@ -48,6 +48,7 @@
     "@capacitor/haptics": "^7.0.5",
     "@capacitor/ios": "^7.6.6",
     "@capacitor/keyboard": "^7.0.6",
+    "@capawesome/capacitor-app-shortcuts": "^7.5.0",
     "@google/generative-ai": "^0.24.1",
     "@onesignal/capacitor-plugin": "^1.1.0",
     "@prisma/client": "5.22.0",

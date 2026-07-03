@@ -1,5 +1,6 @@
 'use client'
 
+import { AppShortcutsManager } from '@/components/layout/AppShortcutsManager'
 import { BiometricLockGate } from '@/components/layout/BiometricLockGate'
 import { DeveloperWatermark } from '@/components/layout/DeveloperWatermark'
 import { ForcedUpdateGate } from '@/components/layout/ForcedUpdateGate'
@@ -16,6 +17,7 @@ export function GlobalPlatformChrome() {
       <PlatformDiagnostics />
       <ForcedUpdateGate />
       <BiometricLockGate />
+      <AppShortcutsManager />
     </>
   )
 }
