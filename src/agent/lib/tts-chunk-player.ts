@@ -30,6 +30,8 @@ export interface TtsChunkPlayer {
 export function createTtsChunkPlayer(handlers: {
   /** First audible chunk started playing. */
   onFirstPlay?: () => void
+  /** A chunk just started sounding — live-subtitle hook. */
+  onChunkStart?: (text: string, sys: boolean) => void
   /** Everything queued has finished sounding (or nothing was ever queued). */
   onDone?: () => void
 }): TtsChunkPlayer {
@@ -40,7 +42,7 @@ export function createTtsChunkPlayer(handlers: {
   let finished = false
   let disposed = false
   let firstPlayed = false
-  let prefetched: { sys: boolean; url: string } | null = null
+  let prefetched: { text: string; sys: boolean; url: string } | null = null
 
   const el = getTtsElement()
 
@@ -50,11 +52,12 @@ export function createTtsChunkPlayer(handlers: {
     }
   }
 
-  const playUrl = (url: string, sys: boolean) => {
+  const playUrl = (url: string, sys: boolean, text: string) => {
     playing = true
     // System lines (ack/narration) don't flip the console to "speaking" —
     // only the real reply does.
     if (!sys && !firstPlayed) { firstPlayed = true; handlers.onFirstPlay?.() }
+    handlers.onChunkStart?.(text, sys)
     el.onended = () => {
       URL.revokeObjectURL(url)
       playing = false
@@ -83,7 +86,7 @@ export function createTtsChunkPlayer(handlers: {
     if (prefetched) {
       const p = prefetched
       prefetched = null
-      playUrl(p.url, p.sys)
+      playUrl(p.url, p.sys, p.text)
       void prefetchNext()
       return
     }
@@ -95,7 +98,7 @@ export function createTtsChunkPlayer(handlers: {
       const url = await fetchTtsUrl(next.text)
       fetching = false
       if (disposed) { URL.revokeObjectURL(url); return }
-      playUrl(url, next.sys)
+      playUrl(url, next.sys, next.text)
       void prefetchNext()
     } catch {
       fetching = false
@@ -112,7 +115,7 @@ export function createTtsChunkPlayer(handlers: {
       const url = await fetchTtsUrl(next.text)
       fetching = false
       if (disposed) { URL.revokeObjectURL(url); return }
-      prefetched = { sys: next.sys, url }
+      prefetched = { text: next.text, sys: next.sys, url }
       if (!playing) void pump()
     } catch {
       fetching = false

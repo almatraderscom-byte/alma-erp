@@ -64,6 +64,76 @@ export function resumeTtsRoute(): void {
   if (_ttsCtx && _ttsCtx.state === 'suspended') void _ttsCtx.resume().catch(() => {})
 }
 
+/* ---- instant acknowledgements ------------------------------------------
+ * The ack used to wait for STT + a TTS fetch (~1.5-2.5s of dead air). The
+ * console pre-synthesizes its ack lines once per session; when the mic
+ * closes, one plays from cache in the SAME tick — Siri-grade immediacy. */
+const _ackCache = new Map<string, string>()
+
+export async function primeSpokenAcks(texts: string[]): Promise<void> {
+  for (const t of texts) {
+    if (_ackCache.has(t)) continue
+    try { _ackCache.set(t, await fetchTtsUrl(t)) } catch { /* ack stays lazy */ }
+  }
+}
+
+/** Play a pre-synthesized ack instantly. False → caller falls back to the queue. */
+export function playInstantAck(text: string): boolean {
+  const url = _ackCache.get(text)
+  if (!url) return false
+  try {
+    const el = getElement()
+    el.onended = null
+    el.onerror = null
+    el.src = url
+    el.muted = false
+    resumeTtsRoute()
+    void el.play().catch(() => {})
+    return true
+  } catch { return false }
+}
+
+/** Speak one standalone line right now (approval confirmations etc.). */
+export async function speakLine(text: string): Promise<void> {
+  try {
+    const url = await fetchTtsUrl(text)
+    const el = getElement()
+    el.onended = () => URL.revokeObjectURL(url)
+    el.onerror = () => URL.revokeObjectURL(url)
+    el.src = url
+    el.muted = false
+    resumeTtsRoute()
+    await el.play().catch(() => {})
+  } catch { /* spoken confirmation is best-effort */ }
+}
+
+/**
+ * Siri-style earcon when the mic opens — two quick soft sine notes on the
+ * routed context. Silent no-op when the context isn't available/running.
+ */
+export function playMicChime(): void {
+  try {
+    if (!_ttsCtx || _ttsCtx.state !== 'running') return
+    const ctx = _ttsCtx
+    const g = ctx.createGain()
+    g.gain.value = 0
+    g.connect(ctx.destination)
+    const note = (freq: number, at: number, dur: number) => {
+      const o = ctx.createOscillator()
+      o.type = 'sine'
+      o.frequency.value = freq
+      o.connect(g)
+      g.gain.setValueAtTime(0, ctx.currentTime + at)
+      g.gain.linearRampToValueAtTime(0.09, ctx.currentTime + at + 0.02)
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + at + dur)
+      o.start(ctx.currentTime + at)
+      o.stop(ctx.currentTime + at + dur + 0.02)
+    }
+    note(880, 0, 0.12)
+    note(1318.5, 0.09, 0.14)
+  } catch { /* an earcon is never worth an error */ }
+}
+
 /**
  * Live amplitude (0..1) of whatever the TTS element is speaking right now,
  * or -1 when no analyser is available (caller falls back to its envelope).

@@ -13,5 +13,5 @@ export type VoiceTurnEvent =
   | { type: 'subagent_start'; id: string; roleLabel: string }
   | { type: 'subagent_end'; id: string; success?: boolean }
   | { type: 'text_delta'; delta: string }
-  | { type: 'confirm_card' }
+  | { type: 'confirm_card'; pendingActionId?: string; summary?: string; costEstimate?: number; actionType?: string }
   | { type: 'thinking' }

@@ -5,8 +5,9 @@ import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useVoiceRecorder } from '@/agent/hooks/useVoiceRecorder'
 import { useMicLevel } from '@/agent/hooks/useMicLevel'
-import { useWakeWord, wakeWordSupported } from '@/agent/hooks/useWakeWord'
-import { unlockTtsAudio } from '@/agent/lib/voice-tts-client'
+import { useWakeWord, useLiveTranscript, wakeWordSupported } from '@/agent/hooks/useWakeWord'
+import { useBargeIn } from '@/agent/hooks/useBargeIn'
+import { unlockTtsAudio, primeSpokenAcks, playInstantAck, playMicChime, speakLine } from '@/agent/lib/voice-tts-client'
 import { createTtsChunkPlayer, type TtsChunkPlayer } from '@/agent/lib/tts-chunk-player'
 import { toolDisplay } from '@/agent/lib/tool-labels'
 import { voiceHaptic, agentReplyHaptic } from '@/agent/lib/haptics'
@@ -50,6 +51,10 @@ interface FeedCard {
   done: boolean
   success?: boolean
   at: string
+  /** approval cards only */
+  pendingActionId?: string
+  busy?: boolean
+  resolution?: 'approved' | 'rejected' | 'settled'
 }
 
 const bnTime = () =>
@@ -63,6 +68,9 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
   const [state, setState] = useState<VoiceState>('idle')
   const [transcript, setTranscript] = useState('')
   const [reply, setReply] = useState('')
+  /** Live subtitle while speaking: sentences already spoken + the one sounding now. */
+  const [spoken, setSpoken] = useState<string[]>([])
+  const [currentLine, setCurrentLine] = useState<string | null>(null)
   const [cards, setCards] = useState<FeedCard[]>([])
   /** Conversation mode (Siri+): when the reply finishes speaking, the mic
    *  re-opens by itself — no tap between turns. Silence for 8s ends the loop. */
@@ -70,6 +78,8 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
   const convoModeRef = useRef(convoMode)
   useEffect(() => { convoModeRef.current = convoMode }, [convoMode])
   const playerRef = useRef<TtsChunkPlayer | null>(null)
+  const currentLineRef = useRef<string | null>(null)
+  const ackPlayedRef = useRef(false)
   const stateRef = useRef(state)
   useEffect(() => { stateRef.current = state }, [state])
   const openRef = useRef(open)
@@ -79,6 +89,9 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
   const stopTts = useCallback(() => {
     playerRef.current?.dispose()
     playerRef.current = null
+    currentLineRef.current = null
+    setSpoken([])
+    setCurrentLine(null)
   }, [])
 
   const onTurnEvent = useCallback((evt: VoiceTurnEvent) => {
@@ -100,8 +113,12 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
       setCards((prev) => prev.map((c) => c.id === evt.id ? { ...c, done: true, success: evt.success !== false } : c))
     } else if (evt.type === 'confirm_card') {
       setCards((prev) => [...prev, {
-        id: `approval-${prev.length}`, kind: 'approval', icon: '🔐',
-        title: 'আপনার অনুমোদন দরকার', sub: 'চ্যাটে Approve কার্ডে ট্যাপ করুন', done: false, at: bnTime(),
+        id: evt.pendingActionId ? `approval-${evt.pendingActionId}` : `approval-${prev.length}`,
+        kind: 'approval', icon: '🔐',
+        title: 'আপনার অনুমোদন দরকার',
+        sub: evt.summary?.slice(0, 140) || (evt.pendingActionId ? undefined : 'চ্যাটে Approve কার্ডে ট্যাপ করুন'),
+        pendingActionId: evt.pendingActionId,
+        done: false, at: bnTime(),
       }])
     } else if (evt.type === 'text_delta') {
       setReply((prev) => prev + evt.delta)
@@ -145,6 +162,8 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
     onTranscribed: async (text) => {
       setTranscript(text)
       setReply('')
+      setSpoken([])
+      setCurrentLine(null)
       setState('thinking')
       // Streaming TTS: sentences start SOUNDING while the head is still
       // writing — 2-4s faster to first word than waiting for the whole reply.
@@ -154,18 +173,30 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
           agentReplyHaptic()
           setState('speaking')
         },
+        onChunkStart: (line, sys) => {
+          if (!openRef.current || sys) return
+          // live subtitle: the sentence being SPOKEN right now lights up
+          setSpoken((prev) => (currentLineRef.current ? [...prev, currentLineRef.current] : prev))
+          currentLineRef.current = line
+          setCurrentLine(line)
+        },
         onDone: () => {
           playerRef.current = null
+          currentLineRef.current = null
           if (openRef.current) {
+            setCurrentLine(null)
             setState('idle')
             scheduleAutoListen()
           }
         },
       })
       playerRef.current = player
-      // Human feel: speak an instant ack, then narrate the first tool while the
-      // head is still working — the owner hears the PROCESS, not just a result.
-      player.say(SPOKEN_ACKS[Math.floor(Math.random() * SPOKEN_ACKS.length)])
+      // Human feel: the instant ack already played when the mic closed (cached
+      // audio, zero wait); only fall back to the queue if the cache missed.
+      if (!ackPlayedRef.current) {
+        player.say(SPOKEN_ACKS[Math.floor(Math.random() * SPOKEN_ACKS.length)])
+      }
+      ackPlayedRef.current = false
       let replyStarted = false
       let lastNarration = 0
       try {
@@ -204,12 +235,15 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
       setState('error')
       setTimeout(() => { if (openRef.current) setState('idle') }, 2000)
     },
-    // Feel the mic like Siri: unmistakable medium tap when it opens, light
-    // tick when it closes, light pulse when the reply starts speaking.
-    onRecordingStart: () => { voiceHaptic(true); setState('listening') },
+    // Feel the mic like Siri: chime + unmistakable medium tap when it opens,
+    // light tick + INSTANT cached ack when it closes — zero dead air.
+    onRecordingStart: () => { playMicChime(); voiceHaptic(true); setState('listening') },
     onRecordingStop: () => {
       voiceHaptic(false)
-      if (stateRef.current === 'listening') setState('transcribing')
+      if (stateRef.current === 'listening') {
+        setState('transcribing')
+        ackPlayedRef.current = playInstantAck(SPOKEN_ACKS[Math.floor(Math.random() * SPOKEN_ACKS.length)])
+      }
     },
   })
 
@@ -227,6 +261,31 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
       if (openRef.current && stateRef.current === 'idle') recorderRef.current?.start()
     },
   )
+
+  /* Live transcript while recording — the owner sees his words appear as he
+     speaks (where the browser supports it; cosmetic, STT stays authoritative). */
+  useLiveTranscript(open && state === 'listening', (liveText) => {
+    if (openRef.current && stateRef.current === 'listening') setTranscript(liveText)
+  })
+
+  /* Voice barge-in — talk over the agent to interrupt, no tap needed. */
+  useBargeIn(open && convoMode && state === 'speaking', () => {
+    if (!openRef.current || stateRef.current !== 'speaking') return
+    stopTts()
+    setState('idle')
+    setTimeout(() => {
+      if (openRef.current && stateRef.current === 'idle') {
+        setTranscript('')
+        setReply('')
+        recorderRef.current?.start()
+      }
+    }, 150)
+  })
+
+  /* Pre-synthesize the ack lines once the console opens — instant playback later. */
+  useEffect(() => {
+    if (open) void primeSpokenAcks(SPOKEN_ACKS)
+  }, [open])
 
   const handleTapOrb = useCallback(() => {
     // Inside the tap gesture: bless the persistent audio element so the reply
@@ -251,6 +310,28 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
       recorder.start()
     }
   }, [state, recorder, stopTts])
+
+  /** Approve/reject a pending action right here — no trip back to the chat.
+   *  409/410/404 mean "already settled elsewhere/expired" — calm, never red. */
+  const resolveApproval = useCallback(async (cardId: string, actionId: string, approve: boolean) => {
+    setCards((prev) => prev.map((c) => c.id === cardId ? { ...c, busy: true } : c))
+    let resolution: FeedCard['resolution'] = 'settled'
+    let failed = false
+    try {
+      const res = await fetch(`/api/assistant/actions/${actionId}/${approve ? 'approve' : 'reject'}`, { method: 'POST' })
+      if (res.ok) resolution = approve ? 'approved' : 'rejected'
+      else if (![404, 409, 410].includes(res.status)) failed = true
+    } catch { failed = true }
+    setCards((prev) => prev.map((c) => c.id === cardId
+      ? { ...c, busy: false, done: !failed, success: !failed, resolution: failed ? undefined : resolution }
+      : c))
+    if (failed) { toast.error('অনুমোদন পাঠানো যায়নি — আবার চেষ্টা করুন'); return }
+    void speakLine(
+      resolution === 'approved' ? 'অনুমোদন করে দিয়েছি স্যার, কাজ এগোচ্ছে।'
+        : resolution === 'rejected' ? 'বাতিল করে দিয়েছি, স্যার।'
+          : 'এটা আগেই নিষ্পত্তি হয়ে গেছে, স্যার।',
+    )
+  }, [])
 
   const handleClose = useCallback(() => {
     recorder.cancel()
@@ -329,7 +410,13 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
               {transcript && (
                 <div className="vc-transcript"><span className="mic">MIC</span>{transcript}</div>
               )}
-              {reply ? (
+              {state === 'speaking' && currentLine ? (
+                /* live subtitle: the sentence being spoken glows, said ones dim */
+                <p className="vc-caption">
+                  {spoken.length > 0 && <span className="said">{spoken.slice(-2).join(' ')} </span>}
+                  <span className="now">{currentLine}</span>
+                </p>
+              ) : reply ? (
                 <p className="vc-caption">{reply}</p>
               ) : (
                 <p className="vc-caption dim">
@@ -358,9 +445,31 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
                       {c.title}
                       {c.sub ? <small>{c.sub}</small> : null}
                     </span>
-                    <span className={`pill ${c.done ? (c.success === false ? 'fail' : 'ok') : 'run'}`}>
-                      {c.kind === 'approval' ? 'অপেক্ষায়' : c.done ? (c.success === false ? 'ব্যর্থ' : 'সম্পন্ন') : 'চলছে…'}
-                    </span>
+                    {c.kind === 'approval' && c.pendingActionId && !c.done ? (
+                      <span className="acts">
+                        <button
+                          type="button"
+                          disabled={c.busy}
+                          className="approve"
+                          onClick={() => void resolveApproval(c.id, c.pendingActionId!, true)}
+                        >{c.busy ? '…' : 'অনুমোদন'}</button>
+                        <button
+                          type="button"
+                          disabled={c.busy}
+                          className="rejectbtn"
+                          onClick={() => void resolveApproval(c.id, c.pendingActionId!, false)}
+                        >বাতিল</button>
+                      </span>
+                    ) : (
+                      <span className={`pill ${c.done ? (c.success === false ? 'fail' : 'ok') : 'run'}`}>
+                        {c.kind === 'approval'
+                          ? (c.resolution === 'approved' ? 'অনুমোদিত'
+                            : c.resolution === 'rejected' ? 'বাতিল'
+                              : c.resolution === 'settled' ? 'নিষ্পত্তি'
+                                : 'অপেক্ষায়')
+                          : c.done ? (c.success === false ? 'ব্যর্থ' : 'সম্পন্ন') : 'চলছে…'}
+                      </span>
+                    )}
                   </motion.div>
                 ))}
               </div>
@@ -539,6 +648,8 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
               color: #eaf2fb;
             }
             .vc-caption.dim { color: #7c92a9; font-size: 15px; }
+            .vc-caption .said { color: #55708c; }
+            .vc-caption .now { color: #eaf2fb; text-shadow: 0 0 18px rgba(120, 200, 255, 0.25); }
             .vc-caption .sir { color: #e2b366; }
             .vc-feed {
               width: 100%;
@@ -603,6 +714,21 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
             .vc-card .pill.run { color: #f4c86a; border: 1px solid rgba(244, 200, 106, 0.35); background: rgba(244, 200, 106, 0.08); }
             .vc-card .pill.ok { color: #3be08f; border: 1px solid rgba(59, 224, 143, 0.35); background: rgba(59, 224, 143, 0.08); }
             .vc-card .pill.fail { color: #f27e7e; border: 1px solid rgba(242, 126, 126, 0.35); background: rgba(242, 126, 126, 0.08); }
+            .vc-card .acts { display: inline-flex; gap: 7px; flex: none; }
+            .vc-card .acts button {
+              border-radius: 9999px;
+              font-size: 12px;
+              font-weight: 600;
+              padding: 6px 13px;
+              border: none;
+            }
+            .vc-card .acts button:disabled { opacity: 0.55; }
+            .vc-card .acts .approve { color: #041018; background: linear-gradient(140deg, #7ce3c8, #4ea3ff); }
+            .vc-card .acts .rejectbtn {
+              color: #9db2c9;
+              background: rgba(140, 190, 240, 0.07);
+              border: 1px solid rgba(160, 200, 240, 0.18);
+            }
             .vc-dock {
               position: relative;
               z-index: 1;
