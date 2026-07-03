@@ -139,12 +139,17 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
             webView.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor),
             webView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            // keyboardLayoutGuide handles BOTH: with no keyboard its top sits at the
-            // safe-area bottom (above the native tab bar → content no longer hides
-            // under it); when the keyboard shows it rides up to the keyboard top (so
-            // the web composer lifts with it). Fixes tab-bar overlap AND typing.
-            webView.bottomAnchor.constraint(equalTo: root.keyboardLayoutGuide.topAnchor)
+            // FULL height to the safe-area bottom (above the native tab bar → no tab-bar
+            // overlap). We deliberately do NOT pin to keyboardLayoutGuide: resizing a
+            // WKWebView the instant its input becomes first responder made iOS resign
+            // that input — the keyboard dismissed on the very first keystroke and text
+            // was dropped (owner report, reproduced on Orders search too). Instead the
+            // view stays a stable size and the keyboard OVERLAPS it; we lift the focused
+            // field above the keyboard with a scroll-view bottom inset (see keyboard
+            // observers), the standard WKWebView pattern that keeps text input alive.
+            webView.bottomAnchor.constraint(equalTo: root.safeAreaLayoutGuide.bottomAnchor)
         ])
+        startObservingKeyboard()
 
         spinner.color = UIColor(white: 1, alpha: 0.7)
         spinner.hidesWhenStopped = true
@@ -156,6 +161,41 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         ])
         view = root
     }
+
+    // MARK: - Keyboard avoidance (without resizing the WebView)
+
+    /// The WebView is a stable full-height size and the keyboard overlaps it. To keep
+    /// the focused field (search boxes, forms, the agent composer) visible we raise the
+    /// scroll view's bottom inset by the overlap so WKWebView scrolls the field above
+    /// the keyboard — the standard pattern, and one that does NOT resign first responder
+    /// the way pinning the view to keyboardLayoutGuide did.
+    private func startObservingKeyboard() {
+        let nc = NotificationCenter.default
+        nc.addObserver(self, selector: #selector(keyboardChange(_:)),
+                       name: UIResponder.keyboardWillShowNotification, object: nil)
+        nc.addObserver(self, selector: #selector(keyboardChange(_:)),
+                       name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        nc.addObserver(self, selector: #selector(keyboardHide(_:)),
+                       name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+
+    @objc private func keyboardChange(_ note: Notification) {
+        guard let webView = webView,
+              let endFrame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+        else { return }
+        // Overlap of the keyboard with the web view, in the web view's own coordinates.
+        let kbInView = webView.convert(endFrame, from: nil)
+        let overlap = max(0, webView.bounds.maxY - kbInView.minY)
+        webView.scrollView.contentInset.bottom = overlap
+        webView.scrollView.verticalScrollIndicatorInsets.bottom = overlap
+    }
+
+    @objc private func keyboardHide(_ note: Notification) {
+        webView?.scrollView.contentInset.bottom = 0
+        webView?.scrollView.verticalScrollIndicatorInsets.bottom = 0
+    }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
 
     private var loadedOnce = false
     override func viewDidAppear(_ animated: Bool) {
