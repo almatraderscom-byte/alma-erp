@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { App as CapApp } from '@capacitor/app'
 import { isCapacitorNative } from '@/lib/capacitor-native'
 import { syncLivePulse } from '@/lib/live-pulse'
+import { syncNativeEntities } from '@/lib/native-entities'
 
 /**
  * Keeps the iOS "Business Pulse" Live Activity in sync.
@@ -28,6 +29,9 @@ function syncIfNotThrottled(): void {
     /* storage unavailable — fall through and sync anyway */
   }
   void syncLivePulse()
+  // Phase N3: refresh the App Intents entity cache (Siri/Spotlight orders) on the
+  // same native-only, throttled open/resume tick. Independent + fail-open.
+  void syncNativeEntities()
 }
 
 export function LivePulseManager() {

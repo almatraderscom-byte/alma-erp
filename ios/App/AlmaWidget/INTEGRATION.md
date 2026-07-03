@@ -571,3 +571,253 @@ the widget plist needs it so the extension advertises Live Activity rendering.
 - Everything is additionally wrapped in `#if canImport(ActivityKit)` and
   `@available(iOS 16.1, *)`; on unsupported OS the bridge resolves `started:false` /
   `ended:false` and never traps.
+
+---
+
+## Phase N1 additions — NativeIntelligenceBridge (Foundation Models)
+
+Build 9. Adds one **App-target-only** Swift file — a second local Capacitor plugin
+(`NativeIntelligenceBridgePlugin`) exposing Apple's on-device Foundation Models to
+the web layer for free/offline summarize + classify. No new target, no widget
+change, no new plist keys (Foundation Models needs no `NS*UsageDescription`).
+
+### A. New file and target
+
+| File                                    | App target | Widget target |
+|-----------------------------------------|:----------:|:-------------:|
+| `App/NativeIntelligenceBridge.swift`    | ✅          | —             |
+
+Registered at runtime in `AlmaBridgeViewController.capacitorDidLoad()` via a second
+`bridge?.registerPluginInstance(NativeIntelligenceBridgePlugin())` line — same
+mechanism as `LiveActivityBridgePlugin`.
+
+### B. `project.pbxproj` additions — reserved IDs (prefix `D1AA44`)
+
+New, 24-hex-char, non-colliding with existing `504EC3…` / `A1AA11…` / `B1AA22…` /
+`C1AA33…` IDs.
+
+| ID                         | Object kind      | Represents                                        |
+|----------------------------|------------------|---------------------------------------------------|
+| `D1AA4400000000000000A001` | PBXFileReference | `App/NativeIntelligenceBridge.swift`              |
+| `D1AA4400000000000000B001` | PBXBuildFile     | NativeIntelligenceBridge.swift in **App** Sources |
+
+Placement: one `PBXBuildFile` row (end of that section), one `PBXFileReference`
+row (end of that section), added to the **App** group `504EC3061FED79650016851F`
+`children`, and to the **App** Sources phase `504EC3001FED79650016851F` `files`.
+
+### C. Build number
+
+`CURRENT_PROJECT_VERSION` bumped `8 → 9` in all **4** places. NOTE: those 4 are the
+App target Debug/Release **and** the widget extension Debug/Release — they move in
+**lockstep** (an app extension's `CFBundleVersion` must equal the host app's or App
+Store Connect rejects the upload). The web gate `MIN_NATIVE_BUILD = 9` in
+`src/lib/native-intelligence.ts` matches, so the plugin is never probed on a binary
+that lacks it.
+
+### D. API / availability caveats
+
+- Wrapped in `#if canImport(FoundationModels)` + `#available(iOS 26, *)`. Below
+  iOS 26, on non-eligible hardware, or when Apple Intelligence isn't
+  enabled/ready, every method resolves a falsy result (`available:false` /
+  `onDevice:false`) and never traps — the web layer then uses its server fallback.
+- FoundationModels requires **no** privacy-usage plist key (unlike Face ID / mic /
+  camera), so there is nothing to add to `Info.plist` for this phase.
+- `classify` uses guided generation (`@Generable` `Classification`) and the Swift
+  side additionally post-validates the chosen label against the caller's list, so
+  an off-list answer falls back rather than being trusted.
+- ⚠️ Bangla output quality is UNVERIFIED on-device — do not wire this to
+  customer-facing / Bangla output until the owner A/B-tests it on his iPhone.
+
+---
+
+## Phase N2 additions — NativeSpeechBridge (on-device STT)
+
+Build 10. Adds one **App-target-only** Swift file — a third local Capacitor plugin
+(`NativeSpeechBridgePlugin`) exposing Apple's on-device speech recognition so
+dictation transcribes for free + offline instead of the Whisper API. No new target,
+no widget change.
+
+### A. New file and target
+
+| File                             | App target | Widget target |
+|----------------------------------|:----------:|:-------------:|
+| `App/NativeSpeechBridge.swift`   | ✅          | —             |
+
+Registered at runtime in `AlmaBridgeViewController.capacitorDidLoad()` via a third
+`bridge?.registerPluginInstance(NativeSpeechBridgePlugin())` line.
+
+### B. `project.pbxproj` additions — reserved IDs (prefix `E1AA55`)
+
+| ID                         | Object kind      | Represents                                   |
+|----------------------------|------------------|----------------------------------------------|
+| `E1AA5500000000000000A001` | PBXFileReference | `App/NativeSpeechBridge.swift`               |
+| `E1AA5500000000000000B001` | PBXBuildFile     | NativeSpeechBridge.swift in **App** Sources  |
+
+Placement: same four spots as the N1 file — PBXBuildFile row, PBXFileReference row,
+App group `504EC3061FED79650016851F` children, App Sources phase
+`504EC3001FED79650016851F` files.
+
+### C. Info.plist — `NSSpeechRecognitionUsageDescription` (REQUIRED)
+
+`SFSpeechRecognizer.requestAuthorization` triggers the OS permission prompt; without
+this key the app **crashes** the first time STT is used (same class of failure as
+the Face ID build-2 incident). Added to `App/Info.plist` in this same phase. The
+mic key (`NSMicrophoneUsageDescription`) was already present.
+
+### D. Build number
+
+`CURRENT_PROJECT_VERSION` bumped `9 → 10` in all **4** App-target/project places.
+Web gate `MIN_NATIVE_BUILD = 10` in `src/lib/native-speech.ts` matches.
+
+### E. Engine + availability caveats
+
+- Wrapped in `#if canImport(Speech)` + `#available(iOS 16, *)`. Engine is
+  `SFSpeechRecognizer` with `requiresOnDeviceRecognition = true` (no network, no
+  cost, offline) via `SFSpeechURLRecognitionRequest` on the recorded clip — the
+  exact drop-in for useVoiceRecorder's record-then-transcribe flow.
+- iOS 26 `SpeechAnalyzer` / `SpeechTranscriber` is a **documented future upgrade**,
+  deliberately NOT written blind (its async-asset API is easy to mis-code and would
+  break the device build). The business goal — free, offline, Bangla STT — is met
+  by the on-device recognizer now; SpeechAnalyzer layers on after device
+  verification. See handoff §Phase N2.
+- Below iOS 16, unauthorized, recognizer-unavailable, or on any error, `transcribe`
+  resolves `{ text:"", onDevice:false }` and never traps — the web layer then uses
+  Whisper.
+- ⚠️ On-device STT is **owner-opt-in** (web flag `alma_native_stt`, default OFF) so
+  the owner A/B-tests Bangla accuracy vs Whisper before switching over.
+
+---
+
+## Phase N3 additions — App Intents entities + Spotlight (App Group)
+
+Build 11. Adds two **App-target** Swift files, an **App Group** shared between the
+App and Widget targets, and a fourth local plugin. This is the first phase to touch
+**entitlements + signing**, so read §C carefully.
+
+### A. New files
+
+| File                             | App target | Widget target |
+|----------------------------------|:----------:|:-------------:|
+| `App/AlmaEntities.swift`         | ✅          | —             |
+| `App/EntityCacheBridge.swift`    | ✅          | —             |
+| `AlmaWidget/AlmaWidget.entitlements` | —      | ✅ (signing)  |
+
+- `AlmaEntities.swift` — `OrderEntity` + `ProductEntity` (`AppEntity` + `EntityQuery`
+  reading the App Group cache) and a parameterized `OpenOrderIntent(order:)` that
+  deep-links `almaerp://orders/<id>` (DeepLinkManager already routes it — no web
+  routing change).
+- `EntityCacheBridge.swift` — `EntityCacheBridgePlugin.setEntities({orders,products})`
+  writes JSON into `UserDefaults(suiteName: "group.com.almatraders.erp")` and calls
+  `AlmaShortcuts.updateAppShortcutParameters()`.
+- Registered in `AlmaBridgeViewController.capacitorDidLoad()` (4th `registerPluginInstance`).
+
+### B. `project.pbxproj` additions — reserved IDs (prefix `F1AA66`)
+
+| ID                         | Object kind      | Represents                                     |
+|----------------------------|------------------|------------------------------------------------|
+| `F1AA6600000000000000A001` | PBXFileReference | `App/AlmaEntities.swift`                       |
+| `F1AA6600000000000000A002` | PBXFileReference | `App/EntityCacheBridge.swift`                  |
+| `F1AA6600000000000000A003` | PBXFileReference | `AlmaWidget/AlmaWidget.entitlements`           |
+| `F1AA6600000000000000B001` | PBXBuildFile     | AlmaEntities.swift in **App** Sources          |
+| `F1AA6600000000000000B002` | PBXBuildFile     | EntityCacheBridge.swift in **App** Sources     |
+
+The two `.swift` files go into the App group + App Sources phase; the widget
+entitlements file is added to the `AlmaWidget` group and referenced by
+`CODE_SIGN_ENTITLEMENTS` (below), not compiled.
+
+### C. Entitlements + signing (⚠️ the risky part for the device build)
+
+- App Group `group.com.almatraders.erp` added to **both** targets:
+  - `App/App.entitlements` gains a `com.apple.security.application-groups` array.
+  - New `AlmaWidget/AlmaWidget.entitlements` with the same group;
+    `CODE_SIGN_ENTITLEMENTS = AlmaWidget/AlmaWidget.entitlements` added to the
+    widget's **Debug and Release** build configs (`D002`/`D003`). The App target
+    already pointed at `App/App.entitlements`.
+- **Automatic signing must provision the App Group.** With
+  `-allowProvisioningUpdates` Xcode usually registers the "App Groups" capability
+  and the `group.com.almatraders.erp` identifier for BOTH app IDs
+  (`com.almatraders.erp` and `com.almatraders.erp.widget`) on first build. If it
+  does NOT (some accounts require it), the owner enables **App Groups →
+  `group.com.almatraders.erp`** for both App IDs in the Apple Developer portal, then
+  rebuilds. The plugin is fail-open — if the group isn't provisioned it resolves
+  `{saved:false}` and nothing breaks — but entities won't populate until it is.
+
+### D. Build number
+
+`CURRENT_PROJECT_VERSION` `10 → 11` in all 4 lockstep places. Web gate
+`MIN_NATIVE_BUILD = 11` in `src/lib/native-entities.ts` matches.
+
+### E. Data path + availability caveats
+
+- Native can't read the web session: the web POSTs recent orders to the bridge via
+  `syncNativeEntities()` (`src/lib/native-entities.ts`, wired into `LivePulseManager`
+  on the same throttled open/resume tick), fed by `/api/assistant/native-entities`
+  (owner-only, no money exposed).
+- `AppEntity`/`EntityQuery`/parameterized intents are iOS 16+ and compile against the
+  current SDK. Everything reads the cache read-only and yields an empty list on a
+  missing/malformed cache — never traps.
+- `ProductEntity` is wired but the feed returns `products: []` (no separate product
+  catalog yet) — populate later when a product source exists.
+- iOS 27 Spotlight semantic-index schemas + View Annotations are a documented future
+  stretch, not built here.
+
+---
+
+## Phase N4 additions — Background refresh (BGAppRefreshTask)
+
+Build 12. Adds one **App-target** Swift file plus two Info.plist keys and two tiny
+AppDelegate hooks. No new plugin, no entitlement, no web code.
+
+### A. New file + wiring
+
+| File                              | App target |
+|-----------------------------------|:----------:|
+| `App/BackgroundRefresh.swift`     | ✅          |
+
+- `AppDelegate.didFinishLaunching` → `BackgroundRefresh.register()` (BEFORE `return true`).
+- `AppDelegate.applicationDidEnterBackground` → `BackgroundRefresh.schedule()`.
+
+### B. `project.pbxproj` — reserved IDs (prefix `A2BB77`)
+
+Hex-safe prefix (the natural next letter `G` is not a hex digit, so `A2BB77`).
+
+| ID                         | Object kind      | Represents                                 |
+|----------------------------|------------------|--------------------------------------------|
+| `A2BB7700000000000000A001` | PBXFileReference | `App/BackgroundRefresh.swift`              |
+| `A2BB7700000000000000B001` | PBXBuildFile     | BackgroundRefresh.swift in **App** Sources |
+
+Into the App group + App Sources phase (same four spots as prior single-file phases).
+
+### C. Info.plist (REQUIRED for BGTaskScheduler)
+
+```xml
+<key>UIBackgroundModes</key>
+<array>
+    <string>remote-notification</string>
+    <string>fetch</string>           <!-- ADDED -->
+</array>
+<key>BGTaskSchedulerPermittedIdentifiers</key>   <!-- ADDED -->
+<array>
+    <string>com.almatraders.erp.refresh</string>
+</array>
+```
+
+Without `BGTaskSchedulerPermittedIdentifiers` the `BGTaskScheduler.register` call
+throws at launch — the identifier MUST be declared here.
+
+### D. Build number
+
+`CURRENT_PROJECT_VERSION` `11 → 12` in all 4 lockstep places. No web gate (this phase
+adds no native-dependent web feature — it drives existing endpoints).
+
+### E. Behaviour + caveats
+
+- Reuses the WKWebView NextAuth cookie (`WKWebsiteDataStore.default().httpCookieStore`)
+  for a native `URLSession` GET to `/api/assistant/device-reminders`, then schedules
+  local notifications via `UNUserNotificationCenter`. No device token, no DB change.
+- Notification ids match the web's `reminderNotificationId` 31-hash so web-scheduled
+  and background-scheduled reminders DEDUPE (same `UNNotificationRequest` identifier).
+- Background tasks run on **device only** (never the simulator). To force a run while
+  debugging, use the LLDB `_simulateLaunchForTaskWithIdentifier` trick on device.
+- Fully fail-open: no cookie / 401 / offline / decode failure → clean no-op, retried
+  next window.

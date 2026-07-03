@@ -17,6 +17,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                 userInfo: [AppShortcutsPlugin.userInfoShortcutItemKey: shortcutItem]
             )
         }
+        // Phase N4: register the background-refresh task handler. Must happen before
+        // this method returns, per BGTaskScheduler requirements.
+        BackgroundRefresh.register()
         return true
     }
 
@@ -38,6 +41,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func applicationDidEnterBackground(_ application: UIApplication) {
         // Use this method to release shared resources, save user data, invalidate timers, and store enough application state information to restore your application to its current state in case it is terminated later.
         // If your application supports background execution, this method is called instead of applicationWillTerminate: when the user quits.
+        // Phase N4: queue the next background reminder refresh.
+        BackgroundRefresh.schedule()
     }
 
     func applicationWillEnterForeground(_ application: UIApplication) {
