@@ -20,6 +20,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Phase N4: register the background-refresh task handler. Must happen before
         // this method returns, per BGTaskScheduler requirements.
         BackgroundRefresh.register()
+
+        // PHASE S0 SPIKE: swap the window root to the native tab-bar shell so the
+        // owner can feel a native frame on device. This replaces the storyboard
+        // (Capacitor) root for THIS build only. To revert, delete this block —
+        // the Capacitor root returns unchanged.
+        if window == nil { window = UIWindow(frame: UIScreen.main.bounds) }
+        window?.rootViewController = SpikeTabBarController()
+        window?.makeKeyAndVisible()
+
         return true
     }
 
