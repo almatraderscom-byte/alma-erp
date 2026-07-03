@@ -91,12 +91,19 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     /// When true the web hides its OWN page header (this VC shows a native one), so
     /// there is no double header. Off for Assistant (keeps its in-page header).
     private let hideWebHeader: Bool
+    /// Native pull-to-refresh (deliberate over-pull reloads the page). The web's own
+    /// pull-to-refresh is disabled inside the native shell (it fired on light scroll),
+    /// so this replaces it with iOS's standard, higher-threshold gesture. Off for
+    /// Assistant (its scroll is locked + it has an in-page refresh button).
+    private let pullToRefresh: Bool
 
-    init(url: URL, processPool: WKProcessPool, tabTitle: String, systemImage: String, hideWebHeader: Bool = false) {
+    init(url: URL, processPool: WKProcessPool, tabTitle: String, systemImage: String,
+         hideWebHeader: Bool = false, pullToRefresh: Bool = false) {
         self.url = url
         self.sharedProcessPool = processPool
         self.baseTitle = tabTitle
         self.hideWebHeader = hideWebHeader
+        self.pullToRefresh = pullToRefresh
         super.init(nibName: nil, bundle: nil)
         title = tabTitle   // shown in the nav bar when this VC is pushed (e.g. from More)
         tabBarItem = UITabBarItem(
@@ -127,9 +134,20 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         let bg = UIColor(red: 0.047, green: 0.043, blue: 0.071, alpha: 1) // #0c0b12
         webView.backgroundColor = bg
         webView.scrollView.backgroundColor = bg
-        // NOTE: no native UIRefreshControl here — the ERP web pages already ship their
-        // own styled pull-to-refresh ("RELEASE TO REFRESH"). A native one on top would
-        // double-fire. Web owns content behaviors; native owns the chrome.
+
+        // Native pull-to-refresh on the ERP content tabs. The web's own PTR is disabled
+        // in the native shell (it fired on light scroll — annoying), so this is the only
+        // refresh gesture and uses iOS's standard, more deliberate over-pull threshold.
+        if pullToRefresh {
+            // contentInsetAdjustmentBehavior is .never (we manage insets ourselves), so
+            // give the refresh control an explicit top inset region + a high-contrast
+            // white spinner so it's clearly visible over the light ERP pages.
+            let rc = UIRefreshControl()
+            rc.tintColor = .white
+            rc.addTarget(self, action: #selector(pullToReload), for: .valueChanged)
+            webView.scrollView.refreshControl = rc
+            webView.scrollView.alwaysBounceVertical = true
+        }
 
         let root = UIView()
         root.backgroundColor = bg
@@ -210,10 +228,17 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         spinner.stopAnimating()
+        webView.scrollView.refreshControl?.endRefreshing()
         updateBackButton()
     }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { spinner.stopAnimating() }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { spinner.stopAnimating() }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        spinner.stopAnimating(); webView.scrollView.refreshControl?.endRefreshing()
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        spinner.stopAnimating(); webView.scrollView.refreshControl?.endRefreshing()
+    }
+
+    @objc private func pullToReload() { webView?.reload() }
 
     // MARK: - almaShell bridge (web → native)
 
@@ -223,7 +248,13 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         let type = body["type"] as? String
         if type == "route" || type == "title" {
             if let t = (body["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
-                title = t
+                // Only the nav-wrapped tabs (Orders/Approvals/More-pushed) show a native
+                // header that needs this title. On the BARE Assistant tab (a direct child
+                // of the tab bar, no nav controller) setting `title` makes UITabBarController
+                // rebuild its tab bar — and that relayout was corrupting a SIBLING tab's
+                // button, so returning to Dashboard showed the Assistant icon/label (owner
+                // report, fixed by restart). Skip the title write where it isn't needed.
+                if navigationController != nil { title = t }
             }
             updateBackButton()
         }
@@ -258,6 +289,11 @@ final class MoreMenuViewController: UITableViewController {
     private let sharedPool: WKProcessPool
 
     private let sections: [Section] = [
+        Section(header: "Workspace", items: [
+            Item(title: "My Desk",        icon: "person.crop.square",  path: "/portal"),
+            Item(title: "Office",         icon: "building.2",          path: "/portal/office"),
+            Item(title: "Product Images", icon: "photo.on.rectangle",  path: "/agent/catalog-images"),
+        ]),
         Section(header: "Money", items: [
             Item(title: "Finance",   icon: "banknote",           path: "/finance"),
             Item(title: "Expenses",  icon: "creditcard",         path: "/expenses"),
@@ -265,10 +301,12 @@ final class MoreMenuViewController: UITableViewController {
             Item(title: "Invoices",  icon: "doc.text",           path: "/invoice"),
         ]),
         Section(header: "Operations", items: [
-            Item(title: "Inventory", icon: "shippingbox",        path: "/inventory"),
-            Item(title: "Trading",   icon: "arrow.left.arrow.right", path: "/trading"),
-            Item(title: "Digital",   icon: "globe",              path: "/digital"),
-            Item(title: "Activity",  icon: "bolt",               path: "/activity"),
+            Item(title: "Inventory",      icon: "shippingbox",            path: "/inventory"),
+            Item(title: "Trading",        icon: "arrow.left.arrow.right", path: "/trading"),
+            Item(title: "Digital",        icon: "globe",                  path: "/digital"),
+            Item(title: "Activity",       icon: "bolt",                   path: "/activity"),
+            Item(title: "Task Spotlight", icon: "target",                 path: "/operations/task-spotlight"),
+            Item(title: "Archive",        icon: "archivebox",             path: "/operations/business-archive"),
         ]),
         Section(header: "People", items: [
             Item(title: "Employees",  icon: "person.2",          path: "/employees"),
@@ -280,6 +318,15 @@ final class MoreMenuViewController: UITableViewController {
             Item(title: "Insights",  icon: "lightbulb",          path: "/insights"),
             Item(title: "Briefing",  icon: "newspaper",          path: "/briefing"),
             Item(title: "Audit",     icon: "checklist",          path: "/audit"),
+        ]),
+        Section(header: "Settings", items: [
+            Item(title: "Users",         icon: "person.3",              path: "/settings/users"),
+            Item(title: "Notifications", icon: "bell.badge",            path: "/settings/notifications"),
+            Item(title: "Branding",      icon: "paintpalette",          path: "/settings/branding"),
+            Item(title: "SMS",           icon: "message",               path: "/settings/sms"),
+            Item(title: "Telegram Ops",  icon: "paperplane",            path: "/settings/telegram-ops"),
+            Item(title: "Database",      icon: "cylinder.split.1x2",    path: "/settings/database"),
+            Item(title: "Session",       icon: "key",                   path: "/settings/session"),
         ]),
     ]
 
@@ -323,7 +370,7 @@ final class MoreMenuViewController: UITableViewController {
         let base = "https://alma-erp-six.vercel.app"
         let vc = AlmaWebTabViewController(
             url: URL(string: base + item.path)!, processPool: sharedPool,
-            tabTitle: item.title, systemImage: item.icon, hideWebHeader: true)
+            tabTitle: item.title, systemImage: item.icon, hideWebHeader: true, pullToRefresh: true)
         vc.hidesBottomBarWhenPushed = false
         navigationController?.pushViewController(vc, animated: true)
     }
@@ -352,7 +399,8 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         // the Capacitor VC, so those two are not wrapped.
         func webNavTab(_ path: String, _ title: String, _ icon: String) -> UINavigationController {
             let vc = AlmaWebTabViewController(url: URL(string: Self.base + path)!, processPool: pool,
-                                              tabTitle: title, systemImage: icon, hideWebHeader: true)
+                                              tabTitle: title, systemImage: icon,
+                                              hideWebHeader: true, pullToRefresh: true)
             return Self.darkNav(root: vc, tabTitle: title, icon: icon, largeTitles: false)
         }
         func plainTab(_ path: String, _ title: String, _ icon: String) -> AlmaWebTabViewController {
