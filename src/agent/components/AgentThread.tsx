@@ -1096,7 +1096,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
     // anchors to this relative wrapper instead of the viewport, so it's immune.
     <div className="relative flex min-h-0 flex-1 flex-col">
     <div ref={containerRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
-      <div className="mx-auto max-w-2xl overflow-x-hidden px-4 py-4 pb-6 md:px-6 md:py-6">
+      <div className="agent-thread-content mx-auto max-w-2xl overflow-x-hidden px-4 py-4 pb-6 md:px-6 md:py-6">
         {/* Plan-Drive autonomous follow-ups in the office thread — inline accordions
             (separate from the daily dock above), same Claude-Code step style. */}
         {isOfficeShift && (

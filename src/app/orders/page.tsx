@@ -422,7 +422,16 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
               <p className="text-sm font-bold text-cream leading-tight">{order.product}</p>
               <div className="mt-2"><StatusBadge status={order.status} /></div>
             </div>
-            <button onClick={onClose} className="w-8 h-8 rounded-xl border border-border flex items-center justify-center text-muted hover:text-cream hover:bg-white/[0.04] transition-colors shrink-0 mt-1">×</button>
+            {/* Glassy Claude-style dismiss — the order drawer opens as a web overlay
+                (not a native push), so the native header shows no back chevron; this
+                frosted circular button is the consistent close/back affordance. */}
+            <button
+              onClick={onClose}
+              aria-label="বন্ধ করুন"
+              className="alma-frost alma-pod flex h-9 w-9 shrink-0 items-center justify-center text-muted transition-all hover:text-cream active:scale-95 mt-0.5"
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
           </div>
         </div>
 

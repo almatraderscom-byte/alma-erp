@@ -1131,7 +1131,14 @@ html.alma-native [data-ctx-menu] {
 html.alma-native-hdr .page-header {
   position: static !important;
   top: auto !important;
-  padding-top: 0.5rem !important;
+  /* Reserve the status-bar + nav-bar strip so the page's top content never collides
+     with the native header. On the Dashboard (a Capacitor web view that runs FULL
+     SCREEN, underlapping the translucent bar) env(safe-area-inset-top) inside the web
+     view = the bar's bottom (~106px), so this clears the "top layer overlaps text"
+     collision the owner reported. On the Orders / Approvals / More-module web views
+     (pinned BELOW the bar by the native shell) env-top is 0, so this stays 0.5rem —
+     no change. One rule, correct for every page, no risky Capacitor constraint edits. */
+  padding-top: calc(0.5rem + env(safe-area-inset-top)) !important;
   border-bottom: 0 !important;
   background: transparent !important;
   backdrop-filter: none !important;
@@ -1146,4 +1153,28 @@ html.alma-native-hdr .page-header [data-ph-titlerow] {
    header, and the dark status-bar area matches the other tabs (no more light top). */
 html.alma-native-hdr .alma-agent-topbar {
   display: none !important;
+}
+
+/* ── GLASS MOTION — chat scrolls UNDER the native dark-glass header, blurred ──
+   The Claude-app top bar: content passes under a translucent blurred bar. Build 29+
+   pins the Assistant WebView to the very top (under the nav bar), so INSIDE the
+   WebView env(safe-area-inset-top) becomes the bar's height. We must NOT spend that
+   inset as CONTAINER padding (that just offsets the whole column below the bar — the
+   old look). Instead:
+     1) zero the column's own top inset (.safe-top) so the scroll area reaches y=0
+        and fills the space under the bar;
+     2) move the inset onto the chat scroll CONTENT as top padding, so the first
+        message clears the bar at rest and every later message scrolls under it.
+   On build 28 the WebView still sits below the bar, so env-top is 0 and every rule
+   here is a no-op — the web deploy is safe on the current build without a new flag. */
+html.alma-native-hdr .agent-main-col {
+  padding-top: 0 !important;
+}
+html.alma-native-hdr .agent-thread-content {
+  padding-top: calc(1rem + env(safe-area-inset-top)) !important;
+}
+/* If the rare "office live" day-shift banner shows, it is the topmost element now
+   (the web header is hidden) — give it the inset so it clears the bar too. */
+html.alma-native-hdr .agent-top-strip {
+  padding-top: calc(0.5rem + env(safe-area-inset-top)) !important;
 }

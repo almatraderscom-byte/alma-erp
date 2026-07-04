@@ -1493,7 +1493,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           so it overflows and WKWebView widens the layout viewport → the whole
           page shifts/cuts on iPhone. (Diagnosed on-device via the overflow probe:
           <div.safe-top.flex.min-h-0.flex-1> w=672 vw=440.) */}
-      <div className="safe-top flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="agent-main-col safe-top flex min-h-0 min-w-0 flex-1 flex-col">
         {dayShift?.conversationId && dayShift.active && activeConvId !== dayShift.conversationId && (
           <button
             type="button"
@@ -1505,7 +1505,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
               archived: false,
               updatedAt: new Date().toISOString(),
             })}
-            className="safe-x shrink-0 border-b border-emerald-200/60 bg-emerald-50/90 px-4 py-2 text-left text-[11px] font-medium text-emerald-800 hover:bg-emerald-100/90 transition-colors"
+            className="agent-top-strip safe-x shrink-0 border-b border-emerald-200/60 bg-emerald-50/90 px-4 py-2 text-left text-[11px] font-medium text-emerald-800 hover:bg-emerald-100/90 transition-colors"
           >
             🏢 <span className="font-semibold">Agent অফিস লাইভ</span> — কাজ চলছে। এখানে চাপুন live দেখতে (Cursor-style updates)
           </button>

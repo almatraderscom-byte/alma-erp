@@ -38,9 +38,10 @@ export function NewOrderDrawer({ onClose, onCreated }: { onClose: () => void; on
             <button
               type="button"
               onClick={onClose}
-              className="w-9 h-9 rounded-xl border border-border flex items-center justify-center text-muted hover:text-cream hover:bg-white/[0.04] transition-colors text-lg"
+              aria-label="বন্ধ করুন"
+              className="alma-frost alma-pod flex h-9 w-9 shrink-0 items-center justify-center text-muted transition-all hover:text-cream active:scale-95"
             >
-              ×
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
             </button>
           </div>
           <div className="h-px bg-gradient-to-r from-transparent via-gold-dim to-transparent" />
