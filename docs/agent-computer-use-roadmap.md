@@ -34,6 +34,7 @@
 | 9 | Website work | P4 (Website pack) |
 | 10 | "joto computer er kaj shob" — general computer tasks, flawless | P2 + P5 |
 | 11 | "bhul na kora" also means not being TRICKED — malicious pages, hidden instructions, account bans | §5 Security layer (built with P1) |
+| 12 | Human feel in his Chrome: visible gliding mouse cursor, glowing aura/shadow around the page while the agent drives, human-paced typing — "ekdom human feel" | P1 (visual presence layer) |
 
 If a future session finds a requirement here that no phase covers — STOP and flag it to the owner; do not silently drop it.
 
@@ -84,6 +85,12 @@ One format for ALL long/agentic work (plan-driver plans, browser tasks, workbenc
 - **See-act loop:** add `screenshot` verb → vision model reads the actual rendered page (not just DOM) → next command. This is the Claude-in-Chrome pattern; DOM verbs stay for speed, vision for understanding.
 - Finish the verb set (scroll-into-view, tabs, frames, waits, file-download read, file UPLOAD from agent storage — e.g. posting a Studio creative into a web form); extension auto-update story; reconnect/retry.
 - **Webmail/email as a work surface:** reading and drafting email through the companion (Gmail web) — drafts only; every SEND is a sensitive-action gate (§5.3).
+- **Human-feel visual presence (owner requirement — the "Claude-in-Chrome feel"):** when the agent drives the owner's Chrome it must LOOK like a careful human at the controls, and the owner must always SEE that the agent is in control:
+  - a visible **virtual cursor** that glides smoothly to its target (never teleports), with a click ripple/pulse on every click;
+  - an **agent-control aura** — a soft glowing border/shadow around the page (Claude-in-Chrome style) that appears the moment the agent takes over and disappears the instant it stops; injected by the extension's content script;
+  - **human-paced typing** (character flow, not instant paste) into fields, human-scale scrolling;
+  - a small floating **status chip** on the page ("🤖 কাজ চলছে — <step>") with an always-visible STOP button (wired to the existing extension `paused` switch);
+  - this presence layer doubles as a SAFETY affordance: the aura means "agent hands on" — no ambiguity about who is driving. Purely content-script visuals — zero effect on the command bus.
 - **Live watch panel** in the agent UI (and phone via responsive page): owner sees each step + screenshot stream as it happens; pause/stop button (extension `paused` already exists).
 - Per-step audit log persisted (what was clicked/typed, screenshot refs) — reviewable afterwards.
 - Route planning: agent decides VPS-headless (public web, research) vs owner-Chrome (logged-in sites) automatically; both under P0 checkpoints.
