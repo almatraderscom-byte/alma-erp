@@ -112,14 +112,18 @@ export function useKeyboardInset() {
       if (h > 0) setInset(h)
     }
 
-    // In the iOS native-frame shell the plain WKWebView is now a STABLE full height
-    // (it is no longer pinned to keyboardLayoutGuide — that resize-on-focus was
-    // dismissing the keyboard on the first keystroke) and the keyboard OVERLAPS it.
-    // That is exactly the standard mobile-web case: visualViewport shrinks and the
-    // web lifts the composer via --kb-inset. So the shell needs NO special path — it
-    // falls through to setupWeb like normal mobile web. (setupNative still wins on
+    // In the iOS native-frame shell the plain WKWebView is a STABLE full height (no
+    // longer pinned to keyboardLayoutGuide — that resize-on-focus dismissed the
+    // keyboard on the first keystroke) and the keyboard OVERLAPS it. The earlier
+    // assumption that visualViewport would then shrink and lift the composer was WRONG
+    // on-device: `vv.height` does NOT shrink for the keyboard in that WKWebView, so
+    // --kb-inset stayed 0 and the composer sat UNDER the keyboard. So from build 27 the
+    // native shell injects `--kb-inset` / `kb-open` from Swift (it knows the exact
+    // keyboard height) and sets `__almaKbNative` — when that's present, skip the web
+    // path entirely so it can't fight the native value. (setupNative still wins on
     // Capacitor, e.g. the Dashboard tab.)
-    {
+    const nativeKb = (window as unknown as { __almaKbNative?: boolean }).__almaKbNative === true
+    if (!nativeKb) {
       document.addEventListener('focusin', onFocusIn)
       cleanups.push(() => document.removeEventListener('focusin', onFocusIn))
       void setupNative().then((isNative) => {
