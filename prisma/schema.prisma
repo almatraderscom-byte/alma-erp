@@ -3599,12 +3599,16 @@ model AgentOpenTask {
   conversationId  String?   @map("conversation_id")
   title           String
   /// chat_followup = owner's request left unfinished · approval_pending = a
-  /// confirm card still awaiting the owner's decision.
+  /// confirm card still awaiting the owner's decision · checkpoint_failed /
+  /// checkpoint_waiting = P0 terminal-state checkpoints (failure / needs-owner).
   kind            String    @default("chat_followup")
   /// open | running | done | cancelled
   status          String    @default("open")
   /// Self-contained Bangla brief the agent reads to pick the work back up.
   resumeNote      String    @db.Text @map("resume_note")
+  /// P0 structured checkpoint (goal, doneSteps, currentStep, artifacts, error,
+  /// resumeHint …) — resume never needs full chat history.
+  checkpoint      Json?     @map("checkpoint")
   /// Links to the AgentPendingAction when kind = approval_pending.
   pendingActionId String?   @map("pending_action_id")
   /// When the next "still pending?" nudge is due (30/60 min escalation).

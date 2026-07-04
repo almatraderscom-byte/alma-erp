@@ -41,7 +41,15 @@ async function handle(req: NextRequest) {
   const businessId = req.nextUrl.searchParams.get('businessId')?.trim() || DEFAULT_BUSINESS
   try {
     const result = await runOpenTaskNudgeTick(businessId)
-    return NextResponse.json({ ok: true, ...result })
+    // P0 watchdog rides the same cron: stuck worker jobs → checkpoint + one ping.
+    let watchdog: { stuck: number; pinged: number } = { stuck: 0, pinged: 0 }
+    try {
+      const { runStuckTaskWatchdogTick } = await import('@/agent/lib/checkpoint')
+      watchdog = await runStuckTaskWatchdogTick()
+    } catch (wdErr) {
+      await captureAgentError(wdErr, 'stuck_task_watchdog_tick', { route: 'open-task-nudge' })
+    }
+    return NextResponse.json({ ok: true, ...result, watchdog })
   } catch (err) {
     await captureAgentError(err, 'open_task_nudge_tick', { route: 'open-task-nudge' })
     return NextResponse.json({ ok: false, error: 'tick_failed' }, { status: 500 })
