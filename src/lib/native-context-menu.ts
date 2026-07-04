@@ -27,9 +27,14 @@ export function hasNativeContextMenu(): boolean {
   return nativeContextHandler() != null
 }
 
-/** Install the global long-press listener. Returns a cleanup function. */
+/** Install the global long-press listener. Returns a cleanup function.
+ *
+ * The listeners always attach (they're cheap); whether a press actually opens a menu
+ * is decided LAZILY in `onDown` by `nativeContextHandler()`. That avoids a race — the
+ * native `almaHaptic`/`almaContextMenu` handler is injected by Swift and might not be
+ * present the instant this mounts — and keeps it a no-op on web/desktop. */
 export function installNativeContextMenu(): () => void {
-  if (typeof document === 'undefined' || !nativeContextHandler()) return () => {}
+  if (typeof document === 'undefined') return () => {}
 
   let timer: number | null = null
   let startX = 0
