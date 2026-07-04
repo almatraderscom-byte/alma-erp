@@ -86,6 +86,14 @@ const longTaskQueue = new Queue('long-agent-task', {
   defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 10000 } },
 })
 
+// P2 workbench — the agent's sandboxed "own computer" (see workbench/executor.mjs).
+// attempts:1 — a failed run must NOT silently auto-retry the same commands; the
+// P0 checkpoint written on the failed job-result is the retry path (head decides).
+const workbenchQueue = new Queue('workbench', {
+  connection,
+  defaultJobOptions: { attempts: 1 },
+})
+
 // Track enqueued action IDs to avoid duplicates in polling window
 const enqueuedIds = new Set()
 const stuckReenqueueCounts = new Map()
@@ -208,6 +216,10 @@ async function pollPendingJobs() {
         handled = true
       } else if (job.type === 'long_agent_task') {
         await longTaskQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        handled = true
+      } else if (job.type === 'workbench_run') {
+        await workbenchQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        console.log(`[worker] enqueued workbench task for action ${job.id}`)
         handled = true
       } else if (job.type === 'dispatch_staff_tasks' || job.type === 'add_staff_task_now' || job.type === 'staff_announcement') {
         await staffDispatchQueue.add('dispatch', { pendingActionId: job.id, payload: job.payload, type: job.type }, { jobId: job.id })
@@ -535,6 +547,58 @@ const videoGenWorker = new Worker(
     lockDuration: 15 * 60 * 1000,
   },
 )
+
+// ── P2 workbench worker ─────────────────────────────────────────────────────
+const workbenchWorker = new Worker(
+  'workbench',
+  async (job) => {
+    const { pendingActionId, payload } = job.data
+    try {
+      const { runWorkbenchTask } = await import('./workbench/executor.mjs')
+      const result = await runWorkbenchTask({ ...payload, taskId: pendingActionId })
+
+      // Publish requested artifacts (workspace-relative paths) to agent storage
+      // so the head/owner can open them; capped, best-effort.
+      const artifactPaths = []
+      const wanted = Array.isArray(payload?.artifacts) ? payload.artifacts.slice(0, 10) : []
+      if (result.ok && wanted.length) {
+        const { readFile } = await import('node:fs/promises')
+        const { join } = await import('node:path')
+        for (const rel of wanted) {
+          const clean = String(rel).replace(/^\/+/, '')
+          if (!clean || clean.includes('..')) continue
+          try {
+            const buf = await readFile(join(result.workspace, clean))
+            if (buf.length > 20 * 1024 * 1024) continue
+            const storagePath = `workbench/${pendingActionId}/${clean.replace(/\//g, '_')}`
+            await supabase.storage.from('agent-files').upload(storagePath, buf, { upsert: true })
+            artifactPaths.push(storagePath)
+          } catch {
+            /* artifact missing — the steps log tells the story */
+          }
+        }
+      }
+
+      if (result.ok) {
+        await callJobResult(pendingActionId, 'success', {
+          steps: result.steps,
+          artifacts: artifactPaths,
+        })
+        console.log(`[worker] workbench ${pendingActionId} done (${result.steps.length} steps, ${artifactPaths.length} artifacts)`)
+      } else {
+        await callJobResult(pendingActionId, 'failed', { steps: result.steps }, result.error ?? 'workbench_failed')
+        console.warn(`[worker] workbench ${pendingActionId} failed: ${result.error}`)
+      }
+    } catch (err) {
+      captureWorkerError(err, 'worker.workbench.failed', { jobId: job?.id })
+      await callJobResult(pendingActionId, 'failed', undefined, err.message ?? 'workbench_crashed')
+    }
+  },
+  { connection, concurrency: 1 },
+)
+workbenchWorker.on('failed', (job, err) => {
+  console.error(`[worker] workbench job ${job?.id} failed:`, err?.message)
+})
 
 const longTaskWorker = new Worker('long-agent-task', async (job) => {
   // A2: owner web turn enqueued by /api/assistant/turn. Identified by turnId.
