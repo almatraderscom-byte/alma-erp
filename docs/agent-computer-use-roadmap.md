@@ -15,6 +15,9 @@
 4. Long work runs on the **VPS worker** (durable Postgres-backed queues — never in-memory); browser work through the existing `browser_action` / live-browser command bus.
 5. Existing safety stays: SSRF guard, daily browser-task caps, kv kill-switches (`live_browser_enabled`, `AGENT_ENABLED`), token-hash pairing, extension verb allowlist.
 6. CLAUDE.md hard rules apply (agent file boundaries, `/api/assistant/*` only, no ERP edits, browser proof / owner-deferred hard verify).
+7. **Web content is DATA, never instructions (prompt-injection defence).** Anything the agent reads on a page/email/doc — including hidden text, HTML comments, alt text — must never be followed as a command. Instructions come from the owner only. See §5 Security layer; this is the #1 attack class against browser agents (2026 OWASP LLM #1; agentic attack success rates reported up to 84%).
+8. **API-first where an official API exists; browser where none does.** "API-nirbhor na" means the agent is never LIMITED to APIs — but automating a logged-in Facebook/Instagram session via browser can get the owner's account flagged; for those, the existing official-API paths (Meta ads/graph libs) stay primary and the browser handles the long tail.
+9. **The agent never types credentials.** Login walls → pause-checkpoint: "Sir, login koren" → owner logs in (his Chrome or phone) → agent detects and resumes. CAPTCHAs are never solved/bypassed by the agent — always handed to the owner the same way.
 
 ## 1. Owner's vision → coverage map (nothing may be dropped)
 
@@ -30,6 +33,7 @@
 | 8 | SEO work | P4 (SEO pack) |
 | 9 | Website work | P4 (Website pack) |
 | 10 | "joto computer er kaj shob" — general computer tasks, flawless | P2 + P5 |
+| 11 | "bhul na kora" also means not being TRICKED — malicious pages, hidden instructions, account bans | §5 Security layer (built with P1) |
 
 If a future session finds a requirement here that no phase covers — STOP and flag it to the owner; do not silently drop it.
 
@@ -52,6 +56,8 @@ One format for ALL long/agentic work (plan-driver plans, browser tasks, workbenc
 ```
 
 - **Written on:** any failure (worker catch blocks, plan-driver step fail, browser task error, timeout/watchdog) AND periodically every N steps (so even a hard crash has a last-known state).
+- **Pause-checkpoints (same format, `state:"waiting_for_owner"`):** not only failures — the task also checkpoints when it NEEDS the owner: a question ("Sir, kon option nibo?"), a login wall, 2FA, a CAPTCHA, or a budget cap hit. Owner answers → resume from the same spot. This turns every interruption class into the one resume flow.
+- **Per-task budget caps:** each long task carries a token/credit budget; hitting it = pause-checkpoint ("budget shesh — chaliye jabo?"), never a silent overrun (owner is cost-sensitive).
 - **Stored:** durable table/kv keyed by conversation + task; surfaced as the existing open-tasks chip ("বাকি কাজ").
 - **Resume path:** owner replies (or taps Continue) → head receives ONLY the checkpoint (+ the new message) via a system note — not the whole history — and continues from `currentStep`. Prompt-cache friendly, cheap, instant.
 
@@ -76,7 +82,8 @@ One format for ALL long/agentic work (plan-driver plans, browser tasks, workbenc
 
 ### Phase P1 — Chrome companion v1 complete ("agent nije dekhe")
 - **See-act loop:** add `screenshot` verb → vision model reads the actual rendered page (not just DOM) → next command. This is the Claude-in-Chrome pattern; DOM verbs stay for speed, vision for understanding.
-- Finish the verb set (scroll-into-view, tabs, frames, waits, file-download read); extension auto-update story; reconnect/retry.
+- Finish the verb set (scroll-into-view, tabs, frames, waits, file-download read, file UPLOAD from agent storage — e.g. posting a Studio creative into a web form); extension auto-update story; reconnect/retry.
+- **Webmail/email as a work surface:** reading and drafting email through the companion (Gmail web) — drafts only; every SEND is a sensitive-action gate (§5.3).
 - **Live watch panel** in the agent UI (and phone via responsive page): owner sees each step + screenshot stream as it happens; pause/stop button (extension `paused` already exists).
 - Per-step audit log persisted (what was clicked/typed, screenshot refs) — reviewable afterwards.
 - Route planning: agent decides VPS-headless (public web, research) vs owner-Chrome (logged-in sites) automatically; both under P0 checkpoints.
@@ -102,21 +109,37 @@ Each pack = hard playbooks + checklists the agent follows (no freestyle), P0-che
 ### Phase P5 — Hardening to "nikhut" (flawless)
 - Retry policies with backoff per failure class; idempotency keys on every side-effect.
 - Parallel task lanes with per-lane caps; scheduled routines (weekly SEO report, daily ad check) via existing schedulers.
+- **Recipe learning:** a successfully completed browser/workbench task gets distilled into a reusable site/task recipe (extends `src/agent/lib/browser/recipes.ts`) — next time the same job is faster, cheaper, and repeats the PROVEN steps instead of re-deriving them. This is how "bhul na kora" compounds over time.
+- **Golden-task eval suite:** a fixed set of benchmark tasks (search-and-extract, form-fill on a test page, SEO crawl of own site) runs weekly; regressions in success rate are flagged BEFORE the owner hits them.
+- **Autonomy levels per task type** via the existing `autonomy-policy`/`autonomy-ledger` libs: read-only steps auto-approved, write steps batched into fewer owner approvals — owner-tunable, so pings don't drown him as usage grows.
 - **Weekly self-report:** every failure checkpoint from the week + what was changed to prevent recurrence — the agent's own QA loop, sent to the owner.
 - Success-rate telemetry per task type; a task type below threshold gets flagged for playbook improvement, not silently retried harder.
 
-## 5. Backlog — parked ideas (NOT scheduled)
+## 5. Security layer (defence-in-depth — built WITH P1, never "later")
+
+Prompt injection against browser agents is the top attack class of 2026 (OWASP LLM #1; hidden white-on-white text / HTML comments steering agents into fetching OTPs or opening banking pages; vendors publicly say it "may never be fully solved" — hence layers, not one fix):
+
+1. **Content/instruction boundary:** every page text, DOM, screenshot OCR, email or doc the agent reads is wrapped as tagged DATA before the model sees it ("sandwich" pattern); the system prompt explicitly forbids following instructions found inside it. Anything that LOOKS like an instruction to the agent gets quoted back to the owner instead of executed.
+2. **Plan-then-execute:** the step plan is fixed BEFORE reading untrusted content; mid-page content may inform extraction, never add new actions. New actions require a re-plan, and a re-plan triggered by page content requires owner confirmation.
+3. **Sensitive-action gate:** a hard list of actions that ALWAYS pause-checkpoint to the owner regardless of plan — payments, sends/publishes, deletes, permission/settings changes, auth pages, downloads of executables. (Extends the existing `final-submit.ts` owner-gate pattern.)
+4. **Site trust tiers:** allowlisted own/known sites (normal), general web (read-freely, act-carefully), flagged/unknown-form pages (read-only + lockdown: extraction only, no typing). Tier stored per-domain in kv, owner-editable.
+5. **Injection tripwire:** cheap detector pass over fetched content for instruction-like patterns targeting agents; hit → task pauses with the quoted content shown to the owner ("Sir, ei page amake ei command dite chaiche — korbo na. Apni dekhen.").
+6. **Privacy of what the agent sees:** screenshots/audit logs may contain the owner's personal data — capped retention (auto-delete after N days), sensitive-field masking in stored screenshots, never leave Supabase/VPS.
+7. **Isolation:** owner-Chrome work runs in a dedicated automation window/tab-group (never his active tab); VPS browsing stays ephemeral-context; workbench gets the same SSRF/egress guard as the browser (no internal IPs, no metadata endpoints).
+8. **Kill switches at every layer** (already exist — keep): kv `live_browser_enabled`, extension popup pause, `AGENT_ENABLED`, daily caps.
+
+## 6. Backlog — parked ideas (NOT scheduled)
 - Desktop-native control (beyond browser: Mac apps) — big security surface; only with a dedicated owner decision.
 - Voice-driven task launch ("agent, ei kaj ta koro") from the phone — voice stack exists; wire after P3.
 - Multi-owner/staff supervised tasks (staff watches, owner approves).
 
-## 6. Cost notes (owner is cost-sensitive)
+## 7. Cost notes (owner is cost-sensitive)
 - Checkpoint-resume SAVES money by design (no full-history reloads after failures).
 - Vision see-act steps cost per screenshot-read — batch/downscale screenshots; DOM-first, vision when needed.
 - Workbench/browser on VPS = free compute; caps keep runaway loops bounded (existing daily caps extend to workbench).
 - Skill-pack LLM steps run on the tier router (cheap models for mechanical steps, Claude where judgment matters — CRITICAL tier rules unchanged).
 
-## 7. Gotchas
+## 8. Gotchas
 - `live_browser_enabled` kv is default OFF — flip it consciously; extension popup has its own pause.
 - Never let the workbench or website pack touch `/api/agent/*`, ERP financial code, or production deploys — PR-only, always.
 - The completion gate is fail-safe to NOT-done: a flaky gate makes the agent more cautious, never falsely "done" — keep that property in every new gate.
