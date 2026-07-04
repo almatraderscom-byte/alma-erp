@@ -278,15 +278,32 @@ const live_browser_look: AgentTool = {
       const want = (input.want as string) || 'both'
       const out: Record<string, unknown> = { device: dev.name, steps }
 
+      // P1 security (§5): page reads come back as tagged DATA + injection tripwire.
+      const { sandwichWrap, scanForInjection, injectionWarningBn } = await import('@/agent/lib/live-browser/guard')
       if (want === 'text' || want === 'both') {
         const r = await runCommand(dev.deviceId, 'read_text')
-        if (r.ok) out.page = r.data
-        else out.textError = r.error ?? r.status
+        if (r.ok) {
+          const pageData = r.data as { url?: string; text?: string } | undefined
+          const rawText = typeof pageData?.text === 'string' ? pageData.text : JSON.stringify(pageData ?? {})
+          const scan = scanForInjection(rawText)
+          if (scan.flagged) {
+            out.injectionAlert = injectionWarningBn(scan.hits)
+            out.readOnlyLockdown = true
+          }
+          out.page = { ...pageData, text: sandwichWrap(pageData?.url ?? 'page', rawText) }
+        } else out.textError = r.error ?? r.status
       }
       if (want === 'dom' || want === 'both') {
         const r = await runCommand(dev.deviceId, 'read_dom')
-        if (r.ok) out.elements = (r.data as { elements?: unknown })?.elements ?? r.data
-        else out.domError = r.error ?? r.status
+        if (r.ok) {
+          const elements = (r.data as { elements?: unknown })?.elements ?? r.data
+          const scan = scanForInjection(JSON.stringify(elements).slice(0, 20000))
+          if (scan.flagged && !out.injectionAlert) {
+            out.injectionAlert = injectionWarningBn(scan.hits)
+            out.readOnlyLockdown = true
+          }
+          out.elements = elements
+        } else out.domError = r.error ?? r.status
       }
       let visionImage: { data: string; mediaType: 'image/jpeg' | 'image/png' } | null = null
       if (input.screenshot !== false) {
