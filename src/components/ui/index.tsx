@@ -225,7 +225,7 @@ export function PageHeader({
       style={{ zIndex: PLATFORM_Z.stickyBanner, paddingTop: 'max(1rem, env(safe-area-inset-top))' }}
     >
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center xl:gap-4">
-        <div className="flex min-w-0 items-center gap-2.5">
+        <div className="flex min-w-0 items-center gap-2.5" data-ph-titlerow>
           <PageBackButton />
           <div className="min-w-0">
             <h1 className="truncate text-base font-bold tracking-tight text-cream md:text-lg">{title}</h1>

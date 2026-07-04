@@ -1102,9 +1102,22 @@ html.alma-native .agent-bottom-nav a[href="/"] {
 }
 
 /* On native web views that carry a NATIVE header (Orders / Approvals / modules
-   opened from More), hide the web's own sticky page header so there is no double
-   title bar. Gated on `alma-native-hdr`, set only for those web views — pages
-   without a native header (Assistant, Dashboard) keep their own header. */
+   opened from More), the native bar already shows the title + back button. Hide
+   ONLY the page-header's title row (data-ph-titlerow) so there's no double title —
+   but KEEP its actions (filters, export, add, etc.) so those pages don't lose
+   function in the app (previously the whole header was hidden, dropping them).
+   De-sticky + strip the header's chrome since the native bar is now the sticky
+   top; a page with no actions collapses to nothing. Gated on `alma-native-hdr`,
+   set only for those web views — Assistant/Dashboard keep their own header. */
 html.alma-native-hdr .page-header {
+  position: static !important;
+  top: auto !important;
+  padding-top: 0.5rem !important;
+  border-bottom: 0 !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html.alma-native-hdr .page-header [data-ph-titlerow] {
   display: none !important;
 }
