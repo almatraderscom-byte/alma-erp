@@ -973,6 +973,10 @@ final class AgentAssistiveNav: UIView {
         wake()
         let t = g.translation(in: self)
         switch g.state {
+        case .began:
+            if isOpen { close() }
+            impact.impactOccurred(intensity: 0.5); impact.prepare()   // grab
+            UIView.animate(withDuration: 0.12) { self.fab.transform = CGAffineTransform(scaleX: 0.94, y: 0.94) }
         case .changed:
             var c = CGPoint(x: fab.center.x + t.x, y: fab.center.y + t.y)
             let sa = safeAreaInsets
@@ -987,16 +991,30 @@ final class AgentAssistiveNav: UIView {
         }
     }
 
+    /// iOS-AssistiveTouch release physics: carry the flick's momentum (project a landing
+    /// point from the release velocity), snap X to the nearest edge — biased by horizontal
+    /// velocity — and settle with an under-damped spring so it OVERSHOOTS slightly and eases
+    /// back, exactly like the system button (not a linear/CSS glide).
     private func snapToEdge(velocity: CGPoint) {
         let sa = safeAreaInsets
         let half = fabSize / 2
-        let toRight = fab.center.x > bounds.width / 2
-        let x = toRight ? bounds.width - half - edge - sa.right : half + edge + sa.left
-        var c = fab.center; c.x = x
-        UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.7,
-                       initialSpringVelocity: min(abs(velocity.x) / 800, 6),
+        let minY = half + edge + sa.top
+        let maxY = bounds.height - half - tabBarHeight - sa.bottom
+        // Momentum: where would the flick carry it? (projectile decay ≈ velocity * k)
+        let projectedY = fab.center.y + velocity.y * 0.14
+        let y = min(max(projectedY, minY), maxY)
+        // Snap side: strong horizontal flick wins, else nearest edge.
+        let goRight = velocity.x > 250 ? true : (velocity.x < -250 ? false : fab.center.x > bounds.width / 2)
+        let x = goRight ? bounds.width - half - edge - sa.right : half + edge + sa.left
+        let target = CGPoint(x: x, y: y)
+        let speed = hypot(velocity.x, velocity.y)
+        impact.impactOccurred(intensity: 0.7); impact.prepare()   // release/snap
+        UIView.animate(withDuration: 0.6, delay: 0,
+                       usingSpringWithDamping: 0.66,               // < 1 → overshoot + settle
+                       initialSpringVelocity: min(speed / 450, 14),
                        options: [.allowUserInteraction, .curveEaseOut]) {
-            self.fab.center = c
+            self.fab.center = target
+            self.fab.transform = .identity
         }
     }
 
@@ -1035,13 +1053,26 @@ final class AgentAssistiveNav: UIView {
 
         p.layer.anchorPoint = CGPoint(x: onRight ? 1 : 0, y: below ? 0 : 1)
         p.frame = CGRect(x: px, y: py, width: pw, height: ph)
-        p.transform = CGAffineTransform(scaleX: 0.35, y: 0.35)
+        p.transform = CGAffineTransform(scaleX: 0.32, y: 0.32)
         p.alpha = 0
-        UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.78,
+        UIView.animate(withDuration: 0.44, delay: 0, usingSpringWithDamping: 0.75,
                        initialSpringVelocity: 0.6, options: [.curveEaseOut]) {
             p.transform = .identity
             p.alpha = 1
             self.fabIcon.transform = CGAffineTransform(rotationAngle: .pi / 4)
+        }
+        // Staggered spring: each row pops in one after another (iOS AssistiveTouch feel),
+        // ordered from the row nearest the FAB outward.
+        let order = below ? Array(rows.enumerated()) : Array(rows.enumerated().reversed())
+        for (step, (_, row)) in order.enumerated() {
+            row.alpha = 0
+            row.transform = CGAffineTransform(scaleX: 0.6, y: 0.6).translatedBy(x: 0, y: 6)
+            UIView.animate(withDuration: 0.34, delay: 0.05 + Double(step) * 0.04,
+                           usingSpringWithDamping: 0.7, initialSpringVelocity: 0.8,
+                           options: [.curveEaseOut]) {
+                row.alpha = 1
+                row.transform = .identity
+            }
         }
     }
 
