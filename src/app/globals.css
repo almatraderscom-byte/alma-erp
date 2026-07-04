@@ -1170,11 +1170,15 @@ html.alma-native-hdr .alma-agent-topbar {
 html.alma-native-hdr .agent-main-col {
   padding-top: 0 !important;
 }
+/* The inset comes from the native shell as `--alma-top-inset` (the exact bar height),
+   because the WebView's own env(safe-area-inset-top) is unreliable under
+   contentInsetAdjustmentBehavior=.never. Fall back to env() when the var is absent
+   (older builds / plain browser with ?nativehdr), so this stays additive + safe. */
 html.alma-native-hdr .agent-thread-content {
-  padding-top: calc(1rem + env(safe-area-inset-top)) !important;
+  padding-top: calc(1rem + var(--alma-top-inset, env(safe-area-inset-top))) !important;
 }
 /* If the rare "office live" day-shift banner shows, it is the topmost element now
    (the web header is hidden) — give it the inset so it clears the bar too. */
 html.alma-native-hdr .agent-top-strip {
-  padding-top: calc(0.5rem + env(safe-area-inset-top)) !important;
+  padding-top: calc(0.5rem + var(--alma-top-inset, env(safe-area-inset-top))) !important;
 }
