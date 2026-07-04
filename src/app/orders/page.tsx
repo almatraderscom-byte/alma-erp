@@ -416,22 +416,24 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
           className="sticky top-0 bg-surface/95 backdrop-blur border-b border-border px-5 pb-4 z-10"
           style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}
         >
-          <div className="flex items-start justify-between gap-3">
-            <div>
+          <div className="flex items-start gap-3">
+            {/* Glassy Claude-style BACK — the order drawer opens as a web overlay (not a
+                native push), so the native header shows no back chevron. Placed top-LEFT
+                (a frosted back chevron, matching the native sub-pages' back button) so it
+                is consistent AND clear of the page's top-right floating chips (টুডু / the
+                Ask-ALMA FAB) that render above the drawer's stacking context. */}
+            <button
+              onClick={onClose}
+              aria-label="ফিরে যান"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-card/80 text-cream shadow-sm backdrop-blur-md transition-all hover:bg-card active:scale-95 mt-0.5"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <div className="min-w-0 flex-1">
               <p className="font-mono text-[11px] text-gold font-bold mb-1">{order.id}</p>
               <p className="text-sm font-bold text-cream leading-tight">{order.product}</p>
               <div className="mt-2"><StatusBadge status={order.status} /></div>
             </div>
-            {/* Glassy Claude-style dismiss — the order drawer opens as a web overlay
-                (not a native push), so the native header shows no back chevron; this
-                frosted circular button is the consistent close/back affordance. */}
-            <button
-              onClick={onClose}
-              aria-label="বন্ধ করুন"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-card/70 text-cream shadow-sm backdrop-blur-md transition-all hover:bg-card active:scale-95 mt-0.5"
-            >
-              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
-            </button>
           </div>
         </div>
 
