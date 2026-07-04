@@ -318,6 +318,28 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         offlineView = nil
     }
 
+    // MARK: - S4: scroll-to-top on active-tab re-tap (iOS-standard)
+
+    /// Called when the owner taps the already-active tab. The ERP pages usually scroll an
+    /// INNER container (not the webView's own scrollView), so reset both: the native
+    /// scrollView AND, via JS, the window plus whatever element is actually scrolled.
+    func scrollToTop() {
+        guard let webView = webView else { return }
+        let top = -webView.scrollView.adjustedContentInset.top
+        webView.scrollView.setContentOffset(CGPoint(x: 0, y: top), animated: true)
+        webView.evaluateJavaScript(Self.scrollTopJS, completionHandler: nil)
+    }
+
+    private static let scrollTopJS = """
+    (function(){
+      try {
+        window.scrollTo({top:0,behavior:'smooth'});
+        (document.scrollingElement||document.documentElement).scrollTo({top:0,behavior:'smooth'});
+        document.querySelectorAll('main,[data-scroll-root],.overflow-y-auto,.overflow-auto,.overflow-y-scroll').forEach(function(e){ if(e.scrollTop>0){ e.scrollTo({top:0,behavior:'smooth'}); } });
+      } catch(e){}
+    })();
+    """
+
     // MARK: - almaShell bridge (web → native)
 
     /// Receives the web app's route events and updates the native header title.
@@ -594,5 +616,15 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
     func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
         selection.selectionChanged()
         selection.prepare()
+    }
+
+    /// Re-tapping the already-active tab scrolls its web content back to the top
+    /// (the iOS-standard gesture). Returning true still lets the tap proceed normally.
+    func tabBarController(_ tabBarController: UITabBarController, shouldSelect viewController: UIViewController) -> Bool {
+        if viewController === tabBarController.selectedViewController {
+            let visible = (viewController as? UINavigationController)?.topViewController ?? viewController
+            (visible as? AlmaWebTabViewController)?.scrollToTop()
+        }
+        return true
     }
 }
