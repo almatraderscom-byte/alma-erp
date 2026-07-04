@@ -16,7 +16,8 @@
  *   • NEVER touches ERP secrets: jobs get a scrubbed env (PATH/HOME/LANG only).
  */
 import { execFile } from 'node:child_process'
-import { mkdir, rm, readdir, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, rm, readdir, stat, writeFile } from 'node:fs/promises'
+import { constants as fsConstants } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const WORKBENCH_ROOT = process.env.WORKBENCH_ROOT || '/opt/alma-workbench'
@@ -144,4 +145,74 @@ export async function runWorkbenchTask(payload) {
   }
 
   return { ok, steps, workspace: workDir, error: ok ? undefined : steps[steps.length - 1]?.error ?? 'step_failed' }
+}
+
+/**
+ * Startup preflight (P2 provisioning — pull-based, since the VPS has no inbound
+ * SSH): the worker runs as the deploy user, so it provisions its own root dir
+ * and surveys which allowlisted binaries actually exist on this box. The report
+ * lands in pm2 logs AND `${WORKBENCH_ROOT}/.preflight.json`. A missing binary is
+ * never a silent gap either way: at run time execFile fails ENOENT → the step
+ * errors → the P0 checkpoint carries the exact reason.
+ */
+async function binAvailable(bin) {
+  for (const dir of String(process.env.PATH || '').split(':')) {
+    if (!dir) continue
+    try {
+      await access(join(dir, bin), fsConstants.X_OK)
+      return true
+    } catch { /* not here — keep looking */ }
+  }
+  return false
+}
+
+export async function workbenchPreflight() {
+  await mkdir(WORKBENCH_ROOT, { recursive: true })
+  const missing = []
+  for (const bin of ALLOWED_BINARIES) {
+    if (!(await binAvailable(bin))) missing.push(bin)
+  }
+  const report = { at: new Date().toISOString(), root: WORKBENCH_ROOT, missing }
+  try {
+    await writeFile(join(WORKBENCH_ROOT, '.preflight.json'), JSON.stringify(report, null, 2), 'utf8')
+  } catch { /* report still returned/logged */ }
+  return report
+}
+
+/**
+ * Workspace janitor (P2 leftover): failed runs keep their workspace for diagnosis
+ * (see above) and keepWorkspace runs opt out of cleanup — this sweep is what
+ * eventually reclaims that disk. Removes per-task dirs under WORKBENCH_ROOT whose
+ * last modification is older than WORKBENCH_KEEP_DAYS (default 7). The checkpoint
+ * a failed run left stays valid as a resume brief — the resumed task simply runs
+ * in a fresh workspace.
+ */
+const WORKSPACE_KEEP_DAYS = Math.max(1, Number(process.env.WORKBENCH_KEEP_DAYS) || 7)
+
+export async function cleanupWorkspaces() {
+  const cutoff = Date.now() - WORKSPACE_KEEP_DAYS * 24 * 60 * 60 * 1000
+  let removed = 0
+  let kept = 0
+  let entries = []
+  try {
+    entries = await readdir(WORKBENCH_ROOT, { withFileTypes: true })
+  } catch {
+    return { removed, kept } // root missing — nothing to clean
+  }
+  for (const e of entries) {
+    if (!e.isDirectory()) continue
+    const dir = join(WORKBENCH_ROOT, e.name)
+    try {
+      const s = await stat(dir)
+      if (s.mtimeMs < cutoff) {
+        await rm(dir, { recursive: true, force: true })
+        removed++
+      } else {
+        kept++
+      }
+    } catch {
+      /* raced / permission — skip */
+    }
+  }
+  return { removed, kept }
 }

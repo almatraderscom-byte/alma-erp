@@ -834,6 +834,29 @@ async function showOverlay(tabId, label) {
   }
 }
 
+// Site trust lockdown (§5.4): the server ships the current lockdown-domain list
+// with every WRITE command; we check the ACTIVE tab's REAL hostname here (the
+// server can't see redirects/tab follows). Suffix match: "example.com" also
+// covers "shop.example.com". Returns the matched domain, or null when clear.
+function lockdownMatch(url, domains) {
+  if (!Array.isArray(domains) || domains.length === 0) return null
+  let host = ''
+  try {
+    host = new URL(url || '').hostname.toLowerCase().replace(/^www\./, '')
+  } catch {
+    return null
+  }
+  if (!host) return null
+  for (const d of domains) {
+    const dom = String(d || '').toLowerCase()
+    if (!dom) continue
+    if (host === dom || host.endsWith('.' + dom)) return dom
+  }
+  return null
+}
+
+const WRITE_VERBS = new Set(['click', 'type', 'press', 'select_option'])
+
 async function executeCommand(cmd) {
   const action = String(cmd.action || '')
   if (!ALLOWED_ACTIONS.has(action)) return { ok: false, error: `unsupported action: ${action}` }
@@ -846,6 +869,24 @@ async function executeCommand(cmd) {
 
   const tab = await getAgentTab(true)
   if (!tab || !tab.id) return { ok: false, error: 'could not open ALMA window' }
+
+  // READ-ONLY lockdown: refuse writes on a lockdown-tier site. Reading, scrolling,
+  // screenshots and navigation stay allowed — lockdown means extraction-only.
+  if (WRITE_VERBS.has(action)) {
+    const locked = lockdownMatch(tab.url, cmd.lockdownDomains)
+    if (locked) {
+      await showOverlay(tab.id, 'সাইটটা lockdown — শুধু পড়া যাবে')
+      return {
+        ok: false,
+        blocked: true,
+        error:
+          'site_lockdown: ' +
+          locked +
+          ' — এই সাইটটা read-only (lockdown) তালিকায়; এখানে ক্লিক/টাইপ কোড-লেভেলে বন্ধ। ' +
+          'Sir চাইলে trust tier বদলে খুলে দিতে পারেন।',
+      }
+    }
+  }
 
   if (action === 'navigate') {
     if (!/^https?:\/\//i.test(cmd.url || '')) return { ok: false, error: 'navigate needs http(s) url' }

@@ -600,6 +600,34 @@ workbenchWorker.on('failed', (job, err) => {
   console.error(`[worker] workbench job ${job?.id} failed:`, err?.message)
 })
 
+// Startup preflight: create WORKBENCH_ROOT + survey allowlisted binaries (the
+// VPS has no inbound SSH — provisioning ships through the repo, pull-deployed).
+try {
+  const { workbenchPreflight } = await import('./workbench/executor.mjs')
+  const pre = await workbenchPreflight()
+  if (pre.missing.length) {
+    console.warn(`[worker] workbench preflight: MISSING binaries on this box: ${pre.missing.join(', ')} (root ${pre.root})`)
+  } else {
+    console.log(`[worker] workbench preflight OK — root ${pre.root}, all allowlisted binaries present`)
+  }
+} catch (err) {
+  console.error('[worker] workbench preflight error:', err.message)
+}
+
+// Workspace janitor: failed/kept workspaces are retained for diagnosis; this
+// sweep reclaims them after WORKBENCH_KEEP_DAYS (default 7). Startup + every 6h.
+async function sweepWorkbenchWorkspaces() {
+  try {
+    const { cleanupWorkspaces } = await import('./workbench/executor.mjs')
+    const { removed, kept } = await cleanupWorkspaces()
+    if (removed > 0) console.log(`[worker] workbench janitor: removed ${removed} old workspaces (${kept} kept)`)
+  } catch (err) {
+    console.error('[worker] workbench janitor error:', err.message)
+  }
+}
+await sweepWorkbenchWorkspaces()
+const workbenchJanitorInterval = setInterval(sweepWorkbenchWorkspaces, 6 * 60 * 60 * 1000)
+
 const longTaskWorker = new Worker('long-agent-task', async (job) => {
   // A2: owner web turn enqueued by /api/assistant/turn. Identified by turnId.
   // Runs the turn via the chat route in stream mode and republishes events to
@@ -929,6 +957,7 @@ async function shutdown(signal) {
   clearInterval(csMessengerPollInterval)
   clearInterval(heartbeatInterval)
   clearInterval(healthPingInterval)
+  clearInterval(workbenchJanitorInterval)
   if (schedulerTeardown?.retriggerPoll) clearInterval(schedulerTeardown.retriggerPoll)
   if (schedulerTeardown?.dutyTimePoll) clearInterval(schedulerTeardown.dutyTimePoll)
   await stopTelegramBot(signal)
