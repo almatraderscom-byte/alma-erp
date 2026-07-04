@@ -1101,6 +1101,15 @@ html.alma-native .agent-bottom-nav a[href="/"] {
   display: none !important;
 }
 
+/* Build 26+ replaces the whole agent sub-nav with a NATIVE segmented control on the
+   Assistant tab (no more web bar stacked above the native tab bar — the "double
+   bottom bar"). Gated on `alma-agent-native`, set only when the native shell injects
+   `window.__almaAgentNative`, so builds 24/25 (which have no native replacement)
+   keep the web sub-nav. Also drop the bottom padding the sub-nav reserved. */
+html.alma-agent-native .agent-bottom-nav {
+  display: none !important;
+}
+
 /* On native web views that carry a NATIVE header (Orders / Approvals / modules
    opened from More), the native bar already shows the title + back button. Hide
    ONLY the page-header's title row (data-ph-titlerow) so there's no double title —

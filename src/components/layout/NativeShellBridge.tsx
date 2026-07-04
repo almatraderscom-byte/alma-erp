@@ -29,8 +29,16 @@ export function NativeShellBridge() {
     root.classList.add('alma-native')
     // Pages shown under a native header hide their own .page-header (no double bar).
     if (isNativeHeaderMode()) root.classList.add('alma-native-hdr')
+    // The Assistant tab's agent sub-nav (Chat/Studio/WhatsApp/Monitor/Costs) is
+    // replaced by a NATIVE segmented control in build 26+, which injects
+    // `window.__almaAgentNative`. Only then hide the web sub-nav — older builds
+    // (24/25) keep the web sub-nav so its sections stay reachable.
+    const agentNativeNav = Boolean(
+      (window as unknown as { __almaAgentNative?: boolean }).__almaAgentNative,
+    )
+    if (agentNativeNav) root.classList.add('alma-agent-native')
     post({ type: 'ready' })
-    return () => root.classList.remove('alma-native', 'alma-native-hdr')
+    return () => root.classList.remove('alma-native', 'alma-native-hdr', 'alma-agent-native')
   }, [])
 
   // Report route (path + best-effort title) on every navigation.
