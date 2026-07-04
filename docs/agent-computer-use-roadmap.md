@@ -62,6 +62,21 @@ One format for ALL long/agentic work (plan-driver plans, browser tasks, workbenc
 - **Stored:** durable table/kv keyed by conversation + task; surfaced as the existing open-tasks chip ("বাকি কাজ").
 - **Resume path:** owner replies (or taps Continue) → head receives ONLY the checkpoint (+ the new message) via a system note — not the whole history — and continues from `currentStep`. Prompt-cache friendly, cheap, instant.
 
+## 2ক. PROGRESS LOG — resume here (update this section every phase)
+
+| Phase | Status | Shipped |
+|---|---|---|
+| **P0 checkpoint/no-silent-fail** | ✅ DONE | PR #236 (2026-07-04): `src/agent/lib/checkpoint.ts` (write/resolve/list + Bangla notes, waiting_for_owner state), job-result failed-branch hook (all worker job types), plan-driver `escalate()` hook, stuck-task watchdog on the open-task-nudge cron (30 min, one ping, dedupe), resume fast-path in run-owner-turn volatile injection, open-task reconciler fix, additive `checkpoint` Json column, 9 tests |
+| **P1 Chrome companion** | ✅ core done | PR #237: aura+ripple+glide+paced typing (ext 0.4.0), §5 guard (`live-browser/guard.ts` sandwich+tripwire wired into live_browser_look), 7-day LiveBrowserCommand retention, 5 guard tests. PR #238: on-page STOP ⏹ + bold always-visible cursor (ext 0.4.1). **Pre-existing (don't rebuild):** see-act vision loop (`live_browser_look` returns real screenshots), pair/status/act tools, final-submit code ban in `pageClick`, dedicated ALMA window. Owner has ext installed from `/Users/marufbillah/alma-companion` (update = copy files there + he reloads) |
+| **P2 VPS workbench** | ✅ core done | PR #239: `worker/src/workbench/executor.mjs` (per-task workspace, binary allowlist via execFile no-shell, path/private-net arg rejection, 2min/8min/200KB/500MB/20-cmd caps, scrubbed env), workbench queue (attempts:1 — checkpoint IS the retry path), artifact upload, head tools `run_workbench_task`/`check_workbench_task` in CORE group, watchdog covers workbench_run |
+| P1 leftovers | ⬜ | site trust tiers (kv per-domain, §5.4), webmail surface (drafts only), watch-panel polish, `readOnlyLockdown` enforcement in live_browser_act |
+| P2 leftovers | ⬜ | **VPS provisioning:** create `WORKBENCH_ROOT` (/opt/alma-workbench) + verify allowlisted binaries exist on the VPS; one live e2e workbench job; workspace janitor (age-based cleanup of kept failed workspaces) |
+| P3 mobile companion | ⬜ | not started |
+| P4 skill packs | ⬜ | not started (research → SEO → marketing → website PR-only) |
+| P5 hardening | ⬜ | not started (recipe learning, golden evals, autonomy levels, weekly self-report) |
+
+**Owner-pending items:** reload extension (v0.4.1 already copied to `/Users/marufbillah/alma-companion`); pair the extension (chat: "live browser চালু করো, pair code দাও"); live test P0/P1/P2 together. Owner explicitly deferred live browser-proof for these phases — hard verify (tests+build) accepted, live test later together.
+
 ## 3. Where the work lives (current state — honest audit)
 
 **Already built (use, don't rebuild):**
