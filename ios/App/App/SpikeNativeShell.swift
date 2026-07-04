@@ -113,6 +113,11 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         AlmaEmbed.install(into: content, hideWebHeader: hideWebHeader)
         // Native header title-sync: the web posts {type:'route', path, title} here.
         content.add(WeakScriptMessageHandler(self), name: "almaShell")
+        // Soft native haptics for the plain (non-Capacitor) WebViews: the web posts
+        // {kind:'selection'|'impact'|'notify', style?} and native fires a real
+        // UIFeedbackGenerator. Unlike the iOS-web switch-tick shim this doesn't steal
+        // focus, so the keyboard-typing tick works without dismissing the keyboard.
+        content.add(WeakScriptMessageHandler(self), name: "almaHaptic")
 
         let config = WKWebViewConfiguration()
         config.processPool = sharedProcessPool
@@ -340,10 +345,43 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     })();
     """
 
+    // MARK: - almaHaptic bridge (web → native soft feedback)
+
+    // Shared, pre-warmed generators. The selection generator is Apple's SOFT
+    // keyboard/picker tick — what the owner asked for ("soft") — and firing it
+    // natively never touches web focus, so it works while typing.
+    private static let selectionGen = UISelectionFeedbackGenerator()
+    private static let lightGen = UIImpactFeedbackGenerator(style: .light)
+    private static let mediumGen = UIImpactFeedbackGenerator(style: .medium)
+    private static let heavyGen = UIImpactFeedbackGenerator(style: .heavy)
+    private static let notifyGen = UINotificationFeedbackGenerator()
+
+    /// Fires the requested feedback and re-primes the generator for low latency.
+    /// Called on the main thread (WKScriptMessage delivery is main-thread).
+    static func fireHaptic(_ body: [String: Any]?) {
+        let kind = (body?["kind"] as? String) ?? "selection"
+        let style = (body?["style"] as? String) ?? ""
+        switch kind {
+        case "impact":
+            let g = style == "HEAVY" ? heavyGen : (style == "MEDIUM" ? mediumGen : lightGen)
+            g.impactOccurred(); g.prepare()
+        case "notify":
+            let t: UINotificationFeedbackGenerator.FeedbackType =
+                style == "ERROR" ? .error : (style == "WARNING" ? .warning : .success)
+            notifyGen.notificationOccurred(t); notifyGen.prepare()
+        default: // "selection" — the soft tick
+            selectionGen.selectionChanged(); selectionGen.prepare()
+        }
+    }
+
     // MARK: - almaShell bridge (web → native)
 
     /// Receives the web app's route events and updates the native header title.
     func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "almaHaptic" {
+            Self.fireHaptic(message.body as? [String: Any])
+            return
+        }
         guard let body = message.body as? [String: Any] else { return }
         let type = body["type"] as? String
         if type == "route" || type == "title" {
