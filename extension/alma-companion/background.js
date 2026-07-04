@@ -178,9 +178,15 @@ function pageOverlay(arg) {
       'padding:9px 16px;border-radius:999px;box-shadow:0 8px 28px rgba(0,0,0,.4);' +
       'border:1px solid rgba(201,168,76,.55);display:flex;align-items:center;gap:9px;pointer-events:none}' +
       '#__alma_dot__{width:9px;height:9px;border-radius:50%;background:#c9a84c;box-shadow:0 0 9px #c9a84c;animation:__almapulse 1s infinite}' +
-      '#__alma_cur__{position:fixed;z-index:2147483647;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;' +
-      'border:2px solid #c9a84c;background:rgba(201,168,76,.25);box-shadow:0 0 12px rgba(201,168,76,.7);' +
+      // Bold, ALWAYS-visible cursor (owner feedback): solid gold core + white ring,
+      // strong glow — reads clearly on light AND dark pages.
+      '#__alma_cur__{position:fixed;z-index:2147483647;width:28px;height:28px;margin:-14px 0 0 -14px;border-radius:50%;' +
+      'border:3px solid #fff;background:radial-gradient(circle,#e8c964 0%,#c9a84c 60%,rgba(201,168,76,.5) 100%);' +
+      'box-shadow:0 0 0 2px rgba(139,92,246,.8),0 0 18px 4px rgba(201,168,76,.9),0 2px 8px rgba(0,0,0,.45);' +
       'pointer-events:none;transition:left .55s cubic-bezier(.25,.8,.35,1),top .55s cubic-bezier(.25,.8,.35,1)}' +
+      '#__alma_stop__{pointer-events:auto;cursor:pointer;background:#e05252;color:#fff;border:none;border-radius:999px;' +
+      'font:700 12px/1 -apple-system,Segoe UI,Roboto,sans-serif;padding:6px 12px;margin-left:4px;box-shadow:0 2px 8px rgba(0,0,0,.35)}' +
+      '#__alma_stop__:hover{background:#c73e3e}' +
       // Agent-control aura — the owner's requested "Claude feel": a soft glowing
       // frame around the whole page the entire time the agent is driving.
       '@keyframes __almaaura{0%,100%{box-shadow:inset 0 0 34px 6px rgba(139,92,246,.38),inset 0 0 90px 14px rgba(201,168,76,.14)}' +
@@ -194,8 +200,27 @@ function pageOverlay(arg) {
     root.appendChild(st)
     bar = document.createElement('div')
     bar.id = '__alma_bar__'
-    bar.innerHTML = '<span id="__alma_dot__"></span><span id="__alma_txt__"></span>'
+    bar.innerHTML =
+      '<span id="__alma_dot__"></span><span id="__alma_txt__"></span>' +
+      '<button id="__alma_stop__" type="button">STOP ⏹</button>'
     root.appendChild(bar)
+    // Owner's always-visible kill switch, right on the page. Runs in the
+    // isolated world → content-script chrome.storage access; the background
+    // loop reads `paused` before every command, so this stops the NEXT step
+    // immediately and the popup shows "থামানো আছে".
+    const stopBtn = document.getElementById('__alma_stop__')
+    if (stopBtn) {
+      stopBtn.addEventListener('click', () => {
+        try {
+          chrome.storage.local.set({ paused: true })
+        } catch { /* storage unavailable — popup pause still works */ }
+        const t = document.getElementById('__alma_txt__')
+        if (t) t.textContent = 'থামানো হয়েছে — popup থেকে আবার চালু করা যাবে'
+        document.getElementById('__alma_aura__')?.remove()
+        document.getElementById('__alma_cur__')?.remove()
+        stopBtn.remove()
+      })
+    }
   }
   // Aura on whenever the agent is driving this page (created once, stays until
   // the page unloads or the owner pauses from the popup).
@@ -203,6 +228,15 @@ function pageOverlay(arg) {
     const aura = document.createElement('div')
     aura.id = '__alma_aura__'
     root.appendChild(aura)
+  }
+  // Cursor is ALWAYS present while the agent drives (owner feedback) — parked
+  // near the top-center until an action moves it to a real target.
+  if (!document.getElementById('__alma_cur__')) {
+    const cur = document.createElement('div')
+    cur.id = '__alma_cur__'
+    cur.style.left = Math.round(window.innerWidth / 2) + 'px'
+    cur.style.top = '96px'
+    root.appendChild(cur)
   }
   const txt = document.getElementById('__alma_txt__')
   if (txt) txt.textContent = 'ALMA কাজ করছে · ' + label
