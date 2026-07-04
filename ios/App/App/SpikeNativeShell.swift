@@ -164,7 +164,12 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // UIRefreshControl (it would double up and can't show the robot). Web owns it.
 
         let root = UIView()
-        root.backgroundColor = bg
+        // The agent's page is LIGHT, but its native header is a translucent DARK blur —
+        // so the area BEHIND the bar must be dark or the blur reads white (the owner's
+        // "white top"). Paint the agent root dark; the light web content sits below the
+        // bar. Other tabs keep the light placeholder.
+        root.backgroundColor = agentSegments.isEmpty ? bg
+            : UIColor(red: 0.055, green: 0.047, blue: 0.078, alpha: 1) // #0e0c14
         root.addSubview(webView)
         webView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -219,6 +224,51 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         case "Costs": return "dollarsign.circle"
         default: return "sparkles"
         }
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        guard !agentSegments.isEmpty else { return }
+        // Agent = the Claude surface: a fixed "ALMA AI" title in the native dark-glass
+        // header + native history / new-chat bar buttons that drive the web agent's own
+        // controls (reusing its logic). The light web top bar is hidden (hideWebHeader).
+        navigationItem.title = "ALMA AI"
+        navigationItem.leftBarButtonItem = Self.glassBarButton(
+            icon: "clock.arrow.circlepath", target: self, action: #selector(agentHistory))
+        navigationItem.rightBarButtonItem = Self.glassBarButton(
+            icon: "square.and.pencil", target: self, action: #selector(agentNewChat))
+    }
+
+    /// A Claude-style frosted DARK circular bar button (blur + hairline ring + white icon).
+    static func glassBarButton(icon: String, target: Any, action: Selector) -> UIBarButtonItem {
+        let size: CGFloat = 34
+        let container = UIButton(type: .system)
+        container.frame = CGRect(x: 0, y: 0, width: size, height: size)
+        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialDark))
+        blur.frame = container.bounds
+        blur.layer.cornerRadius = size / 2
+        blur.clipsToBounds = true
+        blur.isUserInteractionEnabled = false
+        blur.contentView.backgroundColor = UIColor(white: 0, alpha: 0.14) // deepen so it reads dark over light content
+        container.addSubview(blur)
+        container.sendSubviewToBack(blur)
+        container.tintColor = .white
+        container.setImage(UIImage(systemName: icon,
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)), for: .normal)
+        container.layer.cornerRadius = size / 2
+        container.layer.borderWidth = 1
+        container.layer.borderColor = UIColor(white: 1, alpha: 0.18).cgColor
+        container.addTarget(target, action: action, for: .touchUpInside)
+        return UIBarButtonItem(customView: container)
+    }
+
+    @objc private func agentHistory() {
+        Self.selectionGen.selectionChanged()
+        webView?.evaluateJavaScript("var b=document.querySelector('[aria-label=\"সাইডবার\"]'); if(b) b.click();", completionHandler: nil)
+    }
+    @objc private func agentNewChat() {
+        Self.selectionGen.selectionChanged()
+        webView?.evaluateJavaScript("var b=document.querySelector('[aria-label=\"নতুন চ্যাট\"]'); if(b) b.click();", completionHandler: nil)
     }
 
     // MARK: - Keyboard avoidance (without resizing the WebView)
@@ -514,7 +564,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
                 // rebuild its tab bar — and that relayout was corrupting a SIBLING tab's
                 // button, so returning to Dashboard showed the Assistant icon/label (owner
                 // report, fixed by restart). Skip the title write where it isn't needed.
-                if navigationController != nil { title = t }
+                if navigationController != nil && agentSegments.isEmpty { title = t }
             }
             updateBackButton()
         }
@@ -523,12 +573,14 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     /// Show a native back chevron whenever the web view has history to pop; tapping
     /// it (or swiping from the edge) drives the web app's own back navigation.
     private func updateBackButton() {
+        // The agent keeps its history/new-chat bar buttons (set in viewDidLoad) — it
+        // navigates via the AssistiveTouch nav + swipe-back, not a header back chevron.
+        guard agentSegments.isEmpty else { return }
         // Only relevant when hosted in a nav controller as that stack's root.
         guard navigationController?.viewControllers.first === self else { return }
         if webView?.canGoBack == true {
-            navigationItem.leftBarButtonItem = UIBarButtonItem(
-                image: UIImage(systemName: "chevron.backward"),
-                style: .plain, target: self, action: #selector(goBackTapped))
+            navigationItem.leftBarButtonItem = Self.glassBarButton(
+                icon: "chevron.backward", target: self, action: #selector(goBackTapped))
         } else {
             navigationItem.leftBarButtonItem = nil
         }
@@ -710,6 +762,7 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         let assistant = AlmaWebTabViewController(
             url: agentURL("/agent"), processPool: pool,
             tabTitle: "Assistant", systemImage: "sparkles",
+            hideWebHeader: true,   // native dark-glass header replaces the light web top bar
             agentSegments: [
                 ("Chat", agentURL("/agent")),
                 ("Studio", agentURL("/agent/creative-studio")),
@@ -717,6 +770,8 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
                 ("Monitor", agentURL("/agent/staff-monitor")),
                 ("Costs", agentURL("/agent/costs")),
             ])
+        let assistantNav = Self.darkNav(root: assistant, tabTitle: "Assistant",
+                                        icon: "sparkles", largeTitles: false)
 
         // "More" is a NATIVE menu whose rows push web screens with a native slide.
         let moreNav = Self.darkNav(root: MoreMenuViewController(processPool: pool),
@@ -725,7 +780,7 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         viewControllers = [
             Self.darkNav(root: dashboard, tabTitle: "Dashboard", icon: "square.grid.2x2", largeTitles: false),
             webNavTab("/orders",    "Orders",    "shippingbox"),
-            assistant,
+            assistantNav,
             webNavTab("/approvals", "Approvals", "checkmark.seal"),
             moreNav,
         ]
