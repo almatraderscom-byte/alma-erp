@@ -28,6 +28,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // tabs are session-sharing content web views. Revert = delete this block.
         if let capacitorRoot = window?.rootViewController {
             window?.rootViewController = AlmaTabBarController(dashboard: capacitorRoot)
+            // S3 white-flash removal: the whole shell is dark-violet, but the launch
+            // storyboard + an unset window background resolve to WHITE on a light-mode
+            // device, so a cold launch could flash white before the first webview paints.
+            // Pin the window to the shell's dark colour so every gap (launch → shell, tab
+            // first-load, nav pushes) is dark, never white. We deliberately do NOT force
+            // `overrideUserInterfaceStyle = .dark` on the window: that would flip the
+            // WKWebViews' `prefers-color-scheme` to dark and could restyle the (light) ERP
+            // content. The native chrome is already explicitly dark via its appearance
+            // objects, so it needs no global override.
+            window?.backgroundColor = UIColor(red: 0.055, green: 0.047, blue: 0.078, alpha: 1) // ~#0e0c14
             window?.makeKeyAndVisible()
         }
 
