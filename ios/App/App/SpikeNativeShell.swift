@@ -96,7 +96,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     /// the web's own agent sub-nav (the "double bottom bar") is hidden — this is the
     /// Assistant tab's Chat/Studio/WhatsApp/Monitor/Costs switcher, made native.
     private let agentSegments: [(title: String, url: URL)]
-    private var segmentControl: UISegmentedControl?
+    private var assistiveNav: AgentAssistiveNav?
 
     init(url: URL, processPool: WKProcessPool, tabTitle: String, systemImage: String,
          hideWebHeader: Bool = false, agentSegments: [(title: String, url: URL)] = []) {
@@ -164,33 +164,8 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         root.addSubview(webView)
         webView.translatesAutoresizingMaskIntoConstraints = false
 
-        // Assistant tab: a NATIVE segmented control (Chat/Studio/WhatsApp/Monitor/Costs)
-        // in a dark top strip (under the status bar, consistent with the other tabs'
-        // dark headers). Replaces the web sub-nav that stacked above the native tab bar
-        // — so there is no more "double bottom bar". The webView starts below the strip.
-        var webTopAnchor = root.safeAreaLayoutGuide.topAnchor
-        if !agentSegments.isEmpty {
-            let strip = UIView()
-            strip.backgroundColor = UIColor(red: 0.055, green: 0.047, blue: 0.078, alpha: 1) // #0e0c14
-            strip.translatesAutoresizingMaskIntoConstraints = false
-            root.addSubview(strip)
-            let seg = makeAgentSegmentControl()
-            strip.addSubview(seg)
-            segmentControl = seg
-            NSLayoutConstraint.activate([
-                strip.topAnchor.constraint(equalTo: root.topAnchor),
-                strip.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-                strip.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-                seg.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 6),
-                seg.leadingAnchor.constraint(equalTo: strip.leadingAnchor, constant: 12),
-                seg.trailingAnchor.constraint(equalTo: strip.trailingAnchor, constant: -12),
-                seg.bottomAnchor.constraint(equalTo: strip.bottomAnchor, constant: -8),
-            ])
-            webTopAnchor = strip.bottomAnchor
-        }
-
         NSLayoutConstraint.activate([
-            webView.topAnchor.constraint(equalTo: webTopAnchor),
+            webView.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor),
             webView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             // FULL height to the safe-area bottom (above the native tab bar → no tab-bar
@@ -213,7 +188,33 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
             spinner.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             spinner.centerYAnchor.constraint(equalTo: root.centerYAnchor)
         ])
+
+        // Assistant tab: an iOS-AssistiveTouch-style FLOATING nav for the agent sections
+        // — no bar at all, just a draggable translucent button that springs open into a
+        // blur panel of Chat/Studio/WhatsApp/Monitor/Costs. Replaces the web sub-nav.
+        if !agentSegments.isEmpty {
+            let nav = AgentAssistiveNav(items: agentSegments.map { seg in
+                AgentAssistiveNav.Item(title: seg.title, icon: Self.agentIcon(seg.title)) { [weak self] in
+                    self?.webView.load(URLRequest(url: seg.url))
+                }
+            })
+            root.addSubview(nav)
+            nav.attach(to: root, tabBarHeight: 49)
+            assistiveNav = nav
+        }
         view = root
+    }
+
+    /// SF Symbol for each agent section.
+    private static func agentIcon(_ title: String) -> String {
+        switch title {
+        case "Chat": return "bubble.left.and.text.bubble.right"
+        case "Studio": return "wand.and.stars"
+        case "WhatsApp": return "message.fill"
+        case "Monitor": return "chart.bar.xaxis"
+        case "Costs": return "dollarsign.circle"
+        default: return "sparkles"
+        }
     }
 
     // MARK: - Keyboard avoidance (without resizing the WebView)
@@ -367,38 +368,17 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         offlineView = nil
     }
 
-    // MARK: - S5: native agent segmented control (Assistant tab)
+    // MARK: - S5: AssistiveTouch-style agent nav (Assistant tab)
 
-    private func makeAgentSegmentControl() -> UISegmentedControl {
-        let seg = UISegmentedControl(items: agentSegments.map { $0.title })
-        seg.translatesAutoresizingMaskIntoConstraints = false
-        seg.selectedSegmentIndex = 0
-        seg.selectedSegmentTintColor = UIColor(red: 0.42, green: 0.36, blue: 0.62, alpha: 1) // violet
-        seg.backgroundColor = UIColor(red: 0.12, green: 0.11, blue: 0.16, alpha: 1)
-        seg.setTitleTextAttributes([.foregroundColor: UIColor.white,
-                                    .font: UIFont.systemFont(ofSize: 12, weight: .semibold)], for: .selected)
-        seg.setTitleTextAttributes([.foregroundColor: UIColor(white: 0.72, alpha: 1),
-                                    .font: UIFont.systemFont(ofSize: 12, weight: .medium)], for: .normal)
-        seg.addTarget(self, action: #selector(agentSegmentChanged(_:)), for: .valueChanged)
-        return seg
-    }
-
-    @objc private func agentSegmentChanged(_ sender: UISegmentedControl) {
-        let i = sender.selectedSegmentIndex
-        guard i >= 0, i < agentSegments.count else { return }
-        Self.selectionGen.selectionChanged(); Self.selectionGen.prepare() // soft tap
-        webView.load(URLRequest(url: agentSegments[i].url))
-    }
-
-    /// Keep the segmented control in sync when the web navigates itself (e.g. a link
-    /// inside the chat) — match the current path to a segment.
+    /// Keep the floating nav's active highlight in sync when the web navigates itself
+    /// (e.g. a link inside the chat) — match the current path to a section.
     private func syncSegment(toPath path: String) {
-        guard let seg = segmentControl, !agentSegments.isEmpty else { return }
+        guard let nav = assistiveNav, !agentSegments.isEmpty else { return }
         // Longest-matching section wins (so /agent/costs beats /agent).
         let idx = agentSegments.enumerated()
             .filter { path == $0.element.url.path || path.hasPrefix($0.element.url.path + "/") }
             .max(by: { $0.element.url.path.count < $1.element.url.path.count })?.offset
-        if let idx = idx, seg.selectedSegmentIndex != idx { seg.selectedSegmentIndex = idx }
+        if let idx = idx { nav.setActiveIndex(idx) }
     }
 
     // MARK: - S4: scroll-to-top on active-tab re-tap (iOS-standard)
@@ -793,4 +773,284 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         }
         return true
     }
+}
+
+/// An iOS-AssistiveTouch-style floating navigator for the agent sections.
+///
+/// A draggable, edge-snapping translucent button that idles to low opacity and springs
+/// open into a blurred panel of sections (Chat / Studio / WhatsApp / Monitor / Costs).
+/// Pure UIKit so the feel — spring physics, blur, drag inertia, haptics — is authentic.
+/// The view fills its host but passes touches through to the web view when closed, so
+/// only the floating button (and the backdrop while open) are interactive.
+final class AgentAssistiveNav: UIView {
+    struct Item { let title: String; let icon: String; let onSelect: () -> Void }
+
+    private let items: [Item]
+    private let fab = UIView()
+    private let fabIcon = UIImageView()
+    private var backdrop: UIControl?
+    private var panel: UIVisualEffectView?
+    private var rows: [UIControl] = []
+    private var isOpen = false
+    private var activeIndex = 0
+    private var positioned = false
+    private var tabBarHeight: CGFloat = 49
+    private var idleTimer: Timer?
+    private let haptic = UISelectionFeedbackGenerator()
+    private let impact = UIImpactFeedbackGenerator(style: .light)
+
+    private let fabSize: CGFloat = 56
+    private let edge: CGFloat = 12
+
+    init(items: [Item]) {
+        self.items = items
+        super.init(frame: .zero)
+        buildFab()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
+
+    // MARK: build + attach
+
+    private func buildFab() {
+        fab.frame = CGRect(x: 0, y: 0, width: fabSize, height: fabSize)
+        fab.backgroundColor = UIColor(red: 0.10, green: 0.09, blue: 0.14, alpha: 0.82)
+        fab.layer.cornerRadius = 17
+        fab.layer.cornerCurve = .continuous
+        fab.layer.borderWidth = 1
+        fab.layer.borderColor = UIColor(white: 1, alpha: 0.22).cgColor
+        fab.layer.shadowColor = UIColor.black.cgColor
+        fab.layer.shadowOpacity = 0.35
+        fab.layer.shadowRadius = 10
+        fab.layer.shadowOffset = CGSize(width: 0, height: 4)
+
+        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialDark))
+        blur.frame = fab.bounds
+        blur.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        blur.layer.cornerRadius = 17
+        blur.layer.cornerCurve = .continuous
+        blur.clipsToBounds = true
+        blur.isUserInteractionEnabled = false
+        fab.addSubview(blur)
+
+        fabIcon.image = UIImage(systemName: "sparkles",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold))
+        fabIcon.tintColor = .white
+        fabIcon.contentMode = .center
+        fabIcon.frame = fab.bounds
+        fabIcon.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        blur.contentView.addSubview(fabIcon)
+
+        fab.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(fabTapped)))
+        fab.addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(fabPanned(_:))))
+        addSubview(fab)
+    }
+
+    func attach(to host: UIView, tabBarHeight: CGFloat) {
+        self.tabBarHeight = tabBarHeight
+        translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            topAnchor.constraint(equalTo: host.topAnchor),
+            bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            trailingAnchor.constraint(equalTo: host.trailingAnchor),
+        ])
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard !positioned, bounds.width > 0 else { return }
+        positioned = true
+        let sa = safeAreaInsets
+        fab.center = CGPoint(x: bounds.width - fabSize / 2 - edge - sa.right,
+                             y: bounds.height - fabSize / 2 - tabBarHeight - 18 - sa.bottom)
+        scheduleIdle()
+    }
+
+    // Pass touches through to the web view unless they hit the button (closed) or the
+    // whole overlay is open (backdrop catches them).
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        if isOpen { return super.hitTest(point, with: event) }
+        return fab.frame.insetBy(dx: -8, dy: -8).contains(point) ? super.hitTest(point, with: event) : nil
+    }
+
+    // MARK: idle fade
+
+    private func scheduleIdle() {
+        idleTimer?.invalidate()
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+            guard let self = self, !self.isOpen else { return }
+            UIView.animate(withDuration: 0.4) { self.fab.alpha = 0.42 }
+        }
+    }
+    private func wake() {
+        UIView.animate(withDuration: 0.15) { self.fab.alpha = 1 }
+        scheduleIdle()
+    }
+
+    // MARK: drag
+
+    @objc private func fabPanned(_ g: UIPanGestureRecognizer) {
+        wake()
+        let t = g.translation(in: self)
+        switch g.state {
+        case .changed:
+            var c = CGPoint(x: fab.center.x + t.x, y: fab.center.y + t.y)
+            let sa = safeAreaInsets
+            let half = fabSize / 2
+            c.x = min(max(c.x, half + edge + sa.left), bounds.width - half - edge - sa.right)
+            c.y = min(max(c.y, half + edge + sa.top), bounds.height - half - tabBarHeight - sa.bottom)
+            fab.center = c
+            g.setTranslation(.zero, in: self)
+        case .ended, .cancelled:
+            snapToEdge(velocity: g.velocity(in: self))
+        default: break
+        }
+    }
+
+    private func snapToEdge(velocity: CGPoint) {
+        let sa = safeAreaInsets
+        let half = fabSize / 2
+        let toRight = fab.center.x > bounds.width / 2
+        let x = toRight ? bounds.width - half - edge - sa.right : half + edge + sa.left
+        var c = fab.center; c.x = x
+        UIView.animate(withDuration: 0.45, delay: 0, usingSpringWithDamping: 0.7,
+                       initialSpringVelocity: min(abs(velocity.x) / 800, 6),
+                       options: [.allowUserInteraction, .curveEaseOut]) {
+            self.fab.center = c
+        }
+    }
+
+    // MARK: open / close
+
+    @objc private func fabTapped() {
+        wake()
+        isOpen ? close() : open()
+    }
+
+    private func open() {
+        guard !isOpen, bounds.width > 0 else { return }
+        isOpen = true
+        impact.impactOccurred(); impact.prepare()
+
+        let back = UIControl(frame: bounds)
+        back.backgroundColor = UIColor.black.withAlphaComponent(0.001)
+        back.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        back.addTarget(self, action: #selector(close), for: .touchUpInside)
+        insertSubview(back, belowSubview: fab)
+        backdrop = back
+
+        let p = buildPanel()
+        addSubview(p)
+        panel = p
+
+        // Anchor the panel near the FAB (above it if the FAB is in the lower half) and
+        // spring it out FROM the nearest FAB corner — set the layer anchorPoint BEFORE
+        // the frame so the scale grows out of that corner, not the centre.
+        let onRight = fab.center.x > bounds.width / 2
+        let below = fab.center.y < bounds.height / 2
+        let pw = p.bounds.width, ph = p.bounds.height
+        var px = onRight ? fab.frame.maxX - pw : fab.frame.minX
+        px = min(max(px, edge + safeAreaInsets.left), bounds.width - pw - edge - safeAreaInsets.right)
+        let py = below ? fab.frame.maxY + 10 : fab.frame.minY - ph - 10
+
+        p.layer.anchorPoint = CGPoint(x: onRight ? 1 : 0, y: below ? 0 : 1)
+        p.frame = CGRect(x: px, y: py, width: pw, height: ph)
+        p.transform = CGAffineTransform(scaleX: 0.35, y: 0.35)
+        p.alpha = 0
+        UIView.animate(withDuration: 0.42, delay: 0, usingSpringWithDamping: 0.78,
+                       initialSpringVelocity: 0.6, options: [.curveEaseOut]) {
+            p.transform = .identity
+            p.alpha = 1
+            self.fabIcon.transform = CGAffineTransform(rotationAngle: .pi / 4)
+        }
+    }
+
+    @objc private func close() {
+        guard isOpen else { return }
+        isOpen = false
+        haptic.selectionChanged()
+        let p = panel, back = backdrop
+        panel = nil; backdrop = nil; rows = []
+        UIView.animate(withDuration: 0.24, delay: 0, options: [.curveEaseIn]) {
+            p?.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
+            p?.alpha = 0
+            back?.alpha = 0
+            self.fabIcon.transform = .identity
+        } completion: { _ in
+            p?.removeFromSuperview(); back?.removeFromSuperview()
+        }
+        scheduleIdle()
+    }
+
+    // MARK: panel
+
+    private func buildPanel() -> UIVisualEffectView {
+        let rowH: CGFloat = 46
+        let width: CGFloat = 224
+        let pad: CGFloat = 6
+        let height = CGFloat(items.count) * rowH + pad * 2
+
+        let p = UIVisualEffectView(effect: UIBlurEffect(style: .systemThickMaterialDark))
+        p.frame = CGRect(x: 0, y: 0, width: width, height: height)
+        p.layer.cornerRadius = 22
+        p.layer.cornerCurve = .continuous
+        p.clipsToBounds = true
+        p.layer.borderWidth = 1
+        p.layer.borderColor = UIColor(white: 1, alpha: 0.12).cgColor
+
+        rows = []
+        for (i, item) in items.enumerated() {
+            let row = UIControl(frame: CGRect(x: pad, y: pad + CGFloat(i) * rowH, width: width - pad * 2, height: rowH))
+            row.tag = i
+            row.layer.cornerRadius = 14
+            row.layer.cornerCurve = .continuous
+            row.backgroundColor = i == activeIndex ? UIColor(red: 0.42, green: 0.36, blue: 0.62, alpha: 0.9) : .clear
+            row.addTarget(self, action: #selector(rowTapped(_:)), for: .touchUpInside)
+
+            let iv = UIImageView(image: UIImage(systemName: item.icon,
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)))
+            iv.tintColor = i == activeIndex ? .white : UIColor(white: 0.85, alpha: 1)
+            iv.frame = CGRect(x: 14, y: (rowH - 24) / 2, width: 24, height: 24)
+            iv.contentMode = .center
+            iv.isUserInteractionEnabled = false
+            row.addSubview(iv)
+
+            let label = UILabel(frame: CGRect(x: 48, y: 0, width: width - pad * 2 - 56, height: rowH))
+            label.text = item.title
+            label.font = .systemFont(ofSize: 15, weight: i == activeIndex ? .semibold : .medium)
+            label.textColor = i == activeIndex ? .white : UIColor(white: 0.92, alpha: 1)
+            label.isUserInteractionEnabled = false
+            row.addSubview(label)
+
+            p.contentView.addSubview(row)
+            rows.append(row)
+        }
+        return p
+    }
+
+    @objc private func rowTapped(_ sender: UIControl) {
+        let i = sender.tag
+        guard i >= 0, i < items.count else { return }
+        haptic.selectionChanged(); haptic.prepare()
+        setActiveIndex(i)
+        let action = items[i].onSelect
+        close()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { action() }
+    }
+
+    func setActiveIndex(_ i: Int) {
+        guard i >= 0, i < items.count else { return }
+        activeIndex = i
+        for (idx, row) in rows.enumerated() {
+            let on = idx == i
+            row.backgroundColor = on ? UIColor(red: 0.42, green: 0.36, blue: 0.62, alpha: 0.9) : .clear
+            (row.subviews.compactMap { $0 as? UIImageView }.first)?.tintColor = on ? .white : UIColor(white: 0.85, alpha: 1)
+            if let l = row.subviews.compactMap({ $0 as? UILabel }).first {
+                l.font = .systemFont(ofSize: 15, weight: on ? .semibold : .medium)
+                l.textColor = on ? .white : UIColor(white: 0.92, alpha: 1)
+            }
+        }
+    }
+
+    deinit { idleTimer?.invalidate() }
 }
