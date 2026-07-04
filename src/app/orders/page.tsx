@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
-import { Suspense, useCallback, useDeferredValue, useLayoutEffect, useMemo, useState, type UIEvent } from 'react'
+import { Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useState, type UIEvent } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useUpdateStatus } from '@/hooks/useERP'
@@ -786,6 +786,24 @@ function OrdersPageContent() {
     setRowWindow(prev => (prev.start === start && prev.end === end ? prev : { start, end }))
   }, [])
 
+  // Native long-press context menu (iOS shell): run the picked action on that order.
+  // The `alma-ctx-pick` event only fires from the native action sheet, so web/desktop
+  // are unaffected. Actions are non-destructive (view / copy / WhatsApp).
+  useEffect(() => {
+    const onPick = (e: Event) => {
+      const el = (e.target as HTMLElement | null)?.closest?.('[data-order-id]') as HTMLElement | null
+      if (!el) return
+      const o = orders.find(x => x.id === el.getAttribute('data-order-id'))
+      if (!o) return
+      const key = (e as CustomEvent<{ key: string }>).detail?.key
+      if (key === 'view') setSelected(o)
+      else if (key === 'copy') void navigator.clipboard?.writeText(o.id).then(() => toast.success('কপি হয়েছে'))
+      else if (key === 'whatsapp' && o.phone) window.open(`https://wa.me/880${o.phone.slice(1)}`, '_blank')
+    }
+    document.addEventListener('alma-ctx-pick', onPick as EventListener)
+    return () => document.removeEventListener('alma-ctx-pick', onPick as EventListener)
+  }, [orders])
+
   const summary = useMemo(() => summarizeOrders(filtered), [filtered])
   const statusCounts = useMemo(
     () => statusCountsForPills(dateFiltered, STATUSES),
@@ -963,7 +981,18 @@ function OrdersPageContent() {
           {tableLoading
             ? Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)
             : mobileOrders.map(o => (
-                <button key={o.id} onClick={() => setSelected(o.id === selected?.id ? null : o)} className="w-full min-h-[44px] text-left active:scale-[0.99]">
+                <button
+                  key={o.id}
+                  onClick={() => setSelected(o.id === selected?.id ? null : o)}
+                  className="w-full min-h-[44px] text-left active:scale-[0.99]"
+                  data-order-id={o.id}
+                  data-ctx-title={`${o.id} · ${o.customer}`}
+                  data-ctx-menu={JSON.stringify([
+                    { key: 'view', label: 'অর্ডার দেখুন' },
+                    { key: 'copy', label: 'অর্ডার নম্বর কপি' },
+                    ...(o.phone ? [{ key: 'whatsapp', label: 'WhatsApp করুন' }] : []),
+                  ])}
+                >
                   <Card interactive className={`p-4 border-l-2 ${
                     o.id === selected?.id ? 'border-gold-dim/50' : ''
                   } ${

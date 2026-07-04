@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 import { usePathname } from 'next/navigation'
 import { isNativeShell, isNativeHeaderMode } from '@/lib/native-shell'
+import { installNativeContextMenu } from '@/lib/native-context-menu'
 
 /**
  * Bridges the web app to the native iOS shell when running inside it (embed mode).
@@ -38,7 +39,12 @@ export function NativeShellBridge() {
     )
     if (agentNativeNav) root.classList.add('alma-agent-native')
     post({ type: 'ready' })
-    return () => root.classList.remove('alma-native', 'alma-native-hdr', 'alma-agent-native')
+    // Long-press → native action sheet for any [data-ctx-menu] element (order cards …).
+    const uninstallCtx = installNativeContextMenu()
+    return () => {
+      root.classList.remove('alma-native', 'alma-native-hdr', 'alma-agent-native')
+      uninstallCtx()
+    }
   }, [])
 
   // Report route (path + best-effort title) on every navigation.
