@@ -132,6 +132,10 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // UIFeedbackGenerator. Unlike the iOS-web switch-tick shim this doesn't steal
         // focus, so the keyboard-typing tick works without dismissing the keyboard.
         content.add(WeakScriptMessageHandler(self), name: "almaHaptic")
+        // Native long-press context menu: the web posts {title, subtitle?, items:[{key,
+        // label, role?}]} and native shows a real UIKit action sheet; the picked key is
+        // sent back via window.__almaCtxPick(key). Gives order cards etc. a native menu.
+        content.add(WeakScriptMessageHandler(self), name: "almaContextMenu")
 
         let config = WKWebViewConfiguration()
         config.processPool = sharedProcessPool
@@ -448,12 +452,47 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         }
     }
 
+    // MARK: - S5: native long-press context menu (web → native action sheet)
+
+    /// Web posts {title?, subtitle?, items:[{key,label,role?}]} on a card long-press;
+    /// show a native action sheet and send the picked key back to the web.
+    private func showContextMenu(_ body: [String: Any]?) {
+        guard let items = body?["items"] as? [[String: Any]], !items.isEmpty else { return }
+        let sheet = UIAlertController(title: body?["title"] as? String,
+                                      message: body?["subtitle"] as? String,
+                                      preferredStyle: .actionSheet)
+        for item in items {
+            guard let key = item["key"] as? String, let label = item["label"] as? String else { continue }
+            let style: UIAlertAction.Style = (item["role"] as? String) == "destructive" ? .destructive : .default
+            sheet.addAction(UIAlertAction(title: label, style: style) { [weak self] _ in
+                self?.pickContextItem(key)
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "বাতিল", style: .cancel))
+        if let pop = sheet.popoverPresentationController { // iPad-safe anchor
+            pop.sourceView = webView
+            pop.sourceRect = CGRect(x: webView.bounds.midX, y: webView.bounds.midY, width: 1, height: 1)
+            pop.permittedArrowDirections = []
+        }
+        Self.selectionGen.selectionChanged() // soft tick as the menu opens
+        present(sheet, animated: true)
+    }
+
+    private func pickContextItem(_ key: String) {
+        let esc = key.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "'", with: "\\'")
+        webView?.evaluateJavaScript("window.__almaCtxPick && window.__almaCtxPick('\(esc)')", completionHandler: nil)
+    }
+
     // MARK: - almaShell bridge (web → native)
 
     /// Receives the web app's route events and updates the native header title.
     func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
         if message.name == "almaHaptic" {
             Self.fireHaptic(message.body as? [String: Any])
+            return
+        }
+        if message.name == "almaContextMenu" {
+            showContextMenu(message.body as? [String: Any])
             return
         }
         guard let body = message.body as? [String: Any] else { return }
