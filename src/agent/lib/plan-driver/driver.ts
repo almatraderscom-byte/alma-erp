@@ -119,6 +119,31 @@ async function escalate(
     nextTickAt: null,
     selfCheckNote: reason,
   })
+  // P0 terminal-state contract: an escalated plan leaves a self-contained
+  // checkpoint so the owner's next reply resumes from the exact stuck step.
+  try {
+    const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
+    const done = plan.steps.filter((s) => s.status === 'done').map((s) => s.action)
+    const stuck = plan.steps.find((s) => s.status === 'failed' || s.status === 'running')
+      ?? plan.steps.find((s) => s.status === 'pending')
+    await writeCheckpoint({
+      taskRef: `plan:${plan.id}`,
+      taskType: 'plan',
+      state: 'waiting_for_owner',
+      goal: plan.goal,
+      summaryBn: `"${plan.goal}" plan-টা থেমে গেছে — ${reason}`,
+      doneSteps: done,
+      currentStep: stuck?.action ?? 'unknown step',
+      artifacts: [],
+      error: reason,
+      question: 'কাজটা কি চালিয়ে যাবো, নাকি অন্যভাবে করবো?',
+      nextActions: ['Sir-এর সিদ্ধান্ত নাও, তারপর plan-টা ঠিক এই step থেকে resume করো'],
+      resumeHint: `Plan ${plan.id} escalated (${outcome}): ${reason}. Done: ${done.length}/${plan.steps.length} steps. Resume at step "${stuck?.action ?? '?'}".`,
+      conversationId: plan.conversationId ?? null,
+    })
+  } catch (cpErr) {
+    console.error('[plan-driver] checkpoint write failed:', cpErr)
+  }
   void notifyOwnerIfAway({
     tier: 2,
     title: 'Plan-Driver — সিদ্ধান্ত দরকার',

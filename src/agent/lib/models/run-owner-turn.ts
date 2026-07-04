@@ -306,7 +306,16 @@ async function* runAlternateProviderTurn(
   // can actually reuse, and it keeps web/Telegram prefixes identical for a
   // conversation. The injection is transient (only the assistant reply is
   // persisted), so replayed history stays clean.
-  const volatileText = systemBlocksToText(volatile)
+  let volatileText = systemBlocksToText(volatile)
+  // P0 resume fast-path: unresolved checkpoints ride the same transient per-turn
+  // injection — the head resumes stalled work from the exact step with ZERO
+  // history re-reading (the note is self-contained by contract). Fail-open.
+  try {
+    const { listUnresolvedCheckpoints, buildCheckpointSystemNote } = await import('@/agent/lib/checkpoint')
+    const cps = await listUnresolvedCheckpoints(conversationId)
+    const note = buildCheckpointSystemNote(cps)
+    if (note) volatileText = volatileText ? `${volatileText}\n\n${note}` : note
+  } catch { /* fail-open — never block the turn */ }
   if (volatileText) {
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i]

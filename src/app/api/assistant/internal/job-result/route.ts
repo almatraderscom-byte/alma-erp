@@ -193,6 +193,38 @@ export async function POST(req: NextRequest) {
     messageText = `✅ কাজটি সফলভাবে সম্পাদিত হয়েছে।`
   }
 
+  // P0 terminal-state contract: EVERY worker-job failure leaves a checkpoint the
+  // owner's next reply can resume from — this one hook covers all job types.
+  if (status === 'failed') {
+    try {
+      const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
+      const goal = (action.summary as string | null)?.split('\n')[0]?.slice(0, 160) || `${action.type} job`
+      const errMsg = (error ?? String(data?.error ?? 'unknown_error')).slice(0, 300)
+      const partial = typeof data?.storagePath === 'string' ? [data.storagePath] : []
+      await writeCheckpoint({
+        taskRef: pendingActionId,
+        taskType: action.type,
+        goal,
+        summaryBn: `"${goal}" কাজটা মাঝপথে ব্যর্থ হয়েছে।`,
+        doneSteps: [],
+        currentStep: `worker executing ${action.type}`,
+        artifacts: partial,
+        error: errMsg,
+        nextActions: ['কারণ দেখে ঠিক করে কাজটা আবার চালাও (নতুন approved action বানিয়ে), অথবা Sir-কে বিকল্প দাও'],
+        resumeHint: `pendingAction ${pendingActionId} (type ${action.type}) failed with: ${errMsg}. Payload payload-এ আগের সব input আছে — same payload দিয়ে retry করা যায়।`,
+        conversationId: convId,
+      })
+    } catch (cpErr) {
+      console.error('[job-result] checkpoint write failed:', cpErr)
+    }
+  } else if (status === 'success') {
+    // a retried task that now succeeded closes its old checkpoint chip
+    try {
+      const { resolveCheckpointByTaskRef } = await import('@/agent/lib/checkpoint')
+      await resolveCheckpointByTaskRef(pendingActionId)
+    } catch { /* best-effort */ }
+  }
+
   if (convId && messageText) {
     await db.agentMessage.create({
       data: {
