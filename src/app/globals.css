@@ -1092,6 +1092,15 @@ html.alma-native .agent-attention-banner {
   display: none !important;
 }
 
+/* The agent sub-nav's "ERP" item (href="/") jumps the Assistant web view out to the
+   ERP home — redundant with, and confusing against, the native Dashboard tab that
+   already owns `/` (it would leave two tabs showing ERP content). Hide just that one
+   item in the native shell; the agent-specific destinations (Chat / Studio / WhatsApp
+   / Monitor / Costs) stay. Plain web/desktop keep the full sub-nav. */
+html.alma-native .agent-bottom-nav a[href="/"] {
+  display: none !important;
+}
+
 /* On native web views that carry a NATIVE header (Orders / Approvals / modules
    opened from More), hide the web's own sticky page header so there is no double
    title bar. Gated on `alma-native-hdr`, set only for those web views — pages
