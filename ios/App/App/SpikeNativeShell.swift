@@ -122,7 +122,11 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // agent sub-nav (the web bar that stacked above the native tab bar).
         if !agentSegments.isEmpty {
             content.addUserScript(WKUserScript(
-                source: "window.__almaAgentNative = true;",
+                // Hide the web agent sub-nav (replaced by the AssistiveTouch nav) AND
+                // tell the agent's keyboard hook to defer to the native --kb-inset
+                // injection below (its own visualViewport path can't see the keyboard
+                // in this stable-height WKWebView, so the composer stayed covered).
+                source: "window.__almaAgentNative = true; window.__almaKbNative = true;",
                 injectionTime: .atDocumentStart, forMainFrameOnly: false))
         }
         // Native header title-sync: the web posts {type:'route', path, title} here.
@@ -241,13 +245,34 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // Overlap of the keyboard with the web view, in the web view's own coordinates.
         let kbInView = webView.convert(endFrame, from: nil)
         let overlap = max(0, webView.bounds.maxY - kbInView.minY)
-        webView.scrollView.contentInset.bottom = overlap
-        webView.scrollView.verticalScrollIndicatorInsets.bottom = overlap
+        if !agentSegments.isEmpty {
+            // Agent (Claude surface): the agent layout rides the keyboard via
+            // `--kb-inset` + `body.kb-open` (its `.agent-main-height` = 100lvh − inset),
+            // so the composer sits directly above the keyboard. The plain WKWebView's
+            // visualViewport can't see the keyboard, so feed it the exact height here.
+            setAgentKbInset(overlap)
+        } else {
+            webView.scrollView.contentInset.bottom = overlap
+            webView.scrollView.verticalScrollIndicatorInsets.bottom = overlap
+        }
     }
 
     @objc private func keyboardHide(_ note: Notification) {
-        webView?.scrollView.contentInset.bottom = 0
-        webView?.scrollView.verticalScrollIndicatorInsets.bottom = 0
+        if !agentSegments.isEmpty {
+            setAgentKbInset(0)
+        } else {
+            webView?.scrollView.contentInset.bottom = 0
+            webView?.scrollView.verticalScrollIndicatorInsets.bottom = 0
+        }
+    }
+
+    /// Drive the agent layout's `--kb-inset` / `body.kb-open` from the native keyboard.
+    private func setAgentKbInset(_ px: CGFloat) {
+        let v = Int(px.rounded())
+        let js = v > 1
+            ? "document.documentElement.style.setProperty('--kb-inset','\(v)px');document.body.classList.add('kb-open');"
+            : "document.documentElement.style.setProperty('--kb-inset','0px');document.body.classList.remove('kb-open');"
+        webView?.evaluateJavaScript(js, completionHandler: nil)
     }
 
     deinit { NotificationCenter.default.removeObserver(self) }
