@@ -1140,3 +1140,10 @@ html.alma-native-hdr .page-header {
 html.alma-native-hdr .page-header [data-ph-titlerow] {
   display: none !important;
 }
+
+/* The Assistant tab now carries a NATIVE dark-glass header (title + new-chat +
+   sidebar bar buttons), so hide the web agent's own top bar there — no double
+   header, and the dark status-bar area matches the other tabs (no more light top). */
+html.alma-native-hdr .alma-agent-topbar {
+  display: none !important;
+}

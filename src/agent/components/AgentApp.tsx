@@ -1544,7 +1544,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         {/* Header — floating translucent pods (FOUND-1B "Claude-app feel").
             Top inset now lives on the parent column (safe-top), so the header
             keeps only safe-x to avoid double-padding below the status bar. */}
-        <header className="safe-x relative z-20 flex shrink-0 items-center gap-2 bg-transparent px-3 py-2 md:px-4">
+        <header className="alma-agent-topbar safe-x relative z-20 flex shrink-0 items-center gap-2 bg-transparent px-3 py-2 md:px-4">
           {/* Left — ☰ menu in a circular frosted pod */}
           <button
             type="button"
