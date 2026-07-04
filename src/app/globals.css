@@ -1110,6 +1110,16 @@ html.alma-agent-native .agent-bottom-nav {
   display: none !important;
 }
 
+/* Elements that open a NATIVE long-press context menu in the shell: suppress the
+   WKWebView's own long-press (text selection / callout / link preview) so it can't
+   cancel our pointer sequence — otherwise the native gesture wins and our menu never
+   fires. Gated on the native shell; web/desktop keep normal selection. */
+html.alma-native [data-ctx-menu] {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* On native web views that carry a NATIVE header (Orders / Approvals / modules
    opened from More), the native bar already shows the title + back button. Hide
    ONLY the page-header's title row (data-ph-titlerow) so there's no double title —

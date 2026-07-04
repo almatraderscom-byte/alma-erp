@@ -72,7 +72,10 @@ export function installNativeContextMenu(): () => void {
       } catch {
         /* not in the native shell — ignore */
       }
-    }, 500)
+      // 420ms fires just before WKWebView's own ~500ms long-press (text-select /
+      // callout) so ours wins; the `-webkit-touch-callout:none` CSS on the cards
+      // stops that native gesture from cancelling our pointer sequence anyway.
+    }, 420)
   }
 
   const onMove = (e: PointerEvent) => {
