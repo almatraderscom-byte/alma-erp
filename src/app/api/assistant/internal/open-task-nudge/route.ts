@@ -49,6 +49,15 @@ async function handle(req: NextRequest) {
     } catch (wdErr) {
       await captureAgentError(wdErr, 'stuck_task_watchdog_tick', { route: 'open-task-nudge' })
     }
+    // P1 §5.6 retention: live-browser command rows (params/results may embed page
+    // data and screenshot dataURLs) are auto-deleted after 7 days.
+    try {
+      const { prisma } = await import('@/lib/prisma')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (prisma as any).liveBrowserCommand.deleteMany({
+        where: { createdAt: { lt: new Date(Date.now() - 7 * 24 * 3600 * 1000) } },
+      })
+    } catch { /* table may not exist yet on old DBs — best-effort */ }
     return NextResponse.json({ ok: true, ...result, watchdog })
   } catch (err) {
     await captureAgentError(err, 'open_task_nudge_tick', { route: 'open-task-nudge' })
