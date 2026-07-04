@@ -92,12 +92,19 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     /// there is no double header. Off for Assistant (keeps its in-page header).
     private let hideWebHeader: Bool
 
+    /// When non-empty, a NATIVE segmented control is shown at the top of this tab and
+    /// the web's own agent sub-nav (the "double bottom bar") is hidden — this is the
+    /// Assistant tab's Chat/Studio/WhatsApp/Monitor/Costs switcher, made native.
+    private let agentSegments: [(title: String, url: URL)]
+    private var segmentControl: UISegmentedControl?
+
     init(url: URL, processPool: WKProcessPool, tabTitle: String, systemImage: String,
-         hideWebHeader: Bool = false) {
+         hideWebHeader: Bool = false, agentSegments: [(title: String, url: URL)] = []) {
         self.url = url
         self.sharedProcessPool = processPool
         self.baseTitle = tabTitle
         self.hideWebHeader = hideWebHeader
+        self.agentSegments = agentSegments
         super.init(nibName: nil, bundle: nil)
         title = tabTitle   // shown in the nav bar when this VC is pushed (e.g. from More)
         tabBarItem = UITabBarItem(
@@ -111,6 +118,13 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     override func loadView() {
         let content = WKUserContentController()
         AlmaEmbed.install(into: content, hideWebHeader: hideWebHeader)
+        // When this tab has a native segmented control, tell the web to hide its own
+        // agent sub-nav (the web bar that stacked above the native tab bar).
+        if !agentSegments.isEmpty {
+            content.addUserScript(WKUserScript(
+                source: "window.__almaAgentNative = true;",
+                injectionTime: .atDocumentStart, forMainFrameOnly: false))
+        }
         // Native header title-sync: the web posts {type:'route', path, title} here.
         content.add(WeakScriptMessageHandler(self), name: "almaShell")
         // Soft native haptics for the plain (non-Capacitor) WebViews: the web posts
@@ -145,8 +159,34 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         root.backgroundColor = bg
         root.addSubview(webView)
         webView.translatesAutoresizingMaskIntoConstraints = false
+
+        // Assistant tab: a NATIVE segmented control (Chat/Studio/WhatsApp/Monitor/Costs)
+        // in a dark top strip (under the status bar, consistent with the other tabs'
+        // dark headers). Replaces the web sub-nav that stacked above the native tab bar
+        // — so there is no more "double bottom bar". The webView starts below the strip.
+        var webTopAnchor = root.safeAreaLayoutGuide.topAnchor
+        if !agentSegments.isEmpty {
+            let strip = UIView()
+            strip.backgroundColor = UIColor(red: 0.055, green: 0.047, blue: 0.078, alpha: 1) // #0e0c14
+            strip.translatesAutoresizingMaskIntoConstraints = false
+            root.addSubview(strip)
+            let seg = makeAgentSegmentControl()
+            strip.addSubview(seg)
+            segmentControl = seg
+            NSLayoutConstraint.activate([
+                strip.topAnchor.constraint(equalTo: root.topAnchor),
+                strip.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+                strip.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+                seg.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 6),
+                seg.leadingAnchor.constraint(equalTo: strip.leadingAnchor, constant: 12),
+                seg.trailingAnchor.constraint(equalTo: strip.trailingAnchor, constant: -12),
+                seg.bottomAnchor.constraint(equalTo: strip.bottomAnchor, constant: -8),
+            ])
+            webTopAnchor = strip.bottomAnchor
+        }
+
         NSLayoutConstraint.activate([
-            webView.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor),
+            webView.topAnchor.constraint(equalTo: webTopAnchor),
             webView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             // FULL height to the safe-area bottom (above the native tab bar → no tab-bar
@@ -323,6 +363,40 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         offlineView = nil
     }
 
+    // MARK: - S5: native agent segmented control (Assistant tab)
+
+    private func makeAgentSegmentControl() -> UISegmentedControl {
+        let seg = UISegmentedControl(items: agentSegments.map { $0.title })
+        seg.translatesAutoresizingMaskIntoConstraints = false
+        seg.selectedSegmentIndex = 0
+        seg.selectedSegmentTintColor = UIColor(red: 0.42, green: 0.36, blue: 0.62, alpha: 1) // violet
+        seg.backgroundColor = UIColor(red: 0.12, green: 0.11, blue: 0.16, alpha: 1)
+        seg.setTitleTextAttributes([.foregroundColor: UIColor.white,
+                                    .font: UIFont.systemFont(ofSize: 12, weight: .semibold)], for: .selected)
+        seg.setTitleTextAttributes([.foregroundColor: UIColor(white: 0.72, alpha: 1),
+                                    .font: UIFont.systemFont(ofSize: 12, weight: .medium)], for: .normal)
+        seg.addTarget(self, action: #selector(agentSegmentChanged(_:)), for: .valueChanged)
+        return seg
+    }
+
+    @objc private func agentSegmentChanged(_ sender: UISegmentedControl) {
+        let i = sender.selectedSegmentIndex
+        guard i >= 0, i < agentSegments.count else { return }
+        Self.selectionGen.selectionChanged(); Self.selectionGen.prepare() // soft tap
+        webView.load(URLRequest(url: agentSegments[i].url))
+    }
+
+    /// Keep the segmented control in sync when the web navigates itself (e.g. a link
+    /// inside the chat) — match the current path to a segment.
+    private func syncSegment(toPath path: String) {
+        guard let seg = segmentControl, !agentSegments.isEmpty else { return }
+        // Longest-matching section wins (so /agent/costs beats /agent).
+        let idx = agentSegments.enumerated()
+            .filter { path == $0.element.url.path || path.hasPrefix($0.element.url.path + "/") }
+            .max(by: { $0.element.url.path.count < $1.element.url.path.count })?.offset
+        if let idx = idx, seg.selectedSegmentIndex != idx { seg.selectedSegmentIndex = idx }
+    }
+
     // MARK: - S4: scroll-to-top on active-tab re-tap (iOS-standard)
 
     /// Called when the owner taps the already-active tab. The ERP pages usually scroll an
@@ -384,6 +458,10 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         }
         guard let body = message.body as? [String: Any] else { return }
         let type = body["type"] as? String
+        if type == "route" {
+            // Keep the Assistant's native segmented control in sync with web navigation.
+            if let path = body["path"] as? String { syncSegment(toPath: path) }
+        }
         if type == "route" || type == "title" {
             if let t = (body["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
                 // Only the nav-wrapped tabs (Orders/Approvals/More-pushed) show a native
@@ -580,10 +658,21 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
                                               hideWebHeader: true)
             return Self.darkNav(root: vc, tabTitle: title, icon: icon, largeTitles: false)
         }
-        func plainTab(_ path: String, _ title: String, _ icon: String) -> AlmaWebTabViewController {
-            AlmaWebTabViewController(url: URL(string: Self.base + path)!, processPool: pool,
-                                     tabTitle: title, systemImage: icon)
-        }
+        // Assistant = the "Claude" surface: a native segmented control (Chat / Studio /
+        // WhatsApp / Monitor / Costs) at the top replaces the web sub-nav that used to
+        // stack above the native tab bar (the "double bottom bar"). Each segment loads
+        // its /agent route in the shared web view.
+        func agentURL(_ p: String) -> URL { URL(string: Self.base + p)! }
+        let assistant = AlmaWebTabViewController(
+            url: agentURL("/agent"), processPool: pool,
+            tabTitle: "Assistant", systemImage: "sparkles",
+            agentSegments: [
+                ("Chat", agentURL("/agent")),
+                ("Studio", agentURL("/agent/creative-studio")),
+                ("WhatsApp", agentURL("/agent/whatsapp")),
+                ("Monitor", agentURL("/agent/staff-monitor")),
+                ("Costs", agentURL("/agent/costs")),
+            ])
 
         // "More" is a NATIVE menu whose rows push web screens with a native slide.
         let moreNav = Self.darkNav(root: MoreMenuViewController(processPool: pool),
@@ -592,7 +681,7 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         viewControllers = [
             Self.darkNav(root: dashboard, tabTitle: "Dashboard", icon: "square.grid.2x2", largeTitles: false),
             webNavTab("/orders",    "Orders",    "shippingbox"),
-            plainTab ("/agent",     "Assistant", "sparkles"),
+            assistant,
             webNavTab("/approvals", "Approvals", "checkmark.seal"),
             moreNav,
         ]
