@@ -63,11 +63,24 @@
 
 /* Colour dissolve on top of the blur stack: page bg, opaque top → clear bottom.
    var(--bg-0) follows the theme root, so light/dark both match with no JS. */
+/* Colour dissolve — SUBTLE by design: the BLUR does the separating, the scrim only
+   melts the last step into the page. Owner rule (dark "aura" theme): the scrim must
+   match the TOP of the aurora, never black/near-black — a dark scrim reads as a
+   shadow band. Shared tokens (= native ClaudeTopFadeTheme):
+     SCRIM_LIGHT #FAF9F6 @ 0.45→0 · SCRIM_DARK #1C1830 (aura top indigo) @ 0.45→0 */
 .scrim {
   background: linear-gradient(
     to bottom,
-    var(--bg-0) 0%,
-    color-mix(in srgb, var(--bg-0) 55%, transparent) 55%,
+    rgb(250 249 246 / 0.45) 0%,
+    rgb(250 249 246 / 0.22) 55%,
+    transparent 100%
+  );
+}
+:global(html[data-theme='dark']) .scrim {
+  background: linear-gradient(
+    to bottom,
+    rgb(28 24 48 / 0.45) 0%,
+    rgb(28 24 48 / 0.22) 55%,
     transparent 100%
   );
 }
