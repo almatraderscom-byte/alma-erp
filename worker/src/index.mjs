@@ -90,6 +90,13 @@ const videoEditQueue = new Queue('video-edit', {
   defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 30000 } },
 })
 
+// Phase V3: Remotion motion-template finishing (attempts:2 — bundling/browser
+// hiccups are transient; the P0 checkpoint covers the final failure).
+const videoFinishQueue = new Queue('video-finish', {
+  connection,
+  defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 30000 } },
+})
+
 const longTaskQueue = new Queue('long-agent-task', {
   connection: longTaskConnection,
   defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 10000 } },
@@ -226,6 +233,10 @@ async function pollPendingJobs() {
       } else if (job.type === 'video_edit') {
         await videoEditQueue.add('edit', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
         console.log(`[worker] enqueued video-edit job for action ${job.id}`)
+        handled = true
+      } else if (job.type === 'video_finish') {
+        await videoFinishQueue.add('finish', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        console.log(`[worker] enqueued video-finish job for action ${job.id}`)
         handled = true
       } else if (job.type === 'long_agent_task') {
         await longTaskQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
@@ -573,6 +584,28 @@ const videoEditWorker = new Worker(
   },
 )
 
+// Phase V3: Remotion render + ffmpeg composite — heavy, strictly one at a time.
+const videoFinishWorker = new Worker(
+  'video-finish',
+  async (job) => {
+    const { processVideoFinish } = await import('./video-finish.mjs')
+    return processVideoFinish(job, { supabase, callJobResult })
+  },
+  {
+    connection,
+    concurrency: 1,
+    lockDuration: 30 * 60 * 1000,
+  },
+)
+
+// Pre-warm Chrome Headless Shell + the Remotion bundle so the owner's first
+// finish job doesn't pay the cold start. Best-effort, fully async.
+setTimeout(() => {
+  import('./video-finish.mjs')
+    .then(({ videoFinishPreflight }) => videoFinishPreflight())
+    .catch((err) => console.warn('[worker] video-finish preflight failed (first job will retry):', err?.message))
+}, 30_000)
+
 // ── P2 workbench worker ─────────────────────────────────────────────────────
 const workbenchWorker = new Worker(
   'workbench',
@@ -848,6 +881,20 @@ videoEditWorker.on('failed', async (job, err) => {
   // BullMQ retries first (attempts:2); only the FINAL failure reaches the app.
   if (job && job.attemptsMade < (job.opts?.attempts ?? 1)) return
   captureWorkerError(err, 'worker.video_edit.failed', { jobId: job?.id })
+  if (job?.data?.pendingActionId) {
+    enqueuedIds.delete(job.data.pendingActionId)
+    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
+  }
+})
+
+videoFinishWorker.on('completed', (job) => {
+  console.log(`[worker] video-finish ${job.id} completed`)
+  if (job?.data?.pendingActionId) enqueuedIds.delete(job.data.pendingActionId)
+})
+videoFinishWorker.on('failed', async (job, err) => {
+  console.error(`[worker] video-finish ${job?.id} failed:`, err.message)
+  if (job && job.attemptsMade < (job.opts?.attempts ?? 1)) return
+  captureWorkerError(err, 'worker.video_finish.failed', { jobId: job?.id })
   if (job?.data?.pendingActionId) {
     enqueuedIds.delete(job.data.pendingActionId)
     await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)

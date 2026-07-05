@@ -368,6 +368,29 @@ export async function setReelCover(pendingActionId: string, coverPath: string): 
   return data as { thumbUrl: string | null }
 }
 
+export type VideoFinishTemplates = {
+  pricePop?: { price: string }
+  lowerThird?: { code: string; name?: string }
+  logoWatermark?: boolean
+  endCard?: { cta?: string; code?: string; price?: string }
+  countdown?: { days: number }
+}
+
+/** V3: queue motion-template finishing for a rendered reel. */
+export async function finishVideo(
+  pendingActionId: string,
+  templates: VideoFinishTemplates,
+): Promise<{ pendingActionId: string; message: string }> {
+  const res = await fetch('/api/assistant/creative-studio/video/finish', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pendingActionId, templates }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? 'finish_failed')
+  return data
+}
+
 export type VideoRunOptions = {
   captions?: boolean
   audioMode?: 'original' | 'music' | 'music_duck'
