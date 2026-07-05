@@ -165,6 +165,10 @@ export default function CreativeStudio() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* A1: catalog images cross-link — one central creative place */}
+            <Link href="/agent/catalog-images" className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-muted hover:text-cream">
+              📸 ক্যাটালগ
+            </Link>
             {config && (
               <span
                 className={cn(
