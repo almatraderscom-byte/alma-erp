@@ -5,6 +5,7 @@
 **Approach (owner-approved, locked):** "Option 1 / native frame" — native chrome (tab bar, headers, nav, gestures, haptics, floating buttons in Swift) wrapping the existing web ERP as content ("embed mode"). We do NOT rebuild every screen.
 
 > **Resume phrase:** the owner pastes *"docs/ios-native-frame-handoff.md poড়e ekhan theke continue koro"*. This file must let you continue with zero re-discovery.
+> **Parallel page-migration sessions:** governed by `NATIVE_MIGRATION_HANDOFF.md` (repo root) — page registry, file-ownership rules, frozen-file list, branch/worktree protocol, `SHARED_CHANGES_REQUESTED.md` queue. A page session reads THAT doc; this doc stays the shell/program log.
 
 ---
 
