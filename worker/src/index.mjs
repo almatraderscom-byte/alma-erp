@@ -97,6 +97,12 @@ const videoFinishQueue = new Queue('video-finish', {
   defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 30000 } },
 })
 
+// E1: ElevenLabs Audio Lab jobs (owner-initiated only).
+const audioGenQueue = new Queue('audio-gen', {
+  connection,
+  defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 20000 } },
+})
+
 const longTaskQueue = new Queue('long-agent-task', {
   connection: longTaskConnection,
   defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 10000 } },
@@ -241,6 +247,10 @@ async function pollPendingJobs() {
       } else if (job.type === 'video_edit') {
         await videoEditQueue.add('edit', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
         console.log(`[worker] enqueued video-edit job for action ${job.id}`)
+        handled = true
+      } else if (job.type === 'audio_gen') {
+        await audioGenQueue.add('gen', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        console.log(`[worker] enqueued audio-lab job for action ${job.id}`)
         handled = true
       } else if (job.type === 'video_finish') {
         await videoFinishQueue.add('finish', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
@@ -617,6 +627,28 @@ setTimeout(() => {
     .then(({ videoFinishPreflight }) => videoFinishPreflight())
     .catch((err) => console.warn('[worker] video-finish preflight failed (first job will retry):', err?.message))
 }, 30_000)
+
+// E1: Audio Lab worker (ElevenLabs API calls — light, but keep it serial).
+const audioGenWorker = new Worker(
+  'audio-gen',
+  async (job) => {
+    const { processAudioGen } = await import('./audio-lab.mjs')
+    return processAudioGen(job, { supabase, callJobResult })
+  },
+  { connection, concurrency: 1, lockDuration: 10 * 60 * 1000 },
+)
+audioGenWorker.on('completed', (job) => {
+  if (job?.data?.pendingActionId) enqueuedIds.delete(job.data.pendingActionId)
+})
+audioGenWorker.on('failed', async (job, err) => {
+  console.error(`[worker] audio-lab ${job?.id} failed:`, err.message)
+  if (job && job.attemptsMade < (job.opts?.attempts ?? 1)) return
+  captureWorkerError(err, 'worker.audio_gen.failed', { jobId: job?.id })
+  if (job?.data?.pendingActionId) {
+    enqueuedIds.delete(job.data.pendingActionId)
+    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
+  }
+})
 
 // ── P2 workbench worker ─────────────────────────────────────────────────────
 const workbenchWorker = new Worker(

@@ -66,6 +66,10 @@ import {
   deleteGarmentCache,
   generateBrandModel,
   type StudioSettings,
+  fetchAudioLabStatus,
+  queueAudioJob,
+  uploadAudioFile,
+  type AudioLabStatus,
   type StudioMusicTrack,
   type VideoFinishTemplates,
   type GalleryItem,
@@ -86,7 +90,7 @@ async function handleDownload(url: string | undefined | null, filename?: string)
   else if (result === 'opened') toast('ছবি নতুন ট্যাবে খোলা হলো, স্যার')
 }
 
-type MainView = 'studio' | 'gallery' | 'models' | 'finishing' | 'video'
+type MainView = 'studio' | 'gallery' | 'models' | 'finishing' | 'video' | 'audio'
 type StudioModel = { id: string; name: string; role: string | null; isDefault: boolean }
 
 // These modes carry no product image, so the Gemini fallback (which requires a
@@ -134,6 +138,9 @@ export default function CreativeStudio() {
         </NavIcon>
         <NavIcon label="Video" active={view === 'video'} onClick={() => setView('video')}>
           <VideoSvg />
+        </NavIcon>
+        <NavIcon label="Audio" active={view === 'audio'} onClick={() => setView('audio')}>
+          <AudioSvg />
         </NavIcon>
       </aside>
 
@@ -198,6 +205,11 @@ export default function CreativeStudio() {
                 <VideoStudioView onOpenGallery={() => setView('gallery')} />
               </motion.div>
             )}
+            {view === 'audio' && (
+              <motion.div key="audio" className="absolute inset-0 overflow-y-auto" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <AudioLabView />
+              </motion.div>
+            )}
           </AnimatePresence>
         </main>
 
@@ -213,6 +225,7 @@ export default function CreativeStudio() {
               ['models', 'Models', UserSvg],
               ['finishing', 'Finishing', BrandingSvg],
               ['video', 'Video', VideoSvg],
+              ['audio', 'Audio', AudioSvg],
             ] as const
           ).map(([id, label, Icon]) => (
             <button
@@ -1071,6 +1084,7 @@ function GalleryView() {
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
           {items.map((item) => {
             const isVideo = item.storagePath?.endsWith('.mp4') || item.type === 'video_gen'
+            const isAudio = item.type === 'audio_gen'
             const pending = isPendingStatus(item.status)
             const failed = isFailedStatus(item.status)
             return (
@@ -1085,7 +1099,12 @@ function GalleryView() {
               >
                 <div className="relative aspect-[4/5] bg-bg-1">
                   {item.previewUrl ? (
-                    isVideo ? (
+                    isAudio ? (
+                      <div className="flex h-full flex-col items-center justify-center gap-1.5 p-2 text-center">
+                        <span className="text-3xl">🎵</span>
+                        <span className="line-clamp-3 text-[10px] text-muted">{item.summary}</span>
+                      </div>
+                    ) : isVideo ? (
                       // eslint-disable-next-line jsx-a11y/media-has-caption
                       <video src={item.previewUrl} className="h-full w-full object-cover" playsInline muted />
                     ) : (
@@ -1170,7 +1189,21 @@ function GalleryView() {
             >
               ✕
             </button>
-            {selected.storagePath?.endsWith('.mp4') || selected.type === 'video_gen' ? (
+            {selected.type === 'audio_gen' ? (
+              <div onClick={(e) => e.stopPropagation()} className="flex w-[min(92vw,420px)] flex-col items-center gap-3 rounded-2xl bg-black/70 p-5 ring-1 ring-white/15">
+                <span className="text-4xl">🎵</span>
+                <p className="text-center text-[12px] text-white/85">{selected.summary}</p>
+                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                <audio src={selected.previewUrl} controls autoPlay className="w-full" />
+                <button
+                  type="button"
+                  onClick={() => handleDownload(selected.previewUrl, `alma-${selected.id}.mp3`)}
+                  className="rounded-full bg-white/15 px-5 py-2 text-[12px] font-semibold text-white ring-1 ring-white/25"
+                >
+                  ডাউনলোড
+                </button>
+              </div>
+            ) : selected.storagePath?.endsWith('.mp4') || selected.type === 'video_gen' ? (
               // eslint-disable-next-line jsx-a11y/media-has-caption
               <video
                 key={showBranded && selected.brandedUrl ? 'branded' : 'original'}
@@ -2612,6 +2645,168 @@ function MusicLibrary({
           </button>
         </div>
       ))}
+    </div>
+  )
+}
+
+function AudioSvg({ className }: { className?: string }) {
+  return (
+    <svg className={cn('h-5 w-5', className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <path d="M9 18V6l10-2v12" />
+      <circle cx="6.5" cy="18" r="2.5" />
+      <circle cx="16.5" cy="16" r="2.5" />
+    </svg>
+  )
+}
+
+/**
+ * E1 — Audio Lab (ElevenLabs). Hard presets + owner-typed lines only; the
+ * cloned voice is owner-only by design. Outputs land in the Gallery.
+ */
+function AudioLabView() {
+  const [status, setStatus] = useState<AudioLabStatus | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [musicStyle, setMusicStyle] = useState('celebration')
+  const [musicLine, setMusicLine] = useState('')
+  const [musicSec, setMusicSec] = useState(30)
+  const [occasion, setOccasion] = useState('birthday')
+  const [wishName, setWishName] = useState('')
+  const [voiceText, setVoiceText] = useState('')
+  const [sfxText, setSfxText] = useState('')
+  const [pct, setPct] = useState<number | null>(null)
+  const cloneRef = useRef<HTMLInputElement>(null)
+  const noteRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => { void fetchAudioLabStatus().then(setStatus).catch(() => {}) }, [])
+
+  const run = useCallback((label: string, body: Record<string, unknown>) => {
+    setBusy(label)
+    void queueAudioJob(body)
+      .then((r) => toast.success(`${label} তৈরি হচ্ছে (~৳${r.costBdt}) — Gallery-তে আসবে, স্যার`))
+      .catch((e) => toast.error(e instanceof Error ? e.message : 'হয়নি'))
+      .finally(() => setBusy(null))
+  }, [])
+
+  const card = 'space-y-2 rounded-xl border border-border-subtle bg-card/80 p-3'
+  const input = 'w-full rounded-lg border border-border-subtle bg-bg-1 px-2.5 py-2 text-[12px] text-cream placeholder:text-muted/50'
+  const btn = 'rounded-xl bg-[#E07A5F] px-4 py-2 text-[12px] font-bold text-white disabled:opacity-50'
+
+  return (
+    <div className="px-3 py-3 pb-20 md:pb-4">
+      <div className="mx-auto max-w-xl space-y-3">
+        <div>
+          <h2 className="text-sm font-bold">🎙️ অডিও ল্যাব</h2>
+          <p className="text-[11px] text-muted">মিউজিক, উইশ গান, আপনার ভয়েস — সব এক জায়গায়। খরচ আগে দেখানো হয়।</p>
+        </div>
+
+        {/* voice clone */}
+        <div className={card}>
+          <p className="text-[12px] font-bold text-cream">
+            🧬 আপনার ভয়েস {status?.voiceCloned ? <span className="text-[#81B29A]">— ক্লোন করা আছে ✓</span> : '— এখনো ক্লোন হয়নি'}
+          </p>
+          <p className="text-[10px] text-muted">১-৩টা পরিষ্কার ভয়েস রেকর্ডিং দিন (একবারই লাগবে)। এই ভয়েস শুধু আপনার নিজের কাজে ব্যবহার হবে — অটো বা কাস্টমার ফ্লোতে কখনোই না।</p>
+          <input ref={cloneRef} type="file" accept="audio/*" multiple className="hidden"
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []).slice(0, 3)
+              if (!files.length) return
+              setPct(0)
+              void Promise.all(files.map((f) => uploadAudioFile(f, setPct)))
+                .then((paths) => run('ভয়েস ক্লোন', { kind: 'voice_clone', samplePaths: paths }))
+                .catch((err) => toast.error(err instanceof Error ? err.message : 'আপলোড ব্যর্থ'))
+                .finally(() => { setPct(null); if (cloneRef.current) cloneRef.current.value = '' })
+            }} />
+          <button type="button" disabled={busy !== null || pct !== null} onClick={() => cloneRef.current?.click()} className={btn}>
+            {pct !== null ? `আপলোড ${pct}%` : status?.voiceCloned ? 'আবার ক্লোন করাও' : 'স্যাম্পল দিয়ে ক্লোন করাও'}
+          </button>
+        </div>
+
+        {/* text → music */}
+        <div className={card}>
+          <p className="text-[12px] font-bold text-cream">🎵 মিউজিক বানাও</p>
+          <div className="flex gap-1.5">
+            {(status?.styles ?? []).map((st) => (
+              <button key={st.id} type="button" onClick={() => setMusicStyle(st.id)}
+                className={cn('rounded-lg px-2.5 py-1.5 text-[11px] font-semibold', musicStyle === st.id ? 'bg-[#E07A5F] text-white' : 'bg-white/10 text-muted')}>
+                {st.labelBn}
+              </button>
+            ))}
+          </div>
+          <input value={musicLine} onChange={(e) => setMusicLine(e.target.value)} placeholder="মুড/থিম এক লাইনে (ঐচ্ছিক)" className={input} />
+          <div className="flex items-center gap-2">
+            {[30, 60].map((s2) => (
+              <button key={s2} type="button" onClick={() => setMusicSec(s2)}
+                className={cn('rounded-lg px-3 py-1.5 text-[11px] font-semibold', musicSec === s2 ? 'bg-[#E07A5F] text-white' : 'bg-white/10 text-muted')}>
+                {s2}s
+              </button>
+            ))}
+            <button type="button" disabled={busy !== null} className={btn}
+              onClick={() => run('মিউজিক', { kind: 'music', styleId: musicStyle, line: musicLine, seconds: musicSec })}>
+              বানাও
+            </button>
+          </div>
+        </div>
+
+        {/* wish song */}
+        <div className={card}>
+          <p className="text-[12px] font-bold text-cream">🎁 উইশ গান (ফিক্সড লিরিক — শুধু নাম বসে)</p>
+          <div className="flex gap-1.5">
+            {(status?.occasions ?? []).map((o) => (
+              <button key={o.id} type="button" onClick={() => setOccasion(o.id)}
+                className={cn('rounded-lg px-2.5 py-1.5 text-[11px] font-semibold', occasion === o.id ? 'bg-[#E07A5F] text-white' : 'bg-white/10 text-muted')}>
+                {o.labelBn}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input value={wishName} onChange={(e) => setWishName(e.target.value)} placeholder="নাম" className={input} />
+            <button type="button" disabled={busy !== null || !wishName.trim()} className={btn}
+              onClick={() => run('উইশ গান', { kind: 'wish_song', occasionId: occasion, name: wishName, seconds: 30 })}>
+              বানাও
+            </button>
+          </div>
+        </div>
+
+        {/* owner voice */}
+        <div className={card}>
+          <p className="text-[12px] font-bold text-cream">🎙️ আমার ভয়েসে বলাও</p>
+          <textarea value={voiceText} onChange={(e) => setVoiceText(e.target.value.slice(0, 600))} rows={2}
+            placeholder="যা বলাতে চান লিখুন…" className={input} />
+          <button type="button" disabled={busy !== null || !voiceText.trim() || !status?.voiceCloned} className={btn}
+            onClick={() => run('ভয়েস লাইন', { kind: 'owner_voice', text: voiceText })}>
+            {status?.voiceCloned ? 'বলাও' : 'আগে ভয়েস ক্লোন করুন'}
+          </button>
+        </div>
+
+        {/* clean voice note */}
+        <div className={card}>
+          <p className="text-[12px] font-bold text-cream">🎧 ভয়েস নোট → স্টুডিও কোয়ালিটি</p>
+          <input ref={noteRef} type="file" accept="audio/*" className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (!f) return
+              setPct(0)
+              void uploadAudioFile(f, setPct)
+                .then((path) => run('ভয়েস ক্লিনআপ', { kind: 'clean_voice', sourcePath: path }))
+                .catch((err) => toast.error(err instanceof Error ? err.message : 'আপলোড ব্যর্থ'))
+                .finally(() => { setPct(null); if (noteRef.current) noteRef.current.value = '' })
+            }} />
+          <button type="button" disabled={busy !== null || pct !== null} onClick={() => noteRef.current?.click()} className={btn}>
+            {pct !== null ? `আপলোড ${pct}%` : 'ভয়েস নোট দিন'}
+          </button>
+        </div>
+
+        {/* sfx */}
+        <div className={card}>
+          <p className="text-[12px] font-bold text-cream">🔊 সাউন্ড ইফেক্ট (রিলের জন্য)</p>
+          <div className="flex gap-2">
+            <input value={sfxText} onChange={(e) => setSfxText(e.target.value)} placeholder="যেমন: whoosh, চুড়ির টুংটাং" className={input} />
+            <button type="button" disabled={busy !== null || !sfxText.trim()} className={btn}
+              onClick={() => run('SFX', { kind: 'sfx', text: sfxText, seconds: 3 })}>
+              বানাও
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
