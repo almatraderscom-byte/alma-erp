@@ -31,6 +31,7 @@ import { startTwilioHttpServer } from './twilio-http.mjs'
 import { deliverAgentTurn } from './telegram/agent-turn.mjs'
 import { startDiagnosticHttpServer, setRetriggerHandler } from './diagnostic-http.mjs'
 import { processVideoGen } from './video-gen.mjs'
+import { processVideoEdit } from './video-edit.mjs'
 
 // ── Env checks ─────────────────────────────────────────────────────────────
 
@@ -79,6 +80,14 @@ const imageGenQueue = new Queue('image-gen', {
 const videoGenQueue = new Queue('video-gen', {
   connection,
   defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 15000 } },
+})
+
+// Phase V1: deterministic ffmpeg reel editing of the owner's own shoots.
+// attempts:2 — a transient failure (download hiccup, OOM) retries once; the
+// P0 checkpoint on the failed job-result is the owner-visible fallback.
+const videoEditQueue = new Queue('video-edit', {
+  connection,
+  defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 30000 } },
 })
 
 const longTaskQueue = new Queue('long-agent-task', {
@@ -213,6 +222,10 @@ async function pollPendingJobs() {
       } else if (job.type === 'video_gen') {
         await videoGenQueue.add('generate', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
         console.log(`[worker] enqueued video-gen job for action ${job.id}`)
+        handled = true
+      } else if (job.type === 'video_edit') {
+        await videoEditQueue.add('edit', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        console.log(`[worker] enqueued video-edit job for action ${job.id}`)
         handled = true
       } else if (job.type === 'long_agent_task') {
         await longTaskQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
@@ -548,6 +561,18 @@ const videoGenWorker = new Worker(
   },
 )
 
+// Phase V1: ffmpeg reel editing — CPU-bound, one at a time; a 2-min 500 MB
+// source can take several minutes to transcode, so the lock is generous.
+const videoEditWorker = new Worker(
+  'video-edit',
+  (job) => processVideoEdit(job, { supabase, callJobResult }),
+  {
+    connection,
+    concurrency: 1,
+    lockDuration: 30 * 60 * 1000,
+  },
+)
+
 // ── P2 workbench worker ─────────────────────────────────────────────────────
 const workbenchWorker = new Worker(
   'workbench',
@@ -808,6 +833,21 @@ videoGenWorker.on('completed', (job) => {
 videoGenWorker.on('failed', async (job, err) => {
   console.error(`[worker] video-gen ${job?.id} failed:`, err.message)
   captureWorkerError(err, 'worker.video_gen.failed', { jobId: job?.id })
+  if (job?.data?.pendingActionId) {
+    enqueuedIds.delete(job.data.pendingActionId)
+    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
+  }
+})
+
+videoEditWorker.on('completed', (job) => {
+  console.log(`[worker] video-edit ${job.id} completed`)
+  if (job?.data?.pendingActionId) enqueuedIds.delete(job.data.pendingActionId)
+})
+videoEditWorker.on('failed', async (job, err) => {
+  console.error(`[worker] video-edit ${job?.id} failed:`, err.message)
+  // BullMQ retries first (attempts:2); only the FINAL failure reaches the app.
+  if (job && job.attemptsMade < (job.opts?.attempts ?? 1)) return
+  captureWorkerError(err, 'worker.video_edit.failed', { jobId: job?.id })
   if (job?.data?.pendingActionId) {
     enqueuedIds.delete(job.data.pendingActionId)
     await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)

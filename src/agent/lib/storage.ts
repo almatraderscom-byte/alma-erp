@@ -5,10 +5,12 @@
 
 const AGENT_BUCKET = 'agent-files'
 const DOWNLOAD_TIMEOUT_MS = 9_000
-// Creative Studio videos (Veo reels) can exceed the old 10 MB image limit, so the
-// bucket must accept larger files. Kept modest because originals are archived to
-// Google Drive and cleaned out of Supabase afterwards.
-const AGENT_BUCKET_FILE_LIMIT = 100 * 1024 * 1024 // 100 MB
+// Creative Studio videos need large files: Veo reels broke the old 10 MB image
+// limit, and Phase V1 lets the owner upload his own 1–2 min phone shoots
+// (iPhone HEVC, up to ~500 MB) via signed direct upload. Kept as low as the
+// feature allows because originals are archived to Google Drive and cleaned
+// out of Supabase afterwards.
+const AGENT_BUCKET_FILE_LIMIT = 512 * 1024 * 1024 // 512 MB
 
 function getStorageBase() {
   const candidates = [
@@ -92,6 +94,64 @@ export async function agentStorageUpload(
     throw new Error(`Agent file upload failed (${res.status}): ${(await res.text()).slice(0, 200)}`)
   }
   return { bucket: AGENT_BUCKET, objectPath }
+}
+
+/**
+ * Signed UPLOAD URL: the browser PUTs the file straight into Supabase storage,
+ * bypassing Vercel's request-body limits entirely — this is how Phase V1 gets
+ * ~500 MB phone videos in. Returns an absolute URL valid for ~2 hours.
+ */
+export async function agentStorageSignedUploadUrl(objectPath: string): Promise<string> {
+  const { url, serviceKey } = await ensureAgentBucket()
+  const res = await fetch(`${url}/storage/v1/object/upload/sign/${AGENT_BUCKET}/${objectPath}`, {
+    method: 'POST',
+    headers: { ...storageHeaders(serviceKey), 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!res.ok) {
+    throw new Error(`Agent signed upload URL failed (${res.status}): ${(await res.text()).slice(0, 200)}`)
+  }
+  const data = await res.json() as { url?: string }
+  if (!data.url) throw new Error('Supabase did not return a signed upload URL')
+  return `${url}/storage/v1${data.url}`
+}
+
+/** Object metadata (null when the object does not exist) — used to verify a
+ * signed direct upload actually landed before registering it. HEAD on the
+ * download endpoint: works on every storage-api version, no body transfer. */
+export async function agentStorageObjectInfo(
+  objectPath: string,
+): Promise<{ size: number; contentType: string | null } | null> {
+  const { url, serviceKey } = getStorageBase()
+  const res = await fetch(`${url}/storage/v1/object/${AGENT_BUCKET}/${objectPath}`, {
+    method: 'HEAD',
+    headers: storageHeaders(serviceKey),
+    cache: 'no-store',
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (res.status === 404 || res.status === 400) return null
+  if (!res.ok) throw new Error(`Agent object info failed (${res.status})`)
+  return {
+    size: Number(res.headers.get('content-length') ?? 0),
+    contentType: res.headers.get('content-type'),
+  }
+}
+
+/** Delete agent-files objects (best-effort batch). */
+export async function agentStorageDelete(objectPaths: string[]): Promise<void> {
+  const paths = objectPaths.filter(Boolean)
+  if (paths.length === 0) return
+  const { url, serviceKey } = getStorageBase()
+  const res = await fetch(`${url}/storage/v1/object/${AGENT_BUCKET}`, {
+    method: 'DELETE',
+    headers: { ...storageHeaders(serviceKey), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prefixes: paths }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!res.ok) {
+    throw new Error(`Agent file delete failed (${res.status}): ${(await res.text()).slice(0, 200)}`)
+  }
 }
 
 /** Signed URL for private agent-files objects (default 1 hour). */

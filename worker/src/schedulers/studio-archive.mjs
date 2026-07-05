@@ -124,7 +124,7 @@ export async function runStudioArchive(context) {
   const { data: rows, error } = await supabase
     .from('agent_pending_actions')
     .select('id, type, status, result, payload, "createdAt"')
-    .in('type', ['image_gen', 'video_gen'])
+    .in('type', ['image_gen', 'video_gen', 'video_edit'])
     .eq('status', 'executed')
     .order('createdAt', { ascending: false })
     .limit(SCAN_LIMIT)

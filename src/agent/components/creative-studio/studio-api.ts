@@ -220,6 +220,105 @@ export async function fetchModels() {
   return res.json() as Promise<{ models: Array<{ id: string; name: string; role: string | null; isDefault: boolean }> }>
 }
 
+// ── Phase V1: owner-shot video → deterministic recipe reels ─────────────────
+
+export type StudioVideoUpload = {
+  id: string
+  path: string
+  name: string
+  sizeBytes: number
+  uploadedAt: string
+}
+
+export type VideoJobStatus = {
+  id: string
+  status: string
+  summary: string | null
+  previewUrl: string | null
+  storagePath: string | null
+  videoProgress: { step: number; total: number; labelBn: string } | null
+  error: string | null
+}
+
+export async function fetchStudioVideos(): Promise<StudioVideoUpload[]> {
+  const res = await fetch('/api/assistant/creative-studio/video')
+  if (!res.ok) throw new Error('videos_failed')
+  const data = await res.json()
+  return (data.uploads ?? []) as StudioVideoUpload[]
+}
+
+/**
+ * Big phone shoots (up to ~500 MB) go STRAIGHT to Supabase storage with a
+ * signed upload URL — Vercel never sees the body. XHR (not fetch) so the owner
+ * gets a real progress bar on a multi-minute upload.
+ */
+export async function uploadStudioVideo(
+  file: File,
+  onProgress?: (pct: number) => void,
+): Promise<StudioVideoUpload> {
+  const urlRes = await fetch('/api/assistant/creative-studio/video/upload-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileName: file.name, sizeBytes: file.size }),
+  })
+  const urlData = await urlRes.json().catch(() => ({}))
+  if (!urlRes.ok) throw new Error(urlData.error ?? 'upload_url_failed')
+
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', urlData.uploadUrl)
+    xhr.setRequestHeader('Content-Type', urlData.contentType ?? file.type ?? 'video/mp4')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100))
+    }
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(new Error(`upload_failed_${xhr.status}`))
+    xhr.onerror = () => reject(new Error('upload_network_error'))
+    xhr.send(file)
+  })
+
+  const regRes = await fetch('/api/assistant/creative-studio/video', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ uploadId: urlData.uploadId, path: urlData.path, name: file.name, sizeBytes: file.size }),
+  })
+  const regData = await regRes.json().catch(() => ({}))
+  if (!regRes.ok) throw new Error(regData.error ?? 'register_failed')
+  return regData.upload as StudioVideoUpload
+}
+
+export async function deleteStudioVideo(id: string): Promise<void> {
+  const res = await fetch(`/api/assistant/creative-studio/video?id=${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) throw new Error('delete_failed')
+}
+
+export async function runVideoRecipe(body: {
+  videoPath: string
+  videoName: string
+  recipeId: string
+  targets: number[]
+  aspect: string
+}): Promise<{ jobs: Array<{ pendingActionId: string; label: string; targetSec: number }>; message: string }> {
+  const res = await fetch('/api/assistant/creative-studio/video/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? 'run_failed')
+  return data
+}
+
+export async function fetchVideoJob(id: string): Promise<VideoJobStatus> {
+  const res = await fetch(`/api/assistant/creative-studio/jobs/${id}`)
+  if (!res.ok) throw new Error('job_failed')
+  return res.json() as Promise<VideoJobStatus>
+}
+
 export async function saveModel(body: {
   id: string
   name: string
