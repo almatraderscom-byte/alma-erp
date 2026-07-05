@@ -28,6 +28,122 @@
 import UIKit
 import WebKit
 
+extension Notification.Name {
+    /// Broadcast when the owner flips light/dark so every tab's chrome + web content updates.
+    static let almaThemeChanged = Notification.Name("almaThemeChanged")
+}
+
+/// Single source of truth for the app-wide light/dark mode in the native shell. Mirrors the
+/// web's `alma-theme` cookie (light|dark) so the NATIVE chrome (tab bar, every nav bar,
+/// roots, loaders) and the WEB content stay in lockstep — the owner's "everything the same
+/// in both modes". Default light (the web's default); the real value is read from the cookie
+/// at launch and can be flipped from the More tab's Dark-mode switch.
+enum AlmaTheme {
+    static let cookieName = "alma-theme"
+    static let host = "alma-erp-six.vercel.app"
+    static let defaultsKey = "alma-theme-mode"
+    static private(set) var isDark = false
+
+    /// Synchronous launch read (from UserDefaults, the native mirror) so the shell is built
+    /// in the right mode with no light→dark flash. Call before building the tab bar.
+    static func loadInitial() { isDark = (UserDefaults.standard.string(forKey: defaultsKey) == "dark") }
+
+    // ── Palette (light ⇄ dark) ─────────────────────────────────────────────
+    static let coral = UIColor(red: 0.878, green: 0.478, blue: 0.373, alpha: 1) // #E07A5F accent
+    static let violet = UIColor(red: 0.655, green: 0.545, blue: 0.980, alpha: 1) // #a78bfa
+    static var rootBg: UIColor {
+        isDark ? UIColor(red: 0.043, green: 0.039, blue: 0.070, alpha: 1)   // #0b0a12
+               : UIColor(red: 0.949, green: 0.941, blue: 0.972, alpha: 1)   // #F2F0F8
+    }
+    static var navTitle: UIColor {
+        isDark ? UIColor(white: 0.97, alpha: 1) : UIColor(red: 0.13, green: 0.11, blue: 0.16, alpha: 1)
+    }
+    static var tabBarBg: UIColor {
+        isDark ? UIColor(red: 0.055, green: 0.047, blue: 0.078, alpha: 1)   // #0e0c14
+               : UIColor(red: 0.976, green: 0.972, blue: 0.988, alpha: 1)   // near-white
+    }
+    static var interfaceStyle: UIUserInterfaceStyle { isDark ? .dark : .light }
+
+    /// The Claude-style frosted nav-bar appearance for the current mode (clean system
+    /// material, no violet slab — content blurs THROUGH it in both light and dark).
+    static func navAppearance() -> UINavigationBarAppearance {
+        let a = UINavigationBarAppearance()
+        a.configureWithDefaultBackground()      // standard iOS translucent material (adapts to style)
+        a.shadowColor = .clear
+        a.titleTextAttributes = [.foregroundColor: navTitle]
+        a.largeTitleTextAttributes = [.foregroundColor: navTitle]
+        return a
+    }
+
+    /// Apply the current mode's frosted appearance to a nav controller.
+    static func applyNav(_ nav: UINavigationController) {
+        nav.overrideUserInterfaceStyle = interfaceStyle
+        let a = navAppearance()
+        nav.navigationBar.standardAppearance = a
+        nav.navigationBar.scrollEdgeAppearance = a
+        nav.navigationBar.tintColor = navTitle
+        nav.navigationBar.layer.shadowColor = UIColor.black.cgColor
+        nav.navigationBar.layer.shadowOpacity = isDark ? 0.22 : 0.10
+        nav.navigationBar.layer.shadowRadius = 8
+        nav.navigationBar.layer.shadowOffset = CGSize(width: 0, height: 2)
+    }
+
+    static func tabBarAppearance() -> UITabBarAppearance {
+        let ap = UITabBarAppearance()
+        ap.configureWithOpaqueBackground()
+        ap.backgroundColor = tabBarBg
+        let sel = violet
+        let muted = isDark ? UIColor(white: 1, alpha: 0.45) : UIColor(white: 0, alpha: 0.42)
+        for item in [ap.stackedLayoutAppearance, ap.inlineLayoutAppearance, ap.compactInlineLayoutAppearance] {
+            item.selected.iconColor = sel
+            item.selected.titleTextAttributes = [.foregroundColor: sel]
+            item.normal.iconColor = muted
+            item.normal.titleTextAttributes = [.foregroundColor: muted]
+        }
+        return ap
+    }
+
+    /// Read the persisted mode from the shared cookie store, then run `done` on the main queue.
+    static func loadFromCookies(_ done: @escaping () -> Void) {
+        WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cookies in
+            if let v = cookies.first(where: { $0.name == cookieName })?.value { isDark = (v == "dark") }
+            DispatchQueue.main.async { done() }
+        }
+    }
+
+    /// Set the mode, persist (cookie for the web + UserDefaults for the native launch read),
+    /// and broadcast so all chrome + webviews restyle live.
+    static func set(dark: Bool) {
+        guard dark != isDark else { return }
+        isDark = dark
+        UserDefaults.standard.set(dark ? "dark" : "light", forKey: defaultsKey)
+        persistCookie()
+        NotificationCenter.default.post(name: .almaThemeChanged, object: nil)
+    }
+    static func toggle() { set(dark: !isDark) }
+
+    static func persistCookie() {
+        let props: [HTTPCookiePropertyKey: Any] = [
+            .name: cookieName, .value: isDark ? "dark" : "light",
+            .domain: host, .path: "/",
+            .expires: Date(timeIntervalSinceNow: 60 * 60 * 24 * 365),
+        ]
+        if let c = HTTPCookie(properties: props) {
+            WKWebsiteDataStore.default().httpCookieStore.setCookie(c)
+        }
+    }
+
+    /// JS that forces the web content to the current mode instantly (data-theme + cookie),
+    /// so a live toggle updates a WebView without waiting for a reload.
+    static func applyJS() -> String {
+        let mode = isDark ? "dark" : "light"
+        return """
+        (function(){try{document.documentElement.dataset.theme='\(mode)';
+        document.cookie='alma-theme=\(mode); path=/; max-age=31536000; SameSite=Lax';}catch(e){}})();
+        """
+    }
+}
+
 /// Scripts shared by every tab (and the Capacitor web view).
 enum AlmaEmbed {
     /// Runs at document START, before the web app's JS: sets the flag the ERP's
@@ -156,7 +272,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // dark slab that flashed dark→light on every first load). Matched to the ERP's
         // pale lavender so the content fades in without a flash. (The dark native header
         // sits above this in its own bar.)
-        let bg = UIColor(red: 0.949, green: 0.941, blue: 0.972, alpha: 1) // #F2F0F8
+        let bg = AlmaTheme.rootBg   // placeholder tracks the current light/dark mode
         webView.backgroundColor = bg
         webView.scrollView.backgroundColor = bg
         webView.alpha = 0 // S3: fade the content in on first paint (see didFinish) — no pop-in.
@@ -164,10 +280,8 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // UIRefreshControl (it would double up and can't show the robot). Web owns it.
 
         let root = UIView()
-        // The agent is now the CLAUDE-style LIGHT surface: a LIGHT frosted (ultra-thin white)
-        // nav bar over the light agent content, so the chat blurs THROUGH the bar cleanly as
-        // it scrolls under. So the root stays LIGHT for every tab (no dark slab behind the
-        // agent bar — that was for the old dark-glass header).
+        // Root tracks the app-wide light/dark mode so nothing flashes the wrong shade behind
+        // the frosted bar / at the edges. Restyled live on theme change (see applyTheme).
         root.backgroundColor = bg
         root.addSubview(webView)
         webView.translatesAutoresizingMaskIntoConstraints = false
@@ -203,7 +317,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // Premium branded loader covering the whole tab during first-paint / navigation.
         // Light wash for the ERP web views (no dark→light flash), deep violet for the
         // dark Assistant. It sits ABOVE the web view and fades out when content is ready.
-        loader = AlmaPremiumLoader(style: .light) // agent is now the LIGHT Claude surface too
+        loader = AlmaPremiumLoader(style: AlmaTheme.isDark ? .dark : .light)
         loader.translatesAutoresizingMaskIntoConstraints = false
         loader.isHidden = true
         root.addSubview(loader)
@@ -244,16 +358,36 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // Restyle this tab's chrome whenever the owner flips light/dark.
+        NotificationCenter.default.addObserver(self, selector: #selector(onThemeChanged),
+                                               name: .almaThemeChanged, object: nil)
         guard !agentSegments.isEmpty else { return }
-        // Agent = the Claude surface: a fixed "ALMA AI" title in the native LIGHT frosted
-        // header, with Claude-exact bar buttons — LEFT a frosted-white hamburger (opens the
-        // agent sidebar), RIGHT a SOLID CORAL compose bubble (new chat) — driving the web
-        // agent's own controls. The light web top bar is hidden (hideWebHeader).
         navigationItem.title = "ALMA AI"
+        applyAgentBar()
+    }
+
+    /// Agent = the Claude surface: fixed "ALMA AI" title + Claude-exact bar buttons — LEFT a
+    /// frosted hamburger (opens the sidebar), RIGHT a SOLID CORAL compose bubble (new chat).
+    /// The hamburger's frosted body flips with the mode (frosted-white in light, frosted-dark
+    /// in dark); the coral stays the accent in both.
+    private func applyAgentBar() {
+        guard !agentSegments.isEmpty else { return }
         navigationItem.leftBarButtonItem = Self.glassBarButton(
-            icon: "line.3.horizontal", target: self, action: #selector(agentHistory), light: true)
+            icon: "line.3.horizontal", target: self, action: #selector(agentHistory), light: !AlmaTheme.isDark)
         navigationItem.rightBarButtonItem = Self.coralBarButton(
             icon: "square.and.pencil", target: self, action: #selector(agentNewChat))
+    }
+
+    /// Light ⇄ dark: restyle the root + loader + agent buttons, and push the mode into the
+    /// web content so it flips instantly (no reload). The nav bar material/title are handled
+    /// centrally by AlmaTabBarController.applyTheme.
+    @objc private func onThemeChanged() {
+        view.backgroundColor = AlmaTheme.rootBg
+        webView?.backgroundColor = AlmaTheme.rootBg
+        webView?.scrollView.backgroundColor = AlmaTheme.rootBg
+        webView?.evaluateJavaScript(AlmaTheme.applyJS(), completionHandler: nil)
+        applyAgentBar()
+        updateBackButton()
     }
 
     /// A Claude-style frosted circular bar button. `light: true` = ultra-thin WHITE material
@@ -679,7 +813,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         guard navigationController?.viewControllers.first === self else { return }
         if webView?.canGoBack == true {
             navigationItem.leftBarButtonItem = Self.glassBarButton(
-                icon: "chevron.backward", target: self, action: #selector(goBackTapped))
+                icon: "chevron.backward", target: self, action: #selector(goBackTapped), light: !AlmaTheme.isDark)
         } else {
             navigationItem.leftBarButtonItem = nil
         }
@@ -773,57 +907,80 @@ final class MoreMenuViewController: UITableViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         navigationItem.largeTitleDisplayMode = .always
-        tableView.backgroundColor = UIColor(red: 0.043, green: 0.039, blue: 0.063, alpha: 1) // #0b0a10
+        // System grouped background so the whole menu flips with the app light/dark mode
+        // (the nav's overrideUserInterfaceStyle, set by AlmaTheme, drives the trait).
+        tableView.backgroundColor = .systemGroupedBackground
     }
 
-    // Section 0 = the business switcher; sections 1… = the module groups.
-    override func numberOfSections(in tableView: UITableView) -> Int { sections.count + 1 }
+    // Section 0 = Appearance (Dark-mode switch); section 1 = business switcher; 2… = modules.
+    override func numberOfSections(in tableView: UITableView) -> Int { sections.count + 2 }
     override func tableView(_ t: UITableView, numberOfRowsInSection s: Int) -> Int {
-        s == 0 ? businesses.count : sections[s - 1].items.count
+        s == 0 ? 1 : (s == 1 ? businesses.count : sections[s - 2].items.count)
     }
     override func tableView(_ t: UITableView, titleForHeaderInSection s: Int) -> String? {
-        s == 0 ? "Switch business" : sections[s - 1].header
+        s == 0 ? "Appearance" : (s == 1 ? "Switch business" : sections[s - 2].header)
     }
 
     override func tableView(_ t: UITableView, cellForRowAt ip: IndexPath) -> UITableViewCell {
-        let rowBg = UIColor(red: 0.086, green: 0.078, blue: 0.122, alpha: 1) // #16141f
+        // Appearance — a Dark-mode switch that flips the whole app (chrome + web content).
         if ip.section == 0 {
+            let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
+            var cfg = cell.defaultContentConfiguration()
+            cfg.text = "Dark Mode"
+            cfg.image = UIImage(systemName: AlmaTheme.isDark ? "moon.fill" : "sun.max.fill")
+            cfg.imageProperties.tintColor = AlmaTheme.isDark ? AlmaTheme.violet : .systemOrange
+            cell.contentConfiguration = cfg
+            let sw = UISwitch()
+            sw.isOn = AlmaTheme.isDark
+            sw.onTintColor = AlmaTheme.violet
+            sw.addTarget(self, action: #selector(darkModeToggled(_:)), for: .valueChanged)
+            cell.accessoryView = sw
+            cell.selectionStyle = .none
+            return cell
+        }
+        if ip.section == 1 {
             let biz = businesses[ip.row]
             let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
             var cfg = cell.defaultContentConfiguration()
             cfg.text = biz.name
             cfg.secondaryText = biz.tagline
-            cfg.secondaryTextProperties.color = UIColor(white: 1, alpha: 0.5)
+            cfg.secondaryTextProperties.color = .secondaryLabel
             cfg.image = UIImage(systemName: biz.symbol,
                                 withConfiguration: UIImage.SymbolConfiguration(pointSize: 26))
             cfg.imageProperties.tintColor = biz.color
             cfg.imageToTextPadding = 12
             cell.contentConfiguration = cfg
-            cell.backgroundColor = rowBg
             cell.accessoryType = .disclosureIndicator
             return cell
         }
-        let item = sections[ip.section - 1].items[ip.row]
+        let item = sections[ip.section - 2].items[ip.row]
         let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
         var cfg = cell.defaultContentConfiguration()
         cfg.text = item.title
         cfg.image = UIImage(systemName: item.icon)
-        cfg.imageProperties.tintColor = UIColor(red: 0.655, green: 0.545, blue: 0.980, alpha: 1)
+        cfg.imageProperties.tintColor = AlmaTheme.violet
         cell.contentConfiguration = cfg
-        cell.backgroundColor = rowBg
         cell.accessoryType = .disclosureIndicator
         return cell
     }
 
+    @objc private func darkModeToggled(_ sw: UISwitch) {
+        UISelectionFeedbackGenerator().selectionChanged()
+        AlmaTheme.set(dark: sw.isOn)  // flips + persists + broadcasts → chrome + all webviews restyle
+        // Refresh the Appearance row so its sun/moon icon matches (colours flip via the trait).
+        tableView.reloadRows(at: [IndexPath(row: 0, section: 0)], with: .none)
+    }
+
     override func tableView(_ t: UITableView, didSelectRowAt ip: IndexPath) {
         t.deselectRow(at: ip, animated: true)
+        guard ip.section >= 1 else { return }   // Appearance row is switch-only
         let base = "https://alma-erp-six.vercel.app"
         let path: String, tabTitle: String, symbol: String
-        if ip.section == 0 {
+        if ip.section == 1 {
             let biz = businesses[ip.row]
             path = biz.path; tabTitle = biz.name; symbol = biz.symbol
         } else {
-            let item = sections[ip.section - 1].items[ip.row]
+            let item = sections[ip.section - 2].items[ip.row]
             path = item.path; tabTitle = item.title; symbol = item.icon
         }
         // Native (non-web) rows: the phone companion is a native screen.
@@ -846,10 +1003,15 @@ final class MoreMenuViewController: UITableViewController {
 final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate {
     private let selection = UISelectionFeedbackGenerator()
     private static let base = "https://alma-erp-six.vercel.app"
+    private weak var dashboardVC: UIViewController?
 
     /// - Parameter dashboard: the storyboard's Capacitor bridge VC, reused as tab 0.
     init(dashboard: UIViewController) {
         super.init(nibName: nil, bundle: nil)
+        AlmaTheme.loadInitial()   // build the shell in the persisted mode (no flash)
+        dashboardVC = dashboard
+        NotificationCenter.default.addObserver(self, selector: #selector(onThemeChanged),
+                                               name: .almaThemeChanged, object: nil)
 
         // The Dashboard (Capacitor) tab gets a native header too (S3) — give the VC a
         // title for that header and wrap it in a dark nav controller below, like the
@@ -885,7 +1047,7 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
                 ("Costs", agentURL("/agent/costs")),
             ])
         let assistantNav = Self.darkNav(root: assistant, tabTitle: "Assistant",
-                                        icon: "sparkles", largeTitles: false, light: true)
+                                        icon: "sparkles", largeTitles: false)
 
         // "More" is a NATIVE menu whose rows push web screens with a native slide.
         let moreNav = Self.darkNav(root: MoreMenuViewController(processPool: pool),
@@ -902,6 +1064,12 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         delegate = self
         applyDarkAppearance()
         selection.prepare()
+        // Reconcile with the web cookie (in case it differs from the native mirror), then
+        // re-apply so chrome + content agree.
+        AlmaTheme.loadFromCookies { [weak self] in
+            AlmaTheme.persistCookie()   // make sure the web sees the same value on first load
+            self?.applyTheme()
+        }
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
 
@@ -922,47 +1090,13 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         }
     }
 
-    /// A frosted-glass UINavigationController wrapping `root`, with a tab item.
-    /// `light: true` = the CLAUDE-style LIGHT frosted bar (ultra-thin white material, dark
-    /// title, content scrolls UNDER it and blurs THROUGH clearly) — used for the Assistant.
-    /// `light: false` = the dark violet frosted bar for the ERP tabs.
-    static func darkNav(root: UIViewController, tabTitle: String, icon: String, largeTitles: Bool, light: Bool = false) -> UINavigationController {
+    /// A frosted-glass UINavigationController wrapping `root`, with a tab item. The bar's
+    /// light/dark frosted appearance tracks the app-wide mode via AlmaTheme (Claude-style in
+    /// both) — the Assistant adds its own hamburger/coral buttons on top.
+    static func darkNav(root: UIViewController, tabTitle: String, icon: String, largeTitles: Bool) -> UINavigationController {
         let nav = UINavigationController(rootViewController: root)
         nav.navigationBar.prefersLargeTitles = largeTitles
-        let a = UINavigationBarAppearance()
-        a.configureWithDefaultBackground()
-        a.shadowColor = .clear                       // no hard hairline; soft layer shadow instead
-        if light {
-            // CLAUDE glass: use the STANDARD iOS translucent nav-bar material (the same
-            // systemChromeMaterial Claude uses) — forced to a LIGHT interface so it reads as
-            // clean frosted WHITE and the chat blurs THROUGH it as it scrolls under. Do NOT
-            // override backgroundEffect/backgroundColor — the ultra-thin+tint override read
-            // muddy grey; the plain default background is the authentic frosted bar.
-            nav.overrideUserInterfaceStyle = .light
-            let darkTitle = UIColor(red: 0.13, green: 0.11, blue: 0.16, alpha: 1)
-            a.largeTitleTextAttributes = [.foregroundColor: darkTitle]
-            a.titleTextAttributes = [.foregroundColor: darkTitle]
-            nav.navigationBar.standardAppearance = a
-            nav.navigationBar.scrollEdgeAppearance = a
-            nav.navigationBar.tintColor = darkTitle
-            nav.navigationBar.layer.shadowColor = UIColor.black.cgColor
-            nav.navigationBar.layer.shadowOpacity = 0.10
-            nav.navigationBar.layer.shadowRadius = 8
-            nav.navigationBar.layer.shadowOffset = CGSize(width: 0, height: 2)
-        } else {
-            nav.overrideUserInterfaceStyle = .dark
-            a.backgroundEffect = UIBlurEffect(style: .systemThinMaterialDark) // stronger see-through blur
-            a.backgroundColor = UIColor(red: 0.20, green: 0.14, blue: 0.38, alpha: 0.42) // light violet veil
-            a.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
-            a.titleTextAttributes = [.foregroundColor: UIColor.white]
-            nav.navigationBar.standardAppearance = a
-            nav.navigationBar.scrollEdgeAppearance = a
-            nav.navigationBar.tintColor = UIColor(red: 0.655, green: 0.545, blue: 0.980, alpha: 1)
-            nav.navigationBar.layer.shadowColor = UIColor.black.cgColor
-            nav.navigationBar.layer.shadowOpacity = 0.28
-            nav.navigationBar.layer.shadowRadius = 10
-            nav.navigationBar.layer.shadowOffset = CGSize(width: 0, height: 3)
-        }
+        AlmaTheme.applyNav(nav)
         nav.tabBarItem = UITabBarItem(
             title: tabTitle,
             image: UIImage(systemName: icon),
@@ -970,23 +1104,34 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         return nav
     }
 
-    private func applyDarkAppearance() {
-        overrideUserInterfaceStyle = .dark
-        let appearance = UITabBarAppearance()
-        appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = UIColor(red: 0.055, green: 0.047, blue: 0.078, alpha: 1) // ~#0e0c14
-        let violet = UIColor(red: 0.655, green: 0.545, blue: 0.980, alpha: 1) // #a78bfa
-        let muted = UIColor(white: 1, alpha: 0.45)
-        for item in [appearance.stackedLayoutAppearance, appearance.inlineLayoutAppearance, appearance.compactInlineLayoutAppearance] {
-            item.selected.iconColor = violet
-            item.selected.titleTextAttributes = [.foregroundColor: violet]
-            item.normal.iconColor = muted
-            item.normal.titleTextAttributes = [.foregroundColor: muted]
+    /// Restyle the whole shell — tab bar + every nav bar + the Capacitor Dashboard's web
+    /// content — for the current light/dark mode. The plain web tabs restyle their own root
+    /// + content via their `.almaThemeChanged` observer; here we drive the shared chrome.
+    func applyTheme() {
+        overrideUserInterfaceStyle = AlmaTheme.interfaceStyle
+        let ap = AlmaTheme.tabBarAppearance()
+        tabBar.standardAppearance = ap
+        tabBar.scrollEdgeAppearance = ap
+        tabBar.tintColor = AlmaTheme.violet
+        for vc in viewControllers ?? [] {
+            if let nav = vc as? UINavigationController { AlmaTheme.applyNav(nav) }
         }
-        tabBar.standardAppearance = appearance
-        tabBar.scrollEdgeAppearance = appearance
-        tabBar.tintColor = violet
+        // The Capacitor Dashboard isn't an AlmaWebTabViewController, so flip its web content
+        // here (find its WKWebView without importing Capacitor).
+        if let dvc = dashboardVC, let w = Self.firstWebView(in: dvc.view) {
+            w.evaluateJavaScript(AlmaTheme.applyJS(), completionHandler: nil)
+        }
     }
+
+    private static func firstWebView(in view: UIView) -> WKWebView? {
+        if let w = view as? WKWebView { return w }
+        for sub in view.subviews { if let w = firstWebView(in: sub) { return w } }
+        return nil
+    }
+
+    @objc private func onThemeChanged() { applyTheme() }
+
+    private func applyDarkAppearance() { applyTheme() }
 
     func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
         selection.selectionChanged()
