@@ -35,3 +35,9 @@ Owner flips `[PENDING]` → `[✅ APPLIED <commit>]` or `[❌ REJECTED — reaso
   session; these shared edits were applied + sim-verified (both themes, E2E streamed turn,
   flag-off web fallback) and REBASED onto build-36 before pushing — logged here so the
   integrator knows the pbxproj/shell deltas on the branch are intentional.
+
+### [✅ APPLIED — commit 57cb5c2c] agent-chat — AssistantVoiceSwiftUI.swift pbxproj registration (FYI)
+- Session: assistant session   Date: 2026-07-06
+- File(s): `ios/App/App.xcodeproj/project.pbxproj`
+- Exact change: 4 additive entries for `AssistantVoiceSwiftUI.swift` (ids `…A022`/`…B022`).
+- Why: the native voice-to-voice orb console (owner bundle design) lives in its own file.

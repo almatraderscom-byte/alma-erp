@@ -339,7 +339,10 @@ struct OrdersScreen: View {
             .padding(.top, 6)
         }
         .background(OrdersAurora()) // the owner's aurora — cards float on it in glass
-        .claudeTopFade() // Claude-style top dissolve under the glass nav bar
+        // MANUAL masked-blur path, permanently: our header is a UIKit nav bar (not a
+        // SwiftUI .toolbar), so the native scrollEdgeEffectStyle path paints ~nothing
+        // here — wiring confirmed with the owner's crank test 2026-07-06.
+        .claudeTopFade(useNativeEdgeEffect: false)
         .refreshable { await vm.load() }
         .scrollDismissesKeyboard(.immediately)
         .task { await vm.load() }

@@ -48,10 +48,13 @@ enum ClaudeTopFadeTheme {
     /// The 88 in "safe-area + 88" — the header zone below the notch, both surfaces.
     static let fadeBaseHeight: CGFloat = 88
 
-    /// #F2F0F8 — ALMA light "cream" (== AlmaTheme.rootBg light).
-    static let lightScrim = Color(red: 0.949, green: 0.941, blue: 0.972)
-    /// #0b0a12 — ALMA dark root (== AlmaTheme.rootBg dark).
-    static let darkScrim = Color(red: 0.043, green: 0.039, blue: 0.070)
+    /// SCRIM_LIGHT #FAF9F6 — the light page base (web --bg-0; same value both surfaces).
+    static let lightScrim = Color(red: 0.980, green: 0.976, blue: 0.965)
+    /// SCRIM_DARK #1C1830 — the TOP of the dark "aura" gradient (indigo). NEVER a
+    /// near-black here: on the dark theme a black-ish scrim reads as a shadow band
+    /// (owner verdict 2026-07-06); the dissolve must come from blur + this bg-matched
+    /// tint. Same value as the web scrim.
+    static let darkScrim = Color(red: 0.110, green: 0.094, blue: 0.188)
 
     static func scrim(for scheme: ColorScheme) -> Color {
         scheme == .dark ? darkScrim : lightScrim
@@ -82,6 +85,7 @@ private final class TopFadeBlurUIView: UIView {
         super.init(frame: frame)
         isUserInteractionEnabled = false
         addSubview(blur)
+        stripTint()
         // Mask alpha = blur visibility: 1.0 at top, ~0.35 at 55%, 0 at bottom.
         fadeMask.colors = [
             UIColor.black.cgColor,
@@ -95,9 +99,23 @@ private final class TopFadeBlurUIView: UIView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
 
+    /// Same trick as AlmaGlassHeaderView: every UIKit material paints a TINT layer over
+    /// the blur (dark band on the dark aura — exactly the "black shadow" the owner
+    /// rejected). The gaussian lives in the Backdrop sublayer — hide the tint sublayers,
+    /// keep PURE blur; the colour dissolve comes from the bg-matched scrim gradient only.
+    private func stripTint() {
+        for sub in blur.subviews where sub !== blur.contentView {
+            if !String(describing: type(of: sub)).contains("Backdrop") {
+                sub.isHidden = true
+                sub.backgroundColor = .clear
+            }
+        }
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         blur.frame = bounds
+        stripTint()   // effect views rebuild sublayers on layout — re-strip
         // Mask layers don't autoresize — track bounds ourselves, without implicit animation.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -150,14 +168,16 @@ struct ClaudeTopFadeModifier: ViewModifier {
                 TopFadeBlur()
             }
             LinearGradient(
+                // SUBTLE scrim — max 0.45 (owner rule: 0.9 read as a heavy shadow; the
+                // BLUR does the separating, the scrim only melts into the page colour).
                 stops: nativeActive
                     ? [
-                        .init(color: scrim.opacity(0.50), location: 0.0),
+                        .init(color: scrim.opacity(0.35), location: 0.0),
                         .init(color: scrim.opacity(0.0), location: 1.0),
                     ]
                     : [
-                        .init(color: scrim.opacity(0.92), location: 0.0),
-                        .init(color: scrim.opacity(0.45), location: 0.55),
+                        .init(color: scrim.opacity(0.45), location: 0.0),
+                        .init(color: scrim.opacity(0.22), location: 0.55),
                         .init(color: scrim.opacity(0.0), location: 1.0),
                     ],
                 startPoint: .top, endPoint: .bottom

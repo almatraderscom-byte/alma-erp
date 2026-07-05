@@ -1188,6 +1188,17 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         // DEBUG self-test hook: ALMA_FADE_DEMO=1 presents the ClaudeTopFade demo screen
         // (see ClaudeTopFade.swift) so the scroll-edge fade can be screenshotted headlessly.
         ClaudeTopFadeSelfTest.presentIfRequested(over: self)
+        // DEBUG self-test hook: ALMA_OPEN_TAB=<0-4> jumps straight to a tab at launch, so
+        // sim proofs need no GUI clicks (computer-use can be busy with a parallel session).
+        if let t = ProcessInfo.processInfo.environment["ALMA_OPEN_TAB"], let i = Int(t),
+           (0..<(viewControllers?.count ?? 0)).contains(i) {
+            selectedIndex = i
+            // The Capacitor Dashboard reparent can reset the selection right after the
+            // first appearance — re-assert once the launch dust settles.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                self?.selectedIndex = i
+            }
+        }
         // DEBUG self-test hook (never fires in production): when launched with
         // ALMA_OPEN_COMPANION=1 (only set by the local `simctl launch` self-test),
         // jump to More and push the native Phone Companion so its render + pairing

@@ -226,6 +226,20 @@ struct AgentOpenTask: Decodable, Identifiable, Equatable {
 struct AgentOpenTasksResponse: Decodable { let tasks: [AgentOpenTask]? }
 struct AgentOpenTaskActionResponse: Decodable { let ok: Bool?; let action: String?; let resumeNote: String?; let title: String? }
 
+// Model picker (web AgentModelSelector parity)
+struct AgentModelInfo: Decodable, Identifiable, Equatable {
+    let id: String
+    let label: String
+    let provider: String?
+    let enabled: Bool?
+    let isDefault: Bool?
+    enum CodingKeys: String, CodingKey { case id, label, provider, enabled, isDefault = "default" }
+}
+struct AgentModelsResponse: Decodable {
+    let defaultModelId: String?
+    let models: [AgentModelInfo]?
+}
+
 struct AgentFileRef: Codable, Equatable {
     let bucket: String
     let path: String
@@ -523,6 +537,8 @@ final class AssistantVM {
 
     // Sidebar / conversations (web AgentSidebar parity)
     var showSidebar = false
+    // Native voice-to-voice console
+    var showVoice = false
     var conversations: [AgentConversation] = []
     var conversationsCursor: String?
     var loadingConversations = false
@@ -562,9 +578,46 @@ final class AssistantVM {
     /// Text the mic transcription appends — the composer view observes this.
     var dictatedText: String = ""
 
-    // Model pill
-    var modelLabel: String?
-    var modelId: String?
+    // Model pill + picker (web AgentModelSelector parity)
+    var modelLabel: String?          // live label from the stream's model_info event
+    var modelId: String?             // nil or "auto" = Auto (router picks per turn)
+    var models: [AgentModelInfo] = []
+
+    var isAutoModel: Bool { modelId == nil || modelId == "auto" }
+    /// What the pill shows: Auto, or the pinned model's label.
+    var modelPillLabel: String {
+        if isAutoModel { return modelLabel.map { "Auto · \($0)" } ?? "Auto" }
+        return models.first { $0.id == modelId }?.label ?? modelId ?? "Auto"
+    }
+
+    func loadModels() async {
+        guard models.isEmpty else { return }
+        if let resp: AgentModelsResponse = try? await AlmaAPI.shared.get("/api/assistant/models") {
+            models = (resp.models ?? []).filter { $0.enabled != false }
+        }
+    }
+
+    /// Owner picks a model (nil = Auto). Web parity: update the pill instantly,
+    /// persist on the conversation row when one exists, revert on failure; a new
+    /// chat simply carries it in the next send's body.
+    func selectModel(_ id: String?) {
+        let previous = modelId
+        modelId = id
+        UISelectionFeedbackGenerator().selectionChanged()
+        guard let cid = conversationId else { return }
+        Task { [weak self] in
+            do {
+                let _: AgentConversation = try await AlmaAPI.shared.send(
+                    "PATCH", "/api/assistant/conversations/\(cid)",
+                    body: ["modelId": id ?? "auto"])
+            } catch {
+                await MainActor.run {
+                    self?.modelId = previous
+                    self?.errorToast = "মডেল বদলানো গেল না"
+                }
+            }
+        }
+    }
 
     // Errors / auth
     var authExpired = false
@@ -582,6 +635,7 @@ final class AssistantVM {
                                                object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.authExpired = true }
         }
+        await loadModels()
         await loadActiveConversation()
         startPolling()
     }
@@ -763,6 +817,7 @@ final class AssistantVM {
         guard id != conversationId else { return }
         stopStreaming(cancelServer: false)
         conversationId = id
+        modelId = conversations.first { $0.id == id }?.modelId   // pinned model follows the chat
         messages = []
         openTasks = []
         await loadMessages(showSpinner: true)
@@ -863,6 +918,7 @@ final class AssistantVM {
         let message: String
         let files: [AgentFileRef]
         let modelId: String?
+        var voice: Bool? = nil    // voice console turns: TTS-friendly replies
     }
 
     func send(_ raw: String) {
@@ -884,7 +940,7 @@ final class AssistantVM {
         currentTurnId = nil
 
         let body = ChatBody(conversationId: conversationId, message: text,
-                            files: readyFiles, modelId: modelId)
+                            files: readyFiles, modelId: modelId ?? "auto")
         streamTask = Task { [weak self] in
             await self?.runTurn(body: body)
         }
@@ -2299,6 +2355,7 @@ struct AgentComposerView: View {
     @Environment(\.colorScheme) private var scheme
     @State private var draft = ""
     @State private var photoItem: PhotosPickerItem?
+    @State private var showModelPicker = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -2419,14 +2476,28 @@ struct AgentComposerView: View {
                     .foregroundStyle(pal.muted)
                     .frame(width: 36, height: 36)
             }
-            if let label = vm.modelLabel {
-                Text(label)
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(pal.muted)
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(pal.card.opacity(0.5), in: Capsule())
-                    .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
-                    .lineLimit(1)
+            // Model picker pill — opens the native sheet with EVERY enabled model.
+            Button {
+                UISelectionFeedbackGenerator().selectionChanged()
+                showModelPicker = true
+            } label: {
+                HStack(spacing: 3) {
+                    Text(vm.modelPillLabel)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 7, weight: .semibold))
+                }
+                .foregroundStyle(vm.isAutoModel ? pal.muted : AgentPalette.coral)
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background(pal.card.opacity(0.5), in: Capsule())
+                .overlay(Capsule().strokeBorder(
+                    vm.isAutoModel ? pal.borderSubtle : AgentPalette.coral.opacity(0.35), lineWidth: 1))
+                .frame(maxWidth: 150)
+            }
+            .disabled(vm.isStreaming)
+            .sheet(isPresented: $showModelPicker) {
+                AgentModelPickerSheet(vm: vm)
             }
             Spacer(minLength: 4)
             // mic → Whisper dictation
@@ -2443,10 +2514,10 @@ struct AgentComposerView: View {
                 .frame(width: 36, height: 36)
                 .background(vm.isRecording ? AnyShapeStyle(AgentPalette.coral) : AnyShapeStyle(.clear), in: Circle())
             }
-            // voice-to-voice — stays web (escape hatch, same as old segmented tab)
+            // voice-to-voice — the NATIVE orb console (AssistantVoiceSwiftUI.swift)
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                openWeb("/agent", "ভয়েস টু ভয়েস")
+                vm.showVoice = true
             } label: {
                 Image(systemName: "waveform")
                     .font(.system(size: 15, weight: .medium))
@@ -2532,6 +2603,74 @@ struct AgentVoiceWaveform: View {
         .onReceive(timer) { _ in
             bars.removeFirst()
             bars.append(vm.micLevel)
+        }
+    }
+}
+
+/// Native model picker sheet — Auto + every enabled model, grouped by provider,
+/// checkmark on the current pick. (Owner call: no explainer text — clean iOS list.)
+@available(iOS 17.0, *)
+struct AgentModelPickerSheet: View {
+    @Bindable var vm: AssistantVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+
+    private static let providers: [(key: String, label: String)] = [
+        ("anthropic", "Anthropic"), ("google", "Google"),
+        ("openai", "OpenAI"), ("openrouter", "OpenRouter"),
+    ]
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        NavigationStack {
+            List {
+                Section {
+                    row(label: "⚡ Auto", selected: vm.isAutoModel, pal: pal) {
+                        vm.selectModel(nil)
+                        dismiss()
+                    }
+                }
+                ForEach(Self.providers, id: \.key) { provider in
+                    let group = vm.models.filter { $0.provider == provider.key }
+                    if !group.isEmpty {
+                        Section(provider.label) {
+                            ForEach(group) { m in
+                                row(label: m.label, selected: vm.modelId == m.id, pal: pal) {
+                                    vm.selectModel(m.id)
+                                    dismiss()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("মডেল")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("বন্ধ") { dismiss() }.font(.system(size: 14, weight: .medium))
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .task { await vm.loadModels() }
+    }
+
+    @ViewBuilder private func row(label: String, selected: Bool, pal: AgentPalette,
+                                  action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(label)
+                    .font(.system(size: 15, weight: selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? AgentPalette.coral : pal.ink)
+                Spacer()
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(AgentPalette.coral)
+                }
+            }
         }
     }
 }
@@ -3426,6 +3565,9 @@ struct AssistantScreen: View {
             if env["ALMA_ASSISTANT_NEWCHAT"] == "1" {
                 Task { try? await Task.sleep(nanoseconds: 3_000_000_000); await vm.newChat() }
             }
+            if env["ALMA_ASSISTANT_VOICE"] == "1" {
+                Task { try? await Task.sleep(nanoseconds: 3_000_000_000); vm.showVoice = true }
+            }
             if env["ALMA_ASSISTANT_TOOLSHEET"] == "1" {
                 Task {
                     try? await Task.sleep(nanoseconds: 5_000_000_000)
@@ -3438,6 +3580,9 @@ struct AssistantScreen: View {
         .fullScreenCover(isPresented: $vm.showSidebar) {
             AgentSideDrawer(vm: vm, openWeb: openWeb)
                 .presentationBackground(.clear)
+        }
+        .fullScreenCover(isPresented: $vm.showVoice) {
+            AlmaVoiceConsoleView(vm: vm)
         }
         .sheet(item: $toolSheet) { tool in
             AgentToolIOSheet(tool: tool)

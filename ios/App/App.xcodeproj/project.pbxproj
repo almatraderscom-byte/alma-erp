@@ -37,6 +37,7 @@
 		F2AA7700000000000000B012 /* MoreMenuSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A012 /* MoreMenuSwiftUI.swift */; };
 		F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A013 /* OrdersSwiftUI.swift */; };
 		F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A021 /* AssistantSwiftUI.swift */; };
+		F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */; };
 		F2AA7700000000000000B014 /* ApprovalsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */; };
 		F2AA7700000000000000B015 /* CompanionSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A015 /* CompanionSwiftUI.swift */; };
 		F2AA7700000000000000B016 /* OrderCreateSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A016 /* OrderCreateSwiftUI.swift */; };
@@ -78,6 +79,7 @@
 		F2AA7700000000000000A012 /* MoreMenuSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreMenuSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A013 /* OrdersSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrdersSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A021 /* AssistantSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantVoiceSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A015 /* CompanionSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A016 /* OrderCreateSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrderCreateSwiftUI.swift; sourceTree = "<group>"; };
@@ -166,6 +168,7 @@
 				F2AA7700000000000000A012 /* MoreMenuSwiftUI.swift */,
 				F2AA7700000000000000A013 /* OrdersSwiftUI.swift */,
 				F2AA7700000000000000A021 /* AssistantSwiftUI.swift */,
+				F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */,
 				F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */,
 				F2AA7700000000000000A015 /* CompanionSwiftUI.swift */,
 				F2AA7700000000000000A016 /* OrderCreateSwiftUI.swift */,
@@ -382,6 +385,7 @@
 				F2AA7700000000000000B012 /* MoreMenuSwiftUI.swift in Sources */,
 				F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */,
 				F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */,
+				F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */,
 				F2AA7700000000000000B014 /* ApprovalsSwiftUI.swift in Sources */,
 				F2AA7700000000000000B015 /* CompanionSwiftUI.swift in Sources */,
 				F2AA7700000000000000B016 /* OrderCreateSwiftUI.swift in Sources */,
@@ -535,7 +539,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 39;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -557,7 +561,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 39;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -576,7 +580,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AlmaWidget/AlmaWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 39;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AlmaWidget/Info.plist;
@@ -602,7 +606,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AlmaWidget/AlmaWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 38;
+				CURRENT_PROJECT_VERSION = 39;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AlmaWidget/Info.plist;
