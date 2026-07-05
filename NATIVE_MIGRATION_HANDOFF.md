@@ -43,7 +43,7 @@ are pre-assigned here so two sessions can never pick the same name.
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
 | Finance | `/finance` | `ios/App/App/FinanceSwiftUI.swift` | native | IN_REVIEW (marathon b1 2026-07-06, sim-build pending at marathon end) | marathon session |
-| Office fund | `/finance/office-fund` | `ios/App/App/OfficeFundSwiftUI.swift` | web | NOT_STARTED | — |
+| Office fund | `/finance/office-fund` | `ios/App/App/OfficeFundSwiftUI.swift` | native | IN_REVIEW (marathon b2 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Expenses | `/expenses` | `ios/App/App/ExpensesSwiftUI.swift` | native | IN_REVIEW (marathon b1 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Payroll | `/payroll` | `ios/App/App/PayrollSwiftUI.swift` | native | IN_REVIEW (marathon b1 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Invoices | `/invoice` | `ios/App/App/InvoicesSwiftUI.swift` | native | IN_REVIEW (marathon b1 2026-07-06, sim-build pending at marathon end) | marathon session |
@@ -52,9 +52,9 @@ are pre-assigned here so two sessions can never pick the same name.
 ### Operations
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
-| Inventory | `/inventory` | `ios/App/App/InventorySwiftUI.swift` | web | NOT_STARTED | — |
+| Inventory | `/inventory` | `ios/App/App/InventorySwiftUI.swift` | native | IN_REVIEW (marathon b2 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Supplier import | `/inventory/supplier-import` | `ios/App/App/SupplierImportSwiftUI.swift` | web | NOT_STARTED | — |
-| Activity | `/activity` | `ios/App/App/ActivitySwiftUI.swift` | web | NOT_STARTED | — |
+| Activity | `/activity` | `ios/App/App/ActivitySwiftUI.swift` | native | IN_REVIEW (marathon b2 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Task Spotlight | `/operations/task-spotlight` | `ios/App/App/TaskSpotlightSwiftUI.swift` | web | NOT_STARTED | — |
 | Business archive | `/operations/business-archive` | `ios/App/App/BusinessArchiveSwiftUI.swift` | web | NOT_STARTED | — |
 | System diagnostics | `/operations/system-diagnostics` | `ios/App/App/SystemDiagnosticsSwiftUI.swift` | web | NOT_STARTED | — |
@@ -62,8 +62,8 @@ are pre-assigned here so two sessions can never pick the same name.
 ### People
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
-| Employees | `/employees` | `ios/App/App/EmployeesSwiftUI.swift` | web | NOT_STARTED | — |
-| Employee detail | `/employees/[id]` | (same file as Employees — one session owns both) | web | NOT_STARTED | — |
+| Employees | `/employees` | `ios/App/App/EmployeesSwiftUI.swift` | native | IN_REVIEW (marathon b2 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Employee detail | `/employees/[id]` | (same file as Employees — one session owns both) | native | IN_REVIEW (marathon b2 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Attendance | `/attendance` | `ios/App/App/AttendanceSwiftUI.swift` | web | NOT_STARTED | — |
 | CRM | `/crm` | `ios/App/App/CrmSwiftUI.swift` | web | NOT_STARTED | — |
 

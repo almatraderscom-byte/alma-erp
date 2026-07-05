@@ -38,6 +38,10 @@
 		F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A013 /* OrdersSwiftUI.swift */; };
 		F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A021 /* AssistantSwiftUI.swift */; };
 		F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */; };
+		F2AA7700000000000000B048 /* EmployeesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A048 /* EmployeesSwiftUI.swift */; };
+		F2AA7700000000000000B047 /* InventorySwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A047 /* InventorySwiftUI.swift */; };
+		F2AA7700000000000000B046 /* ActivitySwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A046 /* ActivitySwiftUI.swift */; };
+		F2AA7700000000000000B045 /* OfficeFundSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A045 /* OfficeFundSwiftUI.swift */; };
 		F2AA7700000000000000B044 /* PayrollSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A044 /* PayrollSwiftUI.swift */; };
 		F2AA7700000000000000B043 /* ExpensesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A043 /* ExpensesSwiftUI.swift */; };
 		F2AA7700000000000000B042 /* InvoicesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A042 /* InvoicesSwiftUI.swift */; };
@@ -85,6 +89,10 @@
 		F2AA7700000000000000A013 /* OrdersSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrdersSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A021 /* AssistantSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantVoiceSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A048 /* EmployeesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmployeesSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A047 /* InventorySwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InventorySwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A046 /* ActivitySwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivitySwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A045 /* OfficeFundSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficeFundSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A044 /* PayrollSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PayrollSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A043 /* ExpensesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpensesSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A042 /* InvoicesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InvoicesSwiftUI.swift; sourceTree = "<group>"; };
@@ -179,6 +187,10 @@
 				F2AA7700000000000000A013 /* OrdersSwiftUI.swift */,
 				F2AA7700000000000000A021 /* AssistantSwiftUI.swift */,
 				F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */,
+				F2AA7700000000000000A048 /* EmployeesSwiftUI.swift */,
+				F2AA7700000000000000A047 /* InventorySwiftUI.swift */,
+				F2AA7700000000000000A046 /* ActivitySwiftUI.swift */,
+				F2AA7700000000000000A045 /* OfficeFundSwiftUI.swift */,
 				F2AA7700000000000000A044 /* PayrollSwiftUI.swift */,
 				F2AA7700000000000000A043 /* ExpensesSwiftUI.swift */,
 				F2AA7700000000000000A042 /* InvoicesSwiftUI.swift */,
@@ -401,6 +413,10 @@
 				F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */,
 				F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */,
 				F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */,
+				F2AA7700000000000000B048 /* EmployeesSwiftUI.swift in Sources */,
+				F2AA7700000000000000B047 /* InventorySwiftUI.swift in Sources */,
+				F2AA7700000000000000B046 /* ActivitySwiftUI.swift in Sources */,
+				F2AA7700000000000000B045 /* OfficeFundSwiftUI.swift in Sources */,
 				F2AA7700000000000000B044 /* PayrollSwiftUI.swift in Sources */,
 				F2AA7700000000000000B043 /* ExpensesSwiftUI.swift in Sources */,
 				F2AA7700000000000000B042 /* InvoicesSwiftUI.swift in Sources */,

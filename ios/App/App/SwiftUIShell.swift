@@ -142,7 +142,13 @@ extension AlmaTabBarController {
     private func pushSmart(on nav: UINavigationController?, path: String, title: String, icon: String) {
         if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *),
            let native = AlmaNativeRouter.screen(for: path, openWebForced: { [weak self, weak nav] p, t in
-               self?.pushWeb(on: nav, path: p, title: t, icon: icon)
+               // Same-page pushes are the screen's ESCAPE HATCH → always the real web
+               // (recursion guard). Cross-page links route back through the router so
+               // e.g. Finance → Office fund opens the native screen when it exists.
+               let origin = path.split(separator: "?").first.map(String.init) ?? path
+               let target = p.split(separator: "?").first.map(String.init) ?? p
+               if target == origin { self?.pushWeb(on: nav, path: p, title: t, icon: icon) }
+               else { self?.pushSmart(on: nav, path: p, title: t, icon: icon) }
            }) {
             nav?.pushViewController(native, animated: true)
             return
