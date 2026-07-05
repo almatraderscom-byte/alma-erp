@@ -38,7 +38,7 @@ export default function NewOrderPage() {
   return (
     <div className="min-h-0">
       <header
-        className="fixed top-0 left-0 right-0 z-[100] border-b border-border bg-surface/95 backdrop-blur-md supports-[backdrop-filter]:bg-surface/80"
+        className="fixed top-0 left-0 right-0 z-[100] border-b border-border-subtle bg-surface/95 backdrop-blur-xl backdrop-saturate-150 supports-[backdrop-filter]:bg-transparent"
         style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}
       >
         <div className="flex items-center gap-3 px-4 pb-3">

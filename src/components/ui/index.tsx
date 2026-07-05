@@ -219,7 +219,7 @@ export function PageHeader({
 
   return (
     <header
-      className="page-header sticky top-0 border-b border-border-subtle bg-card/80 px-4 pb-4 backdrop-blur md:px-8"
+      className="page-header sticky top-0 px-4 pb-4 md:px-8"
       // Pad the sticky header below the status bar / Dynamic Island so the title and
       // action buttons never render under the notch on iPhone (and notched Android).
       style={{ zIndex: PLATFORM_Z.stickyBanner, paddingTop: 'max(1rem, env(safe-area-inset-top))' }}

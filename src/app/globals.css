@@ -217,6 +217,30 @@ pre, code {
   mix-blend-mode: normal;
 }
 
+/* ── Frosted-glass page header (iOS glassmorphism) ──────────────────────────
+   Pure glass: a fully transparent background carried by a strong backdrop blur,
+   so page content scrolls UNDER the header and simply reads as frosted, glossy
+   glass in the app's OWN background colors. Deliberately NO dark overlay, NO
+   drop shadow, NO dark linear gradient — the blur + saturation are the whole
+   effect. On iOS WKWebView (and every modern engine) the @supports block wins
+   and the header is transparent glass; the base rule's translucent theme surface
+   is only a legibility fallback for the rare engine without backdrop-filter and
+   is NOT an added tint on top of the glass. */
+.page-header {
+  /* Fallback only (engines without backdrop-filter): themed translucent surface,
+     never a black/dark tint — light-cream in light mode, soft-dark in dark mode. */
+  background: var(--frost-surface);
+  box-shadow: none;
+  border-bottom: 1px solid var(--border-subtle);
+}
+@supports ((backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px))) {
+  .page-header {
+    background: transparent;
+    -webkit-backdrop-filter: blur(24px) saturate(1.8);
+    backdrop-filter: blur(24px) saturate(1.8);
+  }
+}
+
 /* Page header action row — flex-wrap safe, no fixed overlays */
 .page-header .page-action-bar {
   row-gap: 0.5rem;
