@@ -65,6 +65,7 @@ import { NATIVE_PUSH_TOOLS } from './native-push-tools'
 import { LIVE_BROWSER_TOOLS } from './live-browser-tools'
 import { WORKBENCH_TOOLS } from './workbench-tools'
 import { SKILL_PACK_TOOLS } from './skill-pack-tools'
+import { SEO_AUDIT_TOOLS } from './seo-audit-tools'
 
 export interface ToolResult {
   success: boolean
@@ -424,6 +425,7 @@ export const CORE_AGENT_TOOLS: AgentTool[] = [
   ...LIVE_BROWSER_TOOLS,
   ...WORKBENCH_TOOLS,
   ...SKILL_PACK_TOOLS,
+  ...SEO_AUDIT_TOOLS,
 ]
 
 /** Lifestyle-only tools beyond CORE + base groups (not in TOOL_GROUPS.base). */
