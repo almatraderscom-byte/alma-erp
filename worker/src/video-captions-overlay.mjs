@@ -76,7 +76,9 @@ export async function renderCaptionOverlays({ cues, output, workDir }) {
         fill="#ffffff" stroke="#202020" stroke-width="${Math.max(2, Math.round(fontSize / 16))}"
         paint-order="stroke">${escapeXml(text)}</text>
 </svg>`
-    const buf = await sharp(Buffer.from(svg), { density: 96 }).png().toBuffer()
+    // NOTE: no density option — librsvg's 72dpi baseline keeps SVG px 1:1
+    // (density:96 scaled every strip 1.33× and pushed text off-frame).
+    const buf = await sharp(Buffer.from(svg)).png().toBuffer()
     return { buf, stripH }
   }
 
@@ -88,8 +90,10 @@ export async function renderCaptionOverlays({ cues, output, workDir }) {
     // deterministic auto-shrink: measure the drawn text (trim to its bounding
     // box); a line wider than the frame re-renders once at the fitting size
     try {
-      const trimmed = await sharp(buf).trim().metadata()
-      const textW = trimmed.width ?? 0
+      // toBuffer(resolveWithObject) reports the POST-trim size (metadata() would
+      // return the pre-trim input dimensions)
+      const { info } = await sharp(buf).trim().toBuffer({ resolveWithObject: true })
+      const textW = info.width ?? 0
       if (textW > maxTextW) {
         fontSize = Math.max(24, Math.floor((fontSize * maxTextW) / textW))
         ;({ buf, stripH } = await renderCue(cue.text, fontSize))
