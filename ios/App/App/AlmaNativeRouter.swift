@@ -1,0 +1,43 @@
+//
+//  AlmaNativeRouter.swift
+//  ALMA ERP — S6: route-path → native SwiftUI screen map.
+//
+//  The More menu (and any other web push) consults this router first: if a page has
+//  been migrated, the SAME row opens the native screen instead of a WKWebView — no
+//  per-row wiring, one additive case per migrated page. Screens receive a FORCED-web
+//  escape closure (never routed back through here), so a screen's "ওয়েবে খুলুন"
+//  button can never recurse into itself.
+//
+//  Parallel-session note: this file is owned by the integration owner. Page sessions
+//  do NOT edit it — they ship their <Page>SwiftUI.swift and the owner adds one case.
+//
+
+import SwiftUI
+import UIKit
+
+@available(iOS 17.0, *)
+enum AlmaNativeRouter {
+
+    /// Native screen for an ERP route path, or nil → open the web view as before.
+    /// `openWebForced` must push a real WKWebView (never consult this router).
+    @MainActor
+    static func screen(for path: String,
+                       openWebForced: @escaping (_ path: String, _ title: String) -> Void)
+        -> UIViewController? {
+        // Strip query/fragment — the map is keyed on bare route paths.
+        let clean = path.split(separator: "?").first.map(String.init) ?? path
+
+        func host<V: View>(_ view: V, _ title: String) -> UIViewController {
+            let h = AlmaHostingController(rootView: view)
+            h.title = title
+            h.hidesBottomBarWhenPushed = false
+            return h
+        }
+
+        switch clean {
+        // Cases are appended batch-by-batch as pages migrate (S6 marathon).
+        default:
+            return nil
+        }
+    }
+}

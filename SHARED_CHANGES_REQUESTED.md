@@ -41,3 +41,10 @@ Owner flips `[PENDING]` → `[✅ APPLIED <commit>]` or `[❌ REJECTED — reaso
 - File(s): `ios/App/App.xcodeproj/project.pbxproj`
 - Exact change: 4 additive entries for `AssistantVoiceSwiftUI.swift` (ids `…A022`/`…B022`).
 - Why: the native voice-to-voice orb console (owner bundle design) lives in its own file.
+
+---
+## 2026-07-06 · approvals/marathon session (owner-directed)
+- **Owner instruction (2026-07-06, chat):** merge `native/approvals-parity` into the frontier; then migrate ALL remaining Alma Lifestyle pages native (aurora + current components), session acts as owner for decisions; ONE build at the very end.
+- APPLIED on `native/approvals-parity` (acting owner): `AlmaNativeRouter.swift` (new, A040/B040) + `SwiftUIShell.swift` `pushSmart` hook (More rows route to native screens when migrated; forced-web escape prevents recursion).
+- **pbxproj ID range reserved for this marathon: A040–A07F / B040–B07F** — other sessions please allocate below/above this range.
+- Marathon page files will be registered incrementally on this branch; final integration merge + sim-verified build happens at the end of the marathon.
