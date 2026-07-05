@@ -35,7 +35,7 @@ are pre-assigned here so two sessions can never pick the same name.
 | Assistant (Claude surface) | `/agent` | `ios/App/App/AssistantSwiftUI.swift` | native | IN_REVIEW (owner instruction 2026-07-06 lifted KEEP_WEB; native chat sim-verified, see handoff §0-e; web fallback intact via flag) | assistant session |
 | Orders list | `/orders` | `ios/App/App/OrdersSwiftUI.swift` | native | DONE (b36) | main session |
 | Order create | `/orders/new` | `ios/App/App/OrderCreateSwiftUI.swift` | native | IN_REVIEW (b36 — owner's first live submit = e2e test) | main session |
-| Approvals | `/approvals` | `ios/App/App/ApprovalsSwiftUI.swift` | native | DONE (b35, v1 — payout detail pending) | main session |
+| Approvals | `/approvals` | `ios/App/App/ApprovalsSwiftUI.swift` | native | IN_REVIEW (v2 web-parity 2026-07-06: web colours/blocks + Agent view + KPI strip + withdraw txn-id + leave/salary/payout digests; iOS-polish agent cards; sim-verified light+dark on branch `native/approvals-parity`) | approvals session |
 | More menu | (native) | `ios/App/App/MoreMenuSwiftUI.swift` | native | DONE (b35) | main session |
 | Phone Companion | (native) | `ios/App/App/CompanionSwiftUI.swift` (chrome only; `AlmaCompanion.swift` is FROZEN) | native | DONE (b35) | main session |
 
