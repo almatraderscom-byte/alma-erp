@@ -1507,7 +1507,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             })}
             className="agent-top-strip safe-x shrink-0 border-b border-emerald-200/60 bg-emerald-50/90 px-4 py-2 text-left text-[11px] font-medium text-emerald-800 hover:bg-emerald-100/90 transition-colors"
           >
-            🏢 <span className="font-semibold">Agent অফিস লাইভ</span> — কাজ চলছে। এখানে চাপুন live দেখতে (Cursor-style updates)
+            {/* .agent-strip-detail is hidden in the native shell, where this strip
+                renders as a compact floating pill (globals.css, alma-native-hdr). */}
+            🏢 <span className="font-semibold">Agent অফিস লাইভ</span><span className="agent-strip-detail"> — কাজ চলছে। এখানে চাপুন live দেখতে (Cursor-style updates)</span>
           </button>
         )}
         {/* Plan-Drive attention strip — surfaces decisions/approvals waiting on the

@@ -1177,8 +1177,39 @@ html.alma-native-hdr .agent-main-col {
 html.alma-native-hdr .agent-thread-content {
   padding-top: calc(1rem + var(--alma-top-inset, env(safe-area-inset-top))) !important;
 }
-/* If the rare "office live" day-shift banner shows, it is the topmost element now
-   (the web header is hidden) — give it the inset so it clears the bar too. */
+/* The "office live" day-shift banner: in the native shell a full-width strip at the
+   very top painted its pale translucent background UP THROUGH the frosted nav bar
+   (the bar blurred the pale strip instead of the chat → read as a flat grey slab —
+   the owner's "frosted bar looks wrong" root cause). Owner-approved fix (2026-07-05):
+   render it as a small floating glass pill UNDER the bar, Claude-style, so the bar
+   blurs real chat content. The long explainer tail is hidden in the pill
+   (.agent-strip-detail); web/desktop keep the full strip unchanged. */
+html.alma-native-hdr .agent-main-col {
+  position: relative;
+}
 html.alma-native-hdr .agent-top-strip {
-  padding-top: calc(0.5rem + var(--alma-top-inset, env(safe-area-inset-top))) !important;
+  position: absolute !important;
+  top: calc(var(--alma-top-inset, env(safe-area-inset-top)) + 8px) !important;
+  left: 50% !important;
+  transform: translateX(-50%);
+  z-index: 30;
+  width: auto !important;
+  max-width: 86%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid var(--glass-border) !important;
+  background: var(--glass-bg-strong) !important;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-radius: 9999px;
+  padding: 6px 14px !important;
+  box-shadow: var(--glass-shadow-soft);
+  color: #065f46; /* emerald-800 on light glass */
+}
+html[data-theme='dark'].alma-native-hdr .agent-top-strip {
+  color: #6ee7b7; /* emerald-300 on dark glass */
+}
+html.alma-native-hdr .agent-top-strip .agent-strip-detail {
+  display: none;
 }
