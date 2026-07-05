@@ -52,7 +52,7 @@ describe('pack protocol integrity', () => {
     const registered = new Set(TOOLS.map((t: { name: string }) => t.name))
     const missing = referencedToolNames().filter((n) => !registered.has(n))
     expect(missing, `pack steps reference unregistered tools: ${missing.join(', ')}`).toEqual([])
-  })
+  }, 30_000) // importing the full tool registry is heavy (~5s cold)
 
   it('all four packs have required steps, a checklist and an artifact spec', () => {
     for (const pack of Object.values(SKILL_PACKS)) {
@@ -67,6 +67,19 @@ describe('pack protocol integrity', () => {
     expect(SKILL_PACKS.marketing.guardrails.join(' ')).toMatch(/owner/)
     expect(SKILL_PACKS.website.guardrails.join(' ')).toMatch(/PR-only/)
     expect(SKILL_PACKS.research.guardrails.join(' ')).toMatch(/confirm_oxylabs_spend/)
+  })
+
+  it('client_seo audits any site read-only and hands critical/login steps to the owner', () => {
+    const pack = SKILL_PACKS.client_seo
+    // audit step uses the real audit tools; a mandatory owner-handoff step exists
+    const auditStep = pack.steps.find((s) => s.id === 'full-audit')!
+    expect(auditStep.required).toBe(true)
+    expect(auditStep.tools).toContain('run_website_seo_audit')
+    expect(pack.steps.find((s) => s.id === 'owner-handoff')?.required).toBe(true)
+    const g = pack.guardrails.join(' ')
+    expect(g).toMatch(/login/i)
+    expect(g).toMatch(/read-only/i)
+    expect(g).toMatch(/CAPTCHA|Password/i)
   })
 })
 

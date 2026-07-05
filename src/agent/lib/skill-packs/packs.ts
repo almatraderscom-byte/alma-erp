@@ -25,7 +25,7 @@ export type SkillPackStep = {
 }
 
 export type SkillPack = {
-  key: 'research' | 'seo' | 'marketing' | 'website'
+  key: 'research' | 'seo' | 'marketing' | 'website' | 'client_seo'
   title: string
   goal: string
   steps: SkillPackStep[]
@@ -286,6 +286,84 @@ export const SKILL_PACKS: Record<SkillPack['key'], SkillPack> = {
       type: 'website_change_summary',
       titleBn: 'ওয়েবসাইট পরিবর্তন সারাংশ',
       description: 'Every touched page/product with before→after and the proposal/PR that ships it.',
+    },
+  },
+
+  client_seo: {
+    key: 'client_seo',
+    title: 'Client SEO — end-to-end audit of ANY website, then owner-gated execution',
+    goal:
+      "A customer's (or any) website audited end-to-end like a world-class SEO expert, then a full fix " +
+      'plan EXECUTED — but every critical / login / irreversible step handed to the owner, never done by the agent.',
+    steps: [
+      {
+        id: 'full-audit',
+        instruction:
+          'Run the full end-to-end crawl+audit of the given site and WAIT for it to finish (poll). Read the ' +
+          'whole report — score, site-level issues, per-page issues by severity.',
+        tools: ['run_website_seo_audit', 'check_website_seo_audit'],
+        required: true,
+      },
+      {
+        id: 'keyword-context',
+        instruction:
+          'Check where the site ranks for its key terms (pass siteDomain = the client domain; Oxylabs — ' +
+          'owner spend approval first). Note the gap vs competitors.',
+        tools: ['confirm_oxylabs_spend', 'research_seo_keywords', 'research_competitor'],
+        required: false,
+      },
+      {
+        id: 'diagnose',
+        instruction:
+          'Turn the findings into a PRIORITIZED fix plan: critical → high → medium → low, each fix concrete ' +
+          '(which page, what to change, expected impact). Separate the fixes YOU can prepare from the ones ' +
+          'that need the OWNER (see the guardrail).',
+        tools: [],
+        required: true,
+      },
+      {
+        id: 'audit-report',
+        instruction:
+          'Publish the audit + fix plan as the pack artifact (Bangla): score, every issue, the prioritized ' +
+          'plan, and clearly which steps are owner-only (login / DNS / hosting / publishing / paid tools).',
+        tools: [],
+        required: true,
+      },
+      {
+        id: 'execute-safe',
+        instruction:
+          'For fixes the agent CAN prepare without a credential or irreversible action — draft copy, meta, ' +
+          'alt-text, schema, content — prepare them and ship as owner-gated proposals / a workbench PR. ' +
+          'NEVER log in to the client site, change DNS/hosting, or publish directly.',
+        tools: ['run_workbench_task', 'check_workbench_task', 'draft_seo_fixes'],
+        required: false,
+      },
+      {
+        id: 'owner-handoff',
+        instruction:
+          'List the CRITICAL / login-required / irreversible steps as a clear checklist for the owner to do ' +
+          'himself (or approve), each with exactly what to click/change. Pause-checkpoint so he can act, then ' +
+          'continue. This step is "done" once that handoff list is delivered.',
+        tools: [],
+        required: true,
+      },
+    ],
+    checklist: [
+      'পুরো সাইট crawl হয়েছে (score + severity-ভিত্তিক issue list আছে)',
+      'প্রতিটা সুপারিশ নির্দিষ্ট (কোন পেজ, কী বদলাবে, কেন)',
+      'কোন কাজ agent করেছে আর কোনটা owner-এর — পরিষ্কার আলাদা করা',
+      'কোনো login/DNS/hosting/publish agent নিজে করেনি — সব owner-handoff-এ',
+    ],
+    guardrails: [
+      'AUDIT পুরোপুরি read-only (crawl কিছু submit করে না)।',
+      'CRITICAL / login-লাগে / irreversible সব ধাপ owner-এর নিজের হাতে — agent কখনো client সাইটে লগইন করবে না, DNS/hosting বদলাবে না, সরাসরি publish করবে না।',
+      'Password agent টাইপ করবে না, CAPTCHA bypass করবে না — owner-কে দেবে (§0.4, §0.9)।',
+      'Fix apply শুধু owner-gated proposal / PR আকারে; ক্লায়েন্টের নিজের CMS-এ সরাসরি লেখা নয়।',
+    ],
+    artifact: {
+      type: 'client_seo_report',
+      titleBn: 'ক্লায়েন্ট SEO অডিট + কর্মপরিকল্পনা',
+      description: 'Full audit (score + issues) + prioritized fix plan + agent-done vs owner-only split.',
     },
   },
 }

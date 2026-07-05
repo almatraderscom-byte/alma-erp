@@ -22,6 +22,7 @@ export const TELEMETRY_JOB_TYPES = [
   'long_agent_task',
   'browser_action',
   'workbench_run',
+  'seo_audit',
   'outbound_call',
 ] as const
 

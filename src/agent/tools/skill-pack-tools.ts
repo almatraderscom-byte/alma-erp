@@ -17,7 +17,9 @@ const start_skill_pack: AgentTool = {
     'Start one of the DETERMINISTIC skill packs — fixed playbooks for the big recurring jobs: ' +
     '"research" (multi-source, cross-checked, cited brief), "seo" (own-site audit + Search Console/GA4 ' +
     'readout + prioritized fixes), "marketing" (performance + competitor scan + weekly brief, ALL spend ' +
-    'owner-gated), "website" (improvements shipped ONLY as owner-gated proposals/PRs).\n' +
+    'owner-gated), "website" (improvements shipped ONLY as owner-gated proposals/PRs), "client_seo" ' +
+    '(end-to-end audit of ANY website — own or a customer\'s — then a prioritized fix plan where the agent ' +
+    'prepares the safe fixes and hands every critical / login / irreversible step to the owner).\n' +
     'It returns the pack PROTOCOL: ordered steps (each naming the exact tools to use), a checklist, and ' +
     'guardrails. FOLLOW THE STEPS IN ORDER — no freestyle, no skipping required steps. Collect concrete ' +
     'evidence per step (numbers, URLs, tool outputs) as you go; you will need it for the completion ' +
@@ -28,7 +30,7 @@ const start_skill_pack: AgentTool = {
     properties: {
       pack: {
         type: 'string',
-        enum: ['research', 'seo', 'marketing', 'website'],
+        enum: ['research', 'seo', 'marketing', 'website', 'client_seo'],
         description: 'Which skill pack to run.',
       },
       goal: {
@@ -77,7 +79,7 @@ const complete_skill_pack_run: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      pack: { type: 'string', enum: ['research', 'seo', 'marketing', 'website'] },
+      pack: { type: 'string', enum: ['research', 'seo', 'marketing', 'website', 'client_seo'] },
       goal: { type: 'string', description: 'The run goal (same as start_skill_pack).' },
       steps: {
         type: 'array',

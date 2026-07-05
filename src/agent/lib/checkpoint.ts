@@ -174,7 +174,7 @@ export async function listUnresolvedCheckpoints(
 /** Approved actions older than this with no resolution are considered STUCK. */
 const STUCK_AFTER_MIN = 30
 /** Job types the watchdog covers — long worker jobs (chat-approval cards excluded via status). */
-const WATCHDOG_TYPES = ['image_gen', 'video_gen', 'long_agent_task', 'browser_action', 'workbench_run']
+const WATCHDOG_TYPES = ['image_gen', 'video_gen', 'long_agent_task', 'browser_action', 'workbench_run', 'seo_audit']
 
 /**
  * P0 watchdog — silence becomes impossible by construction. Scans for worker

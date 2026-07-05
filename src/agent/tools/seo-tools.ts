@@ -155,7 +155,13 @@ const research_seo_keywords: AgentTool = {
     type: 'object' as const,
     properties: {
       keyword: { type: 'string', description: 'Search term to check rankings for, e.g. "premium panjabi Dhaka"' },
-      productSlug: { type: 'string', description: 'Optional — check if almatraders.com/products/{slug} appears in results for this keyword' },
+      productSlug: { type: 'string', description: 'Optional — check if {siteDomain}/products/{slug} appears in results for this keyword' },
+      siteDomain: {
+        type: 'string',
+        description:
+          'Optional — the domain to check the ranking of (e.g. "customer-shop.com"). Omit for the ' +
+          'own site (almatraders.com). Use this for a CLIENT SEO audit of another website.',
+      },
       spendApprovalId: { type: 'string', description: 'Required — from confirm_oxylabs_spend after owner approves' },
     },
     required: ['keyword', 'spendApprovalId'],
@@ -183,10 +189,12 @@ const research_seo_keywords: AgentTool = {
     if (!result.success) return { success: false, error: result.error }
 
     const results = result.results ?? []
+    // Default target is the own site; a client SEO audit passes siteDomain.
+    const targetDomain = String(input.siteDomain ?? '').trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '').toLowerCase() || 'almatraders.com'
     let almaRank: number | null = null
     let almaUrl: string | null = null
     for (const r of results) {
-      if (r.url.includes('almatraders.com')) {
+      if (r.url.toLowerCase().includes(targetDomain)) {
         almaRank = r.pos
         almaUrl = r.url
         break
@@ -206,10 +214,11 @@ const research_seo_keywords: AgentTool = {
       success: true,
       data: {
         keyword,
+        targetDomain,
         top10: results.map(r => ({ rank: r.pos, url: r.url, title: r.title })),
-        almatraders: almaRank !== null
+        siteRanking: almaRank !== null
           ? { rank: almaRank, url: almaUrl }
-          : { rank: null, message: 'Top 10-এ almatraders.com নেই' },
+          : { rank: null, message: `Top 10-এ ${targetDomain} নেই` },
         productMatch,
       },
     }

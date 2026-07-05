@@ -103,6 +103,14 @@ const workbenchQueue = new Queue('workbench', {
   defaultJobOptions: { attempts: 1 },
 })
 
+// Client-SEO end-to-end audit (crawl + audit ANY public site). attempts:1 for
+// the same reason as workbench — a failed audit checkpoints, never silently
+// re-crawls someone's site.
+const seoAuditQueue = new Queue('seo-audit', {
+  connection,
+  defaultJobOptions: { attempts: 1 },
+})
+
 // Track enqueued action IDs to avoid duplicates in polling window
 const enqueuedIds = new Set()
 const stuckReenqueueCounts = new Map()
@@ -233,6 +241,10 @@ async function pollPendingJobs() {
       } else if (job.type === 'workbench_run') {
         await workbenchQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
         console.log(`[worker] enqueued workbench task for action ${job.id}`)
+        handled = true
+      } else if (job.type === 'seo_audit') {
+        await seoAuditQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        console.log(`[worker] enqueued seo audit for action ${job.id}`)
         handled = true
       } else if (job.type === 'dispatch_staff_tasks' || job.type === 'add_staff_task_now' || job.type === 'staff_announcement') {
         await staffDispatchQueue.add('dispatch', { pendingActionId: job.id, payload: job.payload, type: job.type }, { jobId: job.id })
@@ -631,6 +643,56 @@ workbenchWorker.on('failed', (job, err) => {
   console.error(`[worker] workbench job ${job?.id} failed:`, err?.message)
 })
 
+// ── Client-SEO audit worker ──────────────────────────────────────────────────
+const seoAuditWorker = new Worker(
+  'seo-audit',
+  async (job) => {
+    const { pendingActionId, payload } = job.data
+    try {
+      const { runSeoAudit } = await import('./seo/audit.mjs')
+      const result = await runSeoAudit(payload)
+      if (!result.ok) {
+        await callJobResult(pendingActionId, 'failed', undefined, result.error ?? 'seo_audit_failed')
+        console.warn(`[worker] seo-audit ${pendingActionId} failed: ${result.error}`)
+        return
+      }
+      // Publish the report (markdown) + full findings (json) as artifacts.
+      const base = `seo-audits/${pendingActionId}`
+      const artifacts = []
+      try {
+        await supabase.storage
+          .from('agent-files')
+          .upload(`${base}/report.md`, Buffer.from(result.reportMarkdown, 'utf8'), { upsert: true, contentType: 'text/markdown' })
+        artifacts.push(`${base}/report.md`)
+        await supabase.storage
+          .from('agent-files')
+          .upload(`${base}/audit.json`, Buffer.from(JSON.stringify(result.auditJson), 'utf8'), { upsert: true, contentType: 'application/json' })
+        artifacts.push(`${base}/audit.json`)
+      } catch (upErr) {
+        // Report built but upload failed → NOT success (never claim done without the proof).
+        await callJobResult(pendingActionId, 'failed', { score: result.score }, `artifact upload failed: ${upErr.message}`)
+        return
+      }
+      await callJobResult(pendingActionId, 'success', {
+        score: result.score,
+        counts: result.counts,
+        pagesCrawled: result.pagesCrawled,
+        avgTtfbMs: result.avgTtfbMs,
+        artifacts,
+        reportPreview: result.reportMarkdown.slice(0, 1500),
+      })
+      console.log(`[worker] seo-audit ${pendingActionId} done — score ${result.score}, ${result.pagesCrawled} pages`)
+    } catch (err) {
+      captureWorkerError(err, 'worker.seo_audit.failed', { jobId: job?.id })
+      await callJobResult(pendingActionId, 'failed', undefined, err.message ?? 'seo_audit_crashed')
+    }
+  },
+  { connection, concurrency: 1, lockDuration: 10 * 60 * 1000 },
+)
+seoAuditWorker.on('failed', (job, err) => {
+  console.error(`[worker] seo-audit job ${job?.id} failed:`, err?.message)
+})
+
 // Startup preflight: create WORKBENCH_ROOT + survey allowlisted binaries (the
 // VPS has no inbound SSH — provisioning ships through the repo, pull-deployed).
 try {
@@ -1011,6 +1073,8 @@ async function shutdown(signal) {
     imageGenWorker.close(),
     videoGenWorker.close(),
     longTaskWorker.close(),
+    workbenchWorker.close(),
+    seoAuditWorker.close(),
     staffDispatchWorker.close(),
     csReplyWorker.close(),
     schedulerTeardown?.schedulerWorker?.close(),
