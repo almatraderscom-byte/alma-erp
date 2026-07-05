@@ -75,7 +75,7 @@ async function fetchCaptions({ audioFile, output, knownText }) {
   })
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(`captions endpoint failed: ${body?.error ?? `HTTP ${res.status}`}`)
-  return body.ass ?? null
+  return { ass: body.ass ?? null, cues: Array.isArray(body.cues) ? body.cues : [] }
 }
 
 /** Extract the reel's speech as a small mp3 for Whisper. */
@@ -94,12 +94,19 @@ const fmt = (label) => `${label}aformat=sample_rates=48000:channel_layouts=stere
  * The single post-render pass: burns captions (if any) and rebuilds the
  * soundtrack per audioMode/voiceover. Audio-only changes keep -c:v copy.
  */
-async function renderPostPass({ workDir, reelFile, outFile, assFile, musicFile, voiceFile, audioMode, reelHasAudio, durationSec }) {
+async function renderPostPass({ workDir, reelFile, outFile, assFile, captionOverlays, marginV, musicFile, voiceFile, audioMode, reelHasAudio, durationSec }) {
   const args = ['-y', '-i', reelFile]
-  const inputs = { music: -1, voice: -1 }
+  const inputs = { music: -1, voice: -1, overlayStart: -1 }
   let idx = 1
   if (musicFile) { args.push('-i', musicFile); inputs.music = idx++ }
   if (voiceFile) { args.push('-i', voiceFile); inputs.voice = idx++ }
+  if (captionOverlays?.length) {
+    inputs.overlayStart = idx
+    for (const ov of captionOverlays) {
+      args.push('-loop', '1', '-i', ov.file)
+      idx++
+    }
+  }
 
   const parts = []
   const fadeStart = Math.max(0, durationSec - 1)
@@ -123,9 +130,20 @@ async function renderPostPass({ workDir, reelFile, outFile, assFile, musicFile, 
     aout = '[aout]'
   }
 
-  // ── video: burn captions or pass through untouched ───────────────────────
+  // ── video: caption overlays (pango-shaped PNGs), ASS fallback, or copy ───
   let videoArgs
-  if (assFile) {
+  if (captionOverlays?.length) {
+    let vTail = '[0:v]'
+    captionOverlays.forEach((ov, i) => {
+      const inIdx = inputs.overlayStart + i
+      const outLabel = i === captionOverlays.length - 1 ? '[vout]' : `[vcap${i}]`
+      parts.push(
+        `${vTail}[${inIdx}:v]overlay=0:H-h-${marginV}:enable='between(t,${ov.start},${ov.end})'${outLabel}`,
+      )
+      vTail = outLabel
+    })
+    videoArgs = ['-map', '[vout]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22']
+  } else if (assFile) {
     const assName = assFile.replace(/\\/g, '/').split('/').pop()
     parts.push(`[0:v]subtitles=filename=${assName}:fontsdir='${FONTS_DIR}'[vout]`)
     videoArgs = ['-map', '[vout]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22']
@@ -270,20 +288,34 @@ export async function applyPostLayers({ supabase, workDir, reelFile, payload, ou
     }
   }
 
-  // captions — transcribe the SPEECH source, not the mixed track
+  // captions — transcribe the SPEECH source, not the mixed track. Preferred
+  // renderer: pango-shaped PNG overlays (VPS libass breaks Bangla shaping);
+  // ASS burn-in stays as the fallback.
   let assFile = null
+  let captionOverlays = []
+  let marginV = 0
   if (captions) {
     try {
       const speechSrc = voiceFile ?? (reelHasAudio ? await extractSpeechMp3(current, join(workDir, 'speech.mp3')) : null)
       if (speechSrc) {
-        const ass = await fetchCaptions({
+        const got = await fetchCaptions({
           audioFile: speechSrc,
           output,
           knownText: voiceFile ? voiceoverText : undefined,
         })
-        if (ass) {
+        if (got.cues.length > 0) {
+          try {
+            const { renderCaptionOverlays, captionMarginV } = await import('./video-captions-overlay.mjs')
+            captionOverlays = await renderCaptionOverlays({ cues: got.cues, output, workDir })
+            marginV = captionMarginV(output)
+          } catch (err) {
+            console.warn('[worker] caption overlay render failed, falling back to ASS:', err?.message)
+            captionOverlays = []
+          }
+        }
+        if (captionOverlays.length === 0 && got.ass) {
           assFile = join(workDir, 'captions.ass')
-          await writeFile(assFile, ass, 'utf8')
+          await writeFile(assFile, got.ass, 'utf8')
         }
       } else {
         warnings.push('captions_skipped:no_speech_track')
@@ -304,13 +336,15 @@ export async function applyPostLayers({ supabase, workDir, reelFile, payload, ou
     }
   }
 
-  if (assFile || musicFile || voiceFile) {
+  if (assFile || captionOverlays.length || musicFile || voiceFile) {
     const mixed = join(workDir, 'reel-post.mp4')
     await renderPostPass({
       workDir,
       reelFile: current,
       outFile: mixed,
       assFile,
+      captionOverlays,
+      marginV,
       musicFile,
       voiceFile,
       audioMode,
@@ -349,7 +383,8 @@ export async function applyPostLayers({ supabase, workDir, reelFile, payload, ou
     finalFile: current,
     warnings,
     applied: {
-      captions: Boolean(assFile),
+      captions: Boolean(assFile) || captionOverlays.length > 0,
+      captionRenderer: captionOverlays.length > 0 ? 'pango_overlay' : assFile ? 'libass' : null,
       music: Boolean(musicFile),
       voiceover: Boolean(voiceFile),
       stings: current.includes('reel-stings'),
