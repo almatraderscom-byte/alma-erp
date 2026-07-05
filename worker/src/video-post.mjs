@@ -265,11 +265,21 @@ export async function processVeoConcat(job, { supabase, callJobResult, reportPro
     }
     await reportProgress(supabase, pendingActionId, 4)
     const lens = []
-    for (const f of files) lens.push(await mediaDuration(f))
+    const hasA = []
+    for (const f of files) {
+      lens.push(await mediaDuration(f))
+      hasA.push(await hasAudioStream(f))
+    }
     const parts = []
     files.forEach((_, i) => {
       parts.push(`[${i}:v]fps=30,setsar=1,format=yuv420p[v${i}]`)
-      parts.push(`[${i}:a]${fmt('')}[a${i}]`)
+      // a clip without audio (e.g. an old silent reel) gets a silent bed so
+      // acrossfade always has two real inputs
+      parts.push(
+        hasA[i]
+          ? `[${i}:a]${fmt('')}[a${i}]`
+          : `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=0:${lens[i]}[a${i}]`,
+      )
     })
     let vT = '[v0]'
     let aT = '[a0]'
