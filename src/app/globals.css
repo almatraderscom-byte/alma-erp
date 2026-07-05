@@ -1257,22 +1257,63 @@ html.alma-native-hdr .agent-top-strip .agent-strip-detail {
   display: none;
 }
 
-/* ── Creative Studio forced dark scope ─────────────────────────────────────
-   The Studio is designed dark (cream text, glassy cards, brand orange). On
-   the light app theme every token collapsed to pale-on-white. This scope
-   re-pins the SAME variables the dark theme uses, only inside the Studio. */
-.cs-dark {
-  --c-ink: 247 248 252;
-  --c-surface: 30 30 36;
-  --c-card: 32 32 39;
-  --c-muted: 174 178 192;
-  --c-muted-hi: 208 212 224;
-  --bg-0: #141418;
-  --bg-1: #1C1C22;
-  --bg-2: #232329;
-  --bg-3: #2A2A31;
-  --border: rgba(255, 255, 255, 0.10);
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.16);
-  color-scheme: dark;
+/* ── Creative Studio design system ──────────────────────────────────────────
+   iOS-inspired, THEME-AWARE (follows the app's light/dark tokens — the old
+   forced-dark scope clashed with the owner's theme). Soft branded shell,
+   glassy cards, pill chips, one floating tab bar. */
+.studio-shell {
+  background:
+    radial-gradient(1100px 700px at 85% -8%, rgba(224, 122, 95, 0.10), transparent 55%),
+    radial-gradient(900px 650px at -8% 108%, rgba(129, 178, 154, 0.09), transparent 50%),
+    var(--bg-0);
+}
+.st-card {
+  background: rgb(var(--c-card) / 0.78);
+  border: 1px solid var(--border-subtle);
+  border-radius: 22px;
+  box-shadow: 0 8px 28px rgba(20, 16, 25, 0.07);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.st-chip {
+  background: rgb(var(--c-ink) / 0.07) !important;
+  color: rgb(var(--c-muted)) !important;
+  border-radius: 999px !important;
+  font-weight: 600;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+.st-chip:active { transform: scale(0.96); }
+.st-chip-on {
+  background: #e07a5f !important;
+  color: #fff !important;
+  border-radius: 999px !important;
+  font-weight: 700;
+  box-shadow: 0 4px 14px rgba(224, 122, 95, 0.35);
+}
+.st-btn {
+  background: linear-gradient(135deg, #e8896f, #dd6f52) !important;
+  color: #fff;
+  border-radius: 16px;
+  font-weight: 700;
+  box-shadow: 0 6px 18px rgba(224, 122, 95, 0.32);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.st-btn:active { transform: scale(0.97); }
+.st-btn:disabled { opacity: 0.45; box-shadow: none; }
+.st-tabbar {
+  background: rgb(var(--c-card) / 0.82);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  box-shadow: 0 10px 34px rgba(20, 16, 25, 0.16);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.st-tab {
+  color: rgb(var(--c-muted));
+  border-radius: 999px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.st-tab-on {
+  color: #e07a5f;
+  background: rgb(224 122 95 / 0.12);
 }
