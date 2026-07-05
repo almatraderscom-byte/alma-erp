@@ -129,6 +129,7 @@ export async function POST(req: NextRequest) {
           voiceoverText: voiceoverText || null,
           stings,
           brandLogoPath,
+          aiAssist: opts.aiAssist === true,
         },
         summary: `🎬 ${recipe.labelBn} রিল ${targetSec}s ${aspect} — ${videoName}${captions ? ' · ক্যাপশন' : ''}${musicPath ? ' · মিউজিক' : ''}`,
         costEstimate: 0, // ffmpeg on the VPS — no API spend

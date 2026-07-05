@@ -397,6 +397,7 @@ export type VideoRunOptions = {
   musicTrackId?: string
   voiceoverText?: string
   stings?: boolean
+  aiAssist?: boolean
 }
 
 export async function runVideoRecipe(body: {

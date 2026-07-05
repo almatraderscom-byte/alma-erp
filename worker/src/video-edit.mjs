@@ -277,6 +277,15 @@ async function renderOutput({ inputFile, outFile, plan, output, hasAudio, isHdr 
  */
 export async function processVideoEdit(job, { supabase, callJobResult }) {
   const { pendingActionId, payload } = job.data
+
+  // V4: stitch finished Veo clips into one long reel (crossfade, one encode)
+  if (payload?.veoConcat) {
+    const { processVeoConcat } = await import('./video-post.mjs')
+    await ensureFfmpeg()
+    await processVeoConcat(job, { supabase, callJobResult, reportProgress })
+    return
+  }
+
   if (!payload?.videoPath || !payload?.recipeId || !payload?.targetSec) {
     await callJobResult(pendingActionId, 'failed', undefined, 'video_edit payload incomplete')
     return
@@ -299,7 +308,20 @@ export async function processVideoEdit(job, { supabase, callJobResult }) {
 
     await reportProgress(supabase, pendingActionId, 2)
     const { durationSec, hasAudio, isHdr } = await probeVideo(inputFile)
-    const sceneChanges = await detectScenes(supabase, videoPath, inputFile)
+    let sceneChanges = await detectScenes(supabase, videoPath, inputFile)
+    // V4 AI-assist (owner toggles per run, OFF by default): Gemini suggests
+    // highlight timestamps that are ADDED to scdet's cuts — the deterministic
+    // planner still decides everything; a failure falls back silently.
+    if (payload.aiAssist) {
+      try {
+        const { suggestHighlights } = await import('./video-post.mjs')
+        const extra = await suggestHighlights({ inputFile, durationSec })
+        if (extra.length) sceneChanges = Array.from(new Set([...sceneChanges, ...extra])).sort((a, b) => a - b)
+        console.log(`[worker] video-edit ${pendingActionId} — AI assist added ${extra.length} highlights`)
+      } catch (err) {
+        console.warn(`[worker] video-edit ${pendingActionId} — AI assist failed (scdet only):`, err?.message)
+      }
+    }
     console.log(`[worker] video-edit ${pendingActionId} — ${durationSec.toFixed(1)}s, ${sceneChanges.length} scene cuts${isHdr ? ', HDR' : ''}`)
 
     await reportProgress(supabase, pendingActionId, 3)

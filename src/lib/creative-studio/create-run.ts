@@ -188,6 +188,21 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     if (!imagePath) throw new Error('source_image_required')
 
     const vibe = input.vibe ?? 'premium'
+
+    // V4: 16s+ reels = a multi-clip Veo chain (2–3 × 8s, per-clip scene-pool
+    // variety, crossfade-stitched by the worker). Owner-initiated only; the UI
+    // shows the cost before this ever runs.
+    if (Number(input.durationSec) >= 16) {
+      const { startVeoReelChain } = await import('@/lib/creative-studio/veo-chain')
+      const chain = await startVeoReelChain({
+        productImagePath: imagePath,
+        totalClips: Number(input.durationSec) >= 24 ? 3 : 2,
+        aspect: input.aspectRatio === '16:9' ? '16:9' : '9:16',
+        vibe,
+      })
+      jobs.push({ pendingActionId: chain.pendingActionId, label: 'লম্বা রিল (Veo multi-clip)', type: 'video_gen' })
+      return { jobs, provider: 'gemini', fashnReady }
+    }
     const durationSec = Math.min(Math.max(Number(input.durationSec ?? 6), 4), 8)
     const aspect = input.aspectRatio === '16:9' ? '16:9' : '9:16'
     const { prompt } = buildVideoBrief(

@@ -25,6 +25,7 @@ import {
   MUSIC_VIBES,
   AUDIO_MODES,
   VOICEOVER_MAX_CHARS,
+  reelCostBdt,
   type VideoAudioMode,
 } from '@/lib/creative-studio/video-recipes'
 import LifestyleEditor from '@/agent/components/creative-studio/LifestyleEditor'
@@ -1214,6 +1215,30 @@ function GalleryView() {
                 >
                   ডাউনলোড
                 </button>
+                {/* V4: one-tap reel from any finished studio image — the family
+                    merge becomes a moving reel; 16/24s = multi-clip Veo chain */}
+                {selected.status === 'executed' && selected.storagePath && (
+                  <div className="flex items-center gap-1.5 rounded-full bg-black/50 px-2 py-1 ring-1 ring-white/20 backdrop-blur-md">
+                    <span className="pl-1 text-[11px] font-semibold text-white/80">রিল:</span>
+                    {[6, 16, 24].map((d) => {
+                      const cost = d >= 16 ? reelCostBdt(8) * Math.round(d / 8) : reelCostBdt(d)
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => {
+                            void runStudioJob({ mode: 'image_to_video', sourceImagePath: selected.storagePath ?? undefined, durationSec: d })
+                              .then(() => toast.success(`${d}s রিল তৈরি হচ্ছে (~৳${cost}) — Gallery-তে আসবে, স্যার`))
+                              .catch((e) => toast.error(e instanceof Error ? e.message : 'শুরু করা যায়নি'))
+                          }}
+                          className="rounded-full bg-[#E07A5F] px-2.5 py-1 text-[11px] font-bold text-white"
+                        >
+                          {d}s ~৳{cost}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             )}
             {selected.type === 'video_gen' || selected.storagePath?.endsWith('.mp4') ? (
@@ -1863,6 +1888,7 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
   const [musicTrackId, setMusicTrackId] = useState<string>('auto')
   const [voiceoverText, setVoiceoverText] = useState('')
   const [stings, setStings] = useState(false)
+  const [aiAssist, setAiAssist] = useState(false)
   const [tracks, setTracks] = useState<StudioMusicTrack[]>([])
   const [showMusicLib, setShowMusicLib] = useState(false)
 
@@ -1945,6 +1971,7 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
           musicTrackId,
           voiceoverText: voiceoverText.trim() || undefined,
           stings,
+          aiAssist,
         },
       })
       setJobs((prev) => [
@@ -1957,7 +1984,7 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
     } finally {
       setRunning(false)
     }
-  }, [selected, recipe, targets, aspect, captions, audioMode, musicTrackId, voiceoverText, stings])
+  }, [selected, recipe, targets, aspect, captions, audioMode, musicTrackId, voiceoverText, stings, aiAssist])
 
   const fmtSize = (b: number) => (b > 1024 * 1024 ? `${Math.round(b / (1024 * 1024))} MB` : `${Math.round(b / 1024)} KB`)
 
@@ -2159,6 +2186,13 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
               <label className="flex items-center justify-between">
                 <span className="text-[12px] font-semibold text-cream">ALMA লোগো intro/outro</span>
                 <input type="checkbox" checked={stings} onChange={(e) => setStings(e.target.checked)} className="h-4 w-4 accent-[#E07A5F]" />
+              </label>
+
+              <label className="flex items-center justify-between">
+                <span className="text-[12px] font-semibold text-cream">
+                  AI হাইলাইট সাজেশন <span className="text-[10px] text-muted">(বিটা)</span>
+                </span>
+                <input type="checkbox" checked={aiAssist} onChange={(e) => setAiAssist(e.target.checked)} className="h-4 w-4 accent-[#E07A5F]" />
               </label>
             </div>
 
