@@ -68,12 +68,14 @@ enum AlmaTheme {
     /// material, no violet slab — content blurs THROUGH it in both light and dark).
     static func navAppearance() -> UINavigationBarAppearance {
         let a = UINavigationBarAppearance()
-        // FULLY transparent — no material at all. EVERY UIKit blur carries a tint
-        // (black band in dark, grey slab in light — owner rejected both), so the bar
-        // paints nothing; the frosted-glass effect comes from the WEB side instead
-        // (a tint-free backdrop-blur strip under the bar, gated alma-native-hdr),
-        // which blurs the page's own pixels and therefore melts into the background
-        // by construction. Native keeps only the floating title + buttons.
+        // PURE GLASSMORPHISM (owner spec 2026-07-05): the bar itself paints NOTHING —
+        // no material, no background colour, no shadow line, no gradient. The frosted
+        // blur comes from an AlmaGlassHeader strip each screen pins under its bar zone:
+        // a UIVisualEffectView with the material's TINT layers stripped, leaving only
+        // the gaussian backdrop blur. Every stock UIKit material tints (dark band in
+        // dark mode, grey slab in light — sim-verified again 2026-07-05 with
+        // .systemUltraThinMaterial), so a bar-painted material can never satisfy
+        // "blurred + glossy in the app's own colours, zero dark tint".
         a.configureWithTransparentBackground()
         a.shadowColor = .clear
         // Claude-style: strong dark (light mode) / white (dark mode) semibold title.
@@ -93,6 +95,26 @@ enum AlmaTheme {
         // NO drop shadow — the bar must melt into the page as ONE layer (owner: the
         // shadow made the header read as a separate slab floating over the background).
         nav.navigationBar.layer.shadowOpacity = 0
+        installGlassHeader(nav)
+    }
+
+    /// Pin the pure-blur glass strip under this nav's bar zone (status bar + nav bar),
+    /// BELOW the navigationBar so the title/buttons stay crisp above the frost. One
+    /// central hook — every tab and every pushed screen gets the identical header glass.
+    /// Bottom tracks the bar's real bottom edge, so large-title expansion/collapse and
+    /// rotation resize it automatically. Idempotent (tag guard) — applyNav re-runs on
+    /// every theme flip.
+    static func installGlassHeader(_ nav: UINavigationController) {
+        guard nav.view.viewWithTag(AlmaGlassHeaderView.viewTag) == nil else { return }
+        let glass = AlmaGlassHeaderView()
+        glass.translatesAutoresizingMaskIntoConstraints = false
+        nav.view.insertSubview(glass, belowSubview: nav.navigationBar)
+        NSLayoutConstraint.activate([
+            glass.topAnchor.constraint(equalTo: nav.view.topAnchor),
+            glass.leadingAnchor.constraint(equalTo: nav.view.leadingAnchor),
+            glass.trailingAnchor.constraint(equalTo: nav.view.trailingAnchor),
+            glass.bottomAnchor.constraint(equalTo: nav.navigationBar.bottomAnchor),
+        ])
     }
 
     static func tabBarAppearance() -> UITabBarAppearance {
@@ -151,6 +173,40 @@ enum AlmaTheme {
         (function(){try{document.documentElement.dataset.theme='\(mode)';
         document.cookie='alma-theme=\(mode); path=/; max-age=31536000; SameSite=Lax';}catch(e){}})();
         """
+    }
+}
+
+/// PURE frosted glass for the header zone (owner spec 2026-07-05): a UIVisualEffectView
+/// whose material TINT sublayers are stripped, leaving ONLY the gaussian backdrop blur.
+/// Every stock UIKit material paints a tint over the content (dark band in dark mode,
+/// grey wash in light — both rejected); the blur itself lives in the backdrop sublayer,
+/// so hiding the non-backdrop sublayers yields true glassmorphism: scrolled content
+/// reads blurred + glossy in the app's own colours, zero added tint, no gradients, no
+/// shadows. Introspection is by class-name substring only (no private API calls); if a
+/// future iOS renames the sublayers the view degrades to a stock blur — never breaks.
+final class AlmaGlassHeaderView: UIVisualEffectView {
+    static let viewTag = 987_431
+
+    init() {
+        super.init(effect: UIBlurEffect(style: .regular))
+        tag = Self.viewTag
+        isUserInteractionEnabled = false
+        stripTint()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
+
+    // The effect view rebuilds its sublayers on window / layout changes — re-strip.
+    override func didMoveToWindow() { super.didMoveToWindow(); stripTint() }
+    override func layoutSubviews() { super.layoutSubviews(); stripTint() }
+
+    private func stripTint() {
+        for sub in subviews where sub !== contentView {
+            let cls = String(describing: type(of: sub))
+            if !cls.contains("Backdrop") {
+                sub.isHidden = true
+                sub.backgroundColor = .clear
+            }
+        }
     }
 }
 
@@ -454,10 +510,9 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // Hairline only — Claude's discs have no visible ring (a bright ring read as a
         // white halo around the dark hamburger in dark mode, owner comparison 2026-07-05).
         container.layer.borderColor = (light ? UIColor(white: 0, alpha: 0.08) : UIColor(white: 1, alpha: 0.10)).cgColor
-        container.layer.shadowColor = UIColor.black.cgColor
-        container.layer.shadowOpacity = light ? 0.12 : 0
-        container.layer.shadowRadius = 4
-        container.layer.shadowOffset = CGSize(width: 0, height: 1)
+        // NO drop shadow (owner spec: zero black shadows anywhere in the header —
+        // the frosted disc + hairline ring alone carry the depth).
+        container.layer.shadowOpacity = 0
         container.addTarget(target, action: action, for: .touchUpInside)
         return UIBarButtonItem(customView: container)
     }
@@ -479,10 +534,8 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         container.setImage(img, for: .normal)
         container.layer.cornerRadius = size / 2
         container.layer.masksToBounds = false
-        container.layer.shadowColor = coral.cgColor
-        container.layer.shadowOpacity = 0.25   // subtler — Claude's compose sits nearly flat
-        container.layer.shadowRadius = 6
-        container.layer.shadowOffset = CGSize(width: 0, height: 2)
+        // Flat — no shadow at all in the header zone (owner spec 2026-07-05).
+        container.layer.shadowOpacity = 0
         container.addTarget(target, action: action, for: .touchUpInside)
         return UIBarButtonItem(customView: container)
     }
