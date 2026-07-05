@@ -338,7 +338,7 @@ struct OrdersScreen: View {
             .padding(.horizontal, 14)
             .padding(.top, 6)
         }
-        .background(AlmaSwiftTheme.rootBg(colorScheme).ignoresSafeArea())
+        .background(OrdersAurora()) // the owner's aurora — cards float on it in glass
         .claudeTopFade() // Claude-style top dissolve under the glass nav bar
         .refreshable { await vm.load() }
         .scrollDismissesKeyboard(.immediately)
@@ -432,9 +432,7 @@ struct OrdersScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(AlmaSwiftTheme.cardBg(colorScheme),
-                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .shadow(color: AlmaSwiftTheme.cardShadow(colorScheme), radius: 6, y: 2)
+        .ordersGlass(colorScheme, corner: 14)
     }
 
     // ── Channel / payment / sort (the web header's dropdowns, as one native menu) ──
@@ -470,9 +468,7 @@ struct OrdersScreen: View {
                 .font(.title3)
                 .foregroundStyle(AlmaSwiftTheme.violet)
                 .frame(width: 42, height: 42)
-                .background(AlmaSwiftTheme.cardBg(colorScheme),
-                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .shadow(color: AlmaSwiftTheme.cardShadow(colorScheme), radius: 6, y: 2)
+                .ordersGlass(colorScheme, corner: 14)
         }
     }
 
@@ -487,10 +483,12 @@ struct OrdersScreen: View {
                 .font(.footnote.weight(active ? .semibold : .regular))
                 .foregroundStyle(active ? tint : .secondary)
                 .padding(.horizontal, 12).padding(.vertical, 7)
-                .background(active ? tint.opacity(colorScheme == .dark ? 0.18 : 0.12)
-                                   : AlmaSwiftTheme.cardBg(colorScheme),
+                .background(active ? tint.opacity(colorScheme == .dark ? 0.28 : 0.16)
+                                   : Color.white.opacity(colorScheme == .dark ? 0.08 : 0.45),
                             in: Capsule())
-                .overlay(Capsule().strokeBorder(active ? tint.opacity(0.5) : .clear, lineWidth: 1))
+                .overlay(Capsule().strokeBorder(
+                    active ? tint.opacity(0.55) : Color.white.opacity(colorScheme == .dark ? 0.10 : 0.4),
+                    lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
@@ -528,10 +526,12 @@ struct OrdersScreen: View {
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 7)
-            .background(active ? tint.opacity(colorScheme == .dark ? 0.18 : 0.12)
-                               : AlmaSwiftTheme.cardBg(colorScheme),
+            .background(active ? tint.opacity(colorScheme == .dark ? 0.28 : 0.16)
+                               : Color.white.opacity(colorScheme == .dark ? 0.08 : 0.45),
                         in: Capsule())
-            .overlay(Capsule().strokeBorder(active ? tint.opacity(0.5) : .clear, lineWidth: 1))
+            .overlay(Capsule().strokeBorder(
+                active ? tint.opacity(0.55) : Color.white.opacity(colorScheme == .dark ? 0.10 : 0.4),
+                lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
@@ -553,9 +553,7 @@ struct OrdersScreen: View {
                 .autocorrectionDisabled()
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
-        .background(AlmaSwiftTheme.cardBg(colorScheme),
-                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .shadow(color: AlmaSwiftTheme.cardShadow(colorScheme), radius: 6, y: 2)
+        .ordersGlass(colorScheme, corner: 14)
     }
 
     private var newOrderFAB: some View {
@@ -584,7 +582,7 @@ struct OrdersScreen: View {
         }
         .frame(maxWidth: .infinity)
         .padding(20)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .ordersGlass(colorScheme, corner: 16)
     }
 
     private func errorCard(_ message: String) -> some View {
@@ -593,14 +591,14 @@ struct OrdersScreen: View {
             .foregroundStyle(.red)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .ordersGlass(colorScheme, corner: 12)
     }
 
     private var loadingRows: some View {
         ForEach(0..<6, id: \.self) { _ in
-            RoundedRectangle(cornerRadius: 16)
-                .fill(.thinMaterial)
+            Color.clear
                 .frame(height: 92)
+                .ordersGlass(colorScheme, corner: 16)
                 .shimmering()
         }
     }
@@ -647,9 +645,7 @@ private struct OrderCard: View {
             }
         }
         .padding(14)
-        .background(AlmaSwiftTheme.cardBg(colorScheme),
-                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: AlmaSwiftTheme.cardShadow(colorScheme), radius: 6, y: 2)
+        .ordersGlass(colorScheme, corner: 16)
         .contentShape(RoundedRectangle(cornerRadius: 16))
     }
 
@@ -696,7 +692,7 @@ private struct OrderDetailSheet: View {
             }
             .padding(18)
         }
-        .presentationBackground(.thinMaterial)
+        .presentationBackground { OrdersAurora() }   // sheet floats on the aurora too
     }
 
     private var header: some View {
@@ -732,8 +728,9 @@ private struct OrderDetailSheet: View {
             }
         }
         .padding(14)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .ordersGlass(colorScheme, corner: 14)
     }
+    @Environment(\.colorScheme) private var colorScheme
 
     private func row(_ icon: String, _ text: String?) -> some View {
         HStack(alignment: .top, spacing: 10) {
@@ -800,6 +797,96 @@ private struct OrderDetailSheet: View {
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
         .padding(.top, 2)
+    }
+}
+
+// MARK: - Aurora background + glass card (the owner's theme — Orders-owned copies)
+
+/// The ALMA aurora: deep indigo → violet → magenta wash (dark) / cream with soft coral,
+/// violet and pink washes (light) — the same ambient the Assistant surface and the web
+/// dashboard wear. Owner reference screenshot 2026-07-06. Lives in the Orders files (not
+/// the shared shell) so parallel page sessions can't collide on it.
+@available(iOS 17.0, *)
+struct OrdersAurora: View {
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        ZStack {
+            if scheme == .dark {
+                LinearGradient(stops: [
+                    .init(color: Color(red: 0.075, green: 0.063, blue: 0.196), location: 0.0),  // deep indigo
+                    .init(color: Color(red: 0.216, green: 0.125, blue: 0.439), location: 0.32), // violet
+                    .init(color: Color(red: 0.478, green: 0.176, blue: 0.494), location: 0.62), // purple-magenta
+                    .init(color: Color(red: 0.706, green: 0.255, blue: 0.404), location: 1.0),  // pink
+                ], startPoint: .top, endPoint: .bottom)
+                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.35), .clear],
+                               center: .init(x: 0.15, y: 0.18), startRadius: 10, endRadius: 420)
+                RadialGradient(colors: [Color(red: 0.93, green: 0.42, blue: 0.55).opacity(0.30), .clear],
+                               center: .init(x: 0.9, y: 0.85), startRadius: 20, endRadius: 480)
+            } else {
+                AlmaSwiftTheme.rootBg(.light)
+                LinearGradient(stops: [
+                    .init(color: Color(red: 0.902, green: 0.882, blue: 0.973), location: 0.0),  // pale violet
+                    .init(color: Color(red: 0.949, green: 0.941, blue: 0.972), location: 0.45), // cream
+                    .init(color: Color(red: 0.988, green: 0.918, blue: 0.925), location: 1.0),  // pale pink
+                ], startPoint: .top, endPoint: .bottom)
+                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.14), .clear],
+                               center: .init(x: 0.12, y: 0.15), startRadius: 10, endRadius: 380)
+                RadialGradient(colors: [AlmaSwiftTheme.coral.opacity(0.12), .clear],
+                               center: .init(x: 0.9, y: 0.9), startRadius: 20, endRadius: 420)
+            }
+        }
+        .ignoresSafeArea()
+    }
+}
+
+/// Frosted glass card over the aurora — translucent surface + hairline ring, so the
+/// gradient glows through (the Assistant-surface card look, per the owner's reference).
+@available(iOS 17.0, *)
+struct OrdersGlassCard<Content: View>: View {
+    @Environment(\.colorScheme) private var scheme
+    var title: String? = nil
+    var icon: String? = nil
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let title {
+                HStack(spacing: 7) {
+                    if let icon {
+                        Image(systemName: icon)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AlmaSwiftTheme.coral)
+                    }
+                    Text(title)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                }
+                .padding(.bottom, 2)
+            }
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.12 : 0.5), lineWidth: 1))
+    }
+}
+
+/// Small glass surface for chips / fields / row cards (same recipe, tighter radius).
+@available(iOS 17.0, *)
+extension View {
+    func ordersGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+        self
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),
+                        in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
     }
 }
 
