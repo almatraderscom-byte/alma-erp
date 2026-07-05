@@ -12,6 +12,7 @@ import { AppToaster } from '@/components/ui/AppToaster'
 import { ConfirmDialogHost } from '@/components/ui/confirm-dialog'
 import { PromptDialogHost } from '@/components/ui/prompt-dialog'
 import { GlobalPlatformChrome } from '@/components/layout/GlobalPlatformChrome'
+import TopScrollFade from '@/components/layout/TopScrollFade'
 import { AmbientBackground } from '@/components/ambient/AmbientBackground'
 import { GlobalKeyboardManager } from '@/components/ui-mobile/GlobalKeyboardManager'
 import { bootEscapeScript } from '@/lib/boot-escape-script'
@@ -110,6 +111,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             focused inputs above the keyboard (Keyboard.resize is None). */}
         <GlobalKeyboardManager />
         <GlobalPlatformChrome />
+        {/* App-wide top scroll-edge progressive blur (native shell only — gated on
+            html.alma-native inside the component's CSS; desktop/web unaffected).
+            The SwiftUI twin is ios/App/App/ClaudeTopFade.swift — tokens must match. */}
+        <TopScrollFade />
         <AppToaster />
         <ConfirmDialogHost />
         <PromptDialogHost />
