@@ -700,6 +700,14 @@ final class MoreMenuViewController: UITableViewController {
     private let sharedPool: WKProcessPool
 
     private let sections: [Section] = [
+        // P3 mobile companion: the agent drives a browser ON THIS PHONE (same
+        // command bus as the Mac Chrome extension) + the live watch feed.
+        // "native:companion" is a sentinel handled in didSelectRowAt — it pushes
+        // the NATIVE companion screen instead of a web view.
+        Section(header: "Agent", items: [
+            Item(title: "Phone Companion", icon: "iphone.radiowaves.left.and.right", path: "native:companion"),
+            Item(title: "Live Watch",      icon: "eye",                              path: "/agent/live-watch"),
+        ]),
         Section(header: "Workspace", items: [
             Item(title: "My Desk",        icon: "person.crop.square",  path: "/portal"),
             Item(title: "Office",         icon: "building.2",          path: "/portal/office"),
@@ -818,6 +826,13 @@ final class MoreMenuViewController: UITableViewController {
             let item = sections[ip.section - 1].items[ip.row]
             path = item.path; tabTitle = item.title; symbol = item.icon
         }
+        // Native (non-web) rows: the phone companion is a native screen.
+        if path == "native:companion" {
+            let vc = AlmaCompanionViewController(processPool: sharedPool)
+            vc.hidesBottomBarWhenPushed = false
+            navigationController?.pushViewController(vc, animated: true)
+            return
+        }
         let vc = AlmaWebTabViewController(
             url: URL(string: base + path)!, processPool: sharedPool,
             tabTitle: tabTitle, systemImage: symbol, hideWebHeader: true)
@@ -889,6 +904,23 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         selection.prepare()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
+
+    private var didRunCompanionSelfTest = false
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // DEBUG self-test hook (never fires in production): when launched with
+        // ALMA_OPEN_COMPANION=1 (only set by the local `simctl launch` self-test),
+        // jump to More and push the native Phone Companion so its render + pairing
+        // dialog can be screenshotted headlessly. No effect on any real launch.
+        guard !didRunCompanionSelfTest,
+              ProcessInfo.processInfo.environment["ALMA_OPEN_COMPANION"] == "1" else { return }
+        didRunCompanionSelfTest = true
+        selectedIndex = 4 // More
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let nav = self?.viewControllers?.last as? UINavigationController else { return }
+            nav.pushViewController(AlmaCompanionViewController(processPool: WKProcessPool()), animated: false)
+        }
+    }
 
     /// A frosted-glass UINavigationController wrapping `root`, with a tab item.
     /// `light: true` = the CLAUDE-style LIGHT frosted bar (ultra-thin white material, dark
