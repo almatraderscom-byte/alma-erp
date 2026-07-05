@@ -89,6 +89,15 @@ vi.mock('@/agent/lib/telegram-owner-notify', () => ({
   },
 }))
 
+// P3: native push on NEW checkpoints (never on refresh) — recorded for assertions.
+const nativePushes: Array<{ title: string; actionUrl?: string | null }> = []
+vi.mock('@/agent/lib/native-owner-push', () => ({
+  pushNativeToOwner: async (opts: { title: string; actionUrl?: string | null }) => {
+    nativePushes.push({ title: opts.title, actionUrl: opts.actionUrl })
+    return { attempted: true, ok: true }
+  },
+}))
+
 import {
   writeCheckpoint,
   resolveCheckpointByTaskRef,
@@ -101,6 +110,7 @@ beforeEach(() => {
   tasks.length = 0
   actions.length = 0
   pings.length = 0
+  nativePushes.length = 0
   idc = 0
 })
 
@@ -135,6 +145,14 @@ describe('writeCheckpoint', () => {
     await writeCheckpoint({ ...baseInput, error: 'timeout again', currentStep: 'site B page 4' })
     expect(tasks).toHaveLength(1)
     expect((tasks[0].checkpoint as { currentStep: string }).currentStep).toBe('site B page 4')
+  })
+
+  it('P3: a NEW checkpoint sends ONE native push with the app deep link; a refresh sends none', async () => {
+    await writeCheckpoint(baseInput)
+    expect(nativePushes).toHaveLength(1)
+    expect(nativePushes[0].actionUrl).toBe('/agent')
+    await writeCheckpoint({ ...baseInput, error: 'again' }) // refresh — same taskRef
+    expect(nativePushes).toHaveLength(1)
   })
 
   it('waiting_for_owner carries the question', async () => {

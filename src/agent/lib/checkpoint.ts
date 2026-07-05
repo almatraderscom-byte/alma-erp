@@ -108,6 +108,22 @@ export async function writeCheckpoint(input: WriteCheckpointInput): Promise<stri
       return existing.id as string
     }
     const row = await db.agentOpenTask.create({ data })
+
+    // P3 step 1 — the owner supervises from his PHONE: a brand-NEW checkpoint
+    // (never a refresh — the dedupe above returns early) lights up the native
+    // app with a tap-through to the agent. Fail-open; Telegram/chat channels
+    // are separate and unaffected.
+    try {
+      const { pushNativeToOwner } = await import('@/agent/lib/native-owner-push')
+      await pushNativeToOwner({
+        tier: 2,
+        title: cp.state === 'failed' ? '⛔ কাজ আটকে গেছে' : '⏸️ আপনার উত্তর দরকার',
+        message: `${cp.goal}\n${cp.summaryBn}`.slice(0, 400),
+        category: 'task',
+        actionUrl: '/agent',
+      })
+    } catch { /* best-effort — the checkpoint row is already durable */ }
+
     return row.id as string
   } catch (err) {
     console.error('[checkpoint] write failed (task state may be lost!):', err instanceof Error ? err.message : err)
