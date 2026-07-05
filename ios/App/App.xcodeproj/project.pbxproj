@@ -36,6 +36,7 @@
 		F2AA7700000000000000B011 /* SwiftUIShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A011 /* SwiftUIShell.swift */; };
 		F2AA7700000000000000B012 /* MoreMenuSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A012 /* MoreMenuSwiftUI.swift */; };
 		F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A013 /* OrdersSwiftUI.swift */; };
+		F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A021 /* AssistantSwiftUI.swift */; };
 		F2AA7700000000000000B014 /* ApprovalsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */; };
 		F2AA7700000000000000B015 /* CompanionSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A015 /* CompanionSwiftUI.swift */; };
 		F2AA7700000000000000B016 /* OrderCreateSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A016 /* OrderCreateSwiftUI.swift */; };
@@ -76,6 +77,7 @@
 		F2AA7700000000000000A011 /* SwiftUIShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftUIShell.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A012 /* MoreMenuSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreMenuSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A013 /* OrdersSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrdersSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A021 /* AssistantSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A015 /* CompanionSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A016 /* OrderCreateSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrderCreateSwiftUI.swift; sourceTree = "<group>"; };
@@ -163,6 +165,7 @@
 				F2AA7700000000000000A011 /* SwiftUIShell.swift */,
 				F2AA7700000000000000A012 /* MoreMenuSwiftUI.swift */,
 				F2AA7700000000000000A013 /* OrdersSwiftUI.swift */,
+				F2AA7700000000000000A021 /* AssistantSwiftUI.swift */,
 				F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */,
 				F2AA7700000000000000A015 /* CompanionSwiftUI.swift */,
 				F2AA7700000000000000A016 /* OrderCreateSwiftUI.swift */,
@@ -378,6 +381,7 @@
 				F2AA7700000000000000B011 /* SwiftUIShell.swift in Sources */,
 				F2AA7700000000000000B012 /* MoreMenuSwiftUI.swift in Sources */,
 				F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */,
+				F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */,
 				F2AA7700000000000000B014 /* ApprovalsSwiftUI.swift in Sources */,
 				F2AA7700000000000000B015 /* CompanionSwiftUI.swift in Sources */,
 				F2AA7700000000000000B016 /* OrderCreateSwiftUI.swift in Sources */,

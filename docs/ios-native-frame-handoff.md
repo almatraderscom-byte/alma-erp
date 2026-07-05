@@ -9,6 +9,18 @@
 
 ---
 
+## 0-e. ✅ 2026-07-06 — S6b: NATIVE SWIFTUI ASSISTANT (chat) — sim-verified, NOT yet in a TestFlight build
+
+Owner asked for the Assistant section native (same colors/components as the current web agent UI); parallel Orders session untouched. Everything lives in **`ios/App/App/AssistantSwiftUI.swift`** (new, ~1.5k lines); shared-file touches kept to a minimum for conflict-safety: SpikeNativeShell.swift (assistant tab construction → `makeAssistantTab()`), SwiftUIShell.swift (`vcs[2]` swap on flag change), pbxproj (registration, ids A021/B021).
+
+- **Native chat v1 (iOS 17+, behind the same `alma-swiftui-screens` flag):** aurora background (globals.css blob colors, light/dark), coral #E07A5F→#C45A3C user bubbles (rounded-2xl, cut BR corner), full-width ink assistant text (15pt/1.7), markdown-lite (headers coral / bullets / fenced code + ```copy কপি-card / table cards), "🔧 Nটি টুল" pill (expandable, live spinner), thinking disclosure ("ভেবেছে N সেকেন্ড") + live "কাজ করছি…" shimmer row, confirm cards (অনুমোদন/বাতিল + status breadcrumbs), ask cards (option pills), chat images (signed-URL via /api/assistant/files), composer (plus→PhotosPicker upload, model pill, mic→/transcribe Whisper dictation, waveform orb=web escape, coral send⇄stop), sidebar sheet (conversation list + নতুন কথোপকথন + swipe-delete + Studio/WhatsApp/Monitor/Costs web escapes), jump-to-bottom, 12s quiet poll + presence ping, turn-status resume, auth-expired banner → /login web push.
+- **Protocol:** POST /api/assistant/chat SSE (conversation_id/turn_id/model_info/text_delta/tool_start/end/confirm_card/ask_card/done/error), 15s first-event watchdog → POST /turn + /turn/:id/stream (A2 worker fallback), stop = /turn/:id/cancel. JSON via AlmaAPI (cookie bridge); SSE/multipart via own `AssistantNet` (redirect-blocking, 330s timeouts). After each turn the server truth re-poll replaces the streamed tail.
+- **Web fallback verbatim:** flag OFF (or iOS 16) = the old segmented web Assistant, construction moved unchanged into makeAssistantTab's else-branch. Sim-verified both ways.
+- **Sim-verified (2026-07-06, live prod data):** dark + light both (aurora/bubbles/cards/composer), sidebar sheet, REAL E2E turn (sent "ছোট্ট সিস্টেম টেস্ট…" → "কাজ করছি…" → streamed "ঠিক আছে বস।", Gemini 3.1 Pro model pill live, stop button state), flag OFF→web fallback. Screenshots in session log.
+- **Self-test hooks (env-gated, never fire in production):** `ALMA_OPEN_ASSISTANT=1` (jump to tab, works in both variants), `ALMA_ASSISTANT_SIDEBAR=1`, `ALMA_ASSISTANT_SAY="…"`. **Sim theme flipping gotcha:** `simctl spawn defaults write` does NOT reach the app container, and direct plist edits get clobbered by cfprefsd — edit the container plist (PlistBuddy) then `simctl spawn <udid> launchctl kill SIGKILL system/com.apple.cfprefsd.xpc.daemon`, then launch.
+- **Deliberate v1 gaps:** voice-to-voice stays web (orb pushes /agent), no model-switcher menu (pill is display-only), web's full activity-timeline drill-down not replicated (thinking + tool pill instead), day-shift heartbeat markers not rendered as pills.
+- **⚠️ NOT yet shipped to TestFlight** — batch it into the next build together with the parallel Orders session's work (24h upload limit).
+
 ## 0-d. ✅ 2026-07-05 (night) — S6 KICKOFF SHIPPED: SwiftUI Orders / Approvals / More / Companion, BUILD 35
 
 Owner said "S6 shuru koro, non-stop shob sesh korbe" — the S6 deferral is lifted. Shipped in ONE session (4 parallel sub-agents + main integration), all sim-verified against LIVE prod data in both themes:

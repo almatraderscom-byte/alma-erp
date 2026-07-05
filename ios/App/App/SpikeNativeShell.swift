@@ -1150,34 +1150,16 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         // other content tabs. Its web page-header is hidden via AlmaBridgeViewController.
         dashboard.title = "Dashboard"
 
-        let pool = contentPool
-        // Assistant = the "Claude" surface: a native segmented control (Chat / Studio /
-        // WhatsApp / Monitor / Costs) at the top replaces the web sub-nav that used to
-        // stack above the native tab bar (the "double bottom bar"). Each segment loads
-        // its /agent route in the shared web view.
-        func agentURL(_ p: String) -> URL { URL(string: Self.base + p)! }
-        let assistant = AlmaWebTabViewController(
-            url: agentURL("/agent"), processPool: pool,
-            tabTitle: "Assistant", systemImage: "sparkles",
-            hideWebHeader: true,   // native dark-glass header replaces the light web top bar
-            agentSegments: [
-                ("Chat", agentURL("/agent")),
-                ("Studio", agentURL("/agent/creative-studio")),
-                ("WhatsApp", agentURL("/agent/whatsapp")),
-                ("Monitor", agentURL("/agent/staff-monitor")),
-                ("Costs", agentURL("/agent/costs")),
-            ])
-        let assistantNav = Self.darkNav(root: assistant, tabTitle: "Assistant",
-                                        icon: "sparkles", largeTitles: false)
-
-        // S6: Orders / Approvals / More are SwiftUI when the flag is on (iOS 17+),
-        // web/UIKit otherwise — makeXxxTab() decides per launch, and the flag toggle
-        // in More swaps them live (onSwiftUIFlagChanged). Dashboard (Capacitor) and
-        // Assistant are never swapped.
+        // S6: Orders / Assistant / Approvals / More are SwiftUI when the flag is on
+        // (iOS 17+), web/UIKit otherwise — makeXxxTab() decides per launch, and the
+        // flag toggle in More swaps them live (onSwiftUIFlagChanged). Dashboard
+        // (Capacitor) is never swapped. Assistant's builder lives in
+        // AssistantSwiftUI.swift (native chat; web fallback keeps the old segmented
+        // Chat/Studio/WhatsApp/Monitor/Costs construction verbatim).
         viewControllers = [
             Self.darkNav(root: dashboard, tabTitle: "Dashboard", icon: "square.grid.2x2", largeTitles: false),
             makeOrdersTab(),
-            assistantNav,
+            makeAssistantTab(),
             makeApprovalsTab(),
             makeMoreTab(),
         ]

@@ -194,11 +194,13 @@ extension AlmaTabBarController {
                             tabTitle: "More", icon: "ellipsis.circle", largeTitles: true)
     }
 
-    /// Swap Orders / Approvals / More in place when the owner flips the toggle —
-    /// Dashboard (Capacitor) and Assistant instances are preserved untouched.
+    /// Swap Orders / Assistant / Approvals / More in place when the owner flips the
+    /// toggle — the Dashboard (Capacitor) instance is preserved untouched.
+    /// (makeAssistantTab lives in AssistantSwiftUI.swift.)
     @objc func onSwiftUIFlagChanged() {
         guard var vcs = viewControllers, vcs.count == 5 else { return }
         vcs[1] = makeOrdersTab()
+        vcs[2] = makeAssistantTab()
         vcs[3] = makeApprovalsTab()
         vcs[4] = makeMoreTab()
         setViewControllers(vcs, animated: false)
