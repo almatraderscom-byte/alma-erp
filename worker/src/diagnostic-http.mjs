@@ -144,6 +144,42 @@ export function startDiagnosticHttpServer() {
 
       const token = tokenFromRequest(req)
 
+      // Twilio's own verdict on a call SID (status/duration/error) — lets a
+      // remote session distinguish carrier no-answer from a config/TwiML fault
+      // without materializing Twilio secrets (returns only the call's status).
+      if (req.method === 'GET' && pathname === '/twilio-status') {
+        if (!verifyToken(token)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'unauthorized' }))
+          return
+        }
+        const sid = url.searchParams.get('sid')?.trim()
+        const accountSid = process.env.TWILIO_ACCOUNT_SID
+        const authToken = process.env.TWILIO_AUTH_TOKEN
+        if (!sid || !accountSid || !authToken) {
+          res.writeHead(400, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'sid + twilio env required' }))
+          return
+        }
+        try {
+          const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64')
+          const r = await fetch(
+            `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${sid}.json`,
+            { headers: { Authorization: `Basic ${auth}` } },
+          )
+          const c = await r.json()
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            sid, status: c.status, duration: c.duration, price: c.price,
+            answered_by: c.answered_by, start: c.start_time, end: c.end_time,
+          }))
+        } catch (err) {
+          res.writeHead(502, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: String(err.message) }))
+        }
+        return
+      }
+
       if (req.method === 'POST' && pathname === '/retrigger') {
         if (!verifyToken(token)) {
           res.writeHead(401, { 'Content-Type': 'application/json' })
