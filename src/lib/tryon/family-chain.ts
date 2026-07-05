@@ -27,7 +27,7 @@ import { randomUUID } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { getOrClassifyGarment, normalizeGarmentType, type GarmentAttrs } from '@/lib/tryon/art-director'
 import { listModelsByRole, type SavedModel } from '@/lib/tryon/model-library'
-import { pickScene, toSceneRef, type SceneRef } from '@/lib/tryon/scene-pool'
+import { pickScene, pickSceneWeighted, toSceneRef, type SceneRef } from '@/lib/tryon/scene-pool'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -35,7 +35,7 @@ const db = prisma as any
 const CHILD_GARMENT_CACHE_PREFIX = 'tryon_child_garment:'
 const GROUP_KV_PREFIX = 'family_chain_group:'
 
-export type FamilyChainVariant = 'father_son' | 'mother_son' | 'mother_daughter' | 'full_family'
+export type FamilyChainVariant = 'father_son' | 'mother_son' | 'mother_daughter' | 'father_daughter' | 'couple' | 'full_family'
 export type ChainStepKind = 'adult_tryon' | 'child_garment' | 'child_tryon' | 'pair_merge' | 'group_merge' | 'rescene'
 
 const STEP_LABELS_BN: Record<ChainStepKind, string> = {
@@ -52,6 +52,8 @@ const VARIANT_LABELS_BN: Record<string, string> = {
   father_son: 'বাবা + ছেলে',
   mother_son: 'মা + ছেলে',
   mother_daughter: 'মা + মেয়ে',
+  father_daughter: 'বাবা + মেয়ে',
+  couple: 'কাপল (স্বামী-স্ত্রী)',
   full_family: 'পুরো ফ্যামিলি',
 }
 
@@ -65,7 +67,7 @@ export type FamilyChainState = {
   garmentType: string
   fabricNote?: string
   adultRole: 'father' | 'mother'
-  childRole?: 'son' | 'daughter'
+  childRole?: 'son' | 'daughter' | 'mother'
   adultModelPath: string
   childModelPath?: string
   /** full ordered plan; stepIndex points at the step THIS action performs */
@@ -101,7 +103,8 @@ const IDENTITY_GUARD =
 
 function chainSummary(state: FamilyChainState, step: ChainStepKind): string {
   const variant = VARIANT_LABELS_BN[state.variant] ?? state.variant
-  return `🧬 ${variant} — ধাপ ${state.stepIndex + 1}/${state.plan.length}: ${STEP_LABELS_BN[step]}`
+  const stepLabel = state.childRole === 'mother' && step === 'child_tryon' ? 'স্ত্রীর শট (FASHN)' : STEP_LABELS_BN[step]
+  return `🧬 ${variant} — ধাপ ${state.stepIndex + 1}/${state.plan.length}: ${stepLabel}`
 }
 
 // ── Child garment cache (per product image + child role) ──────────────────────
@@ -222,7 +225,9 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
             prompt: fashnPosePrompt(
               state.scene.childPose,
               state.scene,
-              'Natural child proportions for the age shown in the model photo; garment sized correctly for the child.',
+              state.childRole === 'mother'
+              ? 'Natural adult proportions; the garment is her piece of the matching couple set.'
+              : 'Natural child proportions for the age shown in the model photo; garment sized correctly for the child.',
             ),
             resolution: state.resolution,
             generationMode: state.generationMode,
@@ -241,11 +246,15 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
           ...base,
           prompt: [
             'TASK: combine two finished fashion photos into ONE cohesive photograph.',
-            'Image 1 = person A (adult), Image 2 = person B (child). Recreate BOTH people together in a single scene.',
+            state.childRole === 'mother'
+              ? 'Image 1 = the husband, Image 2 = the wife. Recreate BOTH adults together in a single natural couple scene.'
+              : 'Image 1 = person A (adult), Image 2 = person B (child). Recreate BOTH people together in a single scene.',
             IDENTITY_GUARD,
             `SCENE — ${state.scene.scenePrompt}`,
             `POSE — ${state.scene.pairPose}.`,
-            'One consistent light source and color grade across both people, natural contact shadows, correct relative height between the adult and the child.',
+            state.childRole === 'mother'
+              ? 'One consistent light source and color grade across both people, natural contact shadows, natural relative heights for a couple.'
+              : 'One consistent light source and color grade across both people, natural contact shadows, correct relative height between the adult and the child.',
             'They wear the SAME matching family collection — the shared motif/color must read clearly as a coordinated set.',
             'Photorealistic professional Bangladeshi family fashion photograph, e-commerce ready.',
             state.extraPrompt ?? '',
@@ -325,10 +334,14 @@ async function createStepAction(state: FamilyChainState, step: ChainStepKind): P
 
 // ── Chain start ───────────────────────────────────────────────────────────────
 
-const VARIANT_ROLES: Record<FamilyChainVariant, { adult: 'father' | 'mother'; child: 'son' | 'daughter' }> = {
+const VARIANT_ROLES: Record<FamilyChainVariant, { adult: 'father' | 'mother'; child: 'son' | 'daughter' | 'mother' }> = {
   father_son: { adult: 'father', child: 'son' },
   mother_son: { adult: 'mother', child: 'son' },
   mother_daughter: { adult: 'mother', child: 'daughter' },
+  father_daughter: { adult: 'father', child: 'daughter' },
+  // couple = two ADULTS: the "child" slot carries the wife, who wears the
+  // adult product directly — no child-garment step, no cache.
+  couple: { adult: 'father', child: 'mother' },
   full_family: { adult: 'father', child: 'son' }, // resolved per sub-chain
 }
 
@@ -355,6 +368,8 @@ function requiredRoles(variant: FamilyChainVariant): Array<'father' | 'mother' |
   if (variant === 'father_son') return ['father', 'son']
   if (variant === 'mother_son') return ['mother', 'son']
   if (variant === 'mother_daughter') return ['mother', 'daughter']
+  if (variant === 'father_daughter') return ['father', 'daughter']
+  if (variant === 'couple') return ['father', 'mother']
   return ['father', 'mother', 'son', 'daughter']
 }
 
@@ -375,7 +390,12 @@ async function startPairChain(opts: {
   const adult = opts.models[roles.adult]!
   const child = opts.models[roles.child]!
 
-  const cachedGarment = await readChildGarmentCache(opts.productImagePath, roles.child)
+  // couple: the wife wears the ADULT product as-is — skip the child-garment
+  // generation entirely and feed the product straight into her FASHN try-on.
+  const isCouple = opts.variant === 'couple'
+  const cachedGarment = isCouple
+    ? opts.productImagePath
+    : await readChildGarmentCache(opts.productImagePath, roles.child)
   const plan: ChainStepKind[] = cachedGarment
     ? ['adult_tryon', 'child_tryon', 'pair_merge']
     : ['adult_tryon', 'child_garment', 'child_tryon', 'pair_merge']
@@ -424,7 +444,9 @@ export async function startFamilyChain(input: StartFamilyChainInput): Promise<{
   const missing = requiredRoles(input.variant).filter((r) => !models[r])
   if (missing.length) throw new FamilyChainModelError(missing)
 
-  const picked = pickScene()
+  // CS4: owner's ভালো/বাদ feedback weights the scene pool (deterministic)
+  const { readSceneWeights } = await import('@/lib/creative-studio/taste')
+  const picked = pickSceneWeighted(await readSceneWeights())
   const scene = toSceneRef(picked)
   const attrs = await getOrClassifyGarment(productImagePath)
   const common = {
@@ -573,7 +595,7 @@ export async function advanceFamilyChain(
     if (step === 'adult_tryon') next.adultImagePath = storagePath
     if (step === 'child_garment') {
       next.childGarmentPath = storagePath
-      if (state.childRole) await writeChildGarmentCache(state.productImagePath, state.childRole, storagePath)
+      if (state.childRole && state.childRole !== 'mother') await writeChildGarmentCache(state.productImagePath, state.childRole, storagePath)
     }
     if (step === 'child_tryon') next.childImagePath = storagePath
 

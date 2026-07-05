@@ -26,6 +26,8 @@ export type GalleryItem = {
   storagePath: string | null
   /** V2: reel cover picker options (video_edit items) */
   coverOptions?: Array<{ path: string; url: string }>
+  /** CS4: role when this image is an AI-generated brand model portrait */
+  modelCreator?: string | null
   error: string | null
 }
 
@@ -389,6 +391,63 @@ export async function finishVideo(
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error ?? 'finish_failed')
   return data
+}
+
+// ── CS4 helpers ──────────────────────────────────────────────────────────────
+
+export async function sendItemFeedback(pendingActionId: string, verdict: 'good' | 'bad') {
+  const res = await fetch('/api/assistant/creative-studio/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pendingActionId, verdict }),
+  })
+  if (!res.ok) throw new Error('feedback_failed')
+  return res.json() as Promise<{ weighted: boolean; weight?: number }>
+}
+
+export async function retryStudioJob(pendingActionId: string) {
+  const res = await fetch(`/api/assistant/creative-studio/jobs/${pendingActionId}/retry`, { method: 'POST' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? 'retry_failed')
+  return data as { pendingActionId: string }
+}
+
+export type StudioSettings = {
+  qcLevel: 'off' | 'normal' | 'strict'
+  notifyOnDone: boolean
+  sceneWeights: Record<string, number>
+  childGarments: Array<{ key: string; role: string; productPath: string; garmentPath: string; url: string | null }>
+}
+
+export async function fetchStudioSettings(): Promise<StudioSettings> {
+  const res = await fetch('/api/assistant/creative-studio/settings')
+  if (!res.ok) throw new Error('settings_failed')
+  return res.json()
+}
+
+export async function saveStudioSettings(patch: { qcLevel?: string; notifyOnDone?: boolean }) {
+  const res = await fetch('/api/assistant/creative-studio/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) throw new Error('settings_save_failed')
+}
+
+export async function deleteGarmentCache(key: string) {
+  const res = await fetch(`/api/assistant/creative-studio/settings?key=${encodeURIComponent(key)}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('cache_delete_failed')
+}
+
+export async function generateBrandModel(role: string) {
+  const res = await fetch('/api/assistant/creative-studio/model-creator', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? 'model_gen_failed')
+  return data as { pendingActionId: string }
 }
 
 export type VideoRunOptions = {

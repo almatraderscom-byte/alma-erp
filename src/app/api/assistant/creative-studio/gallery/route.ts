@@ -116,6 +116,8 @@ export async function GET(req: NextRequest) {
       storagePath,
       // true once the original lives only on Google Drive (UI can show a badge)
       archivedToDrive,
+      // CS4: model-creator output → lightbox shows "মডেল হিসেবে সেভ"
+      modelCreator: (payload.modelCreator as string | undefined) ?? null,
       // V2 reel cover picker options (video_edit only)
       coverOptions: (Array.isArray(result.coverCandidates) ? (result.coverCandidates as string[]) : [])
         .filter((c) => signed[c])
