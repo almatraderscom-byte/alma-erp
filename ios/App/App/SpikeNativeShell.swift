@@ -86,7 +86,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     private let url: URL
     private let sharedProcessPool: WKProcessPool
     private var webView: WKWebView!
-    private let spinner = UIActivityIndicatorView(style: .medium)
+    private var loader: AlmaPremiumLoader!   // premium branded first-paint / transition loader
     private let baseTitle: String
     /// When true the web hides its OWN page header (this VC shows a native one), so
     /// there is no double header. Off for Assistant (keeps its in-page header).
@@ -173,8 +173,20 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         root.addSubview(webView)
         webView.translatesAutoresizingMaskIntoConstraints = false
 
+        // GLASS MOTION (Assistant only): pin the web view to the very TOP of the root
+        // (y=0, UNDER the translucent dark-glass nav bar) so the chat scrolls THROUGH
+        // the bar, blurred — the Claude-app top-bar feel. Because the view now underlaps
+        // the bar, iOS reports env(safe-area-inset-top) = the bar's bottom INSIDE the
+        // WebView, and the web (gated on `alma-native-hdr`) turns that inset into the
+        // chat scroll area's CONTENT top padding: the first message clears the bar at
+        // rest, later messages pass under it. Every OTHER tab stays pinned below the bar
+        // (safe-area top) — their pages are opaque and must not underlap. On build 28 the
+        // web change is a no-op (env-top there is 0), so the web deploy is safe either way.
+        let topAnchor = agentSegments.isEmpty
+            ? root.safeAreaLayoutGuide.topAnchor
+            : root.topAnchor
         NSLayoutConstraint.activate([
-            webView.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor),
+            webView.topAnchor.constraint(equalTo: topAnchor),
             webView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             // FULL height to the safe-area bottom (above the native tab bar → no tab-bar
@@ -189,13 +201,18 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         ])
         startObservingKeyboard()
 
-        spinner.color = UIColor(red: 0.42, green: 0.36, blue: 0.62, alpha: 0.75) // violet-gray on the light placeholder
-        spinner.hidesWhenStopped = true
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(spinner)
+        // Premium branded loader covering the whole tab during first-paint / navigation.
+        // Light wash for the ERP web views (no dark→light flash), deep violet for the
+        // dark Assistant. It sits ABOVE the web view and fades out when content is ready.
+        loader = AlmaPremiumLoader(style: agentSegments.isEmpty ? .light : .dark)
+        loader.translatesAutoresizingMaskIntoConstraints = false
+        loader.isHidden = true
+        root.addSubview(loader)
         NSLayoutConstraint.activate([
-            spinner.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            spinner.centerYAnchor.constraint(equalTo: root.centerYAnchor)
+            loader.topAnchor.constraint(equalTo: root.topAnchor),
+            loader.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            loader.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            loader.trailingAnchor.constraint(equalTo: root.trailingAnchor),
         ])
 
         // Assistant tab: an iOS-AssistiveTouch-style FLOATING nav for the agent sections
@@ -325,6 +342,27 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         webView?.evaluateJavaScript(js, completionHandler: nil)
     }
 
+    /// GLASS MOTION top inset — inject the EXACT status-bar+nav-bar height into
+    /// `--alma-top-inset` so the agent's chat scroll CONTENT can clear the bar (and
+    /// scroll under it). We inject it natively instead of relying on the WebView's
+    /// `env(safe-area-inset-top)`, which is unreliable here: the plain WKWebView runs
+    /// `contentInsetAdjustmentBehavior = .never` (so the web owns all insets), and under
+    /// that mode env() does not track the underlapped nav bar. Same proven bridge as
+    /// `--kb-inset`. Agent tab only; the web falls back to env() when the var is absent
+    /// (older builds / non-native), so this is additive and safe.
+    private func setAgentTopInset() {
+        guard !agentSegments.isEmpty else { return }
+        let px = Int(view.safeAreaInsets.top.rounded())
+        webView?.evaluateJavaScript(
+            "document.documentElement.style.setProperty('--alma-top-inset','\(px)px');",
+            completionHandler: nil)
+    }
+
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        setAgentTopInset()
+    }
+
     deinit { NotificationCenter.default.removeObserver(self) }
 
     private var loadedOnce = false
@@ -334,22 +372,29 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // so four background web views don't all hit the network at launch.
         guard !loadedOnce else { return }
         loadedOnce = true
-        spinner.startAnimating()
+        loader.alpha = 1
+        loader.start()
         webView.load(URLRequest(url: url))
     }
 
     private var firstPaintDone = false
     private var offlineView: UIView?
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        spinner.stopAnimating()
         hideOffline() // a successful load clears any lingering offline screen
-        // S3: on the FIRST paint, fade the content in over the light placeholder instead
-        // of it popping in abruptly. Later navigations/reloads are instant (alpha == 1).
+        setAgentTopInset() // re-assert the glass-motion top inset on the fresh DOM
+        // S3: on the FIRST paint, fade the content in over the placeholder instead of it
+        // popping in abruptly. Later navigations/reloads are instant (alpha == 1).
         if !firstPaintDone {
             firstPaintDone = true
             UIView.animate(withDuration: 0.28, delay: 0, options: [.curveEaseOut]) {
                 webView.alpha = 1
             }
+        }
+        // Cross-fade the premium loader out over the now-painted content, then stop it.
+        if !loader.isHidden {
+            UIView.animate(withDuration: 0.32, delay: 0.04, options: [.curveEaseOut]) {
+                self.loader.alpha = 0
+            } completion: { _ in self.loader.stop() }
         }
         updateBackButton()
     }
@@ -363,7 +408,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     // MARK: - S4: native offline screen
 
     private func handleLoadFailure(_ error: Error) {
-        spinner.stopAnimating()
+        loader.stop()
         firstPaintDone = true
         webView?.alpha = 1
         // Only show the offline screen for genuine connectivity failures. NSURLErrorCancelled
@@ -379,7 +424,8 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
 
     @objc private func retryLoad() {
         hideOffline()
-        spinner.startAnimating()
+        loader.alpha = 1
+        loader.start()
         webView.load(URLRequest(url: url))
     }
 
@@ -869,8 +915,7 @@ final class AgentAssistiveNav: UIView {
     private let fab = UIView()
     private let fabIcon = UIImageView()
     private var backdrop: UIControl?
-    private var panel: UIVisualEffectView?
-    private var rows: [UIControl] = []
+    private var itemViews: [UIControl] = []   // radial item buttons (fanned around the FAB)
     private var isOpen = false
     private var activeIndex = 0
     private var positioned = false
@@ -1025,54 +1070,75 @@ final class AgentAssistiveNav: UIView {
         isOpen ? close() : open()
     }
 
+    private let itemCircle: CGFloat = 54     // frosted icon disc
+    private let arcRadius: CGFloat = 132      // distance from FAB centre to each item
+
+    /// Where item `i` sits on the fan arc around the FAB. The arc occupies the screen
+    /// QUADRANT that opens toward the centre (FAB bottom-right → fan up-left, etc.), so
+    /// the items always fan INTO the screen, never off an edge. y grows downward, so the
+    /// angle convention is 0=right, 90°=down, 180°=left, 270°=up.
+    private func arcCenter(for i: Int) -> CGPoint {
+        let onRight = fab.center.x > bounds.width / 2
+        let topHalf = fab.center.y < bounds.height / 2
+        // Quadrant sweep (degrees), inset a touch from the pure axes so end items don't
+        // hug the edge.
+        let (startDeg, endDeg): (CGFloat, CGFloat)
+        switch (onRight, topHalf) {
+        case (true,  false): (startDeg, endDeg) = (184, 274)   // bottom-right → up-left
+        case (false, false): (startDeg, endDeg) = (266, 356)   // bottom-left  → up-right
+        case (true,  true):  (startDeg, endDeg) = (86, 176)    // top-right    → down-left
+        case (false, true):  (startDeg, endDeg) = (4, 94)      // top-left     → down-right
+        }
+        let n = items.count
+        let t: CGFloat = n <= 1 ? 0.5 : CGFloat(i) / CGFloat(n - 1)
+        let deg = startDeg + t * (endDeg - startDeg)
+        let rad = deg * .pi / 180
+        var c = CGPoint(x: fab.center.x + arcRadius * cos(rad),
+                        y: fab.center.y + arcRadius * sin(rad))
+        // Keep every disc fully on-screen.
+        let sa = safeAreaInsets, half = itemCircle / 2
+        c.x = min(max(c.x, half + edge + sa.left), bounds.width - half - edge - sa.right)
+        c.y = min(max(c.y, half + edge + sa.top), bounds.height - half - edge - sa.bottom - tabBarHeight)
+        return c
+    }
+
     private func open() {
         guard !isOpen, bounds.width > 0 else { return }
         isOpen = true
         impact.impactOccurred(); impact.prepare()
 
         let back = UIControl(frame: bounds)
-        back.backgroundColor = UIColor.black.withAlphaComponent(0.001)
+        back.backgroundColor = UIColor.black.withAlphaComponent(0.28)   // dim so the fan reads
+        back.alpha = 0
         back.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         back.addTarget(self, action: #selector(close), for: .touchUpInside)
         insertSubview(back, belowSubview: fab)
         backdrop = back
+        UIView.animate(withDuration: 0.22) { back.alpha = 1 }
 
-        let p = buildPanel()
-        addSubview(p)
-        panel = p
+        // Build the fan and pop each disc OUT from the FAB centre to its arc seat with a
+        // staggered spring — the true iOS-AssistiveTouch radial feel.
+        itemViews = []
+        for (i, _) in items.enumerated() {
+            let v = makeRadialItem(i)
+            let seat = arcCenter(for: i)
+            v.center = seat
+            insertSubview(v, belowSubview: fab)
+            itemViews.append(v)
 
-        // Anchor the panel near the FAB (above it if the FAB is in the lower half) and
-        // spring it out FROM the nearest FAB corner — set the layer anchorPoint BEFORE
-        // the frame so the scale grows out of that corner, not the centre.
-        let onRight = fab.center.x > bounds.width / 2
-        let below = fab.center.y < bounds.height / 2
-        let pw = p.bounds.width, ph = p.bounds.height
-        var px = onRight ? fab.frame.maxX - pw : fab.frame.minX
-        px = min(max(px, edge + safeAreaInsets.left), bounds.width - pw - edge - safeAreaInsets.right)
-        let py = below ? fab.frame.maxY + 10 : fab.frame.minY - ph - 10
-
-        p.layer.anchorPoint = CGPoint(x: onRight ? 1 : 0, y: below ? 0 : 1)
-        p.frame = CGRect(x: px, y: py, width: pw, height: ph)
-        p.transform = CGAffineTransform(scaleX: 0.32, y: 0.32)
-        p.alpha = 0
-        UIView.animate(withDuration: 0.44, delay: 0, usingSpringWithDamping: 0.75,
-                       initialSpringVelocity: 0.6, options: [.curveEaseOut]) {
-            p.transform = .identity
-            p.alpha = 1
-            self.fabIcon.transform = CGAffineTransform(rotationAngle: .pi / 4)
-        }
-        // Staggered spring: each row pops in one after another (iOS AssistiveTouch feel),
-        // ordered from the row nearest the FAB outward.
-        let order = below ? Array(rows.enumerated()) : Array(rows.enumerated().reversed())
-        for (step, (_, row)) in order.enumerated() {
-            row.alpha = 0
-            row.transform = CGAffineTransform(scaleX: 0.6, y: 0.6).translatedBy(x: 0, y: 6)
-            UIView.animate(withDuration: 0.34, delay: 0.05 + Double(step) * 0.04,
-                           usingSpringWithDamping: 0.7, initialSpringVelocity: 0.8,
+            let dx = fab.center.x - seat.x, dy = fab.center.y - seat.y
+            v.transform = CGAffineTransform(translationX: dx, y: dy).scaledBy(x: 0.2, y: 0.2)
+            v.alpha = 0
+            UIView.animate(withDuration: 0.42, delay: 0.03 + Double(i) * 0.045,
+                           usingSpringWithDamping: 0.68, initialSpringVelocity: 0.7,
                            options: [.curveEaseOut]) {
-                row.alpha = 1
-                row.transform = .identity
+                v.transform = .identity
+                v.alpha = 1
             }
+        }
+        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.6,
+                       initialSpringVelocity: 0.5, options: [.curveEaseOut]) {
+            self.fabIcon.transform = CGAffineTransform(rotationAngle: .pi / 4)   // + → ×
         }
     }
 
@@ -1080,88 +1146,225 @@ final class AgentAssistiveNav: UIView {
         guard isOpen else { return }
         isOpen = false
         haptic.selectionChanged()
-        let p = panel, back = backdrop
-        panel = nil; backdrop = nil; rows = []
+        let views = itemViews, back = backdrop
+        itemViews = []; backdrop = nil
+        // Suck each disc back INTO the FAB, staggered from the outer item inward.
+        for (i, v) in views.enumerated() {
+            let dx = fab.center.x - v.center.x, dy = fab.center.y - v.center.y
+            UIView.animate(withDuration: 0.22, delay: Double(views.count - 1 - i) * 0.025,
+                           options: [.curveEaseIn]) {
+                v.transform = CGAffineTransform(translationX: dx, y: dy).scaledBy(x: 0.2, y: 0.2)
+                v.alpha = 0
+            } completion: { _ in v.removeFromSuperview() }
+        }
         UIView.animate(withDuration: 0.24, delay: 0, options: [.curveEaseIn]) {
-            p?.transform = CGAffineTransform(scaleX: 0.4, y: 0.4)
-            p?.alpha = 0
             back?.alpha = 0
             self.fabIcon.transform = .identity
-        } completion: { _ in
-            p?.removeFromSuperview(); back?.removeFromSuperview()
-        }
+        } completion: { _ in back?.removeFromSuperview() }
         scheduleIdle()
     }
 
-    // MARK: panel
+    // MARK: radial item
 
-    private func buildPanel() -> UIVisualEffectView {
-        let rowH: CGFloat = 46
-        let width: CGFloat = 224
-        let pad: CGFloat = 6
-        let height = CGFloat(items.count) * rowH + pad * 2
+    /// A single fan item: a frosted circular disc (icon) with a small label below.
+    /// Subview tags: 1 = blur disc, 2 = icon, 3 = label — used by setActiveIndex.
+    private func makeRadialItem(_ i: Int) -> UIControl {
+        let item = items[i]
+        let on = i == activeIndex
+        let v = UIControl(frame: CGRect(x: 0, y: 0, width: itemCircle, height: itemCircle))
+        v.tag = i
+        v.clipsToBounds = false   // let the label overflow below the disc
+        v.addTarget(self, action: #selector(itemTapped(_:)), for: .touchUpInside)
 
-        let p = UIVisualEffectView(effect: UIBlurEffect(style: .systemThickMaterialDark))
-        p.frame = CGRect(x: 0, y: 0, width: width, height: height)
-        p.layer.cornerRadius = 22
-        p.layer.cornerCurve = .continuous
-        p.clipsToBounds = true
-        p.layer.borderWidth = 1
-        p.layer.borderColor = UIColor(white: 1, alpha: 0.12).cgColor
+        let disc = UIVisualEffectView(effect: UIBlurEffect(style: .systemThickMaterialDark))
+        disc.tag = 1
+        disc.frame = v.bounds
+        disc.layer.cornerRadius = itemCircle / 2
+        disc.clipsToBounds = true
+        disc.isUserInteractionEnabled = false
+        disc.layer.borderWidth = 1
+        disc.layer.borderColor = UIColor(white: 1, alpha: 0.16).cgColor
+        disc.contentView.backgroundColor = on
+            ? UIColor(red: 0.42, green: 0.36, blue: 0.62, alpha: 0.92) : .clear
+        v.addSubview(disc)
 
-        rows = []
-        for (i, item) in items.enumerated() {
-            let row = UIControl(frame: CGRect(x: pad, y: pad + CGFloat(i) * rowH, width: width - pad * 2, height: rowH))
-            row.tag = i
-            row.layer.cornerRadius = 14
-            row.layer.cornerCurve = .continuous
-            row.backgroundColor = i == activeIndex ? UIColor(red: 0.42, green: 0.36, blue: 0.62, alpha: 0.9) : .clear
-            row.addTarget(self, action: #selector(rowTapped(_:)), for: .touchUpInside)
+        // Soft shadow so discs float above the dimmed backdrop.
+        v.layer.shadowColor = UIColor.black.cgColor
+        v.layer.shadowOpacity = 0.3
+        v.layer.shadowRadius = 8
+        v.layer.shadowOffset = CGSize(width: 0, height: 3)
 
-            let iv = UIImageView(image: UIImage(systemName: item.icon,
-                withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)))
-            iv.tintColor = i == activeIndex ? .white : UIColor(white: 0.85, alpha: 1)
-            iv.frame = CGRect(x: 14, y: (rowH - 24) / 2, width: 24, height: 24)
-            iv.contentMode = .center
-            iv.isUserInteractionEnabled = false
-            row.addSubview(iv)
+        let iv = UIImageView(image: UIImage(systemName: item.icon,
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .semibold)))
+        iv.tag = 2
+        iv.tintColor = on ? .white : UIColor(white: 0.9, alpha: 1)
+        iv.frame = v.bounds
+        iv.contentMode = .center
+        iv.isUserInteractionEnabled = false
+        v.addSubview(iv)
 
-            let label = UILabel(frame: CGRect(x: 48, y: 0, width: width - pad * 2 - 56, height: rowH))
-            label.text = item.title
-            label.font = .systemFont(ofSize: 15, weight: i == activeIndex ? .semibold : .medium)
-            label.textColor = i == activeIndex ? .white : UIColor(white: 0.92, alpha: 1)
-            label.isUserInteractionEnabled = false
-            row.addSubview(label)
-
-            p.contentView.addSubview(row)
-            rows.append(row)
-        }
-        return p
+        let label = UILabel(frame: CGRect(x: (itemCircle - 78) / 2, y: itemCircle + 4, width: 78, height: 14))
+        label.tag = 3
+        label.text = item.title
+        label.font = .systemFont(ofSize: 10.5, weight: on ? .bold : .semibold)
+        label.textColor = on ? .white : UIColor(white: 0.96, alpha: 1)
+        label.textAlignment = .center
+        label.isUserInteractionEnabled = false
+        label.layer.shadowColor = UIColor.black.cgColor      // legible over any content
+        label.layer.shadowOpacity = 0.6
+        label.layer.shadowRadius = 2
+        label.layer.shadowOffset = .zero
+        v.addSubview(label)
+        return v
     }
 
-    @objc private func rowTapped(_ sender: UIControl) {
+    @objc private func itemTapped(_ sender: UIControl) {
         let i = sender.tag
         guard i >= 0, i < items.count else { return }
         haptic.selectionChanged(); haptic.prepare()
         setActiveIndex(i)
         let action = items[i].onSelect
         close()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { action() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { action() }
     }
 
     func setActiveIndex(_ i: Int) {
         guard i >= 0, i < items.count else { return }
         activeIndex = i
-        for (idx, row) in rows.enumerated() {
+        for (idx, v) in itemViews.enumerated() {
             let on = idx == i
-            row.backgroundColor = on ? UIColor(red: 0.42, green: 0.36, blue: 0.62, alpha: 0.9) : .clear
-            (row.subviews.compactMap { $0 as? UIImageView }.first)?.tintColor = on ? .white : UIColor(white: 0.85, alpha: 1)
-            if let l = row.subviews.compactMap({ $0 as? UILabel }).first {
-                l.font = .systemFont(ofSize: 15, weight: on ? .semibold : .medium)
-                l.textColor = on ? .white : UIColor(white: 0.92, alpha: 1)
+            (v.viewWithTag(1) as? UIVisualEffectView)?.contentView.backgroundColor = on
+                ? UIColor(red: 0.42, green: 0.36, blue: 0.62, alpha: 0.92) : .clear
+            (v.viewWithTag(2) as? UIImageView)?.tintColor = on ? .white : UIColor(white: 0.9, alpha: 1)
+            if let l = v.viewWithTag(3) as? UILabel {
+                l.font = .systemFont(ofSize: 10.5, weight: on ? .bold : .semibold)
             }
         }
     }
 
     deinit { idleTimer?.invalidate() }
+}
+
+/// A premium branded first-paint / page-transition loader — replaces the plain
+/// UIActivityIndicator on a flat light slab the owner found "too normal / white".
+///
+/// It paints a soft themed gradient backdrop and, centred on it, a BREATHING violet
+/// gradient orb (radial glow that pulses in scale + opacity) over three staggered
+/// morphing dots. Two styles: `.light` for the ERP web views (a pale lavender wash so
+/// the light pages fade in with no dark→light flash) and `.dark` for the Assistant
+/// (deep violet-black to match its dark glass). Pure CoreAnimation, GPU-cheap, and it
+/// stops when hidden so it costs nothing at rest.
+final class AlmaPremiumLoader: UIView {
+    enum Style { case light, dark }
+
+    private let style: Style
+    private let backdrop = CAGradientLayer()
+    private let orb = UIView()
+    private let orbGradient = CAGradientLayer()
+    private var dots: [CALayer] = []
+    private let orbSize: CGFloat = 78
+
+    init(style: Style) {
+        self.style = style
+        super.init(frame: .zero)
+        isUserInteractionEnabled = false
+
+        // Themed backdrop wash (vertical gradient) — never a flat white.
+        switch style {
+        case .light:
+            backdrop.colors = [
+                UIColor(red: 0.957, green: 0.949, blue: 0.980, alpha: 1).cgColor, // #F4F2FA
+                UIColor(red: 0.910, green: 0.898, blue: 0.964, alpha: 1).cgColor, // pale lavender
+            ]
+        case .dark:
+            backdrop.colors = [
+                UIColor(red: 0.055, green: 0.047, blue: 0.086, alpha: 1).cgColor, // #0e0c16
+                UIColor(red: 0.086, green: 0.063, blue: 0.145, alpha: 1).cgColor, // deep violet
+            ]
+        }
+        backdrop.startPoint = CGPoint(x: 0.5, y: 0)
+        backdrop.endPoint = CGPoint(x: 0.5, y: 1)
+        layer.addSublayer(backdrop)
+
+        // Breathing orb — a radial violet glow.
+        orb.isUserInteractionEnabled = false
+        orbGradient.type = .radial
+        orbGradient.colors = [
+            UIColor(red: 0.68, green: 0.55, blue: 1.0, alpha: 0.98).cgColor,
+            UIColor(red: 0.47, green: 0.35, blue: 0.86, alpha: 0.80).cgColor,
+            UIColor(red: 0.36, green: 0.26, blue: 0.70, alpha: 0.0).cgColor,
+        ]
+        orbGradient.locations = [0, 0.55, 1]
+        orbGradient.startPoint = CGPoint(x: 0.5, y: 0.5)
+        orbGradient.endPoint = CGPoint(x: 1, y: 1)
+        orb.layer.addSublayer(orbGradient)
+        orb.layer.shadowColor = UIColor(red: 0.55, green: 0.42, blue: 0.98, alpha: 1).cgColor
+        orb.layer.shadowOpacity = 0.55
+        orb.layer.shadowRadius = 26
+        orb.layer.shadowOffset = .zero
+        addSubview(orb)
+
+        // Three staggered morphing dots below the orb.
+        for _ in 0..<3 {
+            let d = CALayer()
+            d.backgroundColor = UIColor(red: 0.60, green: 0.48, blue: 0.96, alpha: 1).cgColor
+            layer.addSublayer(d)
+            dots.append(d)
+        }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        backdrop.frame = bounds
+        let cx = bounds.midX, cy = bounds.midY
+        orb.frame = CGRect(x: cx - orbSize / 2, y: cy - orbSize / 2 - 12, width: orbSize, height: orbSize)
+        orbGradient.frame = orb.bounds
+        orb.layer.shadowPath = UIBezierPath(ovalIn: orb.bounds).cgPath
+        let dotSize: CGFloat = 9, gap: CGFloat = 17
+        let dotY = orb.frame.maxY + 20
+        for (i, d) in dots.enumerated() {
+            d.frame = CGRect(x: cx + CGFloat(i - 1) * gap - dotSize / 2, y: dotY, width: dotSize, height: dotSize)
+            d.cornerRadius = dotSize / 2
+        }
+        CATransaction.commit()
+    }
+
+    /// Begin the breathing + dot animations and reveal the loader.
+    func start() {
+        isHidden = false
+        // Orb: breathe (scale + opacity), gently forever.
+        let scale = CABasicAnimation(keyPath: "transform.scale")
+        scale.fromValue = 0.84; scale.toValue = 1.12
+        scale.duration = 1.3; scale.autoreverses = true; scale.repeatCount = .infinity
+        scale.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        orb.layer.add(scale, forKey: "breathe")
+        let glow = CABasicAnimation(keyPath: "opacity")
+        glow.fromValue = 0.7; glow.toValue = 1.0
+        glow.duration = 1.3; glow.autoreverses = true; glow.repeatCount = .infinity
+        glow.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        orb.layer.add(glow, forKey: "glow")
+        // Dots: staggered rise (scale + opacity), phase-shifted via timeOffset.
+        for (i, d) in dots.enumerated() {
+            let a = CAKeyframeAnimation(keyPath: "transform.scale")
+            a.values = [0.5, 1.15, 0.5]; a.keyTimes = [0, 0.5, 1]
+            a.duration = 1.05; a.repeatCount = .infinity
+            a.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            a.timeOffset = Double(i) * 0.18
+            d.add(a, forKey: "morph")
+            let o = CAKeyframeAnimation(keyPath: "opacity")
+            o.values = [0.35, 1.0, 0.35]; o.keyTimes = [0, 0.5, 1]
+            o.duration = 1.05; o.repeatCount = .infinity
+            o.timeOffset = Double(i) * 0.18
+            d.add(o, forKey: "fade")
+        }
+    }
+
+    /// Stop the animations (call when hiding, so it costs nothing at rest).
+    func stop() {
+        orb.layer.removeAllAnimations()
+        dots.forEach { $0.removeAllAnimations() }
+        isHidden = true
+    }
 }
