@@ -18,7 +18,8 @@
 //        .overlay(alignment: .top) { FloatingHeaderView() }  // header floats ABOVE the fade
 //
 //  ── TUNING ────────────────────────────────────────────────────────────────────────────
-//  • Fade height:   .claudeTopFade(height: 180) — default 140pt ≈ status bar + header.
+//  • Fade height:   .claudeTopFade(height: 180) — default = FADE_HEIGHT token
+//    (safe-area top + 88pt, ClaudeTopFadeTheme.fadeHeight; same number as the web).
 //  • Scrim colours: edit ClaudeTopFadeTheme.lightScrim / .darkScrim below. They MUST stay
 //    equal to the app background (AlmaTheme.rootBg: light #F2F0F8, dark #0b0a12 — the spec's
 //    #F5EBDD placeholder was replaced with ALMA's real cream) or the dissolve shows a seam.
@@ -36,9 +37,17 @@ import UIKit
 
 // MARK: - Theme tokens
 
-/// Scrim = the app background colour, so blurred content dissolves INTO the page instead
-/// of into an alien tint (owner rule: never a dark/black wash over content).
+/// ── SHARED DESIGN TOKENS — keep IN SYNC with the web twin
+/// (src/components/layout/TopScrollFade.tsx + .module.css, mounted in app/layout.tsx):
+///   FADE_HEIGHT = safe-area top inset + 88pt   (fadeBaseHeight below)
+///   BLUR RAMP   = ~8px at the very top edge → 0 at the fade bottom
+///   SCRIM       = the surface's own background (native: AlmaTheme.rootBg twins below;
+///                 web: var(--bg-0)) so each surface dissolves into ITS page colour.
+/// If any number changes, change BOTH sides (see NATIVE_MIGRATION_HANDOFF.md §7).
 enum ClaudeTopFadeTheme {
+    /// The 88 in "safe-area + 88" — the header zone below the notch, both surfaces.
+    static let fadeBaseHeight: CGFloat = 88
+
     /// #F2F0F8 — ALMA light "cream" (== AlmaTheme.rootBg light).
     static let lightScrim = Color(red: 0.949, green: 0.941, blue: 0.972)
     /// #0b0a12 — ALMA dark root (== AlmaTheme.rootBg dark).
@@ -46,6 +55,15 @@ enum ClaudeTopFadeTheme {
 
     static func scrim(for scheme: ColorScheme) -> Color {
         scheme == .dark ? darkScrim : lightScrim
+    }
+
+    /// FADE_HEIGHT resolved: status-bar/notch inset + the 88pt header zone. Falls back
+    /// to 59pt (Pro Max notch) if no window is attached yet — corrected on first layout.
+    static var fadeHeight: CGFloat {
+        let topInset = UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.keyWindow?.safeAreaInsets.top }
+            .first ?? 59
+        return topInset + fadeBaseHeight
     }
 }
 
@@ -157,11 +175,12 @@ struct ClaudeTopFadeModifier: ViewModifier {
 extension View {
     /// Claude-style top scroll-edge fade — see the file header for wiring examples.
     /// - Parameters:
-    ///   - height: fade depth in points (status bar + header; default 140).
+    ///   - height: fade depth in points (default = FADE_HEIGHT: safe-area top + 88).
     ///   - useNativeEdgeEffect: true for screens whose header is a real `.toolbar`
     ///     (uses iOS 26 `.scrollEdgeEffectStyle(.soft)` + a light scrim); false for
     ///     custom floating-header screens (full masked blur + colour dissolve).
-    func claudeTopFade(height: CGFloat = 140, useNativeEdgeEffect: Bool = true) -> some View {
+    func claudeTopFade(height: CGFloat = ClaudeTopFadeTheme.fadeHeight,
+                       useNativeEdgeEffect: Bool = true) -> some View {
         modifier(ClaudeTopFadeModifier(height: height, useNativeEdgeEffect: useNativeEdgeEffect))
     }
 }

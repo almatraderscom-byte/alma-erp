@@ -261,6 +261,19 @@ it) · renaming instead of creating your pre-assigned file.
 
 ## 7. SHARED TopScrollFade NOTE
 
+**The effect now exists on BOTH surfaces from one design spec — these tokens must stay in
+sync (change one side ⇒ change the other, via the shared-change queue):**
+
+| Token | Value | Native (ClaudeTopFade.swift) | Web (TopScrollFade.tsx/.module.css) |
+|---|---|---|---|
+| FADE_HEIGHT | safe-area top + 88 | `ClaudeTopFadeTheme.fadeHeight` | `calc(env(safe-area-inset-top) + 88px)` |
+| BLUR RAMP | ~8px top → 0 bottom | masked `.systemThinMaterial` | 5 masked backdrop-filter layers (0.5/1/2/4/8px) |
+| SCRIM | surface's own bg | AlmaTheme.rootBg twins | `var(--bg-0)` |
+
+Web twin: `src/components/layout/TopScrollFade.tsx` + `.module.css`, mounted once in
+`app/layout.tsx`, **gated `html.alma-native`** (desktop/mobile-web see nothing). Both files
+are SHARED/FROZEN exactly like the Swift one.
+
 `ios/App/App/ClaudeTopFade.swift` (and any future web twin of the fade) is a **shared, frozen
 design-system component**. Every page consumes `.claudeTopFade()` exactly as-is so the whole
 app scrolls identically. Blur strength / height / scrim tweaks change EVERY screen at once —

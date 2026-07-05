@@ -1,0 +1,73 @@
+/* TopScrollFade — web half of the app-wide scroll-edge progressive blur.
+   Tokens shared with ios/App/App/ClaudeTopFade.swift — keep in sync:
+   FADE_HEIGHT = safe-area-top + 88px · blur ramp 8px→0 · scrim = var(--bg-0). */
+
+.fade {
+  display: none; /* web/desktop: invisible. Native shell only (gate below). */
+}
+
+/* Only inside the native iOS shell (class injected by NativeShellBridge). */
+:global(html.alma-native) .fade {
+  display: block;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* FADE_HEIGHT — identical logical height to the native ClaudeTopFade. */
+  height: calc(env(safe-area-inset-top, 0px) + 88px);
+  pointer-events: none; /* taps NEVER get eaten */
+  /* Above scroll content, below any interactive floating controls (todo pill z-40+,
+     web headers are hidden in the shell anyway). */
+  z-index: 30;
+}
+
+.layer,
+.scrim {
+  position: absolute;
+  inset: 0;
+}
+
+/* 5 masked layers build the variable radius: each stronger blur is revealed only
+   in a window nearer the TOP (mask alpha 1 = show). Top edge stacks ~8px total;
+   the bottom of the zone reaches 0 — the top-strong / bottom-soft ramp. */
+.b1 {
+  -webkit-backdrop-filter: blur(0.5px);
+  backdrop-filter: blur(0.5px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 78%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 78%, transparent 100%);
+}
+.b2 {
+  -webkit-backdrop-filter: blur(1px);
+  backdrop-filter: blur(1px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 60%, transparent 88%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 60%, transparent 88%);
+}
+.b3 {
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 42%, transparent 70%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 42%, transparent 70%);
+}
+.b4 {
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 26%, transparent 50%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 26%, transparent 50%);
+}
+.b5 {
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 10%, transparent 32%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 10%, transparent 32%);
+}
+
+/* Colour dissolve on top of the blur stack: page bg, opaque top → clear bottom.
+   var(--bg-0) follows the theme root, so light/dark both match with no JS. */
+.scrim {
+  background: linear-gradient(
+    to bottom,
+    var(--bg-0) 0%,
+    color-mix(in srgb, var(--bg-0) 55%, transparent) 55%,
+    transparent 100%
+  );
+}
