@@ -75,15 +75,29 @@ export async function POST(req: NextRequest) {
       return Response.json({ ok: true, empty: true, text: '', cues: [], ass: null })
     }
 
-    // Pass 2 — timed windows from whisper-1 (the only model that returns segments).
-    const timed = await client.audio.transcriptions.create({
-      file: new File([buf], 'reel.mp3', { type: file.type }),
+    // Pass 2 — timed windows from whisper-1 (the only model that returns
+    // segments). NOTE: the API rejects language:'bn' ("Language 'bn' is not
+    // supported", live-e2e 2026-07-05) even though the model handles Bangla —
+    // try the hint first, fall back to auto-detect steered by the prompt.
+    const timedBase = {
       model: 'whisper-1',
       response_format: 'verbose_json',
-      language: 'bn',
       prompt: WHISPER_BANGLA_PROMPT,
       temperature: 0,
-    })
+    } as const
+    let timed
+    try {
+      timed = await client.audio.transcriptions.create({
+        ...timedBase,
+        file: new File([buf], 'reel.mp3', { type: file.type }),
+        language: 'bn',
+      })
+    } catch {
+      timed = await client.audio.transcriptions.create({
+        ...timedBase,
+        file: new File([buf], 'reel.mp3', { type: file.type }),
+      })
+    }
     const segments: TimedSegment[] = (timed.segments ?? []).map((s) => ({
       start: Number(s.start),
       end: Number(s.end),
