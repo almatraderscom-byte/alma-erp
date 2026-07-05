@@ -208,7 +208,7 @@ final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
 /// and hiding the web's own bottom nav. When hosted in a UINavigationController it
 /// shows a NATIVE header whose title tracks the web app's current route (via the
 /// `almaShell` bridge), with a back button that drives web history.
-final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler {
+final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WKScriptMessageHandler, WKUIDelegate {
     private let url: URL
     private let sharedProcessPool: WKProcessPool
     private var webView: WKWebView!
@@ -272,9 +272,13 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         config.websiteDataStore = .default()   // shared cookies -> shared login with Capacitor tab
         config.userContentController = content
         config.allowsInlineMediaPlayback = true
+        // Voice: the agent's TTS reply must AUTOPLAY right after a response (no tap),
+        // and the mic/orb audio graph must run inline — clear the default gesture gate.
+        config.mediaTypesRequiringUserActionForPlayback = []
 
         webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
+        webView.uiDelegate = self   // media-capture (mic) permission handling below
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.isOpaque = false
@@ -618,6 +622,25 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         handleLoadFailure(error)
+    }
+
+    // MARK: - WKUIDelegate: mic permission for the voice assistant
+
+    /// Voice fix: a plain WKWebView re-prompts getUserMedia on EVERY call by default,
+    /// which broke the assistant's tap-to-talk orb (2-3 taps then dead) and the "ALMA"
+    /// wake-word continuous listening. Auto-GRANT media capture for our own origin —
+    /// iOS still shows its own one-time system mic prompt (NSMicrophoneUsageDescription)
+    /// the first time, which is the only prompt the owner should ever see.
+    func webView(_ webView: WKWebView,
+                 requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                 initiatedByFrame frame: WKFrameInfo,
+                 type: WKMediaCaptureType,
+                 decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        if origin.host == AlmaTheme.host || origin.host.hasSuffix("." + AlmaTheme.host) {
+            decisionHandler(.grant)
+        } else {
+            decisionHandler(.deny)
+        }
     }
 
     // MARK: - S4: native offline screen
@@ -1167,8 +1190,13 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         w.superview?.backgroundColor = bg
         dvc.view.backgroundColor = bg
         w.evaluateJavaScript(AlmaTheme.applyJS(), completionHandler: nil)
+        // Anchor web overlays (todo pill) to the nav bar's REAL bottom edge, measured
+        // from the bar itself — Capacitor pads the VC's safeAreaInsets with its own
+        // additional insets, which threw the injected value off by tens of points.
+        let nav = dvc.navigationController?.navigationBar
+        let barBottom = nav.map { $0.convert($0.bounds, to: nil).maxY } ?? dvc.view.safeAreaInsets.top
         w.evaluateJavaScript(
-            AlmaWebTabViewController.insetVarsJS(top: view.safeAreaInsets.top,
+            AlmaWebTabViewController.insetVarsJS(top: barBottom,
                                                  bottom: view.safeAreaInsets.bottom),
             completionHandler: nil)
     }
