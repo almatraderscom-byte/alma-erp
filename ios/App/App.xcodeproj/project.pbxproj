@@ -38,6 +38,10 @@
 		F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A013 /* OrdersSwiftUI.swift */; };
 		F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A021 /* AssistantSwiftUI.swift */; };
 		F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */; };
+		F2AA7700000000000000B044 /* PayrollSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A044 /* PayrollSwiftUI.swift */; };
+		F2AA7700000000000000B043 /* ExpensesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A043 /* ExpensesSwiftUI.swift */; };
+		F2AA7700000000000000B042 /* InvoicesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A042 /* InvoicesSwiftUI.swift */; };
+		F2AA7700000000000000B041 /* FinanceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A041 /* FinanceSwiftUI.swift */; };
 		F2AA7700000000000000B040 /* AlmaNativeRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A040 /* AlmaNativeRouter.swift */; };
 		F2AA7700000000000000B014 /* ApprovalsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */; };
 		F2AA7700000000000000B015 /* CompanionSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A015 /* CompanionSwiftUI.swift */; };
@@ -81,6 +85,10 @@
 		F2AA7700000000000000A013 /* OrdersSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrdersSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A021 /* AssistantSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantVoiceSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A044 /* PayrollSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PayrollSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A043 /* ExpensesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpensesSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A042 /* InvoicesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InvoicesSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A041 /* FinanceSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinanceSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A040 /* AlmaNativeRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaNativeRouter.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A015 /* CompanionSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSwiftUI.swift; sourceTree = "<group>"; };
@@ -171,6 +179,10 @@
 				F2AA7700000000000000A013 /* OrdersSwiftUI.swift */,
 				F2AA7700000000000000A021 /* AssistantSwiftUI.swift */,
 				F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */,
+				F2AA7700000000000000A044 /* PayrollSwiftUI.swift */,
+				F2AA7700000000000000A043 /* ExpensesSwiftUI.swift */,
+				F2AA7700000000000000A042 /* InvoicesSwiftUI.swift */,
+				F2AA7700000000000000A041 /* FinanceSwiftUI.swift */,
 				F2AA7700000000000000A040 /* AlmaNativeRouter.swift */,
 				F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */,
 				F2AA7700000000000000A015 /* CompanionSwiftUI.swift */,
@@ -389,6 +401,10 @@
 				F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */,
 				F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */,
 				F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */,
+				F2AA7700000000000000B044 /* PayrollSwiftUI.swift in Sources */,
+				F2AA7700000000000000B043 /* ExpensesSwiftUI.swift in Sources */,
+				F2AA7700000000000000B042 /* InvoicesSwiftUI.swift in Sources */,
+				F2AA7700000000000000B041 /* FinanceSwiftUI.swift in Sources */,
 				F2AA7700000000000000B040 /* AlmaNativeRouter.swift in Sources */,
 				F2AA7700000000000000B014 /* ApprovalsSwiftUI.swift in Sources */,
 				F2AA7700000000000000B015 /* CompanionSwiftUI.swift in Sources */,

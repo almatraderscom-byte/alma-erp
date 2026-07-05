@@ -36,6 +36,10 @@ enum AlmaNativeRouter {
 
         switch clean {
         // Cases are appended batch-by-batch as pages migrate (S6 marathon).
+        case "/finance": return host(FinanceScreen(openWeb: openWebForced), "Finance")
+        case "/invoice": return host(InvoicesScreen(openWeb: openWebForced), "Invoices")
+        case "/expenses": return host(ExpensesScreen(openWeb: openWebForced), "Expenses")
+        case "/payroll": return host(PayrollScreen(openWeb: openWebForced), "Payroll")
         default:
             return nil
         }
