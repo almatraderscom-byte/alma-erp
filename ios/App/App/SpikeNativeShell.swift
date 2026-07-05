@@ -164,12 +164,11 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // UIRefreshControl (it would double up and can't show the robot). Web owns it.
 
         let root = UIView()
-        // The agent's page is LIGHT, but its native header is a translucent DARK blur —
-        // so the area BEHIND the bar must be dark or the blur reads white (the owner's
-        // "white top"). Paint the agent root dark; the light web content sits below the
-        // bar. Other tabs keep the light placeholder.
-        root.backgroundColor = agentSegments.isEmpty ? bg
-            : UIColor(red: 0.055, green: 0.047, blue: 0.078, alpha: 1) // #0e0c14
+        // The agent is now the CLAUDE-style LIGHT surface: a LIGHT frosted (ultra-thin white)
+        // nav bar over the light agent content, so the chat blurs THROUGH the bar cleanly as
+        // it scrolls under. So the root stays LIGHT for every tab (no dark slab behind the
+        // agent bar — that was for the old dark-glass header).
+        root.backgroundColor = bg
         root.addSubview(webView)
         webView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -204,7 +203,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // Premium branded loader covering the whole tab during first-paint / navigation.
         // Light wash for the ERP web views (no dark→light flash), deep violet for the
         // dark Assistant. It sits ABOVE the web view and fades out when content is ready.
-        loader = AlmaPremiumLoader(style: agentSegments.isEmpty ? .light : .dark)
+        loader = AlmaPremiumLoader(style: .light) // agent is now the LIGHT Claude surface too
         loader.translatesAutoresizingMaskIntoConstraints = false
         loader.isHidden = true
         root.addSubview(loader)
@@ -246,35 +245,89 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     override func viewDidLoad() {
         super.viewDidLoad()
         guard !agentSegments.isEmpty else { return }
-        // Agent = the Claude surface: a fixed "ALMA AI" title in the native dark-glass
-        // header + native history / new-chat bar buttons that drive the web agent's own
-        // controls (reusing its logic). The light web top bar is hidden (hideWebHeader).
+        // Agent = the Claude surface: a fixed "ALMA AI" title in the native LIGHT frosted
+        // header, with Claude-exact bar buttons — LEFT a frosted-white hamburger (opens the
+        // agent sidebar), RIGHT a SOLID CORAL compose bubble (new chat) — driving the web
+        // agent's own controls. The light web top bar is hidden (hideWebHeader).
         navigationItem.title = "ALMA AI"
         navigationItem.leftBarButtonItem = Self.glassBarButton(
-            icon: "clock.arrow.circlepath", target: self, action: #selector(agentHistory))
-        navigationItem.rightBarButtonItem = Self.glassBarButton(
+            icon: "line.3.horizontal", target: self, action: #selector(agentHistory), light: true)
+        navigationItem.rightBarButtonItem = Self.coralBarButton(
             icon: "square.and.pencil", target: self, action: #selector(agentNewChat))
     }
 
-    /// A Claude-style frosted DARK circular bar button (blur + hairline ring + white icon).
-    static func glassBarButton(icon: String, target: Any, action: Selector) -> UIBarButtonItem {
-        let size: CGFloat = 34
-        let container = UIButton(type: .system)
-        container.frame = CGRect(x: 0, y: 0, width: size, height: size)
-        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialDark))
-        blur.frame = container.bounds
+    /// A Claude-style frosted circular bar button. `light: true` = ultra-thin WHITE material
+    /// + dark icon (the LIGHT agent header); `light: false` = thin DARK material + white icon
+    /// (the dark ERP tabs' back chevron). Hairline ring + soft shadow either way.
+    static func glassBarButton(icon: String, target: Any, action: Selector, light: Bool = false) -> UIBarButtonItem {
+        let size: CGFloat = 36
+        let iconColor = light ? UIColor(red: 0.16, green: 0.14, blue: 0.20, alpha: 1) : UIColor.white
+        let container = UIButton(type: .custom)
+        // Fixed 36×36 via constraints — a bare frame gets squished by the nav bar into a
+        // lens shape, so pin the size and the icon color is BAKED (.alwaysOriginal) so the
+        // dark hamburger reads clearly over the frosted-white body (tintColor washed out).
+        // FULL Auto Layout — a frame-set blur inside a constraint-sized (0×0-at-init)
+        // container broke autoresizing and dropped the glyph to the bottom edge. Pin the
+        // blur to the container's edges and the icon to the blur's centre, so the disc is a
+        // true circle and the hamburger sits dead-centre. Icon colour is BAKED
+        // (.alwaysOriginal) so the dark glyph reads over the frosted-white body.
+        container.translatesAutoresizingMaskIntoConstraints = false
+        let blur = UIVisualEffectView(effect: UIBlurEffect(style: light ? .systemThinMaterialLight : .systemThinMaterialDark))
+        blur.translatesAutoresizingMaskIntoConstraints = false
         blur.layer.cornerRadius = size / 2
         blur.clipsToBounds = true
         blur.isUserInteractionEnabled = false
-        blur.contentView.backgroundColor = UIColor(white: 0, alpha: 0.14) // deepen so it reads dark over light content
+        blur.contentView.backgroundColor = light
+            ? UIColor(white: 1, alpha: 0.34)   // frosted-white body
+            : UIColor(white: 0, alpha: 0.14)   // deepen so it reads dark over light content
         container.addSubview(blur)
-        container.sendSubviewToBack(blur)
-        container.tintColor = .white
-        container.setImage(UIImage(systemName: icon,
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)), for: .normal)
+        let iconView = UIImageView(image: UIImage(systemName: icon,
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 17, weight: .bold))?
+            .withTintColor(iconColor, renderingMode: .alwaysOriginal))
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+        blur.contentView.addSubview(iconView)
+        NSLayoutConstraint.activate([
+            container.widthAnchor.constraint(equalToConstant: size),
+            container.heightAnchor.constraint(equalToConstant: size),
+            blur.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            blur.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            blur.topAnchor.constraint(equalTo: container.topAnchor),
+            blur.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            iconView.centerXAnchor.constraint(equalTo: blur.contentView.centerXAnchor),
+            iconView.centerYAnchor.constraint(equalTo: blur.contentView.centerYAnchor),
+        ])
         container.layer.cornerRadius = size / 2
         container.layer.borderWidth = 1
-        container.layer.borderColor = UIColor(white: 1, alpha: 0.18).cgColor
+        container.layer.borderColor = (light ? UIColor(white: 0, alpha: 0.10) : UIColor(white: 1, alpha: 0.18)).cgColor
+        container.layer.shadowColor = UIColor.black.cgColor
+        container.layer.shadowOpacity = light ? 0.12 : 0
+        container.layer.shadowRadius = 4
+        container.layer.shadowOffset = CGSize(width: 0, height: 1)
+        container.addTarget(target, action: action, for: .touchUpInside)
+        return UIBarButtonItem(customView: container)
+    }
+
+    /// Claude-style SOLID CORAL circular action button (baked white icon) — the new-chat
+    /// button, exactly like Claude's orange compose bubble on the top-right of the header.
+    static func coralBarButton(icon: String, target: Any, action: Selector) -> UIBarButtonItem {
+        let size: CGFloat = 36
+        let coral = UIColor(red: 0.878, green: 0.478, blue: 0.373, alpha: 1) // #E07A5F (ALMA accent)
+        let container = UIButton(type: .custom)
+        container.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            container.widthAnchor.constraint(equalToConstant: size),
+            container.heightAnchor.constraint(equalToConstant: size),
+        ])
+        container.backgroundColor = coral
+        let img = UIImage(systemName: icon, withConfiguration: UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold))?
+            .withTintColor(.white, renderingMode: .alwaysOriginal)
+        container.setImage(img, for: .normal)
+        container.layer.cornerRadius = size / 2
+        container.layer.masksToBounds = false
+        container.layer.shadowColor = coral.cgColor
+        container.layer.shadowOpacity = 0.40
+        container.layer.shadowRadius = 6
+        container.layer.shadowOffset = CGSize(width: 0, height: 2)
         container.addTarget(target, action: action, for: .touchUpInside)
         return UIBarButtonItem(customView: container)
     }
@@ -817,7 +870,7 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
                 ("Costs", agentURL("/agent/costs")),
             ])
         let assistantNav = Self.darkNav(root: assistant, tabTitle: "Assistant",
-                                        icon: "sparkles", largeTitles: false)
+                                        icon: "sparkles", largeTitles: false, light: true)
 
         // "More" is a NATIVE menu whose rows push web screens with a native slide.
         let moreNav = Self.darkNav(root: MoreMenuViewController(processPool: pool),
@@ -837,29 +890,47 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
 
-    /// A dark, violet-tinted UINavigationController wrapping `root`, with a tab item.
-    static func darkNav(root: UIViewController, tabTitle: String, icon: String, largeTitles: Bool) -> UINavigationController {
+    /// A frosted-glass UINavigationController wrapping `root`, with a tab item.
+    /// `light: true` = the CLAUDE-style LIGHT frosted bar (ultra-thin white material, dark
+    /// title, content scrolls UNDER it and blurs THROUGH clearly) — used for the Assistant.
+    /// `light: false` = the dark violet frosted bar for the ERP tabs.
+    static func darkNav(root: UIViewController, tabTitle: String, icon: String, largeTitles: Bool, light: Bool = false) -> UINavigationController {
         let nav = UINavigationController(rootViewController: root)
         nav.navigationBar.prefersLargeTitles = largeTitles
-        nav.overrideUserInterfaceStyle = .dark
-        // Aurora-frosted header: a genuine thin blur material so the app's purple
-        // aurora + content scroll THROUGH the bar (not a flat violet slab), with just
-        // a light violet tint on top so the white title stays readable over both the
-        // light (Orders) and dark (Approvals) pages. Soft drop shadow so it floats.
         let a = UINavigationBarAppearance()
         a.configureWithDefaultBackground()
-        a.backgroundEffect = UIBlurEffect(style: .systemThinMaterialDark) // stronger see-through blur
-        a.backgroundColor = UIColor(red: 0.20, green: 0.14, blue: 0.38, alpha: 0.42) // light violet veil
         a.shadowColor = .clear                       // no hard hairline; soft layer shadow instead
-        a.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
-        a.titleTextAttributes = [.foregroundColor: UIColor.white]
-        nav.navigationBar.standardAppearance = a
-        nav.navigationBar.scrollEdgeAppearance = a
-        nav.navigationBar.tintColor = UIColor(red: 0.655, green: 0.545, blue: 0.980, alpha: 1)
-        nav.navigationBar.layer.shadowColor = UIColor.black.cgColor
-        nav.navigationBar.layer.shadowOpacity = 0.28
-        nav.navigationBar.layer.shadowRadius = 10
-        nav.navigationBar.layer.shadowOffset = CGSize(width: 0, height: 3)
+        if light {
+            // CLAUDE glass: use the STANDARD iOS translucent nav-bar material (the same
+            // systemChromeMaterial Claude uses) — forced to a LIGHT interface so it reads as
+            // clean frosted WHITE and the chat blurs THROUGH it as it scrolls under. Do NOT
+            // override backgroundEffect/backgroundColor — the ultra-thin+tint override read
+            // muddy grey; the plain default background is the authentic frosted bar.
+            nav.overrideUserInterfaceStyle = .light
+            let darkTitle = UIColor(red: 0.13, green: 0.11, blue: 0.16, alpha: 1)
+            a.largeTitleTextAttributes = [.foregroundColor: darkTitle]
+            a.titleTextAttributes = [.foregroundColor: darkTitle]
+            nav.navigationBar.standardAppearance = a
+            nav.navigationBar.scrollEdgeAppearance = a
+            nav.navigationBar.tintColor = darkTitle
+            nav.navigationBar.layer.shadowColor = UIColor.black.cgColor
+            nav.navigationBar.layer.shadowOpacity = 0.10
+            nav.navigationBar.layer.shadowRadius = 8
+            nav.navigationBar.layer.shadowOffset = CGSize(width: 0, height: 2)
+        } else {
+            nav.overrideUserInterfaceStyle = .dark
+            a.backgroundEffect = UIBlurEffect(style: .systemThinMaterialDark) // stronger see-through blur
+            a.backgroundColor = UIColor(red: 0.20, green: 0.14, blue: 0.38, alpha: 0.42) // light violet veil
+            a.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
+            a.titleTextAttributes = [.foregroundColor: UIColor.white]
+            nav.navigationBar.standardAppearance = a
+            nav.navigationBar.scrollEdgeAppearance = a
+            nav.navigationBar.tintColor = UIColor(red: 0.655, green: 0.545, blue: 0.980, alpha: 1)
+            nav.navigationBar.layer.shadowColor = UIColor.black.cgColor
+            nav.navigationBar.layer.shadowOpacity = 0.28
+            nav.navigationBar.layer.shadowRadius = 10
+            nav.navigationBar.layer.shadowOffset = CGSize(width: 0, height: 3)
+        }
         nav.tabBarItem = UITabBarItem(
             title: tabTitle,
             image: UIImage(systemName: icon),
