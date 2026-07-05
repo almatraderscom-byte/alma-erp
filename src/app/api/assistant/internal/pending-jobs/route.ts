@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
       // NOTE: this list is the single gate between "queued" and "the worker ever
       // sees it" — a job type missing here hangs at approved until the watchdog
       // checkpoints it (exactly how workbench_run was caught missing in the P2 e2e).
-      type: { in: ['image_gen', 'video_gen', 'video_edit', 'long_agent_task', 'dispatch_staff_tasks', 'add_staff_task_now', 'staff_announcement', 'urgent_notify', 'outbound_call', 'browser_action', 'workbench_run', 'seo_audit'] },
+      type: { in: ['image_gen', 'video_gen', 'video_edit', 'video_finish', 'long_agent_task', 'dispatch_staff_tasks', 'add_staff_task_now', 'staff_announcement', 'urgent_notify', 'outbound_call', 'browser_action', 'workbench_run', 'seo_audit'] },
     },
     orderBy: { createdAt: 'asc' },
     take: 20,
