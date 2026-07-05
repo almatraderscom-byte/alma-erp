@@ -92,8 +92,9 @@ enum AlmaTheme {
 
     static func tabBarAppearance() -> UITabBarAppearance {
         let ap = UITabBarAppearance()
-        ap.configureWithOpaqueBackground()
-        ap.backgroundColor = tabBarBg
+        // Frosted glass, like the nav bars: the standard iOS translucent material (adapts
+        // to the bar's overrideUserInterfaceStyle) — content scrolls THROUGH it, blurred.
+        ap.configureWithDefaultBackground()
         let sel = violet
         let muted = isDark ? UIColor(white: 1, alpha: 0.45) : UIColor(white: 0, alpha: 0.42)
         for item in [ap.stackedLayoutAppearance, ap.inlineLayoutAppearance, ap.compactInlineLayoutAppearance] {
@@ -288,31 +289,26 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         root.addSubview(webView)
         webView.translatesAutoresizingMaskIntoConstraints = false
 
-        // GLASS MOTION (Assistant only): pin the web view to the very TOP of the root
-        // (y=0, UNDER the translucent dark-glass nav bar) so the chat scrolls THROUGH
-        // the bar, blurred — the Claude-app top-bar feel. Because the view now underlaps
-        // the bar, iOS reports env(safe-area-inset-top) = the bar's bottom INSIDE the
-        // WebView, and the web (gated on `alma-native-hdr`) turns that inset into the
-        // chat scroll area's CONTENT top padding: the first message clears the bar at
-        // rest, later messages pass under it. Every OTHER tab stays pinned below the bar
-        // (safe-area top) — their pages are opaque and must not underlap. On build 28 the
-        // web change is a no-op (env-top there is 0), so the web deploy is safe either way.
-        let topAnchor = agentSegments.isEmpty
-            ? root.safeAreaLayoutGuide.topAnchor
-            : root.topAnchor
+        // GLASS MOTION (every tab): the web view is pinned FULL-BLEED to the root —
+        // y=0 UNDER the translucent nav bar and all the way down UNDER the frosted
+        // tab bar — so page content scrolls THROUGH both bars, blurred (the Claude-app
+        // feel). The web reserves the covered zones itself via the natively-injected
+        // `--alma-top-inset` / `--alma-bottom-inset` CSS vars (see setWebInsetVars);
+        // env(safe-area-inset-*) is NOT reliable here because the scroll view runs
+        // `contentInsetAdjustmentBehavior = .never`.
         NSLayoutConstraint.activate([
-            webView.topAnchor.constraint(equalTo: topAnchor),
+            webView.topAnchor.constraint(equalTo: root.topAnchor),
             webView.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            // FULL height to the safe-area bottom (above the native tab bar → no tab-bar
-            // overlap). We deliberately do NOT pin to keyboardLayoutGuide: resizing a
-            // WKWebView the instant its input becomes first responder made iOS resign
-            // that input — the keyboard dismissed on the very first keystroke and text
-            // was dropped (owner report, reproduced on Orders search too). Instead the
-            // view stays a stable size and the keyboard OVERLAPS it; we lift the focused
-            // field above the keyboard with a scroll-view bottom inset (see keyboard
-            // observers), the standard WKWebView pattern that keeps text input alive.
-            webView.bottomAnchor.constraint(equalTo: root.safeAreaLayoutGuide.bottomAnchor)
+            // FULL height to the root bottom (under the glass tab bar). We deliberately
+            // do NOT pin to keyboardLayoutGuide: resizing a WKWebView the instant its
+            // input becomes first responder made iOS resign that input — the keyboard
+            // dismissed on the very first keystroke and text was dropped (owner report,
+            // reproduced on Orders search too). Instead the view stays a stable size and
+            // the keyboard OVERLAPS it; we lift the focused field above the keyboard
+            // with a scroll-view bottom inset (see keyboard observers), the standard
+            // WKWebView pattern that keeps text input alive.
+            webView.bottomAnchor.constraint(equalTo: root.bottomAnchor)
         ])
         startObservingKeyboard()
 
@@ -510,6 +506,9 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
             // visualViewport can't see the keyboard, so feed it the exact height here.
             setAgentKbInset(overlap)
         } else {
+            // Full-bleed view: the overlap now also spans the tab-bar zone the view
+            // underlaps — that's correct, the keyboard covers that zone too, so this
+            // inset still puts the content bottom exactly at the keyboard's top edge.
             webView.scrollView.contentInset.bottom = overlap
             webView.scrollView.verticalScrollIndicatorInsets.bottom = overlap
         }
@@ -533,25 +532,33 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         webView?.evaluateJavaScript(js, completionHandler: nil)
     }
 
-    /// GLASS MOTION top inset — inject the EXACT status-bar+nav-bar height into
-    /// `--alma-top-inset` so the agent's chat scroll CONTENT can clear the bar (and
-    /// scroll under it). We inject it natively instead of relying on the WebView's
-    /// `env(safe-area-inset-top)`, which is unreliable here: the plain WKWebView runs
-    /// `contentInsetAdjustmentBehavior = .never` (so the web owns all insets), and under
-    /// that mode env() does not track the underlapped nav bar. Same proven bridge as
-    /// `--kb-inset`. Agent tab only; the web falls back to env() when the var is absent
-    /// (older builds / non-native), so this is additive and safe.
-    private func setAgentTopInset() {
-        guard !agentSegments.isEmpty else { return }
-        let px = Int(view.safeAreaInsets.top.rounded())
+    /// GLASS MOTION insets — the web view underlaps BOTH bars (full-bleed), so inject
+    /// the EXACT nav-bar overlap (`--alma-top-inset` = safeAreaInsets.top) and tab-bar
+    /// overlap (`--alma-bottom-inset` = safeAreaInsets.bottom) so the page CONTENT can
+    /// reserve those zones while still scrolling under the glass. Injected natively
+    /// instead of relying on `env(safe-area-inset-*)`, which is unreliable here: the
+    /// plain WKWebView runs `contentInsetAdjustmentBehavior = .never` (the web owns all
+    /// insets), and under that mode env() does not track the underlapped bars. Same
+    /// proven bridge as `--kb-inset`. Every tab (agent AND ERP); the web falls back to
+    /// env() when the vars are absent (older builds / non-native), so this is additive
+    /// and safe. setProperty is idempotent, so re-running is cheap.
+    private func setWebInsetVars() {
         webView?.evaluateJavaScript(
-            "document.documentElement.style.setProperty('--alma-top-inset','\(px)px');",
+            Self.insetVarsJS(top: view.safeAreaInsets.top, bottom: view.safeAreaInsets.bottom),
             completionHandler: nil)
+    }
+
+    /// The one snippet that writes both inset vars — shared with the Capacitor
+    /// Dashboard tab (AlmaTabBarController injects it there too).
+    static func insetVarsJS(top: CGFloat, bottom: CGFloat) -> String {
+        let t = Int(top.rounded()), b = Int(bottom.rounded())
+        return "document.documentElement.style.setProperty('--alma-top-inset','\(t)px');"
+             + "document.documentElement.style.setProperty('--alma-bottom-inset','\(b)px');"
     }
 
     override func viewSafeAreaInsetsDidChange() {
         super.viewSafeAreaInsetsDidChange()
-        setAgentTopInset()
+        setWebInsetVars()
     }
 
     deinit { NotificationCenter.default.removeObserver(self) }
@@ -572,7 +579,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
     private var offlineView: UIView?
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         hideOffline() // a successful load clears any lingering offline screen
-        setAgentTopInset() // re-assert the glass-motion top inset on the fresh DOM
+        setWebInsetVars() // re-assert the glass-motion top/bottom insets on the fresh DOM
         // S3: on the FIRST paint, fade the content in over the placeholder instead of it
         // popping in abruptly. Later navigations/reloads are instant (alpha == 1).
         if !firstPaintDone {
@@ -1122,9 +1129,37 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         }
         // The Capacitor Dashboard isn't an AlmaWebTabViewController, so flip its web content
         // here (find its WKWebView without importing Capacitor).
-        if let dvc = dashboardVC, let w = Self.firstWebView(in: dvc.view) {
-            w.evaluateJavaScript(AlmaTheme.applyJS(), completionHandler: nil)
-        }
+        styleDashboardWebView()
+    }
+
+    /// The Capacitor web view's background is hardcoded DARK by capacitor.config
+    /// (#0c0b12), so in light mode the Dashboard showed black strips where the page
+    /// underlaps the bars. Re-base every layer under it on the themed root colour and
+    /// push the theme + the glass-motion inset vars into the page — the same
+    /// `--alma-top-inset` / `--alma-bottom-inset` bridge the plain tabs use (the
+    /// Dashboard fills the tab controller, so OUR safeAreaInsets are its overlaps).
+    /// Idempotent; runs at launch (applyTheme via init), on theme flips, and on
+    /// safe-area changes.
+    private func styleDashboardWebView() {
+        guard let dvc = dashboardVC, let w = Self.firstWebView(in: dvc.view) else { return }
+        let bg = AlmaTheme.rootBg
+        w.isOpaque = false
+        w.backgroundColor = bg
+        w.scrollView.backgroundColor = bg
+        w.superview?.backgroundColor = bg
+        dvc.view.backgroundColor = bg
+        w.evaluateJavaScript(AlmaTheme.applyJS(), completionHandler: nil)
+        w.evaluateJavaScript(
+            AlmaWebTabViewController.insetVarsJS(top: view.safeAreaInsets.top,
+                                                 bottom: view.safeAreaInsets.bottom),
+            completionHandler: nil)
+    }
+
+    /// Safe-area geometry lands AFTER init-time applyTheme (insets are 0 until layout),
+    /// so re-inject the Dashboard's inset vars when the real values arrive.
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+        styleDashboardWebView()
     }
 
     private static func firstWebView(in view: UIView) -> WKWebView? {
