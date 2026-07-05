@@ -23,4 +23,15 @@ Owner flips `[PENDING]` → `[✅ APPLIED <commit>]` or `[❌ REJECTED — reaso
 
 ## Queue
 
-(empty — no pending requests)
+### [✅ APPLIED — same commit as AssistantSwiftUI.swift] agent-chat — S6b native Assistant wiring (FYI, no action needed)
+- Session: assistant session (direct owner instruction 2026-07-06, predates this queue)   Date: 2026-07-06
+- File(s): `ios/App/App.xcodeproj/project.pbxproj`, `ios/App/App/SpikeNativeShell.swift`, `ios/App/App/SwiftUIShell.swift`
+- Exact change: pbxproj = 4 additive entries for AssistantSwiftUI.swift (ids `…A021`/`…B021`,
+  deliberately gapped from the …A015 series to avoid id collisions); SpikeNativeShell = the
+  inline Assistant web-tab construction in `AlmaTabBarController.init` replaced by
+  `makeAssistantTab()` (the old construction moved VERBATIM into that builder's else-branch in
+  AssistantSwiftUI.swift); SwiftUIShell = `onSwiftUIFlagChanged` now also swaps `vcs[2]`.
+- Why: the owner directly instructed the Assistant section be migrated native in a parallel
+  session; these shared edits were applied + sim-verified (both themes, E2E streamed turn,
+  flag-off web fallback) and REBASED onto build-36 before pushing — logged here so the
+  integrator knows the pbxproj/shell deltas on the branch are intentional.
