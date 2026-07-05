@@ -31,6 +31,8 @@ import { logCost } from '../cost-log.mjs'
 
 const RELAY_MODEL = () => process.env.VOICE_RELAY_MODEL_ID || 'gemini-3.5-flash'
 const MAX_CALL_MINUTES = () => Number(process.env.VOICE_CALL_MAX_MINUTES) || 10
+/** Hang up if the caller never speaks (voicemail / carrier intercept / dead air). */
+const IDLE_HANGUP_SEC = () => Number(process.env.VOICE_RELAY_IDLE_HANGUP_SEC) || 30
 /** Spoken end-of-conversation marker the model emits when the job is done. */
 const END_MARKER = '[[END_CALL]]'
 
@@ -92,7 +94,20 @@ class RelaySession {
     this.abort = null
     this.ended = false
     this.reported = false
+    this.userTurns = 0
     this.maxTimer = setTimeout(() => this.timeUp(), MAX_CALL_MINUTES() * 60_000)
+    // Idle-hangup: if no human speech is ever transcribed, the call reached
+    // voicemail / a carrier intercept / dead air — don't monologue for the full
+    // 10-min cap (live proof: a 609s call the owner's phone never even rang).
+    this.idleTimer = setTimeout(() => this.idleGiveUp(), IDLE_HANGUP_SEC() * 1000)
+  }
+
+  idleGiveUp() {
+    if (this.userTurns > 0 || this.ended) return
+    this.ended = true
+    console.warn(`[voice-relay] idle give-up (no speech in ${IDLE_HANGUP_SEC()}s) — call ${this.callRecordId}`)
+    relayDiag.note(relayDiag.lastReports, { call: this.callRecordId, idleHangup: true })
+    this.send({ type: 'end' })
   }
 
   send(obj) {
@@ -112,6 +127,8 @@ class RelaySession {
       case 'prompt':
         // ConversationRelay delivers complete utterances (last !== false).
         if (msg.voicePrompt && msg.last !== false) {
+          this.userTurns++
+          clearTimeout(this.idleTimer) // real human speech — cancel idle-hangup
           this.history.push({ role: 'user', text: String(msg.voicePrompt) })
           void this.respond()
         }
@@ -236,6 +253,7 @@ class RelaySession {
 
   async close() {
     clearTimeout(this.maxTimer)
+    clearTimeout(this.idleTimer)
     this.abort?.abort()
     if (this.reported) return
     this.reported = true
