@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>After — WebGL refraction</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  body { background: radial-gradient(130% 120% at 50% 22%, #ffffff 0%, #eef4fc 54%, #e6edf7 100%); color:#2b3a52; overflow:hidden; position:relative; }
+  .bar { position:absolute; top:16px; left:0; right:0; display:flex; justify-content:space-between; padding:0 22px; color:#9fb0c8; }
+  .status { position:absolute; top:calc(50% + 150px); left:0; right:0; text-align:center; font-size:17px; color:#5b6b86; }
+  .status b { color:#2f7fe0; }
+  .stage { position:absolute; left:50%; top:calc(50% - 40px); transform:translate(-50%,-50%); width:340px; height:340px; }
+  .halo { position:absolute; inset:-30%; border-radius:50%; filter:blur(30px); z-index:0;
+    background: radial-gradient(circle at 50% 46%, rgba(90,170,255,.5), rgba(80,150,255,.16) 46%, transparent 68%),
+                radial-gradient(circle at 62% 62%, rgba(120,110,255,.30), transparent 60%); }
+  .shadow { position:absolute; left:50%; bottom:-8%; width:60%; height:8%; transform:translateX(-50%); filter:blur(10px); z-index:0;
+    background: radial-gradient(ellipse at center, rgba(30,70,150,.30), transparent 70%); }
+  canvas { position:relative; z-index:1; width:340px; height:340px; display:block; }
+  .controls { position:absolute; bottom:60px; left:0; right:0; display:flex; justify-content:space-between; padding:0 46px; }
+  .btn { width:66px; height:66px; border-radius:50%; background:#fff; display:grid; place-items:center; box-shadow:0 10px 26px rgba(70,110,170,.2); color:#111; }
+  .foot { position:absolute; bottom:24px; left:0; right:0; text-align:center; font-size:13px; color:#7d8ba6; }
+  .foot .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#2f7fe0; margin-right:6px; vertical-align:middle; }
+  svg { display:block; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#9fb0c8" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#9fb0c8" stroke-width="1.8" stroke-linecap="round"><line x1="4" y1="8" x2="20" y2="8"/><circle cx="9" cy="8" r="2.3" fill="#9fb0c8"/><line x1="4" y1="16" x2="20" y2="16"/><circle cx="15" cy="16" r="2.3" fill="#9fb0c8"/></svg>
+  </div>
+
+  <div class="stage">
+    <div class="halo"></div>
+    <canvas id="orb" width="680" height="680"></canvas>
+    <div class="shadow"></div>
+  </div>
+
+  <div class="status">মাইকে ট্যাপ করে <b>বলুন</b></div>
+
+  <div class="controls">
+    <div class="btn"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#111" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><line x1="12" y1="18" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg></div>
+    <div class="btn"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#111" stroke-width="2.1" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></div>
+  </div>
+  <div class="foot"><span class="dot"></span>কথোপকথন চালু</div>
+
+<script>
+(function(){
+  var cv = document.getElementById('orb');
+  var gl = cv.getContext('webgl', { alpha:true, premultipliedAlpha:false, antialias:true, preserveDrawingBuffer:true });
+  if(!gl){ document.body.style.background='#fdd'; return; }
+
+  // ---- mat helpers ----
+  function perspective(f, a, n, fr){ var t=1/Math.tan(f/2); return [t/a,0,0,0, 0,t,0,0, 0,0,(fr+n)/(n-fr),-1, 0,0,(2*fr*n)/(n-fr),0]; }
+  function mul(a,b){ var o=new Array(16); for(var i=0;i<4;i++)for(var j=0;j<4;j++){var s=0;for(var k=0;k<4;k++)s+=a[k*4+j]*b[i*4+k];o[i*4+j]=s;} return o; }
+  function translate(x,y,z){ return [1,0,0,0, 0,1,0,0, 0,0,1,0, x,y,z,1]; }
+  function rotateY(r){ var c=Math.cos(r),s=Math.sin(r); return [c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]; }
+  function rotateX(r){ var c=Math.cos(r),s=Math.sin(r); return [1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]; }
+  function mat3from(m){ return [m[0],m[1],m[2], m[4],m[5],m[6], m[8],m[9],m[10]]; }
+
+  // ---- sphere ----
+  function makeSphere(seg){
+    var pos=[],nor=[],idx=[];
+    for(var y=0;y<=seg;y++){ var v=y/seg, th=v*Math.PI;
+      for(var x=0;x<=seg;x++){ var u=x/seg, ph=u*2*Math.PI;
+        var sx=Math.sin(th)*Math.cos(ph), sy=Math.cos(th), sz=Math.sin(th)*Math.sin(ph);
+        pos.push(sx,sy,sz); nor.push(sx,sy,sz); } }
+    for(var y2=0;y2<seg;y2++)for(var x2=0;x2<seg;x2++){ var a=y2*(seg+1)+x2, b=a+seg+1; idx.push(a,b,a+1, a+1,b,b+1); }
+    return { pos:new Float32Array(pos), nor:new Float32Array(nor), idx:new Uint16Array(idx) };
+  }
+  var S = makeSphere(96);
+
+  var SIMPLEX = [
+    'vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x,289.0);} vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-0.85373472095314*r;}',
+    'float snoise(vec3 v){ const vec2 C=vec2(1.0/6.0,1.0/3.0); const vec4 D=vec4(0.0,0.5,1.0,2.0);',
+    ' vec3 i=floor(v+dot(v,C.yyy)); vec3 x0=v-i+dot(i,C.xxx); vec3 g=step(x0.yzx,x0.xyz); vec3 l=1.0-g;',
+    ' vec3 i1=min(g.xyz,l.zxy); vec3 i2=max(g.xyz,l.zxy); vec3 x1=x0-i1+C.xxx; vec3 x2=x0-i2+2.0*C.xxx; vec3 x3=x0-1.0+3.0*C.xxx;',
+    ' i=mod(i,289.0); vec4 p=permute(permute(permute(i.z+vec4(0.0,i1.z,i2.z,1.0))+i.y+vec4(0.0,i1.y,i2.y,1.0))+i.x+vec4(0.0,i1.x,i2.x,1.0));',
+    ' float n_=1.0/7.0; vec3 ns=n_*D.wyz-D.xzx; vec4 j=p-49.0*floor(p*ns.z*ns.z); vec4 x_=floor(j*ns.z); vec4 y_=floor(j-7.0*x_);',
+    ' vec4 x=x_*ns.x+ns.yyyy; vec4 y=y_*ns.x+ns.yyyy; vec4 h=1.0-abs(x)-abs(y); vec4 b0=vec4(x.xy,y.xy); vec4 b1=vec4(x.zw,y.zw);',
+    ' vec4 s0=floor(b0)*2.0+1.0; vec4 s1=floor(b1)*2.0+1.0; vec4 sh=-step(h,vec4(0.0)); vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy; vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;',
+    ' vec3 p0=vec3(a0.xy,h.x); vec3 p1=vec3(a0.zw,h.y); vec3 p2=vec3(a1.xy,h.z); vec3 p3=vec3(a1.zw,h.w);',
+    ' vec4 nn=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3))); p0*=nn.x;p1*=nn.y;p2*=nn.z;p3*=nn.w;',
+    ' vec4 m=max(0.6-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.0); m=m*m; return 42.0*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3))); }',
+    'float fbm(vec3 p){ float f=0.0,a=0.5; for(int i=0;i<4;i++){ f+=a*snoise(p); p*=2.03; a*=0.5;} return f; }'
+  ].join('\n');
+
+  var VS = SIMPLEX + [
+    'attribute vec3 aPos, aNor; uniform mat4 uProj,uView,uModel; uniform mat3 uNMat; uniform float uTime,uAmp,uDetail;',
+    'varying vec3 vWorld,vNormal;',
+    'void main(){ vec3 p=aPos;',
+    ' float d=fbm(normalize(p)*uDetail + vec3(0.0,uTime*0.3,0.0)); p += aNor * d * uAmp;',
+    ' vec3 P=normalize(p)*uDetail*1.3 + vec3(0.0,uTime*0.25,0.0);',
+    ' vec3 np=vec3(fbm(P+11.1),fbm(P+31.4),fbm(P+57.7));',
+    ' vec3 n=normalize(aNor + np*(0.12+uAmp*1.0));',
+    ' vec4 wp=uModel*vec4(p,1.0); vWorld=wp.xyz; vNormal=normalize(uNMat*n);',
+    ' gl_Position=uProj*uView*wp; }'
+  ].join('\n');
+
+  var FS = [
+    'precision highp float; uniform vec3 uCam,uTint,uCore; uniform float uIrid,uFres;',
+    'varying vec3 vWorld,vNormal;',
+    'vec3 aces(vec3 x){ return clamp((x*(2.51*x+0.03))/(x*(2.43*x+0.59)+0.14),0.0,1.0); }',
+    // analytic environment (no cubemap) — saturated blue sky + colored light blobs
+    'vec3 envColor(vec3 dir){ float up=dir.y*0.5+0.5;',
+    '  vec3 c=mix(vec3(0.14,0.36,0.82), vec3(0.62,0.83,1.0), up);',        // deep blue -> light top
+    '  c+=vec3(0.10,0.28,0.62)*pow(max(dot(dir,normalize(vec3(0.6,0.4,0.6))),0.0),5.0);',
+    '  c+=vec3(0.16,0.52,0.70)*pow(max(dot(dir,normalize(vec3(-0.5,0.2,0.5))),0.0),7.0);',   // cyan
+    '  c+=vec3(0.34,0.22,0.62)*pow(max(dot(dir,normalize(vec3(0.1,-0.6,0.5))),0.0),7.0);',   // violet
+    '  c+=vec3(0.9,0.85,0.8)*pow(max(dot(dir,normalize(vec3(-0.3,0.7,0.4))),0.0),60.0);',    // small warm hi
+    '  return c; }',
+    'void main(){ vec3 N=normalize(vNormal); vec3 V=normalize(uCam-vWorld); vec3 I=-V;',
+    '  float fres=pow(1.0-max(dot(N,V),0.0),3.0);',
+    // deep-blue volumetric body (deep core -> light cap)
+    '  float g=clamp(N.y*0.5+0.5,0.0,1.0);',
+    '  vec3 deep=vec3(0.04,0.18,0.55), mid=vec3(0.16,0.46,0.88), lite=vec3(0.70,0.88,1.0);',
+    '  vec3 body=mix(deep,mid,smoothstep(0.0,0.60,g)); body=mix(body,lite,smoothstep(0.74,1.0,g));',
+    '  vec3 col=body;',
+    // faint refractive chromatic shimmer (the "expensive" moving colour)
+    '  float eta=0.66;',
+    '  vec3 rR=refract(I,N,eta-0.02*uIrid), rG=refract(I,N,eta), rB=refract(I,N,eta+0.02*uIrid);',
+    '  vec3 refr=vec3(envColor(rR).r, envColor(rG).g, envColor(rB).b);',
+    '  col=mix(col, refr*vec3(0.55,0.74,1.0), 0.14);',
+    // broad top gloss cap
+    '  float top=smoothstep(0.45,1.0, dot(N, normalize(vec3(-0.15,1.0,0.35))));',
+    '  col += vec3(0.85,0.93,1.0)*top*0.30;',
+    // crisp specular hotspot
+    '  vec3 L=normalize(vec3(-0.5,0.9,0.7)); float spec=pow(max(dot(reflect(-L,N),V),0.0),140.0);',
+    '  col += vec3(1.0)*spec*1.7;',
+    // fresnel rim (defines the edge against the light bg)
+    '  col += vec3(0.5,0.70,1.0)*fres*0.45;',
+    '  gl_FragColor=vec4(clamp(col,0.0,1.0),1.0); }'
+  ].join('\n');
+
+  function sh(type,src){ var s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){ document.body.style.background='#fdd'; console.error(gl.getShaderInfoLog(s)); } return s; }
+  var prog=gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER,VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER,FS)); gl.linkProgram(prog); gl.useProgram(prog);
+
+  function buf(data,arr){ var b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.bufferData(gl.ARRAY_BUFFER,arr,gl.STATIC_DRAW);
+    var loc=gl.getAttribLocation(prog,data); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,3,gl.FLOAT,false,0,0); }
+  buf('aPos',S.pos); buf('aNor',S.nor);
+  var ib=gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,S.idx,gl.STATIC_DRAW);
+
+  var U={}; ['uProj','uView','uModel','uNMat','uTime','uAmp','uDetail','uCam','uTint','uCore','uIrid','uFres'].forEach(function(n){ U[n]=gl.getUniformLocation(prog,n); });
+  gl.uniform3f(U.uTint, 0.62,0.76,1.0); gl.uniform3f(U.uCore, 0.80,0.92,1.0);
+  gl.uniform1f(U.uDetail, 2.0); gl.uniform1f(U.uIrid, 1.0); gl.uniform1f(U.uFres, 0.9);
+
+  gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE); gl.cullFace(gl.BACK);
+  gl.clearColor(0,0,0,0);
+
+  var dist=3.4;
+  var proj=perspective(42*Math.PI/180, 1, 0.1, 100);
+  var view=translate(0,0,-dist);
+  gl.uniformMatrix4fv(U.uProj,false,new Float32Array(proj));
+  gl.uniformMatrix4fv(U.uView,false,new Float32Array(view));
+  gl.uniform3f(U.uCam, 0,0,dist);
+
+  function frame(ms){
+    var t=ms*0.001;
+    gl.viewport(0,0,cv.width,cv.height);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    var model=mul(rotateY(t*0.12), rotateX(0.12));
+    gl.uniformMatrix4fv(U.uModel,false,new Float32Array(model));
+    gl.uniformMatrix3fv(U.uNMat,false,new Float32Array(mat3from(model)));
+    gl.uniform1f(U.uTime, t);
+    gl.uniform1f(U.uAmp, 0.02 + 0.01*Math.sin(t*0.8));
+    gl.drawElements(gl.TRIANGLES, S.idx.length, gl.UNSIGNED_SHORT, 0);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
