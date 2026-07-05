@@ -1016,16 +1016,36 @@ final class MoreMenuViewController: UITableViewController {
         tableView.backgroundColor = .systemGroupedBackground
     }
 
-    // Section 0 = Appearance (Dark-mode switch); section 1 = business switcher; 2… = modules.
+    // Section 0 = Appearance (Dark-mode + Native-screens switches); section 1 = business
+    // switcher; 2… = modules. Row (0,1) is the S6 re-entry: this UIKit menu is what the
+    // owner sees AFTER turning the SwiftUI screens off, so the way back lives here.
     override func numberOfSections(in tableView: UITableView) -> Int { sections.count + 2 }
     override func tableView(_ t: UITableView, numberOfRowsInSection s: Int) -> Int {
-        s == 0 ? 1 : (s == 1 ? businesses.count : sections[s - 2].items.count)
+        s == 0 ? 2 : (s == 1 ? businesses.count : sections[s - 2].items.count)
     }
     override func tableView(_ t: UITableView, titleForHeaderInSection s: Int) -> String? {
         s == 0 ? "Appearance" : (s == 1 ? "Switch business" : sections[s - 2].header)
     }
 
     override func tableView(_ t: UITableView, cellForRowAt ip: IndexPath) -> UITableViewCell {
+        // Appearance row 1 — the "Native স্ক্রিন" (S6 SwiftUI screens) switch.
+        if ip.section == 0 && ip.row == 1 {
+            let cell = UITableViewCell(style: .subtitle, reuseIdentifier: nil)
+            var cfg = cell.defaultContentConfiguration()
+            cfg.text = "Native স্ক্রিন"
+            cfg.secondaryText = "Orders · Approvals · More"
+            cfg.secondaryTextProperties.color = .secondaryLabel
+            cfg.image = UIImage(systemName: "swift")
+            cfg.imageProperties.tintColor = AlmaTheme.coral
+            cell.contentConfiguration = cfg
+            let sw = UISwitch()
+            sw.isOn = AlmaSwiftUIFlag.isOn
+            sw.onTintColor = AlmaTheme.coral
+            sw.addTarget(self, action: #selector(nativeScreensToggled(_:)), for: .valueChanged)
+            cell.accessoryView = sw
+            cell.selectionStyle = .none
+            return cell
+        }
         // Appearance — a Dark-mode switch that flips the whole app (chrome + web content).
         if ip.section == 0 {
             let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
@@ -1068,6 +1088,11 @@ final class MoreMenuViewController: UITableViewController {
         return cell
     }
 
+    @objc private func nativeScreensToggled(_ sw: UISwitch) {
+        UISelectionFeedbackGenerator().selectionChanged()
+        AlmaSwiftUIFlag.isOn = sw.isOn   // tab controller swaps Orders/Approvals/More live
+    }
+
     @objc private func darkModeToggled(_ sw: UISwitch) {
         UISelectionFeedbackGenerator().selectionChanged()
         AlmaTheme.set(dark: sw.isOn)  // flips + persists + broadcasts → chrome + all webviews restyle
@@ -1106,8 +1131,11 @@ final class MoreMenuViewController: UITableViewController {
 /// session-sharing content tabs, with a dark appearance and a haptic tick on switch.
 final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate {
     private let selection = UISelectionFeedbackGenerator()
-    private static let base = "https://alma-erp-six.vercel.app"
+    static let base = "https://alma-erp-six.vercel.app"
     private weak var dashboardVC: UIViewController?
+    /// Shared by every content web view (and the S6 SwiftUI screens' web escapes +
+    /// the Companion) — one pool = one logged-in session everywhere.
+    let contentPool = WKProcessPool()
 
     /// - Parameter dashboard: the storyboard's Capacitor bridge VC, reused as tab 0.
     init(dashboard: UIViewController) {
@@ -1122,18 +1150,7 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         // other content tabs. Its web page-header is hidden via AlmaBridgeViewController.
         dashboard.title = "Dashboard"
 
-        let pool = WKProcessPool()
-
-        // Content tabs that get a NATIVE header (title synced from the web route via
-        // the almaShell bridge) + back button + swipe-back — wrapped in a dark nav
-        // controller. Assistant keeps its own in-page header, and the Dashboard is
-        // the Capacitor VC, so those two are not wrapped.
-        func webNavTab(_ path: String, _ title: String, _ icon: String) -> UINavigationController {
-            let vc = AlmaWebTabViewController(url: URL(string: Self.base + path)!, processPool: pool,
-                                              tabTitle: title, systemImage: icon,
-                                              hideWebHeader: true)
-            return Self.darkNav(root: vc, tabTitle: title, icon: icon, largeTitles: false)
-        }
+        let pool = contentPool
         // Assistant = the "Claude" surface: a native segmented control (Chat / Studio /
         // WhatsApp / Monitor / Costs) at the top replaces the web sub-nav that used to
         // stack above the native tab bar (the "double bottom bar"). Each segment loads
@@ -1153,17 +1170,19 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         let assistantNav = Self.darkNav(root: assistant, tabTitle: "Assistant",
                                         icon: "sparkles", largeTitles: false)
 
-        // "More" is a NATIVE menu whose rows push web screens with a native slide.
-        let moreNav = Self.darkNav(root: MoreMenuViewController(processPool: pool),
-                                   tabTitle: "More", icon: "ellipsis.circle", largeTitles: true)
-
+        // S6: Orders / Approvals / More are SwiftUI when the flag is on (iOS 17+),
+        // web/UIKit otherwise — makeXxxTab() decides per launch, and the flag toggle
+        // in More swaps them live (onSwiftUIFlagChanged). Dashboard (Capacitor) and
+        // Assistant are never swapped.
         viewControllers = [
             Self.darkNav(root: dashboard, tabTitle: "Dashboard", icon: "square.grid.2x2", largeTitles: false),
-            webNavTab("/orders",    "Orders",    "shippingbox"),
+            makeOrdersTab(),
             assistantNav,
-            webNavTab("/approvals", "Approvals", "checkmark.seal"),
-            moreNav,
+            makeApprovalsTab(),
+            makeMoreTab(),
         ]
+        NotificationCenter.default.addObserver(self, selector: #selector(onSwiftUIFlagChanged),
+                                               name: .almaSwiftUIFlagChanged, object: nil)
 
         delegate = self
         applyDarkAppearance()
@@ -1181,6 +1200,9 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
     private var didRunCompanionSelfTest = false
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        // The window doesn't exist during init-time applyTheme — re-assert here so the
+        // window-level trait (sheet presentations) matches from the first frame on.
+        view.window?.overrideUserInterfaceStyle = AlmaTheme.interfaceStyle
         // DEBUG self-test hook: ALMA_FADE_DEMO=1 presents the ClaudeTopFade demo screen
         // (see ClaudeTopFade.swift) so the scroll-edge fade can be screenshotted headlessly.
         ClaudeTopFadeSelfTest.presentIfRequested(over: self)
@@ -1217,6 +1239,10 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
     /// + content via their `.almaThemeChanged` observer; here we drive the shared chrome.
     func applyTheme() {
         overrideUserInterfaceStyle = AlmaTheme.interfaceStyle
+        // The WINDOW must carry the override too: SwiftUI .sheet presentations attach at
+        // the window's presentation layer, ABOVE this tab controller's trait override —
+        // without this a sheet rendered light while the app sat in dark (S6 finding).
+        view.window?.overrideUserInterfaceStyle = AlmaTheme.interfaceStyle
         let ap = AlmaTheme.tabBarAppearance()
         tabBar.standardAppearance = ap
         tabBar.scrollEdgeAppearance = ap

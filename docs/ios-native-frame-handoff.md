@@ -8,6 +8,17 @@
 
 ---
 
+## 0-d. ✅ 2026-07-05 (night) — S6 KICKOFF SHIPPED: SwiftUI Orders / Approvals / More / Companion, BUILD 35
+
+Owner said "S6 shuru koro, non-stop shob sesh korbe" — the S6 deferral is lifted. Shipped in ONE session (4 parallel sub-agents + main integration), all sim-verified against LIVE prod data in both themes:
+
+- **Native SwiftUI screens (iOS 17+):** `OrdersSwiftUI.swift` (list + live status chips w/ counts + debounced server search + detail sheet + status-change/cancel actions + Call/WhatsApp + "নতুন অর্ডার"/full-drawer web escapes), `ApprovalsSwiftUI.swift` (PENDING/APPROVED/REJECTED chips, per-row Approve/Reject — reject requires ≥5-char note, one spinner per row), `MoreMenuSwiftUI.swift` (exact UIKit menu parity + Dark Mode + **Native স্ক্রিন toggle**), `CompanionSwiftUI.swift` (SwiftUI chrome EMBEDDING the untouched AlmaCompanionViewController). All use `.claudeTopFade()`.
+- **Infra:** `AlmaAPI.swift` — URLSession client that replays the WKWebsiteDataStore session cookies (30s-cached sync, one auth-retry, redirect-blocking → `almaAuthExpired`); `SwiftUIShell.swift` — `AlmaSwiftUIFlag` (UserDefaults `alma-swiftui-screens`, **default ON**), `AlmaHostingController`, and the `make{Orders,Approvals,More}Tab()` builders + live tab-swap on `.almaSwiftUIFlagChanged`. **Dashboard (Capacitor) and Assistant are NEVER swapped.**
+- **Escape hatch both ways (sim-verified):** More → "Native স্ক্রিন" OFF = old web Orders/Approvals + UIKit More return instantly (the UIKit menu gained the same switch row to come back). iOS 16 devices silently keep web/UIKit.
+- **API notes (from discovery, spec in session log):** orders = flat JSON `GET/POST /api/orders/orders*` (snake_case, whole-taka ints, status enums like `RETURNED_PAID` case-sensitive); approvals = `{ok, data:{…}}` **wrapped** (apiDataSuccess) — the Swift models decode both shapes. Auth = NextAuth `__Secure-next-auth.session-token` cookie; business scoping via `?business_id=ALMA_LIFESTYLE`.
+- **Two integration findings fixed:** (1) SwiftUI `.sheet` presents at the WINDOW's trait layer, so the window (not just navs) now carries `overrideUserInterfaceStyle` — else sheets rendered light in dark mode; (2) multi-item orders carry machine JSON in `notes` (`ORDER_ITEMS_JSON…`) — filtered from the detail sheet.
+- **Build 35** uploaded. Known small gaps (deliberate v1): order CREATE/EDIT stay web (escape hatches in place); Orders is Lifestyle-scoped like the old tab; approvals list shows no payout detail sheet yet.
+
 ## 0-c. ✅ 2026-07-05 (later) — PURE GLASS HEADER, BUILD 34
 
 Owner spec: every page's top header = pure glassmorphism — transparent bg + STRONG backdrop blur, ZERO black shadows / dark overlays / dark gradients; content scrolling under must read blurred + glossy in the app's own colours. Implementation (all in `SpikeNativeShell.swift`):

@@ -32,6 +32,12 @@
 		A2BB7700000000000000B001 /* BackgroundRefresh.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2BB7700000000000000A001 /* BackgroundRefresh.swift */; };
 		F2AA7700000000000000B001 /* SpikeNativeShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A001 /* SpikeNativeShell.swift */; };
 		F2AA7700000000000000B002 /* ClaudeTopFade.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A002 /* ClaudeTopFade.swift */; };
+		F2AA7700000000000000B010 /* AlmaAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A010 /* AlmaAPI.swift */; };
+		F2AA7700000000000000B011 /* SwiftUIShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A011 /* SwiftUIShell.swift */; };
+		F2AA7700000000000000B012 /* MoreMenuSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A012 /* MoreMenuSwiftUI.swift */; };
+		F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A013 /* OrdersSwiftUI.swift */; };
+		F2AA7700000000000000B014 /* ApprovalsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */; };
+		F2AA7700000000000000B015 /* CompanionSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A015 /* CompanionSwiftUI.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -65,6 +71,12 @@
 		A2BB7700000000000000A001 /* BackgroundRefresh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefresh.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A001 /* SpikeNativeShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpikeNativeShell.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A002 /* ClaudeTopFade.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeTopFade.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A010 /* AlmaAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaAPI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A011 /* SwiftUIShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftUIShell.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A012 /* MoreMenuSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreMenuSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A013 /* OrdersSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrdersSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A015 /* CompanionSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSwiftUI.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -145,6 +157,12 @@
 				A2BB7700000000000000A001 /* BackgroundRefresh.swift */,
 				F2AA7700000000000000A001 /* SpikeNativeShell.swift */,
 				F2AA7700000000000000A002 /* ClaudeTopFade.swift */,
+				F2AA7700000000000000A010 /* AlmaAPI.swift */,
+				F2AA7700000000000000A011 /* SwiftUIShell.swift */,
+				F2AA7700000000000000A012 /* MoreMenuSwiftUI.swift */,
+				F2AA7700000000000000A013 /* OrdersSwiftUI.swift */,
+				F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */,
+				F2AA7700000000000000A015 /* CompanionSwiftUI.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -353,6 +371,12 @@
 				A2BB7700000000000000B001 /* BackgroundRefresh.swift in Sources */,
 				F2AA7700000000000000B001 /* SpikeNativeShell.swift in Sources */,
 				F2AA7700000000000000B002 /* ClaudeTopFade.swift in Sources */,
+				F2AA7700000000000000B010 /* AlmaAPI.swift in Sources */,
+				F2AA7700000000000000B011 /* SwiftUIShell.swift in Sources */,
+				F2AA7700000000000000B012 /* MoreMenuSwiftUI.swift in Sources */,
+				F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */,
+				F2AA7700000000000000B014 /* ApprovalsSwiftUI.swift in Sources */,
+				F2AA7700000000000000B015 /* CompanionSwiftUI.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -503,7 +527,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -525,7 +549,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -544,7 +568,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AlmaWidget/AlmaWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AlmaWidget/Info.plist;
@@ -570,7 +594,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AlmaWidget/AlmaWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 34;
+				CURRENT_PROJECT_VERSION = 35;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AlmaWidget/Info.plist;
