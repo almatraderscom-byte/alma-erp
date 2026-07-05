@@ -65,7 +65,21 @@ force a re-encode (one extra encode max).
 | Full vitest suite (712 tests) | PASS |
 | `tsc --noEmit` · `next build` · `node --check` worker | PASS |
 | `git diff --stat` scope — agent/studio/worker only, zero ERP files | PASS |
-| Live e2e with captions/music on VPS | pending merge (worker deploys from main) — test together with V1's UI check |
+| **Live e2e on the VPS (2026-07-05, post-merge)** — voiceover + captions + stings + covers on the real worker; final reel 18.3s (1.2s logo intro + 15s + 1.6s outro), frame-checked | PASS (`postApplied: {captions, voiceover, stings}` all true, `captionRenderer: pango_overlay`, no warnings) |
+| Music bed + ducking live test | NOT yet — owner's approved-track library is empty by design; run one after he uploads a track |
+
+## Live-e2e hardening (same day, frame-level checks caught all three)
+
+1. **PR #248** — OpenAI rejects `language:'bn'` on whisper-1 ("Language 'bn' is
+   not supported"); timing pass now falls back to prompt-steered auto-detect.
+2. **PR #249** — the VPS libass mangles Bangla complex-script shaping (reph/
+   conjuncts broken, e-kar on the wrong side). Captions now render as per-cue
+   PNG strips via sharp's SVG path (pango/harfbuzz shapes Bangla correctly)
+   overlaid by ffmpeg for exactly each cue window; ASS stays as fallback.
+3. **PR #250** — `density:96` scaled the strip 1.33× (librsvg's 72dpi baseline)
+   pushing text off-frame, and `trim().metadata()` reported pre-trim size so
+   auto-shrink never fired. Fixed; final frame check shows the caption centered,
+   in-frame, correctly shaped.
 
 ## Decisions / ambiguities
 
