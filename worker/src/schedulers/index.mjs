@@ -76,6 +76,7 @@ const lazy = {
   securityAudit:       () => import('../security/audit-scan.mjs'),
   agentScorecard:      () => import('./agent-scorecard.mjs'),
   studioArchive:       () => import('./studio-archive.mjs'),
+  weeklySelfReport:    () => import('./self-report.mjs'),
 }
 
 // ── Registry table ────────────────────────────────────────────────────────────
@@ -149,6 +150,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'evening-todo-summary',    cronUtc: '30 14 * * *',  description: 'Evening agent todo summary to owner (20:30 Dhaka)' },
   { name: 'todo-reconcile',          cronUtc: '55 17 * * *',  description: 'End-of-day: cancel agent todos not done today (23:55 Dhaka)' },
   { name: 'agent-scorecard',        cronUtc: '30 3 * * 6',  description: 'Weekly agent tool scorecard (Sat 09:30 Dhaka)' },
+  { name: 'weekly-self-report',     cronUtc: '0 5 * * 6',   description: 'P5 weekly agent QA: golden evals + checkpoints + success telemetry (Sat 11:00 Dhaka)' },
   { name: 'studio-archive',         cronUtc: '0 19 * * *',   description: 'Creative Studio → Drive archive + Supabase cleanup (01:00 Dhaka)' },
   { name: 'salah-muhasaba',         cronUtc: '30 16 * * *',  description: 'Nightly salah muhasaba + encouragement (22:30 Dhaka)' },
   { name: 'plan-driver',            cronUtc: '*/2 * * * *',  description: 'Autonomous plan-driver tick — pursue stalled plans (every 2 min; self-gated by AGENT_AUTODRIVE_ENABLED)' },
@@ -546,6 +548,11 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'agent-scorecard': {
       const { runAgentScorecard } = await lazy.agentScorecard()
       dutyResult = await runAgentScorecard() ?? { dutyStatus: 'done' }
+      break
+    }
+    case 'weekly-self-report': {
+      const { runWeeklySelfReport } = await lazy.weeklySelfReport()
+      dutyResult = await runWeeklySelfReport() ?? { dutyStatus: 'done' }
       break
     }
     case 'studio-archive': {
