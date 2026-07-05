@@ -13,8 +13,9 @@
   top: 0;
   left: 0;
   right: 0;
-  /* FADE_HEIGHT — identical logical height to the native ClaudeTopFade. */
-  height: calc(env(safe-area-inset-top, 0px) + 88px);
+  /* TEMP VERIFY (owner): cranked to 200px flat — restore
+     calc(env(safe-area-inset-top, 0px) + 88px) after the eye-check. */
+  height: 200px;
   pointer-events: none; /* taps NEVER get eaten */
   /* Above scroll content, below any interactive floating controls (todo pill z-40+,
      web headers are hidden in the shell anyway). */
@@ -55,8 +56,9 @@
   mask-image: linear-gradient(to bottom, #000 0%, #000 26%, transparent 50%);
 }
 .b5 {
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
+  /* TEMP VERIFY: 20px crank (restore 8px after the eye-check) */
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 10%, transparent 32%);
   mask-image: linear-gradient(to bottom, #000 0%, #000 10%, transparent 32%);
 }
@@ -64,10 +66,11 @@
 /* Colour dissolve on top of the blur stack: page bg, opaque top → clear bottom.
    var(--bg-0) follows the theme root, so light/dark both match with no JS. */
 .scrim {
+  /* TEMP VERIFY: 0.9 crank (restore 55% mid-stop version after the eye-check) */
   background: linear-gradient(
     to bottom,
-    var(--bg-0) 0%,
-    color-mix(in srgb, var(--bg-0) 55%, transparent) 55%,
+    color-mix(in srgb, var(--bg-0) 90%, transparent) 0%,
+    color-mix(in srgb, var(--bg-0) 90%, transparent) 45%,
     transparent 100%
   );
 }
