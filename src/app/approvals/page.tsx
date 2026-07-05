@@ -409,7 +409,7 @@ function ApprovalsPageInner() {
                     <Button size="xs" variant="ghost" disabled={rowBusy} onClick={() => setSelected(row)}>View Details</Button>
                     {row.status === 'PENDING' && row.executable && (
                       <Button size="xs" variant="gold" disabled={actionDisabled} onClick={() => handleApproveClick(row)}>
-                        {ui.state === 'processing' ? <><Spinner /> Processing</> : 'Approve'}
+                        {ui.state === 'processing' ? 'Processing' : 'Approve'}
                       </Button>
                     )}
                     {row.status === 'PENDING' && (

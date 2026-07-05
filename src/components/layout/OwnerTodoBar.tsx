@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { usePathname } from 'next/navigation'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import toast from 'react-hot-toast'
@@ -64,6 +65,9 @@ export function OwnerTodoBar() {
   const { role } = useActor()
   const path = usePathname() ?? ''
   const reduceMotion = useReducedMotion()
+  // Portal target readiness — the chip renders into document.body so NO ancestor
+  // (provider wrapper, page fade, filter/opacity layer) can ever dim the fixed pill.
+  const [mounted, setMounted] = useState(false)
   const [todos, setTodos] = useState<OwnerTodo[]>([])
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState('')
@@ -72,6 +76,10 @@ export function OwnerTodoBar() {
   const [justDone, setJustDone] = useState<Set<string>>(new Set())
   const openRef = useRef(open)
   openRef.current = open
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const isOwner = role === 'SUPER_ADMIN'
   const hidden = !isOwner || HIDE_PREFIXES.some((p) => path.startsWith(p))
@@ -179,9 +187,9 @@ export function OwnerTodoBar() {
     }
   }, [refresh])
 
-  if (hidden) return null
+  if (hidden || !mounted || typeof document === 'undefined') return null
 
-  return (
+  return createPortal(
     <>
       {/* Collapsed pill — same fixed top-right spot on every ERP page. */}
       <div
@@ -321,6 +329,7 @@ export function OwnerTodoBar() {
           </>
         )}
       </AnimatePresence>
-    </>
+    </>,
+    document.body,
   )
 }

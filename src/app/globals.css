@@ -519,12 +519,35 @@ a,
    data-theme wasn't exactly 'light' the toast fell back to the dark slab and the
    message was unreadable in light mode. */
 .alma-toast {
-  --toast-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(247, 244, 238, 0.97) 100%);
+  --toast-bg: var(--glass-bg-strong, rgba(252, 250, 245, 0.88));
+  --toast-border: var(--glass-border, rgba(0, 0, 0, 0.07));
+  --toast-shadow: var(--glass-shadow-lift, 0 12px 40px -16px rgba(0, 0, 0, 0.22));
   --toast-fg: #1f1d29;
+  position: relative;
+  overflow: hidden;
+  background: var(--toast-bg);
+  border: 1px solid var(--toast-border);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
+  backdrop-filter: blur(18px) saturate(1.35);
+  box-shadow: var(--toast-shadow);
+  padding: 0.875rem 1.125rem 0.875rem 1.25rem;
 }
 :root[data-theme='dark'] .alma-toast {
-  --toast-bg: linear-gradient(180deg, rgba(28, 25, 38, 0.94) 0%, rgba(18, 16, 26, 0.94) 100%);
+  --toast-bg: var(--glass-bg-strong, rgba(26, 24, 34, 0.86));
+  --toast-border: var(--glass-border, rgba(255, 255, 255, 0.09));
+  --toast-shadow: var(--glass-shadow-lift, 0 12px 40px -16px rgba(0, 0, 0, 0.60));
   --toast-fg: #ece6da;
+}
+/* Tone accent bar — 3px gradient on the left edge (emerald success / red error);
+   the component sets --toast-accent / --toast-accent-soft per toast tone. */
+.alma-toast::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--toast-accent, #E07A5F), var(--toast-accent-soft, rgba(224, 122, 95, 0.30)));
 }
 
 @keyframes alma-toast-pop {
@@ -1139,6 +1162,15 @@ html.alma-native-hdr .owner-todo-fab button {
   min-height: 30px;
   padding-top: 0.25rem;
   padding-bottom: 0.25rem;
+  /* The pill sits UNDER the translucent native bar material, which washes out
+     web content in that zone. Its 15%-alpha web tint had nothing solid behind
+     it, so it read ghosted. Give it an opaque theme surface; the gold "has
+     todos" tint is re-applied as a gradient overlay below so both states stay
+     distinct but crisp over the native title row. */
+  background-color: var(--bg-2);
+}
+html.alma-native-hdr .owner-todo-fab button.bg-gold\/15 {
+  background-image: linear-gradient(0deg, rgb(var(--c-accent) / 0.18), rgb(var(--c-accent) / 0.18));
 }
 html.alma-native-hdr .owner-todo-panel {
   top: calc(var(--alma-top-inset, calc(env(safe-area-inset-top) + 2.75rem)) + 6px) !important;
