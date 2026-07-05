@@ -1127,40 +1127,11 @@ html.alma-native .mobile-bottom-spacer {
   display: none !important;
 }
 
-/* ── Tint-free frosted glass for the native bars ──────────────────────────────
-   The native nav/tab bars are now FULLY transparent: every UIKit blur material
-   carries its own tint, which read as a black band (dark) / grey slab (light)
-   over the aurora — the owner wants the bars to be ONE layer with the page.
-   Instead the WEB frosts its own pixels in the two covered zones with a masked
-   backdrop-blur: pure blur, zero tint, so at rest the strip is invisible and
-   scrolled content frosts as it passes under the native titles. Heights come
-   from the shell-injected insets (env()/0 fallback keeps old builds harmless).
-   pointer-events:none — purely visual. */
-html.alma-native body::before,
-html.alma-native body::after {
-  content: '';
-  position: fixed;
-  left: 0;
-  right: 0;
-  z-index: 60;
-  pointer-events: none;
-}
-html.alma-native body::before {
-  top: 0;
-  height: calc(var(--alma-top-inset, env(safe-area-inset-top)) + 8px);
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
-  -webkit-mask-image: linear-gradient(to bottom, black 62%, transparent);
-  mask-image: linear-gradient(to bottom, black 62%, transparent);
-}
-html.alma-native body::after {
-  bottom: 0;
-  height: calc(var(--alma-bottom-inset, env(safe-area-inset-bottom)) + 6px);
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
-  -webkit-mask-image: linear-gradient(to top, black 62%, transparent);
-  mask-image: linear-gradient(to top, black 62%, transparent);
-}
+/* Native bars: NO frost, NO strip, NOTHING painted in the bar zones (owner rule:
+   zero shadow top or bottom, ever). The page runs edge-to-edge; native draws only
+   the floating title/buttons/tab items. (A masked backdrop-blur strip lived here
+   briefly — its compositor re-activation popped in ~1s after tab switches and read
+   as a returning shadow, so it was removed outright.) */
 
 /* Elements that open a NATIVE long-press context menu in the shell: suppress the
    WKWebView's own long-press (text selection / callout / link preview) so it can't
