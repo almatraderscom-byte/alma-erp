@@ -430,8 +430,8 @@ function StudioWorkspace({
             type="button"
             onClick={() => setTab(t)}
             className={cn(
-              'flex-1 rounded-xl py-2 text-[12px] font-bold transition-colors',
-              tab === t ? 'bg-[#E07A5F] text-white shadow-sm' : 'border border-border bg-card/70 text-muted',
+              'flex-1 py-2.5 text-[12px]',
+              tab === t ? 'st-chip-on' : 'st-chip',
             )}
           >
             {t === 'auto' ? '✨ Auto — এক ট্যাপ' : '⚙ Advanced'}
@@ -741,8 +741,8 @@ function AutoPanel({
     <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-24 pt-4">
       <div className="mx-auto flex max-w-md flex-col gap-4">
         <div className="text-center">
-          <p className="text-[15px] font-bold text-cream">Product দিন — বাকিটা AI করবে</p>
-          <p className="mt-1 text-[12px] leading-snug text-muted">
+          <p className="text-[19px] font-extrabold tracking-tight text-cream">Product দিন — বাকিটা AI করবে</p>
+          <p className="mt-1.5 text-[12.5px] leading-snug text-muted-hi">
             শুধু পণ্যের ছবি upload করুন। সেভ করা মডেল, prompt, ব্যাকগ্রাউন্ড — সব AI নিজেই ঠিক রাখবে।
           </p>
         </div>
@@ -840,7 +840,7 @@ function AutoPanel({
           onClick={onRun}
           className={cn(
             'flex w-full items-center justify-center gap-2 rounded-2xl py-4 text-sm font-bold text-white transition-opacity',
-            canRun && !running ? 'bg-[#E07A5F]' : 'bg-[#94A3B8]',
+            canRun && !running ? 'st-btn' : 'bg-[#94A3B8]/70',
           )}
         >
           {running ? (
@@ -889,11 +889,11 @@ function UploadTile({
         <img src={preview} alt={label} className="mx-auto max-h-44 w-full object-contain p-2" />
       ) : (
         <div className="px-4 py-8 text-center">
-          <p className="text-sm font-semibold text-muted">
+          <p className="text-[15px] font-bold text-cream">
             {label}
             {required && <span className="text-[#E07A5F]"> *</span>}
           </p>
-          <p className="mt-1 text-[11px] text-muted">Tap to upload or drop image</p>
+          <p className="mt-1 text-[11px] text-muted">ট্যাপ করে ছবি দিন — বাকিটা সিস্টেম করবে</p>
         </div>
       )}
     </div>
