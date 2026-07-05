@@ -242,6 +242,119 @@ async function concatStings({ workDir, introFile, reelFile, outroFile, outFile }
   )
 }
 
+/**
+ * V4 — stitch 2–3 finished Veo clips into one long reel with crossfades.
+ * Pure ffmpeg; clips come from the same aspect so only fps/format normalize.
+ */
+export async function processVeoConcat(job, { supabase, callJobResult, reportProgress }) {
+  const { pendingActionId, payload } = job.data
+  const { concatPaths = [], fadeSec = 0.4 } = payload
+  if (concatPaths.length < 2) {
+    await callJobResult(pendingActionId, 'failed', undefined, 'veoConcat needs >=2 clips')
+    return
+  }
+  const { mkdir, rm } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const workDir = join(tmpdir(), `alma-veo-concat-${pendingActionId}`)
+  await mkdir(workDir, { recursive: true })
+  try {
+    await reportProgress(supabase, pendingActionId, 1)
+    const files = []
+    for (let i = 0; i < concatPaths.length; i++) {
+      files.push(await downloadSmall(supabase, concatPaths[i], join(workDir, `clip-${i}.mp4`)))
+    }
+    await reportProgress(supabase, pendingActionId, 4)
+    const lens = []
+    for (const f of files) lens.push(await mediaDuration(f))
+    const parts = []
+    files.forEach((_, i) => {
+      parts.push(`[${i}:v]fps=30,setsar=1,format=yuv420p[v${i}]`)
+      parts.push(`[${i}:a]${fmt('')}[a${i}]`)
+    })
+    let vT = '[v0]'
+    let aT = '[a0]'
+    let outLen = lens[0]
+    for (let i = 1; i < files.length; i++) {
+      const off = Math.round((outLen - fadeSec) * 100) / 100
+      const vO = i === files.length - 1 ? '[vout]' : `[vx${i}]`
+      const aO = i === files.length - 1 ? '[aout]' : `[ax${i}]`
+      parts.push(`${vT}[v${i}]xfade=transition=fade:duration=${fadeSec}:offset=${off}${vO}`)
+      parts.push(`${aT}[a${i}]acrossfade=d=${fadeSec}${aO}`)
+      vT = vO; aT = aO
+      outLen = outLen + lens[i] - fadeSec
+    }
+    const outFile = join(workDir, 'reel.mp4')
+    await execFileAsync('ffmpeg', [
+      '-y', ...files.flatMap((f) => ['-i', f]),
+      '-filter_complex', parts.join(';'),
+      '-map', '[vout]', '-map', '[aout]',
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22',
+      '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', outFile,
+    ], { timeout: RENDER_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 })
+
+    const thumbFile = join(workDir, 'thumb.jpg')
+    await execFileAsync('ffmpeg', ['-y', '-ss', '0.5', '-i', outFile, '-frames:v', '1', '-vf', 'scale=480:-2', thumbFile], { timeout: 60_000 }).catch(() => {})
+
+    const storagePath = `generated/${pendingActionId}.mp4`
+    const { readFile: rf } = await import('node:fs/promises')
+    const { error: upErr } = await supabase.storage.from('agent-files').upload(storagePath, await rf(outFile), { contentType: 'video/mp4', upsert: true })
+    if (upErr) throw new Error(upErr.message)
+    let thumbPath = null
+    try {
+      thumbPath = `generated/${pendingActionId}-thumb.jpg`
+      await supabase.storage.from('agent-files').upload(thumbPath, await rf(thumbFile), { contentType: 'image/jpeg', upsert: true })
+    } catch { thumbPath = null }
+
+    await callJobResult(pendingActionId, 'success', {
+      storagePath,
+      ...(thumbPath ? { thumbPath } : {}),
+      mediaType: 'video',
+      durationSec: Math.round(outLen * 10) / 10,
+      clips: files.length,
+      aspect: payload.aspect ?? '9:16',
+    })
+  } finally {
+    await rm(workDir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+/**
+ * V4 AI-assist (per-run opt-in): Gemini watches a small proxy of the shoot and
+ * suggests highlight timestamps. They are only ADDED to scdet's cut list —
+ * the deterministic planner still makes every decision.
+ */
+export async function suggestHighlights({ inputFile, durationSec }) {
+  const key = process.env.GEMINI_API_KEY
+  if (!key) return []
+  const proxyFile = inputFile.replace(/\.mp4$/, '-proxy.mp4')
+  await execFileAsync('ffmpeg', ['-y', '-i', inputFile, '-vf', 'scale=320:-2,fps=5', '-an', '-c:v', 'libx264', '-crf', '32', proxyFile], { timeout: 180_000, maxBuffer: 8 * 1024 * 1024 })
+  const { GoogleGenAI } = await import('@google/genai')
+  const genai = new GoogleGenAI({ apiKey: key })
+  let file = await genai.files.upload({ file: proxyFile, config: { mimeType: 'video/mp4' } })
+  const start = Date.now()
+  while (file.state === 'PROCESSING' && Date.now() - start < 120_000) {
+    await new Promise((r) => setTimeout(r, 4000))
+    file = await genai.files.get({ name: file.name })
+  }
+  if (file.state !== 'ACTIVE') return []
+  const res = await genai.models.generateContent({
+    model: 'gemini-3.1-flash',
+    contents: [{
+      role: 'user',
+      parts: [
+        { fileData: { fileUri: file.uri, mimeType: 'video/mp4' } },
+        { text: `This is a ${Math.round(durationSec)}s product/fashion shoot. List up to 8 timestamps (seconds, one number per line, nothing else) where visually strong moments START.` },
+      ],
+    }],
+  })
+  const text = res.text ?? res.candidates?.[0]?.content?.parts?.[0]?.text ?? ''
+  return String(text)
+    .split(/\s+/)
+    .map((t) => Number(t.replace(/[^0-9.]/g, '')))
+    .filter((n) => Number.isFinite(n) && n > 0.5 && n < durationSec - 0.5)
+    .slice(0, 8)
+}
+
 /** 4 candidate cover frames for the Gallery picker. */
 export async function extractCoverCandidates({ file, workDir, durationSec }) {
   const stamps = [0.12, 0.38, 0.62, 0.88].map((p) => Math.max(0.2, p * durationSec))

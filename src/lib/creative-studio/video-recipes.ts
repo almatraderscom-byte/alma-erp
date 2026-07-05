@@ -78,6 +78,12 @@ export const VIDEO_RECIPES: VideoRecipe[] = [
   },
 ]
 
+/** Client-safe mirror of content-engine estimateReelCostBdt (that module pulls
+ * prisma via brand-identity, so the Studio UI can't import it). Veo ≈ $0.15/s. */
+export function reelCostBdt(durationSec: number, usdToBdt = 125): number {
+  return Math.round(durationSec * 0.15 * usdToBdt)
+}
+
 export function getVideoRecipe(id: string): VideoRecipe | null {
   return VIDEO_RECIPES.find((r) => r.id === id) ?? null
 }
@@ -130,6 +136,9 @@ export type VideoEditOptions = {
   voiceoverText?: string
   /** logo intro/outro stings (pre-rendered once per aspect, concatenated) */
   stings?: boolean
+  /** V4 (per-run opt-in, OFF default): Gemini suggests highlight timestamps —
+   * only ADDED to scdet's cuts; the deterministic planner still decides */
+  aiAssist?: boolean
 }
 
 export type CutSegment = {

@@ -111,6 +111,18 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // V4 multi-clip Veo reel: a finished clip queues the next clip / the concat.
+  if (payload.veoChain && status === 'success') {
+    try {
+      const { advanceVeoChain } = await import('@/lib/creative-studio/veo-chain')
+      const sp = typeof data?.storagePath === 'string' ? data.storagePath : undefined
+      const nextId = await advanceVeoChain(action, sp)
+      if (nextId) console.log(`[job-result] veo chain advanced ${pendingActionId} → ${nextId}`)
+    } catch (chainErr) {
+      console.error('[job-result] veo chain advance failed:', chainErr)
+    }
+  }
+
   const convId = resolveConversationId(action)
   let messageText: string | null = null
   let pushTelegram = false
