@@ -55,7 +55,7 @@ templates over the reel and it comes back as the item's "টেমপ্লে�
 | Full vitest suite | PASS (727 incl. new; 6 pre-existing agent-tools tests flake ONLY under full-suite CPU load — 5s-timeout borderline, pass in isolation and on clean main; unrelated to V3) |
 | `tsc --noEmit` · `next build` · `node --check` worker | PASS |
 | **Local Remotion render** — bundle + transparent vp8 render + still frame visually checked (correct Bangla shaping, all templates positioned) | PASS |
-| Live e2e on the VPS | after merge (worker deploys from main): npm ci pulls Remotion (~500 pkgs), preflight downloads Chrome Headless Shell (~95 MB, once); then run a finish job on an existing e2e reel and frame-check |
+| **Live e2e on the VPS (2026-07-05, post-merge)** — all five templates on a real reel, frame-checked: countdown in Bangla numerals + watermark + lower-third + price tag mid-reel, full end card (logo, code·price, CTA pill) at the tail; audio intact | PASS |
 
 ## Flags for the owner
 
