@@ -138,9 +138,12 @@ export async function runWorkbenchTask(payload) {
     }
   }
 
-  if (!payload.keepWorkspace && !ok) {
-    // keep failed workspaces for diagnosis; only clean SUCCESSFUL ephemeral runs
-  } else if (!payload.keepWorkspace && ok) {
+  // Cleanup policy: keep failed workspaces for diagnosis, and keep successful
+  // ones when the caller asked for artifacts — the WORKER reads those files
+  // AFTER this function returns (deleting here was the P2 e2e bug: report.json
+  // was gone before upload). The caller (or the janitor) removes it afterwards.
+  const artifactsRequested = Array.isArray(payload.artifacts) && payload.artifacts.length > 0
+  if (!payload.keepWorkspace && ok && !artifactsRequested) {
     try { await rm(workDir, { recursive: true, force: true }) } catch { /* best-effort */ }
   }
 

@@ -34,6 +34,30 @@ test('removes workspaces older than the keep window, keeps fresh ones', async ()
   assert.deepEqual(left.sort(), ['wb-new-task'])
 })
 
+test('success WITH artifacts requested keeps the workspace for the uploader (P2 e2e bug)', async () => {
+  const { runWorkbenchTask } = await import('../executor.mjs')
+  const res = await runWorkbenchTask({
+    taskId: 'keep-for-artifacts',
+    commands: [{ bin: 'ls', args: [] }],
+    artifacts: ['report.json'],
+  })
+  assert.equal(res.ok, true)
+  // workspace must still exist — the worker reads artifact files AFTER this returns
+  const left = await readdir(root)
+  assert.ok(left.includes('keep-for-artifacts'), 'workspace was deleted before artifact upload')
+})
+
+test('success WITHOUT artifacts cleans the workspace immediately', async () => {
+  const { runWorkbenchTask } = await import('../executor.mjs')
+  const res = await runWorkbenchTask({
+    taskId: 'ephemeral-run',
+    commands: [{ bin: 'ls', args: [] }],
+  })
+  assert.equal(res.ok, true)
+  const left = await readdir(root)
+  assert.ok(!left.includes('ephemeral-run'), 'ephemeral workspace should be removed on success')
+})
+
 test('missing root is a no-op, never a throw', async () => {
   process.env.WORKBENCH_ROOT = join(root, 'does-not-exist')
   // module already imported with the original root — call against existing root

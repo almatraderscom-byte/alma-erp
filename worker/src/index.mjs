@@ -577,6 +577,12 @@ const workbenchWorker = new Worker(
             /* artifact missing — the steps log tells the story */
           }
         }
+        // Uploads done — now reclaim the workspace the executor kept for us
+        // (it skips its own success-cleanup when artifacts are requested).
+        if (!payload?.keepWorkspace) {
+          const { rm } = await import('node:fs/promises')
+          await rm(result.workspace, { recursive: true, force: true }).catch(() => {})
+        }
       }
 
       if (result.ok) {
