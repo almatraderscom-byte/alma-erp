@@ -106,7 +106,7 @@ export default function CreativeStudio() {
   }, [])
 
   return (
-    <div className="flex h-full min-h-0 w-full overflow-hidden bg-transparent text-cream">
+    <div className="cs-dark flex h-full min-h-0 w-full overflow-hidden text-cream" style={{ background: 'radial-gradient(1200px 800px at 80% -10%, rgba(224,122,95,0.10), transparent 55%), radial-gradient(900px 700px at -10% 110%, rgba(139,124,246,0.08), transparent 50%), #100d16' }}>
       <Toaster position="top-center" toastOptions={{ duration: 3500 }} />
       {/* Desktop sidebar */}
       <aside className="hidden w-[72px] shrink-0 flex-col items-center border-r border-border-subtle bg-card/82 py-4 md:flex">
