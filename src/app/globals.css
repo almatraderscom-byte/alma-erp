@@ -1110,6 +1110,23 @@ html.alma-agent-native .agent-bottom-nav {
   display: none !important;
 }
 
+/* Full-bleed builds: every WebView now also runs UNDER the bottom glass tab bar,
+   so ERP scroll content must clear it — pad the ERP <main> scroller by the exact
+   overlap the shell injects (--alma-bottom-inset; older builds fall back to the
+   safe-area inset). Excludes agent routes (html.agent-route, set by
+   AgentKeyboardManager): on /agent/* BOTH the outer ERP <main> (a non-scrolling
+   flex shell there) and the agent's own <main.agent-main-height> would match a
+   bare `main` selector and double-count the inset — the agent instead sizes
+   itself via the .agent-main-height native override in agent-ambient.css. */
+html.alma-native:not(.agent-route) main {
+  padding-bottom: calc(1rem + var(--alma-bottom-inset, env(safe-area-inset-bottom))) !important;
+}
+/* The web bottom-nav's 6rem scroll spacer would STACK with the padding above in the
+   shell (its nav is hidden there) — drop it; the injected inset is the only reserve. */
+html.alma-native .mobile-bottom-spacer {
+  display: none !important;
+}
+
 /* Elements that open a NATIVE long-press context menu in the shell: suppress the
    WKWebView's own long-press (text selection / callout / link preview) so it can't
    cancel our pointer sequence — otherwise the native gesture wins and our menu never
@@ -1137,8 +1154,11 @@ html.alma-native-hdr .page-header {
      view = the bar's bottom (~106px), so this clears the "top layer overlaps text"
      collision the owner reported. On the Orders / Approvals / More-module web views
      (pinned BELOW the bar by the native shell) env-top is 0, so this stays 0.5rem —
-     no change. One rule, correct for every page, no risky Capacitor constraint edits. */
-  padding-top: calc(0.5rem + env(safe-area-inset-top)) !important;
+     no change. One rule, correct for every page, no risky Capacitor constraint edits.
+     Full-bleed builds: the shell now runs every WebView UNDER the nav bar and injects
+     the exact overlap as --alma-top-inset; prefer it, falling back to env() for older
+     app builds that don't inject the var. */
+  padding-top: calc(0.5rem + var(--alma-top-inset, env(safe-area-inset-top))) !important;
   border-bottom: 0 !important;
   background: transparent !important;
   backdrop-filter: none !important;
