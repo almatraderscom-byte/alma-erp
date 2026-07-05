@@ -86,21 +86,52 @@ const check_website_seo_audit: AgentTool = {
     'the owner. Never claim the audit is done before status=executed.',
   input_schema: {
     type: 'object' as const,
-    properties: { pendingActionId: { type: 'string' } },
-    required: ['pendingActionId'],
+    properties: {
+      pendingActionId: {
+        type: 'string',
+        description:
+          'The id from run_website_seo_audit. If you no longer have it (e.g. a new turn), omit it — ' +
+          'the tool returns the LATEST audit for this conversation automatically.',
+      },
+    },
+    required: [],
   },
   handler: async (input) => {
     try {
-      const action = await db.agentPendingAction.findUnique({
-        where: { id: String(input.pendingActionId ?? '') },
-        select: { id: true, type: true, status: true, summary: true, result: true },
-      })
+      const conversationId = typeof input.conversationId === 'string' ? input.conversationId : null
+      const rawId = String(input.pendingActionId ?? '').trim()
+      // A real UUID id — anything else (empty, "last", a hallucinated value) falls
+      // through to the latest-audit lookup so the head can ALWAYS fetch the result
+      // without perfectly remembering the id across a yield.
+      const looksLikeId = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(rawId)
+
+      let action = looksLikeId
+        ? await db.agentPendingAction.findUnique({
+            where: { id: rawId },
+            select: { id: true, type: true, status: true, summary: true, result: true },
+          })
+        : null
+
+      // Fallback: the most recent seo_audit (scoped to this conversation when known).
       if (!action || action.type !== 'seo_audit') {
-        return { success: false, error: 'SEO audit not found' }
+        action = await db.agentPendingAction.findFirst({
+          where: { type: 'seo_audit', ...(conversationId ? { conversationId } : {}) },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, type: true, status: true, summary: true, result: true },
+        })
+      }
+
+      if (!action || action.type !== 'seo_audit') {
+        return { success: false, error: 'কোনো SEO audit পাওয়া যায়নি — আগে run_website_seo_audit চালাও।' }
       }
       return {
         success: true,
-        data: { id: action.id, status: action.status, summary: action.summary, result: action.result ?? null },
+        data: {
+          id: action.id,
+          status: action.status, // approved = still crawling, executed = done, failed = error
+          summary: action.summary,
+          result: action.result ?? null,
+        },
       }
     } catch (err) {
       return { success: false, error: String(err) }
