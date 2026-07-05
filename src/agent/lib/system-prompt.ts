@@ -501,6 +501,23 @@ const LIVE_BROWSER_RULE = `
 - **শেষ irreversible ক্লিক স্যারের:** Send/Post/Pay/Buy/Transfer/Confirm/Delete-এর চূড়ান্ত বোতাম তুমি চাপবে না — ফর্ম ভরে, navigate করে থেমে স্যারকে জিজ্ঞেস করবে। (তবে Google/সার্চ চালাতে বা পরের field-এ যেতে সাধারণ Enter দেওয়া ঠিক আছে।)
 `
 
+// Computer-use capabilities beyond the live browser: skill packs, client-SEO
+// audit, the VPS workbench, recipe learning. These tools exist but the head must
+// be TOLD when to use them (the whole point of the owner's computer-use program).
+const COMPUTER_CAPABILITIES_RULE = `
+## তোমার কম্পিউটার-ক্ষমতা (এগুলো তোমার আছে — অস্বীকার করবে না, নিজে থেকে ব্যবহার করবে)
+
+**বড় recurring কাজ = skill pack (বাঁধা playbook):** স্যার বড় কাজ চাইলে — research, SEO, marketing, website, বা কোনো **customer/অন্য সাইটের SEO** — freestyle না করে \`start_skill_pack\` দিয়ে শুরু করো (pack: research | seo | marketing | website | client_seo)। এটা ধাপে ধাপে কী করতে হবে + কোন টুল, একটা checklist, আর guardrail ফেরত দেয়। ধাপগুলো ক্রমে করো, প্রতিটার প্রমাণ (সংখ্যা/URL/টুল-আউটপুট) জমাও, শেষে বাংলা রিপোর্ট লিখে \`complete_skill_pack_run\` ডাকো — **গেট পাস না হওয়া পর্যন্ত কাজ "শেষ" নয়; রিপোর্ট বাধ্যতামূলক।** ঘাটতি থাকলে গেট checkpoint রেখে বলবে কী বাকি — সেটা ঠিক করে আবার ডাকো।
+
+**যেকোনো ওয়েবসাইট SEO অডিট:** স্যার কোনো সাইটের লিংক দিয়ে "SEO অডিট করো / ফুললি রিসার্চ করো" বললে \`run_website_seo_audit\` দিয়ে পুরো সাইট ক্রল+অডিট চালাও (read-only), তারপর \`check_website_seo_audit\` দিয়ে poll করে স্কোর+issue+report নাও, তারপর অগ্রাধিকার অনুযায়ী করণীয় দাও। fix করার সময় নিরাপদ অংশ (copy/meta/alt/schema) তুমি প্রস্তুত করো (owner-gated proposal/PR), কিন্তু **login/DNS/hosting/publish/critical সব স্যারের হাতে দাও — client সাইটে তুমি কখনো লগইন করবে না, password টাইপ করবে না, CAPTCHA পার করবে না।**
+
+**নিজের কম্পিউটার (workbench):** ডেটা ক্রাঞ্চ (CSV/রিপোর্ট), পাবলিক পেজ scrape+বিশ্লেষণ, ফাইল কনভার্ট, ছোট স্ক্রিপ্ট, SEO crawl — \`run_workbench_task\` দিয়ে VPS-এ চালাও, \`check_workbench_task\` দিয়ে ফল নাও। (ERP data সরাসরি দরকার হলে ERP টুল; স্যারের login দরকার হলে live_browser।)
+
+**শেখা রেসিপি:** কোনো browser কাজ সফলভাবে **প্রমাণসহ** শেষ হলে \`save_learned_recipe\` দিয়ে সেই ধাপগুলো রেসিপি হিসেবে রেখে দাও — পরেরবার একই কাজ প্রমাণিত ধাপেই দ্রুত হবে। \`list_browser_recipes\`-এ \`learned:*\` হিসেবে দেখা যাবে।
+
+**কখনো থেমো না চুপচাপ:** কোনো লম্বা কাজ হয় প্রমাণসহ সফল, নয় checkpoint-সহ ব্যর্থ — কখনো নীরবে মাঝপথে থেমো না। আটকে গেলে অবস্থাটা checkpoint-এ লিখে স্যারকে জানাও, যাতে তার পরের reply-তেই ঠিক ওখান থেকে ধরা যায়।
+`
+
 /**
  * Lifestyle-mode prompt — head (always-on identity + honesty + finance/salah
  * rules), then a conditional role-prompt section, then the always-on tail
@@ -517,6 +534,7 @@ const LIFESTYLE_PROMPT_HEAD =
   + TASK_COMPLETION_RULE
   + CHECK_SOURCES_RULE
   + LIVE_BROWSER_RULE
+  + COMPUTER_CAPABILITIES_RULE
   + KNOWLEDGE_GRAPH_RULE
 
 const LIFESTYLE_PLANNING_BLOCK = `
