@@ -64,6 +64,8 @@ function familyPrompt(preset: FamilyPresetId): string {
     father_son: 'Bangladeshi father and son (age 5-12) wearing matching outfits from product, one cohesive family photoshoot.',
     mother_son: 'Bangladeshi mother and son (age 5-12) wearing matching outfits, family fashion shoot.',
     mother_daughter: 'Bangladeshi mother and daughter (age 5-10) wearing matching outfits, family fashion shoot.',
+    father_daughter: 'Bangladeshi father and daughter (age 5-10) wearing matching outfits, family fashion shoot.',
+    couple: 'Bangladeshi husband and wife wearing matching couple outfits, modest natural couple pose, fashion shoot.',
     full_family: 'Full Bangladeshi family father mother son daughter in matching coordinated outfits, one scene.',
   }
   return map[preset] ?? ''

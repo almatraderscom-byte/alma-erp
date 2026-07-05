@@ -59,6 +59,13 @@ import {
   deleteMusicTrack,
   setReelCover,
   finishVideo,
+  sendItemFeedback,
+  retryStudioJob,
+  fetchStudioSettings,
+  saveStudioSettings,
+  deleteGarmentCache,
+  generateBrandModel,
+  type StudioSettings,
   type StudioMusicTrack,
   type VideoFinishTemplates,
   type GalleryItem,
@@ -1093,8 +1100,23 @@ function GalleryView() {
                           <span className="text-[10px] font-medium text-muted">তৈরি হচ্ছে…</span>
                         </>
                       ) : failed ? (
-                        <span className="text-[10px] font-medium text-red-400">
-                          ব্যর্থ{item.error ? ` · ${item.error.slice(0, 40)}` : ''}
+                        <span className="flex flex-col items-center gap-1.5">
+                          <span className="text-[10px] font-medium text-red-400">
+                            ব্যর্থ{item.error ? ` · ${item.error.slice(0, 40)}` : ''}
+                          </span>
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void retryStudioJob(item.id)
+                                .then(() => { toast.success('আবার চালানো হচ্ছে, স্যার'); void load() })
+                                .catch((err) => toast.error(err instanceof Error ? err.message : 'হয়নি'))
+                            }}
+                            className="rounded-full bg-[#E07A5F] px-2.5 py-1 text-[10px] font-bold text-white"
+                          >
+                            🔁 আবার চালাও
+                          </span>
                         </span>
                       ) : (
                         <span className="text-[10px] text-muted">{item.status}</span>
@@ -1215,6 +1237,44 @@ function GalleryView() {
                 >
                   ডাউনলোড
                 </button>
+                {/* CS4: ভালো/বাদ → deterministic scene weighting */}
+                {selected.status === 'executed' && (
+                  <div className="flex items-center gap-1.5 rounded-full bg-black/50 px-2 py-1 ring-1 ring-white/20 backdrop-blur-md">
+                    {(['good', 'bad'] as const).map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => {
+                          void sendItemFeedback(selected.id, v)
+                            .then((r) => toast.success(r.weighted ? (v === 'good' ? 'এই ধরনের সিন বেশি আসবে' : 'এই সিন কম আসবে') : 'নোট করা হলো'))
+                            .catch(() => toast.error('হয়নি'))
+                        }}
+                        className={cn('rounded-full px-2.5 py-1 text-[12px] font-bold', v === 'good' ? 'bg-[#81B29A] text-white' : 'bg-white/15 text-white')}
+                      >
+                        {v === 'good' ? '👍 ভালো' : '👎 বাদ'}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {/* CS4: AI-generated brand model → save into the Models library */}
+                {selected.modelCreator && selected.status === 'executed' && selected.storagePath && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void saveModel({
+                        id: `brand-${selected.modelCreator}`,
+                        name: `ALMA ${selected.modelCreator}`,
+                        imagePath: selected.storagePath!,
+                        role: selected.modelCreator!,
+                      })
+                        .then(() => toast.success('মডেল লাইব্রেরিতে সেভ হয়েছে, স্যার'))
+                        .catch((err) => toast.error(err instanceof Error ? err.message : 'সেভ হয়নি'))
+                    }}
+                    className="rounded-full bg-[#81B29A] px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25"
+                  >
+                    ✅ মডেল হিসেবে সেভ ({selected.modelCreator})
+                  </button>
+                )}
                 {/* V4: one-tap reel from any finished studio image — the family
                     merge becomes a moving reel; 16/24s = multi-clip Veo chain */}
                 {selected.status === 'executed' && selected.storagePath && (
@@ -1684,6 +1744,119 @@ function ModelsView() {
           </div>
         ))}
       </div>
+
+      <ModelCreatorCard models={models} onQueued={() => void load()} />
+      <StudioSettingsCard />
+    </div>
+  )
+}
+
+/** CS4 — generate the brand's FICTIONAL models once (no real children's photos). */
+function ModelCreatorCard({ models, onQueued }: { models: Array<{ role: string | null }>; onQueued: () => void }) {
+  const roles = [
+    { id: 'father', bn: 'বাবা' },
+    { id: 'mother', bn: 'মা' },
+    { id: 'son', bn: 'ছেলে' },
+    { id: 'daughter', bn: 'মেয়ে' },
+  ]
+  const have = new Set(models.map((m) => m.role))
+  return (
+    <div className="mt-4 rounded-xl border border-border-subtle bg-card/80 p-3">
+      <p className="text-[12px] font-bold text-cream">🧑‍🎨 AI দিয়ে ব্র্যান্ড মডেল বানাও</p>
+      <p className="mb-2 text-[10px] text-muted">
+        একবার বানালে একই মুখ প্রতিবার ফিরে আসবে — বাচ্চার আসল ছবি লাগবে না। তৈরি হলে Gallery-তে গিয়ে “মডেল হিসেবে সেভ” চাপুন।
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {roles.map((r) => (
+          <button
+            key={r.id}
+            type="button"
+            onClick={() => {
+              void generateBrandModel(r.id)
+                .then(() => { toast.success(`${r.bn} মডেল তৈরি হচ্ছে — Gallery-তে আসবে`); onQueued() })
+                .catch((e) => toast.error(e instanceof Error ? e.message : 'হয়নি'))
+            }}
+            className={cn(
+              'rounded-lg px-3 py-1.5 text-[11px] font-semibold',
+              have.has(r.id) ? 'bg-white/10 text-muted' : 'bg-[#E07A5F] text-white',
+            )}
+          >
+            {r.bn}{have.has(r.id) ? ' ✓ আছে' : ''}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** CS4 — QC level + Telegram done-ping + child-garment cache management. */
+function StudioSettingsCard() {
+  const [settings, setSettings] = useState<StudioSettings | null>(null)
+  useEffect(() => {
+    void fetchStudioSettings().then(setSettings).catch(() => {})
+  }, [])
+  if (!settings) return null
+  return (
+    <div className="mt-3 space-y-2.5 rounded-xl border border-border-subtle bg-card/80 p-3">
+      <p className="text-[12px] font-bold text-cream">⚙️ স্টুডিও সেটিংস</p>
+      <label className="flex items-center justify-between gap-2">
+        <span className="text-[11px] text-muted">ছবির QC (মান যাচাই)</span>
+        <select
+          value={settings.qcLevel}
+          onChange={(e) => {
+            const qcLevel = e.target.value as StudioSettings['qcLevel']
+            setSettings({ ...settings, qcLevel })
+            void saveStudioSettings({ qcLevel }).then(() => toast.success('সেভ হয়েছে')).catch(() => toast.error('হয়নি'))
+          }}
+          className="rounded-lg border border-border-subtle bg-bg-1 px-2 py-1 text-[11px] text-cream"
+        >
+          <option value="off">বন্ধ</option>
+          <option value="normal">নরমাল</option>
+          <option value="strict">কড়া</option>
+        </select>
+      </label>
+      <label className="flex items-center justify-between gap-2">
+        <span className="text-[11px] text-muted">কাজ শেষ হলে Telegram-এ জানাও</span>
+        <input
+          type="checkbox"
+          checked={settings.notifyOnDone}
+          onChange={(e) => {
+            const notifyOnDone = e.target.checked
+            setSettings({ ...settings, notifyOnDone })
+            void saveStudioSettings({ notifyOnDone }).then(() => toast.success('সেভ হয়েছে')).catch(() => toast.error('হয়নি'))
+          }}
+          className="h-4 w-4 accent-[#E07A5F]"
+        />
+      </label>
+      {settings.childGarments.length > 0 && (
+        <div>
+          <p className="mb-1 text-[11px] font-semibold text-muted">বাচ্চার গার্মেন্ট ক্যাশ (খারাপ হলে মুছুন — পরের রানে নতুন হবে)</p>
+          <div className="flex flex-wrap gap-1.5">
+            {settings.childGarments.map((g) => (
+              <div key={g.key} className="relative">
+                {g.url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={g.url} alt="" className="h-14 w-11 rounded-md object-cover ring-1 ring-white/15" />
+                ) : (
+                  <div className="grid h-14 w-11 place-items-center rounded-md bg-white/10 text-[9px] text-muted">{g.role}</div>
+                )}
+                <button
+                  type="button"
+                  aria-label="মুছুন"
+                  onClick={() => {
+                    void deleteGarmentCache(g.key)
+                      .then(() => setSettings({ ...settings, childGarments: settings.childGarments.filter((x) => x.key !== g.key) }))
+                      .catch(() => toast.error('হয়নি'))
+                  }}
+                  className="absolute -right-1 -top-1 grid h-4 w-4 place-items-center rounded-full bg-red-500 text-[9px] text-white"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

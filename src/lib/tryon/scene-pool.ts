@@ -125,6 +125,38 @@ export type PickedScene = {
   groupPose: string
 }
 
+/**
+ * CS4 — owner-taste weighting (deterministic, never LLM-scored): each scene
+ * carries a weight from ভালো/বাদ feedback. weight<=-3 disables the scene,
+ * otherwise its selection chance scales by 2^weight. Pure: inject `rand` to
+ * unit-test; empty weights = uniform (the original behaviour).
+ */
+export function pickSceneWeighted(
+  weights: Record<string, number>,
+  rand: () => number = Math.random,
+): PickedScene {
+  const entries = BD_SCENES.map((scene) => {
+    const w = Number(weights[scene.id] ?? 0)
+    return { scene, mult: w <= -3 ? 0 : Math.pow(2, Math.max(-2, Math.min(5, w))) }
+  }).filter((e) => e.mult > 0)
+  const pool = entries.length > 0 ? entries : BD_SCENES.map((scene) => ({ scene, mult: 1 }))
+  const total = pool.reduce((sum, e) => sum + e.mult, 0)
+  let roll = rand() * total
+  let chosen = pool[pool.length - 1].scene
+  for (const e of pool) {
+    roll -= e.mult
+    if (roll <= 0) { chosen = e.scene; break }
+  }
+  const pickWith = <T,>(arr: readonly T[]): T => arr[Math.min(arr.length - 1, Math.floor(rand() * arr.length))]
+  return {
+    scene: chosen,
+    adultPose: pickWith(ADULT_POSES),
+    childPose: pickWith(CHILD_POSES),
+    pairPose: pickWith(PAIR_POSES),
+    groupPose: pickWith(GROUP_POSES),
+  }
+}
+
 /** Pick one random scene + poses for a run. Chains call this ONCE and carry the
  * result through every step so background/light stay consistent. */
 export function pickScene(): PickedScene {

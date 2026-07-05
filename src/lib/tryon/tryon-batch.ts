@@ -16,6 +16,8 @@ import type { GarmentType } from '@/lib/tryon/art-director'
 export type ChatTryOnVariant =
   | 'single'
   | 'father_son'
+  | 'father_daughter'
+  | 'couple'
   | 'mother_son'
   | 'mother_daughter'
   | 'full_family'
@@ -31,6 +33,8 @@ export const CHAT_TRYON_VARIANTS: ChatTryOnVariant[] = [
 const VARIANT_LABELS: Record<ChatTryOnVariant, string> = {
   single: 'সিঙ্গেল মডেল',
   father_son: 'বাবা + ছেলে',
+  father_daughter: 'বাবা + মেয়ে',
+  couple: 'কাপল (স্বামী-স্ত্রী)',
   mother_son: 'মা + ছেলে',
   mother_daughter: 'মা + মেয়ে',
   full_family: 'পুরো ফ্যামিলি',
@@ -75,6 +79,26 @@ async function buildVariantNotes(
       'Child proportions natural for age 5–10; garment on child sized correctly from the set.',
       fabricNote ?? '',
       daughter?.notes ? `Preserve daughter identity from brand library (${daughter.name}).` : '',
+    ].filter(Boolean).join(' ')
+  }
+
+  if (variant === 'father_daughter') {
+    const daughter = await getModelByRole('daughter')
+    if (daughter) noteParts.push(modelNoteFor('daughter', daughter))
+    familyExtra = [
+      familyExtra,
+      'Two people — father and daughter (age 5–10) — wearing the SAME matching collection in ONE cohesive scene.',
+      daughter?.notes ? `Preserve daughter identity from brand library (${daughter.name}).` : '',
+    ].filter(Boolean).join(' ')
+  }
+
+  if (variant === 'couple') {
+    const mother = await getModelByRole('mother')
+    if (mother) noteParts.push(modelNoteFor('mother', mother))
+    familyExtra = [
+      familyExtra,
+      'Two ADULTS — husband and wife — wearing the SAME matching couple collection in ONE cohesive scene, natural couple pose, modest styling.',
+      mother?.notes ? `Preserve wife identity from brand library (${mother.name}).` : '',
     ].filter(Boolean).join(' ')
   }
 

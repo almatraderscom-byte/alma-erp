@@ -123,6 +123,27 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // CS4: optional Telegram ping when a studio artifact is READY (kv toggle,
+  // default off — studio jobs stay silent by design). Only FINAL artifacts:
+  // internal chain steps and non-final chain/veo clips never ping.
+  if (status === 'success' && payload.creativeStudio && !payload.chainInternal) {
+    try {
+      const chain = payload.familyChain as { stepIndex?: number; plan?: string[] } | undefined
+      const isFinal = chain
+        ? Number(chain.stepIndex) === (chain.plan?.length ?? 1) - 1
+        : !payload.veoChain
+      if (isFinal) {
+        const { readKv, NOTIFY_KEY } = await import('@/lib/creative-studio/taste')
+        if ((await readKv(NOTIFY_KEY)) === '1') {
+          const tg = await sendOwnerText(`✅ Sir, "${action.summary}" রেডি — Studio Gallery-তে দেখুন।`)
+          if (!tg.ok) console.warn('[job-result] studio done-ping failed:', tg.error)
+        }
+      }
+    } catch (pingErr) {
+      console.warn('[job-result] studio done-ping error:', pingErr)
+    }
+  }
+
   const convId = resolveConversationId(action)
   let messageText: string | null = null
   let pushTelegram = false
