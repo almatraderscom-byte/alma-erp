@@ -10,8 +10,8 @@ using namespace metal;
 struct Uniforms {
     float4x4 proj;
     float4x4 view;
-    float4x4 model;   // rotation only (uniform scale) -> valid for normals
-    float3   camPos;
+    float4x4 model;   // rotation (+ uniform scale) -> valid for normals
+    float4   camPos;  // xyz used (float4 for stable buffer alignment)
     float    time;
     float    amp;
     float    detail;
@@ -96,7 +96,7 @@ vertex VOut orb_vertex(const device packed_float3* posBuf [[buffer(0)]],
     p += n * d * u.amp;
     float3 P = normalize(p)*u.detail*1.3 + float3(0.0, u.time*0.25, 0.0);
     float3 np = float3(fbm(P+11.1), fbm(P+31.4), fbm(P+57.7));
-    n = normalize(n + np*(0.12 + u.amp*1.0));
+    n = normalize(n + np*(0.06 + u.amp*0.6));
     float4 world = u.model * float4(p, 1.0);
     VOut o;
     o.world  = world.xyz;
@@ -107,36 +107,39 @@ vertex VOut orb_vertex(const device packed_float3* posBuf [[buffer(0)]],
 
 fragment float4 orb_fragment(VOut in [[stage_in]], constant Uniforms& u [[buffer(0)]]) {
     float3 N = normalize(in.normal);
-    float3 V = normalize(u.camPos - in.world);
+    float3 V = normalize(u.camPos.xyz - in.world);
     float3 I = -V;
     float fres = pow(1.0 - max(dot(N,V), 0.0), 3.0);
 
-    // deep-blue volumetric body (deep core -> light cap)
-    float g = clamp(N.y*0.5+0.5, 0.0, 1.0);
-    float3 deep = float3(0.04,0.18,0.55), mid = float3(0.16,0.46,0.88), lite = float3(0.70,0.88,1.0);
-    float3 body = mix(deep, mid, smoothstep(0.0, 0.60, g));
-    body = mix(body, lite, smoothstep(0.74, 1.0, g));
-    float3 col = body;
+    // volumetric body — fixed top-left key light -> the premium-glass ramp
+    float3 Lc = normalize(float3(-0.55,0.65,0.75));
+    float dl = dot(N, Lc)*0.5 + 0.5;
+    float3 body = mix(float3(0.063,0.247,0.573), float3(0.290,0.596,0.933), smoothstep(0.12,0.58,dl));
+    body = mix(body, float3(0.718,0.867,1.0), smoothstep(0.55,0.86,dl));
+    body = mix(body, float3(1.0), smoothstep(0.86,1.0,dl));
 
-    // faint refractive chromatic shimmer
+    // iridescent flowing accent (like the two conic fluids)
+    float a = atan2(N.y, N.x);
+    float3 ir = 0.5 + 0.5*cos(a + u.time*0.4 + float3(0.0,2.2,4.4));
+    body += ir * float3(0.16,0.32,0.52) * 0.07;
+
+    // real refractive chromatic accent
     float eta = 0.66;
     float3 rR = refract(I, N, eta - 0.02*u.irid);
     float3 rG = refract(I, N, eta);
     float3 rB = refract(I, N, eta + 0.02*u.irid);
     float3 refr = float3(envColor(rR).r, envColor(rG).g, envColor(rB).b);
-    col = mix(col, refr*float3(0.55,0.74,1.0), 0.14);
+    float3 col = mix(body, refr, 0.12);
+    col *= (0.70 + 0.30*dl);                                        // ambient depth -> deeper core
 
-    // broad top gloss cap
-    float top = smoothstep(0.45, 1.0, dot(N, normalize(float3(-0.15,1.0,0.35))));
-    col += float3(0.85,0.93,1.0) * top * 0.30;
+    // specular hotspot + broad gloss (Blinn, top-left)
+    float3 H = normalize(Lc + V);
+    float sp  = pow(max(dot(N,H), 0.0), 220.0);
+    float gl2 = pow(max(dot(N,H), 0.0), 9.0);
+    col += float3(1.0)*sp*1.8 + float3(0.9,0.95,1.0)*gl2*0.18;
 
-    // crisp specular hotspot
-    float3 L = normalize(float3(-0.5,0.9,0.7));
-    float spec = pow(max(dot(reflect(-L, N), V), 0.0), 140.0);
-    col += float3(1.0) * spec * 1.7;
-
-    // fresnel rim (defines the edge on the light bg)
-    col += float3(0.5,0.70,1.0) * fres * 0.45;
+    // fresnel rim
+    col += float3(0.55,0.72,1.0) * fres * 0.52;
 
     return float4(clamp(col, 0.0, 1.0), 1.0);
 }
