@@ -55,8 +55,8 @@ are pre-assigned here so two sessions can never pick the same name.
 | Inventory | `/inventory` | `ios/App/App/InventorySwiftUI.swift` | native | IN_REVIEW (marathon b2 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Supplier import | `/inventory/supplier-import` | `ios/App/App/SupplierImportSwiftUI.swift` | web | NOT_STARTED | — |
 | Activity | `/activity` | `ios/App/App/ActivitySwiftUI.swift` | native | IN_REVIEW (marathon b2 2026-07-06, sim-build pending at marathon end) | marathon session |
-| Task Spotlight | `/operations/task-spotlight` | `ios/App/App/TaskSpotlightSwiftUI.swift` | web | NOT_STARTED | — |
-| Business archive | `/operations/business-archive` | `ios/App/App/BusinessArchiveSwiftUI.swift` | web | NOT_STARTED | — |
+| Task Spotlight | `/operations/task-spotlight` | `ios/App/App/TaskSpotlightSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Business archive | `/operations/business-archive` | `ios/App/App/BusinessArchiveSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
 | System diagnostics | `/operations/system-diagnostics` | `ios/App/App/SystemDiagnosticsSwiftUI.swift` | web | NOT_STARTED | — |
 
 ### People
@@ -64,16 +64,16 @@ are pre-assigned here so two sessions can never pick the same name.
 |---|---|---|---|---|---|
 | Employees | `/employees` | `ios/App/App/EmployeesSwiftUI.swift` | native | IN_REVIEW (marathon b2 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Employee detail | `/employees/[id]` | (same file as Employees — one session owns both) | native | IN_REVIEW (marathon b2 2026-07-06, sim-build pending at marathon end) | marathon session |
-| Attendance | `/attendance` | `ios/App/App/AttendanceSwiftUI.swift` | web | NOT_STARTED | — |
-| CRM | `/crm` | `ios/App/App/CrmSwiftUI.swift` | web | NOT_STARTED | — |
+| Attendance | `/attendance` | `ios/App/App/AttendanceSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
+| CRM | `/crm` | `ios/App/App/CrmSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
 
 ### Insights
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
-| Analytics | `/analytics` | `ios/App/App/AnalyticsSwiftUI.swift` | web | NOT_STARTED | — |
-| Insights | `/insights` | `ios/App/App/InsightsSwiftUI.swift` | web | NOT_STARTED | — |
-| Briefing | `/briefing` | `ios/App/App/BriefingSwiftUI.swift` | web | NOT_STARTED | — |
-| Audit | `/audit` | `ios/App/App/AuditSwiftUI.swift` | web | NOT_STARTED | — |
+| Analytics | `/analytics` | `ios/App/App/AnalyticsSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Insights | `/insights` | `ios/App/App/InsightsSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Briefing | `/briefing` | `ios/App/App/BriefingSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Audit | `/audit` | `ios/App/App/AuditSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
 
 ### Portal (staff desk)
 | Page | Route | Owning files | Surface | Status | Owner |
