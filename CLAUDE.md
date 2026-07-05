@@ -39,6 +39,16 @@
 
 ## Workflow Rules
 
+### Parallel work with sub-agents (owner rule, 2026-07-05 — mandatory)
+
+When a request contains MULTIPLE independent tasks/issues, do NOT work them one-by-one (a serial session that takes 1–2 hours blocks the owner's day):
+
+1. **Fan out:** spawn one sub-agent per independent sub-task (Task/Agent tool), all in ONE message so they run concurrently. Give each a tight, self-contained brief — exact files, exact goal, exact return format — so it burns few tokens and can't wander.
+2. **Never idle:** while sub-agents run, the main session keeps working its own share of the tasks (or preps the next step — builds, deploys, verification setup). Waiting silently is forbidden.
+3. **Verify everything yourself:** a sub-agent's "done" is NOT done. The main session must verify each result itself (read the diff, build/typecheck, sim/Chrome screenshot per the browser-proof rule) BEFORE reporting to the owner. Any mistake found = fix it (or re-dispatch) before confirming.
+4. **Careful scoping:** sub-agents must respect every Hard Rule above (no ERP edits outside scope, no secrets, gated changes only). Never let two sub-agents edit the same file — split by file/area to avoid conflicts; the main session integrates.
+5. **Goal: wall-clock ≈ the slowest single item, not the sum** — and fewer tokens than one long meandering session, because each brief is small and focused.
+
 - When a bug is reported: honest root-cause diagnosis FIRST, no code change. Fix only after owner approval.
 - Architectural fixes > patches. Confirm before any costly/destructive action.
 - Pre-flight checks before code in each phase; if any check fails, STOP and report.
