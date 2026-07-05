@@ -70,7 +70,9 @@ enum AlmaTheme {
         let a = UINavigationBarAppearance()
         a.configureWithDefaultBackground()      // standard iOS translucent material (adapts to style)
         a.shadowColor = .clear
-        a.titleTextAttributes = [.foregroundColor: navTitle]
+        // Claude-style: strong dark (light mode) / white (dark mode) semibold title.
+        a.titleTextAttributes = [.foregroundColor: navTitle,
+                                 .font: UIFont.systemFont(ofSize: 17, weight: .semibold)]
         a.largeTitleTextAttributes = [.foregroundColor: navTitle]
         return a
     }
@@ -432,7 +434,9 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         ])
         container.layer.cornerRadius = size / 2
         container.layer.borderWidth = 1
-        container.layer.borderColor = (light ? UIColor(white: 0, alpha: 0.10) : UIColor(white: 1, alpha: 0.18)).cgColor
+        // Hairline only — Claude's discs have no visible ring (a bright ring read as a
+        // white halo around the dark hamburger in dark mode, owner comparison 2026-07-05).
+        container.layer.borderColor = (light ? UIColor(white: 0, alpha: 0.08) : UIColor(white: 1, alpha: 0.10)).cgColor
         container.layer.shadowColor = UIColor.black.cgColor
         container.layer.shadowOpacity = light ? 0.12 : 0
         container.layer.shadowRadius = 4
@@ -459,7 +463,7 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         container.layer.cornerRadius = size / 2
         container.layer.masksToBounds = false
         container.layer.shadowColor = coral.cgColor
-        container.layer.shadowOpacity = 0.40
+        container.layer.shadowOpacity = 0.25   // subtler — Claude's compose sits nearly flat
         container.layer.shadowRadius = 6
         container.layer.shadowOffset = CGSize(width: 0, height: 2)
         container.addTarget(target, action: action, for: .touchUpInside)
