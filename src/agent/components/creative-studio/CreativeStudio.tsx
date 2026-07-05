@@ -90,7 +90,7 @@ async function handleDownload(url: string | undefined | null, filename?: string)
   else if (result === 'opened') toast('ছবি নতুন ট্যাবে খোলা হলো, স্যার')
 }
 
-type MainView = 'studio' | 'gallery' | 'models' | 'finishing' | 'video' | 'audio'
+type MainView = 'studio' | 'gallery' | 'video' | 'audio' | 'library'
 type StudioModel = { id: string; name: string; role: string | null; isDefault: boolean }
 
 // These modes carry no product image, so the Gemini fallback (which requires a
@@ -117,32 +117,8 @@ export default function CreativeStudio() {
   }, [])
 
   return (
-    <div className="cs-dark flex h-full min-h-0 w-full overflow-hidden text-cream" style={{ background: 'radial-gradient(1200px 800px at 80% -10%, rgba(224,122,95,0.10), transparent 55%), radial-gradient(900px 700px at -10% 110%, rgba(139,124,246,0.08), transparent 50%), #100d16' }}>
+    <div className="studio-shell flex h-full min-h-0 w-full overflow-hidden text-cream">
       <Toaster position="top-center" toastOptions={{ duration: 3500 }} />
-      {/* Desktop sidebar */}
-      <aside className="hidden w-[72px] shrink-0 flex-col items-center border-r border-border-subtle bg-card/82 py-4 md:flex">
-        <NavIcon href="/agent" label="Chat" active={false}>
-          <ChatSvg />
-        </NavIcon>
-        <NavIcon label="Studio" active={view === 'studio'} onClick={() => setView('studio')}>
-          <StudioSvg />
-        </NavIcon>
-        <NavIcon label="Gallery" active={view === 'gallery'} onClick={() => setView('gallery')}>
-          <GallerySvg />
-        </NavIcon>
-        <NavIcon label="Models" active={view === 'models'} onClick={() => setView('models')}>
-          <UserSvg />
-        </NavIcon>
-        <NavIcon label="Finishing" active={view === 'finishing'} onClick={() => setView('finishing')}>
-          <BrandingSvg />
-        </NavIcon>
-        <NavIcon label="Video" active={view === 'video'} onClick={() => setView('video')}>
-          <VideoSvg />
-        </NavIcon>
-        <NavIcon label="Audio" active={view === 'audio'} onClick={() => setView('audio')}>
-          <AudioSvg />
-        </NavIcon>
-      </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header
@@ -160,8 +136,8 @@ export default function CreativeStudio() {
               </svg>
             </Link>
             <div className="min-w-0">
-              <p className="text-sm font-bold text-cream">Creative Studio</p>
-              <p className="text-[10px] text-muted">{config?.organization ?? 'Alma Traders'}</p>
+              <p className="text-lg font-extrabold tracking-tight text-cream">ক্রিয়েটিভ স্টুডিও</p>
+              <p className="text-[10px] text-muted">{config?.organization ?? 'ALMA Lifestyle'} · সব ক্রিয়েটিভ এক জায়গায়</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -194,14 +170,13 @@ export default function CreativeStudio() {
                 <GalleryView />
               </motion.div>
             )}
-            {view === 'models' && (
-              <motion.div key="models" className="absolute inset-0 overflow-y-auto" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <ModelsView />
-              </motion.div>
-            )}
-            {view === 'finishing' && (
-              <motion.div key="finishing" className="absolute inset-0 overflow-y-auto" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <FinishingView />
+            {view === 'library' && (
+              <motion.div key="library" className="absolute inset-0 overflow-y-auto" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <div className="pb-24">
+                  <ModelsView />
+                  <div className="mx-3 my-1 border-t border-border-subtle" />
+                  <FinishingView />
+                </div>
               </motion.div>
             )}
             {view === 'video' && (
@@ -217,72 +192,38 @@ export default function CreativeStudio() {
           </AnimatePresence>
         </main>
 
-        {/* Mobile bottom nav */}
+        {/* Floating iOS-style tab bar — one nav for every screen size */}
         <nav
-          className="flex shrink-0 border-t border-border-subtle bg-card/80 md:hidden"
-          style={{ paddingBottom: 'max(0.35rem, env(safe-area-inset-bottom))' }}
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center"
+          style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
         >
-          {(
-            [
-              ['studio', 'Studio', StudioSvg],
-              ['gallery', 'Gallery', GallerySvg],
-              ['models', 'Models', UserSvg],
-              ['finishing', 'Finishing', BrandingSvg],
-              ['video', 'Video', VideoSvg],
-              ['audio', 'Audio', AudioSvg],
-            ] as const
-          ).map(([id, label, Icon]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setView(id)}
-              className={cn(
-                'flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium',
-                view === id ? 'text-[#E07A5F]' : 'text-muted',
-              )}
-            >
-              <Icon className="h-5 w-5" />
-              {label}
-            </button>
-          ))}
+          <div className="st-tabbar pointer-events-auto flex items-center gap-1 px-2 py-1.5">
+            {(
+              [
+                ['studio', 'স্টুডিও', StudioSvg],
+                ['gallery', 'গ্যালারি', GallerySvg],
+                ['video', 'ভিডিও', VideoSvg],
+                ['audio', 'অডিও', AudioSvg],
+                ['library', 'লাইব্রেরি', UserSvg],
+              ] as const
+            ).map(([id, label, Icon]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setView(id)}
+                className={cn('st-tab flex flex-col items-center gap-0.5 px-3.5 py-1.5 text-[10px] font-semibold', view === id && 'st-tab-on')}
+              >
+                <Icon className="h-5 w-5" />
+                {label}
+              </button>
+            ))}
+          </div>
         </nav>
       </div>
     </div>
   )
 }
 
-function NavIcon({
-  label,
-  active,
-  onClick,
-  href,
-  children,
-}: {
-  label: string
-  active: boolean
-  onClick?: () => void
-  href?: string
-  children: React.ReactNode
-}) {
-  const cls = cn(
-    'mb-3 flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-[9px] font-medium transition-colors',
-    active ? 'bg-[#E07A5F]/12 text-[#E07A5F]' : 'text-muted hover:text-muted',
-  )
-  if (href) {
-    return (
-      <Link href={href} className={cls}>
-        {children}
-        {label}
-      </Link>
-    )
-  }
-  return (
-    <button type="button" onClick={onClick} className={cls}>
-      {children}
-      {label}
-    </button>
-  )
-}
 
 function StudioWorkspace({
   config,
@@ -1099,7 +1040,7 @@ function GalleryView() {
                 initial={{ opacity: 0, scale: 0.96 }}
                 animate={{ opacity: 1, scale: 1 }}
                 onClick={() => item.previewUrl && openItem(item)}
-                className="overflow-hidden rounded-xl border border-border-subtle bg-card/80 text-left shadow-sm transition-transform active:scale-[0.98]"
+                className="overflow-hidden st-card text-left shadow-sm transition-transform active:scale-[0.98]"
               >
                 <div className="relative aspect-[4/5] bg-bg-1">
                   {item.previewUrl ? (
@@ -1772,7 +1713,7 @@ function ModelsView() {
 
       <div className="space-y-2">
         {models.map((m) => (
-          <div key={m.id} className="flex items-center justify-between rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
+          <div key={m.id} className="flex items-center justify-between st-card px-3 py-2.5">
             <div>
               <p className="font-semibold">{m.name}</p>
               <p className="text-[10px] text-muted">{m.role}{m.isDefault ? ' · default' : ''}</p>
@@ -1798,7 +1739,7 @@ function ModelCreatorCard({ models, onQueued }: { models: Array<{ role: string |
   ]
   const have = new Set(models.map((m) => m.role))
   return (
-    <div className="mt-4 rounded-xl border border-border-subtle bg-card/80 p-3">
+    <div className="mt-4 st-card p-3">
       <p className="text-[12px] font-bold text-cream">🧑‍🎨 AI দিয়ে ব্র্যান্ড মডেল বানাও</p>
       <p className="mb-2 text-[10px] text-muted">
         একবার বানালে একই মুখ প্রতিবার ফিরে আসবে — বাচ্চার আসল ছবি লাগবে না। তৈরি হলে Gallery-তে গিয়ে “মডেল হিসেবে সেভ” চাপুন।
@@ -1834,7 +1775,7 @@ function StudioSettingsCard() {
   }, [])
   if (!settings) return null
   return (
-    <div className="mt-3 space-y-2.5 rounded-xl border border-border-subtle bg-card/80 p-3">
+    <div className="mt-3 space-y-2.5 st-card p-3">
       <p className="text-[12px] font-bold text-cream">⚙️ স্টুডিও সেটিংস</p>
       <label className="flex items-center justify-between gap-2">
         <span className="text-[11px] text-muted">ছবির QC (মান যাচাই)</span>
@@ -2215,7 +2156,7 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
           onChange={(e) => void handleFile(e.target.files?.[0] ?? null)}
         />
         {uploadPct !== null ? (
-          <div className="rounded-xl border border-border-subtle bg-card/80 p-3">
+          <div className="st-card p-3">
             <p className="mb-2 text-[11px] font-semibold text-cream">আপলোড হচ্ছে… {uploadPct}%</p>
             <div className="h-2 overflow-hidden rounded-full bg-white/10">
               <div className="h-full rounded-full bg-[#E07A5F] transition-all" style={{ width: `${uploadPct}%` }} />
@@ -2249,7 +2190,7 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
                 )}
               >
                 <button type="button" onClick={() => setSelected(up)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-                  <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', selected?.id === up.id ? 'bg-[#E07A5F] text-white' : 'bg-white/10 text-muted')}>
+                  <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', selected?.id === up.id ? 'st-chip-on' : 'st-chip')}>
                     <VideoSvg className="h-4 w-4" />
                   </span>
                   <span className="min-w-0">
@@ -2267,7 +2208,7 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
 
         {/* Recipe picker — hard presets, no prompts */}
         {selected && (
-          <div className="space-y-3 rounded-xl border border-border-subtle bg-card/80 p-3">
+          <div className="space-y-3 st-card p-3">
             <p className="text-[11px] font-semibold text-muted">রেসিপি বাছুন — বাকিটা সিস্টেম করবে</p>
             <div className="grid gap-1.5">
               {VIDEO_RECIPES.map((r) => (
@@ -2306,7 +2247,7 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
                     }
                     className={cn(
                       'rounded-lg px-3.5 py-1.5 text-[12px] font-semibold',
-                      targets.includes(t) ? 'bg-[#E07A5F] text-white' : 'bg-white/10 text-muted',
+                      targets.includes(t) ? 'st-chip-on' : 'st-chip',
                     )}
                   >
                     {t}s
@@ -2325,7 +2266,7 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
                     onClick={() => setAspect(a.id)}
                     className={cn(
                       'rounded-lg px-3 py-1.5 text-[11px] font-semibold',
-                      aspect === a.id ? 'bg-[#E07A5F] text-white' : 'bg-white/10 text-muted',
+                      aspect === a.id ? 'st-chip-on' : 'st-chip',
                     )}
                   >
                     {a.label}
@@ -2351,7 +2292,7 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
                       onClick={() => setAudioMode(m.id)}
                       className={cn(
                         'rounded-lg px-2.5 py-1.5 text-[11px] font-semibold',
-                        audioMode === m.id ? 'bg-[#E07A5F] text-white' : 'bg-white/10 text-muted',
+                        audioMode === m.id ? 'st-chip-on' : 'st-chip',
                       )}
                     >
                       {m.labelBn}
@@ -2410,7 +2351,7 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
               type="button"
               disabled={running || targets.length === 0}
               onClick={() => void handleRun()}
-              className="w-full rounded-xl bg-[#E07A5F] py-3 text-[13px] font-bold text-white disabled:opacity-50"
+              className="st-btn w-full py-3 text-[13px]"
             >
               {running ? 'শুরু হচ্ছে…' : `রিল বানাও (${targets.map((t) => `${t}s`).join(' + ')})`}
             </button>
@@ -2418,7 +2359,7 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
         )}
 
         {/* Music library — owner-approved beds only (Islamic guardrail) */}
-        <div className="rounded-xl border border-border-subtle bg-card/80 p-3">
+        <div className="st-card p-3">
           <button type="button" onClick={() => setShowMusicLib((v) => !v)} className="flex w-full items-center justify-between">
             <span className="text-[12px] font-bold text-cream">🎵 মিউজিক লাইব্রেরি ({tracks.length})</span>
             <span className="text-[11px] text-muted">{showMusicLib ? '▲' : '▼'}</span>
@@ -2437,7 +2378,7 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
               const done = st?.status === 'executed'
               const failed = st?.status === 'failed'
               return (
-                <div key={j.id} className="flex items-center gap-2.5 rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
+                <div key={j.id} className="flex items-center gap-2.5 st-card px-3 py-2.5">
                   {done ? (
                     <span className="text-sm">✅</span>
                   ) : failed ? (
@@ -2554,7 +2495,7 @@ function VideoFinishPanel({ pendingActionId, onDone }: { pendingActionId: string
             type="button"
             disabled={state !== 'idle'}
             onClick={() => void submit()}
-            className="w-full rounded-xl bg-[#E07A5F] py-2.5 text-[13px] font-bold text-white disabled:opacity-50"
+            className="st-btn w-full py-2.5 text-[13px]"
           >
             {state === 'queued' ? 'শুরু হচ্ছে…' : 'টেমপ্লেট বসাও'}
           </button>
@@ -2602,7 +2543,7 @@ function MusicLibrary({
             onClick={() => setVibe(v.id)}
             className={cn(
               'rounded-lg px-2.5 py-1 text-[11px] font-semibold',
-              vibe === v.id ? 'bg-[#E07A5F] text-white' : 'bg-white/10 text-muted',
+              vibe === v.id ? 'st-chip-on' : 'st-chip',
             )}
           >
             {v.labelBn}
@@ -2691,9 +2632,9 @@ function AudioLabView() {
       .finally(() => setBusy(null))
   }, [])
 
-  const card = 'space-y-2 rounded-xl border border-border-subtle bg-card/80 p-3'
+  const card = 'space-y-2 st-card p-3'
   const input = 'w-full rounded-lg border border-border-subtle bg-bg-1 px-2.5 py-2 text-[12px] text-cream placeholder:text-muted/50'
-  const btn = 'rounded-xl bg-[#E07A5F] px-4 py-2 text-[12px] font-bold text-white disabled:opacity-50'
+  const btn = 'st-btn px-4 py-2 text-[12px]'
 
   return (
     <div className="px-3 py-3 pb-20 md:pb-4">
@@ -2730,7 +2671,7 @@ function AudioLabView() {
           <div className="flex gap-1.5">
             {(status?.styles ?? []).map((st) => (
               <button key={st.id} type="button" onClick={() => setMusicStyle(st.id)}
-                className={cn('rounded-lg px-2.5 py-1.5 text-[11px] font-semibold', musicStyle === st.id ? 'bg-[#E07A5F] text-white' : 'bg-white/10 text-muted')}>
+                className={cn('rounded-lg px-2.5 py-1.5 text-[11px] font-semibold', musicStyle === st.id ? 'st-chip-on' : 'st-chip')}>
                 {st.labelBn}
               </button>
             ))}
@@ -2739,7 +2680,7 @@ function AudioLabView() {
           <div className="flex items-center gap-2">
             {[30, 60].map((s2) => (
               <button key={s2} type="button" onClick={() => setMusicSec(s2)}
-                className={cn('rounded-lg px-3 py-1.5 text-[11px] font-semibold', musicSec === s2 ? 'bg-[#E07A5F] text-white' : 'bg-white/10 text-muted')}>
+                className={cn('rounded-lg px-3 py-1.5 text-[11px] font-semibold', musicSec === s2 ? 'st-chip-on' : 'st-chip')}>
                 {s2}s
               </button>
             ))}
@@ -2756,7 +2697,7 @@ function AudioLabView() {
           <div className="flex gap-1.5">
             {(status?.occasions ?? []).map((o) => (
               <button key={o.id} type="button" onClick={() => setOccasion(o.id)}
-                className={cn('rounded-lg px-2.5 py-1.5 text-[11px] font-semibold', occasion === o.id ? 'bg-[#E07A5F] text-white' : 'bg-white/10 text-muted')}>
+                className={cn('rounded-lg px-2.5 py-1.5 text-[11px] font-semibold', occasion === o.id ? 'st-chip-on' : 'st-chip')}>
                 {o.labelBn}
               </button>
             ))}
@@ -2815,13 +2756,6 @@ function AudioLabView() {
   )
 }
 
-function ChatSvg({ className }: { className?: string }) {
-  return (
-    <svg className={cn('h-5 w-5', className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-    </svg>
-  )
-}
 function StudioSvg({ className }: { className?: string }) {
   return (
     <svg className={cn('h-5 w-5', className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
