@@ -1127,6 +1127,23 @@ html.alma-native .mobile-bottom-spacer {
   display: none !important;
 }
 
+/* Native shell: the টুডু pill rides IN the native title row (top-right), so it
+   never overlaps page content. The title row is the BOTTOM ~44pt of the injected
+   top inset; !important beats the component's inline env()-based `top`. The open
+   panel drops just below the bar. Older builds without the var fall back to the
+   web placement. */
+html.alma-native-hdr .owner-todo-fab {
+  top: calc(var(--alma-top-inset, calc(env(safe-area-inset-top) + 0.625rem + 42px)) - 42px) !important;
+}
+html.alma-native-hdr .owner-todo-fab button {
+  min-height: 30px;
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+html.alma-native-hdr .owner-todo-panel {
+  top: calc(var(--alma-top-inset, calc(env(safe-area-inset-top) + 2.75rem)) + 6px) !important;
+}
+
 /* Native bars: NO frost, NO strip, NOTHING painted in the bar zones (owner rule:
    zero shadow top or bottom, ever). The page runs edge-to-edge; native draws only
    the floating title/buttons/tab items. (A masked backdrop-blur strip lived here

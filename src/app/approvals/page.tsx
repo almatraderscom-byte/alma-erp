@@ -342,7 +342,7 @@ function ApprovalsPageInner() {
         <Card className="min-w-0">
           {loading && !data ? <Skeleton className="h-96" /> : !approvals.length ? <Empty icon="◆" title="No approval requests" /> : (
             <div className="table-scroll min-w-0 max-w-full">
-            <div className="min-w-[720px] divide-y divide-border">
+            <div className="md:min-w-[720px] divide-y divide-border">
               {approvals.map(row => {
                 const ui = getRowUi(row.id)
                 const rowBusy = isRowProcessing(row.id)

@@ -185,7 +185,7 @@ export function OwnerTodoBar() {
     <>
       {/* Collapsed pill — same fixed top-right spot on every ERP page. */}
       <div
-        className="pointer-events-none fixed right-0 z-[70]"
+        className="owner-todo-fab pointer-events-none fixed right-0 z-[70]"
         style={{ top: 'max(0.625rem, env(safe-area-inset-top))', paddingRight: 'max(0.75rem, env(safe-area-inset-right))' }}
       >
         <button
@@ -223,7 +223,7 @@ export function OwnerTodoBar() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
               transition={{ duration: 0.16, ease: 'easeOut' }}
-              className="fixed z-[72] w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-border-subtle bg-card/85 shadow-float backdrop-blur-xl"
+              className="owner-todo-panel fixed z-[72] w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-border-subtle bg-card/85 shadow-float backdrop-blur-xl"
               style={{
                 top: 'calc(max(0.625rem, env(safe-area-inset-top)) + 2.75rem)',
                 right: 'max(0.75rem, env(safe-area-inset-right))',
