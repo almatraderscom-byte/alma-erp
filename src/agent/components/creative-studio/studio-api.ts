@@ -393,6 +393,53 @@ export async function finishVideo(
   return data
 }
 
+// ── E1 Audio Lab helpers ─────────────────────────────────────────────────────
+
+export type AudioLabStatus = {
+  voiceCloned: boolean
+  styles: Array<{ id: string; labelBn: string }>
+  occasions: Array<{ id: string; labelBn: string }>
+}
+
+export async function fetchAudioLabStatus(): Promise<AudioLabStatus> {
+  const res = await fetch('/api/assistant/creative-studio/audio')
+  if (!res.ok) throw new Error('audio_status_failed')
+  return res.json()
+}
+
+export async function queueAudioJob(body: Record<string, unknown>) {
+  const res = await fetch('/api/assistant/creative-studio/audio', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? 'audio_failed')
+  return data as { pendingActionId: string; costBdt: number }
+}
+
+export async function uploadAudioFile(file: File, onProgress?: (pct: number) => void): Promise<string> {
+  const urlRes = await fetch('/api/assistant/creative-studio/audio/upload-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileName: file.name, sizeBytes: file.size }),
+  })
+  const urlData = await urlRes.json().catch(() => ({}))
+  if (!urlRes.ok) throw new Error(urlData.error ?? 'upload_url_failed')
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', urlData.uploadUrl)
+    xhr.setRequestHeader('Content-Type', urlData.contentType ?? file.type ?? 'audio/mpeg')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100))
+    }
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`upload_failed_${xhr.status}`)))
+    xhr.onerror = () => reject(new Error('upload_network_error'))
+    xhr.send(file)
+  })
+  return urlData.path as string
+}
+
 // ── CS4 helpers ──────────────────────────────────────────────────────────────
 
 export async function sendItemFeedback(pendingActionId: string, verdict: 'good' | 'bad') {

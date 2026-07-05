@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
   const db = prisma as any
   const rows = await db.agentPendingAction.findMany({
     where: {
-      type: { in: ['image_gen', 'video_gen', 'video_edit'] },
+      type: { in: ['image_gen', 'video_gen', 'video_edit', 'audio_gen'] },
     },
     orderBy: { createdAt: 'desc' },
     take: limit + 50,

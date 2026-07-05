@@ -76,6 +76,8 @@ function guessContentType(path) {
   const ext = path.split('.').pop()?.toLowerCase()
   switch (ext) {
     case 'mp4': return 'video/mp4'
+    case 'mp3': return 'audio/mpeg'
+    case 'm4a': return 'audio/mp4'
     case 'png': return 'image/png'
     case 'webp': return 'image/webp'
     case 'jpg':
@@ -124,7 +126,7 @@ export async function runStudioArchive(context) {
   const { data: rows, error } = await supabase
     .from('agent_pending_actions')
     .select('id, type, status, result, payload, "createdAt"')
-    .in('type', ['image_gen', 'video_gen', 'video_edit'])
+    .in('type', ['image_gen', 'video_gen', 'video_edit', 'audio_gen'])
     .eq('status', 'executed')
     .order('createdAt', { ascending: false })
     .limit(SCAN_LIMIT)
