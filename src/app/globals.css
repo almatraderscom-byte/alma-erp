@@ -1268,3 +1268,23 @@ html[data-theme='dark'].alma-native-hdr .agent-top-strip {
 html.alma-native-hdr .agent-top-strip .agent-strip-detail {
   display: none;
 }
+
+/* ── Creative Studio forced dark scope ─────────────────────────────────────
+   The Studio is designed dark (cream text, glassy cards, brand orange). On
+   the light app theme every token collapsed to pale-on-white. This scope
+   re-pins the SAME variables the dark theme uses, only inside the Studio. */
+.cs-dark {
+  --c-ink: 247 248 252;
+  --c-surface: 30 30 36;
+  --c-card: 32 32 39;
+  --c-muted: 174 178 192;
+  --c-muted-hi: 208 212 224;
+  --bg-0: #141418;
+  --bg-1: #1C1C22;
+  --bg-2: #232329;
+  --bg-3: #2A2A31;
+  --border: rgba(255, 255, 255, 0.10);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  color-scheme: dark;
+}
