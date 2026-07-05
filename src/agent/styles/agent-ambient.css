@@ -124,6 +124,13 @@ html.alma-native .agent-main-height {
   height: calc(100dvh - var(--alma-bottom-inset, env(safe-area-inset-bottom, 0px)) - var(--kb-inset, 0px));
 }
 
+/* Full-bleed shell: env(safe-area-inset-bottom) inside the WebView now equals the
+ * whole tab-bar overlap, so the composer's own pb-[max(12px,env(...))] would stack
+ * a second tab-bar height on top of the reserve above — pin it to the 12px floor. */
+html.alma-native .agent-composer-wrap {
+  padding-bottom: 12px !important;
+}
+
 /* Creative Studio hides the agent bottom nav and renders its own chrome, so it
  * gets the full viewport (no 3.5rem nav reserve, no bottom safe-area reserve —
  * Studio's own header/nav handle the insets). Class toggled by CreativeStudio. */
