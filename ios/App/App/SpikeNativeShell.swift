@@ -68,7 +68,13 @@ enum AlmaTheme {
     /// material, no violet slab — content blurs THROUGH it in both light and dark).
     static func navAppearance() -> UINavigationBarAppearance {
         let a = UINavigationBarAppearance()
-        a.configureWithDefaultBackground()      // standard iOS translucent material (adapts to style)
+        // FULLY transparent — no material at all. EVERY UIKit blur carries a tint
+        // (black band in dark, grey slab in light — owner rejected both), so the bar
+        // paints nothing; the frosted-glass effect comes from the WEB side instead
+        // (a tint-free backdrop-blur strip under the bar, gated alma-native-hdr),
+        // which blurs the page's own pixels and therefore melts into the background
+        // by construction. Native keeps only the floating title + buttons.
+        a.configureWithTransparentBackground()
         a.shadowColor = .clear
         // Claude-style: strong dark (light mode) / white (dark mode) semibold title.
         a.titleTextAttributes = [.foregroundColor: navTitle,
@@ -84,17 +90,18 @@ enum AlmaTheme {
         nav.navigationBar.standardAppearance = a
         nav.navigationBar.scrollEdgeAppearance = a
         nav.navigationBar.tintColor = navTitle
-        nav.navigationBar.layer.shadowColor = UIColor.black.cgColor
-        nav.navigationBar.layer.shadowOpacity = isDark ? 0.22 : 0.10
-        nav.navigationBar.layer.shadowRadius = 8
-        nav.navigationBar.layer.shadowOffset = CGSize(width: 0, height: 2)
+        // NO drop shadow — the bar must melt into the page as ONE layer (owner: the
+        // shadow made the header read as a separate slab floating over the background).
+        nav.navigationBar.layer.shadowOpacity = 0
     }
 
     static func tabBarAppearance() -> UITabBarAppearance {
         let ap = UITabBarAppearance()
-        // Frosted glass, like the nav bars: the standard iOS translucent material (adapts
-        // to the bar's overrideUserInterfaceStyle) — content scrolls THROUGH it, blurred.
-        ap.configureWithDefaultBackground()
+        // FULLY transparent, same reasoning as the nav bars: every UIKit material tints
+        // (a visible band over the aurora), so the tab bar paints nothing — the web
+        // renders a tint-free backdrop-blur strip in the tab-bar zone instead.
+        ap.configureWithTransparentBackground()
+        ap.shadowColor = .clear
         let sel = violet
         let muted = isDark ? UIColor(white: 1, alpha: 0.45) : UIColor(white: 0, alpha: 0.42)
         for item in [ap.stackedLayoutAppearance, ap.inlineLayoutAppearance, ap.compactInlineLayoutAppearance] {
@@ -362,6 +369,16 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         guard !agentSegments.isEmpty else { return }
         navigationItem.title = "ALMA AI"
         applyAgentBar()
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // Re-assert theme + insets every time the tab comes forward: iOS can suspend a
+        // BACKGROUND WebView, silently dropping the evaluateJavaScript pushed on a theme
+        // flip — the tab then reappears in the OLD theme (seen: agent stayed dark after
+        // a More-tab light switch). Idempotent, so the common case is a no-op.
+        webView?.evaluateJavaScript(AlmaTheme.applyJS(), completionHandler: nil)
+        setWebInsetVars()
     }
 
     /// Agent = the Claude surface: fixed "ALMA AI" title + Claude-exact bar buttons — LEFT a
@@ -1075,12 +1092,13 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         delegate = self
         applyDarkAppearance()
         selection.prepare()
-        // Reconcile with the web cookie (in case it differs from the native mirror), then
-        // re-apply so chrome + content agree.
-        AlmaTheme.loadFromCookies { [weak self] in
-            AlmaTheme.persistCookie()   // make sure the web sees the same value on first load
-            self?.applyTheme()
-        }
+        // UserDefaults is the SINGLE source of truth for the mode (loadInitial above).
+        // We deliberately do NOT read the cookie back: a stale/raced cookie kept
+        // reverting a fresh launch to the previous mode (owner-visible bug). The
+        // in-app web has no reachable theme toggle, so one-way native→web is safe:
+        // push the persisted mode INTO the cookie store, then restyle everything.
+        AlmaTheme.persistCookie()
+        applyTheme()
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
 
