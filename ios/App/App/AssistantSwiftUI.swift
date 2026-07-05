@@ -75,6 +75,7 @@ func almaBn(_ n: Int) -> String {
 struct AgentConversation: Decodable, Identifiable, Equatable {
     let id: String
     var title: String?
+    var projectId: String?
     var modelId: String?
     var source: String?
     var archived: Bool?
@@ -112,6 +113,55 @@ struct AgentToolCallWire: Decodable {
     let result: String?
 }
 
+/// Arbitrary JSON (tool inputs vary per tool) — decoded losslessly for the I/O sheet.
+enum AgentJSONValue: Decodable {
+    case string(String), number(Double), bool(Bool)
+    case object([String: AgentJSONValue]), array([AgentJSONValue]), null
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() { self = .null }
+        else if let b = try? c.decode(Bool.self) { self = .bool(b) }
+        else if let n = try? c.decode(Double.self) { self = .number(n) }
+        else if let s = try? c.decode(String.self) { self = .string(s) }
+        else if let o = try? c.decode([String: AgentJSONValue].self) { self = .object(o) }
+        else if let a = try? c.decode([AgentJSONValue].self) { self = .array(a) }
+        else { self = .null }
+    }
+
+    /// Pretty text for the tool I/O sheet (2-space indent, stable key order).
+    func pretty(indent: Int = 0) -> String {
+        let pad = String(repeating: "  ", count: indent)
+        let padIn = String(repeating: "  ", count: indent + 1)
+        switch self {
+        case .null: return "null"
+        case .bool(let b): return b ? "true" : "false"
+        case .number(let n):
+            return n == n.rounded() && abs(n) < 1e15 ? String(Int(n)) : String(n)
+        case .string(let s): return s.contains("\n") || indent == 0 ? s : "\"\(s)\""
+        case .array(let a):
+            if a.isEmpty { return "[]" }
+            return "[\n" + a.map { padIn + $0.pretty(indent: indent + 1) }.joined(separator: ",\n") + "\n\(pad)]"
+        case .object(let o):
+            if o.isEmpty { return "{}" }
+            return "{\n" + o.keys.sorted().map { "\(padIn)\($0): \(o[$0]!.pretty(indent: indent + 1))" }
+                .joined(separator: ",\n") + "\n\(pad)}"
+        }
+    }
+}
+
+/// One entry of the persisted Claude-style activity timeline (`t: 'think' | 'tool'`).
+struct AgentTimelineEntryWire: Decodable {
+    let t: String?
+    let text: String?
+    let id: String?
+    let name: String?
+    let ok: Bool?
+    let live: Bool?
+    let input: AgentJSONValue?
+    let result: String?
+}
+
 struct AgentMessageWire: Decodable {
     let id: String
     let role: String
@@ -119,8 +169,62 @@ struct AgentMessageWire: Decodable {
     let thinking: String?
     let thinkingMs: Int?
     let toolCalls: [AgentToolCallWire]?
+    let timeline: [AgentTimelineEntryWire]?
+    let tokensIn: Int?
+    let tokensOut: Int?
+    let costUsd: AgentJSONValue?
     let createdAt: String?
 }
+
+// Sidebar data (web AgentSidebar parity)
+
+struct AgentProject: Decodable, Identifiable, Equatable {
+    let id: String
+    var name: String
+    var description: String?
+    var systemInstructions: String?
+    var businessId: String?
+}
+
+struct AgentConversationsPage: Decodable {
+    let conversations: [AgentConversation]
+    let nextCursor: String?
+}
+
+struct AgentMemoryRow: Decodable, Identifiable, Equatable {
+    let id: String
+    var scope: String
+    var key: String?
+    var content: String
+    var pinned: Bool
+    var createdAt: String?
+}
+
+struct AgentLearnedRule: Decodable, Identifiable, Equatable {
+    let id: String
+    var domain: String?
+    var text: String
+    var timesApplied: Int?
+}
+struct AgentLearnedRulesResponse: Decodable { let rules: [AgentLearnedRule]? }
+
+struct AgentFinanceSummary: Decodable, Equatable {
+    struct Balance: Decodable, Equatable { let person: String; let display: String? }
+    struct Expense: Decodable, Equatable { let display: String?; let currency: String?; let category: String? }
+    let balances: [Balance]?
+    let monthExpensesByCategory: [Expense]?
+}
+
+struct AgentOpenTask: Decodable, Identifiable, Equatable {
+    let id: String
+    let kind: String            // chat_followup | approval_pending
+    let title: String?
+    let note: String?
+    let ageMinutes: Int?
+    let pendingActionId: String?
+}
+struct AgentOpenTasksResponse: Decodable { let tasks: [AgentOpenTask]? }
+struct AgentOpenTaskActionResponse: Decodable { let ok: Bool?; let action: String?; let resumeNote: String?; let title: String? }
 
 struct AgentFileRef: Codable, Equatable {
     let bucket: String
@@ -143,6 +247,7 @@ struct AgentSSEEvent: Decodable {
     let name: String?
     let success: Bool?
     let resultPreview: String?
+    let input: AgentJSONValue?
     let pendingActionId: String?
     let summary: String?
     let actionType: String?
@@ -165,6 +270,15 @@ struct AgentChatMessage: Identifiable, Equatable {
         var ok: Bool?
         var preview: String?
         var live: Bool
+        var inputPretty: String?    // for the tool I/O sheet
+        var resultFull: String?
+    }
+    /// One Claude-style activity phase (a `think` headline + the tools that ran under it).
+    struct Phase: Identifiable, Equatable {
+        let id: String
+        var headline: String
+        var detail: String?          // full reasoning text (accordion)
+        var tools: [Tool] = []
     }
     struct ConfirmCard: Identifiable, Equatable {
         let id: String            // pendingActionId
@@ -188,10 +302,21 @@ struct AgentChatMessage: Identifiable, Equatable {
     var localImages: [UIImage] = []   // optimistic composer thumbnails (user msgs)
     var confirmCards: [ConfirmCard] = []
     var askCards: [AskCard] = []
-    var tools: [Tool] = []
+    var tools: [Tool] = []            // flat list (live streaming + fallback)
+    var phases: [Phase] = []          // Claude-style activity timeline (persisted msgs)
     var thinking: String?
     var thinkingMs: Int?
+    var tokensIn: Int?
+    var tokensOut: Int?
+    var costUsd: String?
+    var createdAt: String?
     var isStreaming = false
+
+    /// The heartbeat's self-wake seed renders as a divider, never as an owner bubble
+    /// (web: isHeartbeatWakeText / HEARTBEAT_WAKE_SENTINEL).
+    var isHeartbeatWake: Bool {
+        role == .user && text.trimmingCharacters(in: .whitespaces).hasPrefix("[স্বয়ংক্রিয় হার্টবিট")
+    }
 
     static func from(_ wire: AgentMessageWire) -> AgentChatMessage {
         var m = AgentChatMessage(id: wire.id, role: wire.role == "user" ? .user : .assistant)
@@ -220,11 +345,58 @@ struct AgentChatMessage: Identifiable, Equatable {
         }
         m.thinking = wire.thinking
         m.thinkingMs = wire.thinkingMs
+        m.tokensIn = wire.tokensIn
+        m.tokensOut = wire.tokensOut
+        m.createdAt = wire.createdAt
+        if let c = wire.costUsd {
+            switch c {
+            case .string(let s): m.costUsd = s
+            case .number(let n): m.costUsd = String(format: "%.4f", n)
+            default: break
+            }
+        }
         m.tools = (wire.toolCalls ?? []).enumerated().map { i, t in
             .init(id: t.id ?? "tool-\(wire.id)-\(i)", name: t.name ?? "?", ok: t.success,
-                  preview: t.result, live: false)
+                  preview: t.result, live: false, inputPretty: nil, resultFull: t.result)
         }
+        m.phases = Self.buildPhases(wire: wire, fallbackTools: m.tools)
         return m
+    }
+
+    /// Web parity: derive phases from the persisted `timeline` — every `think` entry
+    /// starts a phase (first line = headline, full text = accordion detail) and the
+    /// `tool` entries that follow attach to it. Falls back to one phase around the
+    /// flat toolCalls when a message predates the timeline column.
+    static func buildPhases(wire: AgentMessageWire, fallbackTools: [Tool]) -> [Phase] {
+        var phases: [Phase] = []
+        var n = 0
+        for e in wire.timeline ?? [] {
+            n += 1
+            if e.t == "think" {
+                let full = (e.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !full.isEmpty else { continue }
+                // Headline = first line, markdown emphasis stripped (Gemini loves **…**).
+                let headline = String(full.split(separator: "\n").first ?? "")
+                    .replacingOccurrences(of: "**", with: "")
+                    .replacingOccurrences(of: "##", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+                phases.append(Phase(id: "ph-\(wire.id)-\(n)",
+                                    headline: headline.count > 120 ? String(headline.prefix(120)) + "…" : headline,
+                                    detail: full == headline ? nil : full))
+            } else if e.t == "tool" {
+                let tool = Tool(id: e.id ?? "tl-\(wire.id)-\(n)", name: e.name ?? "টুল",
+                                ok: e.ok, preview: e.result.map { String($0.prefix(160)) },
+                                live: false, inputPretty: e.input?.pretty(), resultFull: e.result)
+                if phases.isEmpty {
+                    phases.append(Phase(id: "ph-\(wire.id)-t\(n)", headline: tool.name, detail: nil))
+                }
+                phases[phases.count - 1].tools.append(tool)
+            }
+        }
+        if phases.isEmpty && !fallbackTools.isEmpty {
+            phases = [Phase(id: "ph-\(wire.id)-flat", headline: "কাজের ধাপ", detail: nil, tools: fallbackTools)]
+        }
+        return phases
     }
 }
 
@@ -272,6 +444,21 @@ enum AssistantNet {
             throw AlmaAPIError.http(status: http.statusCode, body: String(data: respData, encoding: .utf8) ?? "")
         }
         return respData
+    }
+
+    /// POST a small JSON body and return raw bytes (the TTS endpoint answers audio/mpeg).
+    static func postJSONForData(path: String, body: [String: String]) async throws -> Data {
+        await AlmaAPI.shared.syncCookies()
+        var req = URLRequest(url: base.appendingPathComponent(path))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 60
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONEncoder().encode(body)
+        let (data, resp) = try await streamSession.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw AlmaAPIError.http(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, body: "tts")
+        }
+        return data
     }
 
     /// Open an SSE stream and yield parsed events. Caller cancels via Task cancellation.
@@ -324,9 +511,37 @@ final class AssistantVM {
     var currentTurnId: String?
     private var streamTask: Task<Void, Never>?
 
-    // Sidebar / conversations
+    /// Spinner mode for the live indicator (web AlmaSpinner parity): a live tool =
+    /// "searching", visible text streaming = "writing", otherwise "thinking".
+    var liveMode: String {
+        if let i = messages.lastIndex(where: { $0.isStreaming }) {
+            if messages[i].tools.contains(where: { $0.live }) { return "searching" }
+            if !messages[i].text.isEmpty { return "writing" }
+        }
+        return "thinking"
+    }
+
+    // Sidebar / conversations (web AgentSidebar parity)
     var showSidebar = false
     var conversations: [AgentConversation] = []
+    var conversationsCursor: String?
+    var loadingConversations = false
+    var loadingMoreConversations = false
+    var projects: [AgentProject] = []
+    var memories: [AgentMemoryRow] = []
+    var memoriesLoading = false
+    var financeSummary: AgentFinanceSummary?
+    var learnedRules: [AgentLearnedRule] = []
+
+    // Open-loop tasks ("N কাজ বাকি" chip)
+    var openTasks: [AgentOpenTask] = []
+    var openTaskBusyId: String?
+
+    // TTS playback ("শুনুন")
+    var ttsPlayingId: String?
+    var ttsLoadingId: String?
+    private var ttsPlayer: AVAudioPlayer?
+    private var ttsDelegate: AssistantTTSDelegate?
 
     // Composer attachments
     struct PendingFile: Identifiable, Equatable {
@@ -337,10 +552,13 @@ final class AssistantVM {
     }
     var pendingFiles: [PendingFile] = []
 
-    // Mic
+    // Mic (recording bar: waveform + timer, web VoiceWaveform parity)
     var isRecording = false
     var transcribing = false
+    var micLevel: Double = 0.06         // 0.06…1, mirrors the web's clamped RMS level
+    var recordingSeconds: Int = 0
     private var recorder: AVAudioRecorder?
+    private var meterTask: Task<Void, Never>?
     /// Text the mic transcription appends — the composer view observes this.
     var dictatedText: String = ""
 
@@ -393,6 +611,7 @@ final class AssistantVM {
             guard !isStreaming else { return }
             messages = wire.map(AgentChatMessage.from)
             authExpired = false
+            await loadOpenTasks()
         } catch AlmaAPIError.notAuthenticated { authExpired = true } catch {
             if showSpinner { errorToast = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription }
         }
@@ -440,16 +659,103 @@ final class AssistantVM {
         }
     }
 
-    // ── Conversations (sidebar) ────────────────────────────────────────────
+    // ── Conversations + sidebar data (web AgentSidebar parity) ────────────
 
     func loadConversations() async {
+        loadingConversations = conversations.isEmpty
+        defer { loadingConversations = false }
         do {
-            let list: [AgentConversation] = try await AlmaAPI.shared.get("/api/assistant/conversations",
-                                                                         query: ["limit": "50"])
-            conversations = list.filter { $0.archived != true }
+            let page: AgentConversationsPage = try await AlmaAPI.shared.get(
+                "/api/assistant/conversations", query: ["paginated": "true", "limit": "30"])
+            conversations = page.conversations.filter { $0.archived != true }
+            conversationsCursor = page.nextCursor
             authExpired = false
         } catch AlmaAPIError.notAuthenticated { authExpired = true } catch {
             errorToast = error.localizedDescription
+        }
+    }
+
+    func loadMoreConversations() async {
+        guard let cursor = conversationsCursor, !loadingMoreConversations else { return }
+        loadingMoreConversations = true
+        defer { loadingMoreConversations = false }
+        if let page: AgentConversationsPage = try? await AlmaAPI.shared.get(
+            "/api/assistant/conversations",
+            query: ["paginated": "true", "limit": "30", "cursor": cursor]) {
+            let known = Set(conversations.map(\.id))
+            conversations += page.conversations.filter { $0.archived != true && !known.contains($0.id) }
+            conversationsCursor = page.nextCursor
+        }
+    }
+
+    func loadProjects() async {
+        if let list: [AgentProject] = try? await AlmaAPI.shared.get("/api/assistant/projects") {
+            projects = list
+        }
+    }
+
+    func loadMemories(scope: String) async {
+        memoriesLoading = memories.isEmpty
+        defer { memoriesLoading = false }
+        let query: [String: String?] = scope == "all" ? [:] : ["scope": scope]
+        if let rows: [AgentMemoryRow] = try? await AlmaAPI.shared.get("/api/assistant/memory", query: query) {
+            memories = rows
+        }
+        if financeSummary == nil {
+            financeSummary = try? await AlmaAPI.shared.get("/api/assistant/memory/finance-summary")
+        }
+        if learnedRules.isEmpty {
+            let resp: AgentLearnedRulesResponse? = try? await AlmaAPI.shared.get("/api/assistant/learned-rules")
+            learnedRules = resp?.rules ?? []
+        }
+    }
+
+    func toggleMemoryPin(_ id: String, pinned: Bool) async {
+        if let i = memories.firstIndex(where: { $0.id == id }) { memories[i].pinned = !pinned }
+        let _: OkResponse? = try? await AlmaAPI.shared.send("PATCH", "/api/assistant/memory/\(id)",
+                                                            body: ["pinned": !pinned])
+    }
+
+    func deleteMemory(_ id: String) async {
+        memories.removeAll { $0.id == id }
+        struct Empty: Decodable {}
+        let _: Empty? = try? await AlmaAPI.shared.send("DELETE", "/api/assistant/memory/\(id)")
+    }
+
+    func renameConversation(_ id: String, title: String) async {
+        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return }
+        if let i = conversations.firstIndex(where: { $0.id == id }) { conversations[i].title = t }
+        let _: OkResponse? = try? await AlmaAPI.shared.send("PATCH", "/api/assistant/conversations/\(id)",
+                                                            body: ["title": t])
+    }
+
+    func archiveConversation(_ id: String) async {
+        conversations.removeAll { $0.id == id }
+        let _: OkResponse? = try? await AlmaAPI.shared.send("PATCH", "/api/assistant/conversations/\(id)",
+                                                            body: ["archived": true])
+        if conversationId == id { await newChat() }
+    }
+
+    func saveProject(id: String?, name: String, description: String,
+                     instructions: String, businessId: String?) async -> Bool {
+        struct Body: Encodable {
+            let name: String; let description: String
+            let systemInstructions: String; let businessId: String?
+        }
+        let body = Body(name: name, description: description,
+                        systemInstructions: instructions, businessId: businessId)
+        do {
+            if let id {
+                let _: AgentProject = try await AlmaAPI.shared.send("PATCH", "/api/assistant/projects/\(id)", body: body)
+            } else {
+                let _: AgentProject = try await AlmaAPI.shared.send("POST", "/api/assistant/projects", body: body)
+            }
+            await loadProjects()
+            return true
+        } catch {
+            errorToast = error.localizedDescription
+            return false
         }
     }
 
@@ -458,6 +764,7 @@ final class AssistantVM {
         stopStreaming(cancelServer: false)
         conversationId = id
         messages = []
+        openTasks = []
         await loadMessages(showSpinner: true)
         let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/active-conversation",
                                                             body: ["conversationId": id])
@@ -469,6 +776,7 @@ final class AssistantVM {
         conversationId = nil     // server creates one on the first send
         messages = []
         pendingFiles = []
+        openTasks = []
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
@@ -478,6 +786,73 @@ final class AssistantVM {
             let _: Empty? = try? await AlmaAPI.shared.send("DELETE", "/api/assistant/conversations/\(id)")
             conversations.removeAll { $0.id == id }
             if conversationId == id { await newChat() }
+        }
+    }
+
+    // ── Open tasks ("N কাজ বাকি") ──────────────────────────────────────────
+
+    func loadOpenTasks() async {
+        guard let cid = conversationId else { openTasks = []; return }
+        let resp: AgentOpenTasksResponse? = try? await AlmaAPI.shared.get(
+            "/api/assistant/open-tasks", query: ["conversationId": cid])
+        openTasks = resp?.tasks ?? []
+    }
+
+    /// Web parity: continue = POST → take resumeNote → send it as the next message.
+    func continueOpenTask(_ task: AgentOpenTask) async {
+        openTaskBusyId = task.id
+        defer { openTaskBusyId = nil }
+        let resp: AgentOpenTaskActionResponse? = try? await AlmaAPI.shared.send(
+            "POST", "/api/assistant/open-tasks",
+            body: ["id": task.id, "action": "continue"])
+        await loadOpenTasks()
+        if let note = resp?.resumeNote ?? task.note, !note.isEmpty { send(note) }
+    }
+
+    func cancelOpenTask(_ task: AgentOpenTask) async {
+        openTaskBusyId = task.id
+        defer { openTaskBusyId = nil }
+        let _: AgentOpenTaskActionResponse? = try? await AlmaAPI.shared.send(
+            "POST", "/api/assistant/open-tasks",
+            body: ["id": task.id, "action": "cancel"])
+        await loadOpenTasks()
+    }
+
+    // ── TTS ("শুনুন") ──────────────────────────────────────────────────────
+
+    func toggleTTS(for message: AgentChatMessage) {
+        if ttsPlayingId == message.id {
+            ttsPlayer?.stop()
+            ttsPlayer = nil
+            ttsPlayingId = nil
+            return
+        }
+        guard ttsLoadingId == nil else { return }
+        ttsLoadingId = message.id
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.ttsLoadingId = nil }
+            do {
+                let mp3 = try await AssistantNet.postJSONForData(
+                    path: "/api/assistant/tts", body: ["text": String(message.text.prefix(600))])
+                try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
+                try AVAudioSession.sharedInstance().setActive(true)
+                let player = try AVAudioPlayer(data: mp3)
+                let delegate = AssistantTTSDelegate { [weak self] in
+                    Task { @MainActor in
+                        self?.ttsPlayingId = nil
+                        self?.ttsPlayer = nil
+                    }
+                }
+                player.delegate = delegate
+                self.ttsDelegate = delegate
+                self.ttsPlayer = player
+                self.ttsPlayingId = message.id
+                player.play()
+            } catch {
+                self.errorToast = "ভয়েস চালানো গেল না"
+            }
         }
     }
 
@@ -624,13 +999,15 @@ final class AssistantVM {
             ensureStreamingTail()
             if let i = messages.lastIndex(where: { $0.isStreaming }) {
                 messages[i].tools.append(.init(id: ev.id ?? UUID().uuidString,
-                                               name: ev.name ?? "টুল", ok: nil, preview: nil, live: true))
+                                               name: ev.name ?? "টুল", ok: nil, preview: nil, live: true,
+                                               inputPretty: ev.input?.pretty(), resultFull: nil))
             }
         case "tool_end":
             if let i = messages.lastIndex(where: { $0.isStreaming }),
                let j = messages[i].tools.firstIndex(where: { $0.id == ev.id }) {
                 messages[i].tools[j].ok = ev.success
                 messages[i].tools[j].preview = ev.resultPreview
+                messages[i].tools[j].resultFull = ev.resultPreview
                 messages[i].tools[j].live = false
             }
         case "confirm_card":
@@ -782,10 +1159,28 @@ final class AssistantVM {
                         AVNumberOfChannelsKey: 1,
                         AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
                     ]
-                    self.recorder = try AVAudioRecorder(url: self.recordingURL, settings: settings)
-                    self.recorder?.record()
+                    let rec = try AVAudioRecorder(url: self.recordingURL, settings: settings)
+                    rec.isMeteringEnabled = true
+                    rec.record()
+                    self.recorder = rec
                     self.isRecording = true
+                    self.recordingSeconds = 0
+                    self.micLevel = 0.06
                     UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    // Web VoiceWaveform parity: live RMS level drives the 34-bar wave.
+                    self.meterTask?.cancel()
+                    self.meterTask = Task { [weak self] in
+                        while let self, self.isRecording, !Task.isCancelled {
+                            if let r = self.recorder {
+                                r.updateMeters()
+                                let db = r.averagePower(forChannel: 0)          // -160…0 dB
+                                let linear = pow(10.0, Double(db) / 20.0)       // 0…1
+                                self.micLevel = max(0.06, min(1.0, linear * 3.2))
+                                self.recordingSeconds = Int(r.currentTime)
+                            }
+                            try? await Task.sleep(nanoseconds: 66_000_000)      // ~15 fps
+                        }
+                    }
                 } catch {
                     self.errorToast = "মাইক্রোফোন চালু করা গেল না"
                 }
@@ -793,7 +1188,18 @@ final class AssistantVM {
         }
     }
 
+    /// ✕ on the recording bar — discard the take, no transcription.
+    func cancelRecording() {
+        meterTask?.cancel()
+        recorder?.stop()
+        recorder = nil
+        isRecording = false
+        try? FileManager.default.removeItem(at: recordingURL)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
     private func finishRecording() {
+        meterTask?.cancel()
         recorder?.stop()
         recorder = nil
         isRecording = false
@@ -816,6 +1222,13 @@ final class AssistantVM {
             }
         }
     }
+}
+
+/// AVAudioPlayer completion → clear the "playing" state on the TTS button.
+final class AssistantTTSDelegate: NSObject, AVAudioPlayerDelegate {
+    private let onFinish: () -> Void
+    init(onFinish: @escaping () -> Void) { self.onFinish = onFinish }
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) { onFinish() }
 }
 
 // MARK: - Aurora background (web .ambient-bg-root parity)
@@ -1058,11 +1471,31 @@ struct AgentChatImage: View {
 struct AgentMessageRow: View {
     let message: AgentChatMessage
     let vm: AssistantVM
+    let onToolTap: (AgentChatMessage.Tool) -> Void
     @Environment(\.colorScheme) private var scheme
+    @State private var expandedLong = false
 
     var body: some View {
         let pal = AgentPalette(scheme)
-        if message.role == .user {
+        if message.isHeartbeatWake {
+            // Autonomous self-wake — an inline divider, never a fake owner bubble.
+            HStack(spacing: 10) {
+                Rectangle().fill(pal.borderSubtle).frame(height: 1)
+                HStack(spacing: 5) {
+                    Text("💓").font(.system(size: 10))
+                    Text("ALMA নিজে থেকে জাগল")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(AgentPalette.coral.opacity(0.9))
+                }
+                .padding(.horizontal, 12).padding(.vertical, 4)
+                .background(AgentPalette.coral.opacity(0.06), in: Capsule())
+                .overlay(Capsule().strokeBorder(AgentPalette.coral.opacity(0.25), lineWidth: 1))
+                .fixedSize()
+                Rectangle().fill(pal.borderSubtle).frame(height: 1)
+            }
+            .padding(.vertical, 6)
+            .padding(.bottom, 12)
+        } else if message.role == .user {
             VStack(alignment: .trailing, spacing: 6) {
                 if !message.localImages.isEmpty || !message.imagePaths.isEmpty {
                     HStack(spacing: 6) {
@@ -1098,17 +1531,46 @@ struct AgentMessageRow: View {
             .padding(.bottom, 18)
         } else {
             VStack(alignment: .leading, spacing: 10) {
-                if let thinking = message.thinking, !thinking.isEmpty {
-                    AgentThinkingDisclosure(trace: thinking, ms: message.thinkingMs, pal: pal)
-                }
-                if !message.tools.isEmpty {
-                    AgentToolPill(tools: message.tools, pal: pal)
+                // Claude-style activity timeline (persisted) or the live tool pill.
+                if !message.phases.isEmpty && !message.isStreaming {
+                    AgentActivityTimeline(message: message, pal: pal, onToolTap: onToolTap)
+                } else if !message.tools.isEmpty {
+                    AgentLiveToolList(tools: message.tools, pal: pal, onToolTap: onToolTap)
                 }
                 if !message.text.isEmpty {
-                    AgentMarkdownText(text: message.text, pal: pal)
-                }
-                if message.isStreaming && message.text.isEmpty && message.tools.isEmpty {
-                    EmptyView() // the global thinking row covers this state
+                    let long = message.text.count > 1500 && !message.isStreaming
+                    VStack(alignment: .leading, spacing: 4) {
+                        AgentMarkdownText(text: message.text, pal: pal)
+                            .frame(maxHeight: long && !expandedLong ? 340 : .infinity, alignment: .top)
+                            .clipped()
+                            .mask(
+                                LinearGradient(stops: long && !expandedLong
+                                    ? [.init(color: .black, location: 0), .init(color: .black, location: 0.78),
+                                       .init(color: .clear, location: 1)]
+                                    : [.init(color: .black, location: 0), .init(color: .black, location: 1)],
+                                    startPoint: .top, endPoint: .bottom))
+                            .overlay(alignment: .bottomTrailing) {
+                                if message.isStreaming { EmptyView() }
+                            }
+                        if long {
+                            Button {
+                                UISelectionFeedbackGenerator().selectionChanged()
+                                withAnimation(.easeOut(duration: 0.3)) { expandedLong.toggle() }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(expandedLong ? "কম দেখুন" : "বিস্তারিত দেখুন")
+                                        .font(.system(size: 12, weight: .medium))
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: 10))
+                                        .rotationEffect(.degrees(expandedLong ? 180 : 0))
+                                }
+                                .foregroundStyle(AgentPalette.coral.opacity(0.85))
+                            }
+                        }
+                        if message.isStreaming && !message.text.isEmpty {
+                            AgentTypingCursor()
+                        }
+                    }
                 }
                 ForEach(message.imagePaths, id: \.self) { p in
                     AgentChatImage(path: p, vm: vm)
@@ -1123,6 +1585,10 @@ struct AgentMessageRow: View {
                         Task { await vm.answerAskCard(card.id, option: option) }
                     }
                 }
+                // "✦ ALMA" byline + copy / listen / cost — web action row parity.
+                if !message.isStreaming && !message.text.isEmpty {
+                    AgentMessageActions(message: message, vm: vm, pal: pal)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 26)
@@ -1130,89 +1596,550 @@ struct AgentMessageRow: View {
     }
 }
 
+/// Blinking coral caret at the end of a streaming reply (web parity: 2px bar, 0.8s).
 @available(iOS 17.0, *)
-struct AgentThinkingDisclosure: View {
-    let trace: String
-    let ms: Int?
-    let pal: AgentPalette
-    @State private var open = false
-
+struct AgentTypingCursor: View {
+    @State private var on = true
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
-                withAnimation(.snappy(duration: 0.2)) { open.toggle() }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "brain").font(.system(size: 11))
-                    Text(ms.map { "ভেবেছে \(almaBn(max(1, $0 / 1000))) সেকেন্ড" } ?? "ভাবনা")
-                        .font(.system(size: 11.5, weight: .medium))
-                    Image(systemName: open ? "chevron.up" : "chevron.down").font(.system(size: 9))
-                }
-                .foregroundStyle(pal.muted)
+        Capsule()
+            .fill(AgentPalette.coral.opacity(0.6))
+            .frame(width: 2.5, height: 16)
+            .opacity(on ? 1 : 0)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.4).repeatForever(autoreverses: true)) { on = false }
             }
-            if open {
-                Text(trace)
-                    .font(.system(size: 12))
-                    .foregroundStyle(pal.muted)
-                    .lineSpacing(2.5)
-                    .padding(.leading, 10)
-                    .overlay(alignment: .leading) {
-                        Rectangle().fill(pal.borderSubtle).frame(width: 2)
-                    }
-            }
-        }
     }
 }
 
+// MARK: - Claude-style activity timeline
+
+/// The web SparkleGlyph — a 4-point star with concave sides.
 @available(iOS 17.0, *)
-struct AgentToolPill: View {
-    let tools: [AgentChatMessage.Tool]
+struct AlmaSparkleShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        let w = rect.width, h = rect.height
+        let c = CGPoint(x: rect.midX, y: rect.midY)
+        let top = CGPoint(x: rect.midX, y: rect.minY)
+        let right = CGPoint(x: rect.maxX, y: rect.midY)
+        let bottom = CGPoint(x: rect.midX, y: rect.maxY)
+        let left = CGPoint(x: rect.minX, y: rect.midY)
+        let pull: CGFloat = 0.18
+        p.move(to: top)
+        p.addQuadCurve(to: right, control: CGPoint(x: c.x + w * pull, y: c.y - h * pull))
+        p.addQuadCurve(to: bottom, control: CGPoint(x: c.x + w * pull, y: c.y + h * pull))
+        p.addQuadCurve(to: left, control: CGPoint(x: c.x - w * pull, y: c.y + h * pull))
+        p.addQuadCurve(to: top, control: CGPoint(x: c.x - w * pull, y: c.y - h * pull))
+        p.closeSubpath()
+        return p
+    }
+}
+
+/// alma-sparkle-pulse: scale 0.8↔1.2 + opacity 0.55↔1, 1.6s ease-in-out.
+@available(iOS 17.0, *)
+struct AlmaSparklePulse: View {
+    var size: CGFloat = 13
+    var color: Color = AgentPalette.coral
+    @State private var up = false
+    var body: some View {
+        AlmaSparkleShape()
+            .fill(color)
+            .frame(width: size, height: size)
+            .scaleEffect(up ? 1.2 : 0.8)
+            .opacity(up ? 1 : 0.55)
+            .onAppear {
+                withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { up = true }
+            }
+    }
+}
+
+/// Coral shimmer sweeping across a label (web alma-thinking-shimmer / alma-run-shimmer).
+@available(iOS 17.0, *)
+struct AlmaShimmerText: View {
+    let text: String
+    var font: Font = .system(size: 12.5, weight: .semibold)
+    var base: Color
+    @State private var sweep = false
+    var body: some View {
+        Text(text)
+            .font(font)
+            .foregroundStyle(base)
+            .overlay(
+                GeometryReader { g in
+                    LinearGradient(colors: [.clear, AgentPalette.coral.opacity(0.9), .clear],
+                                   startPoint: .leading, endPoint: .trailing)
+                        .frame(width: max(40, g.size.width * 0.55))
+                        .offset(x: sweep ? g.size.width : -g.size.width * 0.55)
+                }
+                .mask(Text(text).font(font))
+            )
+            .onAppear {
+                withAnimation(.linear(duration: 2).repeatForever(autoreverses: false)) { sweep = true }
+            }
+    }
+}
+
+/// Persisted-message activity card: pinned summary → phases (headline + reasoning
+/// accordion + tool pill + tappable tool rows). Web AgentThread lines 629-893.
+@available(iOS 17.0, *)
+struct AgentActivityTimeline: View {
+    let message: AgentChatMessage
     let pal: AgentPalette
-    @State private var open = false
+    let onToolTap: (AgentChatMessage.Tool) -> Void
+    @State private var openPhases: Set<String> = []
+    @State private var openPills: Set<String> = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
-                withAnimation(.snappy(duration: 0.2)) { open.toggle() }
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            } label: {
-                HStack(spacing: 6) {
-                    if tools.contains(where: { $0.live }) {
-                        ProgressView().controlSize(.mini)
-                    } else {
-                        Text("🔧").font(.system(size: 11))
+        VStack(alignment: .leading, spacing: 2) {
+            summaryLine
+            ForEach(Array(message.phases.enumerated()), id: \.element.id) { idx, phase in
+                phaseBlock(phase, isLast: idx == message.phases.count - 1)
+            }
+        }
+        .padding(.bottom, 2)
+    }
+
+    private var summaryLine: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "lightbulb")
+                .font(.system(size: 10.5))
+                .foregroundStyle(pal.muted)
+            Text(summaryText)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(pal.muted)
+            Text("\(almaBn(message.phases.count)) ধাপ")
+                .font(.system(size: 10))
+                .foregroundStyle(pal.muted.opacity(0.8))
+                .padding(.horizontal, 6).padding(.vertical, 1)
+                .background(pal.muted.opacity(0.10), in: Capsule())
+        }
+        .padding(.bottom, 6)
+    }
+
+    private var summaryText: String {
+        let tokenEst = max(1, (message.thinking?.count ?? 40) / 4)
+        if let ms = message.thinkingMs, ms > 0 {
+            return "\(almaBn(max(1, ms / 1000))) সেকেন্ড ধরে ভেবেছে · ~\(almaBn(tokenEst)) টোকেন"
+        }
+        return "কাজের ধাপ"
+    }
+
+    @ViewBuilder private func phaseBlock(_ phase: AgentChatMessage.Phase, isLast: Bool) -> some View {
+        let failed = phase.tools.contains { $0.ok == false }
+        HStack(alignment: .top, spacing: 8) {
+            // Rail: node + connector
+            VStack(spacing: 0) {
+                Circle()
+                    .fill(failed ? Color.red : AgentPalette.coral)
+                    .frame(width: 8, height: 8)
+                    .shadow(color: AgentPalette.coral.opacity(failed ? 0 : 0.35), radius: 3)
+                    .padding(.top, 5)
+                if !isLast {
+                    Rectangle().fill(pal.muted.opacity(0.15)).frame(width: 1)
+                }
+            }
+            .frame(width: 10)
+            VStack(alignment: .leading, spacing: 4) {
+                // Headline (tappable when there is a reasoning detail)
+                Button {
+                    guard phase.detail != nil else { return }
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        if openPhases.contains(phase.id) { openPhases.remove(phase.id) }
+                        else { openPhases.insert(phase.id) }
                     }
-                    Text("\(almaBn(tools.count))টি টুল")
-                        .font(.system(size: 12, weight: .medium))
+                } label: {
+                    HStack(alignment: .top, spacing: 5) {
+                        Text(phase.headline)
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundStyle(pal.ink)
+                            .multilineTextAlignment(.leading)
+                        if phase.detail != nil {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(pal.muted.opacity(0.6))
+                                .rotationEffect(.degrees(openPhases.contains(phase.id) ? 90 : 0))
+                                .padding(.top, 3)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                if openPhases.contains(phase.id), let detail = phase.detail {
+                    Text(detail)
+                        .font(.system(size: 12))
                         .foregroundStyle(pal.muted)
-                    Image(systemName: open ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 8.5)).foregroundStyle(pal.muted)
+                        .lineSpacing(3)
+                        .padding(.leading, 10)
+                        .overlay(alignment: .leading) {
+                            Rectangle().fill(pal.muted.opacity(0.15)).frame(width: 2)
+                        }
+                        .transition(.opacity)
+                }
+                if !phase.tools.isEmpty {
+                    toolPill(phase)
+                    if openPills.contains(phase.id) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(phase.tools) { t in
+                                AgentToolRow(tool: t, pal: pal, onTap: onToolTap)
+                            }
+                        }
+                        .transition(.opacity)
+                    }
+                }
+            }
+            .padding(.bottom, isLast ? 0 : 10)
+        }
+    }
+
+    @ViewBuilder private func toolPill(_ phase: AgentChatMessage.Phase) -> some View {
+        let failed = phase.tools.contains { $0.ok == false }
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            withAnimation(.easeOut(duration: 0.18)) {
+                if openPills.contains(phase.id) { openPills.remove(phase.id) }
+                else { openPills.insert(phase.id) }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Text("🔧").font(.system(size: 10.5))
+                Text("\(almaBn(phase.tools.count))টি টুল ব্যবহার হয়েছে")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(pal.muted)
+                if failed {
+                    Text("· ব্যর্থ").font(.system(size: 11.5)).foregroundStyle(.red)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(pal.muted.opacity(0.6))
+                    .rotationEffect(.degrees(openPills.contains(phase.id) ? 90 : 0))
+            }
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(pal.card.opacity(0.6), in: Capsule())
+            .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// One tool row — tap opens the glossy I/O bottom sheet.
+@available(iOS 17.0, *)
+struct AgentToolRow: View {
+    let tool: AgentChatMessage.Tool
+    let pal: AgentPalette
+    let onTap: (AgentChatMessage.Tool) -> Void
+
+    var body: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            onTap(tool)
+        } label: {
+            HStack(alignment: .center, spacing: 6) {
+                if tool.live {
+                    AlmaSparklePulse(size: 13)
+                } else if tool.ok == false {
+                    Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(.red)
+                } else {
+                    Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(AgentPalette.teal)
+                }
+                if tool.live {
+                    AlmaShimmerText(text: "চলছে · \(tool.name)",
+                                    font: .system(size: 12, weight: .medium), base: pal.muted)
+                } else {
+                    Text(tool.name)
+                        .font(.system(size: 12))
+                        .foregroundStyle(pal.muted)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 9))
+                    .foregroundStyle(pal.muted.opacity(tool.inputPretty == nil && tool.resultFull == nil ? 0.25 : 0.7))
+            }
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .background(pal.card.opacity(0.4), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(pal.borderSubtle, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Live (streaming) tool list — the same pill + rows, before phases exist.
+@available(iOS 17.0, *)
+struct AgentLiveToolList: View {
+    let tools: [AgentChatMessage.Tool]
+    let pal: AgentPalette
+    let onToolTap: (AgentChatMessage.Tool) -> Void
+    @State private var open = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation(.easeOut(duration: 0.18)) { open.toggle() }
+            } label: {
+                HStack(spacing: 5) {
+                    if tools.contains(where: { $0.live }) {
+                        AlmaSparklePulse(size: 11)
+                    } else {
+                        Text("🔧").font(.system(size: 10.5))
+                    }
+                    Text("\(almaBn(tools.count))টি টুল ব্যবহার হয়েছে")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(pal.muted)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(pal.muted.opacity(0.6))
+                        .rotationEffect(.degrees(open ? 90 : 0))
                 }
                 .padding(.horizontal, 10).padding(.vertical, 5)
                 .background(pal.card.opacity(0.6), in: Capsule())
                 .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
             }
+            .buttonStyle(.plain)
             if open {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 4) {
                     ForEach(tools) { t in
-                        HStack(alignment: .top, spacing: 6) {
-                            if t.live {
-                                Image(systemName: "sparkle").font(.system(size: 10)).foregroundStyle(AgentPalette.coral)
-                            } else if t.ok == false {
-                                Image(systemName: "xmark").font(.system(size: 10)).foregroundStyle(.red)
-                            } else {
-                                Image(systemName: "checkmark").font(.system(size: 10)).foregroundStyle(AgentPalette.teal)
-                            }
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(t.name).font(.system(size: 12, weight: .medium)).foregroundStyle(pal.ink)
-                                if let p = t.preview, !p.isEmpty {
-                                    Text(p).font(.system(size: 11)).foregroundStyle(pal.muted).lineLimit(2)
-                                }
-                            }
-                        }
+                        AgentToolRow(tool: t, pal: pal, onTap: onToolTap)
                     }
                 }
-                .padding(.leading, 6)
+            }
+        }
+    }
+}
+
+/// The glossy tool I/O sheet — glides up from the bottom (web GlassSheet parity).
+@available(iOS 17.0, *)
+struct AgentToolIOSheet: View {
+    let tool: AgentChatMessage.Tool
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text("🔧").font(.system(size: 16))
+                Text(tool.name)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(pal.ink)
+                    .lineLimit(1)
+                if tool.ok == false {
+                    badge("ব্যর্থ", fg: Color(red: 0.73, green: 0.11, blue: 0.11),
+                          bg: Color.red.opacity(0.12), border: Color.red.opacity(0.3))
+                } else if !tool.live {
+                    badge("সম্পন্ন", fg: Color(red: 0.08, green: 0.50, blue: 0.24),
+                          bg: AgentPalette.teal.opacity(0.14), border: AgentPalette.teal.opacity(0.3))
+                }
+                Spacer()
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(pal.muted)
+                        .frame(width: 30, height: 30)
+                        .background(Color.white.opacity(0.06), in: Circle())
+                }
+            }
+            .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 10)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if tool.inputPretty == nil && tool.resultFull == nil && tool.preview == nil {
+                        Text("এই টুলের কোনো ইনপুট/ফলাফল নেই।")
+                            .font(.system(size: 12))
+                            .foregroundStyle(pal.muted)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 24)
+                    }
+                    if let input = tool.inputPretty, !input.isEmpty {
+                        ioBlock(label: "ইনপুট · INPUT", body: input, pal: pal, failed: false)
+                    }
+                    if let out = tool.resultFull ?? tool.preview, !out.isEmpty {
+                        ioBlock(label: "ফলাফল · OUTPUT", body: out, pal: pal, failed: tool.ok == false)
+                    }
+                }
+                .padding(.horizontal, 20).padding(.bottom, 24)
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(.ultraThinMaterial)
+    }
+
+    private func badge(_ text: String, fg: Color, bg: Color, border: Color) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(fg)
+            .padding(.horizontal, 8).padding(.vertical, 2)
+            .background(bg, in: Capsule())
+            .overlay(Capsule().strokeBorder(border, lineWidth: 1))
+    }
+
+    @ViewBuilder private func ioBlock(label: String, body text: String, pal: AgentPalette, failed: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.8)
+                .foregroundStyle(pal.muted.opacity(0.7))
+            ScrollView {
+                Text(text)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(failed ? Color.red.opacity(0.85) : pal.ink.opacity(0.85))
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+            }
+            .frame(maxHeight: 300)
+            .background(Color.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.06), lineWidth: 1))
+        }
+    }
+}
+
+/// "✦ ALMA" byline + relative time + copy + listen + token cost (web action row).
+@available(iOS 17.0, *)
+struct AgentMessageActions: View {
+    let message: AgentChatMessage
+    let vm: AssistantVM
+    let pal: AgentPalette
+    @State private var copied = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 3) {
+                AlmaSparkleShape().fill(AgentPalette.coral.opacity(0.8)).frame(width: 10, height: 10)
+                Text("ALMA")
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(0.5)
+                    .foregroundStyle(AgentPalette.coral.opacity(0.8))
+            }
+            if let rel = relativeTime(message.createdAt) {
+                Text(rel).font(.system(size: 10)).foregroundStyle(pal.muted)
+            }
+            Button {
+                UIPasteboard.general.string = message.text
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) { copied = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { copied = false }
+            } label: {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 12))
+                    .foregroundStyle(copied ? AgentPalette.teal : pal.muted)
+                    .frame(width: 28, height: 28)
+            }
+            Button {
+                vm.toggleTTS(for: message)
+            } label: {
+                Group {
+                    if vm.ttsLoadingId == message.id {
+                        ProgressView().controlSize(.mini)
+                    } else if vm.ttsPlayingId == message.id {
+                        AgentPlayingBars()
+                    } else {
+                        Image(systemName: "speaker.wave.2")
+                            .font(.system(size: 12))
+                            .foregroundStyle(pal.muted)
+                    }
+                }
+                .frame(width: 28, height: 28)
+                .background(vm.ttsPlayingId == message.id ? AgentPalette.coral.opacity(0.1) : .clear,
+                            in: RoundedRectangle(cornerRadius: 8))
+            }
+            Spacer()
+            if let tin = message.tokensIn {
+                Text("↑\(tin)\(message.tokensOut.map { " ↓\($0)" } ?? "")\(message.costUsd.map { " $\($0)" } ?? "")")
+                    .font(.system(size: 9.5, design: .monospaced))
+                    .foregroundStyle(pal.muted.opacity(0.8))
+                    .lineLimit(1)
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private func relativeTime(_ iso: String?) -> String? {
+        guard let iso else { return nil }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = f.date(from: iso) ?? {
+            f.formatOptions = [.withInternetDateTime]
+            return f.date(from: iso)
+        }()
+        guard let date else { return nil }
+        let mins = max(0, Int(-date.timeIntervalSinceNow / 60))
+        if mins < 1 { return "এইমাত্র" }
+        if mins < 60 { return "\(almaBn(mins)) মিনিট আগে" }
+        if mins < 1440 { return "\(almaBn(mins / 60)) ঘণ্টা আগে" }
+        return "\(almaBn(mins / 1440)) দিন আগে"
+    }
+}
+
+/// Two dancing bars while TTS is playing (web parity).
+@available(iOS 17.0, *)
+struct AgentPlayingBars: View {
+    @State private var up = false
+    var body: some View {
+        HStack(spacing: 2.5) {
+            Capsule().fill(AgentPalette.coral).frame(width: 3, height: up ? 13 : 6)
+            Capsule().fill(AgentPalette.coral).frame(width: 3, height: up ? 6 : 13)
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.35).repeatForever(autoreverses: true)) { up = true }
+        }
+    }
+}
+
+/// The web AlmaSpinner, ported: mono glyph frames + rotating Bangla verbs, with
+/// mode-specific cadence (thinking 210ms / writing 130ms / searching 300ms).
+@available(iOS 17.0, *)
+struct AlmaSpinnerView: View {
+    let mode: String            // "thinking" | "writing" | "searching"
+    var size: CGFloat = 18
+    @State private var frameIdx = 0
+    @State private var verbIdx = 0
+    @State private var breathe = false
+    @State private var rotate = false
+
+    private static let frames = ["·", "✢", "✳\u{FE0E}", "✶\u{FE0E}", "✽\u{FE0E}", "✻\u{FE0E}", "✽\u{FE0E}", "✶\u{FE0E}", "✳\u{FE0E}", "✢"]
+    private static let color = Color(red: 0.910, green: 0.514, blue: 0.353) // #E8835A
+
+    private var verbs: [String] {
+        switch mode {
+        case "writing": return ["লিখছি", "সাজাচ্ছি", "তৈরি করছি", "গুছিয়ে লিখছি", "উত্তর লিখছি", "বাক্য সাজাচ্ছি", "শেষ করছি"]
+        case "searching": return ["খুঁজছি", "দেখছি", "পড়ছি", "তথ্য আনছি", "যাচাই করছি", "খুঁজে দেখছি", "মিলিয়ে দেখছি", "সংগ্রহ করছি"]
+        default: return ["ভাবছি", "চিন্তা করছি", "বুঝছি", "মনে করছি", "বিবেচনা করছি", "বিশ্লেষণ করছি", "মিলিয়ে দেখছি", "হিসাব করছি", "খেয়াল করছি"]
+        }
+    }
+    private var frameMs: UInt64 { mode == "writing" ? 130 : mode == "searching" ? 300 : 210 }
+    private var verbMs: UInt64 { mode == "writing" ? 1500 : mode == "searching" ? 1400 : 2000 }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(Self.frames[frameIdx % Self.frames.count])
+                .font(.system(size: size, design: .monospaced))
+                .foregroundStyle(Self.color)
+                .frame(width: size * 1.2)
+                .shadow(color: Self.color.opacity(0.5), radius: 8)
+                .scaleEffect(mode == "searching" ? 1 : (breathe ? 1.05 : 0.96))
+                .opacity(mode == "searching" ? 1 : (breathe ? 1 : 0.78))
+                .rotationEffect(.degrees(mode == "searching" && rotate ? 360 : 0))
+            Text("\(verbs[verbIdx % verbs.count])…")
+                .font(.system(size: size * 0.62 + 2, weight: .medium))
+                .foregroundStyle(Self.color)
+        }
+        .task(id: mode) {
+            withAnimation(.easeInOut(duration: mode == "writing" ? 0.52 : 0.85).repeatForever(autoreverses: true)) { breathe = true }
+            if mode == "searching" {
+                withAnimation(.linear(duration: 1.25).repeatForever(autoreverses: false)) { rotate = true }
+            }
+            var ticks: UInt64 = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: frameMs * 1_000_000)
+                frameIdx += 1
+                ticks += frameMs
+                if ticks >= verbMs { verbIdx += 1; ticks = 0 }
             }
         }
     }
@@ -1345,30 +2272,21 @@ struct AgentAskCardView: View {
     }
 }
 
-/// The live "কাজ করছি…" row — spinner + shimmer, web AgentThinkingIndicator parity.
+/// The live indicator row — AlmaSpinner (glyph + rotating Bangla verb) + the
+/// shimmering "ALMA · {model}" brand label. Web AgentThinkingIndicator parity.
 @available(iOS 17.0, *)
 struct AgentThinkingRow: View {
+    let mode: String            // thinking | searching | writing
+    let modelLabel: String?
     let pal: AgentPalette
-    @State private var spin = false
-    @State private var pulse = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "sparkle")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(AgentPalette.coral)
-                .rotationEffect(.degrees(spin ? 360 : 0))
-                .scaleEffect(pulse ? 1.15 : 0.85)
-            Text("কাজ করছি…")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(pal.muted)
-                .opacity(pulse ? 1 : 0.55)
+        HStack(spacing: 10) {
+            AlmaSpinnerView(mode: mode, size: 18)
+            AlmaShimmerText(text: modelLabel.map { "ALMA · \($0)" } ?? "ALMA",
+                            font: .system(size: 12, weight: .medium), base: pal.muted)
         }
         .padding(.bottom, 22)
-        .onAppear {
-            withAnimation(.linear(duration: 2.4).repeatForever(autoreverses: false)) { spin = true }
-            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { pulse = true }
-        }
     }
 }
 
@@ -1387,23 +2305,26 @@ struct AgentComposerView: View {
         let pal = AgentPalette(scheme)
         VStack(spacing: 0) {
             VStack(spacing: 8) {
-                if !vm.pendingFiles.isEmpty { attachmentsRow(pal) }
-                TextField(vm.isRecording ? "শুনছি…" : (vm.transcribing ? "বুঝে নিচ্ছি…" : "বার্তা লিখুন…"),
-                          text: $draft, axis: .vertical)
-                    .font(.system(size: 16))
-                    .foregroundStyle(pal.ink)
-                    .lineLimit(1...5)
-                    .focused($focused)
-                    .padding(.horizontal, 10)
-                    .padding(.top, 8)
-                controlsRow(pal)
+                if !vm.pendingFiles.isEmpty && !vm.isRecording { attachmentsRow(pal) }
+                if vm.isRecording {
+                    recordingBar(pal)
+                } else {
+                    TextField(vm.transcribing ? "বুঝে নিচ্ছি…" : "বার্তা লিখুন…",
+                              text: $draft, axis: .vertical)
+                        .font(.system(size: 16))
+                        .foregroundStyle(pal.ink)
+                        .lineLimit(1...5)
+                        .focused($focused)
+                        .padding(.horizontal, 10)
+                        .padding(.top, 8)
+                    controlsRow(pal)
+                }
             }
             .padding(8)
             .background(pal.glassFill)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
             .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(pal.borderSubtle, lineWidth: 1))
+            .overlay(AgentNeonBorder(cornerRadius: 24))   // web agent-neon-input parity
             .padding(.horizontal, 12)
             .padding(.bottom, 8)
         }
@@ -1422,6 +2343,36 @@ struct AgentComposerView: View {
                 photoItem = nil
             }
         }
+    }
+
+    /// Recording bar — web parity: ✕ cancel, live 34-bar waveform, mm:ss, ✓ confirm.
+    @ViewBuilder private func recordingBar(_ pal: AgentPalette) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                vm.cancelRecording()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(pal.muted)
+                    .frame(width: 36, height: 36)
+            }
+            AgentVoiceWaveform(vm: vm)
+                .frame(height: 36)
+                .frame(maxWidth: .infinity)
+            Text(String(format: "%d:%02d", vm.recordingSeconds / 60, vm.recordingSeconds % 60))
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundStyle(pal.muted)
+            Button {
+                vm.toggleRecording()   // finish → Whisper
+            } label: {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 36, height: 36)
+                    .background(AgentPalette.coral, in: Circle())
+            }
+        }
+        .padding(.vertical, 3)
     }
 
     @ViewBuilder private func attachmentsRow(_ pal: AgentPalette) -> some View {
@@ -1535,115 +2486,837 @@ struct AgentComposerView: View {
     }
 }
 
+/// The composer's slowly-rotating conic "neon" border (web agent-neon-input:
+/// coral → warm gold → cool blue arc sweeping 360° every 4.5s, 1.5px stroke).
+@available(iOS 17.0, *)
+struct AgentNeonBorder: View {
+    var cornerRadius: CGFloat = 24
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30)) { tl in
+            let t = tl.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 4.5) / 4.5
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(
+                    AngularGradient(stops: [
+                        .init(color: AgentPalette.coral.opacity(0), location: 0),
+                        .init(color: AgentPalette.coral.opacity(0.85), location: 0.18),
+                        .init(color: Color(red: 0.961, green: 0.784, blue: 0.471).opacity(0.95), location: 0.30),
+                        .init(color: Color(red: 0.471, green: 0.784, blue: 0.961).opacity(0.85), location: 0.45),
+                        .init(color: AgentPalette.coral.opacity(0), location: 0.62),
+                        .init(color: AgentPalette.coral.opacity(0), location: 1),
+                    ], center: .center, angle: .degrees(t * 360)),
+                    lineWidth: 1.5)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// Live recording waveform — 34 bars, 3px wide, coral, driven by the mic RMS level
+/// (web VoiceWaveform parity: shift left, append the newest level each frame).
+@available(iOS 17.0, *)
+struct AgentVoiceWaveform: View {
+    let vm: AssistantVM
+    @State private var bars = [Double](repeating: 0.06, count: 34)
+    private let timer = Timer.publish(every: 0.066, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        HStack(spacing: 3) {
+            ForEach(bars.indices, id: \.self) { i in
+                Capsule()
+                    .fill(AgentPalette.coral)
+                    .frame(width: 3, height: max(2.5, bars[i] * 34))
+                    .opacity(0.3 + bars[i] * 0.7)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .clipped()
+        .onReceive(timer) { _ in
+            bars.removeFirst()
+            bars.append(vm.micLevel)
+        }
+    }
+}
+
 // MARK: - Sidebar (conversation list + web escape hatches)
 
+/// The chat-history drawer — slides in from the LEFT over a dimmed scrim, exactly
+/// like the web AgentSidebar (w-72, rounded-r-24, spring 280/28): header with the
+/// quick-access pills, চ্যাট/স্মৃতি tabs, project filter, চ্যাট/অফিস view switch,
+/// search, conversation rows with rename/archive/delete, load-more, and the full
+/// Memory tab (learned rules + finance summary + scoped memories with pin/delete).
 @available(iOS 17.0, *)
-struct AgentSidebarSheet: View {
+struct AgentSideDrawer: View {
     @Bindable var vm: AssistantVM
     let openWeb: (_ path: String, _ title: String) -> Void
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var scheme
+
+    @State private var visible = false
+    @State private var dragX: CGFloat = 0      // swipe-left-to-close (iOS drawer feel)
+    @State private var tab = 0                 // 0 = চ্যাট, 1 = স্মৃতি
+    @State private var chatView = 0            // 0 = regular, 1 = অফিস (day_shift)
+    @State private var search = ""
+    @State private var activeProject: String?  // nil = সব কথোপকথন
+    @State private var memScope = "all"
+    @State private var renameTarget: AgentConversation?
+    @State private var renameText = ""
     @State private var deleteTarget: AgentConversation?
+    @State private var deleteMemTarget: AgentMemoryRow?
+    @State private var showProjectForm = false
+
+    private static let drawerWidth: CGFloat = 288   // web w-72
 
     var body: some View {
         let pal = AgentPalette(scheme)
-        NavigationStack {
-            List {
-                Section {
-                    Button {
-                        Task { await vm.newChat() }
-                        dismiss()
-                    } label: {
-                        Label("নতুন কথোপকথন", systemImage: "plus.circle.fill")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(AgentPalette.coral)
-                    }
-                }
-                Section("চ্যাট") {
-                    if vm.conversations.isEmpty {
-                        Text("কোনো কথোপকথন নেই")
-                            .font(.system(size: 13)).foregroundStyle(pal.muted)
-                    }
-                    ForEach(vm.conversations) { c in
-                        Button {
-                            Task { await vm.openConversation(c.id) }
-                            dismiss()
-                        } label: {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(c.title?.isEmpty == false ? c.title! : "নতুন কথোপকথন")
-                                        .font(.system(size: 14, weight: c.id == vm.conversationId ? .semibold : .regular))
-                                        .foregroundStyle(pal.ink)
-                                        .lineLimit(1)
-                                    if let rel = relativeTime(c.updatedAt) {
-                                        Text(rel).font(.system(size: 11)).foregroundStyle(pal.muted)
-                                    }
-                                }
-                                Spacer()
-                                if c.id == vm.conversationId {
-                                    Circle().fill(AgentPalette.coral).frame(width: 7, height: 7)
-                                }
-                            }
+        ZStack(alignment: .leading) {
+            Color.black.opacity(visible ? 0.30 : 0)
+                .ignoresSafeArea()
+                .onTapGesture { close() }
+            drawer(pal)
+                .frame(width: Self.drawerWidth)
+                .frame(maxHeight: .infinity)
+                .background(pal.glassFill)
+                .background(.ultraThinMaterial)
+                .clipShape(UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: 0,
+                                                  bottomTrailingRadius: 24, topTrailingRadius: 24,
+                                                  style: .continuous))
+                .shadow(color: .black.opacity(0.10), radius: 24, y: 4)
+                .offset(x: (visible ? 0 : -(Self.drawerWidth + 40)) + min(0, dragX))
+                .ignoresSafeArea(edges: .bottom)
+                .gesture(
+                    DragGesture()
+                        .onChanged { v in dragX = v.translation.width }
+                        .onEnded { v in
+                            if v.translation.width < -60 { dragX = 0; close() }
+                            else { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { dragX = 0 } }
                         }
-                        .swipeActions(edge: .trailing) {
-                            Button(role: .destructive) { deleteTarget = c } label: {
-                                Label("মুছুন", systemImage: "trash")
-                            }
-                        }
-                    }
-                }
-                Section("অন্যান্য") {
-                    escapeRow("paintpalette", "Creative Studio", "/agent/creative-studio")
-                    escapeRow("bubble.left.and.bubble.right", "WhatsApp", "/agent/whatsapp")
-                    escapeRow("eye", "Monitor", "/agent/staff-monitor")
-                    escapeRow("dollarsign.circle", "Costs", "/agent/costs")
-                }
+                )
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) { visible = true }
+            Task {
+                await vm.loadConversations()
+                await vm.loadProjects()
             }
-            .navigationTitle("ALMA Agent")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("বন্ধ") { dismiss() }.font(.system(size: 14, weight: .medium))
-                }
+            // DEBUG self-test hook (env only set by local simctl self-tests).
+            if ProcessInfo.processInfo.environment["ALMA_ASSISTANT_MEMTAB"] == "1" {
+                tab = 1
+                Task { await vm.loadMemories(scope: memScope) }
             }
         }
-        .task { await vm.loadConversations() }
-        .alert("কথোপকথনটি মুছবেন?", isPresented: .init(
+        .alert("নাম পরিবর্তন", isPresented: .init(
+            get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })) {
+            TextField("শিরোনাম", text: $renameText)
+            Button("সংরক্ষণ") {
+                if let t = renameTarget { Task { await vm.renameConversation(t.id, title: renameText) } }
+                renameTarget = nil
+            }
+            Button("বাতিল", role: .cancel) { renameTarget = nil }
+        }
+        .alert("কথোপকথন মুছবেন?", isPresented: .init(
             get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } })) {
             Button("মুছুন", role: .destructive) {
                 if let t = deleteTarget { Task { await vm.deleteConversation(t.id) } }
                 deleteTarget = nil
             }
-            Button("থাক", role: .cancel) { deleteTarget = nil }
+            Button("বাতিল", role: .cancel) { deleteTarget = nil }
         } message: {
-            Text("সব মেসেজ স্থায়ীভাবে মুছে যাবে।")
+            Text("এই কথোপকথন এবং সকল বার্তা স্থায়ীভাবে মুছে যাবে।")
+        }
+        .alert("স্মৃতি মুছবেন?", isPresented: .init(
+            get: { deleteMemTarget != nil }, set: { if !$0 { deleteMemTarget = nil } })) {
+            Button("মুছুন", role: .destructive) {
+                if let t = deleteMemTarget { Task { await vm.deleteMemory(t.id) } }
+                deleteMemTarget = nil
+            }
+            Button("বাতিল", role: .cancel) { deleteMemTarget = nil }
+        } message: {
+            Text("এই তথ্য স্থায়ীভাবে মুছে যাবে।")
+        }
+        .sheet(isPresented: $showProjectForm) {
+            AgentProjectFormSheet(vm: vm)
         }
     }
 
-    @ViewBuilder private func escapeRow(_ icon: String, _ title: String, _ path: String) -> some View {
+    private func close() {
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) { visible = false }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { vm.showSidebar = false }
+        }
+    }
+
+    private func closeThen(_ action: @escaping () -> Void) {
+        close()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.34, execute: action)
+    }
+
+    // ── Drawer body ────────────────────────────────────────────────────────
+
+    @ViewBuilder private func drawer(_ pal: AgentPalette) -> some View {
+        VStack(spacing: 0) {
+            // No web-style header — the sub-page shortcuts live on the AssistiveTouch
+            // button (owner call), so the drawer opens straight into content, iOS-style.
+            Capsule()
+                .fill(pal.muted.opacity(0.35))
+                .frame(width: 36, height: 4.5)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 10)
+            tabsBar(pal)
+                .padding(.horizontal, 14)
+                .padding(.top, 12)
+            if tab == 0 { chatsTab(pal) } else { memoryTab(pal) }
+        }
+    }
+
+    private func divider(_ pal: AgentPalette) -> some View {
+        Rectangle().fill(pal.borderSubtle).frame(height: 1)
+    }
+
+    /// চ্যাট / স্মৃতি — a native pill segmented control with the app's coral accent.
+    @ViewBuilder private func tabsBar(_ pal: AgentPalette) -> some View {
+        HStack(spacing: 4) {
+            tabButton("💬 চ্যাট", index: 0, pal: pal)
+            tabButton("🧠 স্মৃতি", index: 1, pal: pal)
+        }
+        .padding(4)
+        .background(Color.white.opacity(scheme == .dark ? 0.05 : 0.35), in: Capsule())
+        .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
+    }
+
+    private func tabButton(_ label: String, index: Int, pal: AgentPalette) -> some View {
         Button {
-            dismiss()
-            openWeb(path, title)
+            UISelectionFeedbackGenerator().selectionChanged()
+            withAnimation(.snappy(duration: 0.2)) { tab = index }
+            if index == 1 { Task { await vm.loadMemories(scope: memScope) } }
         } label: {
-            Label(title, systemImage: icon).font(.system(size: 14))
+            Text(label)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(tab == index ? .white : pal.muted)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background(tab == index ? AnyShapeStyle(AgentPalette.coral) : AnyShapeStyle(.clear),
+                            in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // ── চ্যাট tab ──────────────────────────────────────────────────────────
+
+    private var officeCount: Int {
+        vm.conversations.filter { $0.archived != true && $0.source == "day_shift" }.count
+    }
+
+    private var filteredConversations: [AgentConversation] {
+        vm.conversations.filter { c in
+            guard c.archived != true else { return false }
+            if chatView == 1 { if c.source != "day_shift" { return false } }
+            else if c.source == "day_shift" { return false }
+            if let p = activeProject, c.projectId != p { return false }
+            if !search.isEmpty {
+                return (c.title ?? "").localizedCaseInsensitiveContains(search)
+            }
+            return true
         }
     }
 
-    private func relativeTime(_ iso: String?) -> String? {
-        guard let iso else { return nil }
+    @ViewBuilder private func chatsTab(_ pal: AgentPalette) -> some View {
+        VStack(spacing: 10) {
+            // নতুন চ্যাট — one clear primary action, iOS-style filled capsule.
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                Task { await vm.newChat() }
+                close()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.and.pencil").font(.system(size: 13, weight: .semibold))
+                    Text("নতুন চ্যাট").font(.system(size: 14, weight: .semibold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 40)
+                .background(AgentPalette.coral, in: Capsule())
+                .shadow(color: AgentPalette.coral.opacity(0.3), radius: 6, y: 2)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+
+            // Search — native look: magnifier + rounded quiet field.
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13))
+                    .foregroundStyle(pal.muted)
+                TextField("খুঁজুন…", text: $search)
+                    .font(.system(size: 15))
+                    .foregroundStyle(pal.ink)
+                if !search.isEmpty {
+                    Button { search = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 13)).foregroundStyle(pal.muted.opacity(0.7))
+                    }
+                }
+            }
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .background(Color.white.opacity(scheme == .dark ? 0.06 : 0.5),
+                        in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .padding(.horizontal, 14)
+
+            // চ্যাট / অফিস + প্রজেক্ট ফিল্টার — one compact control row.
+            HStack(spacing: 8) {
+                HStack(spacing: 3) {
+                    chatViewButton("চ্যাট", index: 0, pal: pal)
+                    chatViewButton(officeCount > 0 ? "🏢 \(almaBn(officeCount))" : "🏢", index: 1, pal: pal)
+                }
+                .padding(3)
+                .background(Color.white.opacity(scheme == .dark ? 0.05 : 0.35), in: Capsule())
+                .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
+                Spacer()
+                Menu {
+                    Button("সব কথোপকথন") { activeProject = nil }
+                    ForEach(vm.projects) { p in
+                        Button(projectLabel(p)) { activeProject = p.id }
+                    }
+                    Divider()
+                    Button { showProjectForm = true } label: {
+                        Label("নতুন প্রজেক্ট", systemImage: "plus")
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 11))
+                        Text(activeProject.flatMap { id in vm.projects.first { $0.id == id } }
+                            .map { String($0.name.prefix(12)) } ?? "সব")
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+                    }
+                    .foregroundStyle(activeProject == nil ? pal.muted : AgentPalette.coral)
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .background(Color.white.opacity(scheme == .dark ? 0.05 : 0.35), in: Capsule())
+                    .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
+                }
+            }
+            .padding(.horizontal, 14)
+
+            // Conversations — a real List: inset rows, iOS swipe actions, no web chrome.
+            List {
+                if vm.loadingConversations {
+                    Text("লোড হচ্ছে…")
+                        .font(.system(size: 12)).foregroundStyle(pal.muted)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                } else if filteredConversations.isEmpty {
+                    Text("কোনো কথোপকথন নেই — নতুন চ্যাট শুরু করুন")
+                        .font(.system(size: 12)).foregroundStyle(pal.muted)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 24)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+                ForEach(filteredConversations) { c in
+                    conversationRow(c, pal: pal)
+                        .listRowBackground(
+                            c.id == vm.conversationId
+                                ? AnyView(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(AgentPalette.coral.opacity(0.10))
+                                    .padding(.vertical, 2).padding(.horizontal, 6))
+                                : AnyView(Color.clear))
+                        .listRowSeparatorTint(pal.borderSubtle)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 14))
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) { deleteTarget = c } label: {
+                                Label("মুছুন", systemImage: "trash")
+                            }
+                            Button {
+                                Task { await vm.archiveConversation(c.id) }
+                            } label: {
+                                Label("আর্কাইভ", systemImage: "archivebox")
+                            }
+                            .tint(.orange)
+                            Button {
+                                renameText = c.title ?? ""
+                                renameTarget = c
+                            } label: {
+                                Label("নাম", systemImage: "pencil")
+                            }
+                            .tint(.blue)
+                        }
+                }
+                if vm.conversationsCursor != nil {
+                    Button {
+                        Task { await vm.loadMoreConversations() }
+                    } label: {
+                        Text(vm.loadingMoreConversations ? "লোড হচ্ছে…" : "আরও দেখুন")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(pal.muted)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .scrollIndicators(.hidden)
+        }
+    }
+
+    private func projectLabel(_ p: AgentProject) -> String {
+        let badge = p.businessId == "ALMA_TRADING" ? " · Trading"
+                  : p.businessId == "ALMA_LIFESTYLE" ? " · Lifestyle" : ""
+        return p.name + badge
+    }
+
+    private func chatViewButton(_ label: String, index: Int, pal: AgentPalette) -> some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            withAnimation(.snappy(duration: 0.18)) { chatView = index }
+        } label: {
+            Text(label)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(chatView == index ? .white : pal.muted)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(chatView == index ? AnyShapeStyle(AgentPalette.coral) : AnyShapeStyle(.clear),
+                            in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder private func conversationRow(_ c: AgentConversation, pal: AgentPalette) -> some View {
+        let active = c.id == vm.conversationId
+        Button {
+            Task { await vm.openConversation(c.id) }
+            close()
+        } label: {
+            HStack(spacing: 8) {
+                if c.source == "day_shift" { Text("🏢").font(.system(size: 13)) }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(c.title?.isEmpty == false ? c.title! : "(শিরোনাম নেই)")
+                        .font(.system(size: 14, weight: active ? .semibold : .regular))
+                        .foregroundStyle(active ? AgentPalette.coral : pal.ink)
+                        .lineLimit(1)
+                    Text("\(c.source == "day_shift" ? "অফিস লাইভ · " : "")\(shortDate(c.updatedAt))")
+                        .font(.system(size: 11))
+                        .foregroundStyle(pal.muted)
+                }
+                Spacer(minLength: 0)
+                if active {
+                    Circle().fill(AgentPalette.coral).frame(width: 6, height: 6)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func shortDate(_ iso: String?) -> String {
+        guard let iso else { return "" }
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let date = f.date(from: iso) ?? {
             f.formatOptions = [.withInternetDateTime]
             return f.date(from: iso)
         }()
-        guard let date else { return nil }
-        let mins = max(0, Int(-date.timeIntervalSinceNow / 60))
-        if mins < 1 { return "এইমাত্র" }
-        if mins < 60 { return "\(almaBn(mins)) মিনিট আগে" }
-        let hours = mins / 60
-        if hours < 24 { return "\(almaBn(hours)) ঘণ্টা আগে" }
-        return "\(almaBn(hours / 24)) দিন আগে"
+        guard let date else { return "" }
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_BD")
+        df.dateFormat = "dd MMM"
+        return df.string(from: date)
+    }
+
+    // ── স্মৃতি tab ─────────────────────────────────────────────────────────
+
+    @ViewBuilder private func memoryTab(_ pal: AgentPalette) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                if !vm.learnedRules.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("শেখা নিয়ম")
+                            .font(.system(size: 10, weight: .semibold))
+                            .tracking(1)
+                            .foregroundStyle(AgentPalette.coral)
+                        ForEach(vm.learnedRules.prefix(12)) { r in
+                            (Text("[\(r.domain ?? "সব")] ").foregroundColor(AgentPalette.coral.opacity(0.7))
+                             + Text(String(r.text.prefix(100)))
+                             + Text((r.timesApplied ?? 0) > 0 ? " · \(almaBn(r.timesApplied!))×" : "")
+                                .foregroundColor(pal.muted))
+                                .font(.system(size: 10))
+                                .foregroundStyle(pal.ink)
+                                .padding(.horizontal, 8).padding(.vertical, 6)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                    }
+                    divider(pal)
+                }
+                // Scope filter
+                Menu {
+                    Button("সব ক্যাটাগরি") { memScope = "all"; Task { await vm.loadMemories(scope: "all") } }
+                    Button("ব্যক্তিগত") { memScope = "personal"; Task { await vm.loadMemories(scope: "personal") } }
+                    Button("ব্যবসা") { memScope = "business"; Task { await vm.loadMemories(scope: "business") } }
+                    Button("স্টাফ") { memScope = "staff"; Task { await vm.loadMemories(scope: "staff") } }
+                } label: {
+                    HStack {
+                        Text(memScope == "all" ? "সব ক্যাটাগরি" : scopeLabel(memScope))
+                            .font(.system(size: 12)).foregroundStyle(pal.ink)
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 9)).foregroundStyle(pal.muted)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(pal.borderSubtle, lineWidth: 1))
+                }
+                // Finance summary (💰, gold tone — web parity)
+                if let fin = vm.financeSummary,
+                   (fin.balances?.isEmpty == false || fin.monthExpensesByCategory?.isEmpty == false) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("💰 আর্থিক সারসংক্ষেপ")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Color(red: 0.831, green: 0.659, blue: 0.294)) // #D4A84B
+                        if let bals = fin.balances, !bals.isEmpty {
+                            Text("পাওনা/দেনা (ব্যক্তি অনুযায়ী)").font(.system(size: 10)).foregroundStyle(pal.muted)
+                            ForEach(Array(bals.prefix(8).enumerated()), id: \.offset) { _, b in
+                                Text(b.display ?? b.person).font(.system(size: 11)).foregroundStyle(pal.ink)
+                            }
+                        }
+                        if let exp = fin.monthExpensesByCategory, !exp.isEmpty {
+                            Text("এই মাসের খরচ (ক্যাটাগরি)").font(.system(size: 10)).foregroundStyle(pal.muted)
+                            ForEach(Array(exp.prefix(6).enumerated()), id: \.offset) { _, e in
+                                Text(e.display ?? "").font(.system(size: 11)).foregroundStyle(pal.ink)
+                            }
+                        }
+                        Text("সংশোধন শুধু চ্যাটে — এখানে শুধু দেখা")
+                            .font(.system(size: 9)).foregroundStyle(pal.muted)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(red: 0.831, green: 0.659, blue: 0.294).opacity(0.04),
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color(red: 0.831, green: 0.659, blue: 0.294).opacity(0.2), lineWidth: 1))
+                }
+                // Memory rows
+                if vm.memoriesLoading {
+                    Text("লোড হচ্ছে…").font(.system(size: 11)).foregroundStyle(pal.muted)
+                        .frame(maxWidth: .infinity).padding(.vertical, 24)
+                } else if vm.memories.isEmpty {
+                    Text("কোনো স্মৃতি নেই").font(.system(size: 11)).foregroundStyle(pal.muted)
+                        .frame(maxWidth: .infinity).padding(.vertical, 32)
+                }
+                ForEach(vm.memories) { m in
+                    memoryRow(m, pal: pal)
+                }
+            }
+            .padding(12)
+        }
+        .task { await vm.loadMemories(scope: memScope) }
+    }
+
+    private func scopeLabel(_ s: String) -> String {
+        switch s {
+        case "personal": return "ব্যক্তিগত"
+        case "business": return "ব্যবসা"
+        case "staff": return "স্টাফ"
+        default: return s
+        }
+    }
+
+    private func scopeTone(_ s: String) -> Color {
+        switch s {
+        case "personal": return Color(red: 0.231, green: 0.510, blue: 0.965)   // blue
+        case "business": return Color(red: 0.961, green: 0.620, blue: 0.043)   // amber
+        case "staff": return Color(red: 0.659, green: 0.333, blue: 0.969)      // purple
+        default: return AgentPalette.coral
+        }
+    }
+
+    @ViewBuilder private func memoryRow(_ m: AgentMemoryRow, pal: AgentPalette) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(scopeLabel(m.scope))
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(scopeTone(m.scope))
+                    .padding(.horizontal, 8).padding(.vertical, 2)
+                    .background(scopeTone(m.scope).opacity(0.12), in: Capsule())
+                if let k = m.key {
+                    Text(k).font(.system(size: 10)).foregroundStyle(pal.muted).lineLimit(1)
+                }
+                Spacer()
+                Button {
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    Task { await vm.toggleMemoryPin(m.id, pinned: m.pinned) }
+                } label: {
+                    Text("📌").font(.system(size: 11))
+                        .opacity(m.pinned ? 1 : 0.35)
+                }
+                Button {
+                    deleteMemTarget = m
+                } label: {
+                    Text("🗑️").font(.system(size: 11)).opacity(0.6)
+                }
+            }
+            Text(m.content)
+                .font(.system(size: 11))
+                .foregroundStyle(pal.ink)
+                .lineLimit(3)
+                .lineSpacing(2)
+            Text(shortDate(m.createdAt))
+                .font(.system(size: 9)).foregroundStyle(pal.muted)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(m.pinned ? AgentPalette.coral.opacity(0.04) : Color.white.opacity(0.04),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(m.pinned ? AgentPalette.coral.opacity(0.2) : pal.borderSubtle, lineWidth: 1))
+    }
+}
+
+/// Native "নতুন প্রজেক্ট" form (web ProjectDialog parity: name/description/business/instructions).
+@available(iOS 17.0, *)
+struct AgentProjectFormSheet: View {
+    @Bindable var vm: AssistantVM
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @State private var desc = ""
+    @State private var businessId = ""
+    @State private var instructions = ""
+    @State private var saving = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("নাম *") {
+                    TextField("ALMA Trading", text: $name)
+                }
+                Section("বিবরণ") {
+                    TextField("সংক্ষিপ্ত বিবরণ", text: $desc)
+                }
+                Section("ব্যবসা (business scope)") {
+                    Picker("ব্যবসা", selection: $businessId) {
+                        Text("— Personal / cross-business —").tag("")
+                        Text("ALMA Lifestyle").tag("ALMA_LIFESTYLE")
+                        Text("ALMA Trading (Binance P2P)").tag("ALMA_TRADING")
+                    }
+                    .pickerStyle(.menu)
+                }
+                Section("সিস্টেম নির্দেশনা") {
+                    TextField("এই প্রজেক্টের জন্য বিশেষ নির্দেশনা…", text: $instructions, axis: .vertical)
+                        .lineLimit(3...6)
+                }
+            }
+            .navigationTitle("নতুন প্রজেক্ট")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("বাতিল") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(saving ? "…" : "সংরক্ষণ") {
+                        saving = true
+                        Task {
+                            let ok = await vm.saveProject(id: nil, name: name, description: desc,
+                                                          instructions: instructions,
+                                                          businessId: businessId.isEmpty ? nil : businessId)
+                            saving = false
+                            if ok { dismiss() }
+                        }
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || saving)
+                }
+            }
+        }
+        .presentationDetents([.large])
+    }
+}
+
+/// Empty new-chat state — greeting + time-of-day suggestion chips (web AgentEmptyState).
+@available(iOS 17.0, *)
+struct AgentEmptyStateView: View {
+    let pal: AgentPalette
+    let onPick: (String) -> Void
+    @State private var breathe = false
+
+    private var dayPart: Int {
+        var cal = Calendar.current
+        cal.timeZone = TimeZone(identifier: "Asia/Dhaka") ?? .current
+        let h = cal.component(.hour, from: Date())
+        if h >= 5 && h < 12 { return 0 }      // সকাল
+        if h >= 12 && h < 17 { return 1 }     // দুপুর
+        if h >= 17 && h < 21 { return 2 }     // সন্ধ্যা
+        return 3                              // রাত
+    }
+
+    private var subtitle: String {
+        ["শুভ সকাল, Sir — দিনটা শুরু করি",
+         "শুভ দুপুর, Sir — কীভাবে সাহায্য করতে পারি",
+         "শুভ সন্ধ্যা, Sir — দিনটা গুছিয়ে নিই",
+         "শুভ রাত্রি, Sir — কী দেখে নেবো"][dayPart]
+    }
+
+    private var suggestions: [(String, String)] {
+        switch dayPart {
+        case 0: return [("📦", "আজকের অর্ডার সারাংশ দাও"),
+                        ("👥", "স্টাফদের আজকের টাস্ক রিভিউ করো"),
+                        ("📊", "স্টক কম আছে কি চেক করো"),
+                        ("🗒️", "আজকের জন্য একটা প্ল্যান বানাও")]
+        case 1: return [("💰", "এখন পর্যন্ত আজকের বিক্রি কেমন?"),
+                        ("✅", "অনুমোদনের জন্য কী কী পেন্ডিং আছে?"),
+                        ("✍️", "একটা Facebook পোস্ট ড্রাফট করো"),
+                        ("📊", "স্টক কম আছে কি চেক করো")]
+        case 2: return [("📈", "আজকের দিনের বিক্রির রিপোর্ট দাও"),
+                        ("👥", "কালকের জন্য স্টাফ টাস্ক প্রস্তাব করো"),
+                        ("✍️", "একটা Facebook পোস্ট ড্রাফট করো"),
+                        ("🧾", "আজকের খরচ রিভিউ করো")]
+        default: return [("🌙", "আজকের দিনের সারাংশ দাও"),
+                         ("💹", "ব্যবসার আর্থিক অবস্থা কেমন?"),
+                         ("🗒️", "কালকের জন্য কী কী ঠিক করা দরকার?"),
+                         ("🔔", "কোনো রিমাইন্ডার বা ফলো-আপ বাকি আছে?")]
+        }
+    }
+
+    var body: some View {
+        // Owner call (2026-07-06): no orb, no suggestion chips — the clean greeting only.
+        VStack(spacing: 10) {
+            Text("✨").font(.system(size: 40))
+            Text("আস্সালামু আলাইকুম")
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundStyle(pal.ink)
+            Text(subtitle)
+                .font(.system(size: 13.5))
+                .foregroundStyle(pal.muted)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 110)
+        .padding(.horizontal, 24)
+        .onAppear { breathe = true }   // state kept for API stability
+    }
+}
+
+/// "N কাজ বাকি" — glowing coral pill with a ping dot; expands into the task panel
+/// with চালিয়ে যাও / বাতিল actions (web AgentOpenTasksChip parity).
+@available(iOS 17.0, *)
+struct AgentOpenTasksChipView: View {
+    @Bindable var vm: AssistantVM
+    let pal: AgentPalette
+    @State private var open = false
+    @State private var ping = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                withAnimation(.easeOut(duration: 0.2)) { open.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    ZStack {
+                        Circle()
+                            .fill(AgentPalette.coral.opacity(0.6))
+                            .frame(width: 8, height: 8)
+                            .scaleEffect(ping ? 2.2 : 1)
+                            .opacity(ping ? 0 : 0.7)
+                        Circle().fill(AgentPalette.coral).frame(width: 8, height: 8)
+                    }
+                    .onAppear {
+                        withAnimation(.easeOut(duration: 1.1).repeatForever(autoreverses: false)) { ping = true }
+                    }
+                    Text("\(almaBn(vm.openTasks.count)) কাজ বাকি")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(AgentPalette.coral)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9))
+                        .foregroundStyle(pal.muted.opacity(0.6))
+                        .rotationEffect(.degrees(open ? 180 : 0))
+                }
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(
+                    LinearGradient(colors: [AgentPalette.coral.opacity(0.10), AgentPalette.coralDim.opacity(0.06)],
+                                   startPoint: .leading, endPoint: .trailing),
+                    in: Capsule())
+                .overlay(Capsule().strokeBorder(AgentPalette.coral.opacity(0.3), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            if open {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(vm.openTasks) { task in
+                        taskRow(task)
+                    }
+                }
+                .padding(8)
+                .background(pal.card.opacity(0.8), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.07), lineWidth: 1))
+                .transition(.opacity)
+            }
+        }
+        .padding(.bottom, 20)
+    }
+
+    @ViewBuilder private func taskRow(_ task: AgentOpenTask) -> some View {
+        let pending = task.kind == "approval_pending"
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 6) {
+                Text(pending ? "🔔" : "🔄").font(.system(size: 13))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(task.title ?? "কাজ")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(pal.ink)
+                        .lineLimit(2)
+                    if let age = task.ageMinutes {
+                        Text(age < 60 ? "\(almaBn(age)) মিনিট আগে" : "\(almaBn(age / 60)) ঘণ্টা আগে")
+                            .font(.system(size: 10)).foregroundStyle(pal.muted.opacity(0.7))
+                    }
+                }
+                Spacer()
+                Text(pending ? "অনুমোদন বাকি" : "অসম্পূর্ণ")
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(pending ? Color(red: 0.961, green: 0.620, blue: 0.043) : AgentPalette.coral)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background((pending ? Color(red: 0.961, green: 0.620, blue: 0.043) : AgentPalette.coral).opacity(0.15),
+                                in: RoundedRectangle(cornerRadius: 6))
+            }
+            if !pending {
+                if let note = task.note, !note.isEmpty {
+                    Text(note).font(.system(size: 11.5)).foregroundStyle(pal.muted).lineLimit(2)
+                }
+                HStack(spacing: 8) {
+                    Button {
+                        Task { await vm.continueOpenTask(task) }
+                    } label: {
+                        HStack(spacing: 4) {
+                            if vm.openTaskBusyId == task.id {
+                                ProgressView().controlSize(.mini).tint(.white)
+                            } else {
+                                Image(systemName: "play.fill").font(.system(size: 9))
+                            }
+                            Text("চালিয়ে যাও").font(.system(size: 12, weight: .semibold))
+                        }
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12).padding(.vertical, 6)
+                        .background(AgentPalette.coral, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    Button {
+                        Task { await vm.cancelOpenTask(task) }
+                    } label: {
+                        Text("বাতিল")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(pal.muted)
+                            .padding(.horizontal, 12).padding(.vertical, 6)
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+                    }
+                }
+            } else {
+                Text("নিচের অনুমোদন কার্ড থেকে সিদ্ধান্ত নিন (Approve / Reject)।")
+                    .font(.system(size: 10.5)).foregroundStyle(pal.muted)
+            }
+        }
+        .padding(10)
+        .background(Color.white.opacity(0.02), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.06), lineWidth: 1))
     }
 }
 
@@ -1654,12 +3327,19 @@ struct AssistantScreen: View {
     @State private var vm = AssistantVM()
     @Environment(\.colorScheme) private var scheme
     @State private var nearBottom = true
+    @State private var toolSheet: AgentChatMessage.Tool?
 
     let openWeb: (_ path: String, _ title: String) -> Void
     /// Wired by makeAssistantTab so the native bar buttons drive this screen.
     let barHooks: AssistantBarHooks
 
     private static let bottomID = "ALMA_BOTTOM"
+
+    /// The drawer animates itself (slide-from-left) — the system cover must not.
+    private static func presentDrawer(_ vm: AssistantVM) {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { vm.showSidebar = true }
+    }
 
     var body: some View {
         let pal = AgentPalette(scheme)
@@ -1672,19 +3352,28 @@ struct AssistantScreen: View {
                             ProgressView().frame(maxWidth: .infinity).padding(.top, 80)
                         }
                         if !vm.loadingHistory && vm.messages.isEmpty && !vm.isStreaming {
-                            emptyState(pal)
+                            AgentEmptyStateView(pal: pal) { vm.send($0) }
                         }
                         ForEach(vm.messages) { msg in
-                            AgentMessageRow(message: msg, vm: vm)
+                            AgentMessageRow(message: msg, vm: vm) { tool in
+                                toolSheet = tool
+                            }
+                            .transition(.asymmetric(
+                                insertion: .opacity.combined(with: .offset(y: 12)),
+                                removal: .opacity))
                         }
                         if vm.thinkingLive {
-                            AgentThinkingRow(pal: pal)
+                            AgentThinkingRow(mode: vm.liveMode, modelLabel: vm.modelLabel, pal: pal)
+                        }
+                        if !vm.openTasks.isEmpty && !vm.isStreaming && !vm.messages.isEmpty {
+                            AgentOpenTasksChipView(vm: vm, pal: pal)
                         }
                         Color.clear.frame(height: 4).id(Self.bottomID)
                     }
                     .padding(.horizontal, 16)
                     .padding(.top, 10)
                     .background(scrollOffsetReader)
+                    .animation(.spring(response: 0.32, dampingFraction: 0.8), value: vm.messages.count)
                 }
                 .coordinateSpace(name: "agentscroll")
                 .onPreferenceChange(AgentScrollBottomKey.self) { distance in
@@ -1696,20 +3385,22 @@ struct AssistantScreen: View {
                 .onChange(of: vm.messages.count) { _, _ in
                     withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
                 }
-                .overlay(alignment: .bottomTrailing) {
+                .overlay(alignment: .bottom) {
+                    // Web parity: centered 40pt frosted circle just above the composer.
                     if !nearBottom {
                         Button {
+                            UISelectionFeedbackGenerator().selectionChanged()
                             withAnimation { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
                         } label: {
                             Image(systemName: "arrow.down")
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(pal.ink)
-                                .frame(width: 34, height: 34)
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(pal.muted)
+                                .frame(width: 40, height: 40)
                                 .background(.ultraThinMaterial, in: Circle())
-                                .overlay(Circle().strokeBorder(pal.borderSubtle, lineWidth: 1))
+                                .overlay(Circle().strokeBorder(Color.white.opacity(0.2), lineWidth: 1))
                         }
-                        .padding(.trailing, 14)
-                        .padding(.bottom, 8)
+                        .padding(.bottom, 10)
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
                     }
                 }
             }
@@ -1720,24 +3411,36 @@ struct AssistantScreen: View {
             AgentComposerView(vm: vm, openWeb: openWeb)
         }
         .task {
-            barHooks.onMenu = { vm.showSidebar = true }
+            barHooks.onMenu = { Self.presentDrawer(vm) }
             barHooks.onNewChat = { Task { await vm.newChat() } }
             // DEBUG self-test hooks (never fire in production — the env vars are only
             // set by the local `simctl launch` self-test, same pattern as
             // ALMA_OPEN_COMPANION / ALMA_FADE_DEMO):
             let env = ProcessInfo.processInfo.environment
             if env["ALMA_ASSISTANT_SIDEBAR"] == "1" {
-                Task { try? await Task.sleep(nanoseconds: 1_500_000_000); vm.showSidebar = true }
+                Task { try? await Task.sleep(nanoseconds: 1_500_000_000); Self.presentDrawer(vm) }
             }
             if let say = env["ALMA_ASSISTANT_SAY"], !say.isEmpty {
                 Task { try? await Task.sleep(nanoseconds: 4_000_000_000); vm.send(say) }
             }
+            if env["ALMA_ASSISTANT_NEWCHAT"] == "1" {
+                Task { try? await Task.sleep(nanoseconds: 3_000_000_000); await vm.newChat() }
+            }
+            if env["ALMA_ASSISTANT_TOOLSHEET"] == "1" {
+                Task {
+                    try? await Task.sleep(nanoseconds: 5_000_000_000)
+                    toolSheet = vm.messages.flatMap(\.phases).flatMap(\.tools)
+                        .first { $0.inputPretty != nil || $0.resultFull != nil }
+                }
+            }
             await vm.bootstrap()
         }
-        .sheet(isPresented: $vm.showSidebar) {
-            AgentSidebarSheet(vm: vm, openWeb: openWeb)
-                .presentationDetents([.large, .medium])
-                .presentationDragIndicator(.visible)
+        .fullScreenCover(isPresented: $vm.showSidebar) {
+            AgentSideDrawer(vm: vm, openWeb: openWeb)
+                .presentationBackground(.clear)
+        }
+        .sheet(item: $toolSheet) { tool in
+            AgentToolIOSheet(tool: tool)
         }
         .overlay(alignment: .top) {
             if vm.authExpired { authBanner(pal) }
@@ -1753,23 +3456,6 @@ struct AssistantScreen: View {
                 key: AgentScrollBottomKey.self,
                 value: g.frame(in: .named("agentscroll")).maxY - UIScreen.main.bounds.height)
         }
-    }
-
-    @ViewBuilder private func emptyState(_ pal: AgentPalette) -> some View {
-        VStack(spacing: 10) {
-            Text("✨")
-                .font(.system(size: 40))
-            Text("আসসালামু আলাইকুম, বস")
-                .font(.system(size: 19, weight: .semibold))
-                .foregroundStyle(pal.ink)
-            Text("কী করতে পারি বলুন — ব্যবসা, রিপোর্ট, মার্কেটিং, যা দরকার।")
-                .font(.system(size: 13.5))
-                .foregroundStyle(pal.muted)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 110)
-        .padding(.horizontal, 24)
     }
 
     @ViewBuilder private func authBanner(_ pal: AgentPalette) -> some View {
@@ -1831,6 +3517,19 @@ private var assistantBarHooksKey: UInt8 = 0
 
 extension AlmaTabBarController {
 
+    /// SF Symbols for the AssistiveTouch radial items (mirrors SpikeNativeShell's
+    /// private agentIcon, which is file-scoped there).
+    private static func assistantSectionIcon(_ title: String) -> String {
+        switch title {
+        case "Chat": return "bubble.left.and.text.bubble.right"
+        case "Studio": return "wand.and.stars"
+        case "WhatsApp": return "message.fill"
+        case "Monitor": return "chart.bar.xaxis"
+        case "Costs": return "dollarsign.circle"
+        default: return "sparkles"
+        }
+    }
+
     /// Assistant tab: native SwiftUI chat when the S6 flag is on (iOS 17+), else the
     /// pre-S6b web construction (segmented Chat/Studio/WhatsApp/Monitor/Costs), verbatim.
     func makeAssistantTab() -> UINavigationController {
@@ -1839,8 +3538,11 @@ extension AlmaTabBarController {
         // tab so either variant can be screenshotted headlessly — same pattern as
         // ALMA_OPEN_COMPANION in SpikeNativeShell.
         if ProcessInfo.processInfo.environment["ALMA_OPEN_ASSISTANT"] == "1" {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-                self?.selectedIndex = 2
+            // Cold first launches swap the root VC late — re-assert a few times.
+            for delay in [0.8, 2.5, 5.0] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    self?.selectedIndex = 2
+                }
             }
         }
         if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *) {
@@ -1870,6 +3572,33 @@ extension AlmaTabBarController {
             objc_setAssociatedObject(host, &assistantBarHooksKey, hooks, .OBJC_ASSOCIATION_RETAIN)
             let nav = Self.darkNav(root: host, tabTitle: "Assistant", icon: "sparkles", largeTitles: false)
             navRef.value = nav
+
+            // The AssistiveTouch-style floating sub-page nav the web Assistant tab had
+            // (owner: it must survive the native migration) — the proven UIKit
+            // AgentAssistiveNav, overlaid on the hosting view. "Chat" returns to the
+            // native chat (pops any pushed web screen); the rest push web sub-pages.
+            func webPushItem(_ title: String, _ path: String) -> AgentAssistiveNav.Item {
+                AgentAssistiveNav.Item(title: title, icon: Self.assistantSectionIcon(title)) {
+                    let vc = AlmaWebTabViewController(url: URL(string: Self.base + path)!,
+                                                      processPool: pool,
+                                                      tabTitle: title, systemImage: "sparkles",
+                                                      hideWebHeader: true)
+                    vc.hidesBottomBarWhenPushed = false
+                    navRef.value?.pushViewController(vc, animated: true)
+                }
+            }
+            let assistive = AgentAssistiveNav(items: [
+                AgentAssistiveNav.Item(title: "Chat", icon: Self.assistantSectionIcon("Chat")) {
+                    navRef.value?.popToRootViewController(animated: true)
+                },
+                webPushItem("Studio", "/agent/creative-studio"),
+                webPushItem("WhatsApp", "/agent/whatsapp"),
+                webPushItem("Monitor", "/agent/staff-monitor"),
+                webPushItem("Costs", "/agent/costs"),
+            ])
+            host.view.addSubview(assistive)
+            assistive.attach(to: host.view, tabBarHeight: 49)
+
             return nav
         }
 
