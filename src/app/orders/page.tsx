@@ -856,7 +856,7 @@ function OrdersPageContent() {
         }
       />
 
-      <PageEnter className="min-w-0 max-w-full space-y-4 px-3 py-4 pb-24 sm:px-6 md:pb-6">
+      <PageEnter className="min-w-0 max-w-full space-y-3 px-3 py-4 pb-24 sm:px-6 md:space-y-4 md:pb-6">
 
         {error && (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm tone-red">
@@ -873,15 +873,18 @@ function OrdersPageContent() {
           <KpiCard label="Profit" value={summary.total_profit} valueKind="currency" color="txt-pos" loading={tableLoading} animate />
         </div>
 
-        {/* Status pills — wrap so every filter shows at once (no horizontal scroll) */}
-        <div className="flex flex-wrap gap-2 pb-1">
+        {/* Status pills — single scrollable row on mobile (native-iOS feel); wrap on md+ so every filter shows at once */}
+        <div
+          className="flex flex-nowrap items-center gap-2 overflow-x-auto scrollbar-hide -mx-3 px-3 py-0.5 sm:-mx-6 sm:px-6 md:mx-0 md:flex-wrap md:overflow-visible md:px-0 md:py-0 md:pb-1"
+          style={{ WebkitOverflowScrolling: 'touch' }}
+        >
           <button onClick={() => setStatus('')}
-            className={`shrink-0 min-h-[44px] rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${!status ? 'bg-gold/10 border-gold-dim/50 text-gold-lt' : 'border-border text-muted hover:text-muted'}`}>
+            className={`shrink-0 whitespace-nowrap min-h-[44px] rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${!status ? 'bg-gold/10 border-gold-dim/50 text-gold-lt' : 'border-border text-muted hover:text-muted'}`}>
             All <span className="ml-1 opacity-70">{dateFiltered.length}</span>
           </button>
           <button
             onClick={() => setStatus(status === ALL_RETURNS_FILTER ? '' : ALL_RETURNS_FILTER)}
-            className={`shrink-0 flex min-h-[44px] items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${
+            className={`shrink-0 whitespace-nowrap flex min-h-[44px] items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${
               status === ALL_RETURNS_FILTER
                 ? 'tone-amber'
                 : 'border-border text-muted hover:text-muted'
@@ -895,7 +898,7 @@ function OrdersPageContent() {
             const active = status === s
             return (
               <button key={s} onClick={() => setStatus(status === s ? '' : s)}
-                className={`shrink-0 flex min-h-[44px] items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${active ? `${c.text} ${c.bg} ${c.border}` : 'border-border text-muted hover:text-muted'}`}>
+                className={`shrink-0 whitespace-nowrap flex min-h-[44px] items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${active ? `${c.text} ${c.bg} ${c.border}` : 'border-border text-muted hover:text-muted'}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />
                 {orderStatusLabel(s)} <span className="opacity-70">{statusCounts[s] ?? 0}</span>
               </button>
