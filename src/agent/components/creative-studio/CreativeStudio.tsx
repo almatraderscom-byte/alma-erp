@@ -19,6 +19,7 @@ import {
   type FamilyPresetId,
 } from '@/lib/creative-studio/constants'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
+import { VIDEO_RECIPES, VIDEO_ASPECTS } from '@/lib/creative-studio/video-recipes'
 import LifestyleEditor from '@/agent/components/creative-studio/LifestyleEditor'
 import {
   DEFAULT_OFFER,
@@ -40,11 +41,18 @@ import {
   fetchDriveStatus,
   disconnectDrive,
   connectDriveUrl,
+  fetchStudioVideos,
+  uploadStudioVideo,
+  deleteStudioVideo,
+  runVideoRecipe,
+  fetchVideoJob,
   type GalleryItem,
   type StudioConfig,
   type BrandStatus,
   type FinishMode,
   type DriveStatus,
+  type StudioVideoUpload,
+  type VideoJobStatus,
 } from '@/agent/components/creative-studio/studio-api'
 
 /** Native-safe download — a plain <a download> just opens a browser URL inside the
@@ -58,10 +66,6 @@ async function handleDownload(url: string | undefined | null, filename?: string)
 
 type MainView = 'studio' | 'gallery' | 'models' | 'finishing' | 'video'
 type StudioModel = { id: string; name: string; role: string | null; isDefault: boolean }
-
-// Embedded browser video editor (OpenCut). Owner-tunable via env so we can later
-// point it at a self-hosted/rebranded instance without a code change.
-const OPENCUT_URL = process.env.NEXT_PUBLIC_OPENCUT_URL || 'https://opencut.app/projects'
 
 // These modes carry no product image, so the Gemini fallback (which requires a
 // product) can't serve them — they only render through FASHN. Gate them in the
@@ -169,7 +173,7 @@ export default function CreativeStudio() {
             )}
             {view === 'video' && (
               <motion.div key="video" className="absolute inset-0" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <VideoEditorView />
+                <VideoStudioView onOpenGallery={() => setView('gallery')} />
               </motion.div>
             )}
           </AnimatePresence>
@@ -1028,7 +1032,7 @@ function GalleryView() {
         <div className="mb-3 flex items-center gap-2.5 rounded-xl border border-[#E07A5F]/25 bg-[#E07A5F]/[0.07] px-3 py-2.5">
           <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
           <span className="text-[12px] font-semibold text-[#E07A5F]">
-            {pendingCount}টি ছবি তৈরি হচ্ছে… একটু পর নিচে দেখা যাবে স্যার
+            {pendingCount}টি ছবি/ভিডিও তৈরি হচ্ছে… একটু পর নিচে দেখা যাবে স্যার
           </span>
         </div>
       )}
@@ -1741,66 +1745,293 @@ function VideoSvg({ className }: { className?: string }) {
   )
 }
 
-function VideoEditorView() {
-  const [loading, setLoading] = useState(true)
-  const [failed, setFailed] = useState(false)
+/**
+ * Phase V1 — Video Studio. The owner uploads his 1–2 min phone shoot, taps a
+ * Recipe (hard presets — zero prompts, zero LLM), and the VPS worker cuts it
+ * into ready reels that land in the Gallery. Replaces the old OpenCut iframe.
+ */
+function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
+  const [uploads, setUploads] = useState<StudioVideoUpload[]>([])
+  const [loadingList, setLoadingList] = useState(true)
+  const [uploadPct, setUploadPct] = useState<number | null>(null)
+  const [selected, setSelected] = useState<StudioVideoUpload | null>(null)
+  const [recipeId, setRecipeId] = useState<string>(VIDEO_RECIPES[0].id)
+  const [targets, setTargets] = useState<number[]>([VIDEO_RECIPES[0].defaultTarget])
+  const [aspect, setAspect] = useState<string>('9:16')
+  const [running, setRunning] = useState(false)
+  const [jobs, setJobs] = useState<Array<{ id: string; label: string; status: VideoJobStatus | null }>>([])
+  const fileRef = useRef<HTMLInputElement>(null)
 
-  // If the embedded editor never signals load (some mobile WebViews block
-  // heavy cross-origin frames), surface a clear fallback instead of a
-  // perpetual spinner.
+  const recipe = VIDEO_RECIPES.find((r) => r.id === recipeId) ?? VIDEO_RECIPES[0]
+
+  const loadUploads = useCallback(async () => {
+    try {
+      const list = await fetchStudioVideos()
+      setUploads(list)
+    } catch { /* list stays as-is */ } finally {
+      setLoadingList(false)
+    }
+  }, [])
+
+  useEffect(() => { void loadUploads() }, [loadUploads])
+
+  // Poll running jobs every 4s for ধাপ N/M progress (same rhythm as the gallery).
+  const activeJobIds = jobs.filter((j) => !j.status || j.status.status === 'approved' || j.status.status === 'pending').map((j) => j.id).join(',')
   useEffect(() => {
-    if (!loading) return
-    const t = setTimeout(() => setFailed(true), 12_000)
-    return () => clearTimeout(t)
-  }, [loading])
+    if (!activeJobIds) return
+    const tick = async () => {
+      const ids = activeJobIds.split(',')
+      const results = await Promise.all(ids.map((id) => fetchVideoJob(id).catch(() => null)))
+      setJobs((prev) =>
+        prev.map((j) => {
+          const idx = ids.indexOf(j.id)
+          return idx >= 0 && results[idx] ? { ...j, status: results[idx] } : j
+        }),
+      )
+    }
+    void tick()
+    const t = window.setInterval(() => void tick(), 4000)
+    return () => window.clearInterval(t)
+  }, [activeJobIds])
+
+  const handleFile = useCallback(async (file: File | null) => {
+    if (!file) return
+    setUploadPct(0)
+    try {
+      const up = await uploadStudioVideo(file, setUploadPct)
+      setUploads((prev) => [up, ...prev])
+      setSelected(up)
+      toast.success('ভিডিও আপলোড হয়েছে, স্যার')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'আপলোড ব্যর্থ হয়েছে')
+    } finally {
+      setUploadPct(null)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }, [])
+
+  const handleDelete = useCallback(async (up: StudioVideoUpload) => {
+    try {
+      await deleteStudioVideo(up.id)
+      setUploads((prev) => prev.filter((u) => u.id !== up.id))
+      setSelected((s) => (s?.id === up.id ? null : s))
+      toast.success('ভিডিও মুছে ফেলা হয়েছে')
+    } catch {
+      toast.error('মুছতে সমস্যা হলো')
+    }
+  }, [])
+
+  const handleRun = useCallback(async () => {
+    if (!selected || targets.length === 0) return
+    setRunning(true)
+    try {
+      const res = await runVideoRecipe({
+        videoPath: selected.path,
+        videoName: selected.name,
+        recipeId: recipe.id,
+        targets,
+        aspect,
+      })
+      setJobs((prev) => [
+        ...res.jobs.map((j) => ({ id: j.pendingActionId, label: j.label, status: null })),
+        ...prev,
+      ])
+      toast.success(res.message)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'রিল বানানো শুরু করা যায়নি')
+    } finally {
+      setRunning(false)
+    }
+  }, [selected, recipe, targets, aspect])
+
+  const fmtSize = (b: number) => (b > 1024 * 1024 ? `${Math.round(b / (1024 * 1024))} MB` : `${Math.round(b / 1024)} KB`)
 
   return (
-    <div className="flex h-full w-full flex-col bg-[#0c0b12]">
-      <div className="flex shrink-0 items-center justify-between border-b border-border-subtle bg-card/85 px-3 py-2">
+    <div className="h-full overflow-y-auto px-3 py-3 pb-20 md:pb-4">
+      <div className="mx-auto max-w-xl space-y-4">
         <div>
-          <p className="text-xs font-bold text-cream">Video Editor</p>
-          <p className="text-[10px] text-muted">OpenCut — short video &amp; reels (beta)</p>
+          <h2 className="text-sm font-bold">ভিডিও স্টুডিও</h2>
+          <p className="text-[11px] text-muted">নিজের শুট করা ভিডিও দিন — রেসিপি বেছে নিলেই রেডি রিল Gallery-তে চলে আসবে।</p>
         </div>
-        <a
-          href={OPENCUT_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rounded-lg bg-[#E07A5F] px-2.5 py-1.5 text-[11px] font-semibold text-white"
-        >
-          নতুন ট্যাবে ↗
-        </a>
-      </div>
-      <div className="relative min-h-0 flex-1">
-        {loading && !failed && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#0c0b12] text-muted">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#8b7cf6] border-t-transparent" />
-            <p className="text-xs">Video editor লোড হচ্ছে…</p>
-          </div>
-        )}
-        {failed && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#0c0b12] px-6 text-center text-muted">
-            <p className="text-xs">এখানে লোড হতে দেরি হচ্ছে। সরাসরি খুলুন —</p>
-            <a
-              href={OPENCUT_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-lg bg-[#E07A5F] px-4 py-2 text-xs font-semibold text-white"
-            >
-              Video Editor খুলুন ↗
-            </a>
-          </div>
-        )}
-        <iframe
-          title="OpenCut Video Editor"
-          src={OPENCUT_URL}
-          onLoad={() => {
-            setLoading(false)
-            setFailed(false)
-          }}
-          className="h-full w-full border-0"
-          allow="clipboard-read; clipboard-write; fullscreen; encrypted-media; autoplay"
-          allowFullScreen
+
+        {/* Upload */}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="video/mp4,video/quicktime,.mp4,.mov,.m4v"
+          className="hidden"
+          onChange={(e) => void handleFile(e.target.files?.[0] ?? null)}
         />
+        {uploadPct !== null ? (
+          <div className="rounded-xl border border-border-subtle bg-card/80 p-3">
+            <p className="mb-2 text-[11px] font-semibold text-cream">আপলোড হচ্ছে… {uploadPct}%</p>
+            <div className="h-2 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full bg-[#E07A5F] transition-all" style={{ width: `${uploadPct}%` }} />
+            </div>
+            <p className="mt-1.5 text-[10px] text-muted">বড় ভিডিওতে কয়েক মিনিট লাগতে পারে — পেজ বন্ধ করবেন না।</p>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#E07A5F]/40 bg-[#E07A5F]/[0.06] px-4 py-4 text-[12px] font-semibold text-[#E07A5F]"
+          >
+            <VideoSvg className="h-4 w-4" /> ভিডিও আপলোড করুন (১–২ মিনিটের শুট, mp4/mov)
+          </button>
+        )}
+
+        {/* Uploaded shoots */}
+        {loadingList ? (
+          <div className="h-16 animate-pulse rounded-xl bg-white/[0.05]" />
+        ) : uploads.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-semibold text-muted">আপলোড করা শুট</p>
+            {uploads.map((up) => (
+              <div
+                key={up.id}
+                className={cn(
+                  'flex items-center gap-2 rounded-xl border px-3 py-2.5',
+                  selected?.id === up.id
+                    ? 'border-[#E07A5F]/60 bg-[#E07A5F]/[0.08]'
+                    : 'border-border-subtle bg-card/80',
+                )}
+              >
+                <button type="button" onClick={() => setSelected(up)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                  <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', selected?.id === up.id ? 'bg-[#E07A5F] text-white' : 'bg-white/10 text-muted')}>
+                    <VideoSvg className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-[12px] font-semibold text-cream">{up.name}</span>
+                    <span className="block text-[10px] text-muted">{fmtSize(up.sizeBytes)} · {new Date(up.uploadedAt).toLocaleDateString('en-BD')}</span>
+                  </span>
+                </button>
+                <button type="button" onClick={() => void handleDelete(up)} aria-label="মুছুন" className="shrink-0 rounded-lg px-2 py-1 text-[11px] text-muted hover:text-red-400">
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Recipe picker — hard presets, no prompts */}
+        {selected && (
+          <div className="space-y-3 rounded-xl border border-border-subtle bg-card/80 p-3">
+            <p className="text-[11px] font-semibold text-muted">রেসিপি বাছুন — বাকিটা সিস্টেম করবে</p>
+            <div className="grid gap-1.5">
+              {VIDEO_RECIPES.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => {
+                    setRecipeId(r.id)
+                    setTargets((prev) => {
+                      const kept = prev.filter((t) => r.targets.includes(t))
+                      return kept.length > 0 ? kept : [r.defaultTarget]
+                    })
+                  }}
+                  className={cn(
+                    'rounded-xl border px-3 py-2.5 text-left',
+                    recipeId === r.id ? 'border-[#E07A5F]/60 bg-[#E07A5F]/[0.08]' : 'border-border-subtle bg-bg-1/40',
+                  )}
+                >
+                  <p className={cn('text-[12px] font-bold', recipeId === r.id ? 'text-[#E07A5F]' : 'text-cream')}>{r.labelBn}</p>
+                  <p className="text-[10px] text-muted">{r.descriptionBn}</p>
+                </button>
+              ))}
+            </div>
+
+            <div>
+              <p className="mb-1.5 text-[11px] font-semibold text-muted">রিলের দৈর্ঘ্য</p>
+              <div className="flex gap-1.5">
+                {recipe.targets.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() =>
+                      setTargets((prev) =>
+                        prev.includes(t) ? (prev.length > 1 ? prev.filter((x) => x !== t) : prev) : [...prev, t].sort((a, b) => a - b),
+                      )
+                    }
+                    className={cn(
+                      'rounded-lg px-3.5 py-1.5 text-[12px] font-semibold',
+                      targets.includes(t) ? 'bg-[#E07A5F] text-white' : 'bg-white/10 text-muted',
+                    )}
+                  >
+                    {t}s
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-1.5 text-[11px] font-semibold text-muted">সাইজ</p>
+              <div className="flex gap-1.5">
+                {VIDEO_ASPECTS.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => setAspect(a.id)}
+                    className={cn(
+                      'rounded-lg px-3 py-1.5 text-[11px] font-semibold',
+                      aspect === a.id ? 'bg-[#E07A5F] text-white' : 'bg-white/10 text-muted',
+                    )}
+                  >
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={running || targets.length === 0}
+              onClick={() => void handleRun()}
+              className="w-full rounded-xl bg-[#E07A5F] py-3 text-[13px] font-bold text-white disabled:opacity-50"
+            >
+              {running ? 'শুরু হচ্ছে…' : `রিল বানাও (${targets.map((t) => `${t}s`).join(' + ')})`}
+            </button>
+          </div>
+        )}
+
+        {/* Running / finished jobs */}
+        {jobs.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-semibold text-muted">চলমান কাজ</p>
+            {jobs.map((j) => {
+              const st = j.status
+              const done = st?.status === 'executed'
+              const failed = st?.status === 'failed'
+              return (
+                <div key={j.id} className="flex items-center gap-2.5 rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
+                  {done ? (
+                    <span className="text-sm">✅</span>
+                  ) : failed ? (
+                    <span className="text-sm">❌</span>
+                  ) : (
+                    <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[11px] font-semibold text-cream">{j.label}</p>
+                    <p className="truncate text-[10px] text-muted">
+                      {failed
+                        ? st?.error ?? 'ব্যর্থ হয়েছে'
+                        : done
+                          ? 'রেডি — Gallery-তে দেখুন'
+                          : st?.videoProgress
+                            ? `ধাপ ${st.videoProgress.step}/${st.videoProgress.total}: ${st.videoProgress.labelBn}`
+                            : 'অপেক্ষায়…'}
+                    </p>
+                  </div>
+                  {done && (
+                    <button type="button" onClick={onOpenGallery} className="shrink-0 text-[11px] font-semibold text-[#E07A5F]">
+                      Gallery →
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )

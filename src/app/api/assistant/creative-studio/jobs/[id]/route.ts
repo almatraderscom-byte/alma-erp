@@ -65,6 +65,32 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     }
   }
 
+  // Phase V1 video_edit job: the worker writes step progress into the payload
+  // (ধাপ N/M) while ffmpeg works — surface it exactly like the family chain.
+  if (payload.videoEdit) {
+    const progress = payload._videoProgress as { step?: number; total?: number; labelBn?: string } | undefined
+    const vePath = (result.storagePath ?? null) as string | null
+    let vePreview: string | null = null
+    if (row.status === 'executed' && vePath) {
+      try { vePreview = await agentStorageSignedUrl(vePath, 3600) } catch { vePreview = null }
+    }
+    const stepText = progress?.step
+      ? ` — ধাপ ${progress.step}/${progress.total ?? 5}: ${progress.labelBn ?? ''}`
+      : ''
+    return Response.json({
+      id: row.id,
+      status: row.status,
+      type: row.type,
+      summary: row.status === 'executed' || row.status === 'failed' ? row.summary : `${row.summary}${stepText}`,
+      mode: payload.studioMode,
+      provider: payload.provider ?? 'ffmpeg',
+      previewUrl: vePreview,
+      storagePath: row.status === 'executed' ? vePath : null,
+      videoProgress: progress ?? null,
+      error: (result.error ?? row.error ?? null) as string | null,
+    })
+  }
+
   const storagePath = (result.storagePath ?? result.videoPath) as string | undefined
 
   let previewUrl: string | null = null
