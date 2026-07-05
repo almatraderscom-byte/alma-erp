@@ -1181,6 +1181,9 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
     private var didRunCompanionSelfTest = false
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        // DEBUG self-test hook: ALMA_FADE_DEMO=1 presents the ClaudeTopFade demo screen
+        // (see ClaudeTopFade.swift) so the scroll-edge fade can be screenshotted headlessly.
+        ClaudeTopFadeSelfTest.presentIfRequested(over: self)
         // DEBUG self-test hook (never fires in production): when launched with
         // ALMA_OPEN_COMPANION=1 (only set by the local `simctl launch` self-test),
         // jump to More and push the native Phone Companion so its render + pairing

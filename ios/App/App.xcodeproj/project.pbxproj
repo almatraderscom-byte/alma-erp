@@ -31,6 +31,7 @@
 		F1AA6600000000000000B002 /* EntityCacheBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1AA6600000000000000A002 /* EntityCacheBridge.swift */; };
 		A2BB7700000000000000B001 /* BackgroundRefresh.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2BB7700000000000000A001 /* BackgroundRefresh.swift */; };
 		F2AA7700000000000000B001 /* SpikeNativeShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A001 /* SpikeNativeShell.swift */; };
+		F2AA7700000000000000B002 /* ClaudeTopFade.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A002 /* ClaudeTopFade.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -63,6 +64,7 @@
 		F1AA6600000000000000A003 /* AlmaWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AlmaWidget.entitlements; sourceTree = "<group>"; };
 		A2BB7700000000000000A001 /* BackgroundRefresh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefresh.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A001 /* SpikeNativeShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpikeNativeShell.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A002 /* ClaudeTopFade.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeTopFade.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -142,6 +144,7 @@
 				F1AA6600000000000000A002 /* EntityCacheBridge.swift */,
 				A2BB7700000000000000A001 /* BackgroundRefresh.swift */,
 				F2AA7700000000000000A001 /* SpikeNativeShell.swift */,
+				F2AA7700000000000000A002 /* ClaudeTopFade.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -349,6 +352,7 @@
 				F1AA6600000000000000B002 /* EntityCacheBridge.swift in Sources */,
 				A2BB7700000000000000B001 /* BackgroundRefresh.swift in Sources */,
 				F2AA7700000000000000B001 /* SpikeNativeShell.swift in Sources */,
+				F2AA7700000000000000B002 /* ClaudeTopFade.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
