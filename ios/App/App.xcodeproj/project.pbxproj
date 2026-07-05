@@ -38,6 +38,14 @@
 		F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A013 /* OrdersSwiftUI.swift */; };
 		F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A021 /* AssistantSwiftUI.swift */; };
 		F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */; };
+		F2AA7700000000000000B058 /* PortalSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A058 /* PortalSwiftUI.swift */; };
+		F2AA7700000000000000B057 /* PortalOfficeSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A057 /* PortalOfficeSwiftUI.swift */; };
+		F2AA7700000000000000B056 /* SupplierImportSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A056 /* SupplierImportSwiftUI.swift */; };
+		F2AA7700000000000000B055 /* SettingsUsersSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A055 /* SettingsUsersSwiftUI.swift */; };
+		F2AA7700000000000000B054 /* SettingsNotificationsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A054 /* SettingsNotificationsSwiftUI.swift */; };
+		F2AA7700000000000000B053 /* PortalExpenseSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A053 /* PortalExpenseSwiftUI.swift */; };
+		F2AA7700000000000000B052 /* PaymentAccountsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A052 /* PaymentAccountsSwiftUI.swift */; };
+		F2AA7700000000000000B051 /* SystemDiagnosticsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A051 /* SystemDiagnosticsSwiftUI.swift */; };
 		F2AA7700000000000000B050 /* InsightsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A050 /* InsightsSwiftUI.swift */; };
 		F2AA7700000000000000B04F /* BusinessArchiveSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A04F /* BusinessArchiveSwiftUI.swift */; };
 		F2AA7700000000000000B04E /* TaskSpotlightSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A04E /* TaskSpotlightSwiftUI.swift */; };
@@ -97,6 +105,14 @@
 		F2AA7700000000000000A013 /* OrdersSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrdersSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A021 /* AssistantSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantVoiceSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A058 /* PortalSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A057 /* PortalOfficeSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalOfficeSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A056 /* SupplierImportSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupplierImportSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A055 /* SettingsUsersSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsUsersSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A054 /* SettingsNotificationsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsNotificationsSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A053 /* PortalExpenseSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalExpenseSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A052 /* PaymentAccountsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaymentAccountsSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A051 /* SystemDiagnosticsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemDiagnosticsSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A050 /* InsightsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A04F /* BusinessArchiveSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusinessArchiveSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A04E /* TaskSpotlightSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskSpotlightSwiftUI.swift; sourceTree = "<group>"; };
@@ -203,6 +219,14 @@
 				F2AA7700000000000000A013 /* OrdersSwiftUI.swift */,
 				F2AA7700000000000000A021 /* AssistantSwiftUI.swift */,
 				F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */,
+				F2AA7700000000000000A058 /* PortalSwiftUI.swift */,
+				F2AA7700000000000000A057 /* PortalOfficeSwiftUI.swift */,
+				F2AA7700000000000000A056 /* SupplierImportSwiftUI.swift */,
+				F2AA7700000000000000A055 /* SettingsUsersSwiftUI.swift */,
+				F2AA7700000000000000A054 /* SettingsNotificationsSwiftUI.swift */,
+				F2AA7700000000000000A053 /* PortalExpenseSwiftUI.swift */,
+				F2AA7700000000000000A052 /* PaymentAccountsSwiftUI.swift */,
+				F2AA7700000000000000A051 /* SystemDiagnosticsSwiftUI.swift */,
 				F2AA7700000000000000A050 /* InsightsSwiftUI.swift */,
 				F2AA7700000000000000A04F /* BusinessArchiveSwiftUI.swift */,
 				F2AA7700000000000000A04E /* TaskSpotlightSwiftUI.swift */,
@@ -437,6 +461,14 @@
 				F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */,
 				F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */,
 				F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */,
+				F2AA7700000000000000B058 /* PortalSwiftUI.swift in Sources */,
+				F2AA7700000000000000B057 /* PortalOfficeSwiftUI.swift in Sources */,
+				F2AA7700000000000000B056 /* SupplierImportSwiftUI.swift in Sources */,
+				F2AA7700000000000000B055 /* SettingsUsersSwiftUI.swift in Sources */,
+				F2AA7700000000000000B054 /* SettingsNotificationsSwiftUI.swift in Sources */,
+				F2AA7700000000000000B053 /* PortalExpenseSwiftUI.swift in Sources */,
+				F2AA7700000000000000B052 /* PaymentAccountsSwiftUI.swift in Sources */,
+				F2AA7700000000000000B051 /* SystemDiagnosticsSwiftUI.swift in Sources */,
 				F2AA7700000000000000B050 /* InsightsSwiftUI.swift in Sources */,
 				F2AA7700000000000000B04F /* BusinessArchiveSwiftUI.swift in Sources */,
 				F2AA7700000000000000B04E /* TaskSpotlightSwiftUI.swift in Sources */,

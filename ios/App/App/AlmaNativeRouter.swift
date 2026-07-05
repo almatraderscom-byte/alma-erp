@@ -52,6 +52,14 @@ enum AlmaNativeRouter {
         case "/briefing": return host(BriefingScreen(openWeb: openWebForced), "Briefing")
         case "/operations/task-spotlight": return host(TaskSpotlightScreen(openWeb: openWebForced), "Task Spotlight")
         case "/operations/business-archive": return host(BusinessArchiveScreen(openWeb: openWebForced), "Business archive")
+        case "/operations/system-diagnostics": return host(SystemDiagnosticsScreen(openWeb: openWebForced), "System diagnostics")
+        case "/portal/payment-accounts": return host(PaymentAccountsScreen(openWeb: openWebForced), "Payment accounts")
+        case "/portal/expense": return host(PortalExpenseScreen(openWeb: openWebForced), "Portal expense")
+        case "/settings/notifications": return host(SettingsNotifScreen(openWeb: openWebForced), "Notifications")
+        case "/settings/users": return host(SettingsUsersScreen(openWeb: openWebForced), "Users")
+        case "/inventory/supplier-import": return host(SupplierImportScreen(openWeb: openWebForced), "Supplier import")
+        case "/portal/office": return host(PortalOfficeScreen(openWeb: openWebForced), "Office")
+        case "/portal": return host(PortalScreen(openWeb: openWebForced), "My Desk")
         default:
             return nil
         }

@@ -53,11 +53,11 @@ are pre-assigned here so two sessions can never pick the same name.
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
 | Inventory | `/inventory` | `ios/App/App/InventorySwiftUI.swift` | native | IN_REVIEW (marathon b2 2026-07-06, sim-build pending at marathon end) | marathon session |
-| Supplier import | `/inventory/supplier-import` | `ios/App/App/SupplierImportSwiftUI.swift` | web | NOT_STARTED | — |
+| Supplier import | `/inventory/supplier-import` | `ios/App/App/SupplierImportSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Activity | `/activity` | `ios/App/App/ActivitySwiftUI.swift` | native | IN_REVIEW (marathon b2 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Task Spotlight | `/operations/task-spotlight` | `ios/App/App/TaskSpotlightSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Business archive | `/operations/business-archive` | `ios/App/App/BusinessArchiveSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
-| System diagnostics | `/operations/system-diagnostics` | `ios/App/App/SystemDiagnosticsSwiftUI.swift` | web | NOT_STARTED | — |
+| System diagnostics | `/operations/system-diagnostics` | `ios/App/App/SystemDiagnosticsSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
 
 ### People
 | Page | Route | Owning files | Surface | Status | Owner |
@@ -78,10 +78,10 @@ are pre-assigned here so two sessions can never pick the same name.
 ### Portal (staff desk)
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
-| My Desk | `/portal` | `ios/App/App/PortalSwiftUI.swift` | web | NOT_STARTED | — |
-| Portal expense | `/portal/expense` | `ios/App/App/PortalExpenseSwiftUI.swift` | web | NOT_STARTED | — |
-| Office | `/portal/office` | `ios/App/App/PortalOfficeSwiftUI.swift` | web | NOT_STARTED | — |
-| Payment accounts | `/portal/payment-accounts` | `ios/App/App/PaymentAccountsSwiftUI.swift` | web | NOT_STARTED | — |
+| My Desk | `/portal` | `ios/App/App/PortalSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Portal expense | `/portal/expense` | `ios/App/App/PortalExpenseSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Office | `/portal/office` | `ios/App/App/PortalOfficeSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Payment accounts | `/portal/payment-accounts` | `ios/App/App/PaymentAccountsSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
 
 ### Trading business
 | Page | Route | Owning files | Surface | Status | Owner |
@@ -119,8 +119,8 @@ are pre-assigned here so two sessions can never pick the same name.
 ### Settings
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
-| Users | `/settings/users` | `ios/App/App/SettingsUsersSwiftUI.swift` | web | NOT_STARTED | — |
-| Notifications | `/settings/notifications` | `ios/App/App/SettingsNotificationsSwiftUI.swift` | web | NOT_STARTED | — |
+| Users | `/settings/users` | `ios/App/App/SettingsUsersSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Notifications | `/settings/notifications` | `ios/App/App/SettingsNotificationsSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Branding | `/settings/branding` | `ios/App/App/SettingsBrandingSwiftUI.swift` | web | NOT_STARTED | — |
 | SMS | `/settings/sms` | `ios/App/App/SettingsSmsSwiftUI.swift` | web | NOT_STARTED | — |
 | Telegram Ops | `/settings/telegram-ops` | `ios/App/App/SettingsTelegramSwiftUI.swift` | web | NOT_STARTED | — |
