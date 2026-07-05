@@ -42,11 +42,11 @@ are pre-assigned here so two sessions can never pick the same name.
 ### Money
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
-| Finance | `/finance` | `ios/App/App/FinanceSwiftUI.swift` | web | NOT_STARTED | — |
+| Finance | `/finance` | `ios/App/App/FinanceSwiftUI.swift` | native | IN_REVIEW (marathon b1 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Office fund | `/finance/office-fund` | `ios/App/App/OfficeFundSwiftUI.swift` | web | NOT_STARTED | — |
-| Expenses | `/expenses` | `ios/App/App/ExpensesSwiftUI.swift` | web | NOT_STARTED | — |
-| Payroll | `/payroll` | `ios/App/App/PayrollSwiftUI.swift` | web | NOT_STARTED | — |
-| Invoices | `/invoice` | `ios/App/App/InvoicesSwiftUI.swift` | web | NOT_STARTED | — |
+| Expenses | `/expenses` | `ios/App/App/ExpensesSwiftUI.swift` | native | IN_REVIEW (marathon b1 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Payroll | `/payroll` | `ios/App/App/PayrollSwiftUI.swift` | native | IN_REVIEW (marathon b1 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Invoices | `/invoice` | `ios/App/App/InvoicesSwiftUI.swift` | native | IN_REVIEW (marathon b1 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Invoice share | `/invoice/share/[slug]` | — (public link, stays web) | web | KEEP_WEB | — |
 
 ### Operations
