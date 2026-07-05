@@ -1,0 +1,358 @@
+/**
+ * Phase V2 — caption + audio layer for video_edit reels. Pure ffmpeg mechanics:
+ *
+ *   captions   — reel speech → app's /internal/video-captions (Whisper, twice-
+ *                checked Bangla) → .ass burned with the bundled Noto Sans Bengali
+ *   music bed  — owner-approved track only, looped/trimmed, faded out; ducks
+ *                under speech/voiceover via sidechaincompress
+ *   voiceover  — owner-typed line rendered by the existing Google Bangla TTS
+ *                (never LLM-written); replaces the shoot audio
+ *   stings     — logo intro/outro pre-rendered ONCE per aspect (cached in
+ *                storage) and concat-copied around the reel, no per-run render
+ *   covers     — 4 candidate cover frames for the Gallery picker
+ *
+ * One video re-encode at most (captions burn); audio-only changes keep -c:v copy.
+ */
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { writeFile, readFile, stat } from 'node:fs/promises'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { getAppUrl, getInternalToken } from './env.mjs'
+
+const execFileAsync = promisify(execFile)
+
+const RENDER_TIMEOUT_MS = 15 * 60_000
+const FONTS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets', 'fonts')
+
+const STING_INTRO_SEC = 1.2
+const STING_OUTRO_SEC = 1.6
+const MUSIC_VOLUME = 0.55
+
+async function ffprobeJson(file) {
+  const { stdout } = await execFileAsync(
+    'ffprobe',
+    ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', file],
+    { timeout: 60_000, maxBuffer: 8 * 1024 * 1024 },
+  )
+  return JSON.parse(stdout)
+}
+
+async function hasAudioStream(file) {
+  const info = await ffprobeJson(file)
+  return (info.streams ?? []).some((s) => s.codec_type === 'audio')
+}
+
+async function mediaDuration(file) {
+  const info = await ffprobeJson(file)
+  return Number(info.format?.duration ?? 0)
+}
+
+/** Download a storage object to a local file (small files — music, logo). */
+async function downloadSmall(supabase, storagePath, destFile) {
+  const { data, error } = await supabase.storage.from('agent-files').download(storagePath)
+  if (error || !data) throw new Error(`download failed for ${storagePath}: ${error?.message}`)
+  await writeFile(destFile, Buffer.from(await data.arrayBuffer()))
+  return destFile
+}
+
+/**
+ * Fetch burned-caption ASS content from the app. `knownText` short-circuits the
+ * accuracy pass when the words are already exact (owner-typed voiceover).
+ */
+async function fetchCaptions({ audioFile, output, knownText }) {
+  const audio = await readFile(audioFile)
+  const params = new URLSearchParams({ width: String(output.width), height: String(output.height) })
+  if (knownText) params.set('text', knownText)
+  const res = await fetch(`${getAppUrl()}/api/assistant/internal/video-captions?${params}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'audio/mpeg',
+      Authorization: `Bearer ${getInternalToken()}`,
+    },
+    body: audio,
+    signal: AbortSignal.timeout(90_000),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(`captions endpoint failed: ${body?.error ?? `HTTP ${res.status}`}`)
+  return body.ass ?? null
+}
+
+/** Extract the reel's speech as a small mp3 for Whisper. */
+async function extractSpeechMp3(srcFile, destFile) {
+  await execFileAsync(
+    'ffmpeg',
+    ['-y', '-i', srcFile, '-vn', '-c:a', 'libmp3lame', '-b:a', '64k', '-ac', '1', destFile],
+    { timeout: 120_000, maxBuffer: 8 * 1024 * 1024 },
+  )
+  return destFile
+}
+
+const fmt = (label) => `${label}aformat=sample_rates=48000:channel_layouts=stereo`
+
+/**
+ * The single post-render pass: burns captions (if any) and rebuilds the
+ * soundtrack per audioMode/voiceover. Audio-only changes keep -c:v copy.
+ */
+async function renderPostPass({ workDir, reelFile, outFile, assFile, musicFile, voiceFile, audioMode, reelHasAudio, durationSec }) {
+  const args = ['-y', '-i', reelFile]
+  const inputs = { music: -1, voice: -1 }
+  let idx = 1
+  if (musicFile) { args.push('-i', musicFile); inputs.music = idx++ }
+  if (voiceFile) { args.push('-i', voiceFile); inputs.voice = idx++ }
+
+  const parts = []
+  const fadeStart = Math.max(0, durationSec - 1)
+
+  // ── audio graph → [aout] (null when the original track stays untouched) ──
+  let aout = null
+  const speechLabel = voiceFile ? `[${inputs.voice}:a]` : reelHasAudio ? '[0:a]' : null
+
+  if (musicFile) {
+    parts.push(`[${inputs.music}:a]aloop=loop=-1:size=2e9,atrim=0:${durationSec},${fmt('')},volume=${MUSIC_VOLUME}[mus]`)
+    if (speechLabel && (audioMode === 'music_duck' || voiceFile)) {
+      parts.push(`${speechLabel}${fmt('')},asplit=2[sp1][sp2]`)
+      parts.push(`[mus][sp1]sidechaincompress=threshold=0.03:ratio=12:attack=25:release=500[musduck]`)
+      parts.push(`[sp2][musduck]amix=inputs=2:duration=first:dropout_transition=0,afade=t=out:st=${fadeStart}:d=1[aout]`)
+    } else {
+      parts.push(`[mus]afade=t=out:st=${fadeStart}:d=1,atrim=0:${durationSec}[aout]`)
+    }
+    aout = '[aout]'
+  } else if (voiceFile) {
+    parts.push(`[${inputs.voice}:a]${fmt('')}[aout]`)
+    aout = '[aout]'
+  }
+
+  // ── video: burn captions or pass through untouched ───────────────────────
+  let videoArgs
+  if (assFile) {
+    const assName = assFile.replace(/\\/g, '/').split('/').pop()
+    parts.push(`[0:v]subtitles=filename=${assName}:fontsdir='${FONTS_DIR}'[vout]`)
+    videoArgs = ['-map', '[vout]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22']
+  } else {
+    videoArgs = ['-map', '0:v', '-c:v', 'copy']
+  }
+
+  if (parts.length > 0) args.push('-filter_complex', parts.join(';'))
+  args.push(...videoArgs)
+  if (aout) {
+    args.push('-map', aout, '-c:a', 'aac', '-b:a', '128k')
+  } else if (reelHasAudio) {
+    args.push('-map', '0:a', '-c:a', 'copy')
+  }
+  args.push('-movflags', '+faststart', '-t', String(durationSec + 0.5), outFile)
+
+  // subtitles filter resolves relative filenames against cwd → run in workDir
+  await execFileAsync('ffmpeg', args, { timeout: RENDER_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024, cwd: workDir })
+}
+
+/**
+ * Logo intro/outro stings — generated ONCE per aspect + logo version with the
+ * reel's exact encode params, cached in storage, then concat-COPIED (roadmap:
+ * "pre-rendered clips concatenated, no per-run rendering").
+ */
+async function ensureStings(supabase, { brandLogoPath, output, workDir }) {
+  const key = `${output.width}x${output.height}`
+  const metaKey = `studio_sting_meta:${key}`
+  const introPath = `studio-video/stings/${key}-intro.mp4`
+  const outroPath = `studio-video/stings/${key}-outro.mp4`
+  const introFile = join(workDir, 'sting-intro.mp4')
+  const outroFile = join(workDir, 'sting-outro.mp4')
+
+  // cache hit only if the same logo version produced them
+  try {
+    const { data } = await supabase.from('agent_kv_settings').select('value').eq('key', metaKey).maybeSingle()
+    if (data?.value === brandLogoPath) {
+      await downloadSmall(supabase, introPath, introFile)
+      await downloadSmall(supabase, outroPath, outroFile)
+      return { introFile, outroFile }
+    }
+  } catch { /* regenerate below */ }
+
+  const logoFile = join(workDir, 'brand-logo.png')
+  await downloadSmall(supabase, brandLogoPath, logoFile)
+
+  const logoW = Math.round(output.width * 0.5)
+  const common = [
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2', '-movflags', '+faststart',
+  ]
+  const bg = (dur) => `color=c=0x141019:size=${output.width}x${output.height}:rate=30:duration=${dur}`
+
+  // intro: logo fades in over the dark brand backdrop
+  await execFileAsync('ffmpeg', [
+    '-y',
+    '-f', 'lavfi', '-i', bg(STING_INTRO_SEC),
+    '-i', logoFile,
+    '-f', 'lavfi', '-i', `anullsrc=channel_layout=stereo:sample_rate=48000:duration=${STING_INTRO_SEC}`,
+    '-filter_complex',
+    `[1:v]scale=${logoW}:-1[logo];[0:v][logo]overlay=(W-w)/2:(H-h)/2,fade=t=in:st=0:d=0.5[vout]`,
+    '-map', '[vout]', '-map', '2:a', '-t', String(STING_INTRO_SEC), ...common, introFile,
+  ], { timeout: 120_000, maxBuffer: 8 * 1024 * 1024 })
+
+  // outro: logo holds then fades to black
+  await execFileAsync('ffmpeg', [
+    '-y',
+    '-f', 'lavfi', '-i', bg(STING_OUTRO_SEC),
+    '-i', logoFile,
+    '-f', 'lavfi', '-i', `anullsrc=channel_layout=stereo:sample_rate=48000:duration=${STING_OUTRO_SEC}`,
+    '-filter_complex',
+    `[1:v]scale=${logoW}:-1[logo];[0:v][logo]overlay=(W-w)/2:(H-h)/2,fade=t=out:st=${STING_OUTRO_SEC - 0.6}:d=0.6[vout]`,
+    '-map', '[vout]', '-map', '2:a', '-t', String(STING_OUTRO_SEC), ...common, outroFile,
+  ], { timeout: 120_000, maxBuffer: 8 * 1024 * 1024 })
+
+  // cache for next runs (best-effort)
+  try {
+    await supabase.storage.from('agent-files').upload(introPath, await readFile(introFile), { contentType: 'video/mp4', upsert: true })
+    await supabase.storage.from('agent-files').upload(outroPath, await readFile(outroFile), { contentType: 'video/mp4', upsert: true })
+    await supabase.from('agent_kv_settings').upsert({ key: metaKey, value: brandLogoPath }, { onConflict: 'key' })
+  } catch (err) {
+    console.warn('[worker] sting cache write failed:', err?.message)
+  }
+  return { introFile, outroFile }
+}
+
+/** concat-copy intro + reel + outro (identical encode params — no re-render). */
+async function concatStings({ workDir, introFile, reelFile, outroFile, outFile }) {
+  const listFile = join(workDir, 'concat.txt')
+  const esc = (p) => p.replace(/'/g, "'\\''")
+  await writeFile(listFile, [introFile, reelFile, outroFile].map((f) => `file '${esc(f)}'`).join('\n'))
+  await execFileAsync(
+    'ffmpeg',
+    ['-y', '-f', 'concat', '-safe', '0', '-i', listFile, '-c', 'copy', '-movflags', '+faststart', outFile],
+    { timeout: 120_000, maxBuffer: 8 * 1024 * 1024 },
+  )
+}
+
+/** 4 candidate cover frames for the Gallery picker. */
+export async function extractCoverCandidates({ file, workDir, durationSec }) {
+  const stamps = [0.12, 0.38, 0.62, 0.88].map((p) => Math.max(0.2, p * durationSec))
+  const files = []
+  for (let i = 0; i < stamps.length; i++) {
+    const out = join(workDir, `cover-${i + 1}.jpg`)
+    try {
+      await execFileAsync(
+        'ffmpeg',
+        ['-y', '-ss', String(stamps[i]), '-i', file, '-frames:v', '1', '-vf', 'scale=540:-2', out],
+        { timeout: 60_000, maxBuffer: 8 * 1024 * 1024 },
+      )
+      await stat(out)
+      files.push(out)
+    } catch { /* skip frame */ }
+  }
+  return files
+}
+
+/**
+ * Apply the whole V2 layer to a rendered reel. Returns the final file plus
+ * flags for the job result. Caption/audio failures degrade gracefully — a
+ * reel without captions beats a dead job — but a requested-and-failed layer
+ * is reported in `warnings`.
+ */
+export async function applyPostLayers({ supabase, workDir, reelFile, payload, output }) {
+  const { captions, audioMode = 'original', musicPath, voiceoverText, stings, brandLogoPath } = payload
+  const wantsAudioWork = (audioMode !== 'original' && musicPath) || voiceoverText
+  const warnings = []
+  let current = reelFile
+  const durationSec = await mediaDuration(current)
+  const reelHasAudio = await hasAudioStream(current)
+
+  // voiceover TTS (existing Google Bangla voice — owner's exact words)
+  let voiceFile = null
+  if (voiceoverText) {
+    try {
+      const { synthesizeSpeech } = await import('./tts.mjs')
+      const mp3 = await synthesizeSpeech(voiceoverText, 400, { purpose: 'studio_voiceover' })
+      voiceFile = join(workDir, 'voiceover.mp3')
+      await writeFile(voiceFile, mp3)
+    } catch (err) {
+      warnings.push(`voiceover_failed:${err.message?.slice(0, 80)}`)
+    }
+  }
+
+  // captions — transcribe the SPEECH source, not the mixed track
+  let assFile = null
+  if (captions) {
+    try {
+      const speechSrc = voiceFile ?? (reelHasAudio ? await extractSpeechMp3(current, join(workDir, 'speech.mp3')) : null)
+      if (speechSrc) {
+        const ass = await fetchCaptions({
+          audioFile: speechSrc,
+          output,
+          knownText: voiceFile ? voiceoverText : undefined,
+        })
+        if (ass) {
+          assFile = join(workDir, 'captions.ass')
+          await writeFile(assFile, ass, 'utf8')
+        }
+      } else {
+        warnings.push('captions_skipped:no_speech_track')
+      }
+    } catch (err) {
+      warnings.push(`captions_failed:${err.message?.slice(0, 80)}`)
+    }
+  }
+
+  // music bed
+  let musicFile = null
+  if (audioMode !== 'original' && musicPath) {
+    try {
+      musicFile = await downloadSmall(supabase, musicPath, join(workDir, 'music-bed'))
+    } catch (err) {
+      warnings.push(`music_failed:${err.message?.slice(0, 80)}`)
+      musicFile = null
+    }
+  }
+
+  if (assFile || musicFile || voiceFile) {
+    const mixed = join(workDir, 'reel-post.mp4')
+    await renderPostPass({
+      workDir,
+      reelFile: current,
+      outFile: mixed,
+      assFile,
+      musicFile,
+      voiceFile,
+      audioMode,
+      reelHasAudio,
+      durationSec,
+    })
+    current = mixed
+  } else if (wantsAudioWork || captions) {
+    // requested layers all failed — reel ships as-is, warnings tell the story
+  }
+
+  // logo stings (concat-copy; needs the reel to carry an audio track)
+  if (stings && brandLogoPath) {
+    try {
+      let reelForConcat = current
+      if (!(await hasAudioStream(current))) {
+        const withAudio = join(workDir, 'reel-silent-audio.mp4')
+        await execFileAsync('ffmpeg', [
+          '-y', '-i', current,
+          '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000',
+          '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+          '-shortest', '-movflags', '+faststart', withAudio,
+        ], { timeout: 120_000, maxBuffer: 8 * 1024 * 1024 })
+        reelForConcat = withAudio
+      }
+      const { introFile, outroFile } = await ensureStings(supabase, { brandLogoPath, output, workDir })
+      const withStings = join(workDir, 'reel-stings.mp4')
+      await concatStings({ workDir, introFile, reelFile: reelForConcat, outroFile, outFile: withStings })
+      current = withStings
+    } catch (err) {
+      warnings.push(`stings_failed:${err.message?.slice(0, 80)}`)
+    }
+  }
+
+  return {
+    finalFile: current,
+    warnings,
+    applied: {
+      captions: Boolean(assFile),
+      music: Boolean(musicFile),
+      voiceover: Boolean(voiceFile),
+      stings: current.includes('reel-stings'),
+    },
+  }
+}

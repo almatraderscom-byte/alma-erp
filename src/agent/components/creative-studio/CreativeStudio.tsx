@@ -19,7 +19,14 @@ import {
   type FamilyPresetId,
 } from '@/lib/creative-studio/constants'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
-import { VIDEO_RECIPES, VIDEO_ASPECTS } from '@/lib/creative-studio/video-recipes'
+import {
+  VIDEO_RECIPES,
+  VIDEO_ASPECTS,
+  MUSIC_VIBES,
+  AUDIO_MODES,
+  VOICEOVER_MAX_CHARS,
+  type VideoAudioMode,
+} from '@/lib/creative-studio/video-recipes'
 import LifestyleEditor from '@/agent/components/creative-studio/LifestyleEditor'
 import {
   DEFAULT_OFFER,
@@ -46,6 +53,11 @@ import {
   deleteStudioVideo,
   runVideoRecipe,
   fetchVideoJob,
+  fetchMusicTracks,
+  uploadMusicTrack,
+  deleteMusicTrack,
+  setReelCover,
+  type StudioMusicTrack,
   type GalleryItem,
   type StudioConfig,
   type BrandStatus,
@@ -1196,13 +1208,39 @@ function GalleryView() {
               </div>
             )}
             {selected.type === 'video_gen' || selected.storagePath?.endsWith('.mp4') ? (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); handleDownload(selected.previewUrl, `alma-${selected.id}.mp4`) }}
-                className="absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 rounded-full bg-white/15 px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25 backdrop-blur-md"
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 flex -translate-x-1/2 flex-col items-center gap-2"
               >
-                ডাউনলোড
-              </button>
+                {/* V2: reel cover picker — FB/IG reels need a cover frame */}
+                {(selected.coverOptions?.length ?? 0) > 0 && (
+                  <div className="flex items-center gap-1.5 rounded-2xl bg-black/60 p-1.5 ring-1 ring-white/15 backdrop-blur-md">
+                    <span className="px-1 text-[10px] font-semibold text-white/80">কভার:</span>
+                    {selected.coverOptions!.map((c) => (
+                      <button
+                        key={c.path}
+                        type="button"
+                        onClick={() => {
+                          void setReelCover(selected.id, c.path)
+                            .then(() => toast.success('কভার সেট হয়েছে, স্যার'))
+                            .catch(() => toast.error('কভার সেট করা যায়নি'))
+                        }}
+                        className="h-12 w-8 overflow-hidden rounded-md ring-1 ring-white/20"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={c.url} alt="" className="h-full w-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => handleDownload(selected.previewUrl, `alma-${selected.id}.mp4`)}
+                  className="rounded-full bg-white/15 px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25 backdrop-blur-md"
+                >
+                  ডাউনলোড
+                </button>
+              </div>
             ) : null}
 
             {/* Finishing panel — per-image code + hook, applied with the real brand frame */}
@@ -1762,7 +1800,20 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
   const [jobs, setJobs] = useState<Array<{ id: string; label: string; status: VideoJobStatus | null }>>([])
   const fileRef = useRef<HTMLInputElement>(null)
 
+  // ── V2 options (defaults = V1 behaviour) ─────────────────────────────────
+  const [captions, setCaptions] = useState(false)
+  const [audioMode, setAudioMode] = useState<VideoAudioMode>('original')
+  const [musicTrackId, setMusicTrackId] = useState<string>('auto')
+  const [voiceoverText, setVoiceoverText] = useState('')
+  const [stings, setStings] = useState(false)
+  const [tracks, setTracks] = useState<StudioMusicTrack[]>([])
+  const [showMusicLib, setShowMusicLib] = useState(false)
+
   const recipe = VIDEO_RECIPES.find((r) => r.id === recipeId) ?? VIDEO_RECIPES[0]
+
+  useEffect(() => {
+    void fetchMusicTracks().then(setTracks).catch(() => {})
+  }, [])
 
   const loadUploads = useCallback(async () => {
     try {
@@ -1831,6 +1882,13 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
         recipeId: recipe.id,
         targets,
         aspect,
+        options: {
+          captions,
+          audioMode,
+          musicTrackId,
+          voiceoverText: voiceoverText.trim() || undefined,
+          stings,
+        },
       })
       setJobs((prev) => [
         ...res.jobs.map((j) => ({ id: j.pendingActionId, label: j.label, status: null })),
@@ -1842,7 +1900,7 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
     } finally {
       setRunning(false)
     }
-  }, [selected, recipe, targets, aspect])
+  }, [selected, recipe, targets, aspect, captions, audioMode, musicTrackId, voiceoverText, stings])
 
   const fmtSize = (b: number) => (b > 1024 * 1024 ? `${Math.round(b / (1024 * 1024))} MB` : `${Math.round(b / 1024)} KB`)
 
@@ -1982,6 +2040,71 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
               </div>
             </div>
 
+            {/* ── V2: caption + audio layer (hard toggles, no prompts) ── */}
+            <div className="space-y-2.5 rounded-xl border border-border-subtle bg-bg-1/40 p-2.5">
+              <label className="flex items-center justify-between">
+                <span className="text-[12px] font-semibold text-cream">বাংলা ক্যাপশন</span>
+                <input type="checkbox" checked={captions} onChange={(e) => setCaptions(e.target.checked)} className="h-4 w-4 accent-[#E07A5F]" />
+              </label>
+
+              <div>
+                <p className="mb-1.5 text-[11px] font-semibold text-muted">সাউন্ড</p>
+                <div className="flex gap-1.5">
+                  {AUDIO_MODES.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setAudioMode(m.id)}
+                      className={cn(
+                        'rounded-lg px-2.5 py-1.5 text-[11px] font-semibold',
+                        audioMode === m.id ? 'bg-[#E07A5F] text-white' : 'bg-white/10 text-muted',
+                      )}
+                    >
+                      {m.labelBn}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {audioMode !== 'original' && (
+                <div>
+                  <p className="mb-1.5 text-[11px] font-semibold text-muted">মিউজিক ট্র্যাক (আপনার অনুমোদিত লাইব্রেরি)</p>
+                  {tracks.length === 0 ? (
+                    <p className="text-[11px] text-amber-400">লাইব্রেরি খালি — নিচের “মিউজিক লাইব্রেরি” থেকে ট্র্যাক আপলোড করুন।</p>
+                  ) : (
+                    <select
+                      value={musicTrackId}
+                      onChange={(e) => setMusicTrackId(e.target.value)}
+                      className="w-full rounded-lg border border-border-subtle bg-bg-1 px-2 py-1.5 text-[12px] text-cream"
+                    >
+                      <option value="auto">অটো (প্রতিবার ভিন্ন ট্র্যাক)</option>
+                      {tracks.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} · {MUSIC_VIBES.find((v) => v.id === t.vibe)?.labelBn ?? t.vibe}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
+
+              <div>
+                <p className="mb-1 text-[11px] font-semibold text-muted">ভয়েসওভার (ঐচ্ছিক — আপনার লেখা লাইন, আপনার এজেন্টের বাংলা ভয়েসে)</p>
+                <textarea
+                  value={voiceoverText}
+                  onChange={(e) => setVoiceoverText(e.target.value.slice(0, VOICEOVER_MAX_CHARS))}
+                  rows={2}
+                  placeholder="যেমন: বাবা-ছেলের ম্যাচিং পাঞ্জাবি — অর্ডার করতে ইনবক্স করুন"
+                  className="w-full rounded-lg border border-border-subtle bg-bg-1 px-2 py-1.5 text-[12px] text-cream placeholder:text-muted/50"
+                />
+              </div>
+
+              <label className="flex items-center justify-between">
+                <span className="text-[12px] font-semibold text-cream">ALMA লোগো intro/outro</span>
+                <input type="checkbox" checked={stings} onChange={(e) => setStings(e.target.checked)} className="h-4 w-4 accent-[#E07A5F]" />
+              </label>
+            </div>
+
             <button
               type="button"
               disabled={running || targets.length === 0}
@@ -1992,6 +2115,17 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
             </button>
           </div>
         )}
+
+        {/* Music library — owner-approved beds only (Islamic guardrail) */}
+        <div className="rounded-xl border border-border-subtle bg-card/80 p-3">
+          <button type="button" onClick={() => setShowMusicLib((v) => !v)} className="flex w-full items-center justify-between">
+            <span className="text-[12px] font-bold text-cream">🎵 মিউজিক লাইব্রেরি ({tracks.length})</span>
+            <span className="text-[11px] text-muted">{showMusicLib ? '▲' : '▼'}</span>
+          </button>
+          {showMusicLib && (
+            <MusicLibrary tracks={tracks} onChanged={setTracks} />
+          )}
+        </div>
 
         {/* Running / finished jobs */}
         {jobs.length > 0 && (
@@ -2033,6 +2167,95 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/** Owner-approved music beds: upload (signed direct), tag by vibe, delete. */
+function MusicLibrary({
+  tracks,
+  onChanged,
+}: {
+  tracks: StudioMusicTrack[]
+  onChanged: (tracks: StudioMusicTrack[]) => void
+}) {
+  const [vibe, setVibe] = useState<string>(MUSIC_VIBES[0].id)
+  const [pct, setPct] = useState<number | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const handleFile = useCallback(async (file: File | null) => {
+    if (!file) return
+    setPct(0)
+    try {
+      const track = await uploadMusicTrack(file, vibe, setPct)
+      onChanged([track, ...tracks])
+      toast.success('ট্র্যাক যোগ হয়েছে, স্যার')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'আপলোড ব্যর্থ')
+    } finally {
+      setPct(null)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }, [vibe, tracks, onChanged])
+
+  return (
+    <div className="mt-2.5 space-y-2">
+      <p className="text-[10px] text-muted">শুধু আপনার অনুমোদিত ট্র্যাকই রিলে বসে — সিস্টেম নিজে কোথাও থেকে মিউজিক আনে না।</p>
+      <div className="flex items-center gap-1.5">
+        {MUSIC_VIBES.map((v) => (
+          <button
+            key={v.id}
+            type="button"
+            onClick={() => setVibe(v.id)}
+            className={cn(
+              'rounded-lg px-2.5 py-1 text-[11px] font-semibold',
+              vibe === v.id ? 'bg-[#E07A5F] text-white' : 'bg-white/10 text-muted',
+            )}
+          >
+            {v.labelBn}
+          </button>
+        ))}
+      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="audio/mpeg,audio/mp4,audio/wav,audio/aac,.mp3,.m4a,.wav,.aac"
+        className="hidden"
+        onChange={(e) => void handleFile(e.target.files?.[0] ?? null)}
+      />
+      {pct !== null ? (
+        <div className="h-2 overflow-hidden rounded-full bg-white/10">
+          <div className="h-full rounded-full bg-[#E07A5F] transition-all" style={{ width: `${pct}%` }} />
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          className="w-full rounded-lg border border-dashed border-[#E07A5F]/40 bg-[#E07A5F]/[0.06] py-2 text-[11px] font-semibold text-[#E07A5F]"
+        >
+          + ট্র্যাক আপলোড ({MUSIC_VIBES.find((v) => v.id === vibe)?.labelBn} হিসেবে)
+        </button>
+      )}
+      {tracks.map((t) => (
+        <div key={t.id} className="flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-1/40 px-2.5 py-1.5">
+          <span className="min-w-0 flex-1 truncate text-[11px] text-cream">{t.name}</span>
+          <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[9px] text-muted">
+            {MUSIC_VIBES.find((v) => v.id === t.vibe)?.labelBn ?? t.vibe}
+          </span>
+          <button
+            type="button"
+            aria-label="মুছুন"
+            onClick={() => {
+              void deleteMusicTrack(t.id)
+                .then(() => onChanged(tracks.filter((x) => x.id !== t.id)))
+                .catch(() => toast.error('মুছতে সমস্যা হলো'))
+            }}
+            className="shrink-0 text-[11px] text-muted hover:text-red-400"
+          >
+            ✕
+          </button>
+        </div>
+      ))}
     </div>
   )
 }
