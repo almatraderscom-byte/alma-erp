@@ -81,10 +81,64 @@ struct OrdersListResponse: Decodable {
     let summary: Summary?
     struct Summary: Decodable {
         let total: Int?
+        let totalRevenue: Int?
+        let totalProfit: Int?
         let byStatus: [String: Int]?
         enum CodingKeys: String, CodingKey {
             case total
+            case totalRevenue = "total_revenue"
+            case totalProfit = "total_profit"
             case byStatus = "by_status"
+        }
+    }
+}
+
+/// The web page's date chips, replicated exactly (server-side startDate/endDate,
+/// dates in Asia/Dhaka — the business day the whole ERP runs on).
+enum OrdersDateFilter: Equatable {
+    case last30, today, yesterday, last7, thisMonth, lastMonth
+    case custom(start: Date, end: Date)
+
+    static let presets: [OrdersDateFilter] = [.today, .yesterday, .last7, .last30, .thisMonth, .lastMonth]
+
+    var label: String {
+        switch self {
+        case .today: return "Today"
+        case .yesterday: return "Yesterday"
+        case .last7: return "Last 7 days"
+        case .last30: return "Last 30 days"
+        case .thisMonth: return "This month"
+        case .lastMonth: return "Last month"
+        case .custom: return "কাস্টম"
+        }
+    }
+
+    /// (startDate, endDate) as YYYY-MM-DD in Asia/Dhaka.
+    var range: (String, String) {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Asia/Dhaka") ?? .current
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        fmt.timeZone = cal.timeZone
+        let now = Date()
+        let today = cal.startOfDay(for: now)
+        func d(_ x: Date) -> String { fmt.string(from: x) }
+        switch self {
+        case .today: return (d(today), d(today))
+        case .yesterday:
+            let y = cal.date(byAdding: .day, value: -1, to: today)!
+            return (d(y), d(y))
+        case .last7: return (d(cal.date(byAdding: .day, value: -6, to: today)!), d(today))
+        case .last30: return (d(cal.date(byAdding: .day, value: -29, to: today)!), d(today))
+        case .thisMonth:
+            let first = cal.date(from: cal.dateComponents([.year, .month], from: today))!
+            return (d(first), d(today))
+        case .lastMonth:
+            let firstThis = cal.date(from: cal.dateComponents([.year, .month], from: today))!
+            let firstLast = cal.date(byAdding: .month, value: -1, to: firstThis)!
+            let endLast = cal.date(byAdding: .day, value: -1, to: firstThis)!
+            return (d(firstLast), d(endLast))
+        case .custom(let s, let e): return (d(min(s, e)), d(max(s, e)))
         }
     }
 }
@@ -127,15 +181,30 @@ enum OrderStatusMeta {
         default: return s
         }
     }
+    /// EXACT web pill dot colours (globals.css tone-*) — owner rule: the native screen
+    /// wears the SAME theme, not SwiftUI stock colours.
     static func tint(_ s: String) -> Color {
         switch s {
-        case "Pending":   return .orange
-        case "Confirmed": return .blue
-        case "Packed":    return .indigo
-        case "Shipped":   return .teal
-        case "Delivered": return .green
-        case "CANCELLED", "Cancelled": return .gray
-        default:           return .red // returned family
+        case "Pending":   return Color(red: 0.961, green: 0.620, blue: 0.043) // amber  #F59E0B
+        case "Confirmed": return Color(red: 0.659, green: 0.333, blue: 0.969) // purple #A855F7
+        case "Packed":    return Color(red: 0.024, green: 0.714, blue: 0.831) // cyan   #06B6D4
+        case "Shipped":   return Color(red: 0.231, green: 0.510, blue: 0.965) // blue   #3B82F6
+        case "Delivered": return Color(red: 0.133, green: 0.773, blue: 0.369) // green  #22C55E
+        case "CANCELLED", "Cancelled":
+            return Color(red: 0.580, green: 0.639, blue: 0.722)               // slate  #94A3B8
+        case "RETURNED_PAID":
+            return Color(red: 0.961, green: 0.620, blue: 0.043)               // amber (web: paid=amber)
+        default:          return Color(red: 0.937, green: 0.267, blue: 0.267) // red    #EF4444
+        }
+    }
+
+    /// Payment tag colours (web: bKash pink, Nagad orange, COD amber).
+    static func paymentTint(_ p: String) -> Color {
+        switch p {
+        case "bKash": return Color(red: 0.925, green: 0.286, blue: 0.600)     // #EC4899
+        case "Nagad": return Color(red: 0.976, green: 0.451, blue: 0.086)     // #F97316
+        case "COD":   return Color(red: 0.961, green: 0.620, blue: 0.043)     // #F59E0B
+        default:       return Color(red: 0.231, green: 0.510, blue: 0.965)    // bank/card blue
         }
     }
 }
@@ -148,8 +217,19 @@ final class OrdersVM {
     var orders: [AlmaOrder] = []
     var byStatus: [String: Int] = [:]
     var total = 0
+    var revenue = 0
+    var profit = 0
     var statusFilter: String? = nil
+    var dateFilter: OrdersDateFilter = .last30   // the web's default window
+    var payment: String? = nil                   // COD | bKash | Nagad
+    var source: String? = nil                    // Facebook | WhatsApp | Instagram | Website
+    var sort = "newest"                          // newest | oldest | price | profit (web parity)
     var search = ""
+
+    /// Sentinel for the web's "All Returns" chip (no single server value — the family
+    /// is fetched unfiltered and narrowed client-side, same as the web page does).
+    static let returnsSentinel = "__RETURNS__"
+    static let returnStatuses: Set<String> = ["RETURNED", "RETURNED_PAID", "RETURNED_UNPAID"]
     var loading = false
     var error: String? = nil
     var authExpired = false
@@ -159,15 +239,31 @@ final class OrdersVM {
         error = nil
         defer { loading = false }
         do {
+            let (start, end) = dateFilter.range
+            let isReturns = statusFilter == Self.returnsSentinel
             let resp: OrdersListResponse = try await AlmaAPI.shared.get(
                 "/api/orders/orders",
                 query: ["business_id": "ALMA_LIFESTYLE",
-                        "status": statusFilter,
+                        "status": isReturns ? nil : statusFilter,
+                        "payment": payment,
+                        "source": source,
+                        "startDate": start,
+                        "endDate": end,
                         "search": search.isEmpty ? nil : search,
-                        "limit": "300"])
-            orders = resp.orders
+                        "limit": "500"])
+            var list = resp.orders
+            if isReturns { list = list.filter { Self.returnStatuses.contains($0.status) } }
+            switch sort {   // web sort options: newest (server order) / oldest / price / profit
+            case "oldest": list.reverse()
+            case "price": list.sort { ($0.sellPrice ?? 0) > ($1.sellPrice ?? 0) }
+            case "profit": list.sort { ($0.profit ?? 0) > ($1.profit ?? 0) }
+            default: break
+            }
+            orders = list
             byStatus = resp.summary?.byStatus ?? [:]
             total = resp.summary?.total ?? resp.orders.count
+            revenue = resp.summary?.totalRevenue ?? 0
+            profit = resp.summary?.totalProfit ?? 0
             authExpired = false
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
@@ -204,15 +300,24 @@ struct OrdersScreen: View {
     @State private var vm = OrdersVM()
     @State private var selected: AlmaOrder? = nil
     @State private var searchDebounce: Task<Void, Never>? = nil
+    @State private var showCustomDates = false
+    @State private var customStart = Date()
+    @State private var customEnd = Date()
+    @State private var showCreate = false
 
-    /// Escape hatches into the proven web screens (create order, full drawer, login).
+    /// Escape hatches into the proven web screens (full drawer, login).
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 10, pinnedViews: []) {
+                dateRow
+                statsRow
                 chipsRow
-                searchRow
+                HStack(spacing: 8) {
+                    searchRow
+                    filterMenu
+                }
                 if vm.authExpired { authExpiredCard }
                 if let err = vm.error { errorCard(err) }
                 if vm.loading && vm.orders.isEmpty { loadingRows }
@@ -233,6 +338,7 @@ struct OrdersScreen: View {
             .padding(.horizontal, 14)
             .padding(.top, 6)
         }
+        .background(AlmaSwiftTheme.rootBg(colorScheme).ignoresSafeArea())
         .claudeTopFade() // Claude-style top dissolve under the glass nav bar
         .refreshable { await vm.load() }
         .scrollDismissesKeyboard(.immediately)
@@ -242,7 +348,151 @@ struct OrdersScreen: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showCustomDates) { customDateSheet }
+        .sheet(isPresented: $showCreate) {
+            OrderCreateSheet(onCreated: { Task { await vm.load() } }, openWeb: openWeb)
+        }
         .overlay(alignment: .bottomTrailing) { newOrderFAB }
+    }
+
+    // ── Date chips (the web's Today / Yesterday / 7 / 30 / This month + custom) ──
+
+    private var dateRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(OrdersDateFilter.presets.enumerated()), id: \.offset) { _, f in
+                    let active = vm.dateFilter == f
+                    themeChip(f.label, active: active, tint: AlmaSwiftTheme.coral) {
+                        vm.dateFilter = f
+                        Task { await vm.load() }
+                    }
+                }
+                // Custom range → native date-picker sheet; active shows the range itself.
+                themeChip(customLabel, active: isCustomActive, tint: AlmaSwiftTheme.violet) {
+                    showCustomDates = true
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+        .padding(.top, 4)
+    }
+
+    private var isCustomActive: Bool {
+        if case .custom = vm.dateFilter { return true }
+        return false
+    }
+    private var customLabel: String {
+        if case .custom = vm.dateFilter {
+            let (s, e) = vm.dateFilter.range
+            return "\(s) → \(e)"
+        }
+        return "কাস্টম তারিখ"
+    }
+
+    private var customDateSheet: some View {
+        NavigationStack {
+            Form {
+                DatePicker("শুরু", selection: $customStart, displayedComponents: .date)
+                DatePicker("শেষ", selection: $customEnd, displayedComponents: .date)
+            }
+            .navigationTitle("কাস্টম তারিখ")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("দেখাও") {
+                        vm.dateFilter = .custom(start: customStart, end: customEnd)
+                        showCustomDates = false
+                        Task { await vm.load() }
+                    }
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("বাতিল") { showCustomDates = false }
+                }
+            }
+        }
+        .presentationDetents([.height(320)])
+    }
+
+    // ── Stats cards (ORDERS / REVENUE / PROFIT — same numbers the web header shows) ──
+
+    private var statsRow: some View {
+        HStack(spacing: 10) {
+            statCard("ORDERS", "\(vm.total)", .primary)
+            statCard("REVENUE", AlmaSwiftTheme.takaShort(vm.revenue), AlmaSwiftTheme.coral)
+            statCard("PROFIT", AlmaSwiftTheme.takaShort(vm.profit),
+                     vm.profit >= 0 ? Color.green : Color.red)
+        }
+    }
+
+    private func statCard(_ title: String, _ value: String, _ tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+            Text(value).font(.headline.weight(.bold)).foregroundStyle(tint)
+                .lineLimit(1).minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(AlmaSwiftTheme.cardBg(colorScheme),
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .shadow(color: AlmaSwiftTheme.cardShadow(colorScheme), radius: 6, y: 2)
+    }
+
+    // ── Channel / payment / sort (the web header's dropdowns, as one native menu) ──
+
+    private var filterMenu: some View {
+        Menu {
+            Picker("Channel", selection: Binding(get: { vm.source ?? "" }, set: { v in
+                vm.source = v.isEmpty ? nil : v
+                Task { await vm.load() }
+            })) {
+                Text("All channels").tag("")
+                ForEach(["Facebook", "WhatsApp", "Instagram", "Website"], id: \.self) { Text($0).tag($0) }
+            }
+            Picker("Payment", selection: Binding(get: { vm.payment ?? "" }, set: { v in
+                vm.payment = v.isEmpty ? nil : v
+                Task { await vm.load() }
+            })) {
+                Text("All payments").tag("")
+                ForEach(["COD", "bKash", "Nagad"], id: \.self) { Text($0).tag($0) }
+            }
+            Picker("Sort", selection: Binding(get: { vm.sort }, set: { v in
+                vm.sort = v
+                Task { await vm.load() }
+            })) {
+                Text("Newest").tag("newest")
+                Text("Oldest").tag("oldest")
+                Text("Price").tag("price")
+                Text("Profit").tag("profit")
+            }
+        } label: {
+            Image(systemName: "line.3.horizontal.decrease.circle" +
+                  ((vm.source != nil || vm.payment != nil) ? ".fill" : ""))
+                .font(.title3)
+                .foregroundStyle(AlmaSwiftTheme.violet)
+                .frame(width: 42, height: 42)
+                .background(AlmaSwiftTheme.cardBg(colorScheme),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .shadow(color: AlmaSwiftTheme.cardShadow(colorScheme), radius: 6, y: 2)
+        }
+    }
+
+    /// Theme chip — the web's pill look on the app's own card surface (never material grey).
+    private func themeChip(_ label: String, active: Bool, tint: Color,
+                           action: @escaping () -> Void) -> some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            action()
+        } label: {
+            Text(label)
+                .font(.footnote.weight(active ? .semibold : .regular))
+                .foregroundStyle(active ? tint : .secondary)
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(active ? tint.opacity(colorScheme == .dark ? 0.18 : 0.12)
+                                   : AlmaSwiftTheme.cardBg(colorScheme),
+                            in: Capsule())
+                .overlay(Capsule().strokeBorder(active ? tint.opacity(0.5) : .clear, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     // Status chips — single edge-to-edge scrollable row, like the web (build 33 look).
@@ -250,6 +500,8 @@ struct OrdersScreen: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 chip(nil, label: "All", count: vm.total)
+                chip(OrdersVM.returnsSentinel, label: "All Returns",
+                     count: OrdersVM.returnStatuses.reduce(0) { $0 + (vm.byStatus[$1] ?? 0) })
                 ForEach(OrderStatusMeta.filterable, id: \.self) { s in
                     chip(s, label: OrderStatusMeta.label(s), count: vm.byStatus[s] ?? 0)
                 }
@@ -261,6 +513,7 @@ struct OrdersScreen: View {
 
     private func chip(_ status: String?, label: String, count: Int) -> some View {
         let active = vm.statusFilter == status
+        let tint = status.map(OrderStatusMeta.tint) ?? AlmaSwiftTheme.coral
         return Button {
             UISelectionFeedbackGenerator().selectionChanged()
             vm.statusFilter = status
@@ -269,13 +522,16 @@ struct OrdersScreen: View {
             HStack(spacing: 5) {
                 if let status { Circle().fill(OrderStatusMeta.tint(status)).frame(width: 7, height: 7) }
                 Text(label).font(.footnote.weight(active ? .semibold : .regular))
+                    .foregroundStyle(active ? tint : .secondary)
                 if count > 0 {
                     Text("\(count)").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 7)
-            .background(active ? AnyShapeStyle(.thickMaterial) : AnyShapeStyle(.thinMaterial), in: Capsule())
-            .overlay(Capsule().strokeBorder(active ? Color.accentColor.opacity(0.55) : .clear, lineWidth: 1))
+            .background(active ? tint.opacity(colorScheme == .dark ? 0.18 : 0.12)
+                               : AlmaSwiftTheme.cardBg(colorScheme),
+                        in: Capsule())
+            .overlay(Capsule().strokeBorder(active ? tint.opacity(0.5) : .clear, lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
@@ -297,20 +553,22 @@ struct OrdersScreen: View {
                 .autocorrectionDisabled()
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .background(AlmaSwiftTheme.cardBg(colorScheme),
+                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .shadow(color: AlmaSwiftTheme.cardShadow(colorScheme), radius: 6, y: 2)
     }
 
     private var newOrderFAB: some View {
-        // Order CREATION stays on the proven web form — one tap away, nothing lost.
         Button {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            openWeb("/orders", "নতুন অর্ডার") // create stays on the proven web form
+            showCreate = true   // NATIVE order form (web form stays reachable inside it)
         } label: {
             Label("নতুন অর্ডার", systemImage: "plus")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.white)
                 .padding(.horizontal, 16).padding(.vertical, 12)
-                .background(Color(red: 0.878, green: 0.478, blue: 0.373), in: Capsule()) // ALMA coral
+                .background(AlmaSwiftTheme.coral, in: Capsule())
+                .shadow(color: AlmaSwiftTheme.coral.opacity(0.35), radius: 8, y: 3)
         }
         .padding(.trailing, 16)
         .padding(.bottom, 12)
@@ -353,6 +611,7 @@ struct OrdersScreen: View {
 @available(iOS 17.0, *)
 private struct OrderCard: View {
     let order: AlmaOrder
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -378,8 +637,9 @@ private struct OrderCard: View {
                 Spacer()
                 if let p = order.payment, !p.isEmpty {
                     Text(p).font(.caption2.weight(.semibold))
+                        .foregroundStyle(OrderStatusMeta.paymentTint(p))
                         .padding(.horizontal, 7).padding(.vertical, 3)
-                        .background(.quaternary, in: Capsule())
+                        .background(OrderStatusMeta.paymentTint(p).opacity(0.13), in: Capsule())
                 }
                 if let c = order.courier, !c.isEmpty {
                     Text(c).font(.caption2).foregroundStyle(.secondary)
@@ -387,7 +647,9 @@ private struct OrderCard: View {
             }
         }
         .padding(14)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .background(AlmaSwiftTheme.cardBg(colorScheme),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: AlmaSwiftTheme.cardShadow(colorScheme), radius: 6, y: 2)
         .contentShape(RoundedRectangle(cornerRadius: 16))
     }
 

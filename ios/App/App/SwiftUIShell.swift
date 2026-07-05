@@ -82,6 +82,40 @@ final class WeakRef<T: AnyObject> {
     weak var value: T?
 }
 
+// MARK: - Shared SwiftUI palette
+
+/// The ALMA theme, mirrored for SwiftUI screens (owner rule: native screens must wear
+/// the app's OWN colours — cream/aurora light, deep-violet dark, coral+violet accents —
+/// never stock system greys). Values must stay equal to AlmaTheme (UIKit) and the web
+/// tokens; resolved via colorScheme so theme flips animate correctly.
+enum AlmaSwiftTheme {
+    static let coral = Color(red: 0.878, green: 0.478, blue: 0.373)   // #E07A5F
+    static let violet = Color(red: 0.655, green: 0.545, blue: 0.980)  // #a78bfa
+    static let sage = Color(red: 0.506, green: 0.698, blue: 0.604)    // #81B29A
+
+    static func rootBg(_ s: ColorScheme) -> Color {
+        s == .dark ? Color(red: 0.043, green: 0.039, blue: 0.070)     // #0b0a12
+                   : Color(red: 0.949, green: 0.941, blue: 0.972)     // #F2F0F8 cream
+    }
+    /// Raised card surface (a step above rootBg, same as the More menu's cards).
+    static func cardBg(_ s: ColorScheme) -> Color {
+        s == .dark ? Color(red: 0.090, green: 0.082, blue: 0.129)     // #171521
+                   : .white
+    }
+    /// Whisper shadow so light-mode white cards separate from the cream page.
+    static func cardShadow(_ s: ColorScheme) -> Color {
+        .black.opacity(s == .dark ? 0 : 0.05)
+    }
+
+    /// Whole-taka display with the web's short scale: ৳1.44L / ৳35.1K / ৳960.
+    static func takaShort(_ amount: Int) -> String {
+        let a = abs(amount), sign = amount < 0 ? "-" : ""
+        if a >= 100_000 { return "\(sign)৳\(String(format: "%.2f", Double(a) / 100_000))L" }
+        if a >= 10_000 { return "\(sign)৳\(String(format: "%.1f", Double(a) / 1_000))K" }
+        return "\(sign)৳\(a.formatted())"
+    }
+}
+
 // MARK: - Tab builders (S6 wiring)
 
 extension AlmaTabBarController {
