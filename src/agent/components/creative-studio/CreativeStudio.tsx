@@ -57,7 +57,9 @@ import {
   uploadMusicTrack,
   deleteMusicTrack,
   setReelCover,
+  finishVideo,
   type StudioMusicTrack,
+  type VideoFinishTemplates,
   type GalleryItem,
   type StudioConfig,
   type BrandStatus,
@@ -1147,7 +1149,14 @@ function GalleryView() {
             </button>
             {selected.storagePath?.endsWith('.mp4') || selected.type === 'video_gen' ? (
               // eslint-disable-next-line jsx-a11y/media-has-caption
-              <video src={selected.previewUrl} className="max-h-full max-w-full rounded-lg" controls autoPlay playsInline />
+              <video
+                key={showBranded && selected.brandedUrl ? 'branded' : 'original'}
+                src={(showBranded && selected.brandedUrl) || selected.previewUrl}
+                className="max-h-full max-w-full rounded-lg"
+                controls
+                autoPlay
+                playsInline
+              />
             ) : (
               <motion.img
                 key={showBranded && selected.brandedUrl ? 'branded' : 'original'}
@@ -1233,13 +1242,61 @@ function GalleryView() {
                     ))}
                   </div>
                 )}
-                <button
-                  type="button"
-                  onClick={() => handleDownload(selected.previewUrl, `alma-${selected.id}.mp4`)}
-                  className="rounded-full bg-white/15 px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25 backdrop-blur-md"
-                >
-                  ডাউনলোড
-                </button>
+                {selected.brandedUrl && (
+                  <div className="flex overflow-hidden rounded-full bg-white/10 ring-1 ring-white/20">
+                    <button
+                      type="button"
+                      onClick={() => setShowBranded(true)}
+                      className={cn('px-4 py-1.5 text-[12px] font-semibold', showBranded ? 'bg-[#E07A5F] text-white' : 'text-white/80')}
+                    >
+                      টেমপ্লেট সহ
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowBranded(false)}
+                      className={cn('px-4 py-1.5 text-[12px] font-semibold', !showBranded ? 'bg-[#E07A5F] text-white' : 'text-white/80')}
+                    >
+                      আসল
+                    </button>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  {selected.status === 'executed' && (
+                    <button
+                      type="button"
+                      onClick={() => setShowFinish((v) => !v)}
+                      className="rounded-full bg-[#E07A5F] px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25"
+                    >
+                      {showFinish ? 'বন্ধ করুন' : 'টেমপ্লেট ফিনিশিং'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleDownload((showBranded && selected.brandedUrl) || selected.previewUrl, `alma-${selected.id}.mp4`)}
+                    className="rounded-full bg-white/15 px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25 backdrop-blur-md"
+                  >
+                    ডাউনলোড
+                  </button>
+                </div>
+                {showFinish && (
+                  <div className="w-[min(92vw,420px)]">
+                    <VideoFinishPanel
+                      pendingActionId={selected.id}
+                      onDone={() => {
+                        setShowFinish(false)
+                        void fetchGallery(1).then((d) => {
+                          setItems(d.items)
+                          const fresh = d.items.find((it) => it.id === selected.id)
+                          if (fresh) {
+                            setSelected(fresh)
+                            setShowBranded(Boolean(fresh.brandedUrl))
+                          }
+                        })
+                        toast.success('টেমপ্লেট বসে গেছে — "টেমপ্লেট সহ" ভার্সন দেখুন, স্যার')
+                      }}
+                    />
+                  </div>
+                )}
               </div>
             ) : null}
 
@@ -2167,6 +2224,98 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * V3 — motion-template finishing for a reel: the video twin of the image
+ * FinishPanel. Owner toggles templates + types the values; the worker renders
+ * with Remotion and the finished version lands on this same gallery item.
+ */
+function VideoFinishPanel({ pendingActionId, onDone }: { pendingActionId: string; onDone: () => void }) {
+  const [price, setPrice] = useState('')
+  const [code, setCode] = useState('')
+  const [name, setName] = useState('')
+  const [cta, setCta] = useState('')
+  const [days, setDays] = useState('')
+  const [watermark, setWatermark] = useState(true)
+  const [endCard, setEndCard] = useState(true)
+  const [state, setState] = useState<'idle' | 'queued' | 'working'>('idle')
+  const [progress, setProgress] = useState('')
+
+  const submit = useCallback(async () => {
+    const templates: VideoFinishTemplates = {}
+    if (price.trim()) templates.pricePop = { price: price.trim() }
+    if (code.trim()) templates.lowerThird = { code: code.trim(), name: name.trim() || undefined }
+    if (watermark) templates.logoWatermark = true
+    if (endCard) templates.endCard = { cta: cta.trim() || undefined, code: code.trim() || undefined, price: price.trim() || undefined }
+    if (Number(days) > 0) templates.countdown = { days: Number(days) }
+
+    setState('queued')
+    try {
+      const res = await finishVideo(pendingActionId, templates)
+      setState('working')
+      const poll = window.setInterval(() => {
+        void fetchVideoJob(res.pendingActionId)
+          .then((job) => {
+            if (job.videoProgress) setProgress(`ধাপ ${job.videoProgress.step}/${job.videoProgress.total}: ${job.videoProgress.labelBn}`)
+            if (job.status === 'executed') {
+              window.clearInterval(poll)
+              onDone()
+            } else if (job.status === 'failed') {
+              window.clearInterval(poll)
+              setState('idle')
+              toast.error(job.error ?? 'টেমপ্লেট বসানো ব্যর্থ হয়েছে')
+            }
+          })
+          .catch(() => {})
+      }, 4000)
+    } catch (err) {
+      setState('idle')
+      toast.error(err instanceof Error ? err.message : 'শুরু করা যায়নি')
+    }
+  }, [pendingActionId, price, code, name, cta, days, watermark, endCard, onDone])
+
+  const inputCls = 'w-full rounded-lg border border-white/15 bg-black/40 px-2.5 py-2 text-[13px] text-white placeholder:text-white/40'
+  return (
+    <div className="space-y-2 rounded-2xl bg-black/70 p-3 ring-1 ring-white/15 backdrop-blur-md">
+      {state === 'working' ? (
+        <div className="flex items-center gap-2.5 py-2">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
+          <span className="text-[12px] text-white/85">{progress || 'টেমপ্লেট রেন্ডার হচ্ছে… (১–৩ মিনিট)'}</span>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="দাম (৳)" className={inputCls} />
+            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="প্রোডাক্ট কোড" className={inputCls} />
+          </div>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="প্রোডাক্টের নাম (ঐচ্ছিক)" className={inputCls} />
+          <div className="grid grid-cols-2 gap-2">
+            <input value={cta} onChange={(e) => setCta(e.target.value)} placeholder="CTA (ডিফল্ট: অর্ডার করতে ইনবক্স করুন)" className={inputCls} />
+            <input value={days} onChange={(e) => setDays(e.target.value.replace(/\D/g, ''))} placeholder="অফার শেষ হতে দিন" className={inputCls} />
+          </div>
+          <div className="flex items-center gap-4 py-0.5">
+            <label className="flex items-center gap-1.5 text-[12px] text-white/85">
+              <input type="checkbox" checked={watermark} onChange={(e) => setWatermark(e.target.checked)} className="h-3.5 w-3.5 accent-[#E07A5F]" />
+              লোগো ওয়াটারমার্ক
+            </label>
+            <label className="flex items-center gap-1.5 text-[12px] text-white/85">
+              <input type="checkbox" checked={endCard} onChange={(e) => setEndCard(e.target.checked)} className="h-3.5 w-3.5 accent-[#E07A5F]" />
+              এন্ড কার্ড (CTA)
+            </label>
+          </div>
+          <button
+            type="button"
+            disabled={state !== 'idle'}
+            onClick={() => void submit()}
+            className="w-full rounded-xl bg-[#E07A5F] py-2.5 text-[13px] font-bold text-white disabled:opacity-50"
+          >
+            {state === 'queued' ? 'শুরু হচ্ছে…' : 'টেমপ্লেট বসাও'}
+          </button>
+        </>
+      )}
     </div>
   )
 }
