@@ -34,6 +34,7 @@ const STEPS_BN = [
   'ভিডিও বিশ্লেষণ হচ্ছে',
   'কাট প্ল্যান হচ্ছে',
   'রিল রেন্ডার হচ্ছে',
+  'ক্যাপশন/অডিও বসছে',
   'আপলোড হচ্ছে',
 ]
 
@@ -306,15 +307,36 @@ export async function processVideoEdit(job, { supabase, callJobResult }) {
 
     await reportProgress(supabase, pendingActionId, 4)
     await renderOutput({ inputFile, outFile, plan, output, hasAudio, isHdr })
+
+    // ── Phase V2: captions + soundtrack + stings + cover frames ────────────
+    await reportProgress(supabase, pendingActionId, 5)
+    const { applyPostLayers, extractCoverCandidates } = await import('./video-post.mjs')
+    const post = await applyPostLayers({
+      supabase,
+      workDir,
+      reelFile: outFile,
+      payload,
+      output,
+    })
+    if (post.warnings.length) {
+      console.warn(`[worker] video-edit ${pendingActionId} — post warnings: ${post.warnings.join(', ')}`)
+    }
+    const finalFile = post.finalFile
+    const coverFiles = await extractCoverCandidates({
+      file: finalFile,
+      workDir,
+      durationSec: plan.totalSec,
+    })
+
     await execFileAsync(
       'ffmpeg',
-      ['-y', '-ss', '0.5', '-i', outFile, '-frames:v', '1', '-vf', 'scale=480:-2', thumbFile],
+      ['-y', '-ss', '0.5', '-i', finalFile, '-frames:v', '1', '-vf', 'scale=480:-2', thumbFile],
       { timeout: PROBE_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
     ).catch(() => { /* thumbnail is optional */ })
 
-    await reportProgress(supabase, pendingActionId, 5)
+    await reportProgress(supabase, pendingActionId, 6)
     const storagePath = `generated/${pendingActionId}.mp4`
-    const videoBuffer = await readFile(outFile)
+    const videoBuffer = await readFile(finalFile)
     const { error: upErr } = await supabase.storage
       .from('agent-files')
       .upload(storagePath, videoBuffer, { contentType: 'video/mp4', upsert: true })
@@ -330,15 +352,30 @@ export async function processVideoEdit(job, { supabase, callJobResult }) {
       if (thumbErr) thumbPath = null
     } catch { thumbPath = null }
 
+    // cover candidates for the Gallery picker (best-effort)
+    const coverCandidates = []
+    for (let i = 0; i < coverFiles.length; i++) {
+      try {
+        const coverStorage = `generated/${pendingActionId}-cover-${i + 1}.jpg`
+        const { error: coverErr } = await supabase.storage
+          .from('agent-files')
+          .upload(coverStorage, await readFile(coverFiles[i]), { contentType: 'image/jpeg', upsert: true })
+        if (!coverErr) coverCandidates.push(coverStorage)
+      } catch { /* skip */ }
+    }
+
     await callJobResult(pendingActionId, 'success', {
       storagePath,
       ...(thumbPath ? { thumbPath } : {}),
+      ...(coverCandidates.length ? { coverCandidates } : {}),
       mediaType: 'video',
       recipeId,
       aspect,
       durationSec: plan.totalSec,
       segments: plan.segments.length,
       sourcePath: videoPath,
+      postApplied: post.applied,
+      ...(post.warnings.length ? { postWarnings: post.warnings } : {}),
     })
     console.log(`[worker] video-edit ${pendingActionId} — done → ${storagePath} (${plan.segments.length} cuts, ${plan.totalSec}s)`)
   } finally {

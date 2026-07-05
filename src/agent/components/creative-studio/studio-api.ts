@@ -24,6 +24,8 @@ export type GalleryItem = {
   /** branded variant (logo + code + hook), when produced */
   brandedUrl?: string | null
   storagePath: string | null
+  /** V2: reel cover picker options (video_edit items) */
+  coverOptions?: Array<{ path: string; url: string }>
   error: string | null
 }
 
@@ -296,12 +298,91 @@ export async function deleteStudioVideo(id: string): Promise<void> {
   if (!res.ok) throw new Error('delete_failed')
 }
 
+export type StudioMusicTrack = {
+  id: string
+  path: string
+  name: string
+  vibe: string
+  sizeBytes: number
+  uploadedAt: string
+}
+
+export async function fetchMusicTracks(): Promise<StudioMusicTrack[]> {
+  const res = await fetch('/api/assistant/creative-studio/music')
+  if (!res.ok) throw new Error('music_failed')
+  const data = await res.json()
+  return (data.tracks ?? []) as StudioMusicTrack[]
+}
+
+/** Owner-approved music beds only — uploaded from his own files, signed direct upload. */
+export async function uploadMusicTrack(
+  file: File,
+  vibe: string,
+  onProgress?: (pct: number) => void,
+): Promise<StudioMusicTrack> {
+  const urlRes = await fetch('/api/assistant/creative-studio/music/upload-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileName: file.name, sizeBytes: file.size }),
+  })
+  const urlData = await urlRes.json().catch(() => ({}))
+  if (!urlRes.ok) throw new Error(urlData.error ?? 'upload_url_failed')
+
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', urlData.uploadUrl)
+    xhr.setRequestHeader('Content-Type', urlData.contentType ?? file.type ?? 'audio/mpeg')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100))
+    }
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`upload_failed_${xhr.status}`))
+    xhr.onerror = () => reject(new Error('upload_network_error'))
+    xhr.send(file)
+  })
+
+  const regRes = await fetch('/api/assistant/creative-studio/music', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ uploadId: urlData.uploadId, path: urlData.path, name: file.name, vibe, sizeBytes: file.size }),
+  })
+  const regData = await regRes.json().catch(() => ({}))
+  if (!regRes.ok) throw new Error(regData.error ?? 'register_failed')
+  return regData.track as StudioMusicTrack
+}
+
+export async function deleteMusicTrack(id: string): Promise<void> {
+  const res = await fetch(`/api/assistant/creative-studio/music?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('delete_failed')
+}
+
+/** Set a reel's cover from the worker's candidate frames. */
+export async function setReelCover(pendingActionId: string, coverPath: string): Promise<{ thumbUrl: string | null }> {
+  const res = await fetch('/api/assistant/creative-studio/video/cover', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pendingActionId, coverPath }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? 'cover_failed')
+  return data as { thumbUrl: string | null }
+}
+
+export type VideoRunOptions = {
+  captions?: boolean
+  audioMode?: 'original' | 'music' | 'music_duck'
+  musicTrackId?: string
+  voiceoverText?: string
+  stings?: boolean
+}
+
 export async function runVideoRecipe(body: {
   videoPath: string
   videoName: string
   recipeId: string
   targets: number[]
   aspect: string
+  options?: VideoRunOptions
 }): Promise<{ jobs: Array<{ pendingActionId: string; label: string; targetSec: number }>; message: string }> {
   const res = await fetch('/api/assistant/creative-studio/video/run', {
     method: 'POST',

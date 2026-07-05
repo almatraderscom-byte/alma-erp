@@ -9,8 +9,13 @@ import { prisma } from '@/lib/prisma'
 import {
   getVideoRecipe,
   VIDEO_ASPECTS,
+  AUDIO_MODES,
+  VOICEOVER_MAX_CHARS,
   type VideoAspect,
+  type VideoAudioMode,
+  type VideoEditOptions,
 } from '@/lib/creative-studio/video-recipes'
+import { getMusicTrack, pickMusicTrackAuto } from '@/lib/creative-studio/music-library'
 
 export const runtime = 'nodejs'
 
@@ -24,7 +29,14 @@ export async function POST(req: NextRequest) {
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
   if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
-  let body: { videoPath?: string; videoName?: string; recipeId?: string; targets?: number[]; aspect?: string }
+  let body: {
+    videoPath?: string
+    videoName?: string
+    recipeId?: string
+    targets?: number[]
+    aspect?: string
+    options?: VideoEditOptions
+  }
   try { body = await req.json() } catch {
     return Response.json({ error: 'invalid_json' }, { status: 400 })
   }
@@ -46,6 +58,51 @@ export async function POST(req: NextRequest) {
     .sort((a, b) => a - b)
   if (targets.length === 0) return Response.json({ error: 'invalid_targets' }, { status: 422 })
 
+  // ── Phase V2 options (all optional; defaults keep V1 behaviour) ──────────
+  const opts = body.options ?? {}
+  const captions = opts.captions === true
+  const audioMode: VideoAudioMode = AUDIO_MODES.some((m) => m.id === opts.audioMode)
+    ? (opts.audioMode as VideoAudioMode)
+    : 'original'
+  const voiceoverText = String(opts.voiceoverText ?? '').trim().slice(0, VOICEOVER_MAX_CHARS)
+  const stings = opts.stings === true
+
+  // Music bed: explicit track, or the deterministic round-robin for variety.
+  // Owner-approved library only — no music is ever fetched from outside.
+  let musicPath: string | null = null
+  let musicName: string | null = null
+  if (audioMode !== 'original' || voiceoverText) {
+    const track = opts.musicTrackId && opts.musicTrackId !== 'auto'
+      ? await getMusicTrack(String(opts.musicTrackId))
+      : await pickMusicTrackAuto()
+    if (!track && audioMode !== 'original') {
+      return Response.json(
+        { error: 'আগে মিউজিক সেকশনে অন্তত একটা ট্র্যাক আপলোড করুন — অনুমোদিত ট্র্যাক ছাড়া মিউজিক বসানো হয় না।' },
+        { status: 422 },
+      )
+    }
+    musicPath = track?.path ?? null
+    musicName = track?.name ?? null
+  }
+
+  // Sting needs the brand logo — resolve its storage path once here (the
+  // worker has no session auth; it gets the path in the payload).
+  let brandLogoPath: string | null = null
+  if (stings) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const brandDb = prisma as any
+    for (const kind of ['logo_transparent', 'logo']) {
+      const row = await brandDb.brandAsset.findUnique({ where: { kind } }).catch(() => null)
+      if (row?.path) { brandLogoPath = row.path as string; break }
+    }
+    if (!brandLogoPath) {
+      return Response.json(
+        { error: 'লোগো intro/outro-র জন্য আগে Finishing ট্যাবে লোগো আপলোড করুন।' },
+        { status: 422 },
+      )
+    }
+  }
+
   const videoName = String(body.videoName ?? 'shoot').slice(0, 80)
   const jobs: Array<{ pendingActionId: string; label: string; targetSec: number }> = []
   for (const targetSec of targets) {
@@ -64,8 +121,16 @@ export async function POST(req: NextRequest) {
           recipeId: recipe.id,
           targetSec,
           aspect,
+          // V2 caption + audio layer (worker reads these; absent = V1 behaviour)
+          captions,
+          audioMode,
+          musicPath,
+          musicName,
+          voiceoverText: voiceoverText || null,
+          stings,
+          brandLogoPath,
         },
-        summary: `🎬 ${recipe.labelBn} রিল ${targetSec}s ${aspect} — ${videoName}`,
+        summary: `🎬 ${recipe.labelBn} রিল ${targetSec}s ${aspect} — ${videoName}${captions ? ' · ক্যাপশন' : ''}${musicPath ? ' · মিউজিক' : ''}`,
         costEstimate: 0, // ffmpeg on the VPS — no API spend
         status: 'approved',
       },

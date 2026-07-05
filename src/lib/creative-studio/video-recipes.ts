@@ -92,6 +92,46 @@ export const VIDEO_ASPECTS: Array<{ id: VideoAspect; label: string; width: numbe
 export const VIDEO_UPLOAD_MAX_BYTES = 500 * 1024 * 1024 // ~500 MB, 1–2 min iPhone HEVC
 export const VIDEO_UPLOAD_EXTENSIONS = ['mp4', 'mov', 'm4v'] as const
 
+// ── Phase V2: caption + audio layer (still zero LLM) ────────────────────────
+
+/** Owner-approved music beds only (Islamic guardrail) — tagged by vibe. */
+export const MUSIC_VIBES = [
+  { id: 'celebration', labelBn: 'উৎসব' },
+  { id: 'calm', labelBn: 'শান্ত' },
+  { id: 'energetic', labelBn: 'এনার্জেটিক' },
+] as const
+export type MusicVibe = (typeof MUSIC_VIBES)[number]['id']
+
+export const MUSIC_UPLOAD_MAX_BYTES = 25 * 1024 * 1024
+export const MUSIC_UPLOAD_EXTENSIONS = ['mp3', 'm4a', 'wav', 'aac'] as const
+
+/**
+ * How the reel's soundtrack is built:
+ *  original    — the shoot's own audio, untouched (V1 behaviour)
+ *  music       — music bed replaces the original audio entirely
+ *  music_duck  — original speech stays on top; music auto-ducks under it
+ */
+export type VideoAudioMode = 'original' | 'music' | 'music_duck'
+export const AUDIO_MODES: Array<{ id: VideoAudioMode; labelBn: string }> = [
+  { id: 'original', labelBn: 'শুটের অডিও' },
+  { id: 'music', labelBn: 'শুধু মিউজিক' },
+  { id: 'music_duck', labelBn: 'কথা + মিউজিক' },
+]
+
+export const VOICEOVER_MAX_CHARS = 220
+
+export type VideoEditOptions = {
+  /** burn Bangla captions (Whisper transcription — mechanical, allowed) */
+  captions?: boolean
+  audioMode?: VideoAudioMode
+  /** picked track id, or 'auto' for the deterministic round-robin */
+  musicTrackId?: string
+  /** owner-typed line, rendered with the existing Google Bangla TTS — never LLM-written */
+  voiceoverText?: string
+  /** logo intro/outro stings (pre-rendered once per aspect, concatenated) */
+  stings?: boolean
+}
+
 export type CutSegment = {
   /** source start time (seconds) */
   start: number
