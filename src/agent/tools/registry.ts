@@ -33,6 +33,7 @@ import { ADVISOR_TOOLS } from './advisor-tools'
 import { FAMILY_TOOLS, place_agent_call } from './personal-tools'
 import { OWNER_TODO_TOOLS } from './owner-todo-tools'
 import { TRYON_TOOLS } from './tryon-tools'
+import { STUDIO_TOOLS } from './studio-tools'
 import { DIAGNOSTIC_TOOLS } from './diagnostic-tools'
 import { CONTENT_ENGINE_TOOLS } from './content-engine-tools'
 import { COWORKER_TOOLS } from './coworker-tools'
@@ -514,6 +515,7 @@ export const TOOLS: AgentTool[] = [
   ...VISION_TOOLS,
   ...SIMULATE_TOOLS,
   ...TRYON_TOOLS,
+  ...STUDIO_TOOLS,
   ...DIAGNOSTIC_TOOLS,
   ...CONTENT_ENGINE_TOOLS,
   ...COWORKER_TOOLS,
