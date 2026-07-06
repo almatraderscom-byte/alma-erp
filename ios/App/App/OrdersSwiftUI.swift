@@ -214,9 +214,15 @@ enum OrderStatusMeta {
 @available(iOS 17.0, *)
 @Observable
 final class OrdersVM {
-    var orders: [AlmaOrder] = []
-    var byStatus: [String: Int] = [:]
-    var total = 0
+    /// The FULL window (all statuses), exactly as the server returns it — already
+    /// archive-stripped. Every chip count + KPI is derived from THIS, so the numbers
+    /// can never disagree with the cards on screen (the server's summary counts archived
+    /// rows the list omits, so we never trust it — owner bug 2026-07-06).
+    var allOrders: [AlmaOrder] = []
+    var orders: [AlmaOrder] = []       // the visible slice = allOrders filtered by statusFilter
+    var byStatus: [String: Int] = [:]  // per-status counts over the whole window (chip counts)
+    var windowCount = 0                // all orders in the window (the "All" chip)
+    var total = 0                      // KPI ORDERS = what's actually shown for the active filter
     var revenue = 0
     var profit = 0
     var statusFilter: String? = nil
@@ -240,11 +246,13 @@ final class OrdersVM {
         defer { loading = false }
         do {
             let (start, end) = dateFilter.range
-            let isReturns = statusFilter == Self.returnsSentinel
+            // ALWAYS fetch the whole window (no server status filter) so the chip counts
+            // and the visible list come from ONE source of truth. The status filter is
+            // applied client-side in applyFilter() — this makes chip taps instant AND
+            // keeps every count exactly equal to the cards you see when you tap it.
             let resp: OrdersListResponse = try await AlmaAPI.shared.get(
                 "/api/orders/orders",
                 query: ["business_id": "ALMA_LIFESTYLE",
-                        "status": isReturns ? nil : statusFilter,
                         "payment": payment,
                         "source": source,
                         "startDate": start,
@@ -252,18 +260,14 @@ final class OrdersVM {
                         "search": search.isEmpty ? nil : search,
                         "limit": "500"])
             var list = resp.orders
-            if isReturns { list = list.filter { Self.returnStatuses.contains($0.status) } }
             switch sort {   // web sort options: newest (server order) / oldest / price / profit
             case "oldest": list.reverse()
             case "price": list.sort { ($0.sellPrice ?? 0) > ($1.sellPrice ?? 0) }
             case "profit": list.sort { ($0.profit ?? 0) > ($1.profit ?? 0) }
             default: break
             }
-            orders = list
-            byStatus = resp.summary?.byStatus ?? [:]
-            total = resp.summary?.total ?? resp.orders.count
-            revenue = resp.summary?.totalRevenue ?? 0
-            profit = resp.summary?.totalProfit ?? 0
+            allOrders = list
+            applyFilter()
             authExpired = false
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
@@ -272,10 +276,40 @@ final class OrdersVM {
         }
     }
 
+    /// Re-derive the visible list + all counts from `allOrders` for the active status
+    /// filter. Pure/local — no network — so tapping a status chip is instant and the
+    /// numbers are guaranteed to match the rows shown.
+    func applyFilter() {
+        // Chip counts: per-status over the whole window (independent of the active chip,
+        // exactly like the web header — each chip shows what you'd get if you tapped it).
+        var counts: [String: Int] = [:]
+        for o in allOrders { counts[o.status, default: 0] += 1 }
+        byStatus = counts
+        windowCount = allOrders.count
+
+        // Visible slice for the active filter.
+        let visible: [AlmaOrder]
+        if statusFilter == Self.returnsSentinel {
+            visible = allOrders.filter { Self.returnStatuses.contains($0.status) }
+        } else if let s = statusFilter {
+            visible = allOrders.filter { $0.status == s }
+        } else {
+            visible = allOrders
+        }
+        orders = visible
+        total = visible.count
+        // KPIs reflect exactly what's on screen (self-consistent with ordersSummaryFromSlice:
+        // revenue = Delivered sell price, profit = realized profit on Delivered rows).
+        revenue = visible.reduce(0) { $0 + ($1.status == "Delivered" ? ($1.sellPrice ?? 0) : 0) }
+        profit  = visible.reduce(0) { $0 + ($1.status == "Delivered" ? ($1.profit ?? 0) : 0) }
+    }
+
     /// Optimistic status change with rollback — same behavior the web drawer has.
     func setStatus(_ order: AlmaOrder, to status: String, reason: String? = nil) async -> Bool {
         let old = order.status
-        if let i = orders.firstIndex(where: { $0.id == order.id }) { orders[i].status = status }
+        // Optimistic: update the source of truth (allOrders) and re-derive everything.
+        if let i = allOrders.firstIndex(where: { $0.id == order.id }) { allOrders[i].status = status }
+        applyFilter()
         do {
             var body: [String: String] = ["id": order.id, "status": status]
             if let reason { body["reason"] = reason }
@@ -284,7 +318,8 @@ final class OrdersVM {
             await load() // refresh counts + row (server may cascade fields)
             return true
         } catch {
-            if let i = orders.firstIndex(where: { $0.id == order.id }) { orders[i].status = old }
+            if let i = allOrders.firstIndex(where: { $0.id == order.id }) { allOrders[i].status = old }
+            applyFilter()
             UINotificationFeedbackGenerator().notificationOccurred(.error)
             self.error = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
             return false
@@ -345,6 +380,7 @@ struct OrdersScreen: View {
         .claudeTopFade(useNativeEdgeEffect: false)
         .refreshable { await vm.load() }
         .scrollDismissesKeyboard(.immediately)
+        .dismissKeyboardOnTap()   // tap empty space to close the search keyboard
         .task { await vm.load() }
         .sheet(item: $selected) { order in
             OrderDetailSheet(order: order, vm: vm, openWeb: openWeb)
@@ -500,7 +536,7 @@ struct OrdersScreen: View {
     private var chipsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                chip(nil, label: "All", count: vm.total)
+                chip(nil, label: "All", count: vm.windowCount)
                 chip(OrdersVM.returnsSentinel, label: "All Returns",
                      count: OrdersVM.returnStatuses.reduce(0) { $0 + (vm.byStatus[$1] ?? 0) })
                 ForEach(OrderStatusMeta.filterable, id: \.self) { s in
@@ -518,7 +554,7 @@ struct OrdersScreen: View {
         return Button {
             UISelectionFeedbackGenerator().selectionChanged()
             vm.statusFilter = status
-            Task { await vm.load() }
+            vm.applyFilter()   // instant, local — counts stay perfectly in sync with the rows
         } label: {
             HStack(spacing: 5) {
                 if let status { Circle().fill(OrderStatusMeta.tint(status)).frame(width: 7, height: 7) }

@@ -177,7 +177,9 @@ struct MoreMenuScreen: View {
             .padding(.top, 8)
             .padding(.bottom, 28)
         }
-        .background(rootBg.ignoresSafeArea())
+        // The owner's aurora — the same ambient the Orders / Assistant surfaces wear, so
+        // More stops looking like a flat grey settings list and matches the app theme.
+        .background(OrdersAurora())
         // Claude-style top scroll-edge fade under the (transparent-glass) UIKit nav bar.
         .claudeTopFade()
         // External theme flips (web toggle, another screen) must move OUR switch too.
@@ -205,13 +207,17 @@ struct MoreMenuScreen: View {
     private func section(header: String, @ViewBuilder rows: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(header.uppercased())
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .font(.caption.weight(.bold))
+                .tracking(0.6)
+                // On the raw aurora (outside the card) headers need real contrast, not
+                // the washed-out .secondary the owner flagged as hard to read.
+                .foregroundStyle(colorScheme == .dark ? Color.white.opacity(0.72)
+                                                      : Color.black.opacity(0.55))
                 .padding(.leading, 14)
+            // Frosted-glass card so the aurora glows through but the rows stay crisp.
             VStack(spacing: 0) { rows() }
-                .background(cardBg, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                // Whisper of depth so light-mode white cards separate from the cream page.
-                .shadow(color: .black.opacity(colorScheme == .dark ? 0 : 0.05), radius: 8, y: 2)
+                .ordersGlass(colorScheme, corner: 16)
+                .shadow(color: .black.opacity(colorScheme == .dark ? 0.18 : 0.06), radius: 10, y: 3)
         }
     }
 
