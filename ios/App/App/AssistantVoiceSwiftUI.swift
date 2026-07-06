@@ -118,6 +118,7 @@ final class AlmaVoiceEngine {
     private var narratedFirstTool = false
     private var verificationSaid = false     // verification_retry spoken once per turn
     private var lastAudioAt = Date()
+    private var lastEventAt = Date()          // stall watchdog: last SSE event received
     private var ackData: [Data] = []
     private var ackIdx = 0
     private var sessionReady = false
@@ -143,13 +144,14 @@ final class AlmaVoiceEngine {
         pendingImages.compactMap { if case .ready(let f) = $0.state { return f } else { return nil } }
     }
 
-    /// TRUE streaming STT (live words as spoken). DEFAULT OFF for this stabilization
-    /// build: the live path uses AVAudioEngine + a mic tap, the same surface that
-    /// (with the old .voiceChat VPIO session) crashed on device. OFF ⇒ the proven
-    /// record→/transcribe path (plain AVAudioRecorder, zero AVAudioEngine) — build-39
-    /// stable. Re-enable via `alma-voice-streaming` = true once device-confirmed.
+    /// TRUE streaming STT (gpt-4o-transcribe realtime, live words as spoken). Back ON
+    /// by default: it transcribed the owner's Bangla correctly on device in build 44 —
+    /// the crash there was the .voiceChat VPIO session (now .default), NOT the streaming
+    /// itself. Its transcription is markedly better than the record→Whisper fallback,
+    /// which mis-heard/failed on 4G. ANY pre-audio failure still falls back to the
+    /// recorder. Escape hatch: `alma-voice-streaming` = false.
     private var streamingEnabled: Bool {
-        (UserDefaults.standard.object(forKey: "alma-voice-streaming") as? Bool) ?? false
+        (UserDefaults.standard.object(forKey: "alma-voice-streaming") as? Bool) ?? true
     }
 
     private var recURL: URL {
@@ -316,7 +318,6 @@ final class AlmaVoiceEngine {
             Task { [weak self] in
                 guard let self else { return }
                 do { try await self.streamer.start() }
-                catch { self.startListeningRecorder() }
             }
         } else {
             startListeningRecorder()
@@ -445,8 +446,8 @@ final class AlmaVoiceEngine {
             let tickMs = 33.0
             var elapsed = 0.0
             var noiseFloor = 0.0, floorSamples = 0.0
-            var speechThresh = 0.045                 // web default; raised by calibration
-            let silenceThresh = 0.025
+            var speechThresh = 0.022                 // lowered: owner speech peaked ~0.047, old 0.045 dropped softer speech
+            let silenceThresh = 0.014
             var sustainedMs = 0.0                    // continuous speech accumulator
             var spoke = false
             var speechStartAt = 0.0
@@ -465,7 +466,7 @@ final class AlmaVoiceEngine {
                     noiseFloor += rms; floorSamples += 1
                     if elapsed + tickMs >= 400 && floorSamples > 0 {
                         let floor = noiseFloor / floorSamples
-                        speechThresh = max(0.045, floor * 2.5)
+                        speechThresh = max(0.022, floor * 2.0)
                     }
                 } else if !spoke {
                     if rms > speechThresh {
@@ -542,10 +543,13 @@ final class AlmaVoiceEngine {
                 self.transcript = text
                 self.runTurn(text)
             } catch {
-                self.state = .error
-                self.errorToast = "ট্রান্সক্রিপশন ব্যর্থ।"
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                if self.state == .error { self.state = .idle }
+                // A transient upload/transcribe failure must NOT dead-end on a scary
+                // error orb — recover to idle and (in convo mode) re-listen so the
+                // owner just speaks again. Speak the retry so a hands-free owner hears it.
+                self.state = .idle
+                self.errorToast = "একটু গোলমাল হলো স্যার — আরেকবার বলুন।"
+                self.tts.sayNow("শুনতে একটু সমস্যা হলো স্যার, আরেকবার বলুন।")
+                self.scheduleAutoListen()
             }
         }
     }
@@ -575,6 +579,7 @@ final class AlmaVoiceEngine {
         narratedFirstTool = false
         verificationSaid = false
         lastAudioAt = Date()
+        lastEventAt = Date()
         tts.beginTurn()
         startHeartbeat()
 
@@ -610,6 +615,7 @@ final class AlmaVoiceEngine {
     }
 
     private func handle(_ ev: AgentSSEEvent) {
+        lastEventAt = Date()   // stall watchdog: any event keeps the turn alive
         switch ev.type {
         case "conversation_id":
             if let id = ev.id { chatVM?.conversationId = id }
@@ -679,12 +685,25 @@ final class AlmaVoiceEngine {
     }
 
     /// Web heartbeat: every 4s while thinking, if silent for 14s say "এখনো কাজ চলছে…".
+    /// STALL WATCHDOG: if NO SSE event arrives for 30s while thinking/speaking, the turn
+    /// stream is dead (dropped connection) — never leave the orb frozen: cancel, apologise,
+    /// and (in convo mode) re-listen so the owner can just speak again.
     private func startHeartbeat() {
         heartbeatTask?.cancel()
         heartbeatTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 4_000_000_000)
-                guard let self, self.state == .thinking else { continue }
+                guard let self else { continue }
+                if (self.state == .thinking || self.state == .speaking),
+                   Date().timeIntervalSince(self.lastEventAt) > 30 {
+                    self.turnTask?.cancel()
+                    self.tts.stopAll()
+                    self.state = .idle
+                    self.tts.sayNow("দুঃখিত স্যার, উত্তরটা আটকে গেল — আরেকবার বলুন।")
+                    self.scheduleAutoListen()
+                    continue
+                }
+                guard self.state == .thinking else { continue }
                 if Date().timeIntervalSince(self.lastAudioAt) > 14 {
                     self.lastAudioAt = Date()
                     self.tts.sayNow("এখনো কাজ চলছে স্যার, একটু সময় দিন…")
@@ -852,8 +871,8 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
     // VAD state — touched on the CoreAudio tap thread (serialized by CoreAudio).
     private var elapsedMs = 0.0
     private var noiseFloor = 0.0, floorSamples = 0.0
-    private var speechThresh = 0.045
-    private let silenceThresh = 0.025
+    private var speechThresh = 0.022
+    private let silenceThresh = 0.014
     private var sustainedMs = 0.0
     private var spoke = false
     private var speechStartMs = 0.0
@@ -881,7 +900,7 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
 
     private func reset() {
         elapsedMs = 0; noiseFloor = 0; floorSamples = 0
-        speechThresh = 0.045; sustainedMs = 0; spoke = false
+        speechThresh = 0.022; sustainedMs = 0; spoke = false
         speechStartMs = 0; silenceMs = 0; lastSecond = -1
         committed = false; completedFired = false; failed = false; partial = ""
         pending = []; fullAudio = Data()
@@ -997,7 +1016,7 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         if elapsedMs < 400 {
             noiseFloor += rms; floorSamples += 1
             if elapsedMs + dtMs >= 400 && floorSamples > 0 {
-                speechThresh = max(0.045, (noiseFloor / floorSamples) * 2.5)
+                speechThresh = max(0.022, (noiseFloor / floorSamples) * 2.0)
             }
         } else if !spoke {
             if rms > speechThresh {
@@ -1402,22 +1421,30 @@ final class AlmaTtsQueue: NSObject, AVAudioPlayerDelegate {
         }
     }
 
+    /// Cut `buffer` into sentence-ish chunks (each ≥ ~24 chars, ending on a Bangla
+    /// sentence mark) and queue them. ALWAYS makes forward progress: each loop either
+    /// emits a chunk (advancing `end`) or breaks — never re-scans the same boundary.
+    /// (The old "merge forward" branch re-inserted the punctuation into `buffer` and
+    /// re-matched it forever — a 99% main-thread spin that hung the whole app whenever
+    /// a short Bangla sentence was followed by more text.)
     private func cutSentences(flush: Bool) {
-        while let r = buffer.rangeOfCharacter(from: CharacterSet(charactersIn: "।?!\n")) {
-            let chunk = String(buffer[..<r.upperBound]).trimmingCharacters(in: .whitespacesAndNewlines)
-            let rest = String(buffer[r.upperBound...])
-            if chunk.count >= 24 || flush {
-                buffer = rest
-                if !chunk.isEmpty { queue.append(chunk) }
-            } else if rest.isEmpty {
-                break            // crumb — wait for more text
-            } else {
-                // Short sentence followed by more text: merge forward.
-                buffer = chunk + " " + rest
-                if let r2 = rest.rangeOfCharacter(from: CharacterSet(charactersIn: "।?!\n")) {
-                    _ = r2 // keep looping
-                } else { break }
+        let seps = CharacterSet(charactersIn: "।?!\n")
+        while true {
+            guard let first = buffer.rangeOfCharacter(from: seps) else { break }
+            var end = first.upperBound
+            // Too short? Extend to the NEXT boundary so tiny sentences merge into one
+            // TTS chunk. `end` only moves forward → guaranteed to terminate.
+            while !flush,
+                  buffer.distance(from: buffer.startIndex, to: end) < 24,
+                  let next = buffer.rangeOfCharacter(from: seps, range: end..<buffer.endIndex) {
+                end = next.upperBound
             }
+            if !flush, buffer.distance(from: buffer.startIndex, to: end) < 24 {
+                break   // still short and no further boundary — wait for more text
+            }
+            let chunk = String(buffer[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+            buffer = String(buffer[end...])
+            if !chunk.isEmpty { queue.append(chunk) }
         }
         if flush {
             let tail = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1613,6 +1640,12 @@ struct AlmaVoiceConsoleView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                     engine.wake.debugRecognizeFile(URL(fileURLWithPath: wav))
                 }
+            }
+            // SIM MIC self-test: auto-start a real listen ~3s after the console opens,
+            // so the record→transcribe→reply flow can be exercised headlessly by playing
+            // known speech into the Mac mic. Never fires in production (launch-arg only).
+            if Self.launchValue("ALMA_VOICE_LISTEN") != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { engine.startListening() }
             }
         }
         .onDisappear { engine.end() }
