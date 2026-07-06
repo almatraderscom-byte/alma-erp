@@ -38,6 +38,43 @@
 		F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A013 /* OrdersSwiftUI.swift */; };
 		F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A021 /* AssistantSwiftUI.swift */; };
 		F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */; };
+		F2AA7700000000000000B064 /* StaffMonitorSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */; };
+		F2AA7700000000000000B063 /* AgentGrowthSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A063 /* AgentGrowthSwiftUI.swift */; };
+		F2AA7700000000000000B062 /* KnownPeopleSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A062 /* KnownPeopleSwiftUI.swift */; };
+		F2AA7700000000000000B061 /* TradingStaffSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */; };
+		F2AA7700000000000000B060 /* CatalogImagesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A060 /* CatalogImagesSwiftUI.swift */; };
+		F2AA7700000000000000B05F /* AgentWhatsappSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */; };
+		F2AA7700000000000000B05E /* AgentCostsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */; };
+		F2AA7700000000000000B05D /* SettingsTelegramSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */; };
+		F2AA7700000000000000B05C /* SettingsSessionSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05C /* SettingsSessionSwiftUI.swift */; };
+		F2AA7700000000000000B05B /* SettingsBrandingSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05B /* SettingsBrandingSwiftUI.swift */; };
+		F2AA7700000000000000B05A /* SettingsSmsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05A /* SettingsSmsSwiftUI.swift */; };
+		F2AA7700000000000000B059 /* SettingsDatabaseSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A059 /* SettingsDatabaseSwiftUI.swift */; };
+		F2AA7700000000000000B058 /* PortalSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A058 /* PortalSwiftUI.swift */; };
+		F2AA7700000000000000B057 /* PortalOfficeSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A057 /* PortalOfficeSwiftUI.swift */; };
+		F2AA7700000000000000B056 /* SupplierImportSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A056 /* SupplierImportSwiftUI.swift */; };
+		F2AA7700000000000000B055 /* SettingsUsersSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A055 /* SettingsUsersSwiftUI.swift */; };
+		F2AA7700000000000000B054 /* SettingsNotificationsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A054 /* SettingsNotificationsSwiftUI.swift */; };
+		F2AA7700000000000000B053 /* PortalExpenseSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A053 /* PortalExpenseSwiftUI.swift */; };
+		F2AA7700000000000000B052 /* PaymentAccountsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A052 /* PaymentAccountsSwiftUI.swift */; };
+		F2AA7700000000000000B051 /* SystemDiagnosticsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A051 /* SystemDiagnosticsSwiftUI.swift */; };
+		F2AA7700000000000000B050 /* InsightsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A050 /* InsightsSwiftUI.swift */; };
+		F2AA7700000000000000B04F /* BusinessArchiveSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A04F /* BusinessArchiveSwiftUI.swift */; };
+		F2AA7700000000000000B04E /* TaskSpotlightSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A04E /* TaskSpotlightSwiftUI.swift */; };
+		F2AA7700000000000000B04D /* BriefingSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A04D /* BriefingSwiftUI.swift */; };
+		F2AA7700000000000000B04C /* AnalyticsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A04C /* AnalyticsSwiftUI.swift */; };
+		F2AA7700000000000000B04B /* AuditSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A04B /* AuditSwiftUI.swift */; };
+		F2AA7700000000000000B04A /* CrmSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A04A /* CrmSwiftUI.swift */; };
+		F2AA7700000000000000B049 /* AttendanceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A049 /* AttendanceSwiftUI.swift */; };
+		F2AA7700000000000000B048 /* EmployeesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A048 /* EmployeesSwiftUI.swift */; };
+		F2AA7700000000000000B047 /* InventorySwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A047 /* InventorySwiftUI.swift */; };
+		F2AA7700000000000000B046 /* ActivitySwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A046 /* ActivitySwiftUI.swift */; };
+		F2AA7700000000000000B045 /* OfficeFundSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A045 /* OfficeFundSwiftUI.swift */; };
+		F2AA7700000000000000B044 /* PayrollSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A044 /* PayrollSwiftUI.swift */; };
+		F2AA7700000000000000B043 /* ExpensesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A043 /* ExpensesSwiftUI.swift */; };
+		F2AA7700000000000000B042 /* InvoicesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A042 /* InvoicesSwiftUI.swift */; };
+		F2AA7700000000000000B041 /* FinanceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A041 /* FinanceSwiftUI.swift */; };
+		F2AA7700000000000000B040 /* AlmaNativeRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A040 /* AlmaNativeRouter.swift */; };
 		F2AA7700000000000000B014 /* ApprovalsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */; };
 		F2AA7700000000000000B015 /* CompanionSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A015 /* CompanionSwiftUI.swift */; };
 		F2AA7700000000000000B016 /* OrderCreateSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A016 /* OrderCreateSwiftUI.swift */; };
@@ -80,6 +117,43 @@
 		F2AA7700000000000000A013 /* OrdersSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrdersSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A021 /* AssistantSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantVoiceSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaffMonitorSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A063 /* AgentGrowthSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentGrowthSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A062 /* KnownPeopleSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnownPeopleSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradingStaffSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A060 /* CatalogImagesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogImagesSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentWhatsappSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCostsSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTelegramSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A05C /* SettingsSessionSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSessionSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A05B /* SettingsBrandingSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsBrandingSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A05A /* SettingsSmsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSmsSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A059 /* SettingsDatabaseSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsDatabaseSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A058 /* PortalSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A057 /* PortalOfficeSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalOfficeSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A056 /* SupplierImportSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupplierImportSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A055 /* SettingsUsersSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsUsersSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A054 /* SettingsNotificationsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsNotificationsSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A053 /* PortalExpenseSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalExpenseSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A052 /* PaymentAccountsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaymentAccountsSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A051 /* SystemDiagnosticsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemDiagnosticsSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A050 /* InsightsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A04F /* BusinessArchiveSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusinessArchiveSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A04E /* TaskSpotlightSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskSpotlightSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A04D /* BriefingSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A04C /* AnalyticsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyticsSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A04B /* AuditSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuditSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A04A /* CrmSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrmSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A049 /* AttendanceSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttendanceSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A048 /* EmployeesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmployeesSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A047 /* InventorySwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InventorySwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A046 /* ActivitySwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivitySwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A045 /* OfficeFundSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficeFundSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A044 /* PayrollSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PayrollSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A043 /* ExpensesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpensesSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A042 /* InvoicesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InvoicesSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A041 /* FinanceSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinanceSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A040 /* AlmaNativeRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaNativeRouter.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A015 /* CompanionSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A016 /* OrderCreateSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrderCreateSwiftUI.swift; sourceTree = "<group>"; };
@@ -169,6 +243,43 @@
 				F2AA7700000000000000A013 /* OrdersSwiftUI.swift */,
 				F2AA7700000000000000A021 /* AssistantSwiftUI.swift */,
 				F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */,
+				F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */,
+				F2AA7700000000000000A063 /* AgentGrowthSwiftUI.swift */,
+				F2AA7700000000000000A062 /* KnownPeopleSwiftUI.swift */,
+				F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */,
+				F2AA7700000000000000A060 /* CatalogImagesSwiftUI.swift */,
+				F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */,
+				F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */,
+				F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */,
+				F2AA7700000000000000A05C /* SettingsSessionSwiftUI.swift */,
+				F2AA7700000000000000A05B /* SettingsBrandingSwiftUI.swift */,
+				F2AA7700000000000000A05A /* SettingsSmsSwiftUI.swift */,
+				F2AA7700000000000000A059 /* SettingsDatabaseSwiftUI.swift */,
+				F2AA7700000000000000A058 /* PortalSwiftUI.swift */,
+				F2AA7700000000000000A057 /* PortalOfficeSwiftUI.swift */,
+				F2AA7700000000000000A056 /* SupplierImportSwiftUI.swift */,
+				F2AA7700000000000000A055 /* SettingsUsersSwiftUI.swift */,
+				F2AA7700000000000000A054 /* SettingsNotificationsSwiftUI.swift */,
+				F2AA7700000000000000A053 /* PortalExpenseSwiftUI.swift */,
+				F2AA7700000000000000A052 /* PaymentAccountsSwiftUI.swift */,
+				F2AA7700000000000000A051 /* SystemDiagnosticsSwiftUI.swift */,
+				F2AA7700000000000000A050 /* InsightsSwiftUI.swift */,
+				F2AA7700000000000000A04F /* BusinessArchiveSwiftUI.swift */,
+				F2AA7700000000000000A04E /* TaskSpotlightSwiftUI.swift */,
+				F2AA7700000000000000A04D /* BriefingSwiftUI.swift */,
+				F2AA7700000000000000A04C /* AnalyticsSwiftUI.swift */,
+				F2AA7700000000000000A04B /* AuditSwiftUI.swift */,
+				F2AA7700000000000000A04A /* CrmSwiftUI.swift */,
+				F2AA7700000000000000A049 /* AttendanceSwiftUI.swift */,
+				F2AA7700000000000000A048 /* EmployeesSwiftUI.swift */,
+				F2AA7700000000000000A047 /* InventorySwiftUI.swift */,
+				F2AA7700000000000000A046 /* ActivitySwiftUI.swift */,
+				F2AA7700000000000000A045 /* OfficeFundSwiftUI.swift */,
+				F2AA7700000000000000A044 /* PayrollSwiftUI.swift */,
+				F2AA7700000000000000A043 /* ExpensesSwiftUI.swift */,
+				F2AA7700000000000000A042 /* InvoicesSwiftUI.swift */,
+				F2AA7700000000000000A041 /* FinanceSwiftUI.swift */,
+				F2AA7700000000000000A040 /* AlmaNativeRouter.swift */,
 				F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */,
 				F2AA7700000000000000A015 /* CompanionSwiftUI.swift */,
 				F2AA7700000000000000A016 /* OrderCreateSwiftUI.swift */,
@@ -386,6 +497,43 @@
 				F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */,
 				F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */,
 				F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */,
+				F2AA7700000000000000B064 /* StaffMonitorSwiftUI.swift in Sources */,
+				F2AA7700000000000000B063 /* AgentGrowthSwiftUI.swift in Sources */,
+				F2AA7700000000000000B062 /* KnownPeopleSwiftUI.swift in Sources */,
+				F2AA7700000000000000B061 /* TradingStaffSwiftUI.swift in Sources */,
+				F2AA7700000000000000B060 /* CatalogImagesSwiftUI.swift in Sources */,
+				F2AA7700000000000000B05F /* AgentWhatsappSwiftUI.swift in Sources */,
+				F2AA7700000000000000B05E /* AgentCostsSwiftUI.swift in Sources */,
+				F2AA7700000000000000B05D /* SettingsTelegramSwiftUI.swift in Sources */,
+				F2AA7700000000000000B05C /* SettingsSessionSwiftUI.swift in Sources */,
+				F2AA7700000000000000B05B /* SettingsBrandingSwiftUI.swift in Sources */,
+				F2AA7700000000000000B05A /* SettingsSmsSwiftUI.swift in Sources */,
+				F2AA7700000000000000B059 /* SettingsDatabaseSwiftUI.swift in Sources */,
+				F2AA7700000000000000B058 /* PortalSwiftUI.swift in Sources */,
+				F2AA7700000000000000B057 /* PortalOfficeSwiftUI.swift in Sources */,
+				F2AA7700000000000000B056 /* SupplierImportSwiftUI.swift in Sources */,
+				F2AA7700000000000000B055 /* SettingsUsersSwiftUI.swift in Sources */,
+				F2AA7700000000000000B054 /* SettingsNotificationsSwiftUI.swift in Sources */,
+				F2AA7700000000000000B053 /* PortalExpenseSwiftUI.swift in Sources */,
+				F2AA7700000000000000B052 /* PaymentAccountsSwiftUI.swift in Sources */,
+				F2AA7700000000000000B051 /* SystemDiagnosticsSwiftUI.swift in Sources */,
+				F2AA7700000000000000B050 /* InsightsSwiftUI.swift in Sources */,
+				F2AA7700000000000000B04F /* BusinessArchiveSwiftUI.swift in Sources */,
+				F2AA7700000000000000B04E /* TaskSpotlightSwiftUI.swift in Sources */,
+				F2AA7700000000000000B04D /* BriefingSwiftUI.swift in Sources */,
+				F2AA7700000000000000B04C /* AnalyticsSwiftUI.swift in Sources */,
+				F2AA7700000000000000B04B /* AuditSwiftUI.swift in Sources */,
+				F2AA7700000000000000B04A /* CrmSwiftUI.swift in Sources */,
+				F2AA7700000000000000B049 /* AttendanceSwiftUI.swift in Sources */,
+				F2AA7700000000000000B048 /* EmployeesSwiftUI.swift in Sources */,
+				F2AA7700000000000000B047 /* InventorySwiftUI.swift in Sources */,
+				F2AA7700000000000000B046 /* ActivitySwiftUI.swift in Sources */,
+				F2AA7700000000000000B045 /* OfficeFundSwiftUI.swift in Sources */,
+				F2AA7700000000000000B044 /* PayrollSwiftUI.swift in Sources */,
+				F2AA7700000000000000B043 /* ExpensesSwiftUI.swift in Sources */,
+				F2AA7700000000000000B042 /* InvoicesSwiftUI.swift in Sources */,
+				F2AA7700000000000000B041 /* FinanceSwiftUI.swift in Sources */,
+				F2AA7700000000000000B040 /* AlmaNativeRouter.swift in Sources */,
 				F2AA7700000000000000B014 /* ApprovalsSwiftUI.swift in Sources */,
 				F2AA7700000000000000B015 /* CompanionSwiftUI.swift in Sources */,
 				F2AA7700000000000000B016 /* OrderCreateSwiftUI.swift in Sources */,
@@ -539,7 +687,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 43;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -561,7 +709,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 43;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -580,7 +728,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AlmaWidget/AlmaWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 43;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AlmaWidget/Info.plist;
@@ -606,7 +754,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AlmaWidget/AlmaWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 43;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AlmaWidget/Info.plist;

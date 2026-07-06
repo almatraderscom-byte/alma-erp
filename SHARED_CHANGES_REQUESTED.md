@@ -47,3 +47,9 @@ Owner flips `[PENDING]` → `[✅ APPLIED <commit>]` or `[❌ REJECTED — reaso
 - File(s): `ios/App/App/Info.plist` (frozen — owner applies)
 - Exact change: add `NSSpeechRecognitionUsageDescription` = "ALMA আপনার 'ALMA' ডাক শুনতে ভয়েস চিনবে।" (any Bangla string). Without this key, ANY SFSpeechRecognizer call crashes instantly (see memory feedback_ios_plugin_privacy_keys / the 2026-07-03 Face-ID incident) — so the on-device "ALMA" wake word (the one web feature that never worked on iOS: webkitSpeechRecognition is absent in WKWebView) is DELIBERATELY NOT implemented in this branch. Once the key is added, a follow-up can add an SFSpeechRecognizer always-listening bridge that calls AlmaVoiceEngine.startListening() on the "ALMA/আলমা" hit (idle + console-open only).
 - Why: it is the single remaining web-orb feature not portable without a frozen-file (plist) change; everything else (streaming STT, TTS number/brand normalizer, model-switch + verification-retry spoken, ask/approval-in-console, history scrollback) shipped inside the already-registered AssistantVoiceSwiftUI.swift with no shared-file edits.
+---
+## 2026-07-06 · approvals/marathon session (owner-directed)
+- **Owner instruction (2026-07-06, chat):** merge `native/approvals-parity` into the frontier; then migrate ALL remaining Alma Lifestyle pages native (aurora + current components), session acts as owner for decisions; ONE build at the very end.
+- APPLIED on `native/approvals-parity` (acting owner): `AlmaNativeRouter.swift` (new, A040/B040) + `SwiftUIShell.swift` `pushSmart` hook (More rows route to native screens when migrated; forced-web escape prevents recursion).
+- **pbxproj ID range reserved for this marathon: A040–A07F / B040–B07F** — other sessions please allocate below/above this range.
+- Marathon page files will be registered incrementally on this branch; final integration merge + sim-verified build happens at the end of the marathon.

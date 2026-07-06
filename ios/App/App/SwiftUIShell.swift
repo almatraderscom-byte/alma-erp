@@ -136,6 +136,26 @@ extension AlmaTabBarController {
         nav?.pushViewController(vc, animated: true)
     }
 
+    /// Route-aware push: migrated pages open their NATIVE screen (AlmaNativeRouter),
+    /// everything else falls back to the web view unchanged. Native screens get a
+    /// FORCED-web escape closure so "ওয়েবে খুলুন" can never recurse into the router.
+    private func pushSmart(on nav: UINavigationController?, path: String, title: String, icon: String) {
+        if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *),
+           let native = AlmaNativeRouter.screen(for: path, openWebForced: { [weak self, weak nav] p, t in
+               // Same-page pushes are the screen's ESCAPE HATCH → always the real web
+               // (recursion guard). Cross-page links route back through the router so
+               // e.g. Finance → Office fund opens the native screen when it exists.
+               let origin = path.split(separator: "?").first.map(String.init) ?? path
+               let target = p.split(separator: "?").first.map(String.init) ?? p
+               if target == origin { self?.pushWeb(on: nav, path: p, title: t, icon: icon) }
+               else { self?.pushSmart(on: nav, path: p, title: t, icon: icon) }
+           }) {
+            nav?.pushViewController(native, animated: true)
+            return
+        }
+        pushWeb(on: nav, path: path, title: title, icon: icon)
+    }
+
     func makeOrdersTab() -> UINavigationController {
         if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *) {
             let navRef = WeakRef<UINavigationController>()
@@ -171,7 +191,7 @@ extension AlmaTabBarController {
             let navRef = WeakRef<UINavigationController>()
             let screen = MoreMenuScreen(
                 openPath: { [weak self] path, title in
-                    self?.pushWeb(on: navRef.value, path: path, title: title, icon: "safari")
+                    self?.pushSmart(on: navRef.value, path: path, title: title, icon: "safari")
                 },
                 openCompanion: { [weak self] in
                     guard let self else { return }
