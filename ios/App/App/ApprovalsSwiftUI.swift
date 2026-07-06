@@ -269,6 +269,39 @@ struct AgentActionsResponse: Decodable {
     }
 }
 
+// MARK: - Integrity (web Integrity Monitor parity)
+
+struct ApprovalIntegrityReport: Decodable, Equatable {
+    let scanned: Int
+    let pendingWaivers: Int
+    let walletOrphans: Int
+    let penaltyOrphans: Int
+    let orphans: [Orphan]
+
+    struct Orphan: Decodable, Equatable {
+        let approvalId: String?
+        let waiverId: String?
+        let kind: String?
+    }
+
+    private enum Keys: String, CodingKey {
+        case ok, data, scanned, pendingWaivers, walletOrphans
+        case penaltyApprovalOrphans, penaltyWaiverOrphans, orphans
+    }
+    private struct Blob: Decodable { init(from decoder: Decoder) throws {} }
+    init(from decoder: Decoder) throws {
+        let root = try decoder.container(keyedBy: Keys.self)
+        let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+        scanned = (try? c.decodeIfPresent(Int.self, forKey: .scanned)) ?? 0
+        pendingWaivers = (try? c.decodeIfPresent(Int.self, forKey: .pendingWaivers)) ?? 0
+        walletOrphans = ((try? c.decodeIfPresent([Blob].self, forKey: .walletOrphans)) ?? [])?.count ?? 0
+        let pa = ((try? c.decodeIfPresent([Blob].self, forKey: .penaltyApprovalOrphans)) ?? [])?.count ?? 0
+        let pw = ((try? c.decodeIfPresent([Blob].self, forKey: .penaltyWaiverOrphans)) ?? [])?.count ?? 0
+        penaltyOrphans = pa + pw
+        orphans = (try? c.decodeIfPresent([Orphan].self, forKey: .orphans)) ?? []
+    }
+}
+
 // MARK: - View model
 
 @available(iOS 17.0, *)
@@ -285,6 +318,12 @@ final class ApprovalsVM {
     var error: String? = nil
     var notice: String? = nil             // success/warning line (the web's toast)
     var authExpired = false
+
+    // Integrity monitor (web parity)
+    var showIntegrity = false
+    var integrity: ApprovalIntegrityReport? = nil
+    var integrityLoading = false
+    var repairing = false
 
     // Agent view
     var agentActions: [AlmaAgentAction] = []
@@ -348,6 +387,45 @@ final class ApprovalsVM {
             withAnimation(.snappy) { approvals.removeAll { $0.id == approval.id } }
             totalPending = max(0, totalPending - 1)
             await load()   // refresh counts/by-module, keep numbers honest
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
+        }
+    }
+
+    // ── Integrity monitor (web GET/POST /api/approvals/integrity parity) ──
+
+    func loadIntegrity() async {
+        integrityLoading = true
+        defer { integrityLoading = false }
+        do {
+            let report: ApprovalIntegrityReport = try await AlmaAPI.shared.get("/api/approvals/integrity")
+            integrity = report
+        } catch {
+            if Self.isCancellation(error) { return }
+            self.error = "Integrity scan failed"
+        }
+    }
+
+    func repairIntegrity() async {
+        repairing = true
+        defer { repairing = false }
+        do {
+            struct RepairResponse: Decodable {
+                let repaired: Int
+                private enum Keys: String, CodingKey { case ok, data, repaired }
+                private struct Blob: Decodable { init(from decoder: Decoder) throws {} }
+                init(from decoder: Decoder) throws {
+                    let root = try decoder.container(keyedBy: Keys.self)
+                    let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+                    repaired = ((try? c.decodeIfPresent([Blob].self, forKey: .repaired)) ?? [])?.count ?? 0
+                }
+            }
+            let resp: RepairResponse = try await AlmaAPI.shared.send("POST", "/api/approvals/integrity", body: [String: String]())
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = "Repaired \(resp.repaired) item(s)"
+            await loadIntegrity()
+            await load()
         } catch {
             UINotificationFeedbackGenerator().notificationOccurred(.error)
             self.error = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
@@ -489,6 +567,7 @@ struct ApprovalsScreen: View {
 
     @ViewBuilder private var businessBody: some View {
         statusChips
+        if vm.showIntegrity { integrityCard }
         kpiStrip
         if vm.loading && vm.approvals.isEmpty { loadingRows }
         ForEach(vm.approvals) { ap in
@@ -518,9 +597,93 @@ struct ApprovalsScreen: View {
                         Task { await vm.load() }
                     }
                 }
+                approvalChip("Integrity", active: vm.showIntegrity) {
+                    vm.showIntegrity.toggle()
+                    if vm.showIntegrity && vm.integrity == nil {
+                        Task { await vm.loadIntegrity() }
+                    }
+                }
             }
             .padding(.horizontal, 2)
         }
+    }
+
+    /// Web Integrity Monitor parity — scan + repair, amber card.
+    @State private var confirmRepair = false
+    private var integrityCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Integrity Monitor").font(.footnote.weight(.bold))
+                    Text("Detects orphan approvals, hidden penalty appeals, and stale pending rows.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            if let r = vm.integrity {
+                HStack(spacing: 10) {
+                    integrityStat("Scanned", r.scanned)
+                    integrityStat("Waivers", r.pendingWaivers)
+                    integrityStat("Wallet", r.walletOrphans, warn: r.walletOrphans > 0)
+                    integrityStat("Penalty", r.penaltyOrphans, warn: r.penaltyOrphans > 0)
+                }
+                if r.orphans.isEmpty && !vm.integrityLoading {
+                    Text("No linkage issues detected in scan window.")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(ApprovalPalette.emerald600)
+                } else if !r.orphans.isEmpty {
+                    ForEach(Array(r.orphans.prefix(8).enumerated()), id: \.offset) { _, o in
+                        Text("\((o.kind ?? "").replacingOccurrences(of: "_", with: " "))\(o.approvalId.map { " · approval \(String($0.prefix(8)))…" } ?? "")\(o.waiverId.map { " · waiver \(String($0.prefix(8)))…" } ?? "")")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            HStack(spacing: 10) {
+                if vm.integrityLoading || vm.repairing {
+                    ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 7)
+                } else {
+                    Button {
+                        Task { await vm.loadIntegrity() }
+                    } label: {
+                        Text("Scan").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity).padding(.vertical, 8)
+                            .background(Color.primary.opacity(0.06), in: Capsule())
+                            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    Button {
+                        confirmRepair = true
+                    } label: {
+                        Text("Repair (\(vm.integrity?.orphans.count ?? 0))")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(ApprovalPalette.accentText(colorScheme))
+                            .frame(maxWidth: .infinity).padding(.vertical, 8)
+                            .background(ApprovalPalette.coral.opacity(0.13), in: Capsule())
+                            .overlay(Capsule().strokeBorder(ApprovalPalette.coral.opacity(0.35), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled((vm.integrity?.orphans.count ?? 0) == 0)
+                    .confirmationDialog("অরফান রেকর্ডগুলো ঠিক করবেন?", isPresented: $confirmRepair, titleVisibility: .visible) {
+                        Button("হ্যাঁ, Repair চালাও") { Task { await vm.repairIntegrity() } }
+                        Button("বাতিল", role: .cancel) {}
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(ApprovalPalette.amber500.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16)
+            .strokeBorder(ApprovalPalette.amber500.opacity(0.30), lineWidth: 1))
+    }
+
+    private func integrityStat(_ label: String, _ value: Int, warn: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
+            Text("\(value)").font(.subheadline.weight(.bold))
+                .foregroundStyle(warn ? ApprovalPalette.amber600 : .primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// KPI strip — the web's 5 KpiCards (Pending/Critical/High/Normal/Low) with the
@@ -686,13 +849,13 @@ struct ApprovalsScreen: View {
         Button {
             openWeb("/approvals", "Approvals")
         } label: {
-            Label("সব অপশন (Integrity সহ) — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
+            Label("ওয়েব ভার্সন", systemImage: "safari")
+                .font(.caption2)
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .padding(.vertical, 6)
+        .foregroundStyle(.secondary.opacity(0.7))
+        .padding(.vertical, 4)
     }
 }
 
