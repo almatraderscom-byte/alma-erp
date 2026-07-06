@@ -38,6 +38,13 @@
 		F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A013 /* OrdersSwiftUI.swift */; };
 		F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A021 /* AssistantSwiftUI.swift */; };
 		F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */; };
+		F2AA7700000000000000B05F /* AgentWhatsappSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */; };
+		F2AA7700000000000000B05E /* AgentCostsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */; };
+		F2AA7700000000000000B05D /* SettingsTelegramSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */; };
+		F2AA7700000000000000B05C /* SettingsSessionSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05C /* SettingsSessionSwiftUI.swift */; };
+		F2AA7700000000000000B05B /* SettingsBrandingSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05B /* SettingsBrandingSwiftUI.swift */; };
+		F2AA7700000000000000B05A /* SettingsSmsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05A /* SettingsSmsSwiftUI.swift */; };
+		F2AA7700000000000000B059 /* SettingsDatabaseSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A059 /* SettingsDatabaseSwiftUI.swift */; };
 		F2AA7700000000000000B058 /* PortalSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A058 /* PortalSwiftUI.swift */; };
 		F2AA7700000000000000B057 /* PortalOfficeSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A057 /* PortalOfficeSwiftUI.swift */; };
 		F2AA7700000000000000B056 /* SupplierImportSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A056 /* SupplierImportSwiftUI.swift */; };
@@ -105,6 +112,13 @@
 		F2AA7700000000000000A013 /* OrdersSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrdersSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A021 /* AssistantSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantVoiceSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentWhatsappSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCostsSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTelegramSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A05C /* SettingsSessionSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSessionSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A05B /* SettingsBrandingSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsBrandingSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A05A /* SettingsSmsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSmsSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A059 /* SettingsDatabaseSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsDatabaseSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A058 /* PortalSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A057 /* PortalOfficeSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalOfficeSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A056 /* SupplierImportSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupplierImportSwiftUI.swift; sourceTree = "<group>"; };
@@ -219,6 +233,13 @@
 				F2AA7700000000000000A013 /* OrdersSwiftUI.swift */,
 				F2AA7700000000000000A021 /* AssistantSwiftUI.swift */,
 				F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */,
+				F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */,
+				F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */,
+				F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */,
+				F2AA7700000000000000A05C /* SettingsSessionSwiftUI.swift */,
+				F2AA7700000000000000A05B /* SettingsBrandingSwiftUI.swift */,
+				F2AA7700000000000000A05A /* SettingsSmsSwiftUI.swift */,
+				F2AA7700000000000000A059 /* SettingsDatabaseSwiftUI.swift */,
 				F2AA7700000000000000A058 /* PortalSwiftUI.swift */,
 				F2AA7700000000000000A057 /* PortalOfficeSwiftUI.swift */,
 				F2AA7700000000000000A056 /* SupplierImportSwiftUI.swift */,
@@ -461,6 +482,13 @@
 				F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */,
 				F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */,
 				F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */,
+				F2AA7700000000000000B05F /* AgentWhatsappSwiftUI.swift in Sources */,
+				F2AA7700000000000000B05E /* AgentCostsSwiftUI.swift in Sources */,
+				F2AA7700000000000000B05D /* SettingsTelegramSwiftUI.swift in Sources */,
+				F2AA7700000000000000B05C /* SettingsSessionSwiftUI.swift in Sources */,
+				F2AA7700000000000000B05B /* SettingsBrandingSwiftUI.swift in Sources */,
+				F2AA7700000000000000B05A /* SettingsSmsSwiftUI.swift in Sources */,
+				F2AA7700000000000000B059 /* SettingsDatabaseSwiftUI.swift in Sources */,
 				F2AA7700000000000000B058 /* PortalSwiftUI.swift in Sources */,
 				F2AA7700000000000000B057 /* PortalOfficeSwiftUI.swift in Sources */,
 				F2AA7700000000000000B056 /* SupplierImportSwiftUI.swift in Sources */,

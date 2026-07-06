@@ -60,6 +60,13 @@ enum AlmaNativeRouter {
         case "/inventory/supplier-import": return host(SupplierImportScreen(openWeb: openWebForced), "Supplier import")
         case "/portal/office": return host(PortalOfficeScreen(openWeb: openWebForced), "Office")
         case "/portal": return host(PortalScreen(openWeb: openWebForced), "My Desk")
+        case "/settings/database": return host(SettingsDatabaseScreen(openWeb: openWebForced), "Database")
+        case "/settings/sms": return host(SettingsSmsScreen(openWeb: openWebForced), "SMS")
+        case "/settings/branding": return host(SettingsBrandingScreen(openWeb: openWebForced), "Branding")
+        case "/settings/session": return host(SettingsSessionScreen(openWeb: openWebForced), "Session")
+        case "/settings/telegram-ops": return host(SettingsTelegramScreen(openWeb: openWebForced), "Telegram Ops")
+        case "/agent/costs": return host(AgentCostsScreen(openWeb: openWebForced), "Costs")
+        case "/agent/whatsapp": return host(AgentWhatsappScreen(openWeb: openWebForced), "WhatsApp inbox")
         default:
             return nil
         }

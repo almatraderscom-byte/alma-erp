@@ -106,8 +106,8 @@ are pre-assigned here so two sessions can never pick the same name.
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
 | Creative Studio | `/agent/creative-studio` | — (owner's no-LLM-judgment pipeline, heavy web UI) | web | KEEP_WEB | — |
-| WhatsApp inbox | `/agent/whatsapp` | `ios/App/App/AgentWhatsappSwiftUI.swift` | web | NOT_STARTED | — |
-| Costs | `/agent/costs` | `ios/App/App/AgentCostsSwiftUI.swift` | web | NOT_STARTED | — |
+| WhatsApp inbox | `/agent/whatsapp` | `ios/App/App/AgentWhatsappSwiftUI.swift` | native | IN_REVIEW (marathon b7-8 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Costs | `/agent/costs` | `ios/App/App/AgentCostsSwiftUI.swift` | native | IN_REVIEW (marathon b7-8 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Staff monitor | `/agent/staff-monitor` | `ios/App/App/StaffMonitorSwiftUI.swift` | web | NOT_STARTED | — |
 | Growth | `/agent/growth` | `ios/App/App/AgentGrowthSwiftUI.swift` | web | NOT_STARTED | — |
 | Known people | `/agent/known-people` | `ios/App/App/KnownPeopleSwiftUI.swift` | web | NOT_STARTED | — |
@@ -121,11 +121,11 @@ are pre-assigned here so two sessions can never pick the same name.
 |---|---|---|---|---|---|
 | Users | `/settings/users` | `ios/App/App/SettingsUsersSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Notifications | `/settings/notifications` | `ios/App/App/SettingsNotificationsSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
-| Branding | `/settings/branding` | `ios/App/App/SettingsBrandingSwiftUI.swift` | web | NOT_STARTED | — |
-| SMS | `/settings/sms` | `ios/App/App/SettingsSmsSwiftUI.swift` | web | NOT_STARTED | — |
-| Telegram Ops | `/settings/telegram-ops` | `ios/App/App/SettingsTelegramSwiftUI.swift` | web | NOT_STARTED | — |
-| Database | `/settings/database` | `ios/App/App/SettingsDatabaseSwiftUI.swift` | web | NOT_STARTED | — |
-| Session | `/settings/session` | `ios/App/App/SettingsSessionSwiftUI.swift` | web | NOT_STARTED | — |
+| Branding | `/settings/branding` | `ios/App/App/SettingsBrandingSwiftUI.swift` | native | IN_REVIEW (marathon b7-8 2026-07-06, sim-build pending at marathon end) | marathon session |
+| SMS | `/settings/sms` | `ios/App/App/SettingsSmsSwiftUI.swift` | native | IN_REVIEW (marathon b7-8 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Telegram Ops | `/settings/telegram-ops` | `ios/App/App/SettingsTelegramSwiftUI.swift` | native | IN_REVIEW (marathon b7-8 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Database | `/settings/database` | `ios/App/App/SettingsDatabaseSwiftUI.swift` | native | IN_REVIEW (marathon b7-8 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Session | `/settings/session` | `ios/App/App/SettingsSessionSwiftUI.swift` | native | IN_REVIEW (marathon b7-8 2026-07-06, sim-build pending at marathon end) | marathon session |
 
 ### Never migrated (auth / legal / misc web-only)
 `/login`, `/forgot-password`, `/reset-password` (auth = web, cookies feed the native session),
