@@ -187,17 +187,63 @@ enum AlmaTheme {
 final class AlmaGlassHeaderView: UIVisualEffectView {
     static let viewTag = 987_431
 
+    /// VARIABLE-blur mask: full blur at the top edge → gone at the bottom, so the
+    /// header reads as the Claude scroll-edge DISSOLVE, not a uniform frosted slab
+    /// (owner 2026-07-06: the old uniform strip's hard bottom edge read as a "band").
+    private let blurMask = CAGradientLayer()
+    /// Colour dissolve into the page background, masked by the same ramp so it fades
+    /// out alongside the blur. Colour tracks the app's light/dark theme.
+    private let scrim = CAGradientLayer()
+
     init() {
         super.init(effect: UIBlurEffect(style: .regular))
         tag = Self.viewTag
         isUserInteractionEnabled = false
+
+        blurMask.colors = [UIColor.black.cgColor,
+                           UIColor.black.withAlphaComponent(0.55).cgColor,
+                           UIColor.clear.cgColor]
+        blurMask.locations = [0.0, 0.55, 1.0]
+        blurMask.startPoint = CGPoint(x: 0.5, y: 0)
+        blurMask.endPoint = CGPoint(x: 0.5, y: 1)
+        layer.mask = blurMask
+
+        scrim.startPoint = CGPoint(x: 0.5, y: 0)
+        scrim.endPoint = CGPoint(x: 0.5, y: 1)
+        contentView.layer.addSublayer(scrim)
+        applyScrimColours()
+
         stripTint()
+        NotificationCenter.default.addObserver(self, selector: #selector(applyScrimColours),
+                                               name: .almaThemeChanged, object: nil)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
 
     // The effect view rebuilds its sublayers on window / layout changes — re-strip.
     override func didMoveToWindow() { super.didMoveToWindow(); stripTint() }
-    override func layoutSubviews() { super.layoutSubviews(); stripTint() }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        stripTint()
+        // Mask + scrim layers don't autoresize — track bounds without implicit animation.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        blurMask.frame = bounds
+        scrim.frame = bounds
+        CATransaction.commit()
+    }
+
+    /// Scrim colour = the page background top (dark aura indigo #1C1830 / light cream
+    /// #FAF9F6, same tokens as ClaudeTopFadeTheme), strong at the top → transparent, so
+    /// scrolled content melts into the page colour instead of showing a tinted band.
+    @objc private func applyScrimColours() {
+        let c = AlmaTheme.isDark
+            ? UIColor(red: 0.110, green: 0.094, blue: 0.188, alpha: 1)   // #1C1830
+            : UIColor(red: 0.980, green: 0.976, blue: 0.965, alpha: 1)   // #FAF9F6
+        scrim.colors = [c.withAlphaComponent(0.55).cgColor,
+                        c.withAlphaComponent(0.22).cgColor,
+                        c.withAlphaComponent(0.0).cgColor]
+        scrim.locations = [0.0, 0.55, 1.0]
+    }
 
     private func stripTint() {
         for sub in subviews where sub !== contentView {
@@ -1133,6 +1179,8 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
     private let selection = UISelectionFeedbackGenerator()
     static let base = "https://alma-erp-six.vercel.app"
     private weak var dashboardVC: UIViewController?
+    private var approvalsBadgeTimer: Timer?
+    private static let approvalsTabIndex = 3
     /// Shared by every content web view (and the S6 SwiftUI screens' web escapes +
     /// the Companion) — one pool = one logged-in session everywhere.
     let contentPool = WKProcessPool()
@@ -1166,6 +1214,14 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         NotificationCenter.default.addObserver(self, selector: #selector(onSwiftUIFlagChanged),
                                                name: .almaSwiftUIFlagChanged, object: nil)
 
+        // Approvals tab badge: any PENDING business approval OR PENDING agent action
+        // surfaces as a red count on the Approvals tab. Refresh on foreground, on an
+        // approve/reject (posted by ApprovalsVM), and on a 90s heartbeat.
+        NotificationCenter.default.addObserver(self, selector: #selector(refreshApprovalsBadge),
+                                               name: UIApplication.willEnterForegroundNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(refreshApprovalsBadge),
+                                               name: .almaApprovalsChanged, object: nil)
+
         delegate = self
         applyDarkAppearance()
         selection.prepare()
@@ -1185,6 +1241,13 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         // The window doesn't exist during init-time applyTheme — re-assert here so the
         // window-level trait (sheet presentations) matches from the first frame on.
         view.window?.overrideUserInterfaceStyle = AlmaTheme.interfaceStyle
+        // Approvals badge: first fetch once the shell is on screen, then a 90s heartbeat.
+        refreshApprovalsBadge()
+        if approvalsBadgeTimer == nil {
+            approvalsBadgeTimer = Timer.scheduledTimer(withTimeInterval: 90, repeats: true) { [weak self] _ in
+                self?.refreshApprovalsBadge()
+            }
+        }
         // DEBUG self-test hook: ALMA_FADE_DEMO=1 presents the ClaudeTopFade demo screen
         // (see ClaudeTopFade.swift) so the scroll-edge fade can be screenshotted headlessly.
         ClaudeTopFadeSelfTest.presentIfRequested(over: self)
@@ -1289,9 +1352,79 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         return nil
     }
 
+    // ── Face ID app-lock flag bridge (More menu → web localStorage) ─────────────────
+    // The lock is implemented web-side (BiometricLockGate reads localStorage key
+    // `alma_biometric_lock_enabled` on the production origin). The Capacitor Dashboard
+    // webview lives on that origin after its boot handoff, and every webview shares the
+    // default data store, so reading/writing localStorage there is the same value the
+    // gate uses. A UserDefaults cache gives the switch an instant, correct first paint.
+
+    private static let biometricLockKey = "alma_biometric_lock_enabled"
+    static var cachedBiometricLock: Bool {
+        get { UserDefaults.standard.object(forKey: "alma-biometric-lock-cache") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "alma-biometric-lock-cache") }
+    }
+
+    /// Read the web lock flag ('0' = off; null/absent/anything else = on, the web default).
+    /// Falls back to the cache if no production-origin webview is reachable yet.
+    func readBiometricLock(_ completion: @escaping (Bool) -> Void) {
+        guard let dvc = dashboardVC, let w = Self.firstWebView(in: dvc.view) else {
+            completion(Self.cachedBiometricLock); return
+        }
+        let js = """
+        (function(){try{if(location.host.indexOf('alma-erp-six')<0)return '__na__';\
+        var v=localStorage.getItem('\(Self.biometricLockKey)');return v===null?'__unset__':v;}catch(e){return '__na__';}})()
+        """
+        w.evaluateJavaScript(js) { result, _ in
+            let s = result as? String
+            if s == "__na__" || s == nil {
+                completion(Self.cachedBiometricLock)               // origin not ready → cache
+            } else {
+                let on = (s != "0")                                // unset or non-'0' ⇒ ON
+                Self.cachedBiometricLock = on
+                completion(on)
+            }
+        }
+    }
+
+    /// Write the web lock flag. Cache always updates (drives the switch); the localStorage
+    /// write only fires on the real production origin so we never poison a bootstrap page.
+    func writeBiometricLock(_ on: Bool) {
+        Self.cachedBiometricLock = on
+        guard let dvc = dashboardVC, let w = Self.firstWebView(in: dvc.view) else { return }
+        let v = on ? "1" : "0"
+        let js = """
+        try{if(location.host.indexOf('alma-erp-six')>=0){localStorage.setItem('\(Self.biometricLockKey)','\(v)');}}catch(e){}
+        """
+        w.evaluateJavaScript(js, completionHandler: nil)
+    }
+
     @objc private func onThemeChanged() { applyTheme() }
 
     private func applyDarkAppearance() { applyTheme() }
+
+    /// Fetch pending business approvals + pending agent actions and stamp the sum on
+    /// the Approvals tab as a badge (nil when zero). Best-effort: a failed fetch leaves
+    /// the last known badge untouched rather than clearing a real count on a blip.
+    @objc func refreshApprovalsBadge() {
+        Task { @MainActor [weak self] in
+            guard self != nil else { return }
+            // BOTH counts must load before we touch the badge — a transient failure of
+            // either endpoint must not wrongly clear (or halve) a real pending count.
+            guard let biz: ApprovalsListResponse = try? await AlmaAPI.shared.get(
+                    "/api/approvals", query: ["status": "PENDING", "limit": "80"]),
+                  let agent: AgentActionsResponse = try? await AlmaAPI.shared.get(
+                    "/api/assistant/actions", query: ["status": "pending", "limit": "50"]),
+                  let self else { return }
+            let count = (biz.totalPending ?? biz.approvals.count) + agent.actions.count
+            self.setApprovalsBadge(count)
+        }
+    }
+
+    private func setApprovalsBadge(_ count: Int) {
+        guard let vcs = viewControllers, vcs.count > Self.approvalsTabIndex else { return }
+        vcs[Self.approvalsTabIndex].tabBarItem.badgeValue = count > 0 ? "\(count)" : nil
+    }
 
     func tabBarController(_ tabBarController: UITabBarController, didSelect viewController: UIViewController) {
         selection.selectionChanged()
