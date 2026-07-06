@@ -103,6 +103,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'staff-morale',           cronUtc: '0 7 * * *',    description: 'Daily staff encouragement (13:00 Dhaka)' },
   { name: 'staff-presence',         cronUtc: '0 5,11 * * *', description: 'Staff presence nudges (11:00, 17:00 Dhaka)' },
   { name: 'salah-escalation',       cronUtc: '*/5 * * * *',  description: 'Salah escalation check (every 5 min)' },
+  { name: 'salah-snooze-followup',  cronUtc: '* * * * *',    description: 'Post-snooze reminder→call loop (every 1 min; idle when no snooze active)' },
   { name: 'messenger-scan',         cronUtc: '*/15 * * * *', description: 'Messenger unanswered scan (every 15 min)' },
   { name: 'session-summarizer',     cronUtc: '*/15 * * * *', description: 'Summarize ended owner chats into memory (every 15 min)' },
   { name: 'weekly-review',          cronUtc: '30 15 * * 5',  description: 'Friday weekly review (21:30 Dhaka)' },
@@ -292,6 +293,11 @@ export async function runSchedulerJob(jobName, context, opts = {}) {
     case 'salah-escalation': {
       const { checkAndEscalateSalah } = await lazy.salahScheduler()
       dutyResult = await checkAndEscalateSalah(context) ?? { dutyStatus: 'done' }
+      break
+    }
+    case 'salah-snooze-followup': {
+      const { runSalahSnoozeFollowup } = await lazy.salahScheduler()
+      dutyResult = await runSalahSnoozeFollowup(context) ?? { dutyStatus: 'done' }
       break
     }
     case 'messenger-scan': {
