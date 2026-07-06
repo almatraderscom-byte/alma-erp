@@ -158,3 +158,30 @@ xcrun simctl io "$UDID" screenshot /tmp/x.png      # flake-proof capture
   transcribe,stt-session,actions,ask-cards}`.
 - Program docs: `docs/ios-native-frame-handoff.md`, `NATIVE_MIGRATION_HANDOFF.md`,
   `SHARED_CHANGES_REQUESTED.md`. Memory: `project_voice_console.md`, `reference_ios_sim_access`.
+
+---
+
+## 7. 2026-07-06 UPDATE — v2 design CONFIRMED + implemented natively
+
+- The owner upgraded the target to **DESIGN-V2.html** (this folder): everything in
+  DESIGN-REFERENCE.html **plus** starfield + comets, orb floor reflection, 2nd rim
+  light + iridescent shimmer in the FRAG, ring glow + 5 orbiting energy motes,
+  caption glow with gold Sir, card border-sweep pop, error state (hue 8), and a
+  demo STATE bar. Owner confirmed v2 in preview and asked for a 100% native port.
+- **DONE in `AssistantVoiceSwiftUI.swift`** (this branch): full console natively —
+  top bar (ALMA. · এজেন্ট কনসোল · ঢাকা bn-digit clock · ● LIVE · ✕), starfield,
+  **Metal port of the exact WebGL FRAG** (runtime-compiled via
+  `device.makeLibrary(source:)` → NO pbxproj entry; SwiftUI-gradient fallback kept),
+  correct proportions (sphere 62% of wrapper, ring base 45.6% → visible gap),
+  conic accent ring, motes, thinking sats, reflection, checkmark steps (tool cards),
+  লাইভ অ্যাকশন ফিড (header+count, status pills, bignum+sparkline, border sweep),
+  suggestion chips (run real turns via `engine.runChip`), demo seeding.
+- **Sim self-test hooks:** `ALMA_VOICE_DEMO=1` — pass as a plain LAUNCH ARGUMENT
+  (`xcrun simctl launch <udid> com.almatraders.erp ALMA_VOICE_DEMO=1`); the view
+  reads BOTH env and arguments because **`SIMCTL_CHILD_*` env did NOT reach the
+  app in practice** and positional args never appear in ProcessInfo.environment.
+  For the same reason the frozen `ALMA_ASSISTANT_VOICE=1` auto-open hook in
+  AssistantSwiftUI.swift does not fire under simctl — open the console by tapping
+  the waveform button in the composer (Assistant tab) instead.
+- Sim-verified all 5 states (screenshots shown to owner 2026-07-06). App lock:
+  type the passcode via osascript keystroke AFTER `Simulator` is frontmost.

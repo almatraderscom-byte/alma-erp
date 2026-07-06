@@ -28,6 +28,7 @@
 import SwiftUI
 import UIKit
 import AVFoundation
+import MetalKit
 
 // MARK: - State + strings (web STATUS dict parity)
 
@@ -36,7 +37,7 @@ enum AlmaVoiceState: String {
 
     var statusText: String {
         switch self {
-        case .idle: return "ট্যাপ করে বলুন"
+        case .idle: return "নিষ্ক্রিয়"
         case .listening: return "শুনছি…"
         case .transcribing: return "বুঝে নিচ্ছি…"
         case .thinking: return "ভাবছি…"
@@ -91,6 +92,9 @@ final class AlmaVoiceEngine {
         var options: [String] = []   // ask cards
         var pendingActionId: String?
         var askCardId: String?
+        var big: String = ""         // data cards: big number line
+        var delta: String = ""       //   …its delta caption
+        var spark: [Double] = []     //   …sparkline points
     }
     var cards: [Card] = []
 
@@ -200,6 +204,14 @@ final class AlmaVoiceEngine {
     /// thinking → SSE → chunked-TTS → speaking → auto-relisten loop headlessly
     /// (this Mac mini has no microphone, so the mic leg can't be simulated).
     func debugInjectUtterance(_ text: String) {
+        transcript = text
+        runTurn(text)
+    }
+
+    /// Suggestion chips (design dock): run a normal voice turn from a canned prompt.
+    func runChip(_ text: String) {
+        guard state == .idle || state == .error else { return }
+        tts.stopAll()
         transcript = text
         runTurn(text)
     }
@@ -1110,16 +1122,23 @@ final class AlmaTtsQueue: NSObject, AVAudioPlayerDelegate {
 }
 
 
-// MARK: - The console view — this session's WEB VoiceConsole design, 1:1
+// MARK: - The console view — the owner-confirmed v2 design (DESIGN-REFERENCE.html), 1:1
 //
-// The owner's iPhone app showed the web voice console (dark near-black canvas,
-// state-hued aurora + dot grid, a state-hued FLUID orb with a 72-bar reactive
-// ring, glass status badge, glowing spoken-subtitle caption, dark-glass action
-// cards, কথোপকথন dock) — going native lost that look. This view restores it in
-// SwiftUI, matching artifact ce8df7fd (src/agent/components/voice/VoiceConsole
-// + FluidOrb): tokens bg0 #04070D, ink #EAF2FB, muted #7C92A9, faint #55708C,
-// line rgba(160,200,240,.13), gold #E2B366, good #3BE08F; hues idle 168 /
-// listening 145 / thinking·transcribing 265 / speaking 210 / error 8.
+// Pixel target: docs/voice-console-native/DESIGN-REFERENCE.html + the v2 preview
+// the owner confirmed 2026-07-06. Every component of that page exists here:
+// near-black #04070D canvas, state-hued aurora, twinkling STARFIELD with comets,
+// dot grid, top bar (ALMA. · এজেন্ট কনসোল · ঢাকা clock · ● LIVE), glass state
+// badge, the WebGL FLUID ORB ported 1:1 to Metal (runtime-compiled — no pbxproj
+// entry needed), 72-bar reactive waveform ring OUTSIDE the orb with a clear gap,
+// spinning conic accent ring, 5 orbiting energy motes, thinking satellites,
+// floor reflection, glowing caption (Sir in gold), checkmark steps, suggestion
+// chips, live action-card feed (header + count + border-sweep pop), কথোপকথন
+// dock. Tokens: ink #EAF2FB, muted #7C92A9, faint #55708C, gold #E2B366,
+// line rgba(160,200,240,.13), good #3BE08F; hues idle 168 / listening 145 /
+// thinking·transcribing 265 / speaking 210 / error 8.
+//
+// ALMA_VOICE_DEMO=1 (simctl launch env) shows a STATE PREVIEW bar + sample
+// cards for design verification — never set in production.
 
 /// HSL → Color (the web uses HSL; SwiftUI's Color(hue:) is HSB). Faithful port.
 @available(iOS 17.0, *)
@@ -1145,6 +1164,12 @@ struct AlmaVoiceConsoleView: View {
     let vm: AssistantVM
     @State private var engine = AlmaVoiceEngine()
     @Environment(\.dismiss) private var dismiss
+    @State private var liveBlink = false
+
+    /// Design-verification mode (simctl only): no live engine, STATE PREVIEW bar,
+    /// sample cards — so every state can be screenshotted without a microphone.
+    private let demoMode = ProcessInfo.processInfo.environment["ALMA_VOICE_DEMO"] == "1"
+        || ProcessInfo.processInfo.arguments.contains("ALMA_VOICE_DEMO=1")
 
     // Web palette tokens.
     private let ink   = Color(red: 0.918, green: 0.949, blue: 0.984)   // #EAF2FB
@@ -1154,20 +1179,32 @@ struct AlmaVoiceConsoleView: View {
     private let line  = Color(red: 0.627, green: 0.784, blue: 0.941).opacity(0.13)
     private let good  = Color(red: 0.231, green: 0.878, blue: 0.561)   // #3BE08F
     private let bg0   = Color(red: 0.016, green: 0.027, blue: 0.051)   // #04070D
+    private let glass = Color(red: 0.549, green: 0.745, blue: 0.941)   // rgba(140,190,240,…) base
 
     private var hue: Double { engine.state.hue }
+    private var toolSteps: [AlmaVoiceEngine.Card] { engine.cards.filter { $0.kind == .tool } }
+    private var feedCards: [AlmaVoiceEngine.Card] { engine.cards.filter { $0.kind != .tool } }
+
+    private static let dhakaClock: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "bn_BD@numbers=beng")
+        f.timeZone = TimeZone(identifier: "Asia/Dhaka")
+        f.dateFormat = "h:mm a"
+        return f
+    }()
 
     var body: some View {
         ZStack {
             bg0.ignoresSafeArea()
             aurora.ignoresSafeArea()
-            dotGrid.ignoresSafeArea()
+            AlmaStarfieldView().ignoresSafeArea().allowsHitTesting(false)
+            dotGrid.ignoresSafeArea().allowsHitTesting(false)
 
             VStack(spacing: 0) {
                 topBar
                 Spacer(minLength: 4)
                 stateBadge
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 10)
                 AlmaFluidOrbView(state: engine.state,
                                  micLevel: engine.micLevel,
                                  ttsLevel: engine.ttsLevel)
@@ -1175,8 +1212,8 @@ struct AlmaVoiceConsoleView: View {
                     .contentShape(Circle())
                     .onTapGesture { engine.tapOrb() }
                 voiceZone
-                    .padding(.top, 14)
-                cardsFeed
+                    .padding(.top, 16)
+                feedSection
                 Spacer(minLength: 4)
                 dock
             }
@@ -1184,12 +1221,12 @@ struct AlmaVoiceConsoleView: View {
         .preferredColorScheme(.dark)
         .onAppear {
             engine.chatVM = vm
-            engine.begin()
+            if demoMode { seedDemo() } else { engine.begin() }
             if let say = ProcessInfo.processInfo.environment["ALMA_VOICE_SAY"], !say.isEmpty {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) { engine.debugInjectUtterance(say) }
             }
         }
-        .onDisappear { engine.end() }
+        .onDisappear { if !demoMode { engine.end() } }
         .overlay(alignment: .top) {
             if let t = engine.errorToast {
                 Text(t)
@@ -1207,7 +1244,21 @@ struct AlmaVoiceConsoleView: View {
         }
     }
 
-    private var orbSide: CGFloat { min(300, max(220, UIScreen.main.bounds.width * 0.62)) }
+    private var orbSide: CGFloat { min(300, max(220, UIScreen.main.bounds.width * 0.72)) }
+
+    /// Sample content so the design can be verified state-by-state in the sim.
+    private func seedDemo() {
+        engine.cards = [
+            .init(id: "demo-t1", kind: .tool, icon: "🪙", title: "CoinGecko থেকে লাইভ প্রাইস আনা", sub: "", status: "ok"),
+            .init(id: "demo-t2", kind: .tool, icon: "📈", title: "২৪ ঘণ্টার ট্রেন্ড বিশ্লেষণ", sub: "", status: "ok"),
+            .init(id: "demo-t3", kind: .tool, icon: "📝", title: "রিপোর্ট তৈরি", sub: "", status: "run"),
+            .init(id: "demo-c1", kind: .ask, icon: "🪙", title: "SUI লাইভ প্রাইস", sub: "CoinGecko · crypto-watch",
+                  status: "সম্পন্ন", big: "$3.42", delta: "▲ ২৪ ঘণ্টায় +৪.২%",
+                  spark: [12, 14, 13, 16, 15, 18, 17, 20, 19, 23, 22, 26]),
+            .init(id: "demo-c2", kind: .approval, icon: "🌐", title: "ওয়েবসাইট আপডেট", sub: "almatraders.com · hero-banner", status: "wait"),
+        ]
+        engine.replyText = "Sir, SUI এখন ৩.৪২ ডলারে — গত ২৪ ঘণ্টায় ৪.২% বেড়েছে। ট্রেন্ড ইতিবাচক, তবে ভলিউম কিছুটা কম।"
+    }
 
     // ── Background: state-hued aurora + dot grid (web .aurora / .dotgrid) ──
     private var aurora: some View {
@@ -1247,23 +1298,43 @@ struct AlmaVoiceConsoleView: View {
         }
     }
 
-    // ── Top bar: web has a single ✕ close top-right ──
+    // ── Top bar: ALMA. wordmark · এজেন্ট কনসোল | ঢাকা clock · ● LIVE · ✕ ──
     private var topBar: some View {
-        HStack {
-            Spacer()
+        HStack(spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                HStack(spacing: 0) {
+                    Text("ALMA").font(.system(size: 19, weight: .heavy)).kerning(4.2).foregroundStyle(ink)
+                    Text(".").font(.system(size: 19, weight: .heavy)).foregroundStyle(gold)
+                }
+                Text("এজেন্ট কনসোল").font(.system(size: 12.5)).foregroundStyle(muted)
+            }
+            Spacer(minLength: 8)
+            TimelineView(.periodic(from: .now, by: 30)) { _ in
+                Text("ঢাকা " + Self.dhakaClock.string(from: Date()))
+                    .font(.system(size: 13)).monospacedDigit().foregroundStyle(muted)
+            }
+            HStack(spacing: 6) {
+                Circle().fill(good).frame(width: 7, height: 7)
+                    .shadow(color: good, radius: 5)
+                    .opacity(liveBlink ? 0.35 : 1)
+                    .onAppear {
+                        withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) { liveBlink = true }
+                    }
+                Text("LIVE").font(.system(size: 10.5, weight: .semibold)).kerning(1.9).foregroundStyle(good)
+            }
             Button {
                 engine.end(); dismiss()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(muted)
-                    .frame(width: 40, height: 40)
-                    .background(Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.06), in: Circle())
+                    .frame(width: 34, height: 34)
+                    .background(glass.opacity(0.06), in: Circle())
                     .overlay(Circle().strokeBorder(line, lineWidth: 1))
             }
         }
         .padding(.horizontal, 16)
-        .padding(.top, 6)
+        .padding(.top, 8)
     }
 
     // ── State badge: glass pill + glowing state-hued dot (web .statebadge) ──
@@ -1275,19 +1346,18 @@ struct AlmaVoiceConsoleView: View {
                 .shadow(color: almaHSL(hue, 0.85, 0.62), radius: 6)
             Text(engine.state.statusText)
                 .font(.system(size: 13))
-                .foregroundStyle(muted)
+                .foregroundStyle(engine.state == .error ? Color(red: 0.949, green: 0.627, blue: 0.557) : muted)
         }
         .padding(.horizontal, 14).padding(.vertical, 6)
         .background(
-            LinearGradient(colors: [Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.08),
-                                    Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.02)],
+            LinearGradient(colors: [glass.opacity(0.08), glass.opacity(0.02)],
                            startPoint: .topLeading, endPoint: .bottomTrailing),
             in: Capsule())
         .overlay(Capsule().strokeBorder(line, lineWidth: 1))
         .animation(.easeInOut(duration: 0.4), value: hue)
     }
 
-    // ── Transcript pill + glowing subtitle / caption / history (web voicezone) ──
+    // ── Transcript pill + glowing caption + checkmark steps (web voicezone) ──
     @ViewBuilder private var voiceZone: some View {
         VStack(spacing: 10) {
             // last exchange stays readable between turns
@@ -1307,7 +1377,7 @@ struct AlmaVoiceConsoleView: View {
                     Text(engine.transcript).font(.system(size: 13.5)).foregroundStyle(muted).lineLimit(1)
                 }
                 .padding(.horizontal, 16).padding(.vertical, 7)
-                .background(Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.06), in: Capsule())
+                .background(glass.opacity(0.06), in: Capsule())
                 .overlay(Capsule().strokeBorder(line, lineWidth: 1))
                 .padding(.horizontal, 24)
             }
@@ -1320,129 +1390,109 @@ struct AlmaVoiceConsoleView: View {
                         .font(.system(size: 16.5, weight: .medium))
                         .multilineTextAlignment(.center)
                 } else if !engine.replyText.isEmpty {
-                    Text(engine.replyText)
-                        .font(.system(size: 16.5)).foregroundStyle(ink)
+                    goldSir(engine.replyText)
+                        .font(.system(size: 16.5))
                         .multilineTextAlignment(.center).lineLimit(4)
                 } else if engine.state == .idle {
-                    (Text("বলুন, ").foregroundStyle(muted)
+                    (Text("আসসালামু আলাইকুম, ").foregroundStyle(muted)
                      + Text("Sir").foregroundStyle(gold)
-                     + Text(" — অর্বে ট্যাপ করুন।").foregroundStyle(muted))
+                     + Text("। আমি জেগে আছি — অর্বে ট্যাপ করে বলুন।").foregroundStyle(muted))
                         .font(.system(size: 15))
+                        .multilineTextAlignment(.center)
                 } else if engine.state == .listening {
                     Text("চুপ করলেই পাঠিয়ে দেব — তাড়া নেই, \(engine.listenSeconds / 60):\(String(format: "%02d", engine.listenSeconds % 60))")
                         .font(.system(size: 12, design: .monospaced)).foregroundStyle(faint)
                 }
             }
+            .shadow(color: almaHSL(hue, 0.80, 0.60, 0.28), radius: 13)
             .padding(.horizontal, 26)
+            // checkmark steps (web .steps) — tool progress for the current turn
+            if !toolSteps.isEmpty {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(toolSteps) { s in stepRow(s) }
+                }
+            }
         }
         .frame(minHeight: 66, alignment: .top)
     }
 
-    // ── Dark-glass action cards (web .vc-card) ──
-    @ViewBuilder private var cardsFeed: some View {
-        if !engine.cards.isEmpty {
-            ScrollView {
-                VStack(spacing: 9) {
-                    ForEach(engine.cards) { card in cardView(card) }
-                }
-                .padding(.horizontal, 20)
-            }
-            .frame(maxHeight: 160)
-            .padding(.top, 6)
+    /// Web caption parity: "Sir"/"স্যার" render in gold inside the reply text.
+    private func goldSir(_ text: String) -> Text {
+        var out = Text("")
+        var rest = Substring(text)
+        while true {
+            let rs = ["Sir", "স্যার"].compactMap { rest.range(of: $0) }.min { $0.lowerBound < $1.lowerBound }
+            guard let r = rs else { break }
+            out = out + Text(String(rest[..<r.lowerBound])).foregroundStyle(ink)
+            out = out + Text(String(rest[r])).foregroundStyle(gold)
+            rest = rest[r.upperBound...]
         }
+        return out + Text(String(rest)).foregroundStyle(ink)
     }
 
-    @ViewBuilder private func cardView(_ card: AlmaVoiceEngine.Card) -> some View {
-        HStack(spacing: 11) {
-            Text(card.icon).font(.system(size: 15))
-                .frame(width: 32, height: 32)
-                .background(Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.07),
-                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(line, lineWidth: 1))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(card.title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(ink).lineLimit(2)
-                if !card.sub.isEmpty {
-                    Text(card.sub).font(.system(size: 11.5)).foregroundStyle(faint).lineLimit(1)
-                }
-                if card.kind == .ask && card.status == "wait" {
-                    HStack(spacing: 6) {
-                        ForEach(card.options.prefix(4), id: \.self) { opt in
-                            Button { engine.answer(card, option: opt) } label: {
-                                Text(opt).font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(muted)
-                                    .padding(.horizontal, 11).padding(.vertical, 5)
-                                    .background(Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.07), in: Capsule())
-                                    .overlay(Capsule().strokeBorder(line, lineWidth: 1))
-                            }
-                        }
-                    }.padding(.top, 3)
-                }
-                if card.kind == .approval && card.status == "wait" { approveButtons(card) }
-                if card.kind == .modelSwitch && card.status == "wait" {
-                    HStack(spacing: 8) {
-                        pillButton("অনুমতি দিন", solid: true) { engine.resolveModelSwitch(card, approve: true) }
-                        pillButton("থাক", solid: false) { engine.resolveModelSwitch(card, approve: false) }
-                    }.padding(.top, 3)
-                }
-            }
-            Spacer(minLength: 0)
-            trailingStatus(card)
-        }
-        .padding(13)
-        .background(
-            LinearGradient(colors: [Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.085),
-                                    Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.028)],
-                           startPoint: .topLeading, endPoint: .bottomTrailing),
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(card.kind == .approval || card.kind == .modelSwitch
-                          ? gold.opacity(0.35) : line, lineWidth: 1))
-        .shadow(color: .black.opacity(0.4), radius: 10, y: 5)
-    }
-
-    @ViewBuilder private func approveButtons(_ card: AlmaVoiceEngine.Card) -> some View {
+    @ViewBuilder private func stepRow(_ s: AlmaVoiceEngine.Card) -> some View {
         HStack(spacing: 8) {
-            pillButton("অনুমোদন", solid: true) { engine.approve(card, yes: true) }
-            pillButton("বাতিল", solid: false) { engine.approve(card, yes: false) }
-        }.padding(.top, 3)
-    }
-
-    private func pillButton(_ text: String, solid: Bool, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(text).font(.system(size: 12, weight: solid ? .semibold : .medium))
-                .foregroundStyle(solid ? Color(red: 0.016, green: 0.063, blue: 0.094) : muted)
-                .padding(.horizontal, 12).padding(.vertical, 5)
-                .background(solid
-                    ? AnyShapeStyle(LinearGradient(colors: [Color(red: 0.486, green: 0.890, blue: 0.784),
-                                                            Color(red: 0.306, green: 0.639, blue: 1.0)],
-                                                   startPoint: .topLeading, endPoint: .bottomTrailing))
-                    : AnyShapeStyle(Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.07)),
-                    in: Capsule())
-                .overlay(solid ? nil : Capsule().strokeBorder(line, lineWidth: 1))
-        }
-    }
-
-    @ViewBuilder private func trailingStatus(_ card: AlmaVoiceEngine.Card) -> some View {
-        if card.kind == .tool {
-            if card.status == "run" { ProgressView().controlSize(.mini).tint(gold) }
-            else if card.status == "fail" {
-                Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(Color(red: 0.949, green: 0.494, blue: 0.494))
-            } else {
-                Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(good)
+            ZStack {
+                Circle().strokeBorder(s.status == "ok" ? good : faint, lineWidth: 1.5)
+                    .frame(width: 15, height: 15)
+                if s.status == "ok" {
+                    Image(systemName: "checkmark").font(.system(size: 7.5, weight: .bold)).foregroundStyle(good)
+                } else if s.status == "fail" {
+                    Image(systemName: "xmark").font(.system(size: 7.5, weight: .bold))
+                        .foregroundStyle(Color(red: 0.949, green: 0.494, blue: 0.494))
+                }
             }
-        } else if card.status != "wait" {
-            Text(card.status).font(.system(size: 11)).foregroundStyle(good)
-                .padding(.horizontal, 9).padding(.vertical, 3)
-                .background(good.opacity(0.10), in: Capsule())
+            Text(s.title).font(.system(size: 13.5))
+                .foregroundStyle(s.status == "ok" ? muted : faint)
+                .lineLimit(1)
+        }
+        .transition(.opacity.combined(with: .move(edge: .bottom)))
+    }
+
+    // ── Live action feed: header + count + glass cards (web .feed-col) ──
+    @ViewBuilder private var feedSection: some View {
+        if !feedCards.isEmpty {
+            VStack(spacing: 10) {
+                HStack {
+                    Text("লাইভ অ্যাকশন ফিড")
+                        .font(.system(size: 13.5, weight: .semibold)).foregroundStyle(muted)
+                    Spacer()
+                    Text("\(feedCards.count)")
+                        .font(.system(size: 11)).monospacedDigit().foregroundStyle(faint)
+                        .padding(.horizontal, 10).padding(.vertical, 3)
+                        .overlay(Capsule().strokeBorder(line, lineWidth: 1))
+                }
+                .padding(.horizontal, 22)
+                ScrollView {
+                    VStack(spacing: 10) {
+                        ForEach(feedCards) { card in
+                            AlmaFeedCard(card: card, engine: engine, hue: hue)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                }
+                .frame(maxHeight: 200)
+            }
+            .padding(.top, 10)
         }
     }
 
-    // ── Dock: কথোপকথন chip + hint + চ্যাটে ফিরুন (web dock) ──
+    // ── Dock: suggestion chips + কথোপকথন + চ্যাটে ফিরুন (web dock) ──
     private var dock: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             if engine.state == .speaking {
                 Text("ট্যাপ করে থামান ও কথা বলুন").font(.system(size: 12)).foregroundStyle(faint)
             }
+            // suggestion chips (web .chips) — canned voice prompts
+            let chipsEnabled = engine.state == .idle || engine.state == .error
+            VStack(spacing: 8) {
+                HStack(spacing: 9) {
+                    chip("SUI প্রাইস জিজ্ঞেস করুন", "সুই কয়েনের দাম এখন কত?", enabled: chipsEnabled)
+                    chip("খরচ এন্ট্রি দিন", "একটা খরচ এন্ট্রি করতে চাই।", enabled: chipsEnabled)
+                }
+                chip("ওয়েবসাইট আপডেট করান", "ওয়েবসাইটে কী আপডেট করা দরকার, দেখে বলো।", enabled: chipsEnabled)
+            }
+            if demoMode { demoStateBar }
             HStack(spacing: 10) {
                 Button {
                     engine.convoMode.toggle()
@@ -1457,27 +1507,283 @@ struct AlmaVoiceConsoleView: View {
                             .foregroundStyle(engine.convoMode ? muted : faint)
                     }
                     .padding(.horizontal, 16).padding(.vertical, 9)
-                    .background(Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.06), in: Capsule())
+                    .background(glass.opacity(0.06), in: Capsule())
                     .overlay(Capsule().strokeBorder(engine.convoMode ? good.opacity(0.3) : line, lineWidth: 1))
                 }
                 Button { engine.end(); dismiss() } label: {
                     Text("চ্যাটে ফিরুন").font(.system(size: 13, weight: .medium))
                         .foregroundStyle(muted)
                         .padding(.horizontal, 20).padding(.vertical, 9)
-                        .background(Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.06), in: Capsule())
+                        .background(glass.opacity(0.06), in: Capsule())
                         .overlay(Capsule().strokeBorder(line, lineWidth: 1))
                 }
             }
         }
         .padding(.bottom, 22)
     }
+
+    private func chip(_ label: String, _ utterance: String, enabled: Bool) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            engine.runChip(utterance)
+        } label: {
+            Text(label)
+                .font(.system(size: 13.5))
+                .foregroundStyle(ink)
+                .padding(.horizontal, 18).padding(.vertical, 9)
+                .background(
+                    LinearGradient(colors: [glass.opacity(0.09), glass.opacity(0.03)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing),
+                    in: Capsule())
+                .overlay(Capsule().strokeBorder(line, lineWidth: 1))
+        }
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
+    }
+
+    /// STATE PREVIEW bar — demo/verification builds only (ALMA_VOICE_DEMO=1).
+    private var demoStateBar: some View {
+        HStack(spacing: 6) {
+            Text("STATE").font(.system(size: 10, weight: .semibold)).kerning(1.6).foregroundStyle(faint)
+            ForEach([AlmaVoiceState.idle, .listening, .thinking, .speaking, .error], id: \.self) { s in
+                Button {
+                    engine.state = s
+                } label: {
+                    Text(s.statusText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(engine.state == s ? ink : muted)
+                        .padding(.horizontal, 11).padding(.vertical, 5)
+                        .background(glass.opacity(engine.state == s ? 0.11 : 0.05), in: Capsule())
+                        .overlay(Capsule().strokeBorder(
+                            engine.state == s ? almaHSL(hue, 0.80, 0.65, 0.6) : line, lineWidth: 1))
+                }
+            }
+        }
+    }
 }
 
-// MARK: - The fluid orb — this session's web FluidOrb in SwiftUI
+// MARK: - Feed card (web .card): glass, icon box, status pill, big number +
+// sparkline, approve/ask buttons, pop entrance + v2 border-sweep.
+
+@available(iOS 17.0, *)
+struct AlmaFeedCard: View {
+    let card: AlmaVoiceEngine.Card
+    let engine: AlmaVoiceEngine
+    let hue: Double
+    @State private var appeared = false
+
+    private let ink   = Color(red: 0.918, green: 0.949, blue: 0.984)
+    private let muted = Color(red: 0.486, green: 0.573, blue: 0.663)
+    private let faint = Color(red: 0.333, green: 0.439, blue: 0.549)
+    private let gold  = Color(red: 0.886, green: 0.702, blue: 0.400)
+    private let line  = Color(red: 0.627, green: 0.784, blue: 0.941).opacity(0.13)
+    private let good  = Color(red: 0.231, green: 0.878, blue: 0.561)
+    private let glass = Color(red: 0.549, green: 0.745, blue: 0.941)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text(card.icon).font(.system(size: 15))
+                    .frame(width: 34, height: 34)
+                    .background(glass.opacity(0.07), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(line, lineWidth: 1))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(card.title).font(.system(size: 14, weight: .semibold)).foregroundStyle(ink).lineLimit(2)
+                    if !card.sub.isEmpty {
+                        Text(card.sub).font(.system(size: 11.5)).foregroundStyle(faint).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 6)
+                statusPill
+            }
+            if !card.big.isEmpty {
+                HStack(alignment: .center, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(card.big)
+                            .font(.system(size: 26, weight: .bold)).monospacedDigit()
+                            .foregroundStyle(ink)
+                        if !card.delta.isEmpty {
+                            Text(card.delta).font(.system(size: 12.5)).foregroundStyle(good)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                    if card.spark.count > 1 { sparkline }
+                }
+            }
+            if card.kind == .ask && card.status == "wait" {
+                HStack(spacing: 6) {
+                    ForEach(card.options.prefix(4), id: \.self) { opt in
+                        Button { engine.answer(card, option: opt) } label: {
+                            Text(opt).font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(muted)
+                                .padding(.horizontal, 11).padding(.vertical, 5)
+                                .background(glass.opacity(0.07), in: Capsule())
+                                .overlay(Capsule().strokeBorder(line, lineWidth: 1))
+                        }
+                    }
+                }
+            }
+            if card.kind == .approval && card.status == "wait" {
+                HStack(spacing: 8) {
+                    pillButton("অনুমোদন দিন", solid: true) { engine.approve(card, yes: true) }
+                    pillButton("বাতিল", solid: false) { engine.approve(card, yes: false) }
+                }
+            }
+            if card.kind == .modelSwitch && card.status == "wait" {
+                HStack(spacing: 8) {
+                    pillButton("অনুমতি দিন", solid: true) { engine.resolveModelSwitch(card, approve: true) }
+                    pillButton("থাক", solid: false) { engine.resolveModelSwitch(card, approve: false) }
+                }
+            }
+        }
+        .padding(.horizontal, 17).padding(.vertical, 15)
+        .background(
+            LinearGradient(colors: [glass.opacity(0.085), glass.opacity(0.028)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+            .strokeBorder(card.kind == .approval || card.kind == .modelSwitch
+                          ? gold.opacity(0.35) : line, lineWidth: 1))
+        // v2 border-sweep: a conic light runs the border once when the card pops
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(
+                    AngularGradient(stops: [
+                        .init(color: .clear, location: 0.08),
+                        .init(color: almaHSL(hue, 0.85, 0.68, 0.65), location: 0.22),
+                        .init(color: .clear, location: 0.42),
+                        .init(color: .clear, location: 0.58),
+                        .init(color: almaHSL(hue, 0.85, 0.68, 0.30), location: 0.74),
+                        .init(color: .clear, location: 0.90),
+                    ], center: .center, angle: .degrees(210)),
+                    lineWidth: 1)
+                .opacity(appeared ? 0 : 1)
+        )
+        .shadow(color: .black.opacity(0.45), radius: 14, y: 7)
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared ? 0 : 16)
+        .scaleEffect(appeared ? 1 : 0.965)
+        .onAppear {
+            withAnimation(.spring(duration: 0.55)) { appeared = true }
+        }
+    }
+
+    private var statusPill: some View {
+        let (label, color): (String, Color) = {
+            switch card.status {
+            case "run":  return ("চলছে", Color(red: 0.957, green: 0.784, blue: 0.416))   // #F4C86A
+            case "wait": return ("অপেক্ষায়", Color(red: 0.435, green: 0.698, blue: 1.0)) // #6FB2FF
+            case "ok":   return ("সম্পন্ন", good)
+            case "fail": return ("ব্যর্থ", Color(red: 0.949, green: 0.494, blue: 0.494))
+            default:     return (card.status, good)
+            }
+        }()
+        return Text(label)
+            .font(.system(size: 11.5)).foregroundStyle(color)
+            .padding(.horizontal, 11).padding(.vertical, 4)
+            .background(color.opacity(0.08), in: Capsule())
+            .overlay(Capsule().strokeBorder(color.opacity(0.35), lineWidth: 1))
+    }
+
+    private var sparkline: some View {
+        Canvas { ctx, size in
+            let pts = card.spark
+            guard let maxV = pts.max(), maxV > 0, pts.count > 1 else { return }
+            var p = Path()
+            for (i, v) in pts.enumerated() {
+                let x = CGFloat(i) / CGFloat(pts.count - 1) * (size.width - 8) + 4
+                let y = size.height - 5 - CGFloat(v / maxV) * (size.height - 12)
+                if i == 0 { p.move(to: CGPoint(x: x, y: y)) } else { p.addLine(to: CGPoint(x: x, y: y)) }
+            }
+            ctx.stroke(p, with: .color(good.opacity(0.9)), style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round))
+            // soft fill under the line
+            var fill = p
+            fill.addLine(to: CGPoint(x: size.width - 4, y: size.height))
+            fill.addLine(to: CGPoint(x: 4, y: size.height))
+            fill.closeSubpath()
+            ctx.fill(fill, with: .linearGradient(
+                Gradient(colors: [good.opacity(0.22), .clear]),
+                startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height)))
+        }
+        .frame(width: 120, height: 38)
+    }
+
+    private func pillButton(_ text: String, solid: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(text).font(.system(size: 12.5, weight: solid ? .semibold : .medium))
+                .foregroundStyle(solid ? Color(red: 0.016, green: 0.063, blue: 0.094) : muted)
+                .padding(.horizontal, 16).padding(.vertical, 7)
+                .background(solid
+                    ? AnyShapeStyle(LinearGradient(colors: [Color(red: 0.486, green: 0.890, blue: 0.784),
+                                                            Color(red: 0.306, green: 0.639, blue: 1.0)],
+                                                   startPoint: .topLeading, endPoint: .bottomTrailing))
+                    : AnyShapeStyle(glass.opacity(0.07)),
+                    in: Capsule())
+                .overlay(solid ? nil : Capsule().strokeBorder(line, lineWidth: 1))
+        }
+    }
+}
+
+// MARK: - Starfield (v2): twinkling micro-stars + occasional comet, deterministic
+// (no stored state — star fields derive from hash functions, comets from a 13s cycle).
+
+@available(iOS 17.0, *)
+struct AlmaStarfieldView: View {
+    private func rnd(_ i: Int, _ k: Double) -> Double {
+        let v = sin(Double(i) * 127.1 + k * 311.7) * 43758.5453
+        return v - v.rounded(.down)
+    }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 20)) { tl in
+            let t = tl.date.timeIntervalSinceReferenceDate
+            Canvas { ctx, size in
+                let starColor = Color(red: 0.745, green: 0.863, blue: 0.980)
+                let n = min(170, Int(size.width * size.height / 14000))
+                for i in 0..<max(0, n) {
+                    let x = rnd(i, 1) * size.width
+                    let y = rnd(i, 2) * size.height
+                    let r = 0.3 + 1.1 * rnd(i, 3)
+                    let ph = rnd(i, 4) * 6.283
+                    let sp = 0.4 + 1.4 * rnd(i, 5)
+                    let tw = 0.35 + 0.65 * abs(sin(t * sp + ph))
+                    let rr = r * (0.7 + 0.5 * tw)
+                    ctx.fill(Path(ellipseIn: CGRect(x: x - rr, y: y - rr, width: rr * 2, height: rr * 2)),
+                             with: .color(starColor.opacity(0.08 + 0.20 * tw)))
+                }
+                // comet: one every ~13s, 2.2s flight, path from the cycle hash
+                let cycle = Int(t / 13)
+                let ct = t - Double(cycle) * 13
+                if ct < 2.2 {
+                    let life = 1 - ct / 2.2
+                    let x0 = size.width * (0.15 + 0.75 * rnd(cycle, 7))
+                    let y0 = size.height * 0.30 * rnd(cycle, 8)
+                    let vx = -(130 + 150 * rnd(cycle, 9))
+                    let vy = 55 + 55 * rnd(cycle, 10)
+                    let hx = x0 + vx * ct, hy = y0 + vy * ct
+                    let tx = hx - vx * 0.35, ty = hy - vy * 0.35
+                    var p = Path()
+                    p.move(to: CGPoint(x: hx, y: hy))
+                    p.addLine(to: CGPoint(x: tx, y: ty))
+                    ctx.stroke(p, with: .linearGradient(
+                        Gradient(colors: [Color(red: 0.843, green: 0.933, blue: 1.0).opacity(0.65 * life), .clear]),
+                        startPoint: CGPoint(x: hx, y: hy), endPoint: CGPoint(x: tx, y: ty)),
+                        style: StrokeStyle(lineWidth: 1.6, lineCap: .round))
+                }
+            }
+        }
+    }
+}
+
+// MARK: - The fluid orb — WebGL FRAG ported 1:1 to Metal + ring/motes/sats
 //
-// Dark state-hued sphere (iridescent radial), breathing halo, molten core,
-// fresnel rim, two drifting conic fluids, and the 72-bar reactive waveform ring
-// (web FluidOrb's signature) — hue eased per state, ring driven by mic/tts level.
+// Proportions match the web exactly: the SPHERE is 62% of the component frame
+// (Metal canvas = 124% of frame, shader R≈0.5), the 72-bar waveform ring's base
+// radius is 45.6% of the frame (canvas 136%, base 0.335) — so the ring sits
+// clearly OUTSIDE the orb with a visible gap. Idle bars read as a clean dotted
+// ring; listening/speaking grow them into reactive bars (glow via shadow filter).
+// Plus: breathing bloom, spinning conic accent ring, 5 orbiting energy motes,
+// 3 thinking satellites, and the v2 floor reflection.
 
 @available(iOS 17.0, *)
 struct AlmaFluidOrbView: View {
@@ -1485,18 +1791,24 @@ struct AlmaFluidOrbView: View {
     let micLevel: Double
     let ttsLevel: Double
 
-    private var breathe: Double? {
+    private var breathe: Double {
         switch state {
-        case .idle, .error: return 4.6
+        case .idle: return 4.6
+        case .error: return 1.2
         case .transcribing, .thinking: return 1.7
         case .listening, .speaking: return 2.8
         }
     }
-    private var spin1: Double {
+
+    private func activity(t: Double, level: Double) -> Double {
         switch state {
-        case .listening, .speaking: return 10
-        case .transcribing, .thinking: return 4.5
-        default: return 18
+        case .transcribing, .thinking: return 0.85
+        case .listening: return 0.45 + level * 0.3
+        case .speaking:
+            let env = max(0, sin(t * 3.4)) * max(0, sin(t * 1.24 + 1.6))
+            return 0.25 + max(env * 0.65, level * 0.5)
+        case .error: return 0.32
+        case .idle: return 0.12
         }
     }
 
@@ -1507,12 +1819,10 @@ struct AlmaFluidOrbView: View {
             TimelineView(.animation(minimumInterval: 1.0 / 30)) { tl in
                 let t = tl.date.timeIntervalSinceReferenceDate
                 let level = state == .speaking ? ttsLevel : micLevel
-                let scale: Double = {
-                    if let d = breathe { return 1 + 0.028 * (1 - cos(2 * .pi * t / d)) }
-                    return 1
-                }()
+                let act = activity(t: t, level: level)
+                let scale = 1 + 0.028 * (1 - cos(2 * .pi * t / breathe))
                 ZStack {
-                    // halo / bloom
+                    // breathing bloom (web .orb-bloom)
                     Circle()
                         .fill(RadialGradient(colors: [almaHSL(h, 0.90, 0.60, 0.34),
                                                       almaHSL(h, 0.90, 0.50, 0.10), .clear],
@@ -1522,80 +1832,336 @@ struct AlmaFluidOrbView: View {
                         .blur(radius: 18)
                         .scaleEffect(scale)
 
-                    // 72-bar reactive waveform ring (the web signature)
+                    // v2 floor reflection (web .orb-reflection)
+                    Ellipse()
+                        .fill(RadialGradient(colors: [almaHSL(h, 0.90, 0.60, 0.20), .clear],
+                                             center: .init(x: 0.5, y: 0.1),
+                                             startRadius: 0, endRadius: side * 0.38))
+                        .frame(width: side * 0.76, height: side * 0.15)
+                        .blur(radius: 10)
+                        .offset(y: side * 0.60)
+
+                    // spinning conic accent ring (web .orb-ring, 14s)
+                    Circle()
+                        .stroke(AngularGradient(stops: [
+                            .init(color: .clear, location: 0),
+                            .init(color: almaHSL(h, 0.90, 0.70, 0.55), location: 80.0 / 360),
+                            .init(color: .clear, location: 160.0 / 360),
+                            .init(color: .clear, location: 200.0 / 360),
+                            .init(color: almaHSL(h, 0.90, 0.70, 0.28), location: 290.0 / 360),
+                            .init(color: .clear, location: 1),
+                        ], center: .center), lineWidth: 1)
+                        .frame(width: side * 0.92, height: side * 0.92)
+                        .rotationEffect(.degrees(t.truncatingRemainder(dividingBy: 14) / 14 * 360))
+
+                    // 72-bar reactive waveform ring + 5 energy motes (one canvas)
                     Canvas { ctx, size in
                         let cx = size.width / 2, cy = size.height / 2
                         let base = size.width * 0.335
-                        for i in 0..<72 {
-                            let a = Double(i) / 72 * 2 * .pi - .pi / 2
-                            var amp = 1.5
-                            switch state {
-                            case .listening:
-                                amp = 2 + level * 22 * abs(sin(t * 2.1 + Double(i) * 0.7)) + Double.random(in: 0...3)
-                            case .speaking:
-                                let env = max(0, sin(t * 3.4)) * max(0, sin(t * 1.24 + 1.6))
-                                amp = 2 + (level > 0 ? level : env) * (6 + abs(sin(Double(i) * 1.3 + t * 5)) * 18)
-                            default:
-                                amp = 1.2 + sin(t * 0.9 + Double(i) * 0.35) * 0.8
+                        let barsVisible = state == .idle || state == .listening || state == .speaking
+                        if barsVisible {
+                            ctx.drawLayer { layer in
+                                layer.addFilter(.shadow(color: almaHSL(h, 0.90, 0.65, 0.55), radius: 5))
+                                for i in 0..<72 {
+                                    let a = Double(i) / 72 * 2 * .pi - .pi / 2
+                                    var amp = 1.5
+                                    switch state {
+                                    case .listening:
+                                        amp = 3 + abs(sin(t * 2.1 + Double(i) * 0.7)) * 9
+                                            + Double.random(in: 0...7) + level * 10
+                                    case .speaking:
+                                        let env = max(0, sin(t * 3.4)) * max(0, sin(t * 1.24 + 1.6))
+                                        amp = 2 + max(env, level) * (7 + abs(sin(Double(i) * 1.3 + t * 5)) * 13)
+                                    default:
+                                        amp = 1.2 + sin(t * 0.9 + Double(i) * 0.35) * 0.8
+                                    }
+                                    let r1 = base, r2 = base + amp
+                                    var p = Path()
+                                    p.move(to: CGPoint(x: cx + cos(a) * r1, y: cy + sin(a) * r1))
+                                    p.addLine(to: CGPoint(x: cx + cos(a) * r2, y: cy + sin(a) * r2))
+                                    layer.stroke(p, with: .color(almaHSL(h, 0.90, 0.68, 0.22 + amp / 40)),
+                                                 style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+                                }
                             }
-                            let r1 = base, r2 = base + amp
-                            var p = Path()
-                            p.move(to: CGPoint(x: cx + cos(a) * r1, y: cy + sin(a) * r1))
-                            p.addLine(to: CGPoint(x: cx + cos(a) * r2, y: cy + sin(a) * r2))
-                            ctx.stroke(p, with: .color(almaHSL(h, 0.90, 0.68, 0.22 + amp / 40)),
-                                       style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+                        }
+                        // v2 energy motes
+                        ctx.drawLayer { layer in
+                            layer.addFilter(.shadow(color: almaHSL(h, 0.95, 0.72, 0.8), radius: 9))
+                            for mi in 0..<5 {
+                                let ma = t * (0.22 + Double(mi) * 0.06) + Double(mi) * 2.51
+                                let mr = base * (1.16 + 0.09 * sin(t * 0.7 + Double(mi) * 1.7))
+                                let ms = 1.3 + act * 1.9
+                                let mx = cx + cos(ma) * mr, my = cy + sin(ma) * mr
+                                layer.fill(Path(ellipseIn: CGRect(x: mx - ms, y: my - ms, width: ms * 2, height: ms * 2)),
+                                           with: .color(almaHSL(h, 0.95, 0.80, 0.22 + act * 0.38)))
+                            }
                         }
                     }
                     .frame(width: side * 1.36, height: side * 1.36)
 
-                    // the sphere (state-hued, dark edge) + fluids + rim + core
-                    ZStack {
-                        Circle().fill(RadialGradient(stops: [
-                            .init(color: almaHSL(h, 0.95, 0.88), location: 0),
-                            .init(color: almaHSL(h, 0.92, 0.60), location: 0.42),
-                            .init(color: almaHSL(h, 0.88, 0.40), location: 0.74),
-                            .init(color: almaHSL(h + 18, 0.80, 0.16), location: 1),
-                        ], center: .init(x: 0.36, y: 0.28), startRadius: 0, endRadius: side * 0.6))
-                        // drifting conic fluid
-                        Circle()
-                            .fill(AngularGradient(colors: [
-                                almaHSL(h, 0.88, 0.62), almaHSL(h + 40, 0.85, 0.50),
-                                almaHSL(h - 30, 0.90, 0.66), almaHSL(h, 0.88, 0.62),
-                            ], center: .center, angle: .degrees(t / spin1 * 360)))
-                            .frame(width: side * 1.2, height: side * 1.2)
-                            .blur(radius: 14).blendMode(.screen)
-                            .opacity(state == .thinking || state == .transcribing ? 0.6 : 0.42)
-                        // molten core
-                        Circle()
-                            .fill(RadialGradient(colors: [almaHSL(h, 1.0, 0.92, 0.9),
-                                                          almaHSL(h, 0.95, 0.70, 0.25), .clear],
-                                                 center: .center, startRadius: 0, endRadius: side * 0.16))
-                            .frame(width: side * 0.4, height: side * 0.4)
-                            .blur(radius: 3)
-                            .opacity(0.6 + 0.4 * (state == .speaking ? min(1, ttsLevel) : (1 - cos(2 * .pi * t / 2.0)) / 2))
-                        // upper-left gloss
-                        Ellipse().fill(RadialGradient(colors: [.white.opacity(0.5), .clear],
-                                                      center: .center, startRadius: 0, endRadius: side * 0.16))
-                            .frame(width: side * 0.28, height: side * 0.18)
-                            .offset(x: -side * 0.10, y: -side * 0.16)
-                            .blendMode(.screen)
-                        // fresnel rim
-                        Circle().fill(RadialGradient(stops: [
-                            .init(color: .clear, location: 0.66),
-                            .init(color: almaHSL(h + 18, 0.90, 0.72, 0.35), location: 0.86),
-                            .init(color: almaHSL(h + 18, 0.90, 0.80, 0.55), location: 0.94),
-                            .init(color: .clear, location: 1),
-                        ], center: .center, startRadius: 0, endRadius: side * 0.5))
-                            .blendMode(.screen)
+                    // THE ORB — Metal port of the exact WebGL fluid shader;
+                    // SwiftUI-gradient fallback if Metal is unavailable.
+                    if AlmaOrbRenderer.shared != nil {
+                        AlmaMetalOrbView(hue: h, stateKey: state.rawValue, level: level)
+                            .frame(width: side * 1.24, height: side * 1.24)
+                            .allowsHitTesting(false)
+                    } else {
+                        fallbackSphere(side: side, h: h, t: t)
+                            .frame(width: side * 0.62, height: side * 0.62)
+                            .clipShape(Circle())
+                            .shadow(color: almaHSL(h, 0.90, 0.45, 0.35), radius: 30, y: 18)
+                            .scaleEffect(scale)
                     }
-                    .frame(width: side, height: side)
-                    .clipShape(Circle())
-                    .shadow(color: almaHSL(h, 0.90, 0.45, 0.35), radius: 30, y: 18)
-                    .scaleEffect(scale)
+
+                    // thinking satellites (web .sats, 3.6s spin)
+                    ZStack {
+                        satDot(h).offset(y: -side * 0.58)
+                        satDot(h).offset(x: -side * 0.44, y: side * 0.40)
+                        satDot(h).offset(x: side * 0.44, y: side * 0.40)
+                    }
+                    .rotationEffect(.degrees(t.truncatingRemainder(dividingBy: 3.6) / 3.6 * 360))
+                    .opacity(state == .thinking || state == .transcribing ? 1 : 0)
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
                 .animation(.easeInOut(duration: 0.5), value: h)
             }
+        }
+    }
+
+    private func satDot(_ h: Double) -> some View {
+        Circle()
+            .fill(almaHSL(h, 0.95, 0.78))
+            .frame(width: 7, height: 7)
+            .shadow(color: almaHSL(h, 0.95, 0.70), radius: 6)
+    }
+
+    /// Non-Metal fallback: the previous multi-layer gradient approximation,
+    /// sized to the correct 62% sphere proportion.
+    @ViewBuilder private func fallbackSphere(side: CGFloat, h: Double, t: Double) -> some View {
+        let d = side * 0.62
+        ZStack {
+            Circle().fill(RadialGradient(stops: [
+                .init(color: almaHSL(h, 0.95, 0.88), location: 0),
+                .init(color: almaHSL(h, 0.92, 0.60), location: 0.42),
+                .init(color: almaHSL(h, 0.88, 0.40), location: 0.74),
+                .init(color: almaHSL(h + 18, 0.80, 0.16), location: 1),
+            ], center: .init(x: 0.36, y: 0.28), startRadius: 0, endRadius: d * 0.6))
+            Circle()
+                .fill(AngularGradient(colors: [
+                    almaHSL(h, 0.88, 0.62), almaHSL(h + 40, 0.85, 0.50),
+                    almaHSL(h - 30, 0.90, 0.66), almaHSL(h, 0.88, 0.62),
+                ], center: .center, angle: .degrees(t / 10 * 360)))
+                .frame(width: d * 1.2, height: d * 1.2)
+                .blur(radius: 14).blendMode(.screen)
+                .opacity(0.42)
+            Circle()
+                .fill(RadialGradient(colors: [almaHSL(h, 1.0, 0.92, 0.9),
+                                              almaHSL(h, 0.95, 0.70, 0.25), .clear],
+                                     center: .center, startRadius: 0, endRadius: d * 0.16))
+                .frame(width: d * 0.4, height: d * 0.4)
+                .blur(radius: 3)
+            Ellipse().fill(RadialGradient(colors: [.white.opacity(0.5), .clear],
+                                          center: .center, startRadius: 0, endRadius: d * 0.16))
+                .frame(width: d * 0.28, height: d * 0.18)
+                .offset(x: -d * 0.10, y: -d * 0.16)
+                .blendMode(.screen)
+            Circle().fill(RadialGradient(stops: [
+                .init(color: .clear, location: 0.66),
+                .init(color: almaHSL(h + 18, 0.90, 0.72, 0.35), location: 0.86),
+                .init(color: almaHSL(h + 18, 0.90, 0.80, 0.55), location: 0.94),
+                .init(color: .clear, location: 1),
+            ], center: .center, startRadius: 0, endRadius: d * 0.5))
+                .blendMode(.screen)
+        }
+    }
+}
+
+// MARK: - Metal orb: the DESIGN-REFERENCE WebGL fragment shader, 1:1 in MSL,
+// runtime-compiled (no .metal file → no pbxproj registration needed).
+
+struct AlmaOrbUniforms {
+    var resX: Float
+    var resY: Float
+    var time: Float
+    var hue: Float
+    var amp: Float
+}
+
+final class AlmaOrbRenderer {
+    static let shared: AlmaOrbRenderer? = AlmaOrbRenderer()
+
+    let device: MTLDevice
+    let queue: MTLCommandQueue
+    let pipeline: MTLRenderPipelineState
+
+    private init?() {
+        guard let dev = MTLCreateSystemDefaultDevice(), let q = dev.makeCommandQueue() else { return nil }
+        device = dev
+        queue = q
+        do {
+            let lib = try dev.makeLibrary(source: AlmaOrbRenderer.msl, options: nil)
+            guard let vfn = lib.makeFunction(name: "almaOrbVertex"),
+                  let ffn = lib.makeFunction(name: "almaOrbFragment") else { return nil }
+            let pd = MTLRenderPipelineDescriptor()
+            pd.vertexFunction = vfn
+            pd.fragmentFunction = ffn
+            pd.colorAttachments[0].pixelFormat = .bgra8Unorm
+            pipeline = try dev.makeRenderPipelineState(descriptor: pd)
+        } catch {
+            return nil
+        }
+    }
+
+    /// The exact FRAG from DESIGN-REFERENCE.html translated GLSL→MSL (incl. the
+    /// two v2 additions: second rim light + iridescent shimmer). GLSL mod() is
+    /// euclidean, MSL fmod() is not — hsl2rgb uses x-6·floor(x/6) instead.
+    static let msl = """
+    #include <metal_stdlib>
+    using namespace metal;
+
+    struct AlmaU { float resX; float resY; float time; float hue; float amp; };
+
+    static float ahash(float2 p) {
+        p = fract(p * float2(123.34, 345.45));
+        p += dot(p, p + 34.345);
+        return fract(p.x * p.y);
+    }
+    static float anoise(float2 p) {
+        float2 i = floor(p), f = fract(p);
+        float2 u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(ahash(i), ahash(i + float2(1.0, 0.0)), u.x),
+                   mix(ahash(i + float2(0.0, 1.0)), ahash(i + float2(1.0, 1.0)), u.x), u.y);
+    }
+    static float afbm(float2 p) {
+        float v = 0.0, a = 0.5;
+        for (int i = 0; i < 4; i++) { v += a * anoise(p); p = p * 2.03 + float2(7.3, 3.1); a *= 0.5; }
+        return v;
+    }
+    static float3 ahsl(float h, float s, float l) {
+        float3 k = h / 60.0 + float3(0.0, 4.0, 2.0);
+        k = k - 6.0 * floor(k / 6.0);
+        float3 rgb = clamp(fabs(k - 3.0) - 1.0, 0.0, 1.0);
+        float c = (1.0 - fabs(2.0 * l - 1.0)) * s;
+        return (rgb - 0.5) * c + l;
+    }
+
+    vertex float4 almaOrbVertex(uint vid [[vertex_id]]) {
+        float2 pos[3] = { float2(-1.0, -1.0), float2(3.0, -1.0), float2(-1.0, 3.0) };
+        return float4(pos[vid], 0.0, 1.0);
+    }
+
+    fragment float4 almaOrbFragment(float4 fragPos [[position]], constant AlmaU& u [[buffer(0)]]) {
+        float2 res = float2(u.resX, u.resY);
+        float2 fc = float2(fragPos.x, u.resY - fragPos.y);   // GL is y-up
+        float2 p = (fc * 2.0 - res) / min(res.x, res.y);
+        float t = u.time;
+        float breath = sin(t * 1.37) * 0.5 + 0.5;
+        float R = 0.50 + 0.016 * breath + 0.05 * u.amp;
+        float r = length(p);
+        float ang = t * 0.10;
+        float2x2 rot = float2x2(float2(cos(ang), -sin(ang)), float2(sin(ang), cos(ang)));
+        float2 q = rot * p;
+        float spd = 0.16 + u.amp * 0.6;
+        float2 w = q * 1.9;
+        float n1 = afbm(w + float2(t * spd, -t * spd * 0.7));
+        float n2 = afbm(w * 1.6 + 4.0 * float2(n1, n1 * 0.7) + float2(-t * spd * 0.8, t * spd * 0.5));
+        float3 c1 = ahsl(u.hue,        0.88, 0.55);
+        float3 c2 = ahsl(u.hue + 46.0, 0.85, 0.46);
+        float3 c3 = ahsl(u.hue - 38.0, 0.90, 0.62);
+        float3 col = mix(c1, c2, smoothstep(0.25, 0.75, n1));
+        col = mix(col, c3, smoothstep(0.42, 0.9, n2) * 0.6);
+        float nz = sqrt(max(0.0, 1.0 - (r * r) / (R * R)));
+        col *= 0.26 + 0.72 * nz;
+        col *= 1.0 - 0.30 * smoothstep(0.0, 1.0, (-p.y / R) * 0.5 + 0.5) * (1.0 - nz * 0.6);
+        float core = exp(-r * r * 6.0);
+        col += ahsl(u.hue, 0.55, 0.85) * core * (0.10 + 0.28 * u.amp * (0.55 + 0.45 * sin(t * 8.0)));
+        float fres = pow(1.0 - nz, 2.6);
+        col += ahsl(u.hue + 18.0, 0.9, 0.68) * fres * 0.85;
+        col += ahsl(u.hue - 42.0, 0.85, 0.58) * pow(1.0 - nz, 4.2) * 0.4;
+        col += 0.05 * float3(sin(n2 * 14.0 + t * 0.5), sin(n2 * 14.0 + 2.1 + t * 0.5), sin(n2 * 14.0 + 4.2 + t * 0.5)) * nz;
+        float2 hp = p - float2(-0.42, 0.46) * R;
+        col += float3(1.0) * exp(-dot(hp, hp) * 52.0) * 0.5;
+        float inside = smoothstep(R, R - 0.012, r);
+        float halo = exp(-max(r - R, 0.0) * 6.5);
+        float3 haloCol = ahsl(u.hue, 0.9, 0.60) * halo * (0.30 + 0.35 * u.amp);
+        float3 outCol = col * inside + haloCol * (1.0 - inside);
+        float alpha = max(inside, halo * (0.5 + 0.3 * u.amp) * (1.0 - inside));
+        return float4(outCol * alpha, alpha);   // premultiplied for CA compositing
+    }
+    """
+}
+
+struct AlmaMetalOrbView: UIViewRepresentable {
+    var hue: Double
+    var stateKey: String
+    var level: Double
+
+    func makeCoordinator() -> Coord { Coord() }
+
+    func makeUIView(context: Context) -> MTKView {
+        let v = MTKView(frame: .zero, device: AlmaOrbRenderer.shared?.device)
+        v.delegate = context.coordinator
+        v.preferredFramesPerSecond = 30
+        v.isOpaque = false
+        v.backgroundColor = .clear
+        v.clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+        v.isUserInteractionEnabled = false
+        context.coordinator.apply(hue: hue, state: stateKey, level: level)
+        return v
+    }
+
+    func updateUIView(_ v: MTKView, context: Context) {
+        context.coordinator.apply(hue: hue, state: stateKey, level: level)
+    }
+
+    final class Coord: NSObject, MTKViewDelegate {
+        private let start = CACurrentMediaTime()
+        private var last = CACurrentMediaTime()
+        private var hue: Float = 168
+        private var hueTarget: Float = 168
+        private var amp: Float = 0.12
+        private var state = "idle"
+        private var level: Float = 0
+
+        func apply(hue: Double, state: String, level: Double) {
+            hueTarget = Float(hue)
+            self.state = state
+            self.level = Float(level)
+        }
+
+        func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+
+        func draw(in view: MTKView) {
+            guard let r = AlmaOrbRenderer.shared,
+                  let drawable = view.currentDrawable,
+                  let rpd = view.currentRenderPassDescriptor,
+                  let cb = r.queue.makeCommandBuffer(),
+                  let enc = cb.makeRenderCommandEncoder(descriptor: rpd) else { return }
+            let now = CACurrentMediaTime()
+            let dt = Float(min(0.05, now - last))
+            last = now
+            let t = Float(now - start)
+            // web frame(): hue eases at 4.2/s, activity at 5.5/s
+            hue += (hueTarget - hue) * min(1, dt * 4.2)
+            let env = max(0, sin(t * 3.4)) * max(0, sin(t * 1.24 + 1.6))
+            let target: Float
+            switch state {
+            case "thinking", "transcribing": target = 0.85
+            case "listening": target = 0.45 + level * 0.3
+            case "speaking": target = 0.25 + max(env * 0.65, level * 0.5)
+            case "error": target = 0.32
+            default: target = 0.12
+            }
+            amp += (target - amp) * min(1, dt * 5.5)
+            var u = AlmaOrbUniforms(resX: Float(view.drawableSize.width),
+                                    resY: Float(view.drawableSize.height),
+                                    time: t, hue: hue, amp: amp)
+            enc.setRenderPipelineState(r.pipeline)
+            enc.setFragmentBytes(&u, length: MemoryLayout<AlmaOrbUniforms>.stride, index: 0)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+            enc.endEncoding()
+            cb.present(drawable)
+            cb.commit()
         }
     }
 }
