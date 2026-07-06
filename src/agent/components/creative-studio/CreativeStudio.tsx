@@ -39,6 +39,8 @@ import {
   fetchStudioConfig,
   fetchGallery,
   fetchModels,
+  setDefaultModel,
+  deleteModel,
   runAutoStudioJob,
   runStudioJob,
   saveModel,
@@ -91,7 +93,98 @@ async function handleDownload(url: string | undefined | null, filename?: string)
 }
 
 type MainView = 'studio' | 'gallery' | 'video' | 'audio' | 'library'
-type StudioModel = { id: string; name: string; role: string | null; isDefault: boolean }
+type StudioModel = {
+  id: string
+  name: string
+  role: string | null
+  isDefault: boolean
+  imagePath?: string
+  imageUrl?: string | null
+}
+
+/** Bangla label for a model role (falls back to the raw role for anything odd). */
+function roleLabelBn(role: string | null): string {
+  switch (role) {
+    case 'single': return 'একক / নিজে'
+    case 'father': return 'বাবা'
+    case 'mother': return 'মা'
+    case 'son': return 'ছেলে'
+    case 'daughter': return 'মেয়ে'
+    default: return role ?? ''
+  }
+}
+
+/**
+ * Visual model picker — a horizontal row of saved-model photos the owner can TAP
+ * to choose which face/body the shot uses (replaces the old name-only dropdown,
+ * which gave no way to see or pick the actual person). Tapping the selected card
+ * again clears the choice. Selection drives modelId in the workspace.
+ */
+function ModelPicker({
+  models,
+  selectedId,
+  onSelect,
+}: {
+  models: StudioModel[]
+  selectedId: string
+  onSelect: (id: string) => void
+}) {
+  if (models.length === 0) return null
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between">
+        <p className="text-[11px] font-semibold text-muted">সেভ করা মডেল বেছে নিন</p>
+        {selectedId && (
+          <button type="button" onClick={() => onSelect('')} className="text-[10px] font-semibold text-[#E07A5F]">
+            বাছাই বাদ দিন
+          </button>
+        )}
+      </div>
+      <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {models.map((m) => {
+          const active = selectedId === m.id
+          return (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => onSelect(active ? '' : m.id)}
+              className={cn(
+                'relative w-[74px] shrink-0 overflow-hidden rounded-xl border transition-all',
+                active ? 'border-[#E07A5F] ring-2 ring-[#E07A5F]/30' : 'border-border-subtle opacity-90',
+              )}
+              title={`${m.name} (${roleLabelBn(m.role)})`}
+            >
+              <div className="aspect-[3/4] w-full bg-bg-1">
+                {m.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={m.imageUrl} alt={m.name} className="h-full w-full object-cover" />
+                ) : (
+                  <span className="grid h-full w-full place-items-center text-muted">
+                    <UserSvg className="h-6 w-6" />
+                  </span>
+                )}
+              </div>
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4">
+                <span className="block truncate text-left text-[10px] font-bold text-white">{m.name}</span>
+              </div>
+              {active && (
+                <span className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-[#E07A5F] text-[10px] text-white shadow">✓</span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+const MODEL_ROLES = [
+  { id: 'single', label: 'একক / নিজে' },
+  { id: 'father', label: 'বাবা' },
+  { id: 'mother', label: 'মা' },
+  { id: 'son', label: 'ছেলে (৫–১২)' },
+  { id: 'daughter', label: 'মেয়ে (৫–১০)' },
+] as const
 
 // These modes carry no product image, so the Gemini fallback (which requires a
 // product) can't serve them — they only render through FASHN. Gate them in the
@@ -496,20 +589,7 @@ function StudioWorkspace({
             />
           )}
 
-          {models.length > 0 && (
-            <select
-              value={modelId}
-              onChange={(e) => setModelId(e.target.value)}
-              className="w-full rounded-xl border border-border bg-card/80 px-3 py-2.5 text-sm"
-            >
-              <option value="">Saved model (optional)</option>
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name} ({m.role})
-                </option>
-              ))}
-            </select>
-          )}
+          <ModelPicker models={models} selectedId={modelId} onSelect={setModelId} />
         </div>
       </div>
 
@@ -757,8 +837,13 @@ function AutoPanel({
         {/* Default model status */}
         {defaultModel ? (
           <div className="flex items-center gap-3 rounded-2xl border border-border-subtle bg-card/70 px-3.5 py-3">
-            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#E07A5F]/12 text-[#E07A5F]">
-              <UserSvg className="h-5 w-5" />
+            <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-[#E07A5F]/12 text-[#E07A5F]">
+              {defaultModel.imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={defaultModel.imageUrl} alt={defaultModel.name} className="h-full w-full object-cover" />
+              ) : (
+                <UserSvg className="h-5 w-5" />
+              )}
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-[13px] font-semibold text-cream">মডেল: {defaultModel.name}</p>
@@ -1609,11 +1694,15 @@ function FinishPanel({
 }
 
 function ModelsView() {
-  const [models, setModels] = useState<Array<{ id: string; name: string; role: string | null; isDefault: boolean }>>([])
+  const [models, setModels] = useState<StudioModel[]>([])
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [confirmId, setConfirmId] = useState<string | null>(null)
+  // Draft = the add-model sheet: opens once a photo is picked, collects name + role.
+  const [draftPreview, setDraftPreview] = useState<string | null>(null)
+  const [draftPath, setDraftPath] = useState<string | null>(null)
+  const [draftUploading, setDraftUploading] = useState(false)
   const [name, setName] = useState('')
   const [role, setRole] = useState('single')
-  const [preview, setPreview] = useState<string | null>(null)
-  const [path, setPath] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const ref = useRef<HTMLInputElement>(null)
 
@@ -1626,9 +1715,27 @@ function ModelsView() {
     void load().catch(() => {})
   }, [load])
 
+  const closeDraft = useCallback(() => {
+    setDraftPath(null)
+    setDraftUploading(false)
+    setName('')
+    setRole('single')
+    setDraftPreview((p) => { if (p) URL.revokeObjectURL(p); return null })
+  }, [])
+
+  const onPickFile = (f: File) => {
+    setDraftPreview((p) => { if (p) URL.revokeObjectURL(p); return URL.createObjectURL(f) })
+    setDraftPath(null)
+    setDraftUploading(true)
+    void uploadStudioFile(f, 'model-library')
+      .then((p) => setDraftPath(p))
+      .catch((err) => { toast.error(String(err)); closeDraft() })
+      .finally(() => setDraftUploading(false))
+  }
+
   const onSave = async () => {
-    if (!name.trim() || !path) {
-      toast.error('Name + photo required')
+    if (!name.trim() || !draftPath) {
+      toast.error('নাম আর ছবি — দুটোই দরকার')
       return
     }
     setSaving(true)
@@ -1636,14 +1743,11 @@ function ModelsView() {
       await saveModel({
         id: name.trim().toLowerCase().replace(/\s+/g, '-'),
         name: name.trim(),
-        imagePath: path,
+        imagePath: draftPath,
         role,
       })
-      toast.success(`Model "${name}" saved — chat এ "Model ${name}" বলুন`)
-      setName('')
-      setPath(null)
-      if (preview) URL.revokeObjectURL(preview)
-      setPreview(null)
+      toast.success(`মডেল "${name}" সেভ হলো`)
+      closeDraft()
       await load()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Save failed')
@@ -1652,79 +1756,255 @@ function ModelsView() {
     }
   }
 
-  return (
-    <div className="mx-auto max-w-lg px-3 py-4 pb-8">
-      <h2 className="mb-1 text-sm font-bold">Model Library</h2>
-      <p className="mb-3 text-[11px] leading-snug text-muted">
-        Full-body photo save করুন। Chat: &quot;Model Maruf use koro&quot; — agent মনে রাখবে।
-      </p>
+  const makeDefault = async (id: string) => {
+    setBusyId(id)
+    try {
+      await setDefaultModel(id)
+      await load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed')
+    } finally {
+      setBusyId(null)
+    }
+  }
 
-      <div
-        className="mb-3 overflow-hidden rounded-2xl border-2 border-dashed border-border bg-card/80"
-        onClick={() => ref.current?.click()}
-      >
-        <input
-          ref={ref}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0]
-            if (!f) return
-            if (preview) URL.revokeObjectURL(preview)
-            setPreview(URL.createObjectURL(f))
-            void uploadStudioFile(f, 'model-library')
-              .then(setPath)
-              .catch((err) => toast.error(String(err)))
-          }}
-        />
-        {preview ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={preview} alt="Model" className="mx-auto max-h-52 object-contain p-2" />
-        ) : (
-          <p className="py-10 text-center text-sm text-muted">Upload model photo</p>
+  const removeModel = async (id: string) => {
+    setBusyId(id)
+    try {
+      await deleteModel(id)
+      setConfirmId(null)
+      toast.success('মডেল মুছে ফেলা হলো')
+      await load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const draftOpen = Boolean(draftPreview)
+
+  return (
+    <div className="mx-auto max-w-3xl px-4 pt-4 pb-10">
+      <input
+        ref={ref}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          if (f) onPickFile(f)
+          e.target.value = ''
+        }}
+      />
+
+      {/* Header */}
+      <div className="mb-4 flex items-end justify-between gap-3">
+        <div>
+          <h2 className="text-[17px] font-bold tracking-tight text-cream">মডেল লাইব্রেরি</h2>
+          <p className="mt-0.5 text-[11.5px] leading-snug text-muted">
+            আপনার সেভ করা মডেলগুলো — try-on ও product শুটে এদের ছবি ব্যবহার হবে।
+          </p>
+        </div>
+        {models.length > 0 && (
+          <span className="shrink-0 rounded-full border border-border-subtle bg-card/70 px-2.5 py-1 text-[11px] font-semibold text-muted">
+            {models.length}টি
+          </span>
         )}
       </div>
 
-      <div className="mb-3 grid gap-2 sm:grid-cols-2">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Name (e.g. Maruf)"
-          className="rounded-xl border border-border px-3 py-2.5 text-sm"
-        />
-        <select value={role} onChange={(e) => setRole(e.target.value)} className="rounded-xl border border-border px-3 py-2.5 text-sm">
-          <option value="single">Single / Owner</option>
-          <option value="father">Father</option>
-          <option value="mother">Mother</option>
-          <option value="son">Son (5–12)</option>
-          <option value="daughter">Daughter (5–10)</option>
-        </select>
-      </div>
+      {/* Gallery grid: add-tile first, then every saved model as a portrait card */}
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4">
+        <button
+          type="button"
+          onClick={() => ref.current?.click()}
+          className="group flex aspect-[3/4] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#E07A5F]/35 bg-[#E07A5F]/[0.05] text-[#E07A5F] transition-colors hover:bg-[#E07A5F]/[0.09]"
+        >
+          <span className="grid h-11 w-11 place-items-center rounded-full bg-[#E07A5F]/12 text-2xl leading-none transition-transform group-active:scale-95">+</span>
+          <span className="text-[12px] font-semibold">নতুন মডেল</span>
+          <span className="px-3 text-center text-[9.5px] leading-snug text-[#E07A5F]/60">ফুল-বডি ছবি যোগ করুন</span>
+        </button>
 
-      <button
-        type="button"
-        disabled={saving}
-        onClick={() => void onSave()}
-        className="mb-6 w-full rounded-xl bg-[#E07A5F] py-3 text-sm font-bold text-white disabled:opacity-50"
-      >
-        {saving ? 'Saving…' : 'Save to agent memory'}
-      </button>
+        {models.map((m) => {
+          const busy = busyId === m.id
+          const confirming = confirmId === m.id
+          return (
+            <div
+              key={m.id}
+              className="group relative aspect-[3/4] overflow-hidden rounded-2xl border border-border-subtle bg-bg-1 shadow-sm"
+            >
+              {m.imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={m.imageUrl} alt={m.name} loading="lazy" className="h-full w-full object-cover" />
+              ) : (
+                <span className="grid h-full w-full place-items-center text-muted">
+                  <UserSvg className="h-8 w-8" />
+                </span>
+              )}
 
-      <div className="space-y-2">
-        {models.map((m) => (
-          <div key={m.id} className="flex items-center justify-between st-card px-3 py-2.5">
-            <div>
-              <p className="font-semibold">{m.name}</p>
-              <p className="text-[10px] text-muted">{m.role}{m.isDefault ? ' · default' : ''}</p>
+              {/* bottom gradient + name / role */}
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/35 to-transparent px-2.5 pb-2 pt-8">
+                <p className="truncate text-[13px] font-bold text-white">{m.name}</p>
+                <p className="truncate text-[10px] text-white/70">{roleLabelBn(m.role)}</p>
+              </div>
+
+              {/* default badge */}
+              {m.isDefault && (
+                <span className="absolute left-2 top-2 rounded-full bg-[#E07A5F] px-2 py-0.5 text-[9px] font-bold text-white shadow-sm">
+                  ⭐ ডিফল্ট
+                </span>
+              )}
+
+              {/* action buttons (top-right) */}
+              <div className="absolute right-1.5 top-1.5 flex gap-1">
+                {!m.isDefault && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void makeDefault(m.id)}
+                    title="ডিফল্ট করুন"
+                    className="grid h-7 w-7 place-items-center rounded-full bg-black/45 text-[13px] text-white backdrop-blur-sm transition-colors hover:bg-black/65 disabled:opacity-50"
+                  >
+                    ☆
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setConfirmId(m.id)}
+                  title="মুছুন"
+                  className="grid h-7 w-7 place-items-center rounded-full bg-black/45 text-[12px] text-white backdrop-blur-sm transition-colors hover:bg-red-500/80 disabled:opacity-50"
+                >
+                  🗑
+                </button>
+              </div>
+
+              {/* delete confirm overlay */}
+              {confirming && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/75 px-3 text-center backdrop-blur-sm">
+                  <p className="text-[12px] font-semibold text-white">মুছে ফেলবেন?</p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void removeModel(m.id)}
+                      className="rounded-full bg-red-500 px-3.5 py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
+                    >
+                      {busy ? '…' : 'হ্যাঁ, মুছুন'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmId(null)}
+                      className="rounded-full bg-white/15 px-3.5 py-1.5 text-[11px] font-semibold text-white"
+                    >
+                      না
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-            <code className="text-[9px] text-muted">{m.id}</code>
-          </div>
-        ))}
+          )
+        })}
       </div>
+
+      {models.length === 0 && (
+        <p className="mt-4 text-center text-[11.5px] text-muted">
+          এখনো কোনো মডেল নেই। উপরের <b className="text-[#E07A5F]">নতুন মডেল</b> কার্ডে ট্যাপ করে শুরু করুন।
+        </p>
+      )}
 
       <ModelCreatorCard models={models} onQueued={() => void load()} />
       <StudioSettingsCard />
+
+      {/* Add-model sheet */}
+      <AnimatePresence>
+        {draftOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => !saving && closeDraft()}
+            className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+          >
+            <motion.div
+              initial={{ y: 40, opacity: 0.6 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 40, opacity: 0 }}
+              transition={{ type: 'spring', stiffness: 320, damping: 32 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md rounded-t-3xl border border-border-subtle bg-card p-4 shadow-2xl sm:rounded-3xl"
+              style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-[15px] font-bold text-cream">নতুন মডেল যোগ করুন</h3>
+                <button type="button" onClick={() => !saving && closeDraft()} className="grid h-7 w-7 place-items-center rounded-full bg-white/8 text-muted">✕</button>
+              </div>
+
+              <div className="flex gap-3">
+                <div className="relative h-40 w-32 shrink-0 overflow-hidden rounded-xl bg-bg-1">
+                  {draftPreview && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={draftPreview} alt="preview" className="h-full w-full object-cover" />
+                  )}
+                  {draftUploading && (
+                    <div className="absolute inset-0 grid place-items-center bg-black/40">
+                      <span className="h-6 w-6 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => ref.current?.click()}
+                    className="absolute inset-x-0 bottom-0 bg-black/55 py-1 text-center text-[10px] font-semibold text-white backdrop-blur-sm"
+                  >
+                    ছবি বদলান
+                  </button>
+                </div>
+
+                <div className="flex min-w-0 flex-1 flex-col gap-2.5">
+                  <div>
+                    <label className="mb-1 block text-[10.5px] font-semibold text-muted">নাম</label>
+                    <input
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="যেমন: Maruf"
+                      className="w-full rounded-xl border border-border bg-bg-1 px-3 py-2.5 text-[13px] text-cream outline-none focus:border-[#E07A5F]/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[10.5px] font-semibold text-muted">ধরন</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {MODEL_ROLES.map((r) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          onClick={() => setRole(r.id)}
+                          className={cn(
+                            'rounded-full px-2.5 py-1.5 text-[11px] font-semibold transition-colors',
+                            role === r.id ? 'bg-[#E07A5F] text-white' : 'border border-border bg-bg-1 text-muted',
+                          )}
+                        >
+                          {r.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                disabled={saving || draftUploading || !draftPath || !name.trim()}
+                onClick={() => void onSave()}
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#E07A5F] py-3 text-[14px] font-bold text-white transition-opacity disabled:opacity-40"
+              >
+                {saving ? (
+                  <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> সেভ হচ্ছে…</>
+                ) : draftUploading ? 'ছবি আপলোড হচ্ছে…' : 'সেভ করুন'}
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
