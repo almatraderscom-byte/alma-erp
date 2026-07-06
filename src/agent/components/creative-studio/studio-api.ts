@@ -243,6 +243,18 @@ export async function setDefaultModel(id: string) {
   return data
 }
 
+/** Remove a saved model from the library. */
+export async function deleteModel(id: string) {
+  const res = await fetch('/api/assistant/brand-models', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'remove', id }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message ?? data.error ?? 'delete_failed')
+  return data
+}
+
 export async function saveModel(body: {
   id: string
   name: string
