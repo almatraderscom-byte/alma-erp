@@ -115,11 +115,146 @@ function roleLabelBn(role: string | null): string {
 }
 
 /**
- * Unified model input. Tapping it opens a chooser SHEET that first asks the owner
- * whether to use a SAVED model (from the library) or UPLOAD a new photo — instead
- * of the old behaviour where tapping "Model photo" jumped straight into the OS
- * file picker with no way to reach the saved models. Saved-pick and upload are
- * mutually exclusive: choosing one clears the other.
+ * Reusable chooser sheet — the ONE place the owner decides which model a shot
+ * uses. Lists the saved library models as a grid; optionally offers "upload new"
+ * (Advanced) or a clear action. Auto reuses it without the upload option (it can
+ * only run on a saved model). Used by ModelSlot (Advanced) and the Auto panel so
+ * model selection is identical everywhere.
+ */
+function ModelChooserSheet({
+  title = 'মডেল বেছে নিন',
+  models,
+  selectedId,
+  onClose,
+  onPickSaved,
+  onUpload,
+  onClear,
+  hasChoice,
+  uploadHint,
+}: {
+  title?: string
+  models: StudioModel[]
+  selectedId: string
+  onClose: () => void
+  onPickSaved: (id: string) => void
+  onUpload?: (f: File) => void
+  onClear?: () => void
+  hasChoice?: boolean
+  uploadHint?: string
+}) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-4"
+    >
+      <motion.div
+        initial={{ y: 40, opacity: 0.6 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: 40, opacity: 0 }}
+        transition={{ type: 'spring', stiffness: 320, damping: 32 }}
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-t-3xl border border-border-subtle bg-card p-4 shadow-2xl sm:rounded-3xl"
+        style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+      >
+        {onUpload && (
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) { onUpload(f); onClose() }
+              e.target.value = ''
+            }}
+          />
+        )}
+
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-[15px] font-bold text-cream">{title}</h3>
+          <button type="button" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-full bg-white/8 text-muted">✕</button>
+        </div>
+
+        {models.length > 0 ? (
+          <>
+            <p className="mb-2 text-[11px] font-semibold text-muted">সেভ করা মডেল থেকে</p>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+              {models.map((m) => {
+                const active = selectedId === m.id
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => { onPickSaved(m.id); onClose() }}
+                    className={cn(
+                      'relative aspect-[3/4] overflow-hidden rounded-xl border transition-all',
+                      active ? 'border-[#E07A5F] ring-2 ring-[#E07A5F]/30' : 'border-border-subtle',
+                    )}
+                    title={`${m.name} (${roleLabelBn(m.role)})`}
+                  >
+                    {m.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={m.imageUrl} alt={m.name} className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="grid h-full w-full place-items-center bg-bg-1 text-muted"><UserSvg className="h-6 w-6" /></span>
+                    )}
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4">
+                      <span className="block truncate text-left text-[10px] font-bold text-white">{m.name}</span>
+                    </div>
+                    {active && (
+                      <span className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-[#E07A5F] text-[10px] text-white shadow">✓</span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+            {onUpload && (
+              <div className="my-3 flex items-center gap-2 text-[10px] text-muted">
+                <span className="h-px flex-1 bg-border-subtle" /> অথবা <span className="h-px flex-1 bg-border-subtle" />
+              </div>
+            )}
+          </>
+        ) : (
+          <p className="mb-3 rounded-xl border border-border-subtle bg-bg-1 px-3 py-2.5 text-[11.5px] text-muted">
+            লাইব্রেরিতে কোনো সেভ করা মডেল নেই। {onUpload ? 'এখন একটা ছবি আপলোড করতে পারেন, অথবা ' : ''}<b className="text-cream">লাইব্রেরি</b> ট্যাবে গিয়ে মডেল সেভ করুন।
+          </p>
+        )}
+
+        {onUpload ? (
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#E07A5F] py-3 text-[14px] font-bold text-white"
+          >
+            📁 নতুন ছবি আপলোড করুন
+          </button>
+        ) : uploadHint ? (
+          <p className="text-center text-[10.5px] text-muted">{uploadHint}</p>
+        ) : null}
+
+        {onClear && hasChoice && (
+          <button
+            type="button"
+            onClick={() => { onClear(); onClose() }}
+            className="mt-2 w-full rounded-xl border border-border py-2.5 text-[12px] font-semibold text-muted"
+          >
+            বাছাই বাদ দিন
+          </button>
+        )}
+      </motion.div>
+    </motion.div>
+  )
+}
+
+/**
+ * Unified model input for Advanced. Tapping it opens the chooser SHEET that first
+ * asks the owner whether to use a SAVED model or UPLOAD a new photo — instead of
+ * jumping straight into the OS file picker. Saved-pick and upload are mutually
+ * exclusive: choosing one clears the other.
  */
 function ModelSlot({
   models,
@@ -139,24 +274,11 @@ function ModelSlot({
   required?: boolean
 }) {
   const [open, setOpen] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
   const selected = models.find((m) => m.id === selectedId) ?? null
   const hasChoice = Boolean(selected || uploadPreview)
 
   return (
     <div>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={(e) => {
-          const f = e.target.files?.[0]
-          if (f) { onUpload(f); setOpen(false) }
-          e.target.value = ''
-        }}
-      />
-
       {/* The slot — shows the current choice, or a prompt. Tap → chooser sheet. */}
       <button
         type="button"
@@ -202,92 +324,17 @@ function ModelSlot({
         </span>
       </button>
 
-      {/* Chooser sheet: saved models grid + upload-new */}
       <AnimatePresence>
         {open && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setOpen(false)}
-            className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-4"
-          >
-            <motion.div
-              initial={{ y: 40, opacity: 0.6 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 40, opacity: 0 }}
-              transition={{ type: 'spring', stiffness: 320, damping: 32 }}
-              onClick={(e) => e.stopPropagation()}
-              className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-t-3xl border border-border-subtle bg-card p-4 shadow-2xl sm:rounded-3xl"
-              style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
-            >
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-[15px] font-bold text-cream">মডেল বেছে নিন</h3>
-                <button type="button" onClick={() => setOpen(false)} className="grid h-7 w-7 place-items-center rounded-full bg-white/8 text-muted">✕</button>
-              </div>
-
-              {models.length > 0 ? (
-                <>
-                  <p className="mb-2 text-[11px] font-semibold text-muted">সেভ করা মডেল থেকে</p>
-                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
-                    {models.map((m) => {
-                      const active = selectedId === m.id
-                      return (
-                        <button
-                          key={m.id}
-                          type="button"
-                          onClick={() => { onPickSaved(m.id); setOpen(false) }}
-                          className={cn(
-                            'relative aspect-[3/4] overflow-hidden rounded-xl border transition-all',
-                            active ? 'border-[#E07A5F] ring-2 ring-[#E07A5F]/30' : 'border-border-subtle',
-                          )}
-                          title={`${m.name} (${roleLabelBn(m.role)})`}
-                        >
-                          {m.imageUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={m.imageUrl} alt={m.name} className="h-full w-full object-cover" />
-                          ) : (
-                            <span className="grid h-full w-full place-items-center bg-bg-1 text-muted"><UserSvg className="h-6 w-6" /></span>
-                          )}
-                          <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4">
-                            <span className="block truncate text-left text-[10px] font-bold text-white">{m.name}</span>
-                          </div>
-                          {active && (
-                            <span className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-[#E07A5F] text-[10px] text-white shadow">✓</span>
-                          )}
-                        </button>
-                      )
-                    })}
-                  </div>
-                  <div className="my-3 flex items-center gap-2 text-[10px] text-muted">
-                    <span className="h-px flex-1 bg-border-subtle" /> অথবা <span className="h-px flex-1 bg-border-subtle" />
-                  </div>
-                </>
-              ) : (
-                <p className="mb-3 rounded-xl border border-border-subtle bg-bg-1 px-3 py-2.5 text-[11.5px] text-muted">
-                  লাইব্রেরিতে কোনো সেভ করা মডেল নেই। এখন একটা ছবি আপলোড করতে পারেন, অথবা <b className="text-cream">লাইব্রেরি</b> ট্যাবে গিয়ে মডেল সেভ করুন।
-                </p>
-              )}
-
-              <button
-                type="button"
-                onClick={() => fileRef.current?.click()}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#E07A5F] py-3 text-[14px] font-bold text-white"
-              >
-                📁 নতুন ছবি আপলোড করুন
-              </button>
-
-              {hasChoice && (
-                <button
-                  type="button"
-                  onClick={() => { onClear(); setOpen(false) }}
-                  className="mt-2 w-full rounded-xl border border-border py-2.5 text-[12px] font-semibold text-muted"
-                >
-                  বাছাই বাদ দিন
-                </button>
-              )}
-            </motion.div>
-          </motion.div>
+          <ModelChooserSheet
+            models={models}
+            selectedId={selectedId}
+            onClose={() => setOpen(false)}
+            onPickSaved={onPickSaved}
+            onUpload={onUpload}
+            onClear={onClear}
+            hasChoice={hasChoice}
+          />
         )}
       </AnimatePresence>
     </div>
@@ -496,11 +543,26 @@ function StudioWorkspace({
       || (roles.has('mother') && roles.has('daughter'))
   }, [models])
 
-  useEffect(() => {
-    void fetchModels()
-      .then((d) => setModels(d.models ?? []))
-      .catch(() => {})
+  const reloadModels = useCallback(async () => {
+    const d = await fetchModels()
+    setModels(d.models ?? [])
   }, [])
+
+  useEffect(() => {
+    void reloadModels().catch(() => {})
+  }, [reloadModels])
+
+  // Auto uses whichever model is the DEFAULT (server-side getDefaultModel). Letting
+  // the owner pick a model in the Auto panel simply promotes it to default, then
+  // refreshes so the card + Auto run both reflect the choice — no backend change.
+  const pickAutoModel = useCallback(async (id: string) => {
+    try {
+      await setDefaultModel(id)
+      await reloadModels()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed')
+    }
+  }, [reloadModels])
 
   const handleAutoRun = async () => {
     if (!productPath) {
@@ -653,6 +715,8 @@ function StudioWorkspace({
           productPreview={productPreview}
           onProduct={(f) => void upload(f, 'product').catch((e) => toast.error(String(e)))}
           defaultModel={defaultModel}
+          models={models}
+          onPickModel={(id) => void pickAutoModel(id)}
           familyAvailable={familyAvailable}
           includeFamily={includeFamily}
           setIncludeFamily={setIncludeFamily}
@@ -922,6 +986,8 @@ function AutoPanel({
   productPreview,
   onProduct,
   defaultModel,
+  models,
+  onPickModel,
   familyAvailable,
   includeFamily,
   setIncludeFamily,
@@ -935,6 +1001,8 @@ function AutoPanel({
   productPreview: string | null
   onProduct: (f: File) => void
   defaultModel: StudioModel | null
+  models: StudioModel[]
+  onPickModel: (id: string) => void
   familyAvailable: boolean
   includeFamily: boolean
   setIncludeFamily: (v: boolean) => void
@@ -945,6 +1013,7 @@ function AutoPanel({
   canRun: boolean
   onRun: () => void
 }) {
+  const [modelSheetOpen, setModelSheetOpen] = useState(false)
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-24 pt-4">
       <div className="mx-auto flex max-w-md flex-col gap-4">
@@ -962,9 +1031,13 @@ function AutoPanel({
           required
         />
 
-        {/* Default model status */}
+        {/* Model — tappable: choose which saved model Auto should use (sets default) */}
         {defaultModel ? (
-          <div className="flex items-center gap-3 rounded-2xl border border-border-subtle bg-card/70 px-3.5 py-3">
+          <button
+            type="button"
+            onClick={() => setModelSheetOpen(true)}
+            className="flex items-center gap-3 rounded-2xl border border-border-subtle bg-card/70 px-3.5 py-3 text-left transition-colors hover:border-[#E07A5F]/30"
+          >
             <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-[#E07A5F]/12 text-[#E07A5F]">
               {defaultModel.imageUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -976,17 +1049,29 @@ function AutoPanel({
             <div className="min-w-0 flex-1">
               <p className="truncate text-[13px] font-semibold text-cream">মডেল: {defaultModel.name}</p>
               <p className="text-[10px] text-muted">
-                {bestRealism
-                  ? '🟢 FASHN — best realism engine চালু · Models ট্যাবে বদলানো যাবে'
-                  : 'Gemini engine · FASHN_API_KEY দিলে best realism পাবেন'}
+                {bestRealism ? '🟢 FASHN — best realism engine চালু' : 'Gemini engine · FASHN_API_KEY দিলে best realism'}
               </p>
             </div>
-          </div>
+            <span className="shrink-0 rounded-full bg-[#E07A5F]/12 px-2.5 py-1 text-[11px] font-semibold text-[#E07A5F]">বদলান</span>
+          </button>
         ) : (
           <div className="rounded-2xl border border-amber-400/40 bg-amber-50/10 px-3.5 py-3 text-[12px] text-amber-700">
-            ⚠ এখনো কোনো মডেল সেভ করা নেই। নিচের <b>Models</b> ট্যাবে গিয়ে একটি মডেলের ছবি সেভ করুন — তারপর শুধু product দিলেই হবে।
+            ⚠ এখনো কোনো মডেল সেভ করা নেই। নিচের <b>লাইব্রেরি</b> ট্যাবে গিয়ে একটি মডেলের ছবি সেভ করুন — তারপর শুধু product দিলেই হবে।
           </div>
         )}
+
+        <AnimatePresence>
+          {modelSheetOpen && (
+            <ModelChooserSheet
+              title="Auto কোন মডেল ব্যবহার করবে"
+              models={models}
+              selectedId={defaultModel?.id ?? ''}
+              onClose={() => setModelSheetOpen(false)}
+              onPickSaved={onPickModel}
+              uploadHint="নতুন ছবি আপলোড করতে চাইলে Advanced ট্যাব ব্যবহার করুন।"
+            />
+          )}
+        </AnimatePresence>
 
         {/* Family toggle */}
         {familyAvailable && (
