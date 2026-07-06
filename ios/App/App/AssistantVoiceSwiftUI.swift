@@ -119,6 +119,7 @@ final class AlmaVoiceEngine {
     private var verificationSaid = false     // verification_retry spoken once per turn
     private var lastAudioAt = Date()
     private var lastEventAt = Date()          // stall watchdog: last SSE event received
+    private var emptyListens = 0              // consecutive silent auto-listens (convo re-arm)
     private var ackData: [Data] = []
     private var ackIdx = 0
     private var sessionReady = false
@@ -243,6 +244,13 @@ final class AlmaVoiceEngine {
     func debugInjectUtterance(_ text: String) {
         transcript = text
         runTurn(text)
+    }
+
+    /// Sim-only (launch-arg gated): feed a canned reply through the TTS queue exactly
+    /// as SSE deltas would, and log each sentence chunk it produces — proves the
+    /// newline-split fix without needing backend auth. Never runs in production.
+    func debugTtsChunks(_ reply: String) {
+        tts.debugChunkLog(reply)
     }
 
     /// Attach a photo (chat composer parity) — optimistic thumbnail, uploads to
@@ -375,7 +383,21 @@ final class AlmaVoiceEngine {
         streamingActive = false
         micLevel = 0
         state = .idle
-        playCloseChime()
+        noSpeechEnded()
+    }
+
+    /// A listen window opened but the owner said nothing. In কথোপকথন mode we keep the
+    /// conversation ALIVE across a couple of natural pauses — re-arm listening instead
+    /// of dead-ending, so the owner can fire question after question hands-free. After
+    /// a few empty windows we stop (chime) so the mic isn't held open forever.
+    private func noSpeechEnded() {
+        guard convoMode, !closed, emptyListens < 2 else {
+            emptyListens = 0
+            playCloseChime()
+            return
+        }
+        emptyListens += 1
+        scheduleAutoListen()
     }
     func streamFinal(_ text: String) {
         streamingActive = false
@@ -466,7 +488,12 @@ final class AlmaVoiceEngine {
                     noiseFloor += rms; floorSamples += 1
                     if elapsed + tickMs >= 400 && floorSamples > 0 {
                         let floor = noiseFloor / floorSamples
-                        speechThresh = max(0.022, floor * 2.0)
+                        // Clamp BOTH ends: never below 0.022 (soft speech), never above
+                        // 0.06 — else if the owner is already mid-word when the listen
+                        // window opens, his voice poisons the floor and the threshold
+                        // climbs past his own speech → nothing arms → the turn dies and
+                        // conversation "freezes" though he's clearly talking.
+                        speechThresh = min(0.06, max(0.022, floor * 2.0))
                     }
                 } else if !spoke {
                     if rms > speechThresh {
@@ -478,9 +505,11 @@ final class AlmaVoiceEngine {
                     } else {
                         sustainedMs = 0
                     }
-                    // No-speech abort (web: 8s in convo mode)
+                    // No-speech abort (web: 8s in convo mode). In কথোপকথন mode this
+                    // re-arms for a couple of pauses instead of dead-ending the loop.
                     if elapsed > 8_000 {
-                        self.cancelListening(playChime: true)
+                        self.cancelListening(playChime: false)
+                        self.noSpeechEnded()
                         return
                     }
                 } else {
@@ -570,6 +599,7 @@ final class AlmaVoiceEngine {
     }
 
     private func runTurn(_ text: String, resume: Bool = false) {
+        emptyListens = 0                 // real turn — reset the silent-window counter
         if !resume, !lastUserText.isEmpty { lastQ = lastUserText; lastA = replyText }
         lastUserText = text
         state = .thinking
@@ -1016,7 +1046,9 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         if elapsedMs < 400 {
             noiseFloor += rms; floorSamples += 1
             if elapsedMs + dtMs >= 400 && floorSamples > 0 {
-                speechThresh = max(0.022, (noiseFloor / floorSamples) * 2.0)
+                // Clamp both ends (see recorder runVAD): a floor poisoned by the owner
+                // already speaking must not push the threshold above his own voice.
+                speechThresh = min(0.06, max(0.022, (noiseFloor / floorSamples) * 2.0))
             }
         } else if !spoke {
             if rms > speechThresh {
@@ -1233,12 +1265,12 @@ final class AlmaWakeWord {
     private var recycleTask: Task<Void, Never>?
     private(set) var active = false
 
-    // DEFAULT OFF for this stabilization build: the continuous SFSpeechRecognizer +
-    // its own AVAudioEngine mic tap is the biggest crash/mic-contention surface on
-    // device. Tap-to-talk works regardless. Flip `alma-wake-word` = true to opt in
-    // once the audio-session fix is confirmed stable on the owner's device.
+    // DEFAULT ON (owner request, 2026-07-06): saying «ALMA» while the console is idle
+    // starts a listen. It runs ONLY in idle — `startListening()` calls `wake.stop()`
+    // before touching the STT mic, so the two mic taps never overlap (the earlier
+    // crash surface). Escape hatch: set `alma-wake-word` = false.
     private var enabled: Bool {
-        (UserDefaults.standard.object(forKey: "alma-wake-word") as? Bool) ?? false
+        (UserDefaults.standard.object(forKey: "alma-wake-word") as? Bool) ?? true
     }
 
     /// The transcript tail counts as a wake hit on any close rendering of
@@ -1379,6 +1411,21 @@ final class AlmaTtsQueue: NSObject, AVAudioPlayerDelegate {
         buffer = ""
     }
 
+    /// Sim self-test: run `reply` through cutSentences in small deltas (like SSE) and
+    /// NSLog every chunk so a mid-sentence split would be visible. Does not hit TTS.
+    func debugChunkLog(_ reply: String) {
+        buffer = ""; queue.removeAll()
+        var i = reply.startIndex
+        while i < reply.endIndex {
+            let j = reply.index(i, offsetBy: 7, limitedBy: reply.endIndex) ?? reply.endIndex
+            buffer += String(reply[i..<j]); cutSentences(flush: false); i = j
+        }
+        cutSentences(flush: true)
+        NSLog("ALMA-TTS-TEST chunks=%d", queue.count)
+        for (n, c) in queue.enumerated() { NSLog("ALMA-TTS-TEST [%d] «%@»", n, c) }
+        queue.removeAll()
+    }
+
     func feed(_ delta: String) {
         fedAnything = true
         feedFinished = false
@@ -1421,33 +1468,59 @@ final class AlmaTtsQueue: NSObject, AVAudioPlayerDelegate {
         }
     }
 
-    /// Cut `buffer` into sentence-ish chunks (each ≥ ~24 chars, ending on a Bangla
-    /// sentence mark) and queue them. ALWAYS makes forward progress: each loop either
-    /// emits a chunk (advancing `end`) or breaks — never re-scans the same boundary.
-    /// (The old "merge forward" branch re-inserted the punctuation into `buffer` and
-    /// re-matched it forever — a 99% main-thread spin that hung the whole app whenever
-    /// a short Bangla sentence was followed by more text.)
+    /// Cut `buffer` into WHOLE-sentence chunks for TTS. A chunk may end ONLY at a real
+    /// sentence terminator — «।», «?», «!», or an English «.» that isn't a decimal —
+    /// NEVER at a bare newline. The model emits `\n` for formatting (and mid-stream
+    /// soft-wraps), and the old code cut on it: a sentence got sliced in half and its
+    /// tail bled into the next TTS clip — the owner heard "আমি এখন স্কু" … pause …
+    /// "লে যাব সেখানে…". Newlines inside a chunk are collapsed to a single space so the
+    /// whole sentence is synthesised in one smooth breath. Tiny sentences merge forward
+    /// to ~24 chars so we don't fire a TTS call per clause. `end` is monotonic → always
+    /// terminates (no re-scan of the same boundary → no main-thread spin).
     private func cutSentences(flush: Bool) {
-        let seps = CharacterSet(charactersIn: "।?!\n")
+        func isTerminator(_ i: String.Index) -> Bool {
+            let ch = buffer[i]
+            if ch == "।" || ch == "?" || ch == "!" { return true }
+            if ch == "." {
+                // English full stop, but not a decimal ("5.5") or an initial ("A."):
+                // only a real end when the next char is whitespace / end-of-buffer.
+                if i > buffer.startIndex, buffer[buffer.index(before: i)].isNumber { return false }
+                let next = buffer.index(after: i)
+                if next == buffer.endIndex { return true }
+                return buffer[next] == " " || buffer[next] == "\n"
+            }
+            return false
+        }
+        func firstTerminator(from start: String.Index) -> String.Index? {
+            var i = start
+            while i < buffer.endIndex {
+                if isTerminator(i) { return buffer.index(after: i) }
+                i = buffer.index(after: i)
+            }
+            return nil
+        }
         while true {
-            guard let first = buffer.rangeOfCharacter(from: seps) else { break }
-            var end = first.upperBound
-            // Too short? Extend to the NEXT boundary so tiny sentences merge into one
+            guard var end = firstTerminator(from: buffer.startIndex) else { break }
+            // Too short? Extend to the NEXT terminator so tiny sentences merge into one
             // TTS chunk. `end` only moves forward → guaranteed to terminate.
             while !flush,
                   buffer.distance(from: buffer.startIndex, to: end) < 24,
-                  let next = buffer.rangeOfCharacter(from: seps, range: end..<buffer.endIndex) {
-                end = next.upperBound
+                  let next = firstTerminator(from: end) {
+                end = next
             }
             if !flush, buffer.distance(from: buffer.startIndex, to: end) < 24 {
-                break   // still short and no further boundary — wait for more text
+                break   // still short and no further terminator — wait for more text
             }
-            let chunk = String(buffer[..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let chunk = String(buffer[..<end])
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             buffer = String(buffer[end...])
             if !chunk.isEmpty { queue.append(chunk) }
         }
         if flush {
-            let tail = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+            let tail = buffer
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             if !tail.isEmpty { queue.append(tail) }
             buffer = ""
         }
@@ -1635,6 +1708,9 @@ struct AlmaVoiceConsoleView: View {
             engine.begin()
             if let say = Self.launchValue("ALMA_VOICE_SAY") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) { engine.debugInjectUtterance(say) }
+            }
+            if let reply = Self.launchValue("ALMA_TTS_TEST") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { engine.debugTtsChunks(reply) }
             }
             if let wav = Self.launchValue("ALMA_WAKE_TEST") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
