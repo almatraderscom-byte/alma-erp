@@ -31,6 +31,11 @@ enum AlmaNativeRouter {
             let h = AlmaHostingController(rootView: view)
             h.title = title
             h.hidesBottomBarWhenPushed = false
+            // The More tab's nav has prefersLargeTitles=true; a pushed SwiftUI host in
+            // large-title mode renders an EMPTY expanded bar (big gap, no visible page
+            // name — owner-reported 2026-07-06). Force the compact INLINE title so every
+            // pushed native screen shows its name centred in the bar, no gap.
+            h.navigationItem.largeTitleDisplayMode = .never
             return h
         }
 
