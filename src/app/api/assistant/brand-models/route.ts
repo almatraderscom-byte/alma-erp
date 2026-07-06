@@ -2,6 +2,7 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
+import { agentStorageSignedUrls } from '@/agent/lib/storage'
 import {
   addBrandModel,
   getModelLibrary,
@@ -30,7 +31,25 @@ export async function GET(req: NextRequest) {
   if (denied) return denied
 
   const [models, byRole] = await Promise.all([getModelLibrary(), listModelsByRole()])
-  return Response.json({ models, byRole })
+
+  // The saved model photos live as PRIVATE objects in the agent-files bucket, so
+  // the UI can't render them straight from imagePath. Batch-sign every model's
+  // image in ONE request and hand back a ready-to-use imageUrl per model — this
+  // is what powers the Model Library thumbnails and the visual model picker
+  // (previously the library only showed name/role text, so a saved model looked
+  // like it "never showed up" after upload).
+  let signed: Record<string, string> = {}
+  try {
+    signed = await agentStorageSignedUrls(
+      models.map((m) => m.imagePath).filter(Boolean),
+      3600,
+    )
+  } catch {
+    signed = {}
+  }
+  const withUrls = models.map((m) => ({ ...m, imageUrl: signed[m.imagePath] ?? null }))
+
+  return Response.json({ models: withUrls, byRole })
 }
 
 export async function POST(req: NextRequest) {

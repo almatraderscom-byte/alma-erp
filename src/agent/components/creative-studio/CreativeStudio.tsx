@@ -30,6 +30,7 @@ import {
   fetchStudioConfig,
   fetchGallery,
   fetchModels,
+  setDefaultModel,
   runAutoStudioJob,
   runStudioJob,
   saveModel,
@@ -57,7 +58,86 @@ async function handleDownload(url: string | undefined | null, filename?: string)
 }
 
 type MainView = 'studio' | 'gallery' | 'models' | 'finishing' | 'video'
-type StudioModel = { id: string; name: string; role: string | null; isDefault: boolean }
+type StudioModel = {
+  id: string
+  name: string
+  role: string | null
+  isDefault: boolean
+  imagePath?: string
+  imageUrl?: string | null
+}
+
+/** Bangla label for a model role (falls back to the raw role for anything odd). */
+function roleLabelBn(role: string | null): string {
+  switch (role) {
+    case 'single': return 'একক / নিজে'
+    case 'father': return 'বাবা'
+    case 'mother': return 'মা'
+    case 'son': return 'ছেলে'
+    case 'daughter': return 'মেয়ে'
+    default: return role ?? ''
+  }
+}
+
+/**
+ * Visual model picker — a horizontal row of saved-model photos the owner can TAP
+ * to choose which face/body the shot uses (replaces the old name-only dropdown,
+ * which gave no way to see or pick the actual person). Tapping the selected card
+ * again clears the choice. Selection drives modelId in the workspace.
+ */
+function ModelPicker({
+  models,
+  selectedId,
+  onSelect,
+}: {
+  models: StudioModel[]
+  selectedId: string
+  onSelect: (id: string) => void
+}) {
+  if (models.length === 0) return null
+  return (
+    <div>
+      <p className="mb-1.5 text-[11px] font-semibold text-muted">সেভ করা মডেল বেছে নিন (ঐচ্ছিক)</p>
+      <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {models.map((m) => {
+          const active = selectedId === m.id
+          return (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => onSelect(active ? '' : m.id)}
+              className={cn(
+                'relative shrink-0 overflow-hidden rounded-xl border-2 transition-all',
+                active ? 'border-[#E07A5F] shadow-sm' : 'border-transparent opacity-80',
+              )}
+              style={{ width: 68 }}
+              title={`${m.name} (${roleLabelBn(m.role)})`}
+            >
+              <div className="h-[68px] w-[68px] bg-card/80">
+                {m.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={m.imageUrl} alt={m.name} className="h-full w-full object-cover" />
+                ) : (
+                  <span className="grid h-full w-full place-items-center text-muted">
+                    <UserSvg className="h-6 w-6" />
+                  </span>
+                )}
+              </div>
+              <span className="block truncate px-1 py-0.5 text-center text-[9px] font-medium text-cream">
+                {m.name}
+              </span>
+              {active && (
+                <span className="absolute right-1 top-1 grid h-4 w-4 place-items-center rounded-full bg-[#E07A5F] text-[9px] text-white">
+                  ✓
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 // Embedded browser video editor (OpenCut). Owner-tunable via env so we can later
 // point it at a self-hosted/rebranded instance without a code change.
@@ -512,20 +592,7 @@ function StudioWorkspace({
             />
           )}
 
-          {models.length > 0 && (
-            <select
-              value={modelId}
-              onChange={(e) => setModelId(e.target.value)}
-              className="w-full rounded-xl border border-border bg-card/80 px-3 py-2.5 text-sm"
-            >
-              <option value="">Saved model (optional)</option>
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name} ({m.role})
-                </option>
-              ))}
-            </select>
-          )}
+          <ModelPicker models={models} selectedId={modelId} onSelect={setModelId} />
         </div>
       </div>
 
@@ -773,8 +840,13 @@ function AutoPanel({
         {/* Default model status */}
         {defaultModel ? (
           <div className="flex items-center gap-3 rounded-2xl border border-border-subtle bg-card/70 px-3.5 py-3">
-            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#E07A5F]/12 text-[#E07A5F]">
-              <UserSvg className="h-5 w-5" />
+            <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-[#E07A5F]/12 text-[#E07A5F]">
+              {defaultModel.imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={defaultModel.imageUrl} alt={defaultModel.name} className="h-full w-full object-cover" />
+              ) : (
+                <UserSvg className="h-5 w-5" />
+              )}
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-[13px] font-semibold text-cream">মডেল: {defaultModel.name}</p>
@@ -1447,7 +1519,7 @@ function FinishPanel({
 }
 
 function ModelsView() {
-  const [models, setModels] = useState<Array<{ id: string; name: string; role: string | null; isDefault: boolean }>>([])
+  const [models, setModels] = useState<StudioModel[]>([])
   const [name, setName] = useState('')
   const [role, setRole] = useState('single')
   const [preview, setPreview] = useState<string | null>(null)
@@ -1487,6 +1559,16 @@ function ModelsView() {
       toast.error(e instanceof Error ? e.message : 'Save failed')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const makeDefault = async (id: string) => {
+    try {
+      await setDefaultModel(id)
+      toast.success('ডিফল্ট মডেল বদলানো হলো')
+      await load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed')
     }
   }
 
@@ -1549,14 +1631,41 @@ function ModelsView() {
         {saving ? 'Saving…' : 'Save to agent memory'}
       </button>
 
+      {models.length > 0 && (
+        <p className="mb-2 text-[11px] font-semibold text-muted">সেভ করা মডেল ({models.length})</p>
+      )}
       <div className="space-y-2">
         {models.map((m) => (
-          <div key={m.id} className="flex items-center justify-between rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
-            <div>
-              <p className="font-semibold">{m.name}</p>
-              <p className="text-[10px] text-muted">{m.role}{m.isDefault ? ' · default' : ''}</p>
+          <div key={m.id} className="flex items-center gap-3 rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
+            <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-bg-1">
+              {m.imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={m.imageUrl} alt={m.name} className="h-full w-full object-cover" />
+              ) : (
+                <span className="grid h-full w-full place-items-center text-muted">
+                  <UserSvg className="h-6 w-6" />
+                </span>
+              )}
             </div>
-            <code className="text-[9px] text-muted">{m.id}</code>
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-semibold">{m.name}</p>
+              <p className="text-[10px] text-muted">
+                {roleLabelBn(m.role)}{m.isDefault ? ' · ডিফল্ট' : ''}
+              </p>
+            </div>
+            {m.isDefault ? (
+              <span className="shrink-0 rounded-full bg-[#E07A5F]/15 px-2 py-1 text-[9px] font-bold text-[#E07A5F]">
+                ⭐ ডিফল্ট
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void makeDefault(m.id)}
+                className="shrink-0 rounded-full border border-border px-2.5 py-1 text-[10px] font-semibold text-muted"
+              >
+                ডিফল্ট করুন
+              </button>
+            )}
           </div>
         ))}
       </div>

@@ -214,10 +214,33 @@ export async function fetchGallery(page = 1): Promise<{ items: GalleryItem[]; ha
   return res.json()
 }
 
+export type SavedStudioModel = {
+  id: string
+  name: string
+  role: string | null
+  isDefault: boolean
+  /** raw storage object path (private) */
+  imagePath?: string
+  /** signed, ready-to-render URL for the saved photo (1h) */
+  imageUrl?: string | null
+}
+
 export async function fetchModels() {
   const res = await fetch('/api/assistant/brand-models')
   if (!res.ok) throw new Error('models_failed')
-  return res.json() as Promise<{ models: Array<{ id: string; name: string; role: string | null; isDefault: boolean }> }>
+  return res.json() as Promise<{ models: SavedStudioModel[] }>
+}
+
+/** Make one saved model the default the Auto tab uses (per-image select stays manual). */
+export async function setDefaultModel(id: string) {
+  const res = await fetch('/api/assistant/brand-models', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'set_default', id }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message ?? data.error ?? 'set_default_failed')
+  return data
 }
 
 export async function saveModel(body: {
