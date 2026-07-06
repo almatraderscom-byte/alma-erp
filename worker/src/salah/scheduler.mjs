@@ -26,7 +26,14 @@ import { getAppUrl, getInternalToken } from '../env.mjs'
 import { notify } from '../notify/index.mjs'
 import { isOwnerCallLocked } from '../owner-call-lock.mjs'
 import { isSalahWaqtConfirmed } from '../salah-confirmed.mjs'
-import { dutyWindowEnd } from './duty-window.mjs'
+import { dutyWindowEnd, MORAL_WINDOW_BEFORE_MIN } from './duty-window.mjs'
+import {
+  is30SnoozeUsed,
+  getReremindDue,
+  clearReremind,
+  isPre15Sent,
+  markPre15Sent,
+} from './snooze-state.mjs'
 
 
 const WAQT_NAMES = {
@@ -176,6 +183,17 @@ function salahButtonsWithQaza(waqt, dateYmd = null) {
       ],
     ],
   }
+}
+
+// After "🕐 পরে পড়বো": ask how long to push calls back. ১৫ min is always offered
+// (repeatable); ৩০ min only if it has not been used yet this waqt (once-per-waqt).
+function salahSnoozeChoiceButtons(waqt, dateYmd = null, thirtyUsed = false) {
+  const d = dateYmd ? `:${dateYmd}` : ''
+  const row = [{ text: '১৫ মিনিট পর', callback_data: `salah_snooze:${waqt}:15${d}` }]
+  if (!thirtyUsed) {
+    row.push({ text: '৩০ মিনিট পর', callback_data: `salah_snooze:${waqt}:30${d}` })
+  }
+  return { inline_keyboard: [row] }
 }
 
 // ── Send azan notification ────────────────────────────────────────────────────
@@ -398,6 +416,26 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       }
     }
 
+    // Re-reminder after a snooze expires: BEFORE any call resumes, send ONE
+    // reminder with the পড়েছি / পরে পড়বো buttons so the owner can pray or snooze
+    // again (owner rule: every snooze cycle re-offers the choice before a call).
+    if (supabase) {
+      const reremindDue = await getReremindDue(supabase, today, waqt)
+      if (reremindDue && now >= reremindDue) {
+        await clearReremind(supabase, today, waqt)
+        if (now < windowEnd) {
+          const name = waqtName(waqt)
+          await sendTelegramSafe(
+            bot,
+            ownerChatId,
+            `🕌 *${name} — সময় হয়ে গেছে*\n\nSir, একটু সময় নিয়েছিলেন — এখন পড়ে থাকলে "✅ পড়েছি" চাপুন, নাহলে আরও একটু সময় নিতে "🕐 পরে পড়বো"। সময় শেষের আগে পড়ে নেবেন। 🤲`,
+            { parse_mode: 'Markdown', reply_markup: salahButtonsWithQaza(waqt, today) },
+          )
+          continue
+        }
+      }
+    }
+
     const overrideStart = override?.override_time
       ? new Date(override.override_time)
       : override?.delay_until
@@ -413,6 +451,31 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
     }
     if (clampedOverrideStart && Number.isFinite(clampedOverrideStart.getTime()) && clampedOverrideStart < windowEnd) {
       windowStart = clampedOverrideStart
+    }
+
+    // Pre-jamat heads-up: 15 min BEFORE namaz start, send a Telegram reminder with
+    // the পড়েছি / পরে পড়বো buttons — BEFORE any call — so the owner can snooze
+    // ahead of the first ring. Fires once (KV-idempotent), even for Fajr/Maghrib
+    // where azan == jamat (so it lands before windowStart there). No call, no ntfy.
+    const preJamatStart = new Date(prayerStartForClamp.getTime() - MORAL_WINDOW_BEFORE_MIN * 60_000)
+    if (
+      supabase
+      && Number.isFinite(prayerStartForClamp.getTime())
+      && now >= preJamatStart
+      && now < prayerStartForClamp
+      && now < windowEnd
+    ) {
+      if (!(await isPre15Sent(supabase, today, waqt))) {
+        await markPre15Sent(supabase, today, waqt)
+        const name = waqtName(waqt)
+        await sendTelegramSafe(
+          bot,
+          ownerChatId,
+          `🕌 *${name} — ১৫ মিনিট পর জামাত*\n\nSir, একটু পরেই ${name}-এর সময়। প্রস্তুতি নিন। এখন ব্যস্ত থাকলে "🕐 পরে পড়বো" চেপে সময় নিতে পারেন — নাহলে জামাতের সময় কল আসবে।`,
+          { parse_mode: 'Markdown', reply_markup: salahButtons(waqt, today) },
+        )
+        continue
+      }
     }
 
     // Future waqt — do not remind or mark missed
@@ -739,37 +802,76 @@ export async function handleSalahCallback(ctx, action, waqt, status, dateYmd = n
       await ctx.reply(messages[resolved] || 'রেকর্ড আপডেট হয়েছে।')
     }
   } else if (action === 'salah_later') {
-    // "পরে পড়বো" must ACTUALLY pause reminders + calls — write a delay_until override
-    // AND the global owner-call-lock. Do the write on the web (Vercel) via the shared
-    // salah-delay engine: the worker's own supabase write here was unreliable and the
-    // button was silently a no-op (DB showed zero button-written overrides), so calls
-    // kept ringing. Only confirm "বন্ধ রাখলাম" when the lock actually landed — never
-    // give a false assurance.
-    let reply = null
+    // "🕐 পরে পড়বো" no longer locks a fixed 20 min directly. It asks HOW LONG —
+    // ১৫ মিনিট (repeatable, until waqt end) or ৩০ মিনিট (once per waqt). The actual
+    // lock is applied only after the owner picks (salah_snooze), so the choice is
+    // honest and the ৩০-once rule is enforced before spending it.
+    let thirtyUsed = false
     try {
-      const appUrl = getAppUrl()
-      const token = getInternalToken()
-      if (appUrl && token) {
-        const res = await fetch(`${appUrl}/api/assistant/internal/salah-delay`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ waqt, minutes: 20, date: recordDate }),
-        })
-        if (res.ok) {
-          const body = await res.json().catch(() => ({}))
-          if (typeof body.reply === 'string') reply = body.reply
-        }
-      }
+      if (supabase) thirtyUsed = await is30SnoozeUsed(supabase, recordDate, waqt)
     } catch (e) {
-      console.warn('[salah] later delay via web failed:', e.message)
+      console.warn('[salah] 30-used check failed:', e.message)
     }
     await ctx.answerCbQuery('ঠিক আছে।')
-    await ctx.reply(
-      reply
-      // Truthful fallback: if the web lock couldn't be confirmed, do NOT claim it's off.
-      || `একটু সমস্যা হলো Sir — এই মুহূর্তে কল বন্ধ করা নিশ্চিত করতে পারিনি। ${WAQT_NAMES[waqt]} সময় শেষের আগে পড়ে নিলে ভালো হয়। 🤲`,
-    )
+    const note = thirtyUsed
+      ? `${WAQT_NAMES[waqt]} — ৩০ মিনিট এই ওয়াক্তে একবার নিয়ে ফেলেছেন। এখন কতক্ষণ পিছাবো Sir? 👇`
+      : `${WAQT_NAMES[waqt]} — কতক্ষণ পিছাবো Sir? নিচ থেকে বেছে নিন 👇`
+    await ctx.reply(note, {
+      reply_markup: salahSnoozeChoiceButtons(waqt, recordDate, thirtyUsed),
+    })
   }
+}
+
+/**
+ * Owner picked ১৫ / ৩০ মিনিট under "🕐 পরে পড়বো". Apply the snooze via the web
+ * engine (writes the per-waqt override + global call-lock + reremind marker, and
+ * enforces the ৩০-once rule). Reply truthfully — only say "বন্ধ রাখলাম" when the
+ * web actually locked. On a ৩০-already-used refusal, re-offer just the ১৫ button.
+ */
+export async function handleSalahSnoozeCallback(ctx, waqt, minutes, dateYmd = null) {
+  const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
+  if (!ownerChatId || String(ctx.chat?.id) !== ownerChatId) return
+
+  const recordDate = dateYmd || dhakaTodayYmd()
+  const mins = Number(minutes) === 30 ? 30 : 15
+
+  let body = null
+  try {
+    const appUrl = getAppUrl()
+    const token = getInternalToken()
+    if (appUrl && token) {
+      const res = await fetch(`${appUrl}/api/assistant/internal/salah-snooze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ waqt, minutes: mins, date: recordDate }),
+      })
+      if (res.ok) body = await res.json().catch(() => null)
+    }
+  } catch (e) {
+    console.warn('[salah] snooze via web failed:', e.message)
+  }
+
+  await ctx.editMessageReplyMarkup({ inline_keyboard: [] }).catch(() => {})
+  await ctx.answerCbQuery('ঠিক আছে।').catch(() => {})
+
+  if (body?.locked && typeof body.reply === 'string') {
+    await ctx.reply(body.reply)
+    return
+  }
+
+  // 30 already used → offer only the 15 button again so the owner isn't stuck.
+  if (body && body.locked === false && body.thirtyUsed && mins === 30) {
+    await ctx.reply(body.reply || `${WAQT_NAMES[waqt]} — ৩০ মিনিট শেষ। ১৫ মিনিট নিন।`, {
+      reply_markup: salahSnoozeChoiceButtons(waqt, recordDate, true),
+    })
+    return
+  }
+
+  await ctx.reply(
+    body?.reply
+    // Truthful fallback: if the web lock could not be confirmed, do NOT claim it's off.
+    || `একটু সমস্যা হলো Sir — এই মুহূর্তে কল বন্ধ করা নিশ্চিত করতে পারিনি। ${WAQT_NAMES[waqt]} সময় শেষের আগে পড়ে নিলে ভালো হয়। 🤲`,
+  )
 }
 
 /**
