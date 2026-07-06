@@ -3950,3 +3950,49 @@ model AgentKeywordRank {
   @@index([businessId, checkedAt])
   @@map("agent_keyword_rank")
 }
+
+/// Office Live Intercom — a walkie-talkie voice broadcast from the owner to
+/// staff phones inside the office group chat. Staff receipts track the
+/// delivered → played → confirmed lifecycle per person.
+model OfficeIntercomBroadcast {
+  id            String                  @id @default(uuid())
+  businessId    String                  @default("ALMA_LIFESTYLE") @map("business_id")
+  /// Owner User.id who sent it (owner-only in v1).
+  senderUserId  String?                 @map("sender_user_id")
+  /// 'voice' (PTT audio) | 'urgent' (full-volume text alert, no audio).
+  kind          String                  @default("voice")
+  /// Storage object path in the agent-files bucket (null for 'urgent').
+  audioPath     String?                 @map("audio_path")
+  /// Long-lived signed URL staff phones stream from.
+  audioUrl      String?                 @map("audio_url") @db.Text
+  /// Negotiated recorder mimeType (audio/mp4 on iOS, audio/webm on desktop Chrome).
+  mediaType     String?                 @map("media_type")
+  durationSec   Int                     @default(0) @map("duration_sec")
+  /// Agent auto-transcript (Bangla STT), filled asynchronously after send.
+  transcript    String?                 @db.Text
+  /// AgentStaff.id when the broadcast targets one person; null = everyone.
+  targetStaffId String?                 @map("target_staff_id")
+  createdAt     DateTime                @default(now()) @map("created_at")
+  receipts      OfficeIntercomReceipt[]
+
+  @@index([businessId, createdAt(sort: Desc)])
+  @@map("office_intercom_broadcasts")
+}
+
+/// Per-staff receipt for one intercom broadcast.
+model OfficeIntercomReceipt {
+  id          String                  @id @default(uuid())
+  broadcastId String                  @map("broadcast_id")
+  staffId     String                  @map("staff_id")
+  /// Staff device fetched the broadcast (set server-side on their first feed poll).
+  deliveredAt DateTime?               @map("delivered_at")
+  /// Audio actually started playing on the staff phone.
+  playedAt    DateTime?               @map("played_at")
+  /// Staff tapped "শুনেছি — কনফার্ম".
+  confirmedAt DateTime?               @map("confirmed_at")
+  broadcast   OfficeIntercomBroadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+
+  @@unique([broadcastId, staffId])
+  @@index([staffId, confirmedAt])
+  @@map("office_intercom_receipts")
+}

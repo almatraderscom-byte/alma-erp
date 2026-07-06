@@ -1,7 +1,16 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatFeed, ChatMessage } from '@/agent/lib/office-chat'
+import {
+  useIntercom,
+  IntercomDock,
+  IntercomBubble,
+  IntercomTakeover,
+  IntercomStyle,
+  type Intercom,
+  type ItcBroadcast,
+} from './intercom'
 
 const POLL_MS = 15_000
 const BN = '০১২৩৪৫৬৭৮৯'
@@ -10,6 +19,9 @@ const bn = (n: number | string) => String(n).replace(/\d/g, (d) => BN[Number(d)]
 export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
   const [open, setOpen] = useState(false)
   const [feed, setFeed] = useState<ChatFeed>({ businessId: '', messages: [] })
+  // Live intercom (walkie-talkie) — polls its own fast feed; broadcasts merge
+  // into the message list below and the owner gets the PTT dock.
+  const itc = useIntercom(self)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const [lastSeen, setLastSeen] = useState<string | null>(null)
@@ -104,11 +116,21 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
     requestAnimationFrame(() => {
       el.scrollTo({ top: el.scrollHeight, behavior: justOpened ? 'auto' : 'smooth' })
     })
-  }, [open, feed.messages.length])
+  }, [open, feed.messages.length, itc.feed.broadcasts.length])
 
   useEffect(() => {
     if (open && feed.messages.length > 0) setLastSeen(feed.messages[feed.messages.length - 1].id)
   }, [open, feed.messages])
+
+  // Chat messages + intercom broadcasts interleaved by time (oldest first).
+  const merged = useMemo(() => {
+    const rows: ({ el: 'msg'; t: number; m: ChatMessage } | { el: 'itc'; t: number; b: ItcBroadcast })[] = [
+      ...feed.messages.map((m) => ({ el: 'msg' as const, t: Date.parse(m.createdAt) || 0, m })),
+      ...itc.feed.broadcasts.map((b) => ({ el: 'itc' as const, t: Date.parse(b.createdAt) || 0, b })),
+    ]
+    rows.sort((a, b) => a.t - b.t)
+    return rows
+  }, [feed.messages, itc.feed.broadcasts])
 
   // unread count = messages after the last one seen
   let unread = 0
@@ -202,6 +224,8 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
 
   return (
     <>
+      <IntercomStyle />
+      {self === 'staff' && <IntercomTakeover itc={itc} />}
       {!open && (
         <div className="ohub-chathead" onClick={() => setOpen(true)} role="button" aria-label="অফিস গ্রুপ চ্যাট">
           <span className="ring"></span>
@@ -227,18 +251,20 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
             {feed.messages.length === 0 && (
               <div className="gsys">— এখনো কোনো বার্তা নেই। প্রথম বার্তাটি লিখুন। —</div>
             )}
-            {feed.messages.map((m) =>
-              m.status === 'pending' ? (
+            {merged.map((row) =>
+              row.el === 'itc' ? (
+                <IntercomMsg key={`itc-${row.b.id}`} b={row.b} itc={itc} self={self} />
+              ) : row.m.status === 'pending' ? (
                 <AgentDraft
-                  key={m.id}
-                  m={m}
-                  busy={actingId === m.id}
+                  key={row.m.id}
+                  m={row.m}
+                  busy={actingId === row.m.id}
                   disabled={actingId !== null}
-                  onApprove={(body) => act(m.id, 'approve', body)}
-                  onDismiss={() => act(m.id, 'dismiss')}
+                  onApprove={(body) => act(row.m.id, 'approve', body)}
+                  onDismiss={() => act(row.m.id, 'dismiss')}
                 />
               ) : (
-                <GroupMsg key={m.id} m={m} self={self} />
+                <GroupMsg key={row.m.id} m={row.m} self={self} />
               ),
             )}
           </div>
@@ -279,6 +305,7 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
               )}
             </div>
           )}
+          {self === 'owner' && <IntercomDock itc={itc} />}
           <div className="cp-foot">
             <input
               ref={fileRef}
@@ -324,6 +351,23 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
         </div>
       )}
     </>
+  )
+}
+
+// An intercom broadcast rendered as a chat row — always authored by the Boss,
+// so it sits right-aligned for the owner and left-aligned for staff.
+function IntercomMsg({ b, itc, self }: { b: ItcBroadcast; itc: Intercom; self: 'owner' | 'staff' }) {
+  const mine = self === 'owner'
+  return (
+    <div className={mine ? 'gm me' : 'gm'}>
+      <span className="av o">M</span>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div className="nmt" style={mine ? { textAlign: 'right' } : undefined}>
+          {mine ? 'আপনি (Boss)' : 'Boss'} · 🎙️
+        </div>
+        <IntercomBubble b={b} itc={itc} />
+      </div>
+    </div>
   )
 }
 
