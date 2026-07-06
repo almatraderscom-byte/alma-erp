@@ -41,3 +41,9 @@ Owner flips `[PENDING]` → `[✅ APPLIED <commit>]` or `[❌ REJECTED — reaso
 - File(s): `ios/App/App.xcodeproj/project.pbxproj`
 - Exact change: 4 additive entries for `AssistantVoiceSwiftUI.swift` (ids `…A022`/`…B022`).
 - Why: the native voice-to-voice orb console (owner bundle design) lives in its own file.
+
+### [⏳ REQUESTED] voice-console — SFSpeechRecognizer "ALMA" wake word needs an Info.plist key
+- Session: web-voice session (owner instruction 2026-07-06: port full web orb-page parity into AssistantVoiceSwiftUI.swift)   Date: 2026-07-06
+- File(s): `ios/App/App/Info.plist` (frozen — owner applies)
+- Exact change: add `NSSpeechRecognitionUsageDescription` = "ALMA আপনার 'ALMA' ডাক শুনতে ভয়েস চিনবে।" (any Bangla string). Without this key, ANY SFSpeechRecognizer call crashes instantly (see memory feedback_ios_plugin_privacy_keys / the 2026-07-03 Face-ID incident) — so the on-device "ALMA" wake word (the one web feature that never worked on iOS: webkitSpeechRecognition is absent in WKWebView) is DELIBERATELY NOT implemented in this branch. Once the key is added, a follow-up can add an SFSpeechRecognizer always-listening bridge that calls AlmaVoiceEngine.startListening() on the "ALMA/আলমা" hit (idle + console-open only).
+- Why: it is the single remaining web-orb feature not portable without a frozen-file (plist) change; everything else (streaming STT, TTS number/brand normalizer, model-switch + verification-retry spoken, ask/approval-in-console, history scrollback) shipped inside the already-registered AssistantVoiceSwiftUI.swift with no shared-file edits.
