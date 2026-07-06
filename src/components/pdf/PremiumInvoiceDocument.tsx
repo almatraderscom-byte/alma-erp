@@ -8,6 +8,16 @@ import { pdfMoney, pdfDate, type PdfCurrencyMode } from '@/lib/pdf/format'
 import { A4_SIZE, A4_PADDING_PT, A4_WIDTH_PT, A4_HEIGHT_PT } from '@/lib/pdf/a4'
 import { getPdfFontFamily } from '@/lib/pdf/fonts'
 import { FONT_STACK_PDF } from '@/lib/currency'
+import {
+  auraPalette,
+  AuraBackdrop,
+  AuraDocHeader,
+  AuraSectionTitle,
+  AuraFooter,
+  auraTableStyles,
+  type AuraPalette,
+  type AuraBadgeTone,
+} from '@/components/pdf/aura'
 
 const MAX_FIRST_PAGE_ROWS = 12
 const MAX_CONTINUATION_ROWS = 24
@@ -31,21 +41,19 @@ function chunkRows<T>(rows: T[], firstPageMax: number, nextPageMax: number): T[]
   return pages
 }
 
-function buildStyles(model: InvoicePdfModel) {
+function statusTone(status: InvoicePdfModel['paymentStatus']): AuraBadgeTone {
+  if (status === 'Paid') return 'success'
+  if (status === 'Partial Paid') return 'warning'
+  return 'danger'
+}
+
+function buildStyles(model: InvoicePdfModel, p: AuraPalette) {
   const scale = compactScale(model)
-  const dark = model.theme === 'dark'
-  const bg = dark ? '#0a0a0c' : '#ffffff'
-  const text = dark ? '#f2f0ea' : '#1a1a1a'
-  const muted = dark ? '#9a968c' : '#666666'
-  const gold = model.branding.colorPrimary
-  const softGold = dark ? '#2a2418' : '#f7efd8'
-  const panel = dark ? '#101014' : '#fbfaf6'
-  const line = dark ? '#3a3427' : '#e8dcc0'
 
   return StyleSheet.create({
     page: {
-      backgroundColor: bg,
-      color: text,
+      backgroundColor: p.bg,
+      color: p.ink,
       paddingTop: A4_PADDING_PT.top,
       paddingBottom: A4_PADDING_PT.bottom,
       paddingHorizontal: A4_PADDING_PT.horizontal,
@@ -61,95 +69,43 @@ function buildStyles(model: InvoicePdfModel) {
       objectFit: 'contain' as const,
       opacity: model.branding.watermarkOpacity ?? 0.08,
     },
-    header: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: 13,
-      paddingBottom: 10,
-      borderBottomWidth: 1.2,
-      borderBottomColor: line,
-    },
-    brandRow: { flexDirection: 'row', alignItems: 'center' },
-    logoBox: {
-      width: 88,
-      height: 36,
-      marginRight: 11,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: line,
-      backgroundColor: dark ? '#070708' : '#ffffff',
-    },
-    logo: { width: 80, height: 28, objectFit: 'contain' as const },
-    logoFallback: { fontSize: scale.base + 3, fontWeight: 700, color: gold },
-    brandName: { fontSize: scale.base + 5, fontWeight: 700, color: gold },
-    brandTag: { fontSize: scale.small, color: muted, marginTop: 3, maxWidth: 250 },
-    invTitle: { fontSize: scale.base + 9, fontWeight: 700, textAlign: 'right', color: text },
-    invMeta: { fontSize: scale.small, color: muted, textAlign: 'right', marginTop: 2 },
-    statusPill: {
-      marginTop: 6,
-      alignSelf: 'flex-end',
-      fontSize: scale.small,
-      paddingVertical: 3,
-      paddingHorizontal: 8,
-      backgroundColor: softGold,
-      color: gold,
-      borderRadius: 3,
-      fontWeight: 700,
-    },
     parties: {
       flexDirection: 'row',
       marginBottom: 12,
     },
     partyCard: {
       flex: 1,
-      padding: 9,
+      padding: 10,
       borderWidth: 1,
-      borderColor: line,
-      backgroundColor: panel,
+      borderColor: p.line,
+      borderRadius: 10,
+      backgroundColor: p.panel,
     },
     partyGap: { width: 10 },
     label: {
       fontSize: scale.small,
-      color: gold,
+      color: p.accent,
+      fontWeight: 700,
       textTransform: 'uppercase',
-      letterSpacing: 0.6,
+      letterSpacing: 0.9,
       marginBottom: 4,
     },
-    customerName: { fontSize: scale.base + 1.5, fontWeight: 700, lineHeight: 1.25 },
-    rowText: { fontSize: scale.small, color: muted, marginTop: 2 },
-    table: { marginTop: 3, borderWidth: 1, borderColor: line },
-    tableHead: {
-      flexDirection: 'row',
-      borderBottomWidth: 1,
-      borderBottomColor: line,
-      backgroundColor: softGold,
-      paddingVertical: 5,
-      paddingHorizontal: 6,
-    },
-    th: { fontSize: scale.small, color: dark ? '#d9c47a' : '#6d5723', fontWeight: 700, textTransform: 'uppercase' },
-    tableRow: {
-      flexDirection: 'row',
-      paddingVertical: scale.rowPad,
-      paddingHorizontal: 6,
-      borderBottomWidth: 0.5,
-      borderBottomColor: line,
-      minHeight: scale.base + scale.rowPad * 2 + 9,
-    },
+    customerName: { fontSize: scale.base + 1.5, fontWeight: 700, lineHeight: 1.25, color: p.ink },
+    rowText: { fontSize: scale.small, color: p.muted, marginTop: 2 },
     colItem: { flex: 1.9, paddingRight: 8 },
     colQty: { width: 34, textAlign: 'right' },
     colUnit: { width: 64, textAlign: 'right' },
     colSub: { width: 74, textAlign: 'right' },
-    itemTitle: { fontSize: scale.base, fontWeight: 600, lineHeight: 1.2 },
-    itemMeta: { fontSize: scale.small, color: muted, marginTop: 1, lineHeight: 1.2 },
+    itemTitle: { fontSize: scale.base, fontWeight: 600, lineHeight: 1.2, color: p.ink },
+    itemMeta: { fontSize: scale.small, color: p.muted, marginTop: 1, lineHeight: 1.2 },
     bottomArea: { flexDirection: 'row', alignItems: 'stretch', marginTop: 12 },
     paymentBox: {
       flex: 1,
       padding: 10,
       borderWidth: 1,
-      borderColor: line,
-      backgroundColor: panel,
+      borderColor: p.line,
+      borderRadius: 10,
+      backgroundColor: p.panel,
       marginRight: 10,
       minHeight: 118,
     },
@@ -157,8 +113,9 @@ function buildStyles(model: InvoicePdfModel) {
       width: 214,
       padding: 10,
       borderWidth: 1,
-      borderColor: line,
-      backgroundColor: panel,
+      borderColor: p.line,
+      borderRadius: 10,
+      backgroundColor: p.panel,
       minHeight: 118,
     },
     sumRow: {
@@ -166,71 +123,84 @@ function buildStyles(model: InvoicePdfModel) {
       justifyContent: 'space-between',
       marginBottom: 4,
       fontSize: scale.small,
+      color: p.ink,
     },
     grandRow: {
       flexDirection: 'row',
       justifyContent: 'space-between',
-      marginTop: 4,
-      paddingTop: 6,
-      borderTopWidth: 1,
-      borderTopColor: line,
+      alignItems: 'center',
+      marginTop: 5,
+      padding: 6,
+      backgroundColor: p.accentWash,
+      borderRadius: 7,
       fontSize: scale.base + 2,
       fontWeight: 700,
-      color: gold,
+      color: p.accent,
     },
-    payHead: { fontSize: scale.small, color: gold, fontWeight: 700, marginBottom: 5, textTransform: 'uppercase' },
-    payRow: { flexDirection: 'row', fontSize: scale.small, paddingVertical: 2, borderBottomWidth: 0.5, borderBottomColor: line },
+    payHead: {
+      fontSize: scale.small,
+      color: p.accent,
+      fontWeight: 700,
+      marginBottom: 5,
+      textTransform: 'uppercase',
+      letterSpacing: 0.9,
+    },
+    payRow: {
+      flexDirection: 'row',
+      fontSize: scale.small,
+      color: p.ink,
+      paddingVertical: 2,
+      borderBottomWidth: 0.5,
+      borderBottomColor: p.lineSoft,
+    },
     payCol1: { flex: 1 },
     payCol2: { width: 56, textAlign: 'right' },
     payCol3: { width: 54, textAlign: 'right' },
-    progressText: { fontSize: scale.small, color: muted, marginTop: 6 },
-    progressBar: { height: 4, backgroundColor: dark ? '#252525' : '#e8e1d0', marginTop: 3, flexDirection: 'row' },
-    progressFill: { height: 4, backgroundColor: gold },
+    progressText: { fontSize: scale.small, color: p.muted, marginTop: 6 },
+    progressBar: {
+      height: 5,
+      backgroundColor: p.panel2,
+      borderRadius: 999,
+      marginTop: 3,
+      flexDirection: 'row',
+      borderWidth: 0.5,
+      borderColor: p.lineSoft,
+    },
+    progressFill: { height: 4, backgroundColor: p.accent, borderRadius: 999 },
     qrRow: { flexDirection: 'row', alignItems: 'center', marginTop: 7 },
     qrImg: { width: 42, height: 42, marginRight: 8 },
-    footer: {
-      marginTop: 'auto',
-      marginBottom: 14,
-      paddingTop: 12,
-      borderTopWidth: 1,
-      borderTopColor: line,
-    },
-    footerText: { fontSize: scale.small - 0.25, color: muted, textAlign: 'center', lineHeight: 1.3 },
-    continuationTitle: { fontSize: scale.base + 5, fontWeight: 700, color: gold, marginBottom: 8 },
-    pageNumber: { fontSize: scale.small, color: muted, textAlign: 'right', marginTop: 6 },
   })
 }
 
-function Watermark({ model, styles: s }: { model: InvoicePdfModel; styles: ReturnType<typeof buildStyles> }) {
+type Styles = ReturnType<typeof buildStyles>
+
+function Watermark({ model, styles: s }: { model: InvoicePdfModel; styles: Styles }) {
   if (model.branding.watermarkEnabled === false || !model.branding.logoDataUrl) return null
   return <Image src={model.branding.logoDataUrl} style={s.watermark} fixed />
 }
 
-function Header({ model, styles: s }: { model: InvoicePdfModel; styles: ReturnType<typeof buildStyles> }) {
-  const initials = model.branding.companyName.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase() || 'AL'
+function Header({ model, p, continuation = false }: { model: InvoicePdfModel; p: AuraPalette; continuation?: boolean }) {
+  const meta = continuation
+    ? [model.invoiceId]
+    : [
+        model.invoiceId,
+        `Issued ${pdfDate(model.issueDate)}`,
+        ...(model.dueDate ? [`Due ${pdfDate(model.dueDate)}`] : []),
+      ]
   return (
-    <View style={s.header} wrap={false}>
-      <View style={s.brandRow}>
-        <View style={s.logoBox}>
-          {model.branding.logoDataUrl ? <Image src={model.branding.logoDataUrl} style={s.logo} /> : <Text style={s.logoFallback}>{initials}</Text>}
-        </View>
-        <View>
-          <Text style={s.brandName}>{model.branding.companyName}</Text>
-          {model.branding.tagline ? <Text style={s.brandTag}>{model.branding.tagline}</Text> : null}
-        </View>
-      </View>
-      <View>
-        <Text style={s.invTitle}>INVOICE</Text>
-        <Text style={s.invMeta}>{model.invoiceId}</Text>
-        <Text style={s.invMeta}>Issued {pdfDate(model.issueDate)}</Text>
-        {model.dueDate ? <Text style={s.invMeta}>Due {pdfDate(model.dueDate)}</Text> : null}
-        <Text style={s.statusPill}>{model.paymentStatus}</Text>
-      </View>
-    </View>
+    <AuraDocHeader
+      p={p}
+      logoDataUrl={model.branding.logoDataUrl}
+      companyName={model.branding.companyName}
+      tagline={model.branding.tagline || undefined}
+      docTitle="INVOICE"
+      meta={meta}
+      badge={{ tone: statusTone(model.paymentStatus), label: model.paymentStatus }}
+    />
   )
 }
 
-function Parties({ model, styles: s }: { model: InvoicePdfModel; styles: ReturnType<typeof buildStyles> }) {
+function Parties({ model, styles: s }: { model: InvoicePdfModel; styles: Styles }) {
   return (
     <View style={s.parties} wrap={false}>
       <View style={s.partyCard}>
@@ -256,26 +226,42 @@ function Parties({ model, styles: s }: { model: InvoicePdfModel; styles: ReturnT
 
 function ItemsTable({
   model,
+  p,
   rows,
   styles: s,
   continuation = false,
 }: {
   model: InvoicePdfModel
+  p: AuraPalette
   rows: InvoicePdfModel['lineItems']
-  styles: ReturnType<typeof buildStyles>
+  styles: Styles
   continuation?: boolean
 }) {
   const scale = compactScale(model)
+  const t = auraTableStyles(p)
+  const rowDensity = {
+    paddingVertical: scale.rowPad,
+    minHeight: scale.base + scale.rowPad * 2 + 9,
+  }
   return (
-    <View style={s.table}>
-      <View style={s.tableHead} wrap={false}>
-        <Text style={[s.th, s.colItem]}>{continuation ? 'Item / Service continued' : 'Item / Service'}</Text>
-        <Text style={[s.th, s.colQty]}>Qty</Text>
-        <Text style={[s.th, s.colUnit]}>Unit</Text>
-        <Text style={[s.th, s.colSub]}>Amount</Text>
+    <View style={t.container}>
+      <View style={t.headRow} wrap={false}>
+        <Text style={[t.th, s.colItem]}>{continuation ? 'Item / Service continued' : 'Item / Service'}</Text>
+        <Text style={[t.th, s.colQty]}>Qty</Text>
+        <Text style={[t.th, s.colUnit]}>Unit</Text>
+        <Text style={[t.th, s.colSub]}>Amount</Text>
       </View>
       {rows.map((item, i) => (
-        <View key={`${item.description}-${i}`} style={s.tableRow} wrap={false}>
+        <View
+          key={`${item.description}-${i}`}
+          style={[
+            t.row,
+            rowDensity,
+            ...(i % 2 === 1 ? [t.rowAlt] : []),
+            ...(i === rows.length - 1 ? [t.lastRow] : []),
+          ]}
+          wrap={false}
+        >
           <View style={s.colItem}>
             <Text style={s.itemTitle}>{item.description}</Text>
             {item.meta ? <Text style={s.itemMeta}>{item.meta}</Text> : null}
@@ -289,7 +275,7 @@ function ItemsTable({
   )
 }
 
-function PaymentAndSummary({ model, styles: s }: { model: InvoicePdfModel; styles: ReturnType<typeof buildStyles> }) {
+function PaymentAndSummary({ model, styles: s }: { model: InvoicePdfModel; styles: Styles }) {
   const scale = compactScale(model)
   const payRows = model.payments.slice(0, scale.maxPayRows)
   return (
@@ -332,40 +318,45 @@ function PaymentAndSummary({ model, styles: s }: { model: InvoicePdfModel; style
   )
 }
 
-function Footer({ model, styles: s }: { model: InvoicePdfModel; styles: ReturnType<typeof buildStyles> }) {
-  return (
-    <View style={s.footer} wrap={false}>
-      {model.branding.footerThanks ? <Text style={s.footerText}>{model.branding.footerThanks}</Text> : null}
-      {model.branding.footerPolicy ? <Text style={s.footerText}>{model.branding.footerPolicy}</Text> : null}
-      {model.branding.footerNote ? <Text style={s.footerText}>{model.branding.footerNote}</Text> : null}
-    </View>
-  )
+function footerLines(model: InvoicePdfModel): string[] {
+  return [
+    model.branding.footerThanks || '',
+    model.branding.footerPolicy || '',
+    model.branding.footerNote || '',
+  ]
 }
 
 export function PremiumInvoiceDocument({ model }: { model: InvoicePdfModel }) {
-  const s = buildStyles(model)
+  const p = auraPalette(model.theme === 'dark' ? 'dark' : 'light', model.branding.colorPrimary || undefined)
+  const s = buildStyles(model, p)
   const firstPageCapacity = model.payments.length > 4 ? 10 : MAX_FIRST_PAGE_ROWS
   const pages = chunkRows(model.lineItems, firstPageCapacity, MAX_CONTINUATION_ROWS)
 
   return (
     <Document title={model.invoiceId} author={model.branding.companyName} subject={`Invoice ${model.invoiceId}`}>
       <Page size={A4_SIZE} style={s.page}>
+        <AuraBackdrop p={p} />
         <Watermark model={model} styles={s} />
-        <Header model={model} styles={s} />
+        <Header model={model} p={p} />
         <Parties model={model} styles={s} />
-        <ItemsTable model={model} rows={pages[0] ?? []} styles={s} />
+        <ItemsTable model={model} p={p} rows={pages[0] ?? []} styles={s} />
         {pages.length === 1 ? <PaymentAndSummary model={model} styles={s} /> : null}
-        {pages.length === 1 ? <Footer model={model} styles={s} /> : <Text style={s.pageNumber}>Continued on page 2</Text>}
+        {pages.length === 1
+          ? <AuraFooter p={p} lines={footerLines(model)} />
+          : <AuraFooter p={p} lines={[]} pageLabel="Continued on page 2" />}
       </Page>
 
       {pages.slice(1).map((rows, pageIndex) => (
         <Page key={pageIndex} size={A4_SIZE} style={s.page}>
+          <AuraBackdrop p={p} />
           <Watermark model={model} styles={s} />
-          <Header model={model} styles={s} />
-          <Text style={s.continuationTitle}>Invoice items continued</Text>
-          <ItemsTable model={model} rows={rows} styles={s} continuation />
+          <Header model={model} p={p} continuation />
+          <AuraSectionTitle p={p}>Invoice items — continued</AuraSectionTitle>
+          <ItemsTable model={model} p={p} rows={rows} styles={s} continuation />
           {pageIndex === pages.length - 2 ? <PaymentAndSummary model={model} styles={s} /> : null}
-          {pageIndex === pages.length - 2 ? <Footer model={model} styles={s} /> : <Text style={s.pageNumber}>Continued</Text>}
+          {pageIndex === pages.length - 2
+            ? <AuraFooter p={p} lines={footerLines(model)} />
+            : <AuraFooter p={p} lines={[]} pageLabel="Continued" />}
         </Page>
       ))}
     </Document>
