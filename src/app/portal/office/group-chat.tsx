@@ -9,6 +9,7 @@ import {
   IntercomTakeover,
   IntercomStyle,
   IntercomCall,
+  IntercomLiveBar,
   type Intercom,
   type ItcBroadcast,
 } from './intercom'
@@ -308,6 +309,7 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
             </div>
           )}
           {self === 'owner' && <IntercomDock itc={itc} />}
+          {self === 'staff' && <IntercomLiveBar itc={itc} />}
           <div className="cp-foot">
             <input
               ref={fileRef}

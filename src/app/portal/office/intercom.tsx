@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { tapHaptic, successHaptic, warningHaptic } from '@/lib/ui-haptics'
 import { useAgoraCall } from '@/agent/hooks/useAgoraCall'
+import { useAgoraIntercom } from '@/agent/hooks/useAgoraIntercom'
 import { INTERCOM_CSS } from './intercom-css'
 
 const POLL_MS = 6_000
@@ -63,7 +64,7 @@ export type ItcBroadcast = {
   mine: { deliveredAt: string | null; playedAt: string | null; confirmedAt: string | null } | null
 }
 type ItcStaff = { id: string; name: string; phone: string | null }
-type ItcFeed = { broadcasts: ItcBroadcast[]; staff: ItcStaff[] }
+type ItcFeed = { broadcasts: ItcBroadcast[]; staff: ItcStaff[]; liveChannel?: string }
 
 /** iOS WKWebView records mp4/aac; Chrome webm/opus. Probe in that spirit. */
 function pickRecorderMime(): string {
@@ -116,6 +117,9 @@ export function useIntercom(self: 'owner' | 'staff') {
   const [activeCallId, setActiveCallId] = useState<string | null>(null)
   const [callPeer, setCallPeer] = useState<string>('')
   const [callStarting, setCallStarting] = useState(false)
+  // Live walkie-talkie channel (real-time PTT). Owner publishes; staff listen.
+  const liveApi = useAgoraIntercom()
+  const liveChannel = feed.liveChannel ?? ''
 
   const mrRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
@@ -218,6 +222,9 @@ export function useIntercom(self: 'owner' | 'staff') {
         if (e.data && e.data.size > 0) chunksRef.current.push(e.data)
       }
       mr.onstop = () => {
+        // End the live stream the moment the press ends (whatever happens to the
+        // recording below).
+        void liveApi.stopBroadcast()
         const heldMs = Date.now() - startedAtRef.current
         const finalMime = (mr.mimeType || mime || 'audio/webm').split(';')[0]
         const blob = new Blob(chunksRef.current, { type: finalMime })
@@ -232,6 +239,11 @@ export function useIntercom(self: 'owner' | 'staff') {
       }
       mr.start(250)
       tapHaptic()
+      // Fire the LIVE stream in parallel, REUSING this same mic track (never a
+      // second getUserMedia — that fails on iOS). Listening staff hear us
+      // instantly via Agora; the recording below still lands as history + reaches
+      // offline staff. Best-effort — a live failure never blocks the recording.
+      if (liveChannel) void liveApi.startBroadcast(liveChannel, stream.getAudioTracks()[0] ?? null)
       setRecSecs(0)
       setPtt('live')
       timerRef.current = setInterval(() => {
@@ -244,7 +256,7 @@ export function useIntercom(self: 'owner' | 'staff') {
       setPtt('idle')
       setError('মাইক্রোফোন চালু করা যায়নি — অনুমতি দিন')
     }
-  }, [cleanupRec, sendBlob, target])
+  }, [cleanupRec, sendBlob, target, liveApi, liveChannel])
 
   const stopPtt = useCallback((cancel: boolean) => {
     cancelRef.current = cancel || cancelRef.current
@@ -366,6 +378,17 @@ export function useIntercom(self: 'owner' | 'staff') {
     setCallPeer('')
   }, [callApi])
 
+  /* ── staff: live listen toggle (the tap unlocks audio for auto-play) ── */
+  const toggleLiveListen = useCallback(() => {
+    if (!liveChannel) return
+    tapHaptic()
+    if (liveApi.listening) void liveApi.leave()
+    else void liveApi.joinAsListener(liveChannel)
+  }, [liveApi, liveChannel])
+
+  // Keep listening across office hours; drop the channel if the tab is hidden a
+  // long time is handled by Agora itself. Nothing to do here beyond unmount.
+
   // If the remote hangs up (Agora user-left → remoteJoined flips false after
   // having been true), close our side too.
   const wasConnectedRef = useRef(false)
@@ -401,6 +424,10 @@ export function useIntercom(self: 'owner' | 'staff') {
     answerCall,
     declineCall,
     endCall,
+    // live walkie-talkie
+    liveApi,
+    liveChannel,
+    toggleLiveListen,
   }
 }
 
@@ -505,7 +532,11 @@ export function IntercomDock({ itc }: { itc: Intercom }) {
               <i /><i /><i /><i /><i />
             </span>
             <span className={`st ${cancelArmed ? 'cancel' : 'live'}`}>
-              {cancelArmed ? 'ছাড়লে বাতিল হবে' : `${targetName}-এর ফোনে যাবে`}
+              {cancelArmed
+                ? 'ছাড়লে বাতিল হবে'
+                : itc.liveApi.broadcasting
+                  ? '🔴 লাইভ বাজছে স্টাফের ফোনে'
+                  : `${targetName}-এর ফোনে যাবে`}
             </span>
             <span className="timer">🔴 {fmtDur(recSecs)}</span>
           </>
@@ -520,6 +551,51 @@ export function IntercomDock({ itc }: { itc: Intercom }) {
         )}
       </div>
     </div>
+  )
+}
+
+/* ═══════════════ staff live-listen bar ═══════════════ */
+// The tap that turns this ON unlocks the phone's audio session — the ONLY way
+// the owner's live PTT can then auto-play. While ON + the owner speaks, the
+// voice streams instantly (no upload, no poll, no autoplay wall).
+export function IntercomLiveBar({ itc }: { itc: Intercom }) {
+  const { liveApi, liveChannel, toggleLiveListen } = itc
+  const on = liveApi.listening
+  const speaking = liveApi.remoteSpeaking
+  const failed = liveApi.error && !on
+  return (
+    <button
+      className={`itc-livebar${on ? ' on' : ''}${speaking ? ' speaking' : ''}`}
+      onClick={toggleLiveListen}
+      disabled={!liveChannel}
+    >
+      <span className="itc-lb-ic">{speaking ? '🔊' : on ? '🟢' : '🎙️'}</span>
+      <span className="itc-lb-txt">
+        {speaking ? (
+          <b>বস লাইভ বলছেন… শুনুন</b>
+        ) : on ? (
+          <>
+            <b>লাইভ ইন্টারকম চালু</b>
+            <span>বসের কথা সরাসরি শুনবেন</span>
+          </>
+        ) : failed ? (
+          <>
+            <b>ইন্টারকম চালু করা যায়নি</b>
+            <span>আবার চাপুন</span>
+          </>
+        ) : (
+          <>
+            <b>🎙️ লাইভ ইন্টারকম চালু করুন</b>
+            <span>একবার চাপুন — বস বললেই সরাসরি শুনবেন</span>
+          </>
+        )}
+      </span>
+      {on && !speaking && (
+        <span className="itc-eq" style={{ color: '#6ee7b7' }}>
+          <i /><i /><i /><i /><i />
+        </span>
+      )}
+    </button>
   )
 }
 

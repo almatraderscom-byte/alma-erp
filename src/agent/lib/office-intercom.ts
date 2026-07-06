@@ -51,7 +51,14 @@ export type IntercomFeed = {
   broadcasts: IntercomBroadcast[]
   /** Active staff roster (owner clients use it for target pills + call buttons). */
   staff: IntercomStaffInfo[]
+  /** Shared Agora channel for the live walkie-talkie (owner + all staff join it). */
+  liveChannel: string
   serverNow: string
+}
+
+/** Everyone in a business shares one live-intercom Agora channel. */
+export function liveIntercomChannel(businessId: string): string {
+  return `itc_live_${businessId}`.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64)
 }
 
 /** Feed window — broadcasts older than this are history, not live intercom. */
@@ -219,6 +226,7 @@ export async function getIntercomFeed(
       viewer.role === 'owner'
         ? staff.map((s) => ({ id: s.id, name: s.name, phone: s.phone }))
         : [],
+    liveChannel: liveIntercomChannel(businessId),
     serverNow: new Date().toISOString(),
   }
 }

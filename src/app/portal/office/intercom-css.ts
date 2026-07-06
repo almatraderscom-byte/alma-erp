@@ -232,6 +232,27 @@ export const INTERCOM_CSS = `
   color:#71717a;margin-top:16px;cursor:pointer;padding:6px}
 .itc-tk-count{font-size:11px;font-weight:700;color:#AEB2C0;margin-top:8px}
 
+/* ═══ staff live-listen bar (above the composer) ═══ */
+.itc-livebar{display:flex;align-items:center;gap:11px;width:100%;text-align:left;cursor:pointer;
+  font-family:inherit;border:0;padding:11px 14px;border-top:1px solid rgba(255,255,255,0.07);
+  background:linear-gradient(180deg,rgba(28,28,38,.5),rgba(20,20,28,.85));color:#F7F8FC;
+  -webkit-tap-highlight-color:transparent;transition:background .25s}
+.itc-livebar:disabled{opacity:.5;pointer-events:none}
+.itc-livebar .itc-lb-ic{width:38px;height:38px;flex-shrink:0;border-radius:50%;display:grid;place-items:center;
+  font-size:18px;background:linear-gradient(180deg,rgba(255,255,255,.07),rgba(255,255,255,0) 60%),#202027;
+  border:1px solid rgba(255,255,255,.10)}
+.itc-livebar .itc-lb-txt{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3}
+.itc-livebar .itc-lb-txt b{font-size:13px;font-weight:700}
+.itc-livebar .itc-lb-txt span{font-size:11px;color:#AEB2C0}
+.itc-livebar.on{background:linear-gradient(180deg,rgba(34,197,94,.12),rgba(20,20,28,.85))}
+.itc-livebar.on .itc-lb-ic{border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.12)}
+.itc-livebar.on .itc-lb-txt b{color:#6ee7b7}
+.itc-livebar.speaking{background:linear-gradient(180deg,rgba(224,122,95,.18),rgba(20,20,28,.85));
+  animation:itc-lbpulse 1.1s ease-in-out infinite}
+.itc-livebar.speaking .itc-lb-ic{border-color:rgba(224,122,95,.5);background:rgba(224,122,95,.16)}
+.itc-livebar.speaking .itc-lb-txt b{color:#F4A28C}
+@keyframes itc-lbpulse{0%,100%{background-color:rgba(224,122,95,.06)}50%{background-color:rgba(224,122,95,.16)}}
+
 /* call log line in the chat feed */
 .itc-vb.call{background:linear-gradient(135deg,rgba(34,197,94,.10),rgba(16,120,60,.06));
   border:1px solid rgba(34,197,94,.24);border-radius:14px;padding:9px 12px}
