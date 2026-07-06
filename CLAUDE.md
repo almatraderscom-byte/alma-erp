@@ -39,15 +39,16 @@
 
 ## Workflow Rules
 
-### Parallel work with sub-agents (owner rule, 2026-07-05 — mandatory)
+## Two-Mac Git Sync (mandatory — Mac Mini + MacBook)
+- At the START of every session: run `git pull` on the current branch first, so this Mac has the latest work from the other Mac before doing anything.
+- At the END of every session (and before I switch to the other Mac): commit all changes and `git push` to GitHub. Never leave finished work unpushed.
+- If there are uncommitted or unpushed changes when we stop, remind me before finishing.
 
-When a request contains MULTIPLE independent tasks/issues, do NOT work them one-by-one (a serial session that takes 1–2 hours blocks the owner's day):
+### Sub-agents (use sparingly — Explore only; owner rule, updated 2026-07-06)
 
-1. **Fan out:** spawn one sub-agent per independent sub-task (Task/Agent tool), all in ONE message so they run concurrently. Give each a tight, self-contained brief — exact files, exact goal, exact return format — so it burns few tokens and can't wander.
-2. **Never idle:** while sub-agents run, the main session keeps working its own share of the tasks (or preps the next step — builds, deploys, verification setup). Waiting silently is forbidden.
-3. **Verify everything yourself:** a sub-agent's "done" is NOT done. The main session must verify each result itself (read the diff, build/typecheck, sim/Chrome screenshot per the browser-proof rule) BEFORE reporting to the owner. Any mistake found = fix it (or re-dispatch) before confirming.
-4. **Careful scoping:** sub-agents must respect every Hard Rule above (no ERP edits outside scope, no secrets, gated changes only). Never let two sub-agents edit the same file — split by file/area to avoid conflicts; the main session integrates.
-5. **Goal: wall-clock ≈ the slowest single item, not the sum** — and fewer tokens than one long meandering session, because each brief is small and focused.
+- Do NOT fan out work across sub-agents by default. Work the tasks yourself in the main session, one focused thread — even when a request has multiple issues.
+- Use a sub-agent ONLY when genuinely needed, and then prefer the read-only **Explore** agent for broad codebase searches (locating files/symbols/usages across many places) where you only need the conclusion, not a hand-off of the work.
+- Never delegate edits, implementation, or verification to sub-agents — the main session does the work and owns the browser/sim proof.
 
 - When a bug is reported: honest root-cause diagnosis FIRST, no code change. Fix only after owner approval.
 - Architectural fixes > patches. Confirm before any costly/destructive action.
