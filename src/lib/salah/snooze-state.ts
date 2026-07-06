@@ -4,8 +4,9 @@
  *
  * Three markers per waqt/day:
  *   - snooze30_used  : the one-time 30-min snooze has been consumed for this waqt.
- *   - reremind       : after a snooze lock expires, one reminder-with-buttons is
- *                      owed (value = ISO time it becomes due) BEFORE calls resume.
+ *   - followup       : post-snooze driver state (JSON {remindAt, callAt}) — after a
+ *                      snooze expires, a 1-min cron sends ONE reminder then calls
+ *                      every 2 min until the owner confirms or snoozes again.
  *   - pre15          : the "15 min before jamat" heads-up reminder has been sent.
  *
  * Web side reads/writes via Prisma; the worker mirrors the SAME key strings via
@@ -16,12 +17,14 @@ import { prisma } from '@/lib/prisma'
 export function snooze30UsedKey(ymd: string, waqt: string): string {
   return `salah_snooze30_used:${ymd}:${waqt}`
 }
-export function reremindKey(ymd: string, waqt: string): string {
-  return `salah_reremind:${ymd}:${waqt}`
+export function followupKey(ymd: string, waqt: string): string {
+  return `salah_followup:${ymd}:${waqt}`
 }
 export function pre15Key(ymd: string, waqt: string): string {
   return `salah_pre15:${ymd}:${waqt}`
 }
+
+export type FollowupState = { remindAt: string | null; callAt: string | null }
 
 async function getKv(key: string): Promise<string | null> {
   const row = await prisma.agentKvSetting.findUnique({ where: { key }, select: { value: true } })
@@ -45,7 +48,10 @@ export async function mark30SnoozeUsed(ymd: string, waqt: string): Promise<void>
   await setKv(snooze30UsedKey(ymd, waqt), '1')
 }
 
-/** Owe a "reminder before calls resume" at `dueAt` (set when a snooze is applied). */
-export async function setReremindMarker(ymd: string, waqt: string, dueAt: Date): Promise<void> {
-  await setKv(reremindKey(ymd, waqt), dueAt.toISOString())
+/**
+ * Arm the post-snooze follow-up: at `remindAt` (the snooze expiry) the 1-min cron
+ * sends ONE reminder, then starts calling. callAt=null means "reminder still owed".
+ */
+export async function setFollowupState(ymd: string, waqt: string, state: FollowupState): Promise<void> {
+  await setKv(followupKey(ymd, waqt), JSON.stringify(state))
 }

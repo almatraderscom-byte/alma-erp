@@ -7,20 +7,20 @@
  *   - 15 min : repeatable, works every time until the waqt ends.
  *   - 30 min : ONCE per waqt/day. After it is used, only 15 min works.
  *   - Both suppress calls AND reminders while the lock is active; when the lock
- *     expires the scheduler sends ONE reminder-with-buttons before calls resume
- *     (via the reremind marker set here).
+ *     expires the 1-min salah-snooze-followup job sends ONE reminder, then calls
+ *     every 2 min until confirm / re-snooze (via the follow-up state armed here).
  *
  * Writes, in order, so a call can never slip through:
  *   1. per-waqt agentSalahOverride.delayUntil (scheduler skips the waqt)
  *   2. global owner_call_lock_until KV (blocks ALL Twilio outbound)
- *   3. reremind marker (owes a pre-call reminder at lock expiry)
+ *   3. follow-up state (arms the post-snooze reminder→call loop at lock expiry)
  *   4. (30 only) snooze30_used marker
  */
 import { prisma } from '@/lib/prisma'
 import { getDhakaSchedule } from '@/agent/lib/dhaka-schedule'
 import { computeSnoozeLockUntil, SNOOZE_30_MIN } from '@/lib/salah/duty-window'
 import { setOwnerCallLockUntil } from '@/lib/owner-call-lock'
-import { is30SnoozeUsed, mark30SnoozeUsed, setReremindMarker } from '@/lib/salah/snooze-state'
+import { is30SnoozeUsed, mark30SnoozeUsed, setFollowupState } from '@/lib/salah/snooze-state'
 import { todayYmdDhaka, dhakaMidnightUtc } from '@/lib/agent-api/dhaka-date'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -79,8 +79,10 @@ export async function applySalahButtonSnooze(args: {
   })
   // 2) global hard call-lock — blocks ALL owner Twilio calls
   await setOwnerCallLockUntil(lock.lockUntil)
-  // 3) owe a reminder-with-buttons at lock expiry (before calls resume)
-  await setReremindMarker(dateYmd, args.waqt, lock.lockUntil)
+  // 3) arm the post-snooze follow-up: at expiry the 1-min cron sends ONE reminder,
+  //    then (2-min grace) starts calling every 2 min until confirm / re-snooze.
+  //    callAt=null → reminder still owed; remindAt=null means already reminded.
+  await setFollowupState(dateYmd, args.waqt, { remindAt: lock.lockUntil.toISOString(), callAt: null })
   // 4) 30-min is spent for this waqt
   if (minutes === SNOOZE_30_MIN) await mark30SnoozeUsed(dateYmd, args.waqt)
 

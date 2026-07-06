@@ -4,7 +4,7 @@
  * Internal (worker) endpoint the Telegram bot calls when the owner picks
  * "১৫ মিনিট" / "৩০ মিনিট" under "🕐 পরে পড়বো". The write runs HERE on the web
  * (Vercel) via applySalahButtonSnooze, so it reliably persists the per-waqt
- * override + global owner-call-lock + reremind marker (the worker's own supabase
+ * override + global owner-call-lock + follow-up state (the worker's own supabase
  * write for the lock was unreliable — same reason salah-delay lives here).
  *
  * Snooze is allowed from prayer − 15 min until the WAQT END, repeatable for 15

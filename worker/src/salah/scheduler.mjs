@@ -27,12 +27,16 @@ import { notify } from '../notify/index.mjs'
 import { isOwnerCallLocked } from '../owner-call-lock.mjs'
 import { isSalahWaqtConfirmed } from '../salah-confirmed.mjs'
 import { dutyWindowEnd, MORAL_WINDOW_BEFORE_MIN } from './duty-window.mjs'
+import { makeTwilioCall } from '../notify/twilio-call.mjs'
 import {
   is30SnoozeUsed,
-  getReremindDue,
-  clearReremind,
   isPre15Sent,
   markPre15Sent,
+  hasFollowup,
+  listFollowupWaqts,
+  getFollowupState,
+  setFollowupState,
+  clearFollowup,
 } from './snooze-state.mjs'
 
 
@@ -48,6 +52,10 @@ const WAQT_ORDER = ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha']
 const SETTLED_STATUSES = new Set(['prayed_on_time', 'prayed_late', 'qaza'])
 /** 15 min after prayer start — NTFY if owner has not confirmed */
 const PRAYER_NUDGE_MS = 15 * 60 * 1000
+/** Post-snooze: grace after the expiry reminder before the FIRST call */
+const FOLLOWUP_GRACE_MS = 2 * 60 * 1000
+/** Post-snooze: gap between repeat calls (nonstop until confirm / re-snooze) */
+const FOLLOWUP_CALL_REPEAT_MS = 2 * 60 * 1000
 /** Friday jummah follow-up ~60 min after 1:30 PM prayer */
 const JUMMAH_FOLLOWUP_MS = 60 * 60 * 1000
 
@@ -416,24 +424,15 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
       }
     }
 
-    // Re-reminder after a snooze expires: BEFORE any call resumes, send ONE
-    // reminder with the পড়েছি / পরে পড়বো buttons so the owner can pray or snooze
-    // again (owner rule: every snooze cycle re-offers the choice before a call).
-    if (supabase) {
-      const reremindDue = await getReremindDue(supabase, today, waqt)
-      if (reremindDue && now >= reremindDue) {
-        await clearReremind(supabase, today, waqt)
-        if (now < windowEnd) {
-          const name = waqtName(waqt)
-          await sendTelegramSafe(
-            bot,
-            ownerChatId,
-            `🕌 *${name} — সময় হয়ে গেছে*\n\nSir, একটু সময় নিয়েছিলেন — এখন পড়ে থাকলে "✅ পড়েছি" চাপুন, নাহলে আরও একটু সময় নিতে "🕐 পরে পড়বো"। সময় শেষের আগে পড়ে নেবেন। 🤲`,
-            { parse_mode: 'Markdown', reply_markup: salahButtonsWithQaza(waqt, today) },
-          )
-          continue
-        }
-      }
+    // After a snooze, the 1-min salah-snooze-followup job owns this waqt's
+    // reminder→call loop (it delivers the call within ~2 min of expiry — the
+    // 5-min ladder can't). Defer entirely while a follow-up is armed; the
+    // follow-up clears itself on confirm / window end, then this ladder resumes.
+    if (supabase && (await hasFollowup(supabase, today, waqt))) {
+      if (now <= windowEnd) continue
+      // Window ended with the follow-up still armed → clear it and let the
+      // missed-marking below run this tick.
+      await clearFollowup(supabase, today, waqt)
     }
 
     const overrideStart = override?.override_time
@@ -713,6 +712,125 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
   }
 }
 
+// ── Post-snooze follow-up (runs every 1 min) ──────────────────────────────────
+
+/**
+ * Pure decision for the post-snooze loop — no I/O, unit-testable.
+ * @returns {{ action:'clear'|'wait'|'remind'|'call', nextState?: {remindAt:string|null, callAt:string|null} }}
+ *   - clear : confirmed or window ended → stop
+ *   - wait  : locked (snooze still active / re-snoozed / voice-delay) or nothing due
+ *   - remind: expiry reached → send ONE reminder, arm first call after the grace
+ *   - call  : call due → place a call, re-arm the next after the repeat gap
+ */
+export function decideFollowupAction({
+  state,
+  now,
+  confirmed,
+  locked,
+  windowEnd,
+  graceMs = FOLLOWUP_GRACE_MS,
+  repeatMs = FOLLOWUP_CALL_REPEAT_MS,
+}) {
+  if (confirmed) return { action: 'clear' }
+  if (windowEnd && Number.isFinite(windowEnd.getTime()) && now >= windowEnd) return { action: 'clear' }
+  if (locked) return { action: 'wait' }
+
+  const remindAt = state?.remindAt ? new Date(state.remindAt) : null
+  const callAt = state?.callAt ? new Date(state.callAt) : null
+
+  if (remindAt && Number.isFinite(remindAt.getTime()) && now >= remindAt) {
+    return { action: 'remind', nextState: { remindAt: null, callAt: new Date(now.getTime() + graceMs).toISOString() } }
+  }
+  if (callAt && Number.isFinite(callAt.getTime()) && now >= callAt) {
+    return { action: 'call', nextState: { remindAt: null, callAt: new Date(now.getTime() + repeatMs).toISOString() } }
+  }
+  return { action: 'wait' }
+}
+
+// ── Post-snooze follow-up runner ──────────────────────────────────────────────
+/**
+ * Owns a waqt's reminder→call loop AFTER the owner snoozes, so the call lands
+ * within ~2 min of the snooze expiring (the 5-min escalation cron can't). For
+ * each armed follow-up:
+ *   1. at expiry → send ONE reminder (পড়েছি / পরে পড়বো buttons), arm call +2min
+ *   2. at callAt → place a salah CALL, re-arm +2min (nonstop until confirm/snooze)
+ * Clears itself on confirmation (calls also hard-blocked once confirmed) or at
+ * window end (the 5-min ladder then marks the waqt missed). While armed, the main
+ * ladder defers to this driver (see hasFollowup guard in checkAndEscalateSalah).
+ */
+export async function runSalahSnoozeFollowup({ supabase, bot }) {
+  const ownerChatId = process.env.TELEGRAM_OWNER_CHAT_ID
+  if (!ownerChatId || !supabase) return { dutyStatus: 'skipped' }
+
+  const today = dhakaTodayYmd()
+  const waqts = await listFollowupWaqts(supabase, today)
+  if (!waqts.length) return { dutyStatus: 'idle' }
+
+  const now = new Date()
+  const schedule = await getDhakaSchedule(today)
+  const prayerTimes = await getPrayerTimes(dhakaNoonUtc(today))
+  const settings = await getSettings(['salah_grief_reminder_enabled', 'salah_grief_context'])
+  const griefEnabled = settings.salah_grief_reminder_enabled === 'true'
+  const griefContext = griefEnabled ? (settings.salah_grief_context ?? '') : ''
+
+  for (const waqt of waqts) {
+    const state = await getFollowupState(supabase, today, waqt)
+    if (!state) continue
+
+    const w = schedule[waqt] ?? prayerTimes[waqt]
+    const windowEnd = new Date(w?.end ?? 0)
+    const name = waqtDisplayName(waqt, prayerTimes)
+
+    const confirmed = await isSalahWaqtConfirmed(today, waqt)
+    const lock = await isOwnerCallLocked(now)
+    const { action, nextState } = decideFollowupAction({
+      state, now, confirmed, locked: lock.locked, windowEnd,
+    })
+
+    if (action === 'clear') {
+      // Confirmed → stop. Window ended → hand missed-marking back to the 5-min ladder.
+      await clearFollowup(supabase, today, waqt)
+      continue
+    }
+    if (action === 'wait') continue
+
+    if (action === 'remind') {
+      // Expiry reached → send ONE reminder with buttons, arm the first call.
+      await sendTelegramSafe(
+        bot,
+        ownerChatId,
+        `🕌 *${name} — সময় হয়ে গেছে*\n\nSir, একটু সময় নিয়েছিলেন — পড়ে থাকলে "✅ পড়েছি" চাপুন। ২ মিনিটের মধ্যে সাড়া না দিলে কল আসবে। আরও সময় দরকার হলে "🕐 পরে পড়বো"।`,
+        { parse_mode: 'Markdown', reply_markup: salahButtonsWithQaza(waqt, today) },
+      )
+      await setFollowupState(supabase, today, waqt, nextState)
+      continue
+    }
+
+    if (action === 'call') {
+      // Call due → place ONE salah call, re-arm the next (nonstop cadence).
+      const msgs = salahChannelMessages({
+        tier: 3, waqt, waqtName: name, dateYmd: today, remindersSent: 4, griefContext,
+      })
+      try {
+        await makeTwilioCall(msgs.voice, {
+          force: true,
+          salah: true,
+          purpose: 'salah',
+          skipAutoRetry: true,
+          salahDate: today,
+          salahWaqt: waqt,
+        })
+      } catch (err) {
+        console.warn(`[salah/followup] call failed for ${waqt}:`, err.message)
+      }
+      await setFollowupState(supabase, today, waqt, nextState)
+      continue
+    }
+  }
+
+  return { dutyStatus: 'done' }
+}
+
 // ── Initialize today's salah records at dawn ──────────────────────────────────
 
 export async function initializeDailySalahRecords(supabase) {
@@ -824,7 +942,7 @@ export async function handleSalahCallback(ctx, action, waqt, status, dateYmd = n
 
 /**
  * Owner picked ১৫ / ৩০ মিনিট under "🕐 পরে পড়বো". Apply the snooze via the web
- * engine (writes the per-waqt override + global call-lock + reremind marker, and
+ * engine (writes the per-waqt override + global call-lock + follow-up state, and
  * enforces the ৩০-once rule). Reply truthfully — only say "বন্ধ রাখলাম" when the
  * web actually locked. On a ৩০-already-used refusal, re-offer just the ১৫ button.
  */

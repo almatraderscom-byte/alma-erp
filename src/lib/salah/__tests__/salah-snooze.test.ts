@@ -64,7 +64,7 @@ vi.mock('@/lib/owner-call-lock', () => mockLock)
 const mockState = vi.hoisted(() => ({
   is30SnoozeUsed: vi.fn(),
   mark30SnoozeUsed: vi.fn().mockResolvedValue(undefined),
-  setReremindMarker: vi.fn().mockResolvedValue(undefined),
+  setFollowupState: vi.fn().mockResolvedValue(undefined),
 }))
 vi.mock('@/lib/salah/snooze-state', () => mockState)
 
@@ -94,8 +94,11 @@ describe('applySalahButtonSnooze', () => {
     // global call lock set to now+15
     const lockArg = mockLock.setOwnerCallLockUntil.mock.calls[0][0] as Date
     expect(lockArg.toISOString()).toBe(new Date(now.getTime() + 15 * 60_000).toISOString())
-    // re-reminder owed at the same instant
-    expect(mockState.setReremindMarker).toHaveBeenCalledOnce()
+    // post-snooze follow-up armed at the expiry instant, reminder still owed
+    expect(mockState.setFollowupState).toHaveBeenCalledOnce()
+    const fu = mockState.setFollowupState.mock.calls[0][2]
+    expect(fu.remindAt).toBe(new Date(now.getTime() + 15 * 60_000).toISOString())
+    expect(fu.callAt).toBeNull()
     // 15 min NEVER consumes the 30-min allowance
     expect(mockState.mark30SnoozeUsed).not.toHaveBeenCalled()
   })
