@@ -22,7 +22,13 @@
 //  {voice:true} SSE → sentence-chunked /api/assistant/tts playback (prefetch next
 //  chunk while one plays) → auto-relisten in কথোপকথন mode. Same web constants:
 //  silence 2600ms (1400ms for <3s utterances), 8s no-speech abort, 180s cap,
-//  barge-in 0.08 RMS held 600ms, ack pool, 4s heartbeat after 14s silence.
+//  ack pool, 4s heartbeat after 14s silence.
+//
+//  HALF-DUPLEX (2026-07-06): the mic is open ONLY in `.listening`. While the agent
+//  speaks, a `ttsActive` gate keeps EVERY mic shut — STT, auto-listen, and the wake
+//  word — so the agent can never hear (and re-transcribe) its own TTS. The old
+//  auto barge-in mic did exactly that on the loud, no-echo-cancellation speaker
+//  route, so it is gone; interrupting mid-reply is now a deliberate orb TAP.
 //
 
 import SwiftUI
@@ -73,9 +79,28 @@ final class AlmaVoiceEngine {
     var state: AlmaVoiceState = .idle {
         didSet {
             guard oldValue != state else { return }
-            // Wake word runs ONLY while idle (and the console is open).
-            if state == .idle, !closed { wake.start() } else if state != .idle { wake.stop() }
+            refreshWake()
+            tr("state \(oldValue) → \(state)")
         }
+    }
+
+    /// The wake word is the ONLY ambient mic, and it may run ONLY when the console is
+    /// idle AND no TTS is playing. Gating it on `ttsActive` too means the agent's own
+    /// greeting / narration can never trip the wake recogniser. Any non-idle state (or
+    /// live TTS) stops it, so it never fights the STT mic.
+    private func refreshWake() {
+        let on = state == .idle && !ttsActive && !closed && !startingListen
+        if on { wake.start() } else { wake.stop() }
+        tr(on ? "wake→ON" : "wake→off")
+    }
+
+    // Sim self-test tracing (launch-arg / env ALMA_VOICE_TRACE only; silent in prod).
+    private static let trace =
+        ProcessInfo.processInfo.arguments.contains { $0.hasPrefix("ALMA_VOICE_TRACE") } ||
+        ProcessInfo.processInfo.environment["ALMA_VOICE_TRACE"] != nil
+    private func tr(_ m: String) {
+        guard Self.trace else { return }
+        NSLog("ALMA-VOICE %@  [state=%@ ttsActive=%d]", m, "\(state)", ttsActive ? 1 : 0)
     }
     var transcript = ""              // what the owner said (final)
     var replyText = ""               // full streamed reply
@@ -110,8 +135,6 @@ final class AlmaVoiceEngine {
     private var recorder: AVAudioRecorder?
     private var vadTask: Task<Void, Never>?
     private var turnTask: Task<Void, Never>?
-    private var bargeRecorder: AVAudioRecorder?
-    private var bargeTask: Task<Void, Never>?
     private var heartbeatTask: Task<Void, Never>?
     private var lastUserText = ""
     private var lastToolNarration = Date.distantPast
@@ -125,6 +148,12 @@ final class AlmaVoiceEngine {
     private var sessionReady = false
     private var closed = false
     private var streamingActive = false      // a live-STT listen is in flight
+    // MIC GATE (half-duplex): true from the moment ANY TTS chunk starts until the
+    // queue goes fully silent. While true, NO mic opens — not the STT listen, not
+    // auto-listen, not the wake word. This is the guard that stops the agent from
+    // hearing its own voice (the barge-in mic used to do exactly that on the loud,
+    // no-echo-cancellation speaker session). Tap-to-interrupt on the orb still works.
+    private var ttsActive = false
 
     private let tts = AlmaTtsQueue()
     private let streamer = AlmaStreamingSTT()
@@ -157,9 +186,6 @@ final class AlmaVoiceEngine {
 
     private var recURL: URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("alma-voice-turn.m4a")
-    }
-    private var bargeURL: URL {
-        FileManager.default.temporaryDirectory.appendingPathComponent("alma-voice-barge.m4a")
     }
 
     // ── Lifecycle ──────────────────────────────────────────────────────────
@@ -194,7 +220,7 @@ final class AlmaVoiceEngine {
                 }
                 Task { await self.prefetchAcks() }
                 self.wake.engine = self
-                if self.state == .idle { self.wake.start() }
+                self.refreshWake()
                 // Greeting, exactly like the web (500ms after open).
                 Task {
                     try? await Task.sleep(nanoseconds: 500_000_000)
@@ -210,7 +236,6 @@ final class AlmaVoiceEngine {
         wake.stop()
         vadTask?.cancel(); vadTask = nil
         turnTask?.cancel(); turnTask = nil
-        stopBargeMonitor()
         heartbeatTask?.cancel(); heartbeatTask = nil
         recorder?.stop(); recorder = nil
         streamer.cancel(); streamingActive = false
@@ -251,6 +276,20 @@ final class AlmaVoiceEngine {
     /// newline-split fix without needing backend auth. Never runs in production.
     func debugTtsChunks(_ reply: String) {
         tts.debugChunkLog(reply)
+    }
+
+    /// Sim-only: reproduce the feedback-loop scenario WITHOUT the backend — the agent
+    /// starts speaking, then (as the old barge-in mic did) something tries to open the
+    /// mic mid-speech. The gate MUST block it. Then silence opens the gate. Pure state
+    /// machine, opens no real mic. Watch the ALMA-VOICE trace for BLOCKED then PASS.
+    func debugGateTest() {
+        tr("GATE-TEST begin")
+        state = .thinking
+        ttsDidStartFirstChunk()      // agent begins speaking → gate closes
+        startListening()             // the old barge fired here → must log BLOCKED now
+        startListening()             // twice, to be sure
+        ttsDidGoSilent()             // agent finished → gate opens
+        tr(ttsActive ? "GATE-TEST FAIL: gate still closed" : "GATE-TEST PASS: gate open after silence")
     }
 
     /// Attach a photo (chat composer parity) — optimistic thumbnail, uploads to
@@ -314,9 +353,13 @@ final class AlmaVoiceEngine {
 
     func startListening() {
         guard sessionReady, state != .listening, !startingListen else { return }
+        // HALF-DUPLEX GATE: never open the mic while the agent is still speaking. If a
+        // caller (auto-listen, wake, a stray tap) reaches here mid-TTS, refuse — the
+        // owner taps the orb to interrupt (that path stops TTS first, clearing the gate).
+        guard !ttsActive else { tr("startListening BLOCKED (ttsActive)"); return }
+        tr("startListening ALLOWED")
         startingListen = true
         wake.stop()                      // free the mic for the STT engine
-        stopBargeMonitor()
         tts.stopAll()
         if streamingEnabled {
             // Try TRUE streaming STT first. start() throws on any PRE-audio
@@ -786,17 +829,19 @@ final class AlmaVoiceEngine {
 
     func ttsDidStartFirstChunk() {
         lastAudioAt = Date()
+        ttsActive = true                 // MIC GATE closes: agent is speaking
+        tr("TTS first chunk — gate CLOSED")
+        refreshWake()                    // ...so the wake mic can't hear the agent
         // Recording can flip the route to the receiver; force the loud speaker back
         // for the spoken reply (owner: replies were near-silent on device).
         try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker)
         if state == .thinking || state == .transcribing { state = .speaking }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        startBargeMonitor()
     }
 
     func ttsDidStartChunk(_ text: String) {
-        // Keep every spoken chunk on the loud speaker — the barge-in recorder can
-        // otherwise nudge the route back toward the quiet receiver mid-reply.
+        ttsActive = true                 // stays closed for every chunk of the reply
+        // Keep every spoken chunk on the loud speaker.
         try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker)
         lastAudioAt = Date()
         if !nowLine.isEmpty { saidLines.append(nowLine) }
@@ -806,9 +851,21 @@ final class AlmaVoiceEngine {
 
     func ttsLevelChanged(_ level: Double) { ttsLevel = level }
 
-    func ttsAllDone() {
-        stopBargeMonitor()
+    /// The queue drained and playback stopped — the agent is SILENT now. Clear the mic
+    /// gate. If this is a mid-turn gap (narration finished, reply not started yet) drop
+    /// the orb back to «ভাবছি»; the real end-of-turn (ttsAllDone) flips it to idle+listen.
+    func ttsDidGoSilent() {
+        ttsActive = false
         ttsLevel = 0
+        tr("TTS silent — gate OPEN")
+        if state == .speaking { state = .thinking }
+        refreshWake()
+    }
+
+    func ttsAllDone() {
+        ttsActive = false                // gate open — safe to re-listen
+        ttsLevel = 0
+        tr("TTS all done — turn complete")
         if !nowLine.isEmpty { saidLines.append(nowLine); nowLine = "" }
         if state == .speaking || state == .thinking {
             state = .idle
@@ -816,50 +873,16 @@ final class AlmaVoiceEngine {
         }
     }
 
+    /// Re-open the mic AFTER the agent has fully finished speaking (half-duplex). The
+    /// 700ms gap lets the speaker route settle so the very tail of the reply can't leak
+    /// into the fresh listen. Guards on `!ttsActive` in case a new line started speaking.
     private func scheduleAutoListen() {
         guard convoMode, !closed else { return }
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 450_000_000)   // web: 450ms
-            guard let self, !self.closed, self.state == .idle else { return }
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            guard let self, !self.closed, self.state == .idle, !self.ttsActive else { return }
             self.startListening()
         }
-    }
-
-    // ── Barge-in (talk over the reply) ─────────────────────────────────────
-
-    private func startBargeMonitor() {
-        guard convoMode else { return }
-        stopBargeMonitor()
-        let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 16_000,
-            AVNumberOfChannelsKey: 1,
-        ]
-        guard let rec = try? AVAudioRecorder(url: bargeURL, settings: settings) else { return }
-        rec.isMeteringEnabled = true
-        rec.record()
-        bargeRecorder = rec
-        bargeTask = Task { [weak self] in
-            var heldMs = 0.0
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 50_000_000)
-                guard let self, let r = self.bargeRecorder, self.state == .speaking else { continue }
-                r.updateMeters()
-                let rms = pow(10.0, Double(r.averagePower(forChannel: 0)) / 20.0)
-                if rms > 0.08 { heldMs += 50 } else { heldMs = 0 }   // web: 0.08 held 600ms
-                if heldMs >= 600 {
-                    self.tts.stopAll()
-                    self.startListening()
-                    return
-                }
-            }
-        }
-    }
-
-    private func stopBargeMonitor() {
-        bargeTask?.cancel(); bargeTask = nil
-        bargeRecorder?.stop(); bargeRecorder = nil
-        try? FileManager.default.removeItem(at: bargeURL)
     }
 
     // ── Chimes + acks ──────────────────────────────────────────────────────
@@ -1401,6 +1424,7 @@ final class AlmaTtsQueue: NSObject, AVAudioPlayerDelegate {
     private var feedFinished = false
     private var meterTask: Task<Void, Never>?
     private var pumping = false
+    private var wasSilent = true             // fire ttsDidGoSilent once per silence edge
 
     /// Reset the per-turn flags (greeting/acks must not count as the reply's
     /// first chunk — that kept the state stuck on "ভাবছি" during playback).
@@ -1455,6 +1479,12 @@ final class AlmaTtsQueue: NSObject, AVAudioPlayerDelegate {
         startedFirst = false
         fedAnything = false
         feedFinished = false
+        // We are now silent (deliberate stop / tap-to-interrupt). Clear the engine's
+        // mic gate so a follow-on startListening() is allowed. Does NOT auto-listen.
+        if !wasSilent {
+            wasSilent = true
+            engine?.ttsDidGoSilent()
+        }
     }
 
     func playRaw(_ data: Data) {
@@ -1529,9 +1559,17 @@ final class AlmaTtsQueue: NSObject, AVAudioPlayerDelegate {
     private func pump() {
         guard player == nil, !pumping else { prefetchNext(); return }
         guard !queue.isEmpty else {
+            // Nothing left to play → the queue is now SILENT. Tell the engine once per
+            // silence edge so it can clear the mic gate (and, if a reply turn finished,
+            // re-open the mic). This is what lets auto-listen wait for true silence.
+            if !wasSilent {
+                wasSilent = true
+                engine?.ttsDidGoSilent()
+            }
             if feedFinished && player == nil && fedAnything { engine?.ttsAllDone() }
             return
         }
+        wasSilent = false
         pumping = true
         let text = queue.removeFirst()
         Task { [weak self] in
@@ -1711,6 +1749,9 @@ struct AlmaVoiceConsoleView: View {
             }
             if let reply = Self.launchValue("ALMA_TTS_TEST") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { engine.debugTtsChunks(reply) }
+            }
+            if Self.launchValue("ALMA_GATE_TEST") != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { engine.debugGateTest() }
             }
             if let wav = Self.launchValue("ALMA_WAKE_TEST") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
