@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
 
   const contentType = req.headers.get('content-type') ?? ''
 
-  // ── urgent alert (no audio) ──
+  // ── urgent alert / live-call ring (no audio) ──
   if (contentType.includes('application/json')) {
     let body: { kind?: string; targetStaffId?: string }
     try {
@@ -84,12 +84,19 @@ export async function POST(req: NextRequest) {
     } catch {
       return Response.json({ error: 'invalid_json' }, { status: 400 })
     }
-    if (body.kind !== 'urgent') return Response.json({ error: 'unsupported_kind' }, { status: 400 })
+    if (body.kind !== 'urgent' && body.kind !== 'call') {
+      return Response.json({ error: 'unsupported_kind' }, { status: 400 })
+    }
+    // A live call rings ONE person — the Agora channel is itc_<broadcastId>.
+    const targetStaffId = body.targetStaffId?.trim() || null
+    if (body.kind === 'call' && !targetStaffId) {
+      return Response.json({ error: 'call_needs_target' }, { status: 400 })
+    }
     const res = await createIntercomBroadcast({
       businessId: id.businessId,
       senderUserId: id.userId,
-      kind: 'urgent',
-      targetStaffId: body.targetStaffId?.trim() || null,
+      kind: body.kind,
+      targetStaffId,
     })
     if ('error' in res) return Response.json({ error: res.error }, { status: 422 })
     return Response.json({ ok: true, ...res }, { status: 201 })

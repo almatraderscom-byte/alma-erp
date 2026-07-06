@@ -13,9 +13,14 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { tapHaptic, successHaptic, warningHaptic } from '@/lib/ui-haptics'
+import { useAgoraCall } from '@/agent/hooks/useAgoraCall'
 import { INTERCOM_CSS } from './intercom-css'
 
 const POLL_MS = 6_000
+/** A call broadcast only "rings" this long; older = a missed call. */
+const CALL_RING_MS = 60_000
+/** The Agora channel for a call is derived from its broadcast id (no signaling column needed). */
+const callChannel = (broadcastId: string) => `itc_${broadcastId}`
 const MIN_HOLD_MS = 900
 const MAX_REC_MS = 180_000
 /** Auto-play on staff phones only while the broadcast is truly "live". */
@@ -47,7 +52,7 @@ export type ItcReceipt = {
 }
 export type ItcBroadcast = {
   id: string
-  kind: 'voice' | 'urgent'
+  kind: 'voice' | 'urgent' | 'call'
   audioUrl: string | null
   mediaType: string | null
   durationSec: number
@@ -81,6 +86,22 @@ function extForMime(mime: string): string {
   return 'webm'
 }
 
+/** Stable avatar tint per staff — same person, same colour everywhere. */
+const AV_GRADS = [
+  'linear-gradient(135deg,#6366f1,#8b5cf6)',
+  'linear-gradient(135deg,#0ea5e9,#06b6d4)',
+  'linear-gradient(135deg,#10b981,#059669)',
+  'linear-gradient(135deg,#f59e0b,#d97706)',
+  'linear-gradient(135deg,#ec4899,#be185d)',
+  'linear-gradient(135deg,#14b8a6,#0d9488)',
+]
+const avInitial = (name: string) => (name.trim()[0] || '?').toUpperCase()
+function avGrad(id: string): string {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0
+  return AV_GRADS[h % AV_GRADS.length]
+}
+
 type PttState = 'idle' | 'starting' | 'live' | 'cancel' | 'sending'
 
 export function useIntercom(self: 'owner' | 'staff') {
@@ -90,6 +111,11 @@ export function useIntercom(self: 'owner' | 'staff') {
   const [target, setTarget] = useState<string>('all')
   const [error, setError] = useState<string | null>(null)
   const [confirming, setConfirming] = useState<string | null>(null)
+  // Live call (Agora). activeCallId = the broadcast whose channel we're in.
+  const callApi = useAgoraCall()
+  const [activeCallId, setActiveCallId] = useState<string | null>(null)
+  const [callPeer, setCallPeer] = useState<string>('')
+  const [callStarting, setCallStarting] = useState(false)
 
   const mrRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
@@ -282,6 +308,75 @@ export function useIntercom(self: 'owner' | 'staff') {
     [],
   )
 
+  /* ── live call (Agora) ── */
+  // Owner rings ONE staff: create a call broadcast, then join its channel.
+  const startCall = useCallback(
+    async (staffId: string, staffName: string) => {
+      if (callStarting || activeCallId) return
+      setCallStarting(true)
+      setError(null)
+      tapHaptic()
+      try {
+        const res = await fetch('/api/assistant/office/intercom', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: 'call', targetStaffId: staffId }),
+        })
+        if (!res.ok) {
+          setError('কল শুরু করা যায়নি')
+          return
+        }
+        const { id } = (await res.json()) as { id: string }
+        setCallPeer(staffName)
+        setActiveCallId(id)
+        await callApi.join(callChannel(id))
+        void load()
+      } finally {
+        setCallStarting(false)
+      }
+    },
+    [callStarting, activeCallId, callApi, load],
+  )
+
+  // Staff answers an incoming call: stop the ring (confirm) + join the channel.
+  const answerCall = useCallback(
+    async (b: ItcBroadcast) => {
+      if (activeCallId) return
+      successHaptic()
+      setCallPeer('বস')
+      setActiveCallId(b.id)
+      void confirm(b.id)
+      await callApi.join(callChannel(b.id))
+    },
+    [activeCallId, callApi, confirm],
+  )
+
+  // Staff declines: just stop the ring (never joins). Owner will time out.
+  const declineCall = useCallback(
+    (b: ItcBroadcast) => {
+      warningHaptic()
+      void confirm(b.id)
+    },
+    [confirm],
+  )
+
+  const endCall = useCallback(() => {
+    void callApi.leave()
+    setActiveCallId(null)
+    setCallPeer('')
+  }, [callApi])
+
+  // If the remote hangs up (Agora user-left → remoteJoined flips false after
+  // having been true), close our side too.
+  const wasConnectedRef = useRef(false)
+  useEffect(() => {
+    if (callApi.remoteJoined) wasConnectedRef.current = true
+    else if (wasConnectedRef.current && activeCallId) {
+      wasConnectedRef.current = false
+      endCall()
+    }
+  }, [callApi.remoteJoined, activeCallId, endCall])
+
   return {
     self,
     feed,
@@ -297,6 +392,15 @@ export function useIntercom(self: 'owner' | 'staff') {
     confirm,
     confirming,
     reload: load,
+    // call
+    callApi,
+    activeCallId,
+    callPeer,
+    callStarting,
+    startCall,
+    answerCall,
+    declineCall,
+    endCall,
   }
 }
 
@@ -340,10 +444,13 @@ export function IntercomDock({ itc }: { itc: Intercom }) {
 
       <div className="itc-targets">
         <button className={`itc-tpill${target === 'all' ? ' on' : ''}`} onClick={() => setTarget('all')}>
-          📢 সবাই
+          <span className="itc-tav all">📢</span> সবাই
         </button>
         {feed.staff.map((s) => (
           <button key={s.id} className={`itc-tpill${target === s.id ? ' on' : ''}`} onClick={() => setTarget(s.id)}>
+            <span className="itc-tav" style={{ backgroundImage: avGrad(s.id) }}>
+              {avInitial(s.name)}
+            </span>
             {s.name}
           </button>
         ))}
@@ -374,13 +481,19 @@ export function IntercomDock({ itc }: { itc: Intercom }) {
           </button>
         </div>
 
-        {targetStaff?.phone ? (
-          <a className="itc-side call" href={`tel:${targetStaff.phone}`}>
-            <span className="ic">📞</span>লাইভ কল
-          </a>
+        {targetStaff ? (
+          <button
+            className="itc-side call"
+            disabled={itc.callStarting || !!itc.activeCallId || ptt === 'live'}
+            onClick={() => itc.startCall(targetStaff.id, targetStaff.name)}
+          >
+            <span className="ic">📞</span>
+            <span className="cap">{itc.callStarting ? 'কল যাচ্ছে…' : 'লাইভ কল'}</span>
+          </button>
         ) : (
           <span className="itc-side call" aria-disabled="true">
-            <span className="ic">📞</span>{target === 'all' ? 'স্টাফ বাছুন' : 'নম্বর নেই'}
+            <span className="ic">📞</span>
+            <span className="cap">স্টাফ বাছুন</span>
           </span>
         )}
       </div>
@@ -465,24 +578,26 @@ export function IntercomBubble({ b, itc }: { b: ItcBroadcast; itc: Intercom }) {
       ? 'আপনার জন্য'
       : itc.feed.staff.find((s) => s.id === b.targetStaffId)?.name ?? b.receipts[0]?.staffName ?? 'একজন'
 
-  const rcptState = (r: ItcReceipt) =>
-    r.confirmedAt ? 'confirmed' : r.playedAt ? 'played' : r.deliveredAt ? 'delivered' : ''
-  const rcptIcon = (r: ItcReceipt) => (r.confirmedAt ? '✅' : r.playedAt ? '🔊' : r.deliveredAt ? '✓✓' : '🕓')
+  // A live call leaves a compact log line in the chat (the actual ring/audio is
+  // handled by the takeover + call overlay, not a playable bubble).
+  if (b.kind === 'call') {
+    const answered = b.receipts.some((r) => r.confirmedAt) || b.mine?.confirmedAt
+    return (
+      <div className="gb itc-vb call">
+        <span className="itc-callline">
+          📞 লাইভ কল · {targetLabel}
+          <span className={`itc-callstat ${answered ? 'ok' : 'miss'}`}>{answered ? 'ধরা হয়েছে' : 'মিসড কল'}</span>
+        </span>
+      </div>
+    )
+  }
 
   if (b.kind === 'urgent') {
     return (
       <div className="gb itc-vb urgent">
         <div className="vb-utitle">🚨 জরুরি এলার্ট</div>
         <div className="vb-usub">{targetLabel === 'সবাই' ? 'সব স্টাফের ফোনে ফুল ভলিউমে গেছে' : `${targetLabel}-এর ফোনে গেছে`}</div>
-        {self === 'owner' && b.receipts.length > 0 && (
-          <div className="itc-rcpts">
-            {b.receipts.map((r) => (
-              <span key={r.staffId} className={`itc-rcpt ${rcptState(r)}`}>
-                {rcptIcon(r)} {r.staffName}
-              </span>
-            ))}
-          </div>
-        )}
+        {self === 'owner' && b.receipts.length > 0 && <Receipts receipts={b.receipts} />}
         {self === 'staff' && (
           <div className="itc-mystate">
             {b.mine?.confirmedAt ? (
@@ -524,15 +639,7 @@ export function IntercomBubble({ b, itc }: { b: ItcBroadcast; itc: Intercom }) {
       ) : (
         <div className="vb-tr pending">🤖 এজেন্ট ট্রান্সক্রিপ্ট লিখছে…</div>
       )}
-      {self === 'owner' && b.receipts.length > 0 && (
-        <div className="itc-rcpts">
-          {b.receipts.map((r) => (
-            <span key={r.staffId} className={`itc-rcpt ${rcptState(r)}`}>
-              {rcptIcon(r)} {r.staffName}
-            </span>
-          ))}
-        </div>
-      )}
+      {self === 'owner' && b.receipts.length > 0 && <Receipts receipts={b.receipts} />}
       {self === 'staff' && (
         <div className="itc-mystate">
           {b.mine?.confirmedAt ? (
@@ -548,13 +655,42 @@ export function IntercomBubble({ b, itc }: { b: ItcBroadcast; itc: Intercom }) {
   )
 }
 
+/** Owner-side per-staff receipt chips: delivered → playing (live eq) → confirmed. */
+function Receipts({ receipts }: { receipts: ItcReceipt[] }) {
+  return (
+    <div className="itc-rcpts">
+      {receipts.map((r) => {
+        const state = r.confirmedAt ? 'confirmed' : r.playedAt ? 'played' : r.deliveredAt ? 'delivered' : 'waiting'
+        return (
+          <span key={r.staffId} className={`itc-rcpt ${state}`}>
+            <span className="itc-tav sm" style={{ backgroundImage: avGrad(r.staffId) }}>
+              {avInitial(r.staffName)}
+            </span>
+            {r.staffName}
+            {state === 'confirmed' ? (
+              <span className="mk">✅</span>
+            ) : state === 'played' ? (
+              <span className="itc-eq sm"><i /><i /><i /></span>
+            ) : state === 'delivered' ? (
+              <span className="mk">✓✓</span>
+            ) : (
+              <span className="mk">🕓</span>
+            )}
+          </span>
+        )
+      })}
+    </div>
+  )
+}
+
 /* ═══════════════ staff full-screen takeover ═══════════════ */
 
 export function IntercomTakeover({ itc }: { itc: Intercom }) {
   const { feed, confirm, confirming, markPlayed } = itc
-  // Broadcasts the staff hasn't confirmed, oldest first (hear them in order).
+  // Voice/urgent broadcasts the staff hasn't confirmed, oldest first. Calls are
+  // handled by IntercomCall (a ringing overlay), never here.
   const pendingList = useMemo(
-    () => feed.broadcasts.filter((b) => b.mine && !b.mine.confirmedAt),
+    () => feed.broadcasts.filter((b) => b.kind !== 'call' && b.mine && !b.mine.confirmedAt),
     [feed.broadcasts],
   )
   const [snoozed, setSnoozed] = useState<Set<string>>(() => new Set())
@@ -710,6 +846,134 @@ export function IntercomTakeover({ itc }: { itc: Intercom }) {
       >
         চ্যাটে দেখব — পরে কনফার্ম করব
       </button>
+    </div>
+  )
+}
+
+/* ═══════════════ live call overlay (Agora) ═══════════════ */
+
+const fmtClock = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+
+export function IntercomCall({ itc }: { itc: Intercom }) {
+  const { self, feed, activeCallId, callPeer, callApi, endCall, answerCall, declineCall } = itc
+
+  // Staff: a fresh, unconfirmed call broadcast addressed to me = an incoming ring
+  // (unless I'm already in a call).
+  const incoming = useMemo(() => {
+    if (self !== 'staff' || activeCallId) return null
+    return (
+      feed.broadcasts.find(
+        (b) =>
+          b.kind === 'call' &&
+          b.mine &&
+          !b.mine.confirmedAt &&
+          Date.now() - new Date(b.createdAt).getTime() < CALL_RING_MS,
+      ) ?? null
+    )
+  }, [self, activeCallId, feed.broadcasts])
+
+  // Ring tone + vibration while an incoming call is pending.
+  const ringRef = useRef<{ ctx: AudioContext; stop: () => void } | null>(null)
+  useEffect(() => {
+    if (!incoming) return
+    let cancelled = false
+    try {
+      const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      if (Ctx) {
+        const ctx = new Ctx()
+        const loop = () => {
+          if (cancelled) return
+          const t0 = ctx.currentTime
+          for (let i = 0; i < 2; i++) {
+            const osc = ctx.createOscillator()
+            const g = ctx.createGain()
+            osc.type = 'sine'
+            osc.frequency.value = i === 0 ? 660 : 550
+            g.gain.setValueAtTime(0.0001, t0 + i * 0.4)
+            g.gain.exponentialRampToValueAtTime(0.35, t0 + i * 0.4 + 0.05)
+            g.gain.exponentialRampToValueAtTime(0.0001, t0 + i * 0.4 + 0.3)
+            osc.connect(g).connect(ctx.destination)
+            osc.start(t0 + i * 0.4)
+            osc.stop(t0 + i * 0.4 + 0.35)
+          }
+        }
+        loop()
+        const iv = setInterval(loop, 2000)
+        ringRef.current = { ctx, stop: () => clearInterval(iv) }
+      }
+    } catch {
+      /* autoplay blocked — the visual ring still shows */
+    }
+    const vib = setInterval(() => {
+      try {
+        navigator.vibrate?.([400, 200, 400])
+      } catch {
+        /* iOS */
+      }
+    }, 1500)
+    return () => {
+      cancelled = true
+      clearInterval(vib)
+      ringRef.current?.stop()
+      ringRef.current?.ctx.close().catch(() => {})
+      ringRef.current = null
+    }
+  }, [incoming])
+
+  // ── incoming ring (staff) ──
+  if (incoming) {
+    return (
+      <div className="itc-call incoming" role="alertdialog" aria-label="ইনকামিং কল">
+        <div className="itc-call-top">
+          <div className="itc-tk-av"><span className="ring" /><span className="ring r2" />M</div>
+          <div className="itc-call-who">বস — মারুফ</div>
+          <div className="itc-call-sub">📞 অফিস লাইভ কল…</div>
+        </div>
+        <div className="itc-call-btns">
+          <button className="itc-cbtn decline" onClick={() => declineCall(incoming)} aria-label="কেটে দিন">✕</button>
+          <button className="itc-cbtn accept" onClick={() => answerCall(incoming)} aria-label="ধরুন">📞</button>
+        </div>
+        <div className="itc-call-labels"><span>কেটে দিন</span><span>ধরুন</span></div>
+      </div>
+    )
+  }
+
+  // ── active call (owner or staff, once we've joined) ──
+  if (!activeCallId) return null
+  const st = callApi.state
+  const connected = callApi.remoteJoined
+  const failed = st === 'error'
+  return (
+    <div className="itc-call active" role="dialog" aria-label="লাইভ কল">
+      <div className="itc-call-top">
+        <div className={`itc-tk-av${connected ? ' connected' : ''}`}>
+          {!connected && <><span className="ring" /><span className="ring r2" /></>}
+          {self === 'owner' ? (callPeer.trim()[0] || 'M').toUpperCase() : 'M'}
+        </div>
+        <div className="itc-call-who">{self === 'owner' ? callPeer || 'স্টাফ' : 'বস — মারুফ'}</div>
+        <div className="itc-call-sub">
+          {failed
+            ? callApi.error === 'agora_unconfigured'
+              ? '⚠️ কল সেটআপ বাকি (Agora key)'
+              : '⚠️ কল সংযোগে সমস্যা'
+            : connected
+              ? '🟢 কল চলছে — লাইভ অডিও'
+              : self === 'owner'
+                ? '📞 রিং হচ্ছে…'
+                : 'সংযোগ হচ্ছে…'}
+        </div>
+        {connected && <div className="itc-call-timer">{fmtClock(callApi.callSeconds)}</div>}
+      </div>
+
+      <div className="itc-call-actions">
+        {connected && (
+          <button className={`itc-call-mute${callApi.muted ? ' on' : ''}`} onClick={() => callApi.toggleMute()}>
+            {callApi.muted ? '🔇 আনমিউট' : '🎤 মিউট'}
+          </button>
+        )}
+        <button className="itc-cbtn decline big" onClick={endCall} aria-label="কল শেষ">✕</button>
+        <div className="itc-call-end-lbl">{failed ? 'বন্ধ করুন' : 'কল শেষ করুন'}</div>
+      </div>
     </div>
   )
 }

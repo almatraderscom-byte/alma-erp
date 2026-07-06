@@ -8,6 +8,7 @@ import {
   IntercomBubble,
   IntercomTakeover,
   IntercomStyle,
+  IntercomCall,
   type Intercom,
   type ItcBroadcast,
 } from './intercom'
@@ -226,6 +227,7 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
     <>
       <IntercomStyle />
       {self === 'staff' && <IntercomTakeover itc={itc} />}
+      <IntercomCall itc={itc} />
       {!open && (
         <div className="ohub-chathead" onClick={() => setOpen(true)} role="button" aria-label="অফিস গ্রুপ চ্যাট">
           <span className="ring"></span>

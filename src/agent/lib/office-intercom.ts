@@ -14,7 +14,8 @@
 import { prisma } from '@/lib/prisma'
 import { pushStaffPing } from '@/agent/lib/office-notify'
 
-export type IntercomKind = 'voice' | 'urgent'
+/** 'voice' = PTT audio · 'urgent' = full-volume text alert · 'call' = live VoIP ring (Agora channel = itc_<broadcastId>). */
+export type IntercomKind = 'voice' | 'urgent' | 'call'
 
 export type IntercomReceipt = {
   staffId: string
@@ -109,8 +110,14 @@ export async function createIntercomBroadcast(args: {
   })
 
   // Best-effort push so a closed app still gets a ping. Never blocks the send.
-  const title = args.kind === 'urgent' ? '🚨 বসের জরুরি এলার্ট' : '🎙️ বসের ভয়েস মেসেজ'
-  const body = args.kind === 'urgent' ? 'এখনই অফিস অ্যাপ খুলুন।' : 'অফিস অ্যাপ খুলে শুনে কনফার্ম করুন।'
+  const title =
+    args.kind === 'urgent' ? '🚨 বসের জরুরি এলার্ট' : args.kind === 'call' ? '📞 বস লাইভ কল করছেন' : '🎙️ বসের ভয়েস মেসেজ'
+  const body =
+    args.kind === 'urgent'
+      ? 'এখনই অফিস অ্যাপ খুলুন।'
+      : args.kind === 'call'
+        ? 'এখনই অফিস অ্যাপ খুলে কল ধরুন।'
+        : 'অফিস অ্যাপ খুলে শুনে কনফার্ম করুন।'
   await Promise.allSettled(targets.map((t) => pushStaffPing(t, title, body)))
 
   return { id: row.id, createdAt: row.createdAt.toISOString() }

@@ -57,6 +57,8 @@
     "@sentry/nextjs": "^8.55.2",
     "@supabase/supabase-js": "^2.108.1",
     "adhan": "^4.4.3",
+    "agora-rtc-sdk-ng": "^4.24.5",
+    "agora-token": "^2.0.5",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.79.0",
     "date-fns": "3.6.0",
