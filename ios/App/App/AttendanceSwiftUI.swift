@@ -2,15 +2,23 @@
 //  AttendanceSwiftUI.swift
 //  ALMA ERP — the Attendance dashboard as a native SwiftUI screen.
 //
-//  Mirrors the web /attendance page (read view) — same endpoint, same colours:
-//    GET /api/attendance?business_id=ALL&date=YYYY-MM-DD   → dashboard bundle
-//        (kpis · records · absentEmployees · pendingWaivers · ranking)
+//  Mirrors the web /attendance page — same endpoints, same colours, FULL action parity:
+//    GET    /api/attendance?business_id=ALL&date=YYYY-MM-DD    → dashboard bundle
+//           (kpis · records · absentEmployees · pendingWaivers · selfieLogs · ranking)
+//    GET    /api/attendance/waivers/analytics                  → appeal analytics card
+//    PATCH  /api/attendance/waivers/{id}                       → appeal APPROVE/REJECT
+//           {business_id, action, approved_reduction_amount?, admin_note}
+//    POST   /api/attendance/{recordId}/verification-request    {business_id}
+//    DELETE /api/attendance/{recordId}                         → attendance reset (SA)
+//    PATCH  /api/attendance/selfies/{id}                       → selfie verdict
+//           {business_id, action, attendance_record_id}
 //  Native extras: chevron prev/next day + graphical DatePicker sheet (the API's
 //  `date` param drives the whole dashboard), status-dot initials rows, per-employee
-//  detail sheet with the day's timeline.
-//  ALL edit/override actions stay on the web escape hatch by design: penalty-waiver
-//  review, selfie verification approve/reject, verification request, attendance reset.
-//  Carried lessons: ONE per-section skeleton, never a global overlay; lenient decoding.
+//  detail sheet with the day's timeline. Selfie IMAGES render natively (signed URL via
+//  AsyncImage, data: URLs decoded); TAKING selfies stays on the web (camera flow).
+//  Carried lessons: ONE per-section skeleton, never a global overlay; lenient decoding;
+//  per-row spinners (busyIds), never a global one; confirmationDialogs in Bangla with
+//  the staff name before every mutating call; reload after every action.
 //
 
 import SwiftUI
@@ -146,6 +154,7 @@ struct AttendanceAbsentee: Decodable, Identifiable, Equatable {
 
 struct AttendanceWaiverRow: Decodable, Identifiable, Equatable {
     let id: String
+    let businessId: String?
     let employeeId: String?
     let requesterName: String?
     let requestType: String?
@@ -157,12 +166,13 @@ struct AttendanceWaiverRow: Decodable, Identifiable, Equatable {
     let lateMinutes: Int?
 
     private enum Keys: String, CodingKey {
-        case id, employeeId, requesterName, requestType, originalPenaltyAmount
+        case id, businessId, employeeId, requesterName, requestType, originalPenaltyAmount
         case requestedReductionAmount, reason, hasAttachment, createdAt, lateMinutes
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        businessId = try? c.decodeIfPresent(String.self, forKey: .businessId)
         employeeId = try? c.decodeIfPresent(String.self, forKey: .employeeId)
         requesterName = try? c.decodeIfPresent(String.self, forKey: .requesterName)
         requestType = try? c.decodeIfPresent(String.self, forKey: .requestType)
@@ -173,6 +183,72 @@ struct AttendanceWaiverRow: Decodable, Identifiable, Equatable {
         createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
         lateMinutes = attendanceFlexInt(c, .lateMinutes)
     }
+}
+
+/// One selfie verification photo (web selfieLogs) — `imageUrl` is a 1h-signed storage
+/// URL resolved server-side; legacy rows may inline a `data:image/…` payload instead.
+struct AttendanceSelfieLog: Decodable, Identifiable, Equatable {
+    let id: String
+    let businessId: String?
+    let attendanceRecordId: String?
+    let employeeId: String?
+    let capturedAt: String?
+    let imageDataUrl: String?
+    let imageUrl: String?
+    let imageMissing: Bool?
+    let reviewedAt: String?
+
+    private enum Keys: String, CodingKey {
+        case id, businessId, attendanceRecordId, employeeId, capturedAt
+        case imageDataUrl, imageUrl, imageMissing, reviewedAt
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        businessId = try? c.decodeIfPresent(String.self, forKey: .businessId)
+        attendanceRecordId = try? c.decodeIfPresent(String.self, forKey: .attendanceRecordId)
+        employeeId = try? c.decodeIfPresent(String.self, forKey: .employeeId)
+        capturedAt = try? c.decodeIfPresent(String.self, forKey: .capturedAt)
+        imageDataUrl = try? c.decodeIfPresent(String.self, forKey: .imageDataUrl)
+        imageUrl = try? c.decodeIfPresent(String.self, forKey: .imageUrl)
+        imageMissing = try? c.decodeIfPresent(Bool.self, forKey: .imageMissing)
+        reviewedAt = try? c.decodeIfPresent(String.self, forKey: .reviewedAt)
+    }
+
+    var isPending: Bool { (reviewedAt ?? "").isEmpty }
+    /// Same precedence the web uses: signed URL first, else inline data URL.
+    var displaySrc: String? {
+        if let u = imageUrl, !u.isEmpty { return u }
+        if let d = imageDataUrl, d.hasPrefix("data:image/") { return d }
+        return nil
+    }
+}
+
+/// Web "Penalty appeal analytics (this month)" — GET /api/attendance/waivers/analytics
+/// answers `{ ok, month, analytics: {…} }` flat (no data wrapper).
+struct AttendancePenaltyAnalytics: Decodable, Equatable {
+    let totalPenalties: Int
+    let waivedAmount: Int
+    let netPenaltiesAfterWaivers: Int
+    let approvalRate: Int
+
+    private enum Keys: String, CodingKey {
+        case ok, analytics, totalPenalties, waivedAmount, netPenaltiesAfterWaivers, approvalRate
+    }
+    init(from decoder: Decoder) throws {
+        let root = try decoder.container(keyedBy: Keys.self)
+        let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .analytics)) ?? root
+        totalPenalties = attendanceFlexInt(c, .totalPenalties) ?? 0
+        waivedAmount = attendanceFlexInt(c, .waivedAmount) ?? 0
+        netPenaltiesAfterWaivers = attendanceFlexInt(c, .netPenaltiesAfterWaivers) ?? 0
+        approvalRate = attendanceFlexInt(c, .approvalRate) ?? 0
+    }
+}
+
+/// Minimal decode target for the mutating endpoints — payload details are refetched
+/// via load() right after, so only success/failure matters here.
+struct AttendanceActionOk: Decodable {
+    let ok: Bool?
 }
 
 struct AttendanceRankRow: Decodable, Identifiable, Equatable {
@@ -209,11 +285,12 @@ struct AttendanceDashboardResponse: Decodable {
     let records: [AttendanceRecordRow]
     let absentEmployees: [AttendanceAbsentee]
     let pendingWaivers: [AttendanceWaiverRow]
+    let selfieLogs: [AttendanceSelfieLog]
     let ranking: [AttendanceRankRow]
     let scopeAllBusinesses: Bool
 
     private enum Keys: String, CodingKey {
-        case ok, data, kpis, records, absentEmployees, pendingWaivers, ranking, scopeAllBusinesses
+        case ok, data, kpis, records, absentEmployees, pendingWaivers, selfieLogs, ranking, scopeAllBusinesses
     }
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Keys.self)
@@ -222,6 +299,7 @@ struct AttendanceDashboardResponse: Decodable {
         records = (try? c.decode([AttendanceRecordRow].self, forKey: .records)) ?? []
         absentEmployees = (try? c.decode([AttendanceAbsentee].self, forKey: .absentEmployees)) ?? []
         pendingWaivers = (try? c.decode([AttendanceWaiverRow].self, forKey: .pendingWaivers)) ?? []
+        selfieLogs = (try? c.decode([AttendanceSelfieLog].self, forKey: .selfieLogs)) ?? []
         ranking = (try? c.decode([AttendanceRankRow].self, forKey: .ranking)) ?? []
         scopeAllBusinesses = (try? c.decodeIfPresent(Bool.self, forKey: .scopeAllBusinesses)) ?? false
     }
@@ -236,10 +314,14 @@ final class AttendanceVM {
     var records: [AttendanceRecordRow] = []
     var absentees: [AttendanceAbsentee] = []
     var waivers: [AttendanceWaiverRow] = []
+    var selfieLogs: [AttendanceSelfieLog] = []
     var ranking: [AttendanceRankRow] = []
+    var analytics: AttendancePenaltyAnalytics? = nil
     var scopeAllBusinesses = false
     var loading = false
     var error: String? = nil
+    var notice: String? = nil             // success line (the web's toast)
+    var busyIds: Set<String> = []         // per-row spinners, never a global one
     var authExpired = false
 
     /// Selected day (Dhaka business day) — drives the `date` query param.
@@ -248,6 +330,8 @@ final class AttendanceVM {
     var isToday: Bool {
         AttendanceFormat.dayParam(day) == AttendanceFormat.dayParam(Date())
     }
+
+    var pendingSelfies: [AttendanceSelfieLog] { selfieLogs.filter(\.isPending) }
 
     func load() async {
         loading = true
@@ -261,6 +345,7 @@ final class AttendanceVM {
             records = resp.records
             absentees = resp.absentEmployees
             waivers = resp.pendingWaivers
+            selfieLogs = resp.selfieLogs
             ranking = resp.ranking
             scopeAllBusinesses = resp.scopeAllBusinesses
             authExpired = false
@@ -270,6 +355,139 @@ final class AttendanceVM {
             if Self.isCancellation(error) { return }   // pull-to-refresh let go early
             self.error = error.localizedDescription
         }
+    }
+
+    /// Web loadAnalytics() parity — best-effort, silent on failure (the web passes
+    /// toastOnError:false too). Scoped to the primary business like the web call.
+    func loadAnalytics() async {
+        do {
+            let resp: AttendancePenaltyAnalytics = try await AlmaAPI.shared.get(
+                "/api/attendance/waivers/analytics")
+            analytics = resp
+        } catch {
+            analytics = nil
+        }
+    }
+
+    // ── Admin actions (exact web endpoints/bodies; per-row spinner via busyIds) ──
+
+    /// Web submitReview(): PATCH /api/attendance/waivers/{id}
+    /// {business_id, action, approved_reduction_amount (APPROVE only), admin_note}.
+    func reviewWaiver(_ waiver: AttendanceWaiverRow, approve: Bool,
+                      amount: Int, note: String) async {
+        guard !busyIds.contains(waiver.id) else { return }
+        busyIds.insert(waiver.id)
+        notice = nil
+        error = nil
+        defer { busyIds.remove(waiver.id) }
+        do {
+            var body: [String: AnyEncodable] = [
+                "action": AnyEncodable(approve ? "APPROVE" : "REJECT"),
+                "admin_note": AnyEncodable(note),
+            ]
+            // The web sends the page's business context; natively we know the waiver's
+            // own business (in the ALL-scope payload) — strictly more correct.
+            if let biz = waiver.businessId { body["business_id"] = AnyEncodable(biz) }
+            if approve { body["approved_reduction_amount"] = AnyEncodable(amount) }
+            let _: AttendanceActionOk = try await AlmaAPI.shared.send(
+                "PATCH", "/api/attendance/waivers/\(waiver.id)", body: body)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = approve
+                ? "আপিল অনুমোদিত — ওয়ালেটে ক্রেডিট হয়েছে ✓"
+                : "আপিল প্রত্যাখ্যান করা হয়েছে"
+            withAnimation(.snappy) { waivers.removeAll { $0.id == waiver.id } }
+            await load()
+            await loadAnalytics()
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = Self.actionMessage(error)
+        }
+    }
+
+    /// Web requestVerification(): POST /api/attendance/{recordId}/verification-request
+    /// {business_id} — flags the record; staff sees "Verify Face Now" on My Desk.
+    func requestVerification(_ record: AttendanceRecordRow) async {
+        guard !busyIds.contains(record.id) else { return }
+        busyIds.insert(record.id)
+        notice = nil
+        error = nil
+        defer { busyIds.remove(record.id) }
+        do {
+            var body: [String: AnyEncodable] = [:]
+            if let biz = record.businessId { body["business_id"] = AnyEncodable(biz) }
+            let _: AttendanceActionOk = try await AlmaAPI.shared.send(
+                "POST", "/api/attendance/\(record.id)/verification-request", body: body)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = "ভেরিফিকেশন চাওয়া হয়েছে — কর্মী My Desk-এ 'Verify Face Now' দেখবে"
+            await load()
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = Self.actionMessage(error)
+        }
+    }
+
+    /// Web resetAttendance(): DELETE /api/attendance/{recordId} (no body) — removes
+    /// the day's record + reverses any late penalty; Super Admin only (server-gated).
+    func resetAttendance(_ record: AttendanceRecordRow) async {
+        guard !busyIds.contains(record.id) else { return }
+        busyIds.insert(record.id)
+        notice = nil
+        error = nil
+        defer { busyIds.remove(record.id) }
+        do {
+            let _: AttendanceActionOk = try await AlmaAPI.shared.send(
+                "DELETE", "/api/attendance/\(record.id)")
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = "হাজিরা রিসেট হয়েছে — কর্মী আবার চেক-ইন করতে পারবে"
+            withAnimation(.snappy) { records.removeAll { $0.id == record.id } }
+            await load()
+            await loadAnalytics()
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = Self.actionMessage(error)
+        }
+    }
+
+    /// Web reviewSelfie(): PATCH /api/attendance/selfies/{id}
+    /// {business_id, action, attendance_record_id} — APPROVE → TRUSTED, REJECT → WARNING.
+    func reviewSelfie(_ log: AttendanceSelfieLog, approve: Bool) async {
+        guard !busyIds.contains(log.id) else { return }
+        busyIds.insert(log.id)
+        notice = nil
+        error = nil
+        defer { busyIds.remove(log.id) }
+        do {
+            var body: [String: AnyEncodable] = [
+                "action": AnyEncodable(approve ? "APPROVE" : "REJECT"),
+            ]
+            if let biz = log.businessId { body["business_id"] = AnyEncodable(biz) }
+            if let rec = log.attendanceRecordId { body["attendance_record_id"] = AnyEncodable(rec) }
+            let _: AttendanceActionOk = try await AlmaAPI.shared.send(
+                "PATCH", "/api/attendance/selfies/\(log.id)", body: body)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = approve ? "ভেরিফিকেশন অনুমোদিত ✓" : "ভেরিফিকেশন প্রত্যাখ্যান করা হয়েছে"
+            await load()
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = Self.actionMessage(error)
+        }
+    }
+
+    /// Prefer the server's own message (the web toasts it verbatim); fall back to a
+    /// Bangla line for bare 403s and generic failures.
+    static func actionMessage(_ error: Error) -> String {
+        if case AlmaAPIError.http(let status, let body) = error {
+            if let data = body.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if let msg = obj["error"] as? String, !msg.isEmpty { return msg }
+                if let err = obj["error"] as? [String: Any],
+                   let msg = err["message"] as? String, !msg.isEmpty { return msg }
+                if let msg = obj["message"] as? String, !msg.isEmpty { return msg }
+            }
+            if status == 403 { return "অনুমতি নেই — শুধু Admin/Super Admin এই কাজ করতে পারে।" }
+            return "সার্ভার সমস্যা (\(status)) — আবার চেষ্টা করুন।"
+        }
+        return (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
     }
 
     /// Move the selected day by ±1 (Dhaka calendar); never past today.
@@ -291,12 +509,29 @@ final class AttendanceVM {
 
 // MARK: - Screen
 
+/// Which waiver the review sheet is editing, and with which verdict pre-selected —
+/// mirrors the web's ReviewState (one modal, action baked in by the button pressed).
+private struct AttendanceWaiverReviewTarget: Identifiable {
+    let waiver: AttendanceWaiverRow
+    let approve: Bool
+    var id: String { waiver.id }
+}
+
 @available(iOS 17.0, *)
 struct AttendanceScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = AttendanceVM()
     @State private var selected: AttendanceRecordRow? = nil
     @State private var showDatePicker = false
+    // Action targets — each mutating call passes a Bangla confirmationDialog first.
+    @State private var reviewing: AttendanceWaiverReviewTarget? = nil
+    @State private var resetTarget: AttendanceRecordRow? = nil
+    @State private var showResetDialog = false
+    @State private var verifyTarget: AttendanceRecordRow? = nil
+    @State private var showVerifyDialog = false
+    @State private var selfieTarget: AttendanceSelfieLog? = nil
+    @State private var selfieApprove = true
+    @State private var showSelfieDialog = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -305,11 +540,15 @@ struct AttendanceScreen: View {
                 dateNav
                 if vm.authExpired { authCard }
                 if let err = vm.error { noticeCard(err) }
+                if let ok = vm.notice { successCard(ok) }
                 summaryTrio
                 kpiStrip
-                recordsSection
-                absentSection
+                analyticsSection
                 waiversSection
+                recordsSection
+                selfiePendingSection
+                absentSection
+                selfieLogSection
                 rankingSection
                 webEscape
                 Color.clear.frame(height: 8)
@@ -319,8 +558,14 @@ struct AttendanceScreen: View {
         }
         .background(AttendanceAurora())
         .claudeTopFade()
-        .refreshable { await vm.load() }
-        .task { await vm.load() }
+        .refreshable {
+            await vm.load()
+            await vm.loadAnalytics()
+        }
+        .task {
+            await vm.load()
+            await vm.loadAnalytics()
+        }
         .sheet(item: $selected) { rec in
             AttendanceDetailSheet(record: rec, day: vm.day, openWeb: openWeb)
                 .presentationDetents([.medium, .large])
@@ -333,6 +578,44 @@ struct AttendanceScreen: View {
             }
             .presentationDetents([.height(480)])
             .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $reviewing) { target in
+            AttendanceWaiverReviewSheet(waiver: target.waiver, approve: target.approve) { amount, note in
+                Task { await vm.reviewWaiver(target.waiver, approve: target.approve,
+                                             amount: amount, note: note) }
+            }
+            .presentationDetents([.height(target.approve ? 430 : 330)])
+            .presentationDragIndicator(.visible)
+        }
+        .confirmationDialog("হাজিরা রিসেট", isPresented: $showResetDialog,
+                            titleVisibility: .visible, presenting: resetTarget) { rec in
+            Button("হ্যাঁ, রিসেট করুন", role: .destructive) {
+                Task { await vm.resetAttendance(rec) }
+            }
+            Button("বাতিল", role: .cancel) {}
+        } message: { rec in
+            Text("\(rec.employeeName ?? "কর্মী")-এর এই দিনের হাজিরা মুছে যাবে — আবার চেক-ইন করতে পারবে, লেট পেনাল্টি (থাকলে) ফেরত যাবে।")
+        }
+        .confirmationDialog("সেলফি ভেরিফিকেশন", isPresented: $showVerifyDialog,
+                            titleVisibility: .visible, presenting: verifyTarget) { rec in
+            Button("হ্যাঁ, ভেরিফিকেশন চান") {
+                Task { await vm.requestVerification(rec) }
+            }
+            Button("বাতিল", role: .cancel) {}
+        } message: { rec in
+            Text("\(rec.employeeName ?? "কর্মী")-কে সেলফি ভেরিফিকেশন করতে বলা হবে — সে My Desk-এ 'Verify Face Now' দেখবে।")
+        }
+        .confirmationDialog("ভেরিফিকেশন রিভিউ", isPresented: $showSelfieDialog,
+                            titleVisibility: .visible, presenting: selfieTarget) { log in
+            Button(selfieApprove ? "হ্যাঁ, অনুমোদন করুন" : "হ্যাঁ, প্রত্যাখ্যান করুন",
+                   role: selfieApprove ? nil : .destructive) {
+                Task { await vm.reviewSelfie(log, approve: selfieApprove) }
+            }
+            Button("বাতিল", role: .cancel) {}
+        } message: { log in
+            Text(selfieApprove
+                 ? "\(log.employeeId ?? "কর্মী")-এর সেলফি অনুমোদন হলে রেকর্ডটি TRUSTED হবে।"
+                 : "\(log.employeeId ?? "কর্মী")-এর সেলফি প্রত্যাখ্যান হলে রেকর্ডটি WARNING হবে।")
         }
     }
 
@@ -454,7 +737,43 @@ struct AttendanceScreen: View {
         .attendanceGlass(colorScheme, corner: 14)
     }
 
-    // ── Attendance log (per-employee status-dot rows) ──
+    // ── Penalty appeal analytics (web admin card, this month) ──
+
+    @ViewBuilder private var analyticsSection: some View {
+        if let a = vm.analytics {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Penalty appeal analytics (this month)")
+                    .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                HStack(spacing: 8) {
+                    analyticsStat("Total", AttendanceFormat.money(a.totalPenalties),
+                                  tint: AttendancePalette.red500)
+                    analyticsStat("Waived", AttendanceFormat.money(a.waivedAmount),
+                                  tint: AttendancePalette.emerald600)
+                    analyticsStat("Net", AttendanceFormat.money(a.netPenaltiesAfterWaivers),
+                                  tint: .primary)
+                    analyticsStat("Approval", "\(a.approvalRate)%",
+                                  tint: AttendancePalette.goldLt)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .attendanceGlass(colorScheme, corner: 16)
+        }
+    }
+
+    private func analyticsStat(_ label: String, _ value: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            Text(value).font(.caption.weight(.bold)).monospacedDigit().foregroundStyle(tint)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8).padding(.vertical, 7)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    // ── Attendance log (per-employee status-dot rows + Reset/Selfie admin actions) ──
 
     @ViewBuilder private var recordsSection: some View {
         sectionHeader("Attendance log", count: vm.records.count)
@@ -466,9 +785,19 @@ struct AttendanceScreen: View {
                       subtitle: "কর্মীরা Start Work চাপলে এখানে দেখা যাবে।")
         } else {
             ForEach(vm.records.prefix(60)) { rec in
-                AttendanceRecordCard(record: rec, showBusiness: vm.scopeAllBusinesses) {
-                    selected = rec
-                }
+                AttendanceRecordCard(
+                    record: rec,
+                    showBusiness: vm.scopeAllBusinesses,
+                    busy: vm.busyIds.contains(rec.id),
+                    onTap: { selected = rec },
+                    onReset: {
+                        resetTarget = rec
+                        showResetDialog = true
+                    },
+                    onVerify: {
+                        verifyTarget = rec
+                        showVerifyDialog = true
+                    })
             }
         }
     }
@@ -515,15 +844,54 @@ struct AttendanceScreen: View {
         }
     }
 
-    // ── Penalty review queue (read-only — review action stays on the web) ──
+    // ── Penalty review queue (native Approve/Reject — web submitReview parity) ──
 
     @ViewBuilder private var waiversSection: some View {
         if !vm.waivers.isEmpty {
             sectionHeader("Penalty review queue", count: vm.waivers.count)
             ForEach(vm.waivers) { w in
-                AttendanceWaiverCard(waiver: w) {
-                    openWeb("/attendance?review=\(w.id)", "Attendance")
-                }
+                AttendanceWaiverCard(
+                    waiver: w,
+                    busy: vm.busyIds.contains(w.id),
+                    onApprove: { reviewing = AttendanceWaiverReviewTarget(waiver: w, approve: true) },
+                    onReject: { reviewing = AttendanceWaiverReviewTarget(waiver: w, approve: false) })
+            }
+        }
+    }
+
+    // ── Face verification reviews (web "Pending face verification reviews") ──
+
+    @ViewBuilder private var selfiePendingSection: some View {
+        if !vm.pendingSelfies.isEmpty {
+            sectionHeader("Face verification — pending", count: vm.pendingSelfies.count)
+            ForEach(vm.pendingSelfies) { log in
+                AttendanceSelfieCard(
+                    log: log,
+                    showBusiness: vm.scopeAllBusinesses,
+                    busy: vm.busyIds.contains(log.id),
+                    onApprove: {
+                        selfieTarget = log
+                        selfieApprove = true
+                        showSelfieDialog = true
+                    },
+                    onReject: {
+                        selfieTarget = log
+                        selfieApprove = false
+                        showSelfieDialog = true
+                    })
+            }
+        }
+    }
+
+    // ── Selfie verification logs (web month log — reviewed + awaiting) ──
+
+    @ViewBuilder private var selfieLogSection: some View {
+        let reviewed = vm.selfieLogs.filter { !$0.isPending }
+        if !reviewed.isEmpty {
+            sectionHeader("Selfie verification logs", count: reviewed.count)
+            ForEach(reviewed.prefix(12)) { log in
+                AttendanceSelfieCard(log: log, showBusiness: vm.scopeAllBusinesses,
+                                     busy: false, onApprove: nil, onReject: nil)
             }
         }
     }
@@ -592,6 +960,13 @@ struct AttendanceScreen: View {
             .padding(12).attendanceGlass(colorScheme, corner: 12)
     }
 
+    private func successCard(_ message: String) -> some View {
+        Label(message, systemImage: "checkmark.circle")
+            .font(.footnote).foregroundStyle(AttendancePalette.emerald600)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12).attendanceGlass(colorScheme, corner: 12)
+    }
+
     private var authCard: some View {
         VStack(spacing: 10) {
             Text("সেশন পাওয়া যায়নি — একবার ওয়েব ভিউতে লগইন করুন").font(.subheadline)
@@ -620,17 +995,18 @@ struct AttendanceScreen: View {
         }
     }
 
+    /// Small escape link — every admin action is native now; this is just the exit.
     private var webEscape: some View {
         Button {
             openWeb("/attendance", "Attendance")
         } label: {
-            Label("সব অপশন (রিভিউ · ভেরিফিকেশন · রিসেট) — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
+            Label("ওয়েব ভার্সন", systemImage: "safari")
+                .font(.caption)
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
     }
 }
 
@@ -668,7 +1044,10 @@ private struct AttendanceAvatar: View {
 private struct AttendanceRecordCard: View {
     let record: AttendanceRecordRow
     let showBusiness: Bool
+    let busy: Bool
     let onTap: () -> Void
+    let onReset: () -> Void      // web Reset (Super Admin — server-gated)
+    let onVerify: () -> Void     // web Selfie / Requested / Verified button
     @Environment(\.colorScheme) private var colorScheme
 
     private var dotColor: Color {
@@ -712,6 +1091,8 @@ private struct AttendanceRecordCard: View {
                     .font(.caption.weight(.semibold)).monospacedDigit()
                     .foregroundStyle((record.penaltyAmount ?? 0) > 0 ? AttendancePalette.red500 : .secondary)
             }
+
+            actionRow
         }
         .padding(12)
         .attendanceGlass(colorScheme, corner: 16)
@@ -720,6 +1101,65 @@ private struct AttendanceRecordCard: View {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             onTap()
         }
+    }
+
+    /// Web row actions: Reset (SA) + Selfie/Requested/Verified. ONE spinner per row.
+    @ViewBuilder private var actionRow: some View {
+        if busy {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Processing…").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+        } else {
+            HStack(spacing: 8) {
+                actionChip("রিসেট", icon: "arrow.counterclockwise",
+                           tint: AttendancePalette.red500, action: onReset)
+                verifyChip
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    /// Same three states the web button shows: Verified · Requested · Selfie.
+    @ViewBuilder private var verifyChip: some View {
+        if (record.selfieCount ?? 0) > 0 {
+            statusChipLabel("Verified ✓", tint: AttendancePalette.emerald600)
+        } else if record.verificationRequired == true {
+            statusChipLabel("Requested…", tint: AttendancePalette.amber600)
+        } else {
+            actionChip("সেলফি চান", icon: "faceid",
+                       tint: AttendancePalette.coral,
+                       text: AttendancePalette.accentText(colorScheme), action: onVerify)
+        }
+    }
+
+    private func statusChipLabel(_ label: String, tint: Color) -> some View {
+        Text(label)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(tint)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 7)
+            .background(tint.opacity(0.10), in: Capsule())
+            .overlay(Capsule().strokeBorder(tint.opacity(0.25), lineWidth: 0.8))
+    }
+
+    private func actionChip(_ label: String, icon: String, tint: Color,
+                            text: Color? = nil, action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            action()
+        } label: {
+            Label(label, systemImage: icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(text ?? tint)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .background(tint.opacity(0.13), in: Capsule())
+                .overlay(Capsule().strokeBorder(tint.opacity(0.35), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     private var trustPill: some View {
@@ -746,12 +1186,14 @@ private struct AttendanceRecordCard: View {
     }
 }
 
-// MARK: - Waiver card (read-only digest; review happens on the web)
+// MARK: - Waiver card (native Approve/Reject → review sheet, web queue-row parity)
 
 @available(iOS 17.0, *)
 private struct AttendanceWaiverCard: View {
     let waiver: AttendanceWaiverRow
-    let onReview: () -> Void
+    let busy: Bool
+    let onApprove: () -> Void
+    let onReject: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -767,24 +1209,45 @@ private struct AttendanceWaiverCard: View {
                 Spacer()
             }
             if let reason = waiver.reason, !reason.isEmpty {
-                Text(reason).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Text(reason).font(.caption).foregroundStyle(.secondary).lineLimit(3)
             }
-            Button {
-                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                onReview()
-            } label: {
-                Label("ওয়েবে রিভিউ করুন", systemImage: "safari")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(AttendancePalette.accentText(colorScheme))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .background(AttendancePalette.coral.opacity(0.13), in: Capsule())
-                    .overlay(Capsule().strokeBorder(AttendancePalette.coral.opacity(0.35), lineWidth: 1))
+            if busy {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Processing…").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+            } else {
+                HStack(spacing: 8) {
+                    waiverButton("Reject", icon: "xmark",
+                                 tint: AttendancePalette.red500,
+                                 text: AttendancePalette.red500, action: onReject)
+                    waiverButton("Approve", icon: "checkmark",
+                                 tint: AttendancePalette.coral,
+                                 text: AttendancePalette.accentText(colorScheme), action: onApprove)
+                }
             }
-            .buttonStyle(.plain)
         }
         .padding(12)
         .attendanceGlass(colorScheme, corner: 16)
+    }
+
+    private func waiverButton(_ label: String, icon: String, tint: Color,
+                              text: Color, action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            action()
+        } label: {
+            Label(label, systemImage: icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(text)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(tint.opacity(0.13), in: Capsule())
+                .overlay(Capsule().strokeBorder(tint.opacity(0.35), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     private var metaLine: String {
@@ -798,6 +1261,217 @@ private struct AttendanceWaiverCard: View {
         if waiver.hasAttachment == true { bits.append("📎") }
         if let created = waiver.createdAt, created.count >= 10 { bits.append(String(created.prefix(10))) }
         return bits.joined(separator: " · ")
+    }
+}
+
+// MARK: - Waiver review sheet (web review modal parity — amount + admin note)
+
+@available(iOS 17.0, *)
+private struct AttendanceWaiverReviewSheet: View {
+    let waiver: AttendanceWaiverRow
+    let approve: Bool
+    let onConfirm: (_ amount: Int, _ note: String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var amount = ""
+    @State private var note = ""
+
+    private var original: Int { waiver.originalPenaltyAmount ?? 0 }
+    private var amountValue: Int { Int(amount.trimmingCharacters(in: .whitespaces)) ?? 0 }
+    /// Web input constraints: min 1, max the original penalty.
+    private var amountValid: Bool { !approve || (amountValue >= 1 && amountValue <= original) }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(approve ? "পেনাল্টি মওকুফ অনুমোদন" : "আপিল প্রত্যাখ্যান")
+                    .font(.headline)
+                Text("\(waiver.requesterName ?? "—") · \(waiver.employeeId ?? "—") · আসল পেনাল্টি \(AttendanceFormat.money(original)) · চেয়েছে \(AttendanceFormat.money(waiver.requestedReductionAmount ?? original))")
+                    .font(.caption).foregroundStyle(.secondary)
+
+                if approve {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("অনুমোদিত মওকুফ (ওয়ালেট ক্রেডিট)")
+                            .font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                        TextField("৳", text: $amount)
+                            .keyboardType(.numberPad)
+                            .font(.body.monospacedDigit())
+                            .padding(12)
+                            .attendanceGlass(colorScheme, corner: 12)
+                        Text(amountValid
+                             ? "অনুমোদনের পর ফাইনাল পেনাল্টি: \(AttendanceFormat.money(max(0, original - amountValue)))"
+                             : "১ থেকে \(AttendanceFormat.money(original))-এর মধ্যে দিন")
+                            .font(.caption2)
+                            .foregroundStyle(amountValid ? Color.secondary : AttendancePalette.amber600)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("অ্যাডমিন নোট")
+                        .font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                    TextField("নোট (ঐচ্ছিক)", text: $note, axis: .vertical)
+                        .lineLimit(2...4)
+                        .padding(12)
+                        .attendanceGlass(colorScheme, corner: 12)
+                }
+
+                Button {
+                    dismiss()
+                    onConfirm(amountValue, note.trimmingCharacters(in: .whitespacesAndNewlines))
+                } label: {
+                    Text(approve ? "অনুমোদন করুন" : "প্রত্যাখ্যান করুন")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 4)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(approve ? AttendancePalette.coral : AttendancePalette.red500)
+                .disabled(!amountValid)
+
+                Spacer(minLength: 0)
+            }
+            .padding(18)
+        }
+        .presentationBackground { AttendanceAurora() }
+        .onAppear {
+            amount = String(waiver.requestedReductionAmount ?? original)
+        }
+    }
+}
+
+// MARK: - Selfie verification card (photo + verdict buttons / review status)
+
+@available(iOS 17.0, *)
+private struct AttendanceSelfieCard: View {
+    let log: AttendanceSelfieLog
+    let showBusiness: Bool
+    let busy: Bool
+    let onApprove: (() -> Void)?     // nil = read-only log row (already reviewed)
+    let onReject: (() -> Void)?
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            AttendanceSelfiePhoto(log: log)
+            HStack {
+                Text(log.employeeId ?? "—")
+                    .font(.caption2.monospaced().weight(.semibold))
+                Spacer()
+                Text(AttendanceFormat.dateTime(log.capturedAt))
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            if showBusiness, let biz = log.businessId {
+                Text(biz.replacingOccurrences(of: "_", with: " "))
+                    .font(.caption2).foregroundStyle(AttendancePalette.amber600)
+            }
+            if log.isPending {
+                if busy {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Processing…").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                } else if let onApprove, let onReject {
+                    HStack(spacing: 8) {
+                        selfieButton("Reject", icon: "xmark",
+                                     tint: AttendancePalette.red500,
+                                     text: AttendancePalette.red500, action: onReject)
+                        selfieButton("Approve", icon: "checkmark",
+                                     tint: AttendancePalette.coral,
+                                     text: AttendancePalette.accentText(colorScheme), action: onApprove)
+                    }
+                } else {
+                    Text("Awaiting review")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(AttendancePalette.amber600)
+                }
+            } else {
+                Text("Reviewed \(AttendanceFormat.dateTime(log.reviewedAt))")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(AttendancePalette.emerald600)
+            }
+        }
+        .padding(12)
+        .attendanceGlass(colorScheme, corner: 16)
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(log.isPending ? AttendancePalette.amber500.opacity(0.35) : .clear, lineWidth: 1))
+    }
+
+    private func selfieButton(_ label: String, icon: String, tint: Color,
+                              text: Color, action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            action()
+        } label: {
+            Label(label, systemImage: icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(text)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(tint.opacity(0.13), in: Capsule())
+                .overlay(Capsule().strokeBorder(tint.opacity(0.35), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// The photo itself — signed https URL via AsyncImage; legacy inline data: URLs are
+/// base64-decoded off the render path; missing storage refs show the web's fallback.
+@available(iOS 17.0, *)
+private struct AttendanceSelfiePhoto: View {
+    let log: AttendanceSelfieLog
+    @State private var inlineImage: UIImage? = nil
+
+    var body: some View {
+        Group {
+            if log.imageMissing == true || log.displaySrc == nil {
+                fallback
+            } else if let src = log.displaySrc, src.hasPrefix("data:image/") {
+                if let img = inlineImage {
+                    Image(uiImage: img).resizable().scaledToFill()
+                } else {
+                    ProgressView().frame(maxWidth: .infinity)
+                        .task { inlineImage = Self.decodeDataURL(src) }
+                }
+            } else if let src = log.displaySrc, let url = URL(string: src) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image): image.resizable().scaledToFill()
+                    case .failure: fallback
+                    default: ProgressView().frame(maxWidth: .infinity)
+                    }
+                }
+            } else {
+                fallback
+            }
+        }
+        .frame(height: 150)
+        .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(Color.primary.opacity(0.05),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// Web VerificationPhoto fallback: "Photo unavailable" + re-verify hint.
+    private var fallback: some View {
+        VStack(spacing: 4) {
+            Image(systemName: "photo.badge.exclamationmark")
+                .font(.title3).foregroundStyle(AttendancePalette.amber600)
+            Text("ছবি পাওয়া যায়নি")
+                .font(.caption2.weight(.bold)).foregroundStyle(AttendancePalette.amber600)
+            Text("স্টোরেজ রেফারেন্স নেই/মেয়াদোত্তীর্ণ — দরকারে আবার ভেরিফাই করতে বলুন")
+                .font(.system(size: 9)).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private static func decodeDataURL(_ src: String) -> UIImage? {
+        guard let comma = src.range(of: "base64,") else { return nil }
+        let b64 = String(src[comma.upperBound...])
+        guard let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters) else { return nil }
+        return UIImage(data: data)
     }
 }
 
@@ -934,8 +1608,8 @@ private struct AttendanceDetailSheet: View {
             dismiss()
             openWeb("/attendance", "Attendance")
         } label: {
-            Label("সব অপশন (রিসেট · ভেরিফিকেশন) — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
+            Label("ওয়েব ভার্সন", systemImage: "safari")
+                .font(.caption)
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
@@ -1022,6 +1696,16 @@ enum AttendanceFormat {
         if let d = fractional.date(from: iso) { return d }
         let plain = ISO8601DateFormatter()
         return plain.date(from: iso)
+    }
+
+    /// ISO timestamp → "5/7/26, 8:50 PM" (web: new Date(x).toLocaleString()), Dhaka.
+    static func dateTime(_ iso: String?) -> String {
+        guard let iso, let date = parse(iso) else { return "—" }
+        let f = DateFormatter()
+        f.dateStyle = .short
+        f.timeStyle = .short
+        f.timeZone = dhaka
+        return f.string(from: date)
     }
 
     /// Web duration(): "1h 5m" / "45m".

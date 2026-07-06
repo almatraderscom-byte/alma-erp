@@ -1,18 +1,33 @@
 //
 //  PayrollSwiftUI.swift
-//  ALMA ERP — S7: the Payroll tab as a native SwiftUI screen (STRICTLY READ-ONLY).
+//  ALMA ERP — S7: the Payroll tab as a native SwiftUI screen (FULL ACTION PARITY).
 //
 //  Payroll is financially sensitive (recently-fixed wallet/salary ledger logic), so
-//  this screen mirrors the web /payroll page as summaries + lists + detail sheets
-//  ONLY. Every mutating action — pay, adjust, correct, approve, run accrual, toggle
-//  automation — goes through the web escape hatch. No POST/PATCH is ever sent.
+//  every mutating call below copies the web page's endpoint + JSON body VERBATIM
+//  (field names checked against the route handlers). Money-moving actions get a
+//  native Bangla confirmation (amount + employee name) and a per-row spinner.
 //
-//  GET-only endpoints (same ones the web page reads):
-//    /api/payroll/wallet/summary?business_id=…           → wallets + totals + pending requests
-//    /api/hr/dashboard?business_id=…                     → KPIs + legacy GAS roll + timeline
-//    /api/payroll/wallet/accruals/preview?business_id=…  → monthly accrual preview
-//    /api/payroll/wallet/accruals/history?business_id=…  → accrual run history
-//    /api/payroll/wallet/automation                      → automation setting
+//  GET endpoints (same ones the web page reads):
+//    /api/payroll/wallet/summary?business_id=…             → wallets + totals + pending requests
+//    /api/payroll/wallet/summary?…&roster_only=true        → roster for the compensation picker
+//    /api/hr/dashboard?business_id=…                       → KPIs + legacy GAS roll + timeline
+//    /api/payroll/wallet/accruals/preview?business_id=…    → monthly accrual preview
+//    /api/payroll/wallet/accruals/history?business_id=…    → accrual run history
+//    /api/payroll/wallet/automation                        → automation setting
+//    /api/payroll/meal-allowance/profiles?business_id=…    → meal allowance rows
+//    /api/payroll/driving-mode/profiles?business_id=…      → driving mode rows
+//
+//  Mutations (exact web bodies — src/app/payroll/page.tsx):
+//    PATCH /api/payroll/wallet/requests/{id}   {action, approvedAmount?, note:'', transactionId}
+//    POST  /api/payroll/wallet/entries         {business_id, employee_id, type, amount, note, date}
+//    POST  /api/payroll/wallet/accruals/run    {business_id}
+//    PATCH /api/payroll/wallet/automation      {enabled}
+//    PATCH /api/payroll/meal-allowance/profiles {business_id, userId, employeeId, enabled, amountBdt}
+//    PATCH /api/payroll/driving-mode/profiles  {business_id, userId, employeeId, enabled}
+//    POST  /api/payroll/driving-mode/start|end {business_id, userId}
+//
+//  Web-only remainder: PDF/CSV/Excel exports (client-side browser downloads) — small
+//  "ওয়েব ভার্সন" link at the foot of the page.
 //
 //  Carried lessons: lenient decoding (try? per field, flexInt for stringly numbers),
 //  cancellation-safe pull-to-refresh, auth-expired card, page-private aurora/glass.
@@ -373,6 +388,152 @@ struct PayrollAutomationResponse: Decodable {
     }
 }
 
+// ── Mutation plumbing + settings tables (meal allowance / driving mode) ──
+
+/// Tolerant decode for mutation responses — the payroll routes answer different
+/// apiSuccess shapes; the UI only needs "2xx + decoded", details come from reload.
+struct PayrollOkResponse: Decodable {
+    let ok: Bool?
+    private enum Keys: String, CodingKey { case ok }
+    init(from decoder: Decoder) throws {
+        let c = try? decoder.container(keyedBy: Keys.self)
+        if let c {
+            ok = (try? c.decodeIfPresent(Bool.self, forKey: .ok)) ?? nil
+        } else {
+            ok = nil
+        }
+    }
+}
+
+/// User slice shared by the meal-allowance and driving-mode profile rows.
+struct PayrollProfileUserDto: Decodable {
+    let id: String?
+    let name: String?
+    let phone: String?
+    let employeeIdGas: String?
+}
+
+struct PayrollMealProfileDto: Decodable {
+    let enabled: Bool?
+    let amountBdt: Int?
+    private enum Keys: String, CodingKey { case enabled, amountBdt }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        enabled = try? c.decodeIfPresent(Bool.self, forKey: .enabled)
+        amountBdt = payrollFlexInt(c, .amountBdt)   // Prisma Decimal arrives stringly
+    }
+}
+
+struct PayrollMealRowDto: Decodable {
+    let user: PayrollProfileUserDto?
+    let profile: PayrollMealProfileDto?
+}
+
+struct PayrollMealProfilesResponse: Decodable {
+    let rows: [PayrollMealRowDto]
+    private enum Keys: String, CodingKey { case ok, data, rows }
+    init(from decoder: Decoder) throws {
+        let root = try decoder.container(keyedBy: Keys.self)
+        let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+        rows = (try? c.decode([PayrollMealRowDto].self, forKey: .rows)) ?? []
+    }
+    /// Same mapping the web does: profile → editable row state, amount 0 → empty field.
+    func rowStates() -> [PayrollMealRow] {
+        rows.compactMap { r in
+            guard let u = r.user, let id = u.id else { return nil }
+            let amount = r.profile?.amountBdt ?? 0
+            return PayrollMealRow(
+                userId: id,
+                name: u.name ?? "—",
+                phone: u.phone,
+                employeeId: u.employeeIdGas ?? "",
+                enabled: r.profile?.enabled ?? false,
+                amountText: amount > 0 ? String(amount) : "")
+        }
+    }
+}
+
+struct PayrollDrivingProfileDto: Decodable {
+    let enabled: Bool?
+    private enum Keys: String, CodingKey { case enabled }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        enabled = try? c.decodeIfPresent(Bool.self, forKey: .enabled)
+    }
+}
+
+struct PayrollDrivingRowDto: Decodable {
+    let user: PayrollProfileUserDto?
+    let profile: PayrollDrivingProfileDto?
+    let drivingStatus: String?
+}
+
+struct PayrollDrivingProfilesResponse: Decodable {
+    let rows: [PayrollDrivingRowDto]
+    private enum Keys: String, CodingKey { case ok, data, rows }
+    init(from decoder: Decoder) throws {
+        let root = try decoder.container(keyedBy: Keys.self)
+        let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+        rows = (try? c.decode([PayrollDrivingRowDto].self, forKey: .rows)) ?? []
+    }
+    func rowStates() -> [PayrollDrivingRow] {
+        rows.compactMap { r in
+            guard let u = r.user, let id = u.id else { return nil }
+            return PayrollDrivingRow(
+                userId: id,
+                name: u.name ?? "—",
+                phone: u.phone,
+                employeeId: u.employeeIdGas ?? "",
+                enabled: r.profile?.enabled ?? false,
+                drivingStatus: r.drivingStatus)
+        }
+    }
+}
+
+/// Editable meal-allowance row (web MealProfileRowState).
+struct PayrollMealRow: Identifiable, Equatable {
+    let userId: String
+    let name: String
+    let phone: String?
+    let employeeId: String
+    var enabled: Bool
+    var amountText: String
+    var saving = false
+    var id: String { userId }
+}
+
+/// Editable driving-mode row (web DrivingProfileRowState).
+struct PayrollDrivingRow: Identifiable, Equatable {
+    let userId: String
+    let name: String
+    let phone: String?
+    let employeeId: String
+    var enabled: Bool
+    var drivingStatus: String?    // "ACTIVE" | "PENDING" | nil
+    var saving = false
+    var toggling = false
+    var id: String { userId }
+}
+
+/// The web's PAYROLL_COMPENSATION_TYPES — value + label + credit/debit kind.
+struct PayrollCompType: Identifiable, Equatable {
+    let value: String
+    let label: String
+    let kind: String   // credit | debit | adjust
+    var id: String { value }
+    static let all: [PayrollCompType] = [
+        .init(value: "SALARY_ACCRUAL", label: "💰 Salary credit (manual)", kind: "credit"),
+        .init(value: "COMMISSION", label: "Commission earned", kind: "credit"),
+        .init(value: "EID_BONUS", label: "Eid bonus", kind: "credit"),
+        .init(value: "PERFORMANCE_BONUS", label: "Performance bonus", kind: "credit"),
+        .init(value: "OVERTIME", label: "Overtime payment", kind: "credit"),
+        .init(value: "REIMBURSEMENT", label: "Reimbursement", kind: "credit"),
+        .init(value: "MEAL_DEDUCTION", label: "Meal deduction (debit)", kind: "debit"),
+        .init(value: "PENALTY", label: "Penalty (debit)", kind: "debit"),
+        .init(value: "ADJUSTMENT", label: "Manual adjustment", kind: "adjust"),
+    ]
+}
+
 // MARK: - Businesses (payroll is business-scoped — src/lib/businesses.ts)
 
 struct PayrollBusiness: Identifiable, Equatable {
@@ -385,7 +546,7 @@ struct PayrollBusiness: Identifiable, Equatable {
     ]
 }
 
-// MARK: - View model (READ-ONLY: only GETs, no mutation methods exist here)
+// MARK: - View model (GETs + the web page's exact mutations)
 
 @available(iOS 17.0, *)
 @Observable
@@ -399,6 +560,14 @@ final class PayrollVM {
     var pendingAdvanceCount = 0
     var pendingWithdrawalCount = 0
     var orphanLedgerCount = 0
+
+    // Roster (roster_only=true summary — includes employees with no ledger yet,
+    // exactly what the web feeds its compensation employee <select>)
+    var compWallets: [PayrollEmployeeWallet] = []
+
+    // Meal allowance + driving mode admin tables
+    var mealRows: [PayrollMealRow] = []
+    var drivingRows: [PayrollDrivingRow] = []
 
     // HR dashboard slice
     var monthlySalaryBudget = 0
@@ -417,16 +586,26 @@ final class PayrollVM {
     var monthFilter: String? = nil  // nil = all months (timeline)
     var loading = false
     var error: String? = nil
+    var notice: String? = nil             // success line (the web's toast)
     var authExpired = false
 
-    func load() async {
+    // Per-action busy state — per-row spinners, never a global one
+    var busyRequestIds: Set<String> = []
+    var accrualBusy = false
+    var automationBusy = false
+    var compBusy = false
+
+    func load(fresh: Bool = false) async {
         loading = true
         error = nil
         defer { loading = false }
+        // After a mutation the web reloads with &refresh=Date.now() to bust caches.
+        var summaryQuery: [String: String?] = ["business_id": businessId]
+        if fresh { summaryQuery["refresh"] = String(Int(Date().timeIntervalSince1970 * 1000)) }
         do {
             // The wallet summary is the page's primary dataset — it also decides auth.
             let summary: PayrollSummaryResponse = try await AlmaAPI.shared.get(
-                "/api/payroll/wallet/summary", query: ["business_id": businessId])
+                "/api/payroll/wallet/summary", query: summaryQuery)
             wallets = summary.wallets
             totals = summary.totals
             pendingRequests = summary.pendingRequests
@@ -444,6 +623,10 @@ final class PayrollVM {
         }
 
         // Secondary blocks — best-effort in parallel; a failure never blanks the page.
+        var rosterQuery = summaryQuery
+        rosterQuery["roster_only"] = "true"
+        async let rosterTask: PayrollSummaryResponse? = Self.fetch(
+            "/api/payroll/wallet/summary", query: rosterQuery)
         async let hrTask: PayrollHRDashboardResponse? = Self.fetch(
             "/api/hr/dashboard", query: ["business_id": businessId])
         async let previewTask: PayrollAccrualPreview? = Self.fetch(
@@ -452,7 +635,18 @@ final class PayrollVM {
             "/api/payroll/wallet/accruals/history", query: ["business_id": businessId])
         async let automationTask: PayrollAutomationResponse? = Self.fetch(
             "/api/payroll/wallet/automation", query: [:])
+        async let mealTask: PayrollMealProfilesResponse? = Self.fetch(
+            "/api/payroll/meal-allowance/profiles", query: ["business_id": businessId])
+        async let drivingTask: PayrollDrivingProfilesResponse? = Self.fetch(
+            "/api/payroll/driving-mode/profiles", query: ["business_id": businessId])
 
+        if let roster = await rosterTask {
+            compWallets = roster.wallets
+            // The web reads the orphan count off the roster call (it spans non-roster entries).
+            orphanLedgerCount = roster.orphanLedgerEntryCount
+        } else {
+            compWallets = wallets
+        }
         if let hr = await hrTask {
             monthlySalaryBudget = hr.totalMonthlySalary
             roll = hr.roll
@@ -465,6 +659,8 @@ final class PayrollVM {
             automationDay = auto.dayOfMonth
             automationTimezone = auto.timezone
         }
+        mealRows = (await mealTask)?.rowStates() ?? []
+        drivingRows = (await drivingTask)?.rowStates() ?? []
     }
 
     private static func fetch<T: Decodable>(_ path: String, query: [String: String?]) async -> T? {
@@ -485,6 +681,228 @@ final class PayrollVM {
         monthFilter = nil
         await load()
     }
+
+    // ── Mutations (exact endpoints + JSON bodies the web page sends) ──
+
+    /// Display name for an employee id — pending requests carry the id only.
+    func employeeName(_ employeeId: String) -> String {
+        wallets.first { $0.employeeId == employeeId }?.name
+            ?? compWallets.first { $0.employeeId == employeeId }?.name
+            ?? employeeId
+    }
+
+    /// APPROVE / REJECT one wallet request — web submitReview():
+    /// PATCH /api/payroll/wallet/requests/{id}
+    /// { action, approvedAmount (APPROVE only), note: '', transactionId }.
+    func reviewRequest(_ request: PayrollPendingRequest, action: String,
+                       approvedAmount: Int?, transactionId: String) async {
+        guard !busyRequestIds.contains(request.id) else { return }
+        busyRequestIds.insert(request.id)
+        notice = nil
+        error = nil
+        defer { busyRequestIds.remove(request.id) }
+        do {
+            var body: [String: AnyEncodable] = [
+                "action": AnyEncodable(action),
+                "note": AnyEncodable(""),
+                "transactionId": AnyEncodable(transactionId.trimmingCharacters(in: .whitespacesAndNewlines)),
+            ]
+            if action == "APPROVE", let amount = approvedAmount {
+                body["approvedAmount"] = AnyEncodable(amount)
+            }
+            let _: PayrollOkResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/payroll/wallet/requests/\(request.id)", body: body)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = action == "APPROVE"
+                ? "অনুমোদিত — ওয়ালেট লেজার আপডেট হয়েছে"
+                : "রিকোয়েস্ট বাতিল করা হয়েছে"
+            withAnimation(.snappy) { pendingRequests.removeAll { $0.id == request.id } }
+            await load(fresh: true)
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Run the monthly salary accrual now — web runAccrual():
+    /// POST /api/payroll/wallet/accruals/run  { business_id }.
+    func runAccrual() async {
+        guard !accrualBusy else { return }
+        accrualBusy = true
+        notice = nil
+        error = nil
+        defer { accrualBusy = false }
+        do {
+            let _: PayrollOkResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/payroll/wallet/accruals/run", body: ["business_id": businessId])
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = "মাসিক স্যালারি অ্যাক্রুয়াল চেক সম্পন্ন হয়েছে"
+            await load(fresh: true)
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Enable/disable the monthly automation — web toggleAutomation():
+    /// PATCH /api/payroll/wallet/automation  { enabled }.
+    func setAutomation(_ enabled: Bool) async {
+        guard !automationBusy else { return }
+        automationBusy = true
+        notice = nil
+        error = nil
+        defer { automationBusy = false }
+        do {
+            let resp: PayrollAutomationResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/payroll/wallet/automation", body: ["enabled": enabled])
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            automationEnabled = resp.enabled ?? enabled
+            if let day = resp.dayOfMonth { automationDay = day }
+            if let tz = resp.timezone { automationTimezone = tz }
+            notice = enabled ? "পেরোল অটোমেশন চালু হয়েছে" : "পেরোল অটোমেশন বন্ধ হয়েছে"
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Post one compensation ledger entry — web submitCompensation():
+    /// POST /api/payroll/wallet/entries
+    /// { business_id, employee_id, type, amount, note, date }. Returns success.
+    @discardableResult
+    func postCompensation(employeeId: String, type: String, amount: Int,
+                          note: String, date: Date) async -> Bool {
+        guard !compBusy else { return false }
+        compBusy = true
+        notice = nil
+        error = nil
+        defer { compBusy = false }
+        do {
+            let body: [String: AnyEncodable] = [
+                "business_id": AnyEncodable(businessId),
+                "employee_id": AnyEncodable(employeeId),
+                "type": AnyEncodable(type),
+                "amount": AnyEncodable(amount),
+                "note": AnyEncodable(note),
+                "date": AnyEncodable(Self.dayFormatter.string(from: date)),
+            ]
+            let _: PayrollOkResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/payroll/wallet/entries", body: body)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = "কমপেনসেশন লেজার এন্ট্রি পোস্ট হয়েছে"
+            await load(fresh: true)
+            return true
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Save one meal-allowance profile — web saveMealProfile():
+    /// PATCH /api/payroll/meal-allowance/profiles
+    /// { business_id, userId, employeeId, enabled, amountBdt (0 when disabled) }.
+    func saveMealProfile(_ row: PayrollMealRow) async {
+        guard let idx = mealRows.firstIndex(where: { $0.userId == row.userId }),
+              !mealRows[idx].saving else { return }
+        let amount = Int(row.amountText.trimmingCharacters(in: .whitespaces)) ?? 0
+        if row.enabled && amount <= 0 {
+            error = "চালু করার আগে সঠিক পরিমাণ (BDT) দিন"
+            return
+        }
+        mealRows[idx].saving = true
+        notice = nil
+        error = nil
+        do {
+            let body: [String: AnyEncodable] = [
+                "business_id": AnyEncodable(businessId),
+                "userId": AnyEncodable(row.userId),
+                "employeeId": AnyEncodable(row.employeeId),
+                "enabled": AnyEncodable(row.enabled),
+                "amountBdt": AnyEncodable(row.enabled ? amount : 0),
+            ]
+            let _: PayrollOkResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/payroll/meal-allowance/profiles", body: body)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = "\(row.name) — খাবার ভাতা সেভ হয়েছে"
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = error.localizedDescription
+        }
+        if let i = mealRows.firstIndex(where: { $0.userId == row.userId }) {
+            mealRows[i].saving = false
+        }
+    }
+
+    /// Save one driving-mode profile — web saveDrivingProfile():
+    /// PATCH /api/payroll/driving-mode/profiles  { business_id, userId, employeeId, enabled }.
+    func saveDrivingProfile(_ row: PayrollDrivingRow) async {
+        guard let idx = drivingRows.firstIndex(where: { $0.userId == row.userId }),
+              !drivingRows[idx].saving else { return }
+        drivingRows[idx].saving = true
+        notice = nil
+        error = nil
+        do {
+            let body: [String: AnyEncodable] = [
+                "business_id": AnyEncodable(businessId),
+                "userId": AnyEncodable(row.userId),
+                "employeeId": AnyEncodable(row.employeeId),
+                "enabled": AnyEncodable(row.enabled),
+            ]
+            let _: PayrollOkResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/payroll/driving-mode/profiles", body: body)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = row.enabled
+                ? "\(row.name) — ড্রাইভিং মোড চালু (সেটিং) সেভ হয়েছে"
+                : "\(row.name) — ড্রাইভিং মোড বন্ধ (সেটিং) সেভ হয়েছে"
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = error.localizedDescription
+        }
+        if let i = drivingRows.firstIndex(where: { $0.userId == row.userId }) {
+            drivingRows[i].saving = false
+        }
+    }
+
+    /// Start/end driving mode for a staff member NOW — web toggleDrivingNow():
+    /// POST /api/payroll/driving-mode/start | /end  { business_id, userId }.
+    func toggleDrivingNow(_ row: PayrollDrivingRow) async {
+        guard let idx = drivingRows.firstIndex(where: { $0.userId == row.userId }),
+              !drivingRows[idx].toggling else { return }
+        let turningOn = row.drivingStatus != "ACTIVE"
+        drivingRows[idx].toggling = true
+        notice = nil
+        error = nil
+        do {
+            let endpoint = turningOn
+                ? "/api/payroll/driving-mode/start"
+                : "/api/payroll/driving-mode/end"
+            let body = ["business_id": businessId, "userId": row.userId]
+            let _: PayrollOkResponse = try await AlmaAPI.shared.send("POST", endpoint, body: body)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = turningOn
+                ? "\(row.name) এখন ড্রাইভিং মোডে"
+                : "\(row.name)-এর ড্রাইভিং মোড বন্ধ করা হলো"
+            if let i = drivingRows.firstIndex(where: { $0.userId == row.userId }) {
+                drivingRows[i].drivingStatus = turningOn ? "ACTIVE" : nil
+            }
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = error.localizedDescription
+        }
+        if let i = drivingRows.firstIndex(where: { $0.userId == row.userId }) {
+            drivingRows[i].toggling = false
+        }
+    }
+
+    /// The web's <input type=date> value — local calendar day, Asia/Dhaka.
+    private static let dayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "Asia/Dhaka") ?? .current
+        return f
+    }()
 
     // ── Derived (pure display filters, same logic as the web page) ──
 
@@ -512,6 +930,10 @@ struct PayrollScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = PayrollVM()
     @State private var selected: PayrollEmployeeWallet? = nil
+    @State private var approveTarget: PayrollPendingRequest? = nil
+    @State private var rejectTarget: PayrollPendingRequest? = nil
+    @State private var automationTarget: Bool? = nil
+    @State private var showAccrualConfirm = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -520,13 +942,17 @@ struct PayrollScreen: View {
                 businessChips
                 if vm.authExpired { authCard }
                 if let err = vm.error { noticeCard(err) }
+                if let ok = vm.notice { successCard(ok) }
                 kpiStrip
                 if vm.loading && vm.wallets.isEmpty && !vm.authExpired {
                     loadingRows
                 } else {
-                    pendingRequestsSection
+                    PayrollCompensationCard(vm: vm)
                     automationSection
+                    pendingRequestsSection
                     walletsSection
+                    PayrollMealAllowanceCard(vm: vm)
+                    PayrollDrivingModeCard(vm: vm)
                     legacyRollSection
                     timelineSection
                 }
@@ -599,39 +1025,57 @@ struct PayrollScreen: View {
         .payrollGlass(colorScheme, corner: 14)
     }
 
-    // ── Pending wallet requests (READ-ONLY — decision happens on the web) ──
+    // ── Pending wallet requests (native approve/reject — web submitReview parity) ──
 
     @ViewBuilder private var pendingRequestsSection: some View {
         if !vm.pendingRequests.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 sectionHeader("Pending wallet requests")
                 ForEach(vm.pendingRequests) { req in
-                    PayrollPendingRequestCard(request: req)
+                    PayrollPendingRequestCard(
+                        request: req,
+                        employeeName: vm.employeeName(req.employeeId),
+                        busy: vm.busyRequestIds.contains(req.id),
+                        onApprove: {
+                            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                            approveTarget = req
+                        },
+                        onReject: {
+                            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                            rejectTarget = req
+                        })
                 }
-                Button {
-                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                    openWeb("/payroll", "Payroll")
-                } label: {
-                    Label("অনুমোদন / বাতিল — ওয়েবে রিভিউ করুন", systemImage: "safari")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(PayrollPalette.accentText(colorScheme))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 9)
-                        .background(PayrollPalette.coral.opacity(0.13), in: Capsule())
-                        .overlay(Capsule().strokeBorder(PayrollPalette.coral.opacity(0.35), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
             .payrollGlass(colorScheme, corner: 16)
+            .sheet(item: $approveTarget) { req in
+                PayrollReviewSheet(request: req, employeeName: vm.employeeName(req.employeeId)) { amount, txn in
+                    Task { await vm.reviewRequest(req, action: "APPROVE", approvedAmount: amount, transactionId: txn) }
+                }
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+            }
+            .confirmationDialog(
+                "রিকোয়েস্ট বাতিল করবেন?",
+                isPresented: Binding(get: { rejectTarget != nil },
+                                     set: { if !$0 { rejectTarget = nil } }),
+                titleVisibility: .visible,
+                presenting: rejectTarget
+            ) { req in
+                Button("হ্যাঁ, বাতিল করুন", role: .destructive) {
+                    Task { await vm.reviewRequest(req, action: "REJECT", approvedAmount: nil, transactionId: "") }
+                }
+                Button("থাক", role: .cancel) {}
+            } message: { req in
+                Text("\(vm.employeeName(req.employeeId)) — \(req.type.replacingOccurrences(of: "_", with: " ")) ৳ \(req.requestedAmount.formatted()) বাতিল হবে।")
+            }
         }
     }
 
-    // ── Monthly payroll automation (display only — toggles/run live on the web) ──
+    // ── Monthly payroll automation (native toggle + run-now — web parity) ──
 
-    @ViewBuilder private var automationSection: some View {
-        if vm.preview != nil || !vm.runs.isEmpty || vm.automationEnabled != nil {
+    private var automationSection: some View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     sectionHeader("Monthly payroll automation")
@@ -647,6 +1091,7 @@ struct PayrollScreen: View {
                 }
                 Text("Runs on day \(vm.automationDay ?? 10) · credits previous month salary · \(vm.automationTimezone ?? "Asia/Dhaka")")
                     .font(.caption).foregroundStyle(.secondary)
+                automationButtons
                 if let p = vm.preview {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("MONTHLY PREVIEW\(p.periodYm.map { " · \($0)" } ?? "")")
@@ -688,6 +1133,81 @@ struct PayrollScreen: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
             .payrollGlass(colorScheme, corner: 16)
+    }
+
+    /// Enable/disable + run-now, each behind a Bangla confirmation.
+    private var automationButtons: some View {
+        HStack(spacing: 8) {
+            Button {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                automationTarget = !(vm.automationEnabled ?? false)
+            } label: {
+                Group {
+                    if vm.automationBusy {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text((vm.automationEnabled ?? false) ? "অটোমেশন বন্ধ করুন" : "অটোমেশন চালু করুন")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(PayrollPalette.accentText(colorScheme))
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(PayrollPalette.coral.opacity(0.12), in: Capsule())
+                .overlay(Capsule().strokeBorder(PayrollPalette.coral.opacity(0.32), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .disabled(vm.automationBusy)
+            .confirmationDialog(
+                "পেরোল অটোমেশন",
+                isPresented: Binding(get: { automationTarget != nil },
+                                     set: { if !$0 { automationTarget = nil } }),
+                titleVisibility: .visible,
+                presenting: automationTarget
+            ) { enabled in
+                Button(enabled ? "চালু করুন" : "বন্ধ করুন",
+                       role: enabled ? nil : ButtonRole.destructive) {
+                    Task { await vm.setAutomation(enabled) }
+                }
+                Button("থাক", role: .cancel) {}
+            } message: { enabled in
+                Text(enabled
+                     ? "প্রতি মাসের \(vm.automationDay ?? 10) তারিখে সব কর্মচারীর স্যালারি স্বয়ংক্রিয়ভাবে ওয়ালেটে জমা হবে।"
+                     : "স্বয়ংক্রিয় মাসিক স্যালারি জমা বন্ধ হয়ে যাবে।")
+            }
+
+            Button {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                showAccrualConfirm = true
+            } label: {
+                Group {
+                    if vm.accrualBusy {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("এখনই চালান")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(PayrollPalette.accentText(colorScheme))
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(PayrollPalette.coral.opacity(0.18), in: Capsule())
+                .overlay(Capsule().strokeBorder(PayrollPalette.coral.opacity(0.45), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .disabled(vm.accrualBusy)
+            .confirmationDialog(
+                "এখনই স্যালারি অ্যাক্রুয়াল চালাবেন?",
+                isPresented: $showAccrualConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("হ্যাঁ, চালান") {
+                    Task { await vm.runAccrual() }
+                }
+                Button("থাক", role: .cancel) {}
+            } message: {
+                Text("প্রিভিউ ৳ \((vm.preview?.totalPreviewSalary ?? 0).formatted()) — \(vm.preview?.employeeCount ?? 0) জন কর্মচারীর স্যালারি ওয়ালেটে জমা হবে (আগে জমা হয়ে থাকলে স্কিপ হবে)।")
+            }
         }
     }
 
@@ -865,6 +1385,14 @@ struct PayrollScreen: View {
             .padding(12).payrollGlass(colorScheme, corner: 12)
     }
 
+    /// Success line after a mutation — the web's green toast, native form.
+    private func successCard(_ message: String) -> some View {
+        Label(message, systemImage: "checkmark.circle")
+            .font(.footnote).foregroundStyle(PayrollPalette.pos(colorScheme))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12).payrollGlass(colorScheme, corner: 12)
+    }
+
     private var authCard: some View {
         VStack(spacing: 10) {
             Text("সেশন পাওয়া যায়নি — একবার ওয়েব ভিউতে লগইন করুন").font(.subheadline)
@@ -891,34 +1419,42 @@ struct PayrollScreen: View {
         }
     }
 
-    /// THE escape hatch — every payroll action (pay / adjust / correct / approve /
-    /// run accrual / automation toggles / exports) happens on the web page.
+    /// Small secondary link — actions are native now; only the PDF/CSV/Excel
+    /// exports remain browser-side downloads.
     private var webEscape: some View {
-        Button {
-            openWeb("/payroll", "Payroll")
-        } label: {
-            Label("সব অ্যাকশন (পে · অ্যাডজাস্ট · অনুমোদন) — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
+        VStack(spacing: 2) {
+            Button {
+                openWeb("/payroll", "Payroll")
+            } label: {
+                Label("ওয়েব ভার্সন", systemImage: "safari").font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            Text("এক্সপোর্ট (PDF · CSV · Excel) ওয়েবে পাওয়া যাবে")
+                .font(.caption2).foregroundStyle(.secondary.opacity(0.7))
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
     }
 }
 
-// MARK: - Pending request card (read-only row — web's request card minus buttons)
+// MARK: - Pending request card (web request row + native Approve/Reject buttons)
 
 @available(iOS 17.0, *)
 private struct PayrollPendingRequestCard: View {
     let request: PayrollPendingRequest
+    let employeeName: String
+    let busy: Bool
+    let onApprove: () -> Void
+    let onReject: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline) {
-                Text("\(request.type.replacingOccurrences(of: "_", with: " ")) · \(request.employeeId)")
+                Text("\(request.type.replacingOccurrences(of: "_", with: " ")) · \(employeeName)")
                     .font(.footnote.weight(.bold))
+                    .lineLimit(1)
                 Spacer()
                 Text("৳ \(request.requestedAmount.formatted())")
                     .font(.footnote.weight(.bold).monospacedDigit())
@@ -928,8 +1464,10 @@ private struct PayrollPendingRequestCard: View {
                 Text(reason).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
             HStack {
+                Text(request.employeeId)
+                    .font(.caption2.monospaced()).foregroundStyle(.secondary)
                 if let biz = request.businessId {
-                    Text(biz.replacingOccurrences(of: "_", with: " "))
+                    Text("· \(biz.replacingOccurrences(of: "_", with: " "))")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -938,11 +1476,450 @@ private struct PayrollPendingRequestCard: View {
                         .font(.caption2.monospaced()).foregroundStyle(.secondary)
                 }
             }
+            HStack(spacing: 8) {
+                Spacer()
+                if busy {
+                    ProgressView().controlSize(.small)
+                    Text("প্রসেস হচ্ছে…").font(.caption2).foregroundStyle(.secondary)
+                } else {
+                    Button(action: onReject) {
+                        Text("বাতিল")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(PayrollPalette.red500)
+                            .padding(.horizontal, 14).padding(.vertical, 6)
+                            .background(PayrollPalette.red500.opacity(0.10), in: Capsule())
+                            .overlay(Capsule().strokeBorder(PayrollPalette.red500.opacity(0.35), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    Button(action: onApprove) {
+                        Text("অনুমোদন")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(PayrollPalette.accentText(colorScheme))
+                            .padding(.horizontal, 14).padding(.vertical, 6)
+                            .background(PayrollPalette.coral.opacity(0.18), in: Capsule())
+                            .overlay(Capsule().strokeBorder(PayrollPalette.coral.opacity(0.45), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.top, 2)
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background(PayrollPalette.amber500.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10)
             .strokeBorder(PayrollPalette.amber500.opacity(0.25), lineWidth: 1))
+    }
+}
+
+// MARK: - Approve sheet (web review modal parity — amount + txn id for withdrawals)
+
+@available(iOS 17.0, *)
+private struct PayrollReviewSheet: View {
+    let request: PayrollPendingRequest
+    let employeeName: String
+    let onConfirm: (_ approvedAmount: Int, _ transactionId: String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var amountText: String
+    @State private var txn = ""
+    @FocusState private var focused: Bool
+
+    init(request: PayrollPendingRequest, employeeName: String,
+         onConfirm: @escaping (_ approvedAmount: Int, _ transactionId: String) -> Void) {
+        self.request = request
+        self.employeeName = employeeName
+        self.onConfirm = onConfirm
+        _amountText = State(initialValue: String(request.requestedAmount))
+    }
+
+    private var amount: Int? { Int(amountText.trimmingCharacters(in: .whitespaces)) }
+    private var needsTxn: Bool { request.type == "WITHDRAWAL" }
+    private var txnTrimmed: String { txn.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var valid: Bool {
+        guard let a = amount, a > 0, a <= request.requestedAmount else { return false }
+        return !needsTxn || !txnTrimmed.isEmpty
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Approve wallet request").font(.headline)
+                Text("\(employeeName) · \(request.type.replacingOccurrences(of: "_", with: " ")) · চাওয়া হয়েছে ৳ \(request.requestedAmount.formatted())")
+                    .font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("APPROVED AMOUNT").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                    TextField("Amount", text: $amountText)
+                        .keyboardType(.numberPad)
+                        .focused($focused)
+                        .padding(12)
+                        .payrollGlass(colorScheme, corner: 12)
+                }
+                if let a = amount, a > request.requestedAmount {
+                    Text("চাওয়া পরিমাণের (৳ \(request.requestedAmount.formatted())) বেশি অনুমোদন করা যাবে না")
+                        .font(.caption2).foregroundStyle(PayrollPalette.amber600)
+                }
+                if needsTxn {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("TRANSACTION ID").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                        TextField("যে নম্বর/ID থেকে টাকা পাঠালেন", text: $txn)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .padding(12)
+                            .payrollGlass(colorScheme, corner: 12)
+                    }
+                    Text(txnTrimmed.isEmpty ? "Transaction ID আবশ্যক" : "এই ID সহ staff-কে SMS পাঠানো হবে।")
+                        .font(.caption2)
+                        .foregroundStyle(txnTrimmed.isEmpty ? PayrollPalette.amber600 : Color.secondary)
+                }
+                Button {
+                    guard let a = amount else { return }
+                    dismiss()
+                    onConfirm(a, txnTrimmed)
+                } label: {
+                    Text("অনুমোদন করুন — ৳ \((amount ?? 0).formatted())")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 4)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(PayrollPalette.coral)
+                .disabled(!valid)
+            }
+            .padding(18)
+        }
+        .presentationBackground { PayrollAurora() }
+        .onAppear { focused = true }
+    }
+}
+
+// MARK: - Compensation tools (web "Compensation tools" card — POST wallet entries)
+
+@available(iOS 17.0, *)
+private struct PayrollCompensationCard: View {
+    let vm: PayrollVM
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var employeeId = ""
+    @State private var type = "EID_BONUS"      // web default
+    @State private var amountText = ""
+    @State private var note = ""
+    @State private var date = Date()
+    @State private var showConfirm = false
+
+    private var roster: [PayrollEmployeeWallet] { vm.compWallets.isEmpty ? vm.wallets : vm.compWallets }
+    private var selectedName: String? { roster.first { $0.employeeId == employeeId }?.name }
+    private var compType: PayrollCompType {
+        PayrollCompType.all.first { $0.value == type } ?? PayrollCompType.all[0]
+    }
+    private var amount: Int? { Int(amountText.trimmingCharacters(in: .whitespaces)) }
+    private var valid: Bool {
+        guard !employeeId.isEmpty, let a = amount, a != 0 else { return false }
+        return type == "ADJUSTMENT" || a > 0
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Compensation tools")
+                .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+            Text("স্যালারি ক্রেডিট, বোনাস, কমিশন, ওভারটাইম, রিইমবার্সমেন্ট, কর্তন, জরিমানা বা অ্যাডজাস্টমেন্ট — সরাসরি ওয়ালেট লেজারে পোস্ট করুন।")
+                .font(.caption2).foregroundStyle(.secondary)
+            employeeMenu
+            typeMenu
+            HStack(spacing: 8) {
+                TextField(type == "ADJUSTMENT" ? "Amount (+/-)" : "Amount", text: $amountText)
+                    .keyboardType(type == "ADJUSTMENT" ? .numbersAndPunctuation : .numberPad)
+                    .padding(.horizontal, 12).padding(.vertical, 9)
+                    .payrollGlass(colorScheme, corner: 12)
+                DatePicker("", selection: $date, displayedComponents: .date)
+                    .labelsHidden()
+            }
+            TextField("Note", text: $note)
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .payrollGlass(colorScheme, corner: 12)
+            postButton
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .payrollGlass(colorScheme, corner: 16)
+    }
+
+    private var employeeMenu: some View {
+        Menu {
+            ForEach(roster) { w in
+                Button {
+                    employeeId = w.employeeId
+                } label: {
+                    if employeeId == w.employeeId {
+                        Label("\(w.name) · \(w.employeeId)", systemImage: "checkmark")
+                    } else {
+                        Text("\(w.name) · \(w.employeeId)")
+                    }
+                }
+            }
+        } label: {
+            menuLabel(selectedName.map { "\($0) · \(employeeId)" } ?? "কর্মচারী বাছাই করুন",
+                      icon: "person")
+        }
+    }
+
+    private var typeMenu: some View {
+        Menu {
+            ForEach(PayrollCompType.all) { t in
+                Button {
+                    type = t.value
+                } label: {
+                    if type == t.value {
+                        Label(typeMenuTitle(t), systemImage: "checkmark")
+                    } else {
+                        Text(typeMenuTitle(t))
+                    }
+                }
+            }
+        } label: {
+            menuLabel(typeMenuTitle(compType), icon: "tag")
+        }
+    }
+
+    private func typeMenuTitle(_ t: PayrollCompType) -> String {
+        t.kind == "credit" ? "\(t.label) · credit"
+            : t.kind == "debit" ? "\(t.label) · debit"
+            : t.label
+    }
+
+    private func menuLabel(_ text: String, icon: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon).font(.caption)
+            Text(text).font(.footnote).lineLimit(1)
+            Spacer()
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 9, weight: .bold))
+        }
+        .foregroundStyle(PayrollPalette.accentText(colorScheme))
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(PayrollPalette.coral.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12)
+            .strokeBorder(PayrollPalette.coral.opacity(0.28), lineWidth: 1))
+    }
+
+    private var postButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            showConfirm = true
+        } label: {
+            Group {
+                if vm.compBusy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text("পোস্ট করুন")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(PayrollPalette.accentText(colorScheme))
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 9)
+            .background(PayrollPalette.coral.opacity(0.16), in: Capsule())
+            .overlay(Capsule().strokeBorder(PayrollPalette.coral.opacity(0.4), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(!valid || vm.compBusy)
+        .confirmationDialog("লেজারে পোস্ট করবেন?", isPresented: $showConfirm, titleVisibility: .visible) {
+            Button("হ্যাঁ, পোস্ট করুন") {
+                guard let a = amount else { return }
+                Task {
+                    if await vm.postCompensation(employeeId: employeeId, type: type,
+                                                 amount: a, note: note, date: date) {
+                        amountText = ""
+                        note = ""
+                    }
+                }
+            }
+            Button("থাক", role: .cancel) {}
+        } message: {
+            Text("\(selectedName ?? employeeId) — \(compType.label) ৳ \((amount ?? 0).formatted()) \(compType.kind == "debit" ? "(ডেবিট — ব্যালেন্স থেকে কাটা যাবে)" : compType.kind == "credit" ? "(ক্রেডিট — ওয়ালেটে যোগ হবে)" : "(অ্যাডজাস্টমেন্ট)") লেজারে পোস্ট হবে।")
+        }
+    }
+}
+
+// MARK: - Meal allowance settings (web card — PATCH meal-allowance profiles)
+
+@available(iOS 17.0, *)
+private struct PayrollMealAllowanceCard: View {
+    @Bindable var vm: PayrollVM
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Meal Allowance Settings")
+                .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+            Text("যেদিন রান্না হয় না, চালু-করা কর্মচারীরা খাবার ভাতা রিকোয়েস্ট করতে পারবে।")
+                .font(.caption2).foregroundStyle(.secondary)
+            if vm.mealRows.isEmpty {
+                Text("এই ব্যবসায় লিঙ্ক করা কর্মচারী নেই")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach($vm.mealRows) { $row in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(row.name).font(.footnote.weight(.semibold))
+                            Text(row.employeeId.isEmpty ? "—" : row.employeeId)
+                                .font(.caption2.monospaced()).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Toggle("", isOn: $row.enabled)
+                            .labelsHidden()
+                            .tint(PayrollPalette.coral)
+                    }
+                    HStack(spacing: 8) {
+                        TextField("Amount (BDT)", text: $row.amountText)
+                            .keyboardType(.numberPad)
+                            .disabled(!row.enabled)
+                            .opacity(row.enabled ? 1 : 0.4)
+                            .padding(.horizontal, 12).padding(.vertical, 8)
+                            .payrollGlass(colorScheme, corner: 12)
+                        mealSaveButton(row)
+                    }
+                }
+                .padding(.vertical, 4)
+                if row.id != vm.mealRows.last?.id { Divider().opacity(0.35) }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .payrollGlass(colorScheme, corner: 16)
+    }
+
+    private func mealSaveButton(_ row: PayrollMealRow) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            Task { await vm.saveMealProfile(row) }
+        } label: {
+            Group {
+                if row.saving {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text("সেভ").font(.caption.weight(.semibold))
+                        .foregroundStyle(PayrollPalette.accentText(colorScheme))
+                }
+            }
+            .frame(width: 54)
+            .padding(.vertical, 8)
+            .background(PayrollPalette.coral.opacity(0.13), in: Capsule())
+            .overlay(Capsule().strokeBorder(PayrollPalette.coral.opacity(0.35), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(row.saving || (row.enabled && (Int(row.amountText.trimmingCharacters(in: .whitespaces)) ?? 0) <= 0))
+    }
+}
+
+// MARK: - Driving mode settings (web card — profiles PATCH + start/end POST)
+
+@available(iOS 17.0, *)
+private struct PayrollDrivingModeCard: View {
+    @Bindable var vm: PayrollVM
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Driving Mode Settings")
+                .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+            Text("রাস্তায় যাওয়া স্টাফদের জন্য ড্রাইভিং মোড চালু করুন — চালু থাকলে এজেন্ট অফিস ফলো-আপ বন্ধ রাখে।")
+                .font(.caption2).foregroundStyle(.secondary)
+            if vm.drivingRows.isEmpty {
+                Text("এই ব্যবসায় লিঙ্ক করা কর্মচারী নেই")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach($vm.drivingRows) { $row in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(row.name).font(.footnote.weight(.semibold))
+                            Text(row.employeeId.isEmpty ? "—" : row.employeeId)
+                                .font(.caption2.monospaced()).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        statusBadge(row)
+                        Toggle("", isOn: $row.enabled)
+                            .labelsHidden()
+                            .tint(PayrollPalette.coral)
+                    }
+                    HStack(spacing: 8) {
+                        if row.enabled && row.drivingStatus != "PENDING" {
+                            driveNowButton(row)
+                        }
+                        Spacer()
+                        drivingSaveButton(row)
+                    }
+                }
+                .padding(.vertical, 4)
+                if row.id != vm.drivingRows.last?.id { Divider().opacity(0.35) }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .payrollGlass(colorScheme, corner: 16)
+    }
+
+    @ViewBuilder private func statusBadge(_ row: PayrollDrivingRow) -> some View {
+        if row.drivingStatus == "ACTIVE" {
+            Text("Driving")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(PayrollPalette.pos(colorScheme))
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(PayrollPalette.emerald600.opacity(0.15), in: Capsule())
+        } else if row.drivingStatus == "PENDING" {
+            Text("Pending")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(PayrollPalette.amber600)
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(PayrollPalette.amber500.opacity(0.15), in: Capsule())
+        }
+    }
+
+    private func driveNowButton(_ row: PayrollDrivingRow) -> some View {
+        let active = row.drivingStatus == "ACTIVE"
+        return Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            Task { await vm.toggleDrivingNow(row) }
+        } label: {
+            Group {
+                if row.toggling {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text(active ? "শেষ করুন" : "এখনই ড্রাইভিং")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(active ? PayrollPalette.red500
+                                                : PayrollPalette.accentText(colorScheme))
+                }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 6)
+            .background((active ? PayrollPalette.red500 : PayrollPalette.coral).opacity(0.12),
+                        in: Capsule())
+            .overlay(Capsule().strokeBorder(
+                (active ? PayrollPalette.red500 : PayrollPalette.coral).opacity(0.35), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(row.toggling)
+    }
+
+    private func drivingSaveButton(_ row: PayrollDrivingRow) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            Task { await vm.saveDrivingProfile(row) }
+        } label: {
+            Group {
+                if row.saving {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Text("সেভ").font(.caption.weight(.semibold))
+                        .foregroundStyle(PayrollPalette.accentText(colorScheme))
+                }
+            }
+            .frame(width: 54)
+            .padding(.vertical, 8)
+            .background(PayrollPalette.coral.opacity(0.13), in: Capsule())
+            .overlay(Capsule().strokeBorder(PayrollPalette.coral.opacity(0.35), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(row.saving)
     }
 }
 

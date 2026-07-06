@@ -1,18 +1,29 @@
 //
 //  InventorySwiftUI.swift
-//  ALMA ERP — the Inventory screen as native SwiftUI (browse/search/detail).
+//  ALMA ERP — the Inventory screen as native SwiftUI (browse/search/detail + writes).
 //
 //  Mirrors the web /inventory page:
-//    GET /api/stock → { items: StockItem[], summary: { total_skus, low_stock,
-//                       out_of_stock, total_value } }   (flat — no {ok,data} wrapper)
+//    GET  /api/stock → { items: StockItem[], summary: { total_skus, low_stock,
+//                        out_of_stock, total_value } }   (flat — no {ok,data} wrapper)
+//    POST /api/stock → inventory mutations (web api.stock.mutate parity):
+//          { action:"adjust",  sku, new_stock, buying_price?, reason }
+//          { action:"edit",    sku, data:{ buyingPrice?, reorder_level? } }
+//          { action:"archive", sku, reason:"manual archive" }
+//          { action:"restore", sku }
+//    POST /api/products → add product (web AddProductModal single-mode parity):
+//          { name, sku?, category?, default_price, default_cogs, color?, size?,
+//            initial_stock, reorder_level, notes?, supplier:"manual",
+//            sync_to_stock, skip_duplicate_name_check:false }
 //  The web page loads the FULL stock list once and filters client-side
 //  (view chips Active/Archived/Low/Out · category select · text search over
 //  sku/product/category/collection/barcode/pool label) — the native screen does the
 //  same, with the search debounced because the list can run to thousands of rows.
-//  Stock WRITES (adjust quantity, buying price, archive/restore, add item) stay on
-//  the proven web page — inventory writes are risky — reachable via openWeb.
-//  Carried lessons: lenient per-field decoding (GAS mixes numbers/strings), ONE
-//  spinner state, never a global overlay.
+//  Every write asks a Bangla confirmationDialog first (SKU + quantity delta spelled
+//  out) and shows a per-SKU spinner — never a global overlay. Success/error notices
+//  mirror the web's toasts; the list reloads after each committed write.
+//  Photo upload + collection/bulk add stay on the web (complex uploader/grid) — a
+//  small link opens them. Carried lessons: lenient per-field decoding (GAS mixes
+//  numbers/strings), ONE spinner per row, never a global overlay.
 //
 
 import SwiftUI
@@ -128,6 +139,7 @@ struct InventoryStockItem: Decodable, Identifiable, Equatable {
 
     static func == (a: InventoryStockItem, b: InventoryStockItem) -> Bool {
         a.sku == b.sku && a.available == b.available && a.archived == b.archived
+            && a.buyingPrice == b.buyingPrice && a.reorderLevel == b.reorderLevel
     }
 
     /// Web inventoryPoolLabel(): MEN → sizeGroup, WOMEN → variantGroup, else sizeValue.
@@ -197,6 +209,43 @@ struct InventoryStockResponse: Decodable {
     }
 }
 
+/// POST /api/stock result — `{ ok:true, sku, … }` on success; errors arrive as HTTP
+/// 500 `{ error }` (AlmaAPIError.http) but decode a 200-`{error}` shape defensively.
+private struct InventoryMutateResponse: Decodable {
+    let ok: Bool
+    let error: String?
+    private enum Keys: String, CodingKey { case ok, error }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        error = try? c.decodeIfPresent(String.self, forKey: .error)
+        ok = ((try? c.decodeIfPresent(Bool.self, forKey: .ok)) ?? nil) ?? (error == nil)
+    }
+}
+
+/// POST /api/products result — { ok, product_id, duplicate?, stock:{ ok, reason } }.
+private struct InventoryCreateResponse: Decodable {
+    let ok: Bool
+    let productId: String?
+    let stockOk: Bool?
+    let stockReason: String?
+    let error: String?
+    private enum Keys: String, CodingKey { case ok, product_id, stock, error }
+    private enum StockKeys: String, CodingKey { case ok, reason }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        ok = ((try? c.decodeIfPresent(Bool.self, forKey: .ok)) ?? nil) ?? false
+        productId = try? c.decodeIfPresent(String.self, forKey: .product_id)
+        error = try? c.decodeIfPresent(String.self, forKey: .error)
+        if let s = try? c.nestedContainer(keyedBy: StockKeys.self, forKey: .stock) {
+            stockOk = ((try? s.decodeIfPresent(Bool.self, forKey: .ok)) ?? nil)
+            stockReason = try? s.decodeIfPresent(String.self, forKey: .reason)
+        } else {
+            stockOk = nil
+            stockReason = nil
+        }
+    }
+}
+
 // MARK: - View model
 
 @available(iOS 17.0, *)
@@ -208,7 +257,12 @@ final class InventoryVM {
     var outOfStockCount = 0
     var loading = false
     var error: String? = nil
+    var notice: String? = nil          // success line (the web's toast.success)
     var authExpired = false
+
+    // Writes — per-SKU busy set (per-row spinners, never a global overlay).
+    var busySkus: Set<String> = []
+    var creating = false               // add-product in flight
 
     // Filters — same client-side semantics as the web page.
     var view = "active"            // active | archived | low | out
@@ -241,6 +295,117 @@ final class InventoryVM {
         if error is CancellationError { return true }
         if case AlmaAPIError.transport(let t) = error, (t as? URLError)?.code == .cancelled { return true }
         return (error as? URLError)?.code == .cancelled
+    }
+
+    // ── Writes (web mutateInventory parity — POST /api/stock) ──
+
+    /// One inventory mutation: per-SKU busy flag → POST → success haptic + Bangla
+    /// notice → full reload (keeps summary/KPIs honest). Returns the error message
+    /// (also mirrored into `self.error`) or nil on success.
+    @discardableResult
+    private func mutate(sku: String, body: [String: AnyEncodable], successNotice: String) async -> String? {
+        guard !sku.isEmpty, !busySkus.contains(sku) else { return "এই SKU-তে আরেকটি কাজ চলছে" }
+        busySkus.insert(sku)
+        notice = nil
+        error = nil
+        defer { busySkus.remove(sku) }
+        do {
+            let resp: InventoryMutateResponse = try await AlmaAPI.shared.send("POST", "/api/stock", body: body)
+            if let err = resp.error, !err.isEmpty { throw AlmaAPIError.http(status: 200, body: err) }
+            guard resp.ok else { throw AlmaAPIError.http(status: 200, body: "Inventory action failed") }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = successNotice
+            await load()
+            return nil
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return "সেশন নেই — ওয়েব ট্যাবে লগইন করুন।"
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            let msg = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
+            self.error = msg
+            return msg
+        }
+    }
+
+    /// Web adjustStock: { action:"adjust", sku, new_stock, buying_price?, reason }.
+    /// `new_stock` is the absolute new level (the web prompts with `available`).
+    func adjustStock(sku: String, newStock: Int, buyingPrice: Int?, reason: String) async -> String? {
+        var body: [String: AnyEncodable] = [
+            "action": AnyEncodable("adjust"),
+            "sku": AnyEncodable(sku),
+            "new_stock": AnyEncodable(newStock),
+            "reason": AnyEncodable(reason.isEmpty ? "manual correction" : reason),
+        ]
+        if let buyingPrice { body["buying_price"] = AnyEncodable(buyingPrice) }
+        return await mutate(sku: sku, body: body,
+                            successNotice: "স্টক আপডেট হয়েছে — \(sku) → \(newStock)")
+    }
+
+    /// Web updateBuyingPrice + reorder-level edit:
+    /// { action:"edit", sku, data:{ buyingPrice?, reorder_level? } }.
+    func editItem(sku: String, buyingPrice: Int?, reorderLevel: Int?) async -> String? {
+        var data: [String: AnyEncodable] = [:]
+        if let buyingPrice { data["buyingPrice"] = AnyEncodable(buyingPrice) }
+        if let reorderLevel { data["reorder_level"] = AnyEncodable(reorderLevel) }
+        guard !data.isEmpty else { return nil }
+        let body: [String: AnyEncodable] = [
+            "action": AnyEncodable("edit"),
+            "sku": AnyEncodable(sku),
+            "data": AnyEncodable(data),
+        ]
+        return await mutate(sku: sku, body: body, successNotice: "আপডেট হয়েছে — \(sku)")
+    }
+
+    /// Web archive button: { action:"archive", sku, reason:"manual archive" }.
+    func archive(sku: String) async -> String? {
+        await mutate(sku: sku, body: [
+            "action": AnyEncodable("archive"),
+            "sku": AnyEncodable(sku),
+            "reason": AnyEncodable("manual archive"),
+        ], successNotice: "আর্কাইভ হয়েছে — \(sku)")
+    }
+
+    /// Web restore button: { action:"restore", sku }.
+    func restore(sku: String) async -> String? {
+        await mutate(sku: sku, body: [
+            "action": AnyEncodable("restore"),
+            "sku": AnyEncodable(sku),
+        ], successNotice: "রিস্টোর হয়েছে — \(sku)")
+    }
+
+    /// Web AddProductModal single mode: POST /api/products. Returns error or nil.
+    func createProduct(body: [String: AnyEncodable]) async -> String? {
+        guard !creating else { return "আগের সেভ এখনো চলছে" }
+        creating = true
+        notice = nil
+        error = nil
+        defer { creating = false }
+        do {
+            let resp: InventoryCreateResponse = try await AlmaAPI.shared.send("POST", "/api/products", body: body)
+            guard resp.ok, let pid = resp.productId, !pid.isEmpty else {
+                let msg = resp.error ?? "সার্ভার থেকে অপ্রত্যাশিত উত্তর।"
+                self.error = msg
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                return msg
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            var msg = "নতুন আইটেম সেভ হয়েছে — \(pid)"
+            if resp.stockOk == false, resp.stockReason == "stock_sku_exists" {
+                msg += " (স্টকে এই SKU আগেই ছিল — ডুপ্লিকেট হয়নি)"
+            }
+            notice = msg
+            await load()
+            return nil
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return "সেশন নেই — ওয়েব ট্যাবে লগইন করুন।"
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            let msg = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
+            self.error = msg
+            return msg
+        }
     }
 
     /// Web `items` useMemo — view chip → category → text needle, same fields.
@@ -293,9 +458,10 @@ struct InventoryScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = InventoryVM()
     @State private var selected: InventoryStockItem? = nil
+    @State private var showAdd = false
     @State private var searchDebounce: Task<Void, Never>? = nil
 
-    /// Escape hatch into the proven web screen (writes, add item, login).
+    /// Escape hatch into the web screen (photo upload, collection/bulk add, login).
     let openWeb: (_ path: String, _ title: String) -> Void
 
     /// Web mobile view renders at most the first 120 matches — same cap here so a
@@ -315,9 +481,10 @@ struct InventoryScreen: View {
                 }
                 if vm.authExpired { authCard }
                 if let err = vm.error { errorCard(err) }
+                if let ok = vm.notice { noticeCard(ok) }
                 if vm.loading && vm.items.isEmpty { loadingRows }
                 ForEach(visible) { item in
-                    InventoryItemCard(item: item) {
+                    InventoryItemCard(item: item, vm: vm) {
                         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                         selected = item
                     }
@@ -331,21 +498,50 @@ struct InventoryScreen: View {
                         .padding(.vertical, 4)
                 }
                 webEscape
-                Color.clear.frame(height: 8)
+                Color.clear.frame(height: 64)   // keep the FAB off the last card's buttons
             }
             .padding(.horizontal, 14)
             .padding(.top, 6)
         }
         .background(InventoryAurora())
         .claudeTopFade()
+        .overlay(alignment: .bottomTrailing) { addFab }
         .refreshable { await vm.load() }
         .scrollDismissesKeyboard(.immediately)
         .task { await vm.load() }
         .sheet(item: $selected) { item in
-            InventoryDetailSheet(item: item, openWeb: openWeb)
+            InventoryDetailSheet(item: item, vm: vm, openWeb: openWeb)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showAdd) {
+            InventoryAddSheet(vm: vm, openWeb: openWeb)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+
+    // ── Add-item FAB (web's fixed "+ Add item" button) ──
+
+    private var addFab: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            showAdd = true
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "plus")
+                Text("Add item")
+            }
+            .font(.subheadline.weight(.bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16).padding(.vertical, 12)
+            .background(InventoryPalette.coral, in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.25), lineWidth: 1))
+            .shadow(color: InventoryPalette.coral.opacity(0.45), radius: 10, y: 4)
+        }
+        .buttonStyle(.plain)
+        .padding(.trailing, 16)
+        .padding(.bottom, 14)
     }
 
     // ── KPI strip (web KpiCards: Total SKUs · Stock Value · Potential Profit · Low Stock) ──
@@ -483,6 +679,14 @@ struct InventoryScreen: View {
             .padding(12).inventoryGlass(colorScheme, corner: 12)
     }
 
+    /// Success line — the web's toast.success equivalent.
+    private func noticeCard(_ message: String) -> some View {
+        Label(message, systemImage: "checkmark.circle")
+            .font(.footnote).foregroundStyle(InventoryPalette.positive(colorScheme))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12).inventoryGlass(colorScheme, corner: 12)
+    }
+
     private var loadingRows: some View {
         ForEach(0..<5, id: \.self) { _ in
             Color.clear.frame(height: 112)
@@ -492,35 +696,604 @@ struct InventoryScreen: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             Image(systemName: "shippingbox").font(.largeTitle).foregroundStyle(.secondary)
             Text("No items found").foregroundStyle(.secondary)
             Text("Try another filter or add a product")
                 .font(.caption).foregroundStyle(.secondary)
+            Button("+ Add item") { showAdd = true }
+                .buttonStyle(.borderedProminent)
+                .tint(InventoryPalette.coral)
         }
         .padding(.top, 60)
         .padding(.bottom, 30)
     }
 
+    /// Small escape into the web page (photo upload / collection add / anything else).
     private var webEscape: some View {
         Button {
             openWeb("/inventory", "Inventory")
         } label: {
-            Label("সব অপশন (Add / Adjust সহ) — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
+            Label("ওয়েব ভার্সন", systemImage: "safari")
+                .font(.caption)
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
     }
 }
 
-// MARK: - Row card (mirrors one web mobile card)
+// MARK: - Action buttons (web Actions column / mobile card buttons — native writes)
+
+/// The web row's Adjust / Price / Archive-or-Restore buttons. Owns its own sheet +
+/// confirmation state so it can live inside a list card AND inside the detail sheet.
+@available(iOS 17.0, *)
+private struct InventoryActionButtons: View {
+    let item: InventoryStockItem
+    let vm: InventoryVM
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var showAdjust = false
+    @State private var showEdit = false
+    @State private var confirmArchive = false
+    @State private var confirmRestore = false
+
+    private var busy: Bool { vm.busySkus.contains(item.sku) }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            pill("Adjust", tint: InventoryPalette.accentText(colorScheme)) { showAdjust = true }
+            pill("Price", tint: .secondary) { showEdit = true }
+            if item.archived == true {
+                pill("Restore", tint: InventoryPalette.positive(colorScheme)) { confirmRestore = true }
+            } else {
+                pill("Archive", tint: InventoryPalette.red500) { confirmArchive = true }
+            }
+            if busy { ProgressView().controlSize(.small) }
+            Spacer(minLength: 0)
+        }
+        .sheet(isPresented: $showAdjust) {
+            InventoryAdjustSheet(item: item, vm: vm)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showEdit) {
+            InventoryEditSheet(item: item, vm: vm)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        // Web sends reason:"manual archive" — confirm in Bangla with SKU + stock qty.
+        .confirmationDialog("\(item.sku) আর্কাইভ করবেন?", isPresented: $confirmArchive,
+                            titleVisibility: .visible) {
+            Button("হ্যাঁ, আর্কাইভ করুন", role: .destructive) {
+                Task { await vm.archive(sku: item.sku) }
+            }
+            Button("বাতিল", role: .cancel) {}
+        } message: {
+            Text("SKU \(item.sku) · স্টক \(item.currentStock) পিস — আর্কাইভ করলে Active তালিকা থেকে সরে যাবে (পরে Restore করা যাবে)।")
+        }
+        .confirmationDialog("\(item.sku) রিস্টোর করবেন?", isPresented: $confirmRestore,
+                            titleVisibility: .visible) {
+            Button("হ্যাঁ, রিস্টোর করুন") {
+                Task { await vm.restore(sku: item.sku) }
+            }
+            Button("বাতিল", role: .cancel) {}
+        } message: {
+            Text("SKU \(item.sku) · স্টক \(item.currentStock) পিস — আবার Active তালিকায় ফিরবে।")
+        }
+    }
+
+    private func pill(_ title: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(tint)
+                .padding(.horizontal, 11).padding(.vertical, 6)
+                .background(Color.white.opacity(colorScheme == .dark ? 0.07 : 0.4), in: Capsule())
+                .overlay(Capsule().strokeBorder(tint.opacity(0.35), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
+        .opacity(busy ? 0.45 : 1)
+    }
+}
+
+// MARK: - Adjust-stock sheet (web adjustStock prompt → native stepper + reason)
+
+@available(iOS 17.0, *)
+private struct InventoryAdjustSheet: View {
+    let item: InventoryStockItem
+    let vm: InventoryVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var qtyText: String
+    @State private var reason = "manual correction"
+    @State private var confirming = false
+    @State private var saving = false
+    @State private var errorText: String? = nil
+
+    /// Same presets the web prompt suggests.
+    private static let reasons = ["manual correction", "damaged", "lost", "supplier update", "return restock"]
+
+    init(item: InventoryStockItem, vm: InventoryVM) {
+        self.item = item
+        self.vm = vm
+        // Web parity: promptDialog defaults to the current *available* quantity.
+        _qtyText = State(initialValue: String(item.available))
+    }
+
+    private var qty: Int? {
+        let n = Int(qtyText.trimmingCharacters(in: .whitespaces))
+        return (n ?? -1) >= 0 ? n : nil
+    }
+    private var delta: Int { (qty ?? item.available) - item.available }
+    private var deltaLabel: String { delta >= 0 ? "+\(delta)" : "\(delta)" }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("স্টক অ্যাডজাস্ট").font(.headline)
+                    Text("\(item.sku) · \(item.product)")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+
+                HStack(spacing: 14) {
+                    metric("Available", "\(item.available)")
+                    metric("Stock", "\(item.currentStock)")
+                    metric("Reserved", "\(item.reserved)")
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("নতুন পরিমাণ").font(.caption.weight(.bold)).foregroundStyle(.secondary)
+                    HStack(spacing: 12) {
+                        stepButton("minus") { setQty(max(0, (qty ?? item.available) - 1)) }
+                        TextField("0", text: $qtyText)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.center)
+                            .font(.title2.weight(.bold).monospacedDigit())
+                            .padding(.vertical, 8)
+                            .inventoryGlass(colorScheme, corner: 12)
+                        stepButton("plus") { setQty((qty ?? item.available) + 1) }
+                    }
+                    if qty == nil {
+                        Text("০ বা তার বেশি একটি সংখ্যা দিন")
+                            .font(.caption2).foregroundStyle(InventoryPalette.red500)
+                    } else if delta != 0 {
+                        Text("পরিবর্তন: \(item.available) → \(qty ?? 0) (\(deltaLabel))")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(InventoryPalette.accentText(colorScheme))
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("কারণ").font(.caption.weight(.bold)).foregroundStyle(.secondary)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(Self.reasons, id: \.self) { r in
+                                reasonChip(r)
+                            }
+                        }
+                    }
+                    TextField("কারণ লিখুন…", text: $reason)
+                        .padding(.horizontal, 12).padding(.vertical, 9)
+                        .inventoryGlass(colorScheme, corner: 12)
+                }
+
+                if let errorText {
+                    Label(errorText, systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(InventoryPalette.red500)
+                }
+
+                Button {
+                    guard qty != nil else { return }
+                    confirming = true
+                } label: {
+                    HStack {
+                        if saving { ProgressView().controlSize(.small).tint(.white) }
+                        Text(saving ? "সেভ হচ্ছে…" : "সেভ করুন")
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 6)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(InventoryPalette.coral)
+                .disabled(qty == nil || saving)
+            }
+            .padding(18)
+        }
+        .presentationBackground { InventoryAurora() }
+        .confirmationDialog("স্টক পরিবর্তন নিশ্চিত করুন", isPresented: $confirming,
+                            titleVisibility: .visible) {
+            Button("হ্যাঁ, আপডেট করুন") { save() }
+            Button("বাতিল", role: .cancel) {}
+        } message: {
+            Text("SKU \(item.sku): স্টক \(item.available) → \(qty ?? 0) (\(deltaLabel)) · কারণ: \(reason.isEmpty ? "manual correction" : reason)")
+        }
+    }
+
+    private func save() {
+        guard let q = qty, !saving else { return }
+        saving = true
+        errorText = nil
+        Task {
+            // Web parity: adjust carries the row's current buying price along.
+            let err = await vm.adjustStock(sku: item.sku, newStock: q,
+                                           buyingPrice: item.buyingPrice, reason: reason)
+            saving = false
+            if let err { errorText = err } else { dismiss() }
+        }
+    }
+
+    private func setQty(_ n: Int) {
+        UISelectionFeedbackGenerator().selectionChanged()
+        qtyText = String(n)
+    }
+
+    private func stepButton(_ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.headline)
+                .foregroundStyle(InventoryPalette.accentText(colorScheme))
+                .frame(width: 48, height: 44)
+                .inventoryGlass(colorScheme, corner: 12)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func reasonChip(_ r: String) -> some View {
+        let active = reason == r
+        return Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            reason = r
+        } label: {
+            Text(r)
+                .font(.caption2.weight(active ? .semibold : .regular))
+                .foregroundStyle(active ? InventoryPalette.accentText(colorScheme) : .secondary)
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(active ? InventoryPalette.coral.opacity(colorScheme == .dark ? 0.28 : 0.14)
+                                   : Color.white.opacity(colorScheme == .dark ? 0.08 : 0.45),
+                            in: Capsule())
+                .overlay(Capsule().strokeBorder(
+                    active ? InventoryPalette.coral.opacity(0.55) : Color.clear, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func metric(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label).font(.system(size: 9, weight: .heavy)).textCase(.uppercase)
+                .foregroundStyle(.secondary)
+            Text(value).font(.footnote.weight(.bold).monospacedDigit())
+        }
+    }
+}
+
+// MARK: - Price / reorder-level sheet (web updateBuyingPrice + edit reorder_level)
+
+@available(iOS 17.0, *)
+private struct InventoryEditSheet: View {
+    let item: InventoryStockItem
+    let vm: InventoryVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var priceText: String
+    @State private var reorderText: String
+    @State private var confirming = false
+    @State private var saving = false
+    @State private var errorText: String? = nil
+
+    init(item: InventoryStockItem, vm: InventoryVM) {
+        self.item = item
+        self.vm = vm
+        _priceText = State(initialValue: String(item.buyingPrice ?? 0))
+        _reorderText = State(initialValue: String(item.reorderLevel))
+    }
+
+    private var price: Int? {
+        let n = Int(priceText.trimmingCharacters(in: .whitespaces))
+        return (n ?? -1) >= 0 ? n : nil
+    }
+    private var reorder: Int? {
+        let n = Int(reorderText.trimmingCharacters(in: .whitespaces))
+        return (n ?? -1) >= 0 ? n : nil
+    }
+    private var priceChanged: Bool { price != nil && price != (item.buyingPrice ?? 0) }
+    private var reorderChanged: Bool { reorder != nil && reorder != item.reorderLevel }
+    private var valid: Bool { price != nil && reorder != nil && (priceChanged || reorderChanged) }
+
+    private var changeSummary: String {
+        var parts: [String] = []
+        if priceChanged { parts.append("দাম ৳\(item.buyingPrice ?? 0) → ৳\(price ?? 0)") }
+        if reorderChanged { parts.append("রিঅর্ডার লেভেল \(item.reorderLevel) → \(reorder ?? 0)") }
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("দাম / রিঅর্ডার লেভেল").font(.headline)
+                    Text("\(item.sku) · \(item.product)")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+
+                field("বায়িং প্রাইস (৳)", text: $priceText,
+                      invalid: price == nil, hint: "বর্তমান: ৳\((item.buyingPrice ?? 0).formatted())")
+                field("রিঅর্ডার লেভেল", text: $reorderText,
+                      invalid: reorder == nil, hint: "বর্তমান: \(item.reorderLevel)")
+
+                if let errorText {
+                    Label(errorText, systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(InventoryPalette.red500)
+                }
+
+                Button {
+                    guard valid else { return }
+                    confirming = true
+                } label: {
+                    HStack {
+                        if saving { ProgressView().controlSize(.small).tint(.white) }
+                        Text(saving ? "সেভ হচ্ছে…" : "সেভ করুন")
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 6)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(InventoryPalette.coral)
+                .disabled(!valid || saving)
+
+                if !valid && price != nil && reorder != nil {
+                    Text("কিছু পরিবর্তন করা হয়নি")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            .padding(18)
+        }
+        .presentationBackground { InventoryAurora() }
+        .confirmationDialog("পরিবর্তন নিশ্চিত করুন", isPresented: $confirming,
+                            titleVisibility: .visible) {
+            Button("হ্যাঁ, সেভ করুন") { save() }
+            Button("বাতিল", role: .cancel) {}
+        } message: {
+            Text("SKU \(item.sku): \(changeSummary)")
+        }
+    }
+
+    private func save() {
+        guard valid, !saving else { return }
+        saving = true
+        errorText = nil
+        Task {
+            let err = await vm.editItem(sku: item.sku,
+                                        buyingPrice: priceChanged ? price : nil,
+                                        reorderLevel: reorderChanged ? reorder : nil)
+            saving = false
+            if let err { errorText = err } else { dismiss() }
+        }
+    }
+
+    private func field(_ label: String, text: Binding<String>, invalid: Bool, hint: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(.caption.weight(.bold)).foregroundStyle(.secondary)
+            TextField("0", text: text)
+                .keyboardType(.numberPad)
+                .font(.title3.weight(.bold).monospacedDigit())
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .inventoryGlass(colorScheme, corner: 12)
+            Text(invalid ? "০ বা তার বেশি একটি সংখ্যা দিন" : hint)
+                .font(.caption2)
+                .foregroundStyle(invalid ? InventoryPalette.red500 : .secondary)
+        }
+    }
+}
+
+// MARK: - Add-product sheet (web AddProductModal, single mode)
+
+@available(iOS 17.0, *)
+private struct InventoryAddSheet: View {
+    let vm: InventoryVM
+    let openWeb: (_ path: String, _ title: String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+
+    @State private var name = ""
+    @State private var sku = ""
+    @State private var category = ""
+    @State private var priceText = "0"     // sell price → default_price
+    @State private var cogsText = "0"      // buying price → default_cogs
+    @State private var color = ""
+    @State private var size = ""
+    @State private var stockText = "0"     // initial_stock
+    @State private var reorderText = "0"   // reorder_level
+    @State private var notes = ""
+    @State private var syncToStock = true
+    @State private var confirming = false
+    @State private var errorText: String? = nil
+
+    private func nonNegInt(_ s: String) -> Int? {
+        let n = Int(s.trimmingCharacters(in: .whitespaces))
+        return (n ?? -1) >= 0 ? n : nil
+    }
+    private var price: Int? { nonNegInt(priceText) }
+    private var cogs: Int? { nonNegInt(cogsText) }
+    private var stock: Int? { nonNegInt(stockText) }
+    private var reorder: Int? { nonNegInt(reorderText) }
+    private var valid: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty
+            && price != nil && cogs != nil && stock != nil && reorder != nil
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("নতুন আইটেম যোগ করুন").font(.headline)
+                    Text("সিঙ্গেল প্রোডাক্ট — কালেকশন/বাল্ক ও ছবি আপলোড ওয়েবে")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
+                textField("প্রোডাক্টের নাম *", text: $name, placeholder: "যেমন: Premium Panjabi")
+                textField("SKU (খালি রাখলে অটো)", text: $sku, placeholder: "AUTO", mono: true)
+                categoryField
+                HStack(spacing: 10) {
+                    numberField("সেল প্রাইস (৳)", text: $priceText, invalid: price == nil)
+                    numberField("বায়িং প্রাইস (৳)", text: $cogsText, invalid: cogs == nil)
+                }
+                HStack(spacing: 10) {
+                    textField("কালার", text: $color, placeholder: "—")
+                    textField("সাইজ", text: $size, placeholder: "—")
+                }
+                HStack(spacing: 10) {
+                    numberField("শুরুর স্টক", text: $stockText, invalid: stock == nil)
+                    numberField("রিঅর্ডার লেভেল", text: $reorderText, invalid: reorder == nil)
+                }
+                textField("নোট", text: $notes, placeholder: "ঐচ্ছিক")
+
+                Toggle(isOn: $syncToStock) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("ইনভেন্টরিতে স্টক রো যোগ করুন").font(.footnote.weight(.semibold))
+                        Text("বন্ধ করলে শুধু ক্যাটালগে সেভ হবে").font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                .tint(InventoryPalette.coral)
+                .padding(12)
+                .inventoryGlass(colorScheme, corner: 12)
+
+                if let errorText {
+                    Label(errorText, systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(InventoryPalette.red500)
+                }
+
+                Button {
+                    guard valid else { return }
+                    confirming = true
+                } label: {
+                    HStack {
+                        if vm.creating { ProgressView().controlSize(.small).tint(.white) }
+                        Text(vm.creating ? "সেভ হচ্ছে…" : "+ Add item")
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 6)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(InventoryPalette.coral)
+                .disabled(!valid || vm.creating)
+
+                // Photo upload + collection/bulk mode stay on the proven web modal.
+                Button {
+                    dismiss()
+                    openWeb("/inventory", "Inventory")
+                } label: {
+                    Label("ছবি / কালেকশন-বাল্ক মোড — ওয়েব ভার্সন", systemImage: "safari")
+                        .font(.caption)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .padding(.vertical, 2)
+            }
+            .padding(18)
+        }
+        .scrollDismissesKeyboard(.immediately)
+        .presentationBackground { InventoryAurora() }
+        .confirmationDialog("নতুন আইটেম তৈরি করবেন?", isPresented: $confirming,
+                            titleVisibility: .visible) {
+            Button("হ্যাঁ, তৈরি করুন") { save() }
+            Button("বাতিল", role: .cancel) {}
+        } message: {
+            Text("\(name.trimmingCharacters(in: .whitespaces))\(sku.trimmingCharacters(in: .whitespaces).isEmpty ? "" : " · SKU \(sku.trimmingCharacters(in: .whitespaces))") · শুরুর স্টক \(stock ?? 0) পিস · সেল ৳\(price ?? 0) · বায়িং ৳\(cogs ?? 0)")
+        }
+    }
+
+    private func save() {
+        guard valid, !vm.creating else { return }
+        errorText = nil
+        // Same payload the web AddProductModal (single mode) posts to /api/products.
+        var body: [String: AnyEncodable] = [
+            "name": AnyEncodable(name.trimmingCharacters(in: .whitespaces)),
+            "default_price": AnyEncodable(price ?? 0),
+            "default_cogs": AnyEncodable(cogs ?? 0),
+            "initial_stock": AnyEncodable(stock ?? 0),
+            "reorder_level": AnyEncodable(reorder ?? 0),
+            "supplier": AnyEncodable("manual"),
+            "sync_to_stock": AnyEncodable(syncToStock),
+            "skip_duplicate_name_check": AnyEncodable(false),
+        ]
+        let trimmedSku = sku.trimmingCharacters(in: .whitespaces)
+        if !trimmedSku.isEmpty { body["sku"] = AnyEncodable(trimmedSku) }
+        let trimmedCat = category.trimmingCharacters(in: .whitespaces)
+        if !trimmedCat.isEmpty { body["category"] = AnyEncodable(trimmedCat) }
+        let trimmedColor = color.trimmingCharacters(in: .whitespaces)
+        if !trimmedColor.isEmpty { body["color"] = AnyEncodable(trimmedColor) }
+        let trimmedSize = size.trimmingCharacters(in: .whitespaces)
+        if !trimmedSize.isEmpty { body["size"] = AnyEncodable(trimmedSize) }
+        let trimmedNotes = notes.trimmingCharacters(in: .whitespaces)
+        if !trimmedNotes.isEmpty { body["notes"] = AnyEncodable(trimmedNotes) }
+        Task {
+            let err = await vm.createProduct(body: body)
+            if let err { errorText = err } else { dismiss() }
+        }
+    }
+
+    /// Category — free text with a menu of existing categories (web's select + Other).
+    private var categoryField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("ক্যাটাগরি").font(.caption.weight(.bold)).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                TextField("যেমন: Panjabi", text: $category)
+                    .padding(.horizontal, 12).padding(.vertical, 9)
+                    .inventoryGlass(colorScheme, corner: 12)
+                Menu {
+                    ForEach(vm.categories, id: \.self) { c in
+                        Button(c) { category = c }
+                    }
+                } label: {
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.footnote)
+                        .foregroundStyle(AlmaSwiftTheme.violet)
+                        .frame(width: 38, height: 38)
+                        .inventoryGlass(colorScheme, corner: 12)
+                }
+            }
+        }
+    }
+
+    private func textField(_ label: String, text: Binding<String>, placeholder: String,
+                           mono: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(.caption.weight(.bold)).foregroundStyle(.secondary)
+            TextField(placeholder, text: text)
+                .font(mono ? .footnote.monospaced() : .footnote)
+                .textInputAutocapitalization(mono ? .characters : .sentences)
+                .autocorrectionDisabled(mono)
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .inventoryGlass(colorScheme, corner: 12)
+        }
+    }
+
+    private func numberField(_ label: String, text: Binding<String>, invalid: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(.caption.weight(.bold)).foregroundStyle(.secondary)
+            TextField("0", text: text)
+                .keyboardType(.numberPad)
+                .font(.footnote.weight(.bold).monospacedDigit())
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .inventoryGlass(colorScheme, corner: 12)
+                .overlay(RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(invalid ? InventoryPalette.red500.opacity(0.6) : .clear, lineWidth: 1))
+        }
+    }
+}
+
+// MARK: - Row card (mirrors one web mobile card, action buttons included)
 
 @available(iOS 17.0, *)
 private struct InventoryItemCard: View {
     let item: InventoryStockItem
+    let vm: InventoryVM
     let onTap: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
@@ -566,6 +1339,9 @@ private struct InventoryItemCard: View {
                     .font(.caption2).foregroundStyle(.secondary)
                 InventoryProgressBar(pct: item.utilisationPct)
             }
+
+            // Web mobile card's Adjust / Archive buttons (+ Price for full parity).
+            InventoryActionButtons(item: item, vm: vm)
         }
         .padding(14)
         .inventoryGlass(colorScheme, corner: 16)
@@ -609,30 +1385,38 @@ private struct InventoryProgressBar: View {
     }
 }
 
-// MARK: - Detail sheet (browse-only; writes stay on the web)
+// MARK: - Detail sheet (full data + the same native actions)
 
 @available(iOS 17.0, *)
 private struct InventoryDetailSheet: View {
     let item: InventoryStockItem
+    let vm: InventoryVM
     let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
 
+    /// Live row — after a write the list reloads; show the fresh numbers, not the
+    /// snapshot the sheet was opened with.
+    private var live: InventoryStockItem {
+        vm.items.first { $0.sku == item.sku } ?? item
+    }
+
     var body: some View {
+        let current = live
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                header
-                stockCard
-                moneyCard
-                attributesCard
-                webActions
+                header(current)
+                stockCard(current)
+                moneyCard(current)
+                attributesCard(current)
+                actionsCard(current)
             }
             .padding(18)
         }
         .presentationBackground { InventoryAurora() }
     }
 
-    private var header: some View {
+    private func header(_ item: InventoryStockItem) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline) {
                 Text(item.sku)
@@ -655,7 +1439,7 @@ private struct InventoryDetailSheet: View {
 
     /// Quantities — the web table's Available/Stock/Sold/Returned plus the hidden
     /// reserve/damage columns, with the reorder-level warning inline.
-    private var stockCard: some View {
+    private func stockCard(_ item: InventoryStockItem) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionLabel("Stock")
             grid([
@@ -689,7 +1473,7 @@ private struct InventoryDetailSheet: View {
         .inventoryGlass(colorScheme, corner: 14)
     }
 
-    private var moneyCard: some View {
+    private func moneyCard(_ item: InventoryStockItem) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionLabel("Value")
             grid([
@@ -706,7 +1490,7 @@ private struct InventoryDetailSheet: View {
         .inventoryGlass(colorScheme, corner: 14)
     }
 
-    private var attributesCard: some View {
+    private func attributesCard(_ item: InventoryStockItem) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionLabel("Product")
             grid([
@@ -722,24 +1506,34 @@ private struct InventoryDetailSheet: View {
         .inventoryGlass(colorScheme, corner: 14)
     }
 
-    /// Stock writes are risky — Adjust / Price / Archive stay on the proven web page.
-    /// /inventory?q=… deep link seeds the web search with this SKU (existing web hook).
-    private var webActions: some View {
-        VStack(spacing: 8) {
+    /// Native writes (Adjust / Price / Archive-Restore) + tiny web escape for the
+    /// photo uploader, which stays web-only.
+    private func actionsCard(_ item: InventoryStockItem) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionLabel("Actions")
+            InventoryActionButtons(item: item, vm: vm)
+            if let n = vm.notice {
+                Label(n, systemImage: "checkmark.circle")
+                    .font(.caption).foregroundStyle(InventoryPalette.positive(colorScheme))
+            }
+            if let e = vm.error {
+                Label(e, systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(InventoryPalette.red500)
+            }
             Button {
                 dismiss()
                 let q = item.sku.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? item.sku
                 openWeb("/inventory?q=\(q)", "Inventory")
             } label: {
-                Label("Adjust / Price / Archive — ওয়েবে খুলুন", systemImage: "slider.horizontal.3")
-                    .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 4)
+                Label("ছবি আপলোড / ওয়েব ভার্সন", systemImage: "safari")
+                    .font(.caption)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(InventoryPalette.coral)
-            Text("স্টক পরিবর্তন ওয়েব পেজ থেকে করুন — ভুল এন্ট্রি এড়াতে।")
-                .font(.caption2).foregroundStyle(.secondary)
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .inventoryGlass(colorScheme, corner: 14)
     }
 
     private func sectionLabel(_ label: String) -> some View {

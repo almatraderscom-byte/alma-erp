@@ -2,16 +2,21 @@
 //  PortalSwiftUI.swift
 //  ALMA ERP — the staff "My desk" (/portal) as a native SwiftUI screen.
 //
-//  Mirrors the web /portal page's read blocks — same endpoints, same colours:
-//    GET /api/users/me?business_id=…                     → profile (name/role/shift/HR id)
-//    GET /api/attendance?business_id=…&scope=me          → today + monthly summary
-//    GET /api/payroll/wallet/{empId}?business_id=…       → wallet summary + ledger + requests
-//    GET /api/operational-tasks/my?business_id=…         → my active tasks
-//    GET /api/attendance/leave?business_id=…             → my leave applications
+//  Mirrors the web /portal page — same endpoints, same colours:
+//    GET  /api/users/me?business_id=…                     → profile (name/role/shift/HR id)
+//    GET  /api/attendance?business_id=…&scope=me          → today + monthly summary
+//    GET  /api/payroll/wallet/{empId}?business_id=…       → wallet summary + ledger + requests
+//    GET  /api/operational-tasks/my?business_id=…         → my active tasks
+//    GET  /api/attendance/leave?business_id=…             → my leave applications
+//    GET  /api/attendance/exceptions?business_id=…        → today's exception status
+//    POST /api/payroll/wallet/requests                    → withdraw / advance request
+//    POST /api/attendance/leave                           → ছুটির আবেদন (kind/dates/times/reason)
+//    POST /api/attendance/exceptions                      → checkout-exception (scope + reason)
+//    POST /api/payroll/wallet/advance-notice              → advance-notice "বুঝেছি" ack
 //  iOS re-set: personal dashboard cards — greeting, my balance, my tasks with
-//  status circles, attendance summary. Mutating staff actions (check-in/check-out
-//  selfie+GPS, wallet requests, leave/exception forms, meal allowance, driving
-//  mode) stay on the web escape hatch — openWeb("/portal", "My Desk").
+//  status circles, attendance summary — plus NATIVE request sheets (wallet
+//  withdraw/advance, leave apply, checkout exception) with confirm dialogs.
+//  Check-in / check-out stays on the web (selfie camera + GPS geofence).
 //  Carried lessons: lenient per-field decoding, ONE load path, no global overlay.
 //
 
@@ -361,6 +366,32 @@ struct PortalLeaveResponse: Decodable {
     }
 }
 
+/// GET /api/attendance/exceptions → { exception: { status } | null } — today's
+/// rule-waiver request status (PENDING / APPROVED / …), apiDataSuccess-tolerant.
+struct PortalExceptionResponse: Decodable {
+    let status: String?
+    private enum Keys: String, CodingKey { case ok, data, exception }
+    private enum ExKeys: String, CodingKey { case status }
+    init(from decoder: Decoder) throws {
+        let root = try decoder.container(keyedBy: Keys.self)
+        let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+        let ex = try? c.nestedContainer(keyedBy: ExKeys.self, forKey: .exception)
+        status = ex.flatMap { try? $0.decodeIfPresent(String.self, forKey: .status) }
+    }
+}
+
+/// Mutation ack — every portal POST answers { ok } (+ optional error message).
+struct PortalActionResponse: Decodable {
+    let ok: Bool
+    let errorMessage: String?
+    private enum Keys: String, CodingKey { case ok, error }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        ok = (try? c.decodeIfPresent(Bool.self, forKey: .ok)) ?? true
+        errorMessage = try? c.decodeIfPresent(String.self, forKey: .error)
+    }
+}
+
 // MARK: - View model
 
 @available(iOS 17.0, *)
@@ -377,8 +408,11 @@ final class PortalVM {
     var advanceNoticeAckedToday = false
     var tasks: [PortalTaskAssignment] = []
     var leaves: [PortalLeave] = []
+    var exceptionStatus: String? = nil    // today's rule-waiver request (web exceptionStatus)
     var loading = false
+    var busyActions: Set<String> = []     // "wallet" | "leave" | "exception" | "ack"
     var error: String? = nil
+    var notice: String? = nil             // success line (the web's toast)
     var authExpired = false
 
     var employeeId: String? {
@@ -410,7 +444,7 @@ final class PortalVM {
         // The owner account intentionally has no personal desk data (web parity).
         if isSystemOwner { return }
 
-        // The four staff blocks load concurrently; each is tolerant of its own failure.
+        // The staff blocks load concurrently; each is tolerant of its own failure.
         async let attendanceResp = Self.fetch(
             PortalAttendanceResponse.self, "/api/attendance",
             ["business_id": Self.businessId, "scope": "me"])
@@ -420,6 +454,9 @@ final class PortalVM {
             ["business_id": Self.businessId])
         async let leavesResp = Self.fetch(
             PortalLeaveResponse.self, "/api/attendance/leave",
+            ["business_id": Self.businessId])
+        async let exceptionResp = Self.fetch(
+            PortalExceptionResponse.self, "/api/attendance/exceptions",
             ["business_id": Self.businessId])
 
         attendance = await attendanceResp
@@ -431,6 +468,98 @@ final class PortalVM {
         }
         tasks = (await tasksResp)?.tasks ?? []
         leaves = (await leavesResp)?.leaves ?? []
+        exceptionStatus = (await exceptionResp)?.status
+    }
+
+    // MARK: Native staff actions (web form parity — same endpoints, same bodies)
+
+    /// One POST + success notice + full reload — the web's submit→toast→refetch loop.
+    private func act(_ key: String, path: String, body: [String: AnyEncodable],
+                     success: String?) async -> Bool {
+        guard !busyActions.contains(key) else { return false }
+        busyActions.insert(key)
+        notice = nil
+        error = nil
+        defer { busyActions.remove(key) }
+        do {
+            let resp: PortalActionResponse = try await AlmaAPI.shared.send("POST", path, body: body)
+            guard resp.ok else {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                error = resp.errorMessage ?? "Request failed"
+                return false
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = success
+            await load()
+            return true
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = Self.serverMessage(error)
+            return false
+        }
+    }
+
+    /// Web WalletRequestCard submit: POST /api/payroll/wallet/requests
+    /// { type, amount, reason, business_id } — type WITHDRAWAL | ADVANCE.
+    func submitWalletRequest(type: String, amount: Int, reason: String) async {
+        _ = await act("wallet", path: "/api/payroll/wallet/requests",
+                      body: [
+                          "type": AnyEncodable(type),
+                          "amount": AnyEncodable(amount),
+                          "reason": AnyEncodable(reason),
+                          "business_id": AnyEncodable(Self.businessId),
+                      ],
+                      success: type == "WITHDRAWAL"
+                          ? "Withdrawal requested — awaiting approval"
+                          : "Advance requested — awaiting approval")
+    }
+
+    /// Web requestLeave: POST /api/attendance/leave
+    /// { business_id, kind, start_date, end_date, start_minutes, end_minutes, reason }.
+    func submitLeave(kind: String, startDate: String, endDate: String,
+                     startMinutes: Int?, endMinutes: Int?, reason: String) async {
+        _ = await act("leave", path: "/api/attendance/leave",
+                      body: [
+                          "business_id": AnyEncodable(Self.businessId),
+                          "kind": AnyEncodable(kind),
+                          "start_date": AnyEncodable(startDate),
+                          "end_date": AnyEncodable(endDate),
+                          "start_minutes": AnyEncodable(startMinutes),
+                          "end_minutes": AnyEncodable(endMinutes),
+                          "reason": AnyEncodable(reason),
+                      ],
+                      success: "ছুটির আবেদন মালিকের কাছে পাঠানো হয়েছে।")
+    }
+
+    /// Web requestException: POST /api/attendance/exceptions
+    /// { business_id, reason, scope } — scope EARLY_CHECKOUT | LATE_ARRIVAL | FULL_DAY.
+    func submitException(scope: String, reason: String) async {
+        let ok = await act("exception", path: "/api/attendance/exceptions",
+                           body: [
+                               "business_id": AnyEncodable(Self.businessId),
+                               "reason": AnyEncodable(reason),
+                               "scope": AnyEncodable(scope),
+                           ],
+                           success: "অনুমতির অনুরোধ মালিকের কাছে পাঠানো হয়েছে।")
+        if ok { exceptionStatus = exceptionStatus ?? "PENDING" }
+    }
+
+    /// Web AdvanceRecoveryNotice "বুঝেছি": POST /api/payroll/wallet/advance-notice.
+    func ackAdvanceNotice() async {
+        _ = await act("ack", path: "/api/payroll/wallet/advance-notice",
+                      body: ["business_id": AnyEncodable(Self.businessId)],
+                      success: nil)
+    }
+
+    /// Prefer the API's own { error } message over the raw HTTP dump.
+    static func serverMessage(_ error: Error) -> String {
+        if case AlmaAPIError.http(_, let body) = error,
+           let data = body.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let msg = obj["error"] as? String, !msg.isEmpty {
+            return msg
+        }
+        return (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
     }
 
     private static func fetch<T: Decodable>(_ type: T.Type, _ path: String,
@@ -465,13 +594,17 @@ private extension CharacterSet {
 struct PortalScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = PortalVM()
+    @State private var walletSheet = false
+    @State private var leaveSheet = false
+    @State private var exceptionSheet = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 10) {
                 if vm.authExpired { authCard }
-                if let err = vm.error { noticeCard(err) }
+                if let err = vm.error { noticeCard(err, tone: .error) }
+                if let ok = vm.notice { noticeCard(ok, tone: .success) }
                 if vm.loading && vm.profile == nil && !vm.authExpired { loadingRows }
                 if let profile = vm.profile {
                     greetingCard(profile)
@@ -499,6 +632,32 @@ struct PortalScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task { await vm.load() }
+        .sheet(isPresented: $walletSheet) {
+            PortalWalletRequestSheet(
+                availableWithdrawable: vm.walletSummary?.availableWithdrawable ?? 0
+            ) { type, amount, reason in
+                Task { await vm.submitWalletRequest(type: type, amount: amount, reason: reason) }
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $leaveSheet) {
+            PortalLeaveSheet { kind, start, end, startMin, endMin, reason in
+                Task {
+                    await vm.submitLeave(kind: kind, startDate: start, endDate: end,
+                                         startMinutes: startMin, endMinutes: endMin, reason: reason)
+                }
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $exceptionSheet) {
+            PortalExceptionSheet { scope, reason in
+                Task { await vm.submitException(scope: scope, reason: reason) }
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
     }
 
     // ── Greeting + account details (web ProfilePhotoSection + "Account details") ──
@@ -584,6 +743,24 @@ struct PortalScreen: View {
                     .font(.footnote.weight(.bold))
                 Text("এই টাকা আপনার পরের মাসের বেতন থেকে অটোমেটিক কেটে নেওয়া হবে। পুরোটা শোধ না হওয়া পর্যন্ত এই নোটিশ প্রতিদিন একবার দেখাবে।")
                     .font(.caption).foregroundStyle(.secondary)
+                // The web's "বুঝেছি" ack — POST /api/payroll/wallet/advance-notice.
+                Button {
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                    Task { await vm.ackAdvanceNotice() }
+                } label: {
+                    HStack(spacing: 6) {
+                        if vm.busyActions.contains("ack") { ProgressView().controlSize(.mini) }
+                        Text(vm.busyActions.contains("ack") ? "অপেক্ষা করুন…" : "বুঝেছি")
+                            .font(.caption.weight(.bold))
+                    }
+                    .foregroundStyle(PortalPalette.amber600)
+                    .padding(.horizontal, 14).padding(.vertical, 6)
+                    .background(PortalPalette.amber500.opacity(0.16), in: Capsule())
+                    .overlay(Capsule().strokeBorder(PortalPalette.amber500.opacity(0.45), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.busyActions.contains("ack"))
+                .padding(.top, 4)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -645,10 +822,57 @@ struct PortalScreen: View {
                                                          : "বিস্তারিত — ওয়েবে খুলুন")) {
                 openWeb("/portal", "My Desk")
             }
+
+            // Web "Attendance exception" block — native form (plain text, no camera).
+            if linked, today != nil, today?.checkOutAt == nil {
+                exceptionBlock
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .portalGlass(colorScheme, corner: 16)
+    }
+
+    /// Web exception banner verbatim: APPROVED / PENDING states, else the ask-button.
+    private var exceptionBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if vm.exceptionStatus == "APPROVED" {
+                Text("✅ আজকের জন্য মালিক অনুমতি দিয়েছেন — নিয়ম মওকুফ, এখন স্বাভাবিকভাবে চেক-আউট করতে পারবেন।")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(PortalPalette.emerald600)
+            } else if vm.exceptionStatus == "PENDING" {
+                Text("⏳ আপনার অনুমতির অনুরোধ মালিকের অনুমোদনের অপেক্ষায় আছে।")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(PortalPalette.amber600)
+            } else {
+                Text("আগে বের হতে / মাঠের কাজ / দেরিতে আসা?")
+                    .font(.caption.weight(.bold))
+                Text("নিয়ম (সময়, লোকেশন, কাজ, জরিমানা) মওকুফ চাইলে মালিকের কাছে অনুমতি চান। অনুমোদন পেলে আজকের জন্য নিয়ম প্রযোজ্য হবে না।")
+                    .font(.caption2).foregroundStyle(.secondary)
+                Button {
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                    exceptionSheet = true
+                } label: {
+                    HStack(spacing: 6) {
+                        if vm.busyActions.contains("exception") { ProgressView().controlSize(.mini) }
+                        Text(vm.busyActions.contains("exception") ? "পাঠানো হচ্ছে..." : "🙏 অনুমতি চাও")
+                            .font(.caption.weight(.bold))
+                    }
+                    .foregroundStyle(PortalPalette.amber600)
+                    .padding(.horizontal, 14).padding(.vertical, 6)
+                    .background(PortalPalette.amber500.opacity(0.16), in: Capsule())
+                    .overlay(Capsule().strokeBorder(PortalPalette.amber500.opacity(0.45), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.busyActions.contains("exception"))
+                .padding(.top, 2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(PortalPalette.amber500.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12)
+            .strokeBorder(PortalPalette.amber500.opacity(0.40), lineWidth: 1))
     }
 
     private func statTile(_ label: String, _ value: String, tone: Color = .primary) -> some View {
@@ -711,9 +935,25 @@ struct PortalScreen: View {
             } else {
                 Text("Wallet not active").font(.caption).foregroundStyle(.secondary)
             }
-            // Withdrawal / advance forms post money movements — web escape.
-            portalLinkButton("টাকা তোলা / অগ্রিম রিকোয়েস্ট — ওয়েবে") {
-                openWeb("/portal", "My Desk")
+            // Native wallet request form (the web WalletRequestCard, as a sheet).
+            if vm.employeeId != nil {
+                Button {
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                    walletSheet = true
+                } label: {
+                    HStack(spacing: 6) {
+                        if vm.busyActions.contains("wallet") { ProgressView().controlSize(.mini) }
+                        Text(vm.busyActions.contains("wallet") ? "Sending…" : "টাকা তোলা / অগ্রিম রিকোয়েস্ট")
+                            .font(.footnote.weight(.semibold))
+                    }
+                    .foregroundStyle(PortalPalette.accentText(colorScheme))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .background(PortalPalette.coral.opacity(0.13), in: Capsule())
+                    .overlay(Capsule().strokeBorder(PortalPalette.coral.opacity(0.35), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.busyActions.contains("wallet"))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -818,8 +1058,25 @@ struct PortalScreen: View {
                                 in: RoundedRectangle(cornerRadius: 8))
                 }
             }
-            portalLinkButton("🏖️ ছুটি চাও — ওয়েবে আবেদন করুন") {
-                openWeb("/portal", "My Desk")
+            // Native leave-apply form (the web requestLeave, as a sheet).
+            if vm.employeeId != nil {
+                Button {
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                    leaveSheet = true
+                } label: {
+                    HStack(spacing: 6) {
+                        if vm.busyActions.contains("leave") { ProgressView().controlSize(.mini) }
+                        Text(vm.busyActions.contains("leave") ? "পাঠানো হচ্ছে..." : "🏖️ ছুটি চাও")
+                            .font(.footnote.weight(.semibold))
+                    }
+                    .foregroundStyle(PortalPalette.accentText(colorScheme))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .background(PortalPalette.coral.opacity(0.13), in: Capsule())
+                    .overlay(Capsule().strokeBorder(PortalPalette.coral.opacity(0.35), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.busyActions.contains("leave"))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -931,9 +1188,14 @@ struct PortalScreen: View {
         .buttonStyle(.plain)
     }
 
-    private func noticeCard(_ message: String) -> some View {
-        Label(message, systemImage: "exclamationmark.triangle")
-            .font(.footnote).foregroundStyle(PortalPalette.red500)
+    private enum NoticeTone { case error, success }
+    private func noticeCard(_ message: String, tone: NoticeTone) -> some View {
+        let (icon, color): (String, Color) = switch tone {
+        case .error: ("exclamationmark.triangle", PortalPalette.red500)
+        case .success: ("checkmark.circle", PortalPalette.emerald600)
+        }
+        return Label(message, systemImage: icon)
+            .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12).portalGlass(colorScheme, corner: 12)
     }
@@ -959,13 +1221,343 @@ struct PortalScreen: View {
         Button {
             openWeb("/portal", "My Desk")
         } label: {
-            Label("সব অপশন (চেক-ইন, রিকোয়েস্ট, ছুটি) — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
+            Text("ওয়েব ভার্সন")
+                .font(.caption2)
+                .underline()
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
         .padding(.vertical, 6)
+    }
+}
+
+// MARK: - Wallet request sheet (web WalletRequestCard parity)
+
+@available(iOS 17.0, *)
+private struct PortalWalletRequestSheet: View {
+    let availableWithdrawable: Int
+    let onSubmit: (_ type: String, _ amount: Int, _ reason: String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var type = "WITHDRAWAL"
+    @State private var amount = ""
+    @State private var reason = ""
+    @State private var confirmSend = false
+
+    private var amountValue: Int { Int(amount.trimmingCharacters(in: .whitespaces)) ?? 0 }
+    private var reasonTrimmed: String { reason.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var overCap: Bool { type == "WITHDRAWAL" && amountValue > availableWithdrawable }
+    private var valid: Bool { amountValue > 0 && !reasonTrimmed.isEmpty && !overCap }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Wallet requests").font(.headline)
+                HStack(spacing: 8) {
+                    typeChip("Request withdrawal", "WITHDRAWAL")
+                    typeChip("Request advance", "ADVANCE")
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("AMOUNT (৳)").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                    TextField("0", text: $amount)
+                        .keyboardType(.numberPad)
+                        .font(.body.monospaced())
+                        .padding(12)
+                        .portalGlass(colorScheme, corner: 12)
+                    if type == "WITHDRAWAL" {
+                        // Web cap hint / over-cap error — Bangla verbatim.
+                        Text(overCap
+                             ? "আপনার ওয়ালেটে আছে \(PortalFormat.money(availableWithdrawable)) — এর বেশি টাকা তোলা যাবে না। বেশি দরকার হলে আগে অগ্রিম (advance) রিকোয়েস্ট পাঠান।"
+                             : "তুলতে পারবেন সর্বোচ্চ \(PortalFormat.money(availableWithdrawable))")
+                            .font(.caption2)
+                            .foregroundStyle(overCap ? PortalPalette.red500 : .secondary)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("REASON").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                    TextField("কারণ লিখুন", text: $reason, axis: .vertical)
+                        .lineLimit(3...5)
+                        .padding(12)
+                        .portalGlass(colorScheme, corner: 12)
+                    if amountValue <= 0 || reasonTrimmed.isEmpty {
+                        Text("Amount and reason required")
+                            .font(.caption2).foregroundStyle(PortalPalette.amber600)
+                    }
+                }
+                Button {
+                    confirmSend = true
+                } label: {
+                    Text("Submit request")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 4)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(PortalPalette.coral)
+                .disabled(!valid)
+                .confirmationDialog(
+                    type == "WITHDRAWAL"
+                        ? "\(PortalFormat.money(amountValue)) তোলার রিকোয়েস্ট পাঠাবেন?"
+                        : "\(PortalFormat.money(amountValue)) অগ্রিমের রিকোয়েস্ট পাঠাবেন?",
+                    isPresented: $confirmSend, titleVisibility: .visible
+                ) {
+                    Button("রিকোয়েস্ট পাঠান") {
+                        dismiss()
+                        onSubmit(type, amountValue, reasonTrimmed)
+                    }
+                    Button("বাতিল", role: .cancel) {}
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(18)
+        }
+        .presentationBackground { PortalAurora() }
+    }
+
+    private func typeChip(_ label: String, _ value: String) -> some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            type = value
+        } label: {
+            Text(label)
+                .font(.caption.weight(type == value ? .bold : .semibold))
+                .foregroundStyle(type == value ? PortalPalette.accentText(colorScheme) : .secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 9)
+                .background(type == value ? PortalPalette.coral.opacity(colorScheme == .dark ? 0.28 : 0.14)
+                                          : Color.white.opacity(colorScheme == .dark ? 0.08 : 0.45),
+                            in: Capsule())
+                .overlay(Capsule().strokeBorder(
+                    type == value ? PortalPalette.coral.opacity(0.55)
+                                  : Color.white.opacity(colorScheme == .dark ? 0.10 : 0.4),
+                    lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Leave application sheet (web requestLeave form parity)
+
+@available(iOS 17.0, *)
+private struct PortalLeaveSheet: View {
+    let onSubmit: (_ kind: String, _ startDate: String, _ endDate: String,
+                   _ startMinutes: Int?, _ endMinutes: Int?, _ reason: String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var kind = "FULL_DAY"
+    @State private var startDate = Date()
+    @State private var endDate = Date()
+    @State private var startTime = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) ?? Date()
+    @State private var endTime = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date()) ?? Date()
+    @State private var reason = ""
+    @State private var confirmSend = false
+
+    /// Web <select> options verbatim.
+    private static let kinds: [(String, String)] = [
+        ("FULL_DAY", "একদিনের ছুটি"),
+        ("DATE_RANGE", "কয়েকদিনের ছুটি"),
+        ("HOURS", "কয়েক ঘণ্টার ছুটি"),
+        ("SHIFTED_START", "দেরিতে শুরু"),
+    ]
+
+    private var reasonTrimmed: String { reason.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var needsTimes: Bool { kind == "HOURS" || kind == "SHIFTED_START" }
+    private var startMinutes: Int? { needsTimes ? Self.minutes(of: startTime) : nil }
+    private var endMinutes: Int? { kind == "HOURS" ? Self.minutes(of: endTime) : nil }
+    private var timesInvalid: Bool {
+        guard kind == "HOURS", let s = startMinutes, let e = endMinutes else { return false }
+        return e <= s
+    }
+    private var valid: Bool { reasonTrimmed.count >= 3 && !timesInvalid }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("ছুটির আবেদন").font(.headline)
+                Text("পুরো দিন, কয়েকদিন, কয়েক ঘণ্টা, বা দেরিতে শুরু — মালিক অনুমোদন করলে ঐ সময়ে কোনো জরিমানা হবে না।")
+                    .font(.caption).foregroundStyle(.secondary)
+
+                // Kind — the web select as one-tap rows.
+                VStack(spacing: 6) {
+                    ForEach(Self.kinds, id: \.0) { value, label in
+                        Button {
+                            UISelectionFeedbackGenerator().selectionChanged()
+                            kind = value
+                        } label: {
+                            HStack {
+                                Image(systemName: kind == value ? "largecircle.fill.circle" : "circle")
+                                    .font(.footnote)
+                                    .foregroundStyle(kind == value ? PortalPalette.coral : .secondary)
+                                Text(label).font(.footnote.weight(kind == value ? .bold : .regular))
+                                Spacer()
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 9)
+                            .portalGlass(colorScheme, corner: 12)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                DatePicker("শুরুর তারিখ", selection: $startDate, displayedComponents: .date)
+                    .font(.footnote)
+                if kind == "DATE_RANGE" {
+                    DatePicker("শেষ তারিখ", selection: $endDate, in: startDate..., displayedComponents: .date)
+                        .font(.footnote)
+                }
+                if needsTimes {
+                    DatePicker(kind == "SHIFTED_START" ? "কখন শুরু করবেন" : "ছুটি শুরু",
+                               selection: $startTime, displayedComponents: .hourAndMinute)
+                        .font(.footnote)
+                    if kind == "HOURS" {
+                        DatePicker("ছুটি শেষ", selection: $endTime, displayedComponents: .hourAndMinute)
+                            .font(.footnote)
+                        if timesInvalid {
+                            Text("ছুটির শুরু ও শেষ সময় ঠিকভাবে দিন।")
+                                .font(.caption2).foregroundStyle(PortalPalette.red500)
+                        }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    TextField("ছুটির কারণ লিখুন", text: $reason, axis: .vertical)
+                        .lineLimit(2...4)
+                        .padding(12)
+                        .portalGlass(colorScheme, corner: 12)
+                    if reasonTrimmed.count < 3 {
+                        Text("ছুটির কারণ লিখুন (অন্তত ৩ অক্ষর)।")
+                            .font(.caption2).foregroundStyle(PortalPalette.amber600)
+                    }
+                }
+
+                Button {
+                    confirmSend = true
+                } label: {
+                    Text("আবেদন পাঠান")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 4)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(PortalPalette.coral)
+                .disabled(!valid)
+                .confirmationDialog("ছুটির আবেদন মালিকের কাছে পাঠাবেন?",
+                                    isPresented: $confirmSend, titleVisibility: .visible) {
+                    Button("আবেদন পাঠান") {
+                        let start = Self.ymd(startDate)
+                        // Web: end_date = DATE_RANGE ? (end || start) : start.
+                        let end = kind == "DATE_RANGE" ? Self.ymd(max(endDate, startDate)) : start
+                        dismiss()
+                        onSubmit(kind, start, end, startMinutes, endMinutes, reasonTrimmed)
+                    }
+                    Button("বাতিল", role: .cancel) {}
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(18)
+        }
+        .presentationBackground { PortalAurora() }
+    }
+
+    private static func minutes(of date: Date) -> Int {
+        let c = Calendar.current.dateComponents([.hour, .minute], from: date)
+        return (c.hour ?? 0) * 60 + (c.minute ?? 0)
+    }
+
+    /// Web <input type="date"> value shape — local "yyyy-MM-dd".
+    private static func ymd(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f.string(from: date)
+    }
+}
+
+// MARK: - Checkout-exception sheet (web requestException form parity)
+
+@available(iOS 17.0, *)
+private struct PortalExceptionSheet: View {
+    let onSubmit: (_ scope: String, _ reason: String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var scope = "EARLY_CHECKOUT"
+    @State private var reason = ""
+    @State private var confirmSend = false
+
+    /// Web radio options verbatim.
+    private static let scopes: [(String, String)] = [
+        ("EARLY_CHECKOUT", "🚶 আগে বের হবো / মাঠের কাজ"),
+        ("LATE_ARRIVAL", "⏰ দেরিতে এসেছি / আসবো"),
+        ("FULL_DAY", "📅 সারাদিন সব নিয়ম মওকুফ"),
+    ]
+
+    private var reasonTrimmed: String { reason.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var valid: Bool { reasonTrimmed.count >= 3 }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("আগে বের হতে / মাঠের কাজ / দেরিতে আসা?").font(.headline)
+                Text("নিয়ম (সময়, লোকেশন, কাজ, জরিমানা) মওকুফ চাইলে মালিকের কাছে অনুমতি চান। অনুমোদন পেলে আজকের জন্য নিয়ম প্রযোজ্য হবে না।")
+                    .font(.caption).foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("উদ্দেশ্য বেছে নিন:").font(.caption.weight(.semibold))
+                    ForEach(Self.scopes, id: \.0) { value, label in
+                        Button {
+                            UISelectionFeedbackGenerator().selectionChanged()
+                            scope = value
+                        } label: {
+                            HStack {
+                                Image(systemName: scope == value ? "largecircle.fill.circle" : "circle")
+                                    .font(.footnote)
+                                    .foregroundStyle(scope == value ? PortalPalette.coral : .secondary)
+                                Text(label).font(.footnote.weight(scope == value ? .bold : .regular))
+                                Spacer()
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 9)
+                            .portalGlass(colorScheme, corner: 12)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if scope == "LATE_ARRIVAL" {
+                        Text("নোট: দেরিতে আসার অনুমতি দিয়ে আগে বের হওয়া যাবে না — সেজন্য আলাদা অনুমতি লাগবে।")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    TextField("কারণ লিখুন (যেমন: মাঠে ডেলিভারিতে যাচ্ছি / জরুরি কাজ)", text: $reason, axis: .vertical)
+                        .lineLimit(3...5)
+                        .padding(12)
+                        .portalGlass(colorScheme, corner: 12)
+                    if !valid {
+                        Text("সংক্ষেপে কারণ লিখুন (অন্তত ৩ অক্ষর)।")
+                            .font(.caption2).foregroundStyle(PortalPalette.amber600)
+                    }
+                }
+
+                Button {
+                    confirmSend = true
+                } label: {
+                    Text("অনুমতি পাঠান")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 4)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(PortalPalette.coral)
+                .disabled(!valid)
+                .confirmationDialog("অনুমতির অনুরোধ মালিকের কাছে পাঠাবেন?",
+                                    isPresented: $confirmSend, titleVisibility: .visible) {
+                    Button("অনুমতি পাঠান") {
+                        dismiss()
+                        onSubmit(scope, reasonTrimmed)
+                    }
+                    Button("বাতিল", role: .cancel) {}
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(18)
+        }
+        .presentationBackground { PortalAurora() }
     }
 }
 

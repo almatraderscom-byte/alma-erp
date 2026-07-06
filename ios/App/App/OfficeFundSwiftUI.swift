@@ -3,15 +3,21 @@
 //  ALMA ERP — the Office Fund (petty cash) page as a native SwiftUI screen.
 //
 //  Mirrors the web /finance/office-fund page — same endpoints, same colours, same
-//  blocks — but READ-ONLY by deliberate scope (this is financial):
-//    GET /api/finance/office-fund     → { ok, canTopUp, summary, ledger }
-//    GET /api/finance/office-advance  → { ok, advances, outstanding, fundBalance }
-//  Native blocks: balance hero (big rounded number) · in/out KPI strip · my office
-//  advances (status badges, Bangla verbatim) · recent ledger with direction icons ·
-//  transaction detail sheet. ALL mutating actions (টপ-আপ, অ্যাডভান্স আবেদন, হিসাব
-//  দেওয়া) go through the web escape hatch — the native screen never writes money.
-//  Carried lessons: lenient decoding, refresh cancellation is not an error, ONE
-//  spinner pattern, aurora/glass copies stay private to the page file.
+//  blocks — with FULL ACTION PARITY (owner instruction 2026-07-06):
+//    GET   /api/finance/office-fund     → { ok, canTopUp, summary, ledger }
+//    POST  /api/finance/office-fund     { amount, note? }                    টপ-আপ
+//    GET   /api/finance/office-advance  → { ok, advances, outstanding, fundBalance }
+//    POST  /api/finance/office-advance  { amount, purpose?, payout_method,
+//                                         payout_number }                    আবেদন
+//    PATCH /api/finance/office-advance  { advance_id, spent, leftover_method } হিসাব
+//  Native blocks: balance hero · in/out KPI strip · action buttons (টপ-আপ /
+//  অ্যাডভান্স আবেদন in sheets, number-pad amounts, Bangla confirmationDialog before
+//  every money POST) · my office advances (status badges + হিসাব দিন sheet) ·
+//  recent ledger with direction icons · transaction detail sheet. Follows the
+//  ApprovalsSwiftUI act()/sheet pattern: per-action spinner, success/error notice
+//  (the web's toast), reload after every mutation — web parity: টপ-আপ reloads the
+//  fund, advance actions reload advances. Carried lessons: lenient decoding,
+//  refresh cancellation is not an error, aurora/glass copies stay private.
 //
 
 import SwiftUI
@@ -216,6 +222,23 @@ struct OfficeFundAdvancesResponse: Decodable {
     }
 }
 
+/// POST/PATCH replies — the routes answer `{ ok, message, … }`; apiFailure bodies
+/// carry the same shape with ok=false, so one lenient decode covers both.
+struct OfficeFundActionResponse: Decodable {
+    let ok: Bool
+    let message: String?
+
+    private enum Keys: String, CodingKey { case ok, message }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        ok = (try? c.decodeIfPresent(Bool.self, forKey: .ok)) ?? true
+        message = try? c.decodeIfPresent(String.self, forKey: .message)
+    }
+}
+
+/// The web's PAYOUT_METHODS constant, verbatim order.
+private let officeFundPayoutMethods = ["bKash", "Nagad", "Rocket", "ব্যাংক", "ক্যাশ"]
+
 // MARK: - View model
 
 @available(iOS 17.0, *)
@@ -236,6 +259,12 @@ final class OfficeFundVM {
     var outstandingCount = 0
     var outstandingTotal = 0
     var advLoading = false
+
+    // Actions (web toast parity: one success line + per-action busy flags)
+    var notice: String? = nil
+    var topUpSaving = false
+    var advSaving = false
+    var recSaving = false
 
     func load() async {
         await loadFund()
@@ -277,6 +306,109 @@ final class OfficeFundVM {
         }
     }
 
+    // ── Mutations (web parity: same endpoints, same bodies, reload after) ──
+
+    /// POST /api/finance/office-fund { amount, note? } — owner-only টপ-আপ.
+    /// Returns nil on success (notice set + fund reloaded), or a Bangla error line.
+    func topUp(amount: Int, note: String) async -> String? {
+        guard amount > 0 else { return "সঠিক একটি অঙ্ক দিন।" }
+        guard !topUpSaving else { return nil }
+        topUpSaving = true
+        notice = nil
+        defer { topUpSaving = false }
+        do {
+            var body: [String: AnyEncodable] = ["amount": AnyEncodable(amount)]
+            let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { body["note"] = AnyEncodable(trimmed) }
+            let resp: OfficeFundActionResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/finance/office-fund", body: body)
+            guard resp.ok else { return resp.message ?? "যোগ করা যায়নি।" }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = resp.message ?? "যোগ হয়েছে।"
+            await loadFund()          // web: await load()
+            return nil
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            return Self.failureMessage(error, fallback: "যোগ করা যায়নি।")
+        }
+    }
+
+    /// POST /api/finance/office-advance { amount, purpose?, payout_method, payout_number }
+    /// — অফিস অ্যাডভান্স আবেদন. Returns nil on success, or a Bangla error line.
+    func requestAdvance(amount: Int, purpose: String, method: String, number: String) async -> String? {
+        guard amount > 0 else { return "সঠিক একটি অঙ্ক দিন।" }
+        let trimmedNumber = number.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedNumber.isEmpty else { return "টাকা কোথায় পাঠাবেন সেই নম্বর দিন।" }
+        guard !advSaving else { return nil }
+        advSaving = true
+        notice = nil
+        defer { advSaving = false }
+        do {
+            var body: [String: AnyEncodable] = [
+                "amount": AnyEncodable(amount),
+                "payout_method": AnyEncodable(method),
+                "payout_number": AnyEncodable(trimmedNumber),
+            ]
+            let trimmedPurpose = purpose.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedPurpose.isEmpty { body["purpose"] = AnyEncodable(trimmedPurpose) }
+            let resp: OfficeFundActionResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/finance/office-advance", body: body)
+            guard resp.ok else { return resp.message ?? "আবেদন পাঠানো যায়নি।" }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = resp.message ?? "আবেদন পাঠানো হয়েছে।"
+            await loadAdvances()      // web: await loadAdvances()
+            return nil
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            return Self.failureMessage(error, fallback: "আবেদন পাঠানো যায়নি।")
+        }
+    }
+
+    /// PATCH /api/finance/office-advance { advance_id, spent, leftover_method } —
+    /// হিসাব দেওয়া (reconcile an OUTSTANDING advance). Returns nil on success.
+    func reconcile(advance: OfficeFundAdvanceRow, spent: Int, leftoverMethod: String) async -> String? {
+        guard spent >= 0 else { return "সঠিক খরচের অঙ্ক দিন।" }
+        guard spent <= advance.amount else { return "খরচ অ্যাডভান্সের চেয়ে বেশি হতে পারে না।" }
+        guard !recSaving else { return nil }
+        recSaving = true
+        notice = nil
+        defer { recSaving = false }
+        do {
+            let leftover = advance.amount - spent
+            let body: [String: AnyEncodable] = [
+                "advance_id": AnyEncodable(advance.id),
+                "spent": AnyEncodable(spent),
+                // Web parity: no leftover → method forced to CASH_RETURN.
+                "leftover_method": AnyEncodable(leftover > 0 ? leftoverMethod : "CASH_RETURN"),
+            ]
+            let resp: OfficeFundActionResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/finance/office-advance", body: body)
+            guard resp.ok else { return resp.message ?? "হিসাব পাঠানো যায়নি।" }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = resp.message ?? "হিসাব পাঠানো হয়েছে।"
+            await loadAdvances()      // web: await loadAdvances()
+            return nil
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            return Self.failureMessage(error, fallback: "হিসাব পাঠানো যায়নি।")
+        }
+    }
+
+    /// apiFailure answers 4xx with `{ ok:false, message: <Bangla> }` — surface that
+    /// exact server message when it's there, else the caller's fallback.
+    private static func failureMessage(_ error: Error, fallback: String) -> String {
+        if case AlmaAPIError.notAuthenticated = error {
+            return "সেশন পাওয়া যায়নি — একবার ওয়েব ভিউতে লগইন করুন।"
+        }
+        if case AlmaAPIError.http(_, let body) = error,
+           let data = body.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let msg = obj["message"] as? String, !msg.isEmpty {
+            return msg
+        }
+        return fallback
+    }
+
     /// SwiftUI .refreshable cancels the task when the gesture ends — that's not an
     /// error the owner should ever see.
     static func isCancellation(_ error: Error) -> Bool {
@@ -286,7 +418,7 @@ final class OfficeFundVM {
     }
 }
 
-// MARK: - Screen (READ-ONLY — every mutating action goes to the web escape hatch)
+// MARK: - Screen (full action parity — টপ-আপ / আবেদন / হিসাব all native)
 
 @available(iOS 17.0, *)
 struct OfficeFundScreen: View {
@@ -294,6 +426,9 @@ struct OfficeFundScreen: View {
     @State private var vm = OfficeFundVM()
     @State private var selected: OfficeFundLedgerRow? = nil
     @State private var flowFilter = "ALL"                // ALL | IN | OUT (client-side)
+    @State private var showTopUp = false                 // ফান্ডে টাকা যোগ sheet
+    @State private var showAdvance = false               // অ্যাডভান্স আবেদন sheet
+    @State private var reconciling: OfficeFundAdvanceRow? = nil  // হিসাব দিন sheet
     let openWeb: (_ path: String, _ title: String) -> Void
 
     private var filteredLedger: [OfficeFundLedgerRow] {
@@ -310,9 +445,11 @@ struct OfficeFundScreen: View {
                 if vm.authExpired { authCard }
                 if vm.adminOnly { adminOnlyCard }
                 if let err = vm.error { noticeCard(err) }
+                if let ok = vm.notice { noticeCard(ok, success: true) }
                 if !vm.adminOnly {
                     balanceHero
                     kpiStrip
+                    actionsCard
                     advancesCard
                     ledgerCard
                     webEscape
@@ -331,6 +468,71 @@ struct OfficeFundScreen: View {
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showTopUp) {
+            OfficeFundTopUpSheet(vm: vm)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showAdvance) {
+            OfficeFundAdvanceSheet(vm: vm)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $reconciling) { adv in
+            OfficeFundReconcileSheet(vm: vm, advance: adv)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+
+    // ── Actions card (web টপ-আপ + অ্যাডভান্স form cards, promoted to sheets) ──
+
+    private var actionsCard: some View {
+        VStack(spacing: 0) {
+            if vm.canTopUp {
+                actionRow(icon: "plus.circle.fill",
+                          title: "ফান্ডে টাকা যোগ করুন",
+                          sub: "শুধু মালিক ফান্ডে টাকা যোগ করতে পারেন।",
+                          busy: vm.topUpSaving) { showTopUp = true }
+                Divider().opacity(0.4)
+            }
+            actionRow(icon: "arrow.up.forward.circle.fill",
+                      title: "অফিস অ্যাডভান্স নিন",
+                      sub: "অফিসের কাজে ফান্ড থেকে টাকা নিন — মালিক অনুমোদন করলে পাঠাবেন।",
+                      busy: vm.advSaving) { showAdvance = true }
+        }
+        .padding(.horizontal, 14).padding(.vertical, 4)
+        .officeFundGlass(colorScheme, corner: 16)
+    }
+
+    private func actionRow(icon: String, title: String, sub: String,
+                           busy: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            action()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.title3)
+                    .foregroundStyle(OfficeFundPalette.accentText(colorScheme))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.caption.weight(.bold)).foregroundStyle(.primary)
+                    Text(sub).font(.caption2).foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 4)
+                if busy {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.bold)).foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
     }
 
     // ── Balance hero (web KpiCard "ফান্ড ব্যালেন্স", promoted to an iOS hero) ──
@@ -455,6 +657,28 @@ struct OfficeFundScreen: View {
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(adv.statusColor.opacity(0.12), in: Capsule())
                     .overlay(Capsule().strokeBorder(adv.statusColor.opacity(0.3), lineWidth: 0.8))
+                // Web parity: OUTSTANDING rows carry the "হিসাব দিন" button.
+                if adv.status == "OUTSTANDING" {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                        reconciling = adv
+                    } label: {
+                        if vm.recSaving && reconciling?.id == adv.id {
+                            ProgressView().controlSize(.mini)
+                                .padding(.horizontal, 8).padding(.vertical, 3)
+                        } else {
+                            Text("হিসাব দিন")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(OfficeFundPalette.accentText(colorScheme))
+                                .padding(.horizontal, 8).padding(.vertical, 3)
+                                .background(OfficeFundPalette.coral.opacity(colorScheme == .dark ? 0.24 : 0.14),
+                                            in: Capsule())
+                                .overlay(Capsule().strokeBorder(OfficeFundPalette.coral.opacity(0.45), lineWidth: 0.8))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.recSaving)
+                }
             }
         }
         .padding(.vertical, 4)
@@ -575,9 +799,10 @@ struct OfficeFundScreen: View {
         .buttonStyle(.plain)
     }
 
-    private func noticeCard(_ message: String) -> some View {
-        Label(message, systemImage: "exclamationmark.triangle")
-            .font(.footnote).foregroundStyle(OfficeFundPalette.red500)
+    private func noticeCard(_ message: String, success: Bool = false) -> some View {
+        Label(message, systemImage: success ? "checkmark.circle" : "exclamationmark.triangle")
+            .font(.footnote)
+            .foregroundStyle(success ? OfficeFundPalette.positive(colorScheme) : OfficeFundPalette.red500)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12).officeFundGlass(colorScheme, corner: 12)
     }
@@ -602,18 +827,18 @@ struct OfficeFundScreen: View {
         .officeFundGlass(colorScheme, corner: 16)
     }
 
-    /// READ-ONLY escape hatch — every write (টপ-আপ, অ্যাডভান্স আবেদন, হিসাব) is web-only.
+    /// Every action is native now — a small link remains for the web version.
     private var webEscape: some View {
         Button {
             openWeb("/finance/office-fund", "Office fund")
         } label: {
-            Label("টপ-আপ / অ্যাডভান্স / হিসাব দিন — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
+            Label("ওয়েব ভার্সন", systemImage: "safari")
+                .font(.caption2)
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .padding(.vertical, 6)
+        .foregroundStyle(.tertiary)
+        .padding(.vertical, 4)
     }
 }
 
@@ -682,13 +907,331 @@ private struct OfficeFundTxnDetailSheet: View {
             dismiss()
             openWeb("/finance/office-fund", "Office fund")
         } label: {
-            Label("সব অপশন — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
+            Label("ওয়েব ভার্সন", systemImage: "safari")
+                .font(.caption2)
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
         .padding(.top, 2)
+    }
+}
+
+// MARK: - Shared form bits for the action sheets
+
+/// Bangla-digit-tolerant whole-taka parser: "১০০০" → 1000, "10,000" → 10000.
+private func officeFundParseTaka(_ raw: String) -> Int {
+    let map: [Character: Character] = [
+        "০": "0", "১": "1", "২": "2", "৩": "3", "৪": "4",
+        "৫": "5", "৬": "6", "৭": "7", "৮": "8", "৯": "9",
+    ]
+    let digits = raw.map { map[$0] ?? $0 }.filter { $0.isASCII && $0.isNumber }
+    return Int(String(digits)) ?? 0
+}
+
+/// Labelled glass field — the web's `<label> + <Input>` pair.
+@available(iOS 17.0, *)
+private struct OfficeFundField<Content: View>: View {
+    let label: String
+    @ViewBuilder var content: () -> Content
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(label)
+                .font(.caption2.weight(.heavy)).textCase(.uppercase)
+                .foregroundStyle(.secondary)
+            content()
+                .padding(12)
+                .officeFundGlass(colorScheme, corner: 12)
+        }
+    }
+}
+
+/// Prominent submit button with the ONE per-action spinner.
+@available(iOS 17.0, *)
+private struct OfficeFundSubmitButton: View {
+    let title: String
+    let busy: Bool
+    let disabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Group {
+                if busy { ProgressView().tint(.white) } else { Text(title).font(.subheadline.weight(.semibold)) }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(OfficeFundPalette.coral)
+        .disabled(busy || disabled)
+    }
+}
+
+// MARK: - Top-up sheet (web "ফান্ডে টাকা যোগ করুন" card → native sheet)
+// POST /api/finance/office-fund { amount, note? }
+
+@available(iOS 17.0, *)
+private struct OfficeFundTopUpSheet: View {
+    let vm: OfficeFundVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var amount = ""
+    @State private var note = ""
+    @State private var confirming = false
+    @State private var localError: String? = nil
+    @FocusState private var focused: Bool
+
+    private var amountInt: Int { officeFundParseTaka(amount) }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("ফান্ডে টাকা যোগ করুন").font(.headline)
+                Text("শুধু মালিক ফান্ডে টাকা যোগ করতে পারেন। (আপনি নিজে বিকাশ/ক্যাশে রেখে এখানে রেকর্ড করবেন।)")
+                    .font(.caption).foregroundStyle(.secondary)
+                OfficeFundField(label: "টাকার অঙ্ক (৳)") {
+                    TextField("যেমন 10000", text: $amount)
+                        .keyboardType(.numberPad)
+                        .focused($focused)
+                }
+                OfficeFundField(label: "নোট (ঐচ্ছিক)") {
+                    TextField("যেমন জুনের পেটি ক্যাশ", text: $note)
+                }
+                if let e = localError {
+                    Label(e, systemImage: "exclamationmark.triangle")
+                        .font(.caption2).foregroundStyle(OfficeFundPalette.red500)
+                }
+                OfficeFundSubmitButton(title: "যোগ করুন", busy: vm.topUpSaving,
+                                       disabled: amountInt <= 0) {
+                    localError = nil
+                    confirming = true
+                }
+            }
+            .padding(18)
+        }
+        .presentationBackground { OfficeFundAurora() }
+        .interactiveDismissDisabled(vm.topUpSaving)
+        .onAppear { focused = true }
+        .confirmationDialog(
+            "৳\(amountInt.formatted()) ফান্ডে যোগ হবে — নিশ্চিত?",
+            isPresented: $confirming, titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, ৳\(amountInt.formatted()) যোগ করুন") {
+                Task {
+                    if let err = await vm.topUp(amount: amountInt, note: note) {
+                        localError = err
+                    } else {
+                        dismiss()
+                    }
+                }
+            }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+}
+
+// MARK: - Advance request sheet (web "অফিস অ্যাডভান্স নিন" card → native sheet)
+// POST /api/finance/office-advance { amount, purpose?, payout_method, payout_number }
+
+@available(iOS 17.0, *)
+private struct OfficeFundAdvanceSheet: View {
+    let vm: OfficeFundVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var amount = ""
+    @State private var purpose = ""
+    @State private var method = officeFundPayoutMethods[0]
+    @State private var number = ""
+    @State private var confirming = false
+    @State private var localError: String? = nil
+    @FocusState private var focused: Bool
+
+    private var amountInt: Int { officeFundParseTaka(amount) }
+    private var numberTrimmed: String { number.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("অফিস অ্যাডভান্স নিন").font(.headline)
+                Text("অফিসের কাজে ফান্ড থেকে টাকা নিন — মালিক অনুমোদন করলে আপনার নম্বরে পাঠাবেন।")
+                    .font(.caption).foregroundStyle(.secondary)
+                OfficeFundField(label: "টাকার অঙ্ক (৳)") {
+                    TextField("যেমন 2000", text: $amount)
+                        .keyboardType(.numberPad)
+                        .focused($focused)
+                }
+                OfficeFundField(label: "কী কাজে") {
+                    TextField("যেমন প্যাকেজিং সামগ্রী কেনা", text: $purpose)
+                }
+                OfficeFundField(label: "কোথায় পাঠাবে") {
+                    Menu {
+                        ForEach(officeFundPayoutMethods, id: \.self) { m in
+                            Button {
+                                method = m
+                            } label: {
+                                if m == method { Label(m, systemImage: "checkmark") } else { Text(m) }
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Text(method).font(.subheadline).foregroundStyle(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                }
+                OfficeFundField(label: "বিকাশ/ওয়ালেট নম্বর") {
+                    TextField("01XXXXXXXXX", text: $number)
+                        .keyboardType(.phonePad)
+                }
+                Text("অনুমোদনের পর টাকা আপনার দায়িত্বে থাকবে — খরচ শেষে হিসাব দিতে হবে।")
+                    .font(.caption2).foregroundStyle(.secondary)
+                if let e = localError {
+                    Label(e, systemImage: "exclamationmark.triangle")
+                        .font(.caption2).foregroundStyle(OfficeFundPalette.red500)
+                }
+                OfficeFundSubmitButton(title: "আবেদন পাঠান", busy: vm.advSaving,
+                                       disabled: amountInt <= 0 || numberTrimmed.isEmpty) {
+                    localError = nil
+                    confirming = true
+                }
+            }
+            .padding(18)
+        }
+        .presentationBackground { OfficeFundAurora() }
+        .interactiveDismissDisabled(vm.advSaving)
+        .onAppear { focused = true }
+        .confirmationDialog(
+            "৳\(amountInt.formatted()) অ্যাডভান্সের আবেদন যাবে (\(method) \(numberTrimmed)) — নিশ্চিত?",
+            isPresented: $confirming, titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, আবেদন পাঠান") {
+                Task {
+                    if let err = await vm.requestAdvance(amount: amountInt, purpose: purpose,
+                                                         method: method, number: numberTrimmed) {
+                        localError = err
+                    } else {
+                        dismiss()
+                    }
+                }
+            }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+}
+
+// MARK: - Reconcile sheet (web inline "হিসাব দিন" panel → native sheet)
+// PATCH /api/finance/office-advance { advance_id, spent, leftover_method }
+
+@available(iOS 17.0, *)
+private struct OfficeFundReconcileSheet: View {
+    let vm: OfficeFundVM
+    let advance: OfficeFundAdvanceRow
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var spent = ""
+    @State private var method = "CASH_RETURN"            // CASH_RETURN | WALLET_DEDUCT
+    @State private var confirming = false
+    @State private var localError: String? = nil
+    @FocusState private var focused: Bool
+
+    private var spentInt: Int { officeFundParseTaka(spent) }
+    /// Web leftoverPreview = max(0, amount − spent).
+    private var leftover: Int { max(0, advance.amount - spentInt) }
+    private var methodBn: String {
+        method == "WALLET_DEDUCT" ? "আমার ওয়ালেট থেকে কাটা হবে" : "ক্যাশ ফেরত দেব"
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("হিসাব দিন").font(.headline)
+                Text("\(advance.purpose?.isEmpty == false ? advance.purpose! : "অফিস অ্যাডভান্স") · \(OfficeFundFormat.taka(advance.amount))")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("কত টাকা খরচ হয়েছে লিখুন — বাকি টাকা কীভাবে ফেরত দেবেন তা বেছে নিন। (দুটোই মালিকের অনুমোদন লাগবে।)")
+                    .font(.caption2).foregroundStyle(.secondary)
+                OfficeFundField(label: "খরচ হয়েছে (৳)") {
+                    TextField("সর্বোচ্চ \(advance.amount)", text: $spent)
+                        .keyboardType(.numberPad)
+                        .focused($focused)
+                }
+                HStack(spacing: 4) {
+                    Text("বাকি থাকবে:").font(.caption).foregroundStyle(.secondary)
+                    Text(OfficeFundFormat.taka(leftover))
+                        .font(.caption.weight(.bold)).monospacedDigit()
+                }
+                if leftover > 0 {
+                    HStack(spacing: 8) {
+                        methodChip("ক্যাশ ফেরত দেব", value: "CASH_RETURN")
+                        methodChip("আমার ওয়ালেট থেকে কাটুন", value: "WALLET_DEDUCT")
+                    }
+                }
+                if let e = localError {
+                    Label(e, systemImage: "exclamationmark.triangle")
+                        .font(.caption2).foregroundStyle(OfficeFundPalette.red500)
+                }
+                OfficeFundSubmitButton(title: "হিসাব পাঠান", busy: vm.recSaving,
+                                       disabled: spentInt > advance.amount) {
+                    localError = nil
+                    if spentInt > advance.amount {
+                        localError = "খরচ অ্যাডভান্সের চেয়ে বেশি হতে পারে না।"
+                    } else {
+                        confirming = true
+                    }
+                }
+            }
+            .padding(18)
+        }
+        .presentationBackground { OfficeFundAurora() }
+        .interactiveDismissDisabled(vm.recSaving)
+        .onAppear { focused = true }
+        .confirmationDialog(
+            leftover > 0
+                ? "খরচ ৳\(spentInt.formatted()), বাকি ৳\(leftover.formatted()) (\(methodBn)) — হিসাব পাঠাবেন?"
+                : "খরচ ৳\(spentInt.formatted()), কিছু বাকি নেই — হিসাব পাঠাবেন?",
+            isPresented: $confirming, titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, হিসাব পাঠান") {
+                Task {
+                    if let err = await vm.reconcile(advance: advance, spent: spentInt,
+                                                    leftoverMethod: method) {
+                        localError = err
+                    } else {
+                        dismiss()
+                    }
+                }
+            }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+
+    /// The web's two leftover-method toggle buttons, as capsule chips.
+    private func methodChip(_ label: String, value: String) -> some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            method = value
+        } label: {
+            Text(label)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(method == value
+                                 ? OfficeFundPalette.accentText(colorScheme)
+                                 : Color.secondary)
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .background(method == value
+                            ? OfficeFundPalette.coral.opacity(colorScheme == .dark ? 0.28 : 0.14)
+                            : Color.white.opacity(colorScheme == .dark ? 0.08 : 0.45),
+                            in: Capsule())
+                .overlay(Capsule().strokeBorder(
+                    method == value ? OfficeFundPalette.coral.opacity(0.55)
+                                    : Color.white.opacity(colorScheme == .dark ? 0.10 : 0.4),
+                    lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 }
 

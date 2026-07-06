@@ -2,20 +2,28 @@
 //  PortalOfficeSwiftUI.swift
 //  ALMA ERP — the staff Office tab (/portal/office) as a native SwiftUI screen.
 //
-//  Mirrors the web office app's session-authenticated surface — same endpoints,
-//  same Bangla strings, same colours:
+//  Full ACTION PARITY with the web office app (owner instruction 2026-07-06):
+//  every staff action the web offers that is NOT camera/GPS/file-upload dependent
+//  is wired natively here. Same endpoints, same Bangla strings, same colours:
 //    GET  /api/assistant/office/my-tasks       → today's still-open tasks {tasks:[{id,title,type,serial}]}
-//    GET  /api/assistant/office/notifications  → {unread, items:[{id,taskId,kind,title,body,read,createdAt}]}
+//    GET  /api/assistant/office/thread?taskId= → {task,comments:[{id,authorType,body,createdAt}],events}
+//    POST /api/assistant/office/staff-action   → task actions (see below)
+//         · {action:'done', taskId}                              → mark done
+//         · {action:'comment', taskId, body}                     → text comment
+//         · {action:'update', taskId, body}                      → answer Boss's update request
+//         · {action:'self_create', title, detail}                → propose self-initiated work
+//    GET  /api/assistant/office/chat           → group feed {businessId, messages:[…]}
+//    POST /api/assistant/office/chat           → send a text message {body, attachments:[]}
+//    POST /api/assistant/office/chat/explain   → {taskId} — agent explains one task in the group
+//    GET  /api/assistant/office/notifications  → {unread, items:[…]}
 //    POST /api/assistant/office/notifications  → mark read ({} = all, {id} = one)
-//    POST /api/assistant/office/lunch          → {action:'start'|'end'} (45-min allowance;
-//                                                 start is idempotent and returns the open
-//                                                 row's startedAt, so the timer resumes)
-//  Blocks: header (kicker + date) · lunch card with live ৪৫-min countdown ·
-//  আজকের কাজ list · নোটিফিকেশন feed with mark-read · web escape hatch.
-//  NOT native (web escape instead): task detail/thread, proof photo upload,
-//  self-initiated tasks, group chat, motivation/performer hero (server-rendered
-//  only — no JSON endpoint), salah blocks (internal VPS-key routes, no session API).
-//  Carried lessons: ONE spinner per action, never a global overlay.
+//    POST /api/assistant/office/lunch          → {action:'start'|'end'} (45-min allowance)
+//  Blocks: header · lunch card · আজকের কাজ (tap → native detail sheet: thread + ✅ done +
+//  💬 comment + update answer) · নিজে থেকে কাজ composer · গ্রুপ চ্যাট sheet (send text +
+//  explain a task) · নোটিফিকেশন feed with mark-read · small web links for photo proof only.
+//  NOT native (web escape — needs the camera / file upload): proof-photo submission and
+//  chat image attachments. A small labeled link opens exactly those in the web app.
+//  Carried lessons: ONE spinner per action, never a global overlay. Chat sends don't confirm.
 //
 
 import SwiftUI
@@ -31,6 +39,7 @@ private enum PortalOfficePalette {
     static let amber500 = Color(red: 0.961, green: 0.620, blue: 0.043)       // #F59E0B
     static let emerald600 = Color(red: 0.020, green: 0.588, blue: 0.412)     // #059669
     static let green400 = Color(red: 0.290, green: 0.871, blue: 0.502)       // #4ADE80
+    static let violet = AlmaSwiftTheme.violet
 
     /// The web's accent-tinted text reads gold-dim on cream, gold-lt over dark aurora.
     static func accentText(_ scheme: ColorScheme) -> Color {
@@ -129,6 +138,70 @@ struct PortalOfficeLunchResponse: Decodable {
     }
 }
 
+/// One comment row of GET /api/assistant/office/thread — ThreadMessage on the server.
+struct PortalOfficeThreadMsg: Decodable, Identifiable, Equatable {
+    let id: String
+    let authorType: String
+    let body: String
+    let createdAt: String?
+
+    private enum Keys: String, CodingKey { case id, authorType, body, createdAt }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        authorType = (try? c.decode(String.self, forKey: .authorType)) ?? "staff"
+        body = (try? c.decode(String.self, forKey: .body)) ?? ""
+        createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
+    }
+}
+
+/// GET /api/assistant/office/thread → {task, comments:[…], events:[…]}.
+struct PortalOfficeThread: Decodable {
+    let comments: [PortalOfficeThreadMsg]
+    private enum Keys: String, CodingKey { case comments }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        comments = (try? c.decode([PortalOfficeThreadMsg].self, forKey: .comments)) ?? []
+    }
+}
+
+/// One group-chat message — ChatMessage on the server. `status == "pending"` rows
+/// are owner-only agent drafts; the native staff screen never receives them.
+struct PortalOfficeChatMsg: Decodable, Identifiable, Equatable {
+    let id: String
+    let authorType: String
+    let authorName: String
+    let body: String
+    let attachmentCount: Int
+    let status: String?
+    let createdAt: String?
+
+    private enum Keys: String, CodingKey { case id, authorType, authorName, body, attachments, status, createdAt }
+    private struct Blob: Decodable { init(from decoder: Decoder) throws {} }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        authorType = (try? c.decode(String.self, forKey: .authorType)) ?? "staff"
+        authorName = (try? c.decodeIfPresent(String.self, forKey: .authorName)) ?? "—"
+        body = (try? c.decode(String.self, forKey: .body)) ?? ""
+        attachmentCount = ((try? c.decodeIfPresent([Blob].self, forKey: .attachments)) ?? [])?.count ?? 0
+        status = try? c.decodeIfPresent(String.self, forKey: .status)
+        createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
+    }
+}
+
+struct PortalOfficeChatFeed: Decodable {
+    let messages: [PortalOfficeChatMsg]
+    private enum Keys: String, CodingKey { case messages }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        messages = (try? c.decode([PortalOfficeChatMsg].self, forKey: .messages)) ?? []
+    }
+}
+
+/// staff-action responses only carry {ok, status, …}; we just need the success flag.
+private struct PortalOfficeOk: Decodable {}
+
 // MARK: - View model
 
 @available(iOS 17.0, *)
@@ -139,7 +212,7 @@ final class PortalOfficeVM {
     var notices: [PortalOfficeNotice] = []
     var loading = false
     var error: String? = nil
-    var notice: String? = nil            // one-line info strip (lunch results etc.)
+    var notice: String? = nil            // one-line info strip (lunch / action results)
     var authExpired = false
 
     // Lunch — web LunchControl parity (45-min allowance, live countdown)
@@ -147,6 +220,20 @@ final class PortalOfficeVM {
     var lunchStartedAt: Date? = nil
     var lunchBusy = false
     var markingRead = false
+
+    // Task detail thread (web StaffDetail parity)
+    var thread: [PortalOfficeThreadMsg] = []
+    var threadLoading = false
+    var actionBusyTaskId: String? = nil  // per-task spinner (done / comment / update)
+
+    // Self-initiated proposal (web SelfInitiated parity)
+    var creatingSelf = false
+
+    // Group chat (web GroupChat parity)
+    var chat: [PortalOfficeChatMsg] = []
+    var chatLoading = false
+    var chatSending = false
+    var explainingTaskId: String? = nil
 
     func load() async {
         loading = true
@@ -232,9 +319,8 @@ final class PortalOfficeVM {
         guard !markingRead else { return }
         markingRead = true
         defer { markingRead = false }
-        struct Ok: Decodable {}
         do {
-            let _: Ok = try await AlmaAPI.shared.send(
+            let _: PortalOfficeOk = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/office/notifications", body: [String: String]())
             withAnimation(.snappy) {
                 for i in notices.indices { notices[i].read = true }
@@ -248,9 +334,8 @@ final class PortalOfficeVM {
     /// Tap one notice → mark just that one read (web onItem parity).
     func markRead(_ n: PortalOfficeNotice) async {
         guard !n.read else { return }
-        struct Ok: Decodable {}
         do {
-            let _: Ok = try await AlmaAPI.shared.send(
+            let _: PortalOfficeOk = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/office/notifications", body: ["id": n.id])
             withAnimation(.snappy) {
                 if let i = notices.firstIndex(where: { $0.id == n.id }) { notices[i].read = true }
@@ -258,6 +343,125 @@ final class PortalOfficeVM {
             }
         } catch {
             // best-effort
+        }
+    }
+
+    // ── Task detail thread (web StaffDetail — GET thread) ──
+
+    func loadThread(_ taskId: String) async {
+        threadLoading = true
+        thread = []
+        defer { threadLoading = false }
+        do {
+            let t: PortalOfficeThread = try await AlmaAPI.shared.get(
+                "/api/assistant/office/thread", query: ["taskId": taskId])
+            thread = t.comments
+        } catch {
+            if Self.isCancellation(error) { return }
+            // leave the thread empty; the sheet shows "এখনো কোনো মন্তব্য নেই"
+        }
+    }
+
+    /// One staff-action POST — mark done / text comment / update answer.
+    /// `action` is 'done' | 'comment' | 'update'. Body carried in the web's `body` field.
+    /// Returns success so the caller can clear its composer.
+    @discardableResult
+    func taskAction(_ taskId: String, action: String, body: String = "") async -> Bool {
+        guard actionBusyTaskId == nil else { return false }
+        actionBusyTaskId = taskId
+        defer { actionBusyTaskId = nil }
+        do {
+            var payload: [String: String] = ["action": action, "taskId": taskId]
+            if !body.isEmpty { payload["body"] = body }
+            let _: PortalOfficeOk = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/office/staff-action", body: payload)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            switch action {
+            case "done":
+                notice = "✅ কাজটি সম্পন্ন হিসেবে পাঠানো হয়েছে — Boss অনুমোদন দিলে চূড়ান্ত হবে।"
+                await load()   // done drops it from the open list
+            case "comment": notice = "💬 কমেন্ট পাঠানো হয়েছে।"
+            case "update":  notice = "📤 আপডেট পাঠানো হয়েছে।"
+            default: break
+            }
+            await loadThread(taskId)   // reflect the new comment in the open sheet
+            return true
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
+            return false
+        }
+    }
+
+    /// Web SelfInitiated — propose an extra task the staff did on their own initiative.
+    @discardableResult
+    func createSelfInitiated(title: String, detail: String) async -> Bool {
+        guard !creatingSelf else { return false }
+        creatingSelf = true
+        defer { creatingSelf = false }
+        do {
+            var payload: [String: String] = ["action": "self_create", "title": title]
+            if !detail.isEmpty { payload["detail"] = detail }
+            let _: PortalOfficeOk = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/office/staff-action", body: payload)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = "✨ নিজ উদ্যোগের কাজ পাঠানো হয়েছে — Boss অনুমোদন দিলে পারফরম্যান্সে +পয়েন্ট।"
+            return true
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
+            return false
+        }
+    }
+
+    // ── Group chat (web GroupChat — GET/POST chat, POST chat/explain) ──
+
+    func loadChat() async {
+        chatLoading = true
+        defer { chatLoading = false }
+        do {
+            let feed: PortalOfficeChatFeed = try await AlmaAPI.shared.get("/api/assistant/office/chat")
+            // Staff never see 'pending' agent drafts, but filter defensively.
+            chat = feed.messages.filter { $0.status != "pending" }
+        } catch {
+            if Self.isCancellation(error) { return }
+            // best-effort; keep whatever we had
+        }
+    }
+
+    /// Send a TEXT message to the group. Images stay web (needs the file picker).
+    @discardableResult
+    func sendChat(_ text: String) async -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !chatSending else { return false }
+        chatSending = true
+        defer { chatSending = false }
+        do {
+            // Web posts { body, attachments: [] }; native sends text only.
+            struct Payload: Encodable { let body: String; let attachments: [String] }
+            let _: PortalOfficeOk = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/office/chat", body: Payload(body: trimmed, attachments: []))
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await loadChat()
+            return true
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            return false
+        }
+    }
+
+    /// Web "বুঝিয়ে দিন" — staff asks the agent to explain one task in the group.
+    func explainTask(_ taskId: String) async {
+        guard explainingTaskId == nil else { return }
+        explainingTaskId = taskId
+        defer { explainingTaskId = nil }
+        do {
+            let _: PortalOfficeOk = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/office/chat/explain", body: ["taskId": taskId])
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await loadChat()
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
         }
     }
 }
@@ -268,6 +472,9 @@ final class PortalOfficeVM {
 struct PortalOfficeScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = PortalOfficeVM()
+    @State private var detailTask: PortalOfficeTask? = nil
+    @State private var showSelfCreate = false
+    @State private var showChat = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -282,6 +489,7 @@ struct PortalOfficeScreen: View {
                     loadingRows
                 } else {
                     tasksCard
+                    chatCard
                     noticesCard
                 }
                 webEscape
@@ -294,6 +502,21 @@ struct PortalOfficeScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task { await vm.load() }
+        .sheet(item: $detailTask) { t in
+            PortalTaskDetailSheet(task: t, vm: vm, openWeb: openWeb)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showSelfCreate) {
+            PortalSelfInitiatedSheet(vm: vm)
+                .presentationDetents([.height(360)])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showChat) {
+            PortalGroupChatSheet(vm: vm, openWeb: openWeb)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     // ── Header (web .phead parity: kicker + title + sub + Bangla date) ──
@@ -401,10 +624,25 @@ struct PortalOfficeScreen: View {
                 ForEach(vm.tasks) { t in
                     taskRow(t)
                 }
-                // Proof photos, comments and ✅ done live in the web office app.
-                Text("রেজাল্ট জমা দিতে বা কমেন্ট করতে কাজটিতে চাপ দিন।")
+                Text("রেজাল্ট জমা দিতে, কমেন্ট করতে বা ✅ সম্পন্ন দিতে কাজটিতে চাপ দিন।")
                     .font(.caption2).foregroundStyle(.secondary)
             }
+            // ── নিজে থেকে একটা কাজ (web SelfInitiated composer) ──
+            Button {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                showSelfCreate = true
+            } label: {
+                Label("✨ নিজে থেকে একটা কাজ করেছি — জমা দিন", systemImage: "plus.circle")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(PortalOfficePalette.violet)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(PortalOfficePalette.violet.opacity(0.12), in: Capsule())
+                    .overlay(Capsule().strokeBorder(PortalOfficePalette.violet.opacity(0.4),
+                                                    style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 2)
         }
         .padding(14)
         .portalOfficeGlass(colorScheme, corner: 16)
@@ -413,8 +651,7 @@ struct PortalOfficeScreen: View {
     private func taskRow(_ t: PortalOfficeTask) -> some View {
         Button {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-            // Submission (photos/comments/done) is the web app's job — deep-drop there.
-            openWeb("/portal/office", "Office")
+            detailTask = t
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(PortalOfficeFormat.bn(t.serial ?? 0))
@@ -433,12 +670,39 @@ struct PortalOfficeScreen: View {
                     }
                 }
                 Spacer(minLength: 4)
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                if vm.actionBusyTaskId == t.id {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                }
             }
             .padding(.vertical, 4)
         }
         .buttonStyle(.plain)
+    }
+
+    // ── গ্রুপ চ্যাট (web GroupChat — open the native chat sheet) ──
+
+    private var chatCard: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            showChat = true
+        } label: {
+            HStack(spacing: 10) {
+                officeBadge("bubble.left.and.bubble.right")
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("অফিস গ্রুপ চ্যাট").font(.footnote.weight(.semibold))
+                    Text("● Agent, আপনি, টিম").font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(14)
+        .portalOfficeGlass(colorScheme, corner: 16)
     }
 
     // ── নোটিফিকেশন (GET/POST notifications — web NotifBell parity) ──
@@ -587,13 +851,406 @@ struct PortalOfficeScreen: View {
         Button {
             openWeb("/portal/office", "Office")
         } label: {
-            Label("পুরো অফিস হাব (চ্যাট · ছবি জমা · সবকিছু) — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
+            Label("ওয়েব ভার্সন", systemImage: "safari")
+                .font(.caption2)
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .padding(.vertical, 6)
+        .foregroundStyle(.secondary.opacity(0.7))
+        .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Task detail sheet (web StaffDetail — thread + ✅ done + 💬 comment + update)
+
+@available(iOS 17.0, *)
+private struct PortalTaskDetailSheet: View {
+    let task: PortalOfficeTask
+    @Bindable var vm: PortalOfficeVM
+    let openWeb: (_ path: String, _ title: String) -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    private var busy: Bool { vm.actionBusyTaskId == task.id }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    // Task header
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(task.title).font(.headline.weight(.bold))
+                        if let type = task.type, !type.isEmpty {
+                            Text("📦 \(type)")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .padding(.horizontal, 10).padding(.vertical, 4)
+                                .background(Color.primary.opacity(0.05), in: Capsule())
+                        }
+                    }
+
+                    // Thread (web .msgs)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("আলোচনা").font(.caption.weight(.bold)).textCase(.uppercase)
+                            .foregroundStyle(.secondary)
+                        if vm.threadLoading {
+                            HStack { ProgressView().controlSize(.small); Text("লোড হচ্ছে…").font(.caption).foregroundStyle(.secondary) }
+                        } else if vm.thread.isEmpty {
+                            Text("এখনো কোনো মন্তব্য নেই")
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            ForEach(vm.thread) { c in threadBubble(c) }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .portalOfficeGlass(colorScheme, corner: 14)
+
+                    // Compose: comment / update answer
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("📎 রেজাল্ট / কমেন্ট জমা দিন").font(.footnote.weight(.semibold))
+                        HStack(spacing: 8) {
+                            TextField("কমেন্ট লিখুন…", text: $draft, axis: .vertical)
+                                .lineLimit(1...4)
+                                .focused($focused)
+                                .font(.footnote)
+                                .padding(.horizontal, 12).padding(.vertical, 9)
+                                .background(Color.primary.opacity(0.05),
+                                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            Button {
+                                let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                                guard !text.isEmpty else { return }
+                                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                                Task {
+                                    // Answer a Boss update request as 'update'; a plain note as 'comment'.
+                                    if await vm.taskAction(task.id, action: "comment", body: text) { draft = "" }
+                                }
+                            } label: {
+                                if busy {
+                                    ProgressView().controlSize(.small).frame(width: 60)
+                                } else {
+                                    Text("পাঠান").font(.footnote.weight(.semibold))
+                                        .foregroundStyle(PortalOfficePalette.accentText(colorScheme))
+                                        .padding(.horizontal, 14).padding(.vertical, 9)
+                                        .background(PortalOfficePalette.coral.opacity(0.14), in: Capsule())
+                                        .overlay(Capsule().strokeBorder(PortalOfficePalette.coral.opacity(0.35), lineWidth: 1))
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(busy || draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+
+                        // ✅ Mark done (web "✅ সম্পন্ন হিসেবে চিহ্নিত করুন")
+                        Button {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            Task {
+                                if await vm.taskAction(task.id, action: "done") { dismiss() }
+                            }
+                        } label: {
+                            if busy {
+                                ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 9)
+                            } else {
+                                Label("✅ সম্পন্ন হিসেবে চিহ্নিত করুন", systemImage: "checkmark.seal")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(PortalOfficePalette.emerald600)
+                                    .frame(maxWidth: .infinity).padding(.vertical, 10)
+                                    .background(PortalOfficePalette.emerald600.opacity(0.13), in: Capsule())
+                                    .overlay(Capsule().strokeBorder(PortalOfficePalette.emerald600.opacity(0.35), lineWidth: 1))
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(busy)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .portalOfficeGlass(colorScheme, corner: 14)
+
+                    // Photo proof stays web (needs the camera / file upload).
+                    Button {
+                        openWeb("/portal/office", "Office")
+                    } label: {
+                        Label("📷 ছবি জমা দিতে ওয়েবে খুলুন", systemImage: "safari")
+                            .font(.caption).frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 2)
+
+                    Text("Boss অনুমোদন দিলে কাজটি সম্পন্ন হবে। নোটিফিকেশন এই অ্যাপে ও টেলিগ্রামে পাবেন।")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                .padding(16)
+            }
+            .background(PortalOfficeAurora())
+            .navigationTitle("কাজের বিস্তারিত")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("বন্ধ") { dismiss() }
+                }
+            }
+        }
+        .task { await vm.loadThread(task.id) }
+    }
+
+    private func threadBubble(_ c: PortalOfficeThreadMsg) -> some View {
+        let isOwner = c.authorType == "owner"
+        let isAgent = c.authorType == "agent"
+        let who = isOwner ? "Boss" : isAgent ? "Agent" : "আপনি"
+        return HStack(alignment: .top, spacing: 8) {
+            Text(isOwner ? "M" : isAgent ? "🤖" : "•")
+                .font(.caption2.weight(.bold))
+                .frame(width: 24, height: 24)
+                .background(Color.primary.opacity(0.06), in: Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(who).font(.caption2.weight(.bold))
+                    Text(PortalOfficeFormat.timeAgo(c.createdAt)).font(.caption2).foregroundStyle(.secondary)
+                }
+                Text(c.body).font(.caption).foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+// MARK: - Self-initiated sheet (web SelfInitiated — title + optional detail)
+
+@available(iOS 17.0, *)
+private struct PortalSelfInitiatedSheet: View {
+    @Bindable var vm: PortalOfficeVM
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dismiss) private var dismiss
+    @State private var title = ""
+    @State private var detail = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("✨ নিজে থেকে একটা কাজ করেছি")
+                    .font(.headline.weight(.bold))
+                Text("Boss অনুমোদন দিলে পারফরম্যান্সে +পয়েন্ট।")
+                    .font(.caption).foregroundStyle(.secondary)
+
+                TextField("কাজের শিরোনাম", text: $title)
+                    .focused($focused)
+                    .font(.footnote)
+                    .padding(.horizontal, 12).padding(.vertical, 11)
+                    .background(Color.primary.opacity(0.05),
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                TextField("বিস্তারিত (ঐচ্ছিক)", text: $detail, axis: .vertical)
+                    .lineLimit(2...5)
+                    .font(.footnote)
+                    .padding(.horizontal, 12).padding(.vertical, 11)
+                    .background(Color.primary.opacity(0.05),
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                Button {
+                    let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !t.isEmpty else { return }
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                    Task {
+                        if await vm.createSelfInitiated(title: t,
+                                                        detail: detail.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                            dismiss()
+                        }
+                    }
+                } label: {
+                    if vm.creatingSelf {
+                        ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 10)
+                    } else {
+                        Text("পাঠান").font(.footnote.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity).padding(.vertical, 12)
+                            .background(PortalOfficePalette.violet, in: Capsule())
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.creatingSelf || title.trimmingCharacters(in: .whitespaces).isEmpty)
+
+                Spacer()
+            }
+            .padding(18)
+            .background(PortalOfficeAurora())
+            .navigationTitle("নতুন কাজ")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("বাতিল") { dismiss() } }
+            }
+        }
+        .onAppear { focused = true }
+    }
+}
+
+// MARK: - Group chat sheet (web GroupChat — send text + explain a task)
+
+@available(iOS 17.0, *)
+private struct PortalGroupChatSheet: View {
+    @Bindable var vm: PortalOfficeVM
+    let openWeb: (_ path: String, _ title: String) -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft = ""
+    @State private var tasksOpen = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 10) {
+                            if vm.chatLoading && vm.chat.isEmpty {
+                                HStack { ProgressView().controlSize(.small); Text("লোড হচ্ছে…").font(.caption).foregroundStyle(.secondary) }
+                                    .padding(.top, 20)
+                            } else if vm.chat.isEmpty {
+                                Text("— এখনো কোনো বার্তা নেই। প্রথম বার্তাটি লিখুন। —")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity).padding(.top, 24)
+                            } else {
+                                ForEach(vm.chat) { m in chatBubble(m) }
+                            }
+                            Color.clear.frame(height: 1).id("bottom")
+                        }
+                        .padding(14)
+                    }
+                    .onChange(of: vm.chat.count) { _, _ in
+                        withAnimation(.snappy) { proxy.scrollTo("bottom", anchor: .bottom) }
+                    }
+                }
+
+                // "আজকের কাজ" explain picker (staff only tool)
+                if tasksOpen {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("আজকের কাজ — যেটা বুঝছেন না, সেটায় চাপ দিন")
+                            .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                        if vm.tasks.isEmpty {
+                            Text("আজ আপনার কোনো বাকি কাজ নেই।")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        } else {
+                            ForEach(vm.tasks) { t in
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                                    Task {
+                                        await vm.explainTask(t.id)
+                                        tasksOpen = false
+                                    }
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Text(PortalOfficeFormat.bn(t.serial ?? 0))
+                                            .font(.caption2.weight(.bold))
+                                            .foregroundStyle(PortalOfficePalette.accentText(colorScheme))
+                                            .frame(width: 22, height: 22)
+                                            .background(PortalOfficePalette.coral.opacity(0.16), in: Circle())
+                                        Text(t.title).font(.caption).foregroundStyle(.primary).lineLimit(1)
+                                        Spacer(minLength: 4)
+                                        if vm.explainingTaskId == t.id {
+                                            ProgressView().controlSize(.small)
+                                        } else {
+                                            Text("বুঝিয়ে দিন")
+                                                .font(.caption2.weight(.semibold))
+                                                .foregroundStyle(PortalOfficePalette.accentText(colorScheme))
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(vm.explainingTaskId != nil)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(.ultraThinMaterial)
+                }
+
+                // Composer (web .cp-foot — text only; image attach stays web)
+                HStack(spacing: 8) {
+                    Button {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        withAnimation(.snappy) { tasksOpen.toggle() }
+                    } label: {
+                        Image(systemName: "list.bullet.clipboard")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(tasksOpen ? PortalOfficePalette.accentText(colorScheme) : .secondary)
+                            .frame(width: 36, height: 36)
+                            .background(Color.primary.opacity(0.05), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    Button {
+                        openWeb("/portal/office", "Office")   // image attach needs the file picker
+                    } label: {
+                        Image(systemName: "camera")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 36, height: 36)
+                            .background(Color.primary.opacity(0.05), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    TextField("গ্রুপে মেসেজ লিখুন…", text: $draft, axis: .vertical)
+                        .lineLimit(1...4)
+                        .focused($focused)
+                        .font(.footnote)
+                        .padding(.horizontal, 12).padding(.vertical, 9)
+                        .background(Color.primary.opacity(0.05),
+                                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    Button {
+                        let text = draft
+                        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                        Task { if await vm.sendChat(text) { draft = "" } }
+                    } label: {
+                        if vm.chatSending {
+                            ProgressView().controlSize(.small).frame(width: 52)
+                        } else {
+                            Text("পাঠান").font(.footnote.weight(.semibold))
+                                .foregroundStyle(PortalOfficePalette.accentText(colorScheme))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.chatSending || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .padding(12)
+                .background(.ultraThinMaterial)
+            }
+            .background(PortalOfficeAurora())
+            .navigationTitle("অফিস গ্রুপ")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("বন্ধ") { dismiss() } }
+            }
+        }
+        .task { await vm.loadChat() }
+    }
+
+    private func chatBubble(_ m: PortalOfficeChatMsg) -> some View {
+        let isAgent = m.authorType == "agent"
+        let isOwner = m.authorType == "owner"
+        let name = isAgent ? "Agent" : isOwner ? "Boss" : m.authorName
+        return HStack(alignment: .top, spacing: 8) {
+            Text(isAgent ? "🤖" : isOwner ? "M" : (m.authorName.first.map(String.init) ?? "•").uppercased())
+                .font(.caption2.weight(.bold))
+                .frame(width: 26, height: 26)
+                .background(Color.primary.opacity(0.06), in: Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(name).font(.caption2.weight(.bold))
+                    Text(PortalOfficeFormat.timeAgo(m.createdAt)).font(.caption2).foregroundStyle(.secondary)
+                }
+                if m.attachmentCount > 0 {
+                    Label("\(PortalOfficeFormat.bn(m.attachmentCount)) ছবি — ওয়েবে দেখুন",
+                          systemImage: "photo")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                if !m.body.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Text(m.body).font(.caption).foregroundStyle(.primary)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+            Spacer(minLength: 0)
+        }
     }
 }
 

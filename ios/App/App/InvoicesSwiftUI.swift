@@ -4,14 +4,16 @@
 //
 //  Mirrors the web /invoice page — same endpoints, same colours, same blocks:
 //    GET   /api/invoice?business_id=…&search=…&payment_status=…   → registry + totals
+//    POST  /api/invoice  {id, allow_regenerate, business_id}      → generate / regenerate
 //    PATCH /api/invoice  {id, payment_status}                     → payment status change
 //    GET   /api/orders/orders?business_id=…&status=Delivered      → pending-invoice KPI
 //  Web-parity blocks: 3 KPI cards (Delivered/Invoiced/Pending) · search · payment-status
-//  filter chips (All/Unpaid/Partial/Paid/Void) · "Pending Invoices" amber section ·
-//  "Invoice Registry" cards (invoice no · order id · payment chip · customer · amount ·
-//  generatedBy · last event) · detail sheet with payment-status change + native ShareLink
-//  on the public /invoice/share/alma-<orderId> URL (the web's copy-link target).
-//  PDF preview / generate / regenerate stay on the web (escape hatch).
+//  filter chips (All/Unpaid/Partial/Paid/Void) · "Pending Invoices" amber section with
+//  native Generate (confirm dialog, per-row spinner) · "Invoice Registry" cards ·
+//  detail sheet with payment-status change (VOID confirm-guarded), Regenerate
+//  (confirm-guarded, web message verbatim) + native ShareLink on the public
+//  /invoice/share/alma-<orderId> URL (the web's copy-link target).
+//  PDF PREVIEW stays web — small per-row "PDF" links open the share page in the web view.
 //  Carried lessons: ONE spinner per row, never a global overlay.
 //
 
@@ -177,6 +179,30 @@ struct InvoicePatchResponse: Decodable {
     }
 }
 
+/// POST /api/invoice (generate / regenerate) answers flat snake_case fields —
+/// the same shape the web's api.mutations.generateInvoice consumes.
+struct InvoiceGenerateResponse: Decodable {
+    let ok: Bool
+    let invoiceNumber: String?
+    let duplicate: Bool
+    let driveSync: String?
+    let errorMessage: String?
+
+    private enum Keys: String, CodingKey {
+        case ok, error, duplicate
+        case invoiceNumber = "invoice_number"
+        case driveSync = "drive_sync"
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        ok = (try? c.decodeIfPresent(Bool.self, forKey: .ok)) ?? true
+        invoiceNumber = try? c.decodeIfPresent(String.self, forKey: .invoiceNumber)
+        duplicate = (try? c.decodeIfPresent(Bool.self, forKey: .duplicate)) ?? false
+        driveSync = try? c.decodeIfPresent(String.self, forKey: .driveSync)
+        errorMessage = try? c.decodeIfPresent(String.self, forKey: .error)
+    }
+}
+
 /// Slim delivered-order row — only the fields the web page uses to compute
 /// "Pending Invoices" (delivered orders without a registry record / invoice_num).
 struct InvoiceOrderLite: Decodable, Identifiable, Equatable {
@@ -231,6 +257,7 @@ final class InvoicesVM {
     var search = ""
     var loading = false
     var busyIds: Set<String> = []         // per-row spinners, never a global one
+    var busyOrderIds: Set<String> = []    // generate/regenerate in-flight, keyed by order id
     var error: String? = nil
     var notice: String? = nil             // success line (the web's toast)
     var authExpired = false
@@ -294,6 +321,71 @@ final class InvoicesVM {
         return (error as? URLError)?.code == .cancelled
     }
 
+    /// The web's generateInvoice mutation verbatim:
+    /// POST /api/invoice { id, allow_regenerate, business_id } — generate for a pending
+    /// delivered order (allowRegenerate=false) or regenerate an existing record (true).
+    func generate(orderId: String, allowRegenerate: Bool) async {
+        guard !busyOrderIds.contains(orderId) else { return }
+        busyOrderIds.insert(orderId)
+        notice = nil
+        error = nil
+        defer { busyOrderIds.remove(orderId) }
+        do {
+            let resp: InvoiceGenerateResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/invoice",
+                body: [
+                    "id": AnyEncodable(orderId),
+                    "allow_regenerate": AnyEncodable(allowRegenerate),
+                    "business_id": AnyEncodable("ALMA_LIFESTYLE"),
+                ])
+            guard resp.ok else {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                self.error = resp.errorMessage ?? "Invoice generation failed"
+                return
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            let number = resp.invoiceNumber ?? ""
+            // Web toast strings verbatim.
+            if allowRegenerate {
+                notice = "Regenerated \(number.isEmpty ? orderId : number)"
+            } else if resp.duplicate {
+                notice = "Invoice already exists: \(number)"
+            } else if resp.driveSync == "pending" {
+                notice = "Invoice \(number) ready — Google Drive upload finishing in background"
+            } else {
+                notice = "Saved invoice: \(number)"
+            }
+            await load()
+        } catch {
+            // The native URLSession caps requests at 20s while PDF + Drive can take
+            // longer (the web waits 75s) — a timeout usually means the server is still
+            // finishing, so refresh instead of scaring the owner with an error.
+            if Self.isTimeout(error) {
+                notice = "Invoice generation is still running on the server — pull to refresh in a moment."
+                await load()
+            } else {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                self.error = Self.serverMessage(error)
+            }
+        }
+    }
+
+    static func isTimeout(_ error: Error) -> Bool {
+        if case AlmaAPIError.transport(let t) = error, (t as? URLError)?.code == .timedOut { return true }
+        return (error as? URLError)?.code == .timedOut
+    }
+
+    /// Prefer the API's own { error } message over the raw HTTP dump.
+    static func serverMessage(_ error: Error) -> String {
+        if case AlmaAPIError.http(_, let body) = error,
+           let data = body.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let msg = obj["error"] as? String, !msg.isEmpty {
+            return msg
+        }
+        return (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
+    }
+
     /// Same PATCH body the web sends: { id, payment_status }; optimistic, reverts on error.
     func setPayment(_ invoice: InvoiceRecord, to status: String) async {
         guard invoice.paymentStatus != status, !busyIds.contains(invoice.id) else { return }
@@ -319,7 +411,7 @@ final class InvoicesVM {
         } catch {
             replaceStatus(invoice.id, with: previous)
             UINotificationFeedbackGenerator().notificationOccurred(.error)
-            self.error = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
+            self.error = Self.serverMessage(error)
         }
     }
 
@@ -446,16 +538,17 @@ struct InvoicesScreen: View {
         }
     }
 
-    // ── Pending Invoices (web amber section — PDF preview stays on web) ──
+    // ── Pending Invoices (web amber section — native Generate, PDF preview stays web) ──
 
     @ViewBuilder private var pendingSection: some View {
         if !vm.pendingOrders.isEmpty && vm.statusFilter.isEmpty {
             sectionHeader("Pending Invoices", tint: InvoicePalette.amber600)
             ForEach(vm.pendingOrders) { order in
-                InvoicePendingCard(order: order) {
-                    // Invoice generation is a web-only flow (React-PDF + branding).
-                    openWeb("/invoice", "Invoices")
-                }
+                InvoicePendingCard(
+                    order: order,
+                    busy: vm.busyOrderIds.contains(order.id),
+                    onGenerate: { Task { await vm.generate(orderId: order.id, allowRegenerate: false) } },
+                    onWebPreview: { openWeb("/invoice", "Invoices") })
             }
         }
     }
@@ -465,7 +558,9 @@ struct InvoicesScreen: View {
     @ViewBuilder private var registrySection: some View {
         sectionHeader("Invoice Registry", tint: InvoicePalette.emerald600)
         ForEach(vm.invoices) { inv in
-            InvoiceCard(invoice: inv, busy: vm.busyIds.contains(inv.id)) {
+            InvoiceCard(invoice: inv,
+                        busy: vm.busyIds.contains(inv.id) || vm.busyOrderIds.contains(inv.orderId),
+                        onOpenPDF: { openWeb(inv.sharePath, inv.invoiceNumber) }) {
                 selected = inv
             }
         }
@@ -549,8 +644,9 @@ struct InvoicesScreen: View {
         Button {
             openWeb("/invoice", "Invoices")
         } label: {
-            Label("ইনভয়েস তৈরি / PDF প্রিভিউ — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
+            Text("ওয়েব ভার্সন")
+                .font(.caption2)
+                .underline()
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
@@ -565,6 +661,7 @@ struct InvoicesScreen: View {
 private struct InvoiceCard: View {
     let invoice: InvoiceRecord
     let busy: Bool
+    let onOpenPDF: () -> Void
     let onTap: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
@@ -606,6 +703,17 @@ private struct InvoiceCard: View {
                     Text("Updating…").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
                 }
                 Spacer()
+                // PDF preview stays on the web — small per-row link to the share page.
+                Button {
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                    onOpenPDF()
+                } label: {
+                    Label("PDF", systemImage: "doc.richtext")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8).padding(.vertical, 5)
+                }
+                .buttonStyle(.plain)
                 if let url = invoice.publicShareURL {
                     ShareLink(item: url) {
                         Label("Share", systemImage: "square.and.arrow.up")
@@ -638,19 +746,19 @@ private struct InvoiceCard: View {
     }
 }
 
-// MARK: - Pending order card (web amber "Pending Invoices" row)
+// MARK: - Pending order card (web amber "Pending Invoices" row — native Generate)
 
 @available(iOS 17.0, *)
 private struct InvoicePendingCard: View {
     let order: InvoiceOrderLite
-    let onPreview: () -> Void
+    let busy: Bool
+    let onGenerate: () -> Void
+    let onWebPreview: () -> Void
     @Environment(\.colorScheme) private var colorScheme
+    @State private var confirmGenerate = false
 
     var body: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-            onPreview()
-        } label: {
+        VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(order.id)
@@ -669,18 +777,51 @@ private struct InvoicePendingCard: View {
                         .font(.callout.weight(.bold).monospacedDigit())
                     Text(order.date ?? "")
                         .font(.caption2).foregroundStyle(.secondary)
-                    Text("Preview PDF →")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(InvoicePalette.amber600)
                 }
             }
-            .padding(14)
-            .invoicesGlass(colorScheme, corner: 16)
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(InvoicePalette.amber500.opacity(0.35), lineWidth: 1))
+            HStack(spacing: 8) {
+                // The web's generate POST, native — confirm first, per-row spinner.
+                Button {
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                    confirmGenerate = true
+                } label: {
+                    HStack(spacing: 6) {
+                        if busy { ProgressView().controlSize(.mini) }
+                        Text(busy ? "Generating…" : "ইনভয়েস তৈরি করুন")
+                            .font(.caption.weight(.bold))
+                    }
+                    .foregroundStyle(InvoicePalette.amber600)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(InvoicePalette.amber500.opacity(0.14), in: Capsule())
+                    .overlay(Capsule().strokeBorder(InvoicePalette.amber500.opacity(0.4), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+                .confirmationDialog(
+                    "Order \(order.id) — ইনভয়েস তৈরি করবেন?",
+                    isPresented: $confirmGenerate, titleVisibility: .visible
+                ) {
+                    Button("ইনভয়েস তৈরি করুন") { onGenerate() }
+                    Button("বাতিল", role: .cancel) {}
+                }
+                Spacer()
+                // PDF preview is a web-only flow (React-PDF + branding) — small link.
+                Button {
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                    onWebPreview()
+                } label: {
+                    Text("PDF প্রিভিউ — ওয়েব ভার্সন")
+                        .font(.caption2)
+                        .underline()
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.primary)
+        .padding(14)
+        .invoicesGlass(colorScheme, corner: 16)
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(InvoicePalette.amber500.opacity(0.35), lineWidth: 1))
     }
 }
 
@@ -693,26 +834,69 @@ private struct InvoiceDetailSheet: View {
     let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @State private var confirmVoid = false
+    @State private var confirmRegenerate = false
 
     /// Live copy — payment changes made in the sheet reflect immediately.
     private var current: InvoiceRecord {
         vm.invoices.first { $0.id == invoice.id } ?? invoice
     }
     private var busy: Bool { vm.busyIds.contains(invoice.id) }
+    private var busyGen: Bool { vm.busyOrderIds.contains(invoice.orderId) }
+    /// Web parity: Regenerate only offered while the delivered order still exists.
+    private var hasOrder: Bool { vm.deliveredOrders.contains { $0.id == invoice.orderId } }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
+                if let ok = vm.notice {
+                    Label(ok, systemImage: "checkmark.circle")
+                        .font(.footnote).foregroundStyle(InvoicePalette.emerald600)
+                }
+                if let err = vm.error {
+                    Label(err, systemImage: "exclamationmark.triangle")
+                        .font(.footnote).foregroundStyle(InvoicePalette.red500)
+                }
                 infoRows
                 paymentPicker
                 if !current.events.isEmpty { eventsCard }
                 shareActions
+                regenerateSection
                 webLink
             }
             .padding(18)
         }
         .presentationBackground { InvoicesAurora() }
+    }
+
+    /// The web's per-row Regenerate button (danger) — confirm message verbatim.
+    @ViewBuilder private var regenerateSection: some View {
+        if hasOrder {
+            Button {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                confirmRegenerate = true
+            } label: {
+                HStack(spacing: 6) {
+                    if busyGen { ProgressView().controlSize(.small) }
+                    Label(busyGen ? "Regenerating…" : "Regenerate", systemImage: "arrow.clockwise")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .frame(maxWidth: .infinity).padding(.vertical, 4)
+            }
+            .buttonStyle(.bordered)
+            .tint(InvoicePalette.red500)
+            .disabled(busyGen)
+            .confirmationDialog(
+                "Regenerate invoice for order \(current.orderId)? The existing registry record will be updated and the event will be audited.",
+                isPresented: $confirmRegenerate, titleVisibility: .visible
+            ) {
+                Button("Regenerate", role: .destructive) {
+                    Task { await vm.generate(orderId: current.orderId, allowRegenerate: true) }
+                }
+                Button("বাতিল", role: .cancel) {}
+            }
+        }
     }
 
     private var header: some View {
@@ -775,6 +959,15 @@ private struct InvoiceDetailSheet: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .invoicesGlass(colorScheme, corner: 14)
+        .confirmationDialog(
+            "\(current.invoiceNumber) — ইনভয়েসটি VOID করবেন?",
+            isPresented: $confirmVoid, titleVisibility: .visible
+        ) {
+            Button("VOID করুন", role: .destructive) {
+                Task { await vm.setPayment(current, to: "VOID") }
+            }
+            Button("বাতিল", role: .cancel) {}
+        }
     }
 
     private func statusOption(_ status: String) -> some View {
@@ -782,7 +975,12 @@ private struct InvoiceDetailSheet: View {
         let tint = InvoicePalette.payment(status)
         return Button {
             UISelectionFeedbackGenerator().selectionChanged()
-            Task { await vm.setPayment(current, to: status) }
+            // Voiding is destructive — confirm first (web offers it raw in a Select).
+            if status == "VOID", current.paymentStatus != "VOID" {
+                confirmVoid = true
+            } else {
+                Task { await vm.setPayment(current, to: status) }
+            }
         } label: {
             Text(status.capitalized)
                 .font(.caption2.weight(active ? .bold : .semibold))
@@ -868,8 +1066,9 @@ private struct InvoiceDetailSheet: View {
                 dismiss()
                 openWeb("/invoice", "Invoices")
             } label: {
-                Label("সব অপশন — ওয়েবে খুলুন", systemImage: "safari")
-                    .font(.footnote)
+                Text("ওয়েব ভার্সন")
+                    .font(.caption2)
+                    .underline()
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.plain)

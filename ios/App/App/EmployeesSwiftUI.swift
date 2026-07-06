@@ -10,9 +10,20 @@
 //  filter · contact-list rows (photo avatar via /api/users/{id}/profile-image, status
 //  capsule, Linked marker) · native detail sheet with profile header, tel:///WhatsApp,
 //  wallet summary strip (Bangla balance note verbatim), attendance summary + recent
-//  rows, recent wallet ledger. Mutating actions (add/edit employee, payroll entry,
-//  salary edit/correction, account linking) stay on the web escape hatch.
-//  Carried lessons: lenient per-field decoding, ONE spinner scope, cancellation-safe
+//  rows, recent wallet ledger + legacy GAS payroll history.
+//  ACTION PARITY (2026-07-06, owner order — every web option works natively):
+//    POST  /api/hr/employees                                    → add employee (incl. create-from-user)
+//    PATCH /api/hr/employees/link                               → link_user_to_employee / clear_user_link
+//    POST  /api/hr/payroll                                      → payroll entry (deposit/advance/salary_payment/adjustment)
+//    PATCH /api/hr/employees/{emp_id}/salary                    → edit monthly salary
+//    POST  /api/payroll/salary-corrections                      → salary correction request (approvals-gated, like web)
+//    POST  /api/payroll/wallet/entries/reverse-accrual          → reverse a SALARY_ACCRUAL
+//    DELETE /api/attendance/{recordId}                          → reset one attendance day
+//    GET   /api/approvals?status=PENDING&module=PAYROLL         → pending SALARY_CORRECTION rows
+//  Money/destructive writes go through Bangla confirmationDialogs (employee name +
+//  amount); bodies match the web handlers verbatim. Salary slip PDF + profile photo
+//  upload stay web-only (client-side PDF/upload) behind a small "ওয়েব ভার্সন" link.
+//  Carried lessons: lenient per-field decoding, per-row busy state, cancellation-safe
 //  .refreshable, private renamed aurora/glass/shimmer copies (parallel-session rule).
 //
 
@@ -96,21 +107,52 @@ struct EmployeeRosterItem: Decodable, Identifiable, Equatable {
     static func == (a: EmployeeRosterItem, b: EmployeeRosterItem) -> Bool { a.empId == b.empId }
 }
 
-/// The `users` array from include_users=1 — only the bits the native list needs
-/// (linked userId → photo via /api/users/{id}/profile-image, like the web avatar).
-struct EmployeeLinkedUser: Decodable, Equatable {
+/// The `users` array from include_users=1 — full web LinkableUser shape, powering
+/// avatars, the add-employee "create from user" picker and the link/orphan flows.
+struct EmployeeLinkedUser: Decodable, Equatable, Identifiable {
     let id: String
     let name: String?
+    let email: String?
+    let phone: String?
+    let role: String?
+    let businessAccess: String?
+    let employeeIdGas: String?
+    let salaryHint: String?
+    let joiningDate: String?
     let linked: Bool?
+    let linkState: String?          // linked | orphan | unlinked
     let linkedEmployeeId: String?
+    let orphanEmployeeId: String?
+    let matchedEmployeeId: String?
+    let matchedEmployeeName: String?
+    let selectable: Bool?
 
-    private enum Keys: String, CodingKey { case id, name, linked, linkedEmployeeId }
+    private enum Keys: String, CodingKey {
+        case id, name, email, phone, role, businessAccess, employeeIdGas, salaryHint
+        case joiningDate, linked, linkState, linkedEmployeeId, orphanEmployeeId
+        case matchedEmployeeId, matchedEmployeeName, selectable
+    }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? ""
         name = try? c.decodeIfPresent(String.self, forKey: .name)
+        email = try? c.decodeIfPresent(String.self, forKey: .email)
+        phone = try? c.decodeIfPresent(String.self, forKey: .phone)
+        role = try? c.decodeIfPresent(String.self, forKey: .role)
+        businessAccess = try? c.decodeIfPresent(String.self, forKey: .businessAccess)
+        employeeIdGas = try? c.decodeIfPresent(String.self, forKey: .employeeIdGas)
+        // salaryHint arrives as string OR number on the web type — normalize to string.
+        if let s = try? c.decodeIfPresent(String.self, forKey: .salaryHint) { salaryHint = s }
+        else if let n = employeeFlexInt(c, .salaryHint) { salaryHint = String(n) }
+        else { salaryHint = nil }
+        joiningDate = try? c.decodeIfPresent(String.self, forKey: .joiningDate)
         linked = try? c.decodeIfPresent(Bool.self, forKey: .linked)
+        linkState = try? c.decodeIfPresent(String.self, forKey: .linkState)
         linkedEmployeeId = try? c.decodeIfPresent(String.self, forKey: .linkedEmployeeId)
+        orphanEmployeeId = try? c.decodeIfPresent(String.self, forKey: .orphanEmployeeId)
+        matchedEmployeeId = try? c.decodeIfPresent(String.self, forKey: .matchedEmployeeId)
+        matchedEmployeeName = try? c.decodeIfPresent(String.self, forKey: .matchedEmployeeName)
+        selectable = try? c.decodeIfPresent(Bool.self, forKey: .selectable)
     }
 }
 
@@ -166,13 +208,15 @@ struct EmployeeWalletEntry: Decodable, Identifiable, Equatable {
     let periodYm: String?
     let type: String?
     let note: String?
+    /// Unsigned entry amount (web `entry.amount`) — the salary-correction flow keys off it.
+    let amount: Int
     let signedAmount: Int
     let runningBalance: Int
     /// Stable list identity even when the ledger row has no id.
     let id: String
 
     private enum Keys: String, CodingKey {
-        case id, date, periodYm, type, note, signedAmount, runningBalance
+        case id, date, periodYm, type, note, amount, signedAmount, runningBalance
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -181,6 +225,7 @@ struct EmployeeWalletEntry: Decodable, Identifiable, Equatable {
         periodYm = try? c.decodeIfPresent(String.self, forKey: .periodYm)
         type = try? c.decodeIfPresent(String.self, forKey: .type)
         note = try? c.decodeIfPresent(String.self, forKey: .note)
+        amount = employeeFlexInt(c, .amount) ?? 0
         signedAmount = employeeFlexInt(c, .signedAmount) ?? 0
         runningBalance = employeeFlexInt(c, .runningBalance) ?? 0
         id = entryId ?? "\(date ?? "?")·\(type ?? "?")·\(signedAmount)·\(runningBalance)"
@@ -261,6 +306,157 @@ struct EmployeeAttendanceDetail: Decodable {
     }
 }
 
+// ── Legacy GAS payroll history (GET /api/hr/payroll?emp_id=…) ──
+
+struct EmployeePayrollTx: Decodable, Identifiable, Equatable {
+    let txId: String
+    let date: String?
+    let txType: String?
+    let amount: Int
+    let periodYm: String?
+    let note: String?
+    var id: String { txId }
+
+    private enum Keys: String, CodingKey { case tx_id, date, tx_type, amount, period_ym, note }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        txId = (try? c.decode(String.self, forKey: .tx_id)) ?? UUID().uuidString
+        date = try? c.decodeIfPresent(String.self, forKey: .date)
+        txType = try? c.decodeIfPresent(String.self, forKey: .tx_type)
+        amount = employeeFlexInt(c, .amount) ?? 0
+        periodYm = try? c.decodeIfPresent(String.self, forKey: .period_ym)
+        note = try? c.decodeIfPresent(String.self, forKey: .note)
+    }
+}
+
+struct EmployeePayrollListResponse: Decodable {
+    let transactions: [EmployeePayrollTx]
+    private enum Keys: String, CodingKey { case ok, data, transactions }
+    init(from decoder: Decoder) throws {
+        let root = try decoder.container(keyedBy: Keys.self)
+        let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+        transactions = (try? c.decode([EmployeePayrollTx].self, forKey: .transactions)) ?? []
+    }
+}
+
+// ── Write responses (web handler shapes verbatim) ──
+
+/// POST /api/hr/employees → {ok, emp_id?, error?}
+struct EmployeeSaveResponse: Decodable {
+    let ok: Bool?
+    let empId: String?
+    let error: String?
+    private enum Keys: String, CodingKey { case ok, emp_id, error }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        ok = try? c.decodeIfPresent(Bool.self, forKey: .ok)
+        empId = try? c.decodeIfPresent(String.self, forKey: .emp_id)
+        error = try? c.decodeIfPresent(String.self, forKey: .error)
+    }
+}
+
+/// POST /api/hr/payroll → {ok, tx_id?, error?, wallet?{ok, skipped?, hint?, …}}
+struct EmployeePayrollWalletMirror: Decodable {
+    let ok: Bool?
+    let skipped: String?
+    let hint: String?
+    let existingType: String?
+    let existingPeriodYm: String?
+}
+
+struct EmployeePayrollAddResponse: Decodable {
+    let ok: Bool?
+    let error: String?
+    let wallet: EmployeePayrollWalletMirror?
+}
+
+/// PATCH /api/hr/employees/{emp_id}/salary → {ok, error?, new_salary?}
+struct EmployeeSalaryPatchResponse: Decodable {
+    let ok: Bool?
+    let error: String?
+    let newSalary: Int?
+    private enum Keys: String, CodingKey { case ok, error, new_salary }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        ok = try? c.decodeIfPresent(Bool.self, forKey: .ok)
+        error = try? c.decodeIfPresent(String.self, forKey: .error)
+        newSalary = employeeFlexInt(c, .new_salary)
+    }
+}
+
+/// Generic {ok?, error?} — link PATCH, reverse-accrual POST, attendance DELETE.
+struct EmployeeOkResponse: Decodable {
+    let ok: Bool?
+    let error: String?
+    private enum Keys: String, CodingKey { case ok, error }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        ok = try? c.decodeIfPresent(Bool.self, forKey: .ok)
+        error = try? c.decodeIfPresent(String.self, forKey: .error)
+    }
+}
+
+// ── Pending salary corrections (GET /api/approvals?…&module=PAYROLL) ──
+
+struct EmployeeCorrectionSnapshot: Decodable, Equatable {
+    let employeeId: String?
+    let periodYm: String?
+    let currentAmount: Int
+    let proposedAmount: Int
+    let requestedReason: String?
+    let reversalCount: Int
+
+    private enum Keys: String, CodingKey {
+        case employeeId, periodYm, currentAmount, proposedAmount, requestedReason, reversals
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        employeeId = try? c.decodeIfPresent(String.self, forKey: .employeeId)
+        periodYm = try? c.decodeIfPresent(String.self, forKey: .periodYm)
+        currentAmount = employeeFlexInt(c, .currentAmount) ?? 0
+        proposedAmount = employeeFlexInt(c, .proposedAmount) ?? 0
+        requestedReason = try? c.decodeIfPresent(String.self, forKey: .requestedReason)
+        var count = 0
+        if var arr = try? c.nestedUnkeyedContainer(forKey: .reversals) {
+            struct Blank: Decodable {}
+            while !arr.isAtEnd { _ = try? arr.decode(Blank.self); count += 1 }
+        }
+        reversalCount = count
+    }
+}
+
+struct EmployeePendingCorrection: Decodable, Identifiable, Equatable {
+    let id: String
+    let type: String?
+    let createdAt: String?
+    let reason: String?
+    let requesterName: String?
+    let payload: EmployeeCorrectionSnapshot?
+
+    private enum Keys: String, CodingKey { case id, type, createdAt, reason, requester, payloadSnapshot }
+    private enum RequesterKeys: String, CodingKey { case name }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        type = try? c.decodeIfPresent(String.self, forKey: .type)
+        createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
+        reason = try? c.decodeIfPresent(String.self, forKey: .reason)
+        let r = try? c.nestedContainer(keyedBy: RequesterKeys.self, forKey: .requester)
+        requesterName = r.flatMap { try? $0.decodeIfPresent(String.self, forKey: .name) }
+        payload = try? c.decodeIfPresent(EmployeeCorrectionSnapshot.self, forKey: .payloadSnapshot)
+    }
+}
+
+struct EmployeeApprovalsListResponse: Decodable {
+    let approvals: [EmployeePendingCorrection]
+    private enum Keys: String, CodingKey { case ok, data, approvals }
+    init(from decoder: Decoder) throws {
+        let root = try decoder.container(keyedBy: Keys.self)
+        let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+        approvals = (try? c.decode([EmployeePendingCorrection].self, forKey: .approvals)) ?? []
+    }
+}
+
 // MARK: - View models
 
 /// The web BusinessContext default — HR roster lives in the primary business.
@@ -270,11 +466,21 @@ private let employeesBusinessId = "ALMA_LIFESTYLE"
 @Observable
 final class EmployeesVM {
     var employees: [EmployeeRosterItem] = []
+    /// Full LinkableUser list from include_users=1 — add-employee picker + link flows.
+    var users: [EmployeeLinkedUser] = []
     /// emp_id → linked userId (photo avatars, "Linked" marker — web usersByEmployeeId).
     var linkedUserIdByEmpId: [String: String] = [:]
     var loading = false
+    var saving = false                     // add-employee POST in flight
+    var linkBusyUserId: String? = nil      // per-row spinner for link/clear actions
     var error: String? = nil
+    var notice: String? = nil              // success line (the web's toast)
     var authExpired = false
+
+    /// Users with no link and no stale ID — the "Link roster row to user" choices.
+    var unlinkableUsers: [EmployeeLinkedUser] {
+        users.filter { $0.linked != true && ($0.orphanEmployeeId ?? "").isEmpty }
+    }
 
     func load() async {
         loading = true
@@ -285,6 +491,7 @@ final class EmployeesVM {
                 "/api/hr/employees",
                 query: ["business_id": employeesBusinessId, "include_users": "1"])
             employees = resp.employees
+            users = resp.users
             var map: [String: String] = [:]
             for u in resp.users where u.linked == true {
                 if let empId = u.linkedEmployeeId, !u.id.isEmpty { map[empId] = u.id }
@@ -299,6 +506,51 @@ final class EmployeesVM {
         }
     }
 
+    /// POST /api/hr/employees — same payload keys the web form submits.
+    /// Returns nil on success, or a user-facing error string.
+    func saveEmployee(_ payload: [String: AnyEncodable]) async -> String? {
+        saving = true
+        defer { saving = false }
+        do {
+            let resp: EmployeeSaveResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/hr/employees", body: payload)
+            guard resp.ok == true else { return resp.error ?? "Employee save failed" }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = "Employee saved"
+            await load()
+            return nil
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            return (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
+        }
+    }
+
+    /// PATCH /api/hr/employees/link — web patchUserLink verbatim
+    /// ({business_id, action, user_id[, employee_id]}). Nil on success.
+    func patchLink(action: String, userId: String, employeeId: String? = nil,
+                   successNotice: String) async -> String? {
+        linkBusyUserId = userId
+        defer { linkBusyUserId = nil }
+        do {
+            var body: [String: String] = [
+                "business_id": employeesBusinessId,
+                "action": action,
+                "user_id": userId,
+            ]
+            if let employeeId, !employeeId.isEmpty { body["employee_id"] = employeeId }
+            let resp: EmployeeOkResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/hr/employees/link", body: body)
+            if resp.ok == false { return resp.error ?? "Link update failed" }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = successNotice
+            await load()
+            return nil
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            return (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
+        }
+    }
+
     /// SwiftUI .refreshable cancels the task when the gesture ends — that's not an
     /// error the owner should ever see.
     static func isCancellation(_ error: Error) -> Bool {
@@ -308,31 +560,250 @@ final class EmployeesVM {
     }
 }
 
-/// Detail sheet data — the two fetches the web detail page runs (wallet + attendance).
+/// Detail sheet data + actions — everything the web detail page fetches and writes.
 @available(iOS 17.0, *)
 @Observable
 final class EmployeeDetailVM {
     var wallet: EmployeeWalletDetail? = nil
     var attendance: EmployeeAttendanceDetail? = nil
+    var legacy: [EmployeePayrollTx] = []
+    var pendingCorrections: [EmployeePendingCorrection] = []
     var loading = false
     var error: String? = nil
+    var notice: String? = nil               // success/warning line (web toast parity)
+    var actionError: String? = nil
+
+    // Per-action busy state — never one global spinner.
+    var paying = false
+    var savingSalary = false
+    var correctionSubmitting = false
+    var reversingEntryId: String? = nil
+    var resettingAttendanceId: String? = nil
+
+    /// Ran anything that changed the roster (salary edit)? The list screen refreshes.
+    var rosterDirty = false
 
     func load(empId: String) async {
         loading = true
         error = nil
         defer { loading = false }
         let encoded = empId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? empId
-        // Wallet + attendance are independent — a failure in one must not blank the other.
+        // The four fetches are independent — a failure in one must not blank the rest.
         async let walletTask: EmployeeWalletDetail? = try? AlmaAPI.shared.get(
             "/api/payroll/wallet/\(encoded)", query: ["business_id": employeesBusinessId])
         async let attendanceTask: EmployeeAttendanceDetail? = try? AlmaAPI.shared.get(
             "/api/attendance", query: ["business_id": employeesBusinessId, "employee_id": empId])
-        let (w, a) = await (walletTask, attendanceTask)
+        async let legacyTask: EmployeePayrollListResponse? = try? AlmaAPI.shared.get(
+            "/api/hr/payroll", query: ["business_id": employeesBusinessId, "emp_id": empId])
+        async let correctionsTask: EmployeeApprovalsListResponse? = try? AlmaAPI.shared.get(
+            "/api/approvals", query: ["status": "PENDING", "module": "PAYROLL", "limit": "80"])
+        let (w, a, l, p) = await (walletTask, attendanceTask, legacyTask, correctionsTask)
         if Task.isCancelled { return }
         wallet = w
         attendance = a
+        legacy = l?.transactions ?? []
+        // Web filter parity: SALARY_CORRECTION rows whose payload targets this employee.
+        pendingCorrections = (p?.approvals ?? []).filter {
+            $0.type == "SALARY_CORRECTION" && $0.payload?.employeeId == empId
+        }
         if w == nil && a == nil {
             error = "বিস্তারিত লোড করা যায়নি — আবার চেষ্টা করুন।"
+        }
+    }
+
+    /// Accrual rows the correction flow can target (web salaryAccrualEntries).
+    var salaryAccrualEntries: [EmployeeWalletEntry] {
+        (wallet?.entries ?? []).filter { $0.type == "SALARY_ACCRUAL" && $0.entryId != nil }
+    }
+    /// Entries a correction may reverse (web reversalCandidateEntries).
+    var reversalCandidateEntries: [EmployeeWalletEntry] {
+        (wallet?.entries ?? []).filter {
+            $0.entryId != nil && ($0.type == "WITHDRAWAL" || $0.type == "ADJUSTMENT")
+        }
+    }
+
+    private func fail(_ error: Error, fallback: String) {
+        UINotificationFeedbackGenerator().notificationOccurred(.error)
+        actionError = (error as? AlmaAPIError)?.localizedDescription
+            ?? (error.localizedDescription.isEmpty ? fallback : error.localizedDescription)
+    }
+
+    /// POST /api/hr/payroll — web submitPay/executePay verbatim
+    /// ({emp_id, tx_type, amount, date, period_ym, note, business_id}).
+    func addPayroll(empId: String, txType: String, amount: Double,
+                    date: String, periodYm: String, note: String) async -> Bool {
+        paying = true
+        actionError = nil
+        notice = nil
+        defer { paying = false }
+        do {
+            let body: [String: AnyEncodable] = [
+                "emp_id": AnyEncodable(empId),
+                "tx_type": AnyEncodable(txType),
+                "amount": AnyEncodable(amount),
+                "date": AnyEncodable(date),
+                "period_ym": AnyEncodable(periodYm),
+                "note": AnyEncodable(note),
+                "business_id": AnyEncodable(employeesBusinessId),
+            ]
+            let resp: EmployeePayrollAddResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/hr/payroll", body: body)
+            guard resp.ok == true else {
+                actionError = "Failed: \(resp.error ?? "unknown error")"
+                return false
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            if resp.wallet?.ok == false || resp.wallet?.skipped != nil {
+                notice = "Legacy roll saved but \(Self.walletSkipMessage(resp.wallet))"
+            } else {
+                notice = "Payroll logged + wallet updated"
+            }
+            await load(empId: empId)
+            return true
+        } catch {
+            fail(error, fallback: "Payroll entry failed")
+            return false
+        }
+    }
+
+    /// Web payrollWalletSkipMessage verbatim.
+    static func walletSkipMessage(_ wallet: EmployeePayrollWalletMirror?) -> String {
+        if let hint = wallet?.hint, !hint.isEmpty { return hint }
+        switch wallet?.skipped {
+        case "period_type_already_exists":
+            return "\(wallet?.existingType ?? "Entry") for \(wallet?.existingPeriodYm ?? "this period") already exists. Use Adjustment to modify, or update the existing row."
+        case "wallet_entry_already_mirrored": return "This entry was already mirrored (retry detected)."
+        case "not_wallet_admin": return "You do not have permission to update the wallet ledger."
+        case "wallet_context_denied": return "Wallet access denied for this business."
+        case "missing_employee_or_amount": return "Invalid employee ID or amount."
+        case "legacy_write_failed": return "Legacy roll save failed before wallet mirror."
+        case "legacy_type_not_wallet_mirrored": return "This tx_type is not mirrored to wallet."
+        case "p2002_unknown_constraint": return "Wallet mirror blocked by a unique constraint."
+        default: return "Wallet not updated: \(wallet?.skipped ?? "unknown")"
+        }
+    }
+
+    /// PATCH /api/hr/employees/{emp_id}/salary — web submitSalary verbatim
+    /// ({amount, businessId, effectiveDate, reason?} — note the camelCase keys).
+    func patchSalary(empId: String, amount: Int, effectiveDate: String, reason: String) async -> Bool {
+        savingSalary = true
+        actionError = nil
+        notice = nil
+        defer { savingSalary = false }
+        do {
+            var body: [String: AnyEncodable] = [
+                "amount": AnyEncodable(amount),
+                "businessId": AnyEncodable(employeesBusinessId),
+                "effectiveDate": AnyEncodable(effectiveDate),
+            ]
+            let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { body["reason"] = AnyEncodable(trimmed) }
+            let encoded = empId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? empId
+            let resp: EmployeeSalaryPatchResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/hr/employees/\(encoded)/salary", body: body)
+            guard resp.ok == true else {
+                actionError = resp.error ?? "Failed to update salary"
+                return false
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = "Salary updated to ৳\((resp.newSalary ?? amount).formatted())"
+            rosterDirty = true
+            await load(empId: empId)
+            return true
+        } catch {
+            fail(error, fallback: "Failed to update salary")
+            return false
+        }
+    }
+
+    /// POST /api/payroll/salary-corrections — web api.hr.requestSalaryCorrection
+    /// verbatim; the write itself lands via the approvals system, same as the web.
+    func requestCorrection(empId: String, accrualEntryId: String, periodYm: String,
+                           proposedAmount: Int, reason: String,
+                           reversals: [(ledgerEntryId: String, amount: Int, reason: String)]) async -> Bool {
+        correctionSubmitting = true
+        actionError = nil
+        notice = nil
+        defer { correctionSubmitting = false }
+        do {
+            var body: [String: AnyEncodable] = [
+                "accrual_entry_id": AnyEncodable(accrualEntryId),
+                "employee_id": AnyEncodable(empId),
+                "business_id": AnyEncodable(employeesBusinessId),
+                "period_ym": AnyEncodable(periodYm),
+                "proposed_amount": AnyEncodable(proposedAmount),
+                "reason": AnyEncodable(reason),
+            ]
+            if !reversals.isEmpty {
+                body["reversals"] = AnyEncodable(reversals.map {
+                    ["ledger_entry_id": AnyEncodable($0.ledgerEntryId),
+                     "amount": AnyEncodable($0.amount),
+                     "reason": AnyEncodable($0.reason)]
+                })
+            }
+            let resp: EmployeeOkResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/payroll/salary-corrections", body: body)
+            if resp.ok == false {
+                actionError = resp.error ?? "Failed to request salary correction"
+                return false
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = "Salary correction requested. Awaiting super admin approval."
+            await load(empId: empId)
+            return true
+        } catch {
+            fail(error, fallback: "Failed to request salary correction")
+            return false
+        }
+    }
+
+    /// POST /api/payroll/wallet/entries/reverse-accrual — web reverseSalaryAccrual
+    /// verbatim ({business_id, accrual_entry_id}).
+    func reverseAccrual(empId: String, entryId: String) async {
+        guard reversingEntryId == nil else { return }
+        reversingEntryId = entryId
+        actionError = nil
+        notice = nil
+        defer { reversingEntryId = nil }
+        do {
+            let body: [String: String] = [
+                "business_id": employeesBusinessId,
+                "accrual_entry_id": entryId,
+            ]
+            let resp: EmployeeOkResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/payroll/wallet/entries/reverse-accrual", body: body)
+            if resp.ok == false {
+                actionError = resp.error ?? "Could not reverse accrual"
+                return
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = "Salary accrual reversed"
+            await load(empId: empId)
+        } catch {
+            fail(error, fallback: "Could not reverse accrual")
+        }
+    }
+
+    /// DELETE /api/attendance/{recordId} — web resetAttendanceRecord verbatim (no body).
+    func resetAttendance(empId: String, recordId: String) async {
+        guard resettingAttendanceId == nil else { return }
+        resettingAttendanceId = recordId
+        actionError = nil
+        notice = nil
+        defer { resettingAttendanceId = nil }
+        do {
+            let encoded = recordId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? recordId
+            let resp: EmployeeOkResponse = try await AlmaAPI.shared.send(
+                "DELETE", "/api/attendance/\(encoded)")
+            if resp.ok == false {
+                actionError = resp.error ?? "Could not reset attendance"
+                return
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = "Attendance reset — employee can check in again"
+            await load(empId: empId)
+        } catch {
+            fail(error, fallback: "Could not reset attendance")
         }
     }
 }
@@ -346,6 +817,7 @@ struct EmployeesScreen: View {
     @State private var searchQuery = ""
     @State private var roleFilter = "ALL"
     @State private var selected: EmployeeRosterItem? = nil
+    @State private var showAdd = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -353,7 +825,9 @@ struct EmployeesScreen: View {
             LazyVStack(spacing: 10) {
                 if vm.authExpired { authCard }
                 if let err = vm.error { noticeCard(err) }
+                if let ok = vm.notice { successCard(ok) }
                 statsStrip
+                addEmployeeButton
                 searchBar
                 roleChips
                 if !vm.loading || !vm.employees.isEmpty { countLine }
@@ -381,10 +855,36 @@ struct EmployeesScreen: View {
             EmployeeDetailSheet(
                 employee: em,
                 linkedUserId: vm.linkedUserIdByEmpId[em.empId],
+                listVM: vm,
                 openWeb: openWeb)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showAdd) {
+            EmployeeAddSheet(vm: vm)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+
+    /// Web header "+ Add employee" (gold) — opens the create/link modal.
+    private var addEmployeeButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            vm.notice = nil
+            showAdd = true
+        } label: {
+            Label("+ Add employee", systemImage: "person.badge.plus")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(EmployeePalette.accentText(colorScheme))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(EmployeePalette.coral.opacity(colorScheme == .dark ? 0.24 : 0.12),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(EmployeePalette.coral.opacity(0.45), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     // ── Filtering (web useMemo parity: name / emp_id / phone + role) ──
@@ -500,6 +1000,13 @@ struct EmployeesScreen: View {
             .padding(12).employeesGlass(colorScheme, corner: 12)
     }
 
+    private func successCard(_ message: String) -> some View {
+        Label(message, systemImage: "checkmark.circle")
+            .font(.footnote).foregroundStyle(EmployeePalette.emerald600)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12).employeesGlass(colorScheme, corner: 12)
+    }
+
     private var authCard: some View {
         VStack(spacing: 10) {
             Text("সেশন পাওয়া যায়নি — একবার ওয়েব ভিউতে লগইন করুন").font(.subheadline)
@@ -529,17 +1036,18 @@ struct EmployeesScreen: View {
         .padding(.bottom, 30)
     }
 
+    /// Every web action is native now — keep only a small escape link.
     private var webEscape: some View {
         Button {
             openWeb("/employees", "Employees")
         } label: {
-            Label("সব অপশন (Add·Link·Pay সহ) — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
+            Text("ওয়েব ভার্সন")
+                .font(.caption2)
+                .underline()
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .padding(.vertical, 6)
+        .foregroundStyle(.tertiary)
+        .padding(.vertical, 4)
     }
 }
 
@@ -651,33 +1159,166 @@ private struct EmployeeRowCard: View {
 }
 
 // MARK: - Detail sheet (web /employees/[id] parity — profile header, wallet summary
-// strip, attendance summary, recent ledger; mutating actions stay on the web)
+// strip, attendance summary, ledger + legacy history, and EVERY web action natively:
+// payroll entry, salary edit, salary correction, accrual reverse, attendance reset,
+// account linking. Slip PDF + photo upload stay web behind the small link.)
 
 @available(iOS 17.0, *)
 private struct EmployeeDetailSheet: View {
     let employee: EmployeeRosterItem
     let linkedUserId: String?
+    let listVM: EmployeesVM
     let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = EmployeeDetailVM()
     @State private var showBalanceNote = false
+    @State private var showPay = false
+    @State private var showSalary = false
+    @State private var showCorrection = false
+    @State private var showLink = false
+    // Destructive row actions collect their target first, then confirm in Bangla.
+    @State private var reverseTarget: EmployeeWalletEntry? = nil
+    @State private var showReverseConfirm = false
+    @State private var resetTarget: EmployeeAttendanceRecord? = nil
+    @State private var showResetConfirm = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
                 contactButtons
+                actionsRow
+                if let err = vm.actionError { detailNotice(err, error: true) }
+                if let ok = vm.notice { detailNotice(ok, error: false) }
                 infoRows
                 walletStrip
+                pendingCorrectionsBlock
                 attendanceBlock
                 ledgerBlock
+                legacyBlock
                 webLink
             }
             .padding(18)
         }
         .presentationBackground { EmployeesAurora() }
         .task { await vm.load(empId: employee.empId) }
+        .onDisappear {
+            // Salary edits change the roster row — refresh the list behind us.
+            if vm.rosterDirty { Task { await listVM.load() } }
+        }
+        .sheet(isPresented: $showPay) {
+            EmployeePayrollEntrySheet(employee: employee, vm: vm)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showSalary) {
+            EmployeeSalaryEditSheet(employee: employee, vm: vm)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showCorrection) {
+            EmployeeCorrectionSheet(employee: employee, vm: vm)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showLink) {
+            EmployeeLinkAccountSheet(employee: employee, listVM: listVM)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+        }
+        // Web confirmDialog("Reverse salary accrual") — Bangla, name + amount.
+        .confirmationDialog(
+            "স্যালারি অ্যাক্রুয়াল রিভার্স",
+            isPresented: $showReverseConfirm,
+            titleVisibility: .visible,
+            presenting: reverseTarget
+        ) { entry in
+            Button("রিভার্স করুন", role: .destructive) {
+                if let id = entry.entryId {
+                    Task { await vm.reverseAccrual(empId: employee.empId, entryId: id) }
+                }
+            }
+            Button("বাতিল", role: .cancel) {}
+        } message: { entry in
+            Text("\(employee.name)-এর ৳\(entry.signedAmount.formatted()) স্যালারি অ্যাক্রুয়াল পুরোটা রিভার্স হবে — সমান ADJUSTMENT ডেবিট পোস্ট হবে।")
+        }
+        // Web confirmDialog("Remove attendance…") — Bangla, name + date.
+        .confirmationDialog(
+            "অ্যাটেনডেন্স রিসেট",
+            isPresented: $showResetConfirm,
+            titleVisibility: .visible,
+            presenting: resetTarget
+        ) { row in
+            Button("মুছে ফেলুন", role: .destructive) {
+                Task { await vm.resetAttendance(empId: employee.empId, recordId: row.id) }
+            }
+            Button("বাতিল", role: .cancel) {}
+        } message: { row in
+            Text("\(employee.name)-এর \(String((row.attendanceDate ?? "—").prefix(10))) তারিখের অ্যাটেনডেন্স মুছে যাবে — আবার চেক-ইন করা যাবে, লেট পেনাল্টি থাকলে ফেরত হবে।")
+        }
+    }
+
+    // ── Action buttons (web toolbar: + Payroll entry · Edit salary · + Request
+    // correction · Link account) ──
+
+    private var actionsRow: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                actionButton("+ Payroll entry", icon: "banknote", prominent: true) {
+                    vm.actionError = nil; vm.notice = nil
+                    showPay = true
+                }
+                actionButton("Edit salary", icon: "pencil") {
+                    vm.actionError = nil; vm.notice = nil
+                    showSalary = true
+                }
+            }
+            HStack(spacing: 8) {
+                actionButton("+ Request correction", icon: "arrow.uturn.backward.circle") {
+                    vm.actionError = nil; vm.notice = nil
+                    showCorrection = true
+                }
+                if linkedUserId == nil {
+                    actionButton("Link account", icon: "link") {
+                        listVM.notice = nil
+                        showLink = true
+                    }
+                }
+            }
+        }
+    }
+
+    private func actionButton(_ label: String, icon: String, prominent: Bool = false,
+                              action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            action()
+        } label: {
+            Label(label, systemImage: icon)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .foregroundStyle(prominent ? EmployeePalette.accentText(colorScheme) : .secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 9)
+                .background(
+                    prominent ? EmployeePalette.coral.opacity(colorScheme == .dark ? 0.24 : 0.12)
+                              : Color.white.opacity(colorScheme == .dark ? 0.08 : 0.45),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(prominent ? EmployeePalette.coral.opacity(0.45)
+                                            : Color.white.opacity(colorScheme == .dark ? 0.10 : 0.4),
+                                  lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func detailNotice(_ message: String, error: Bool) -> some View {
+        Label(message, systemImage: error ? "exclamationmark.triangle" : "checkmark.circle")
+            .font(.footnote)
+            .foregroundStyle(error ? EmployeePalette.red500 : EmployeePalette.emerald600)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12).employeesGlass(colorScheme, corner: 12)
     }
 
     // ── Profile header (big avatar + name + role · emp_id + salary) ──
@@ -870,6 +1511,22 @@ private struct EmployeeDetailSheet: View {
             }
             Text(EmployeeFormat.duration(row.totalWorkMinutes))
                 .font(.caption2.monospaced().weight(.semibold))
+            // Web "Reset" (attendance delete, admin-gated server-side) — per-row spinner.
+            if vm.resettingAttendanceId == row.id {
+                ProgressView().controlSize(.mini)
+            } else {
+                Button {
+                    resetTarget = row
+                    showResetConfirm = true
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(EmployeePalette.amber600)
+                        .padding(4)
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.resettingAttendanceId != nil)
+            }
         }
     }
 
@@ -909,23 +1566,1087 @@ private struct EmployeeDetailSheet: View {
                     .font(.system(size: 9).monospaced())
                     .foregroundStyle(EmployeePalette.accentText(colorScheme))
             }
+            // Web "Reverse" on positive SALARY_ACCRUAL rows — per-row spinner.
+            if tx.type == "SALARY_ACCRUAL", tx.entryId != nil, tx.signedAmount > 0 {
+                if vm.reversingEntryId == tx.entryId {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Button {
+                        reverseTarget = tx
+                        showReverseConfirm = true
+                    } label: {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(EmployeePalette.red500)
+                            .padding(4)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.reversingEntryId != nil)
+                }
+            }
         }
     }
 
-    /// Edit employee · payroll entry · salary correction · slip PDF — all web-only.
+    // ── Pending salary corrections (web card: amber rows awaiting super admin) ──
+
+    @ViewBuilder private var pendingCorrectionsBlock: some View {
+        if !vm.pendingCorrections.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Salary corrections (pending)")
+                    .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                ForEach(vm.pendingCorrections) { row in
+                    VStack(alignment: .leading, spacing: 3) {
+                        if let p = row.payload {
+                            Text("Pending: ৳\(p.currentAmount.formatted()) → ৳\(p.proposedAmount.formatted()) (\(p.periodYm ?? "—"))")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(EmployeePalette.amber600)
+                            if p.reversalCount > 0 {
+                                Text("Reversals: \(p.reversalCount) entries")
+                                    .font(.system(size: 9)).foregroundStyle(.secondary)
+                            }
+                        }
+                        Text("Requested by \(row.requesterName ?? "Admin") on \(String((row.createdAt ?? "—").prefix(10)))")
+                            .font(.system(size: 9)).foregroundStyle(.secondary)
+                        if let reason = row.reason ?? row.payload?.requestedReason, !reason.isEmpty {
+                            Text("Reason: \(reason)")
+                                .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(2)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(EmployeePalette.amber500.opacity(0.10),
+                                in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(EmployeePalette.amber500.opacity(0.35), lineWidth: 0.8))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .employeesGlass(colorScheme, corner: 14)
+        }
+    }
+
+    // ── Legacy GAS payroll history (web bottom table, newest rows) ──
+
+    @ViewBuilder private var legacyBlock: some View {
+        if !vm.legacy.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Legacy GAS payroll history")
+                    .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                ForEach(vm.legacy.prefix(10)) { tx in
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(tx.txType ?? "—").font(.caption2.weight(.semibold))
+                            Text("\(String((tx.date ?? "—").prefix(10))) · \(tx.periodYm ?? "—")")
+                                .font(.system(size: 9).monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text("৳\(tx.amount.formatted())")
+                                .font(.caption2.monospaced().weight(.bold))
+                                .foregroundStyle(EmployeePalette.accentText(colorScheme))
+                            if let note = tx.note, !note.isEmpty {
+                                Text(note).font(.system(size: 9))
+                                    .foregroundStyle(.secondary).lineLimit(1)
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .employeesGlass(colorScheme, corner: 14)
+        }
+    }
+
+    /// Slip PDF + profile photo upload are the only web-only leftovers.
     private var webLink: some View {
         Button {
             dismiss()
             let encoded = employee.empId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? employee.empId
             openWeb("/employees/\(encoded)", employee.name)
         } label: {
-            Label("সব অপশন (Pay·Salary·Slip সহ) — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
+            Text("ওয়েব ভার্সন (Slip PDF · ছবি আপলোড)")
+                .font(.caption2)
+                .underline()
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.tertiary)
         .padding(.top, 2)
+    }
+}
+
+// MARK: - Shared form field chrome (glass inputs matching the page look)
+
+@available(iOS 17.0, *)
+private struct EmployeeField<Content: View>: View {
+    let label: String
+    @ViewBuilder let content: Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+            content
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+private extension View {
+    func employeeInputChrome(_ scheme: ColorScheme) -> some View {
+        self
+            .padding(.horizontal, 10).padding(.vertical, 9)
+            .background(Color.white.opacity(scheme == .dark ? 0.07 : 0.5),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.white.opacity(scheme == .dark ? 0.12 : 0.45), lineWidth: 1))
+    }
+}
+
+private func employeeIsoDate(_ date: Date) -> String {
+    let f = DateFormatter()
+    f.dateFormat = "yyyy-MM-dd"
+    f.timeZone = TimeZone(identifier: "Asia/Dhaka") ?? .current
+    return f.string(from: date)
+}
+
+// MARK: - Add employee sheet (web "Employee profile" modal — manual create OR
+// create-from-user, plus the orphan clear/re-link flows; POST /api/hr/employees)
+
+@available(iOS 17.0, *)
+private struct EmployeeAddSheet: View {
+    let vm: EmployeesVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+
+    @State private var selectedUserId = ""
+    @State private var empId = ""
+    @State private var name = ""
+    @State private var phone = ""
+    @State private var email = ""
+    @State private var address = ""
+    @State private var role = ""
+    @State private var hasJoining = false
+    @State private var joiningDate = Date()
+    @State private var salaryText = ""
+    @State private var status = "Active"
+    @State private var notes = ""
+    @State private var orphanLinkEmpId = ""
+    @State private var formError: String? = nil
+
+    private var selectedUser: EmployeeLinkedUser? {
+        vm.users.first { $0.id == selectedUserId }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Employee profile").font(.headline)
+                    Text("Create a roster profile manually or directly from an unlinked system user.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                if let err = formError {
+                    Label(err, systemImage: "exclamationmark.triangle")
+                        .font(.footnote).foregroundStyle(EmployeePalette.red500)
+                }
+                fromUserBlock
+                selectedUserBlock
+                fieldsBlock
+                footerButtons
+            }
+            .padding(18)
+        }
+        .presentationBackground { EmployeesAurora() }
+    }
+
+    // ── Create Employee From User (web left column) ──
+
+    @ViewBuilder private var fromUserBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Create Employee From User")
+                .font(.caption.weight(.bold)).foregroundStyle(EmployeePalette.accentText(colorScheme))
+                .textCase(.uppercase)
+            if vm.users.isEmpty {
+                Text("No users available in this business scope.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            } else {
+                ForEach(vm.users) { user in
+                    userRow(user)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .employeesGlass(colorScheme, corner: 14)
+    }
+
+    private func userRow(_ user: EmployeeLinkedUser) -> some View {
+        let isSelected = selectedUserId == user.id
+        let selectable = user.selectable ?? false
+        let state = user.linkState ?? (user.linked == true ? "linked" : "unlinked")
+        let stateColor: Color = state == "linked" ? EmployeePalette.emerald600
+            : state == "orphan" ? EmployeePalette.red500 : EmployeePalette.amber600
+        return VStack(alignment: .leading, spacing: 6) {
+            Button {
+                guard selectable else { return }
+                UISelectionFeedbackGenerator().selectionChanged()
+                fillFromUser(user)
+            } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .top, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(user.name ?? "—").font(.caption.weight(.semibold))
+                            Text(user.email ?? user.phone ?? "No contact")
+                                .font(.system(size: 9).monospaced()).foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 4)
+                        Text(state == "linked" ? "Linked \(user.linkedEmployeeId ?? "")"
+                             : state == "orphan" ? "Stale ID" : "Unlinked")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(stateColor)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(stateColor.opacity(0.12), in: Capsule())
+                    }
+                    Text("\((user.role ?? "—").replacingOccurrences(of: "_", with: " ")) · \(user.phone.map(EmployeeFormat.bdPhone) ?? "No phone")")
+                        .font(.system(size: 9)).foregroundStyle(.secondary)
+                    if let matched = user.matchedEmployeeId, state == "unlinked" {
+                        Text("Possible existing employee: \(user.matchedEmployeeName ?? "—") · \(matched)")
+                            .font(.system(size: 9)).foregroundStyle(EmployeePalette.amber600)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .opacity(selectable || state == "orphan" ? 1 : 0.6)
+
+            // Web orphan controls: clear the stale ID, or re-link to a roster row.
+            if state == "orphan", let orphanId = user.orphanEmployeeId, !orphanId.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("User has stale employee ID: \(orphanId). Re-link or clear?")
+                        .font(.system(size: 9)).foregroundStyle(EmployeePalette.red500)
+                    HStack(spacing: 8) {
+                        if vm.linkBusyUserId == user.id {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Button("Clear and create new") {
+                                Task {
+                                    formError = await vm.patchLink(
+                                        action: "clear_user_link", userId: user.id,
+                                        successNotice: "Stale employee ID cleared — you can create a new roster row from this user")
+                                }
+                            }
+                            .font(.system(size: 10, weight: .semibold))
+                            .buttonStyle(.bordered).controlSize(.mini)
+                        }
+                    }
+                    HStack(spacing: 6) {
+                        Picker("Link to roster row…", selection: Binding(
+                            get: { selectedUserId == user.id ? orphanLinkEmpId : "" },
+                            set: { selectedUserId = user.id; orphanLinkEmpId = $0 })) {
+                            Text("Link to roster row…").tag("")
+                            ForEach(vm.employees) { em in
+                                Text("\(em.name) · \(em.empId)").tag(em.empId)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .font(.caption2)
+                        Button("Link") {
+                            Task {
+                                guard selectedUserId == user.id, !orphanLinkEmpId.isEmpty else {
+                                    formError = "Select a roster employee to link"
+                                    return
+                                }
+                                formError = await vm.patchLink(
+                                    action: "link_user_to_employee", userId: user.id,
+                                    employeeId: orphanLinkEmpId,
+                                    successNotice: "Linked \(user.name ?? "user") to \(orphanLinkEmpId)")
+                                if formError == nil { orphanLinkEmpId = "" }
+                            }
+                        }
+                        .font(.system(size: 10, weight: .semibold))
+                        .buttonStyle(.borderedProminent).controlSize(.mini)
+                        .disabled(selectedUserId != user.id || orphanLinkEmpId.isEmpty
+                                  || vm.linkBusyUserId != nil)
+                    }
+                }
+                .padding(.top, 4)
+            }
+        }
+        .padding(10)
+        .background(
+            isSelected ? EmployeePalette.coral.opacity(colorScheme == .dark ? 0.20 : 0.10)
+                       : Color.white.opacity(colorScheme == .dark ? 0.05 : 0.35),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(isSelected ? EmployeePalette.coral.opacity(0.5)
+                                     : Color.white.opacity(colorScheme == .dark ? 0.10 : 0.4),
+                          lineWidth: 1))
+    }
+
+    /// Web fillFromUser parity — prefill the form from the tapped user.
+    private func fillFromUser(_ user: EmployeeLinkedUser) {
+        selectedUserId = user.id
+        name = user.name ?? ""
+        phone = user.phone ?? ""
+        email = user.email ?? ""
+        role = (user.role ?? "").replacingOccurrences(of: "_", with: " ")
+        if let jd = user.joiningDate, jd.count >= 10 {
+            let f = DateFormatter()
+            f.dateFormat = "yyyy-MM-dd"
+            if let d = f.date(from: String(jd.prefix(10))) {
+                joiningDate = d
+                hasJoining = true
+            }
+        } else {
+            hasJoining = false
+        }
+        salaryText = user.salaryHint ?? ""
+        if (user.orphanEmployeeId ?? "").isEmpty,
+           let existing = user.employeeIdGas ?? user.matchedEmployeeId {
+            empId = existing
+        } else {
+            empId = ""
+        }
+    }
+
+    @ViewBuilder private var selectedUserBlock: some View {
+        if let user = selectedUser {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Selected user").font(.system(size: 9, weight: .bold))
+                    .textCase(.uppercase).foregroundStyle(EmployeePalette.accentText(colorScheme))
+                Text(user.name ?? "—").font(.caption.weight(.bold))
+                if user.linked == true {
+                    Text("Already linked to \(user.linkedEmployeeId ?? "—"). Duplicate links are blocked.")
+                        .font(.system(size: 9)).foregroundStyle(EmployeePalette.emerald600)
+                }
+                if user.linkState == "orphan" {
+                    Text("Stale ID on file — clear or re-link before creating a duplicate roster row.")
+                        .font(.system(size: 9)).foregroundStyle(EmployeePalette.red500)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .employeesGlass(colorScheme, corner: 12)
+        }
+    }
+
+    // ── Manual fields (web right column, same names) ──
+
+    private var fieldsBlock: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            EmployeeField(label: "Existing ID (optional)") {
+                TextField("AUTO if empty", text: $empId)
+                    .font(.caption.monospaced())
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .employeeInputChrome(colorScheme)
+            }
+            EmployeeField(label: "Full name (required)") {
+                TextField("Name", text: $name).font(.subheadline)
+                    .employeeInputChrome(colorScheme)
+            }
+            HStack(spacing: 10) {
+                EmployeeField(label: "Phone") {
+                    TextField("01…", text: $phone).font(.caption.monospaced())
+                        .keyboardType(.phonePad)
+                        .employeeInputChrome(colorScheme)
+                }
+                EmployeeField(label: "Email") {
+                    TextField("email", text: $email).font(.caption)
+                        .keyboardType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .employeeInputChrome(colorScheme)
+                }
+            }
+            EmployeeField(label: "Address") {
+                TextField("Address", text: $address, axis: .vertical)
+                    .lineLimit(2...3).font(.caption)
+                    .employeeInputChrome(colorScheme)
+            }
+            HStack(spacing: 10) {
+                EmployeeField(label: "Role") {
+                    TextField("Role", text: $role).font(.caption)
+                        .employeeInputChrome(colorScheme)
+                }
+                EmployeeField(label: "Monthly salary") {
+                    TextField("0", text: $salaryText).font(.caption.monospaced())
+                        .keyboardType(.decimalPad)
+                        .employeeInputChrome(colorScheme)
+                }
+            }
+            EmployeeField(label: "Joining date") {
+                HStack {
+                    Toggle("", isOn: $hasJoining).labelsHidden()
+                    if hasJoining {
+                        DatePicker("", selection: $joiningDate, displayedComponents: .date)
+                            .labelsHidden()
+                    } else {
+                        Text("Not set").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+            }
+            EmployeeField(label: "Status") {
+                Picker("Status", selection: $status) {
+                    Text("Active").tag("Active")
+                    Text("Inactive").tag("Inactive")
+                    Text("Probation").tag("Probation")
+                }
+                .pickerStyle(.segmented)
+            }
+            EmployeeField(label: "Notes") {
+                TextField("Notes", text: $notes, axis: .vertical)
+                    .lineLimit(2...4).font(.caption)
+                    .employeeInputChrome(colorScheme)
+            }
+        }
+        .padding(12)
+        .employeesGlass(colorScheme, corner: 14)
+    }
+
+    private var footerButtons: some View {
+        HStack(spacing: 10) {
+            Button {
+                Task { await submit() }
+            } label: {
+                if vm.saving {
+                    ProgressView().frame(maxWidth: .infinity)
+                } else {
+                    Text(selectedUser != nil ? "Create Employee From User" : "Save")
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(EmployeePalette.coral)
+            .disabled(vm.saving || selectedUser?.linked == true)
+            Button("Cancel") { dismiss() }
+                .buttonStyle(.bordered)
+        }
+    }
+
+    /// Web submit() parity — same payload keys, same guards.
+    private func submit() async {
+        formError = nil
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedName.isEmpty else {
+            formError = "Name is required"
+            return
+        }
+        let trimmedEmpId = empId.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let u = selectedUser, u.linked == true,
+           let gas = u.employeeIdGas, !gas.isEmpty, gas != trimmedEmpId {
+            formError = "\(u.name ?? "User") is already linked to \(gas)"
+            return
+        }
+        var payload: [String: AnyEncodable] = [
+            "name": AnyEncodable(trimmedName),
+            "phone": AnyEncodable(phone),
+            "email": AnyEncodable(email),
+            "address": AnyEncodable(address),
+            "role": AnyEncodable(role),
+            "joining_date": AnyEncodable(hasJoining ? employeeIsoDate(joiningDate) : ""),
+            "monthly_salary": AnyEncodable(Double(salaryText) ?? 0),
+            "status": AnyEncodable(status),
+            "notes": AnyEncodable(notes),
+            "business_id": AnyEncodable("ALMA_LIFESTYLE"),
+        ]
+        if !trimmedEmpId.isEmpty { payload["emp_id"] = AnyEncodable(trimmedEmpId) }
+        if !selectedUserId.isEmpty { payload["user_id"] = AnyEncodable(selectedUserId) }
+        if let err = await vm.saveEmployee(payload) {
+            formError = err
+        } else {
+            dismiss()
+        }
+    }
+}
+
+// MARK: - Link account sheet (web "Link roster row to user" modal —
+// PATCH /api/hr/employees/link {action: link_user_to_employee})
+
+@available(iOS 17.0, *)
+private struct EmployeeLinkAccountSheet: View {
+    let employee: EmployeeRosterItem
+    let listVM: EmployeesVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var linkUserId = ""
+    @State private var formError: String? = nil
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Link roster row to user").font(.headline)
+                    Text(employee.empId).font(.caption.monospaced()).foregroundStyle(.secondary)
+                }
+                if let err = formError {
+                    Label(err, systemImage: "exclamationmark.triangle")
+                        .font(.footnote).foregroundStyle(EmployeePalette.red500)
+                }
+                EmployeeField(label: "User without employee link") {
+                    Picker("Select user", selection: $linkUserId) {
+                        Text("Select user").tag("")
+                        ForEach(listVM.unlinkableUsers) { u in
+                            Text("\(u.name ?? "—") · \((u.role ?? "—").replacingOccurrences(of: "_", with: " "))")
+                                .tag(u.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .employeeInputChrome(colorScheme)
+                }
+                HStack(spacing: 10) {
+                    Button {
+                        Task {
+                            guard !linkUserId.isEmpty else {
+                                formError = "Select a user account"
+                                return
+                            }
+                            formError = await listVM.patchLink(
+                                action: "link_user_to_employee", userId: linkUserId,
+                                employeeId: employee.empId,
+                                successNotice: "Roster row linked to user")
+                            if formError == nil { dismiss() }
+                        }
+                    } label: {
+                        if listVM.linkBusyUserId != nil {
+                            ProgressView().frame(maxWidth: .infinity)
+                        } else {
+                            Text("Link").frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(EmployeePalette.coral)
+                    .disabled(listVM.linkBusyUserId != nil)
+                    Button("Cancel") { dismiss() }.buttonStyle(.bordered)
+                }
+            }
+            .padding(18)
+        }
+        .presentationBackground { EmployeesAurora() }
+    }
+}
+
+// MARK: - Payroll entry sheet (web "Log payroll movement" modal —
+// POST /api/hr/payroll; debit types re-confirm with balance before/after)
+
+@available(iOS 17.0, *)
+private struct EmployeePayrollEntrySheet: View {
+    let employee: EmployeeRosterItem
+    let vm: EmployeeDetailVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+
+    // Web LEGACY_PAY_TX_OPTIONS verbatim.
+    private static let txOptions: [(value: String, label: String)] = [
+        ("deposit", "💰 Credit salary (add to wallet)"),
+        ("advance", "💸 Advance to employee (debit)"),
+        ("salary_payment", "⚠️ Mark salary as paid out (debit - usually via approval)"),
+        ("adjustment", "⚙️ Adjustment (correction)"),
+    ]
+
+    @State private var txType = "deposit"
+    @State private var amountText = ""
+    @State private var date = Date()
+    @State private var periodYm = ""
+    @State private var note = ""
+    @State private var formError: String? = nil
+    @State private var showConfirm = false
+
+    private var isDebit: Bool { txType == "advance" || txType == "salary_payment" }
+    private var amount: Double { Double(amountText) ?? 0 }
+
+    /// Web payrollTxHelper verbatim.
+    private var helper: (text: String, color: Color) {
+        switch txType {
+        case "deposit":
+            return ("✓ This will INCREASE the employee's wallet balance.", EmployeePalette.emerald600)
+        case "advance":
+            return ("⚠ This will DECREASE balance (employee received cash early).", EmployeePalette.amber600)
+        case "salary_payment":
+            return ("⚠ Caution: Use only if you paid salary outside the wallet. Normal flow is employee withdrawal request → approval.", EmployeePalette.amber600)
+        default:
+            return ("Manual correction — can be positive or negative depending on amount sign in ledger mirror.", Color.secondary)
+        }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Log payroll movement").font(.headline)
+                Text("\(employee.name) · \(employee.empId)")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let err = formError {
+                    Label(err, systemImage: "exclamationmark.triangle")
+                        .font(.footnote).foregroundStyle(EmployeePalette.red500)
+                }
+                EmployeeField(label: "Type") {
+                    Picker("Type", selection: $txType) {
+                        ForEach(Self.txOptions, id: \.value) { opt in
+                            Text(opt.label).tag(opt.value)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .employeeInputChrome(colorScheme)
+                }
+                Text(helper.text)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(helper.color)
+                EmployeeField(label: "Amount (৳)") {
+                    TextField("0", text: $amountText)
+                        .font(.subheadline.monospaced())
+                        .keyboardType(.decimalPad)
+                        .employeeInputChrome(colorScheme)
+                }
+                HStack(spacing: 10) {
+                    EmployeeField(label: "Effective date") {
+                        DatePicker("", selection: $date, displayedComponents: .date)
+                            .labelsHidden()
+                    }
+                    EmployeeField(label: "Period (YYYY-MM)") {
+                        TextField("2026-05", text: $periodYm)
+                            .font(.caption.monospaced())
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .employeeInputChrome(colorScheme)
+                    }
+                }
+                EmployeeField(label: "Note") {
+                    TextField("Note", text: $note, axis: .vertical)
+                        .lineLimit(2...3).font(.caption)
+                        .employeeInputChrome(colorScheme)
+                }
+                HStack(spacing: 10) {
+                    Button {
+                        formError = nil
+                        guard amount > 0 else {
+                            formError = "Transaction type & amount required"
+                            return
+                        }
+                        showConfirm = true
+                    } label: {
+                        if vm.paying {
+                            ProgressView().frame(maxWidth: .infinity)
+                        } else {
+                            Text("Save entry").frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(EmployeePalette.coral)
+                    .disabled(vm.paying)
+                    Button("Cancel") { dismiss() }.buttonStyle(.bordered)
+                }
+            }
+            .padding(18)
+        }
+        .presentationBackground { EmployeesAurora() }
+        // Money write → Bangla confirm with name + amount; debits add the web
+        // "Confirm wallet debit" balance math.
+        .confirmationDialog(
+            isDebit ? "ওয়ালেট ডেবিট নিশ্চিত করুন" : "পে-রোল এন্ট্রি নিশ্চিত করুন",
+            isPresented: $showConfirm,
+            titleVisibility: .visible
+        ) {
+            Button(isDebit ? "হ্যাঁ, ওয়ালেট থেকে কাটুন" : "নিশ্চিত করুন",
+                   role: isDebit ? .destructive : nil) {
+                Task {
+                    if await vm.addPayroll(
+                        empId: employee.empId, txType: txType, amount: amount,
+                        date: employeeIsoDate(date), periodYm: periodYm, note: note) {
+                        dismiss()
+                    } else {
+                        formError = vm.actionError
+                    }
+                }
+            }
+            Button("বাতিল", role: .cancel) {}
+        } message: {
+            if isDebit {
+                let balance = vm.wallet?.summary?.currentBalance ?? 0
+                Text("\(employee.name)-এর ওয়ালেট ব্যালেন্স ৳\(Int(amount.rounded()).formatted()) কমবে। এখনকার ব্যালেন্স ৳\(balance.formatted()) → এন্ট্রির পরে ৳\((balance - Int(amount.rounded())).formatted())। স্যালারি দিতে সাধারণত \"Credit salary\" ব্যবহার করুন।")
+            } else {
+                Text("\(employee.name)-এর ওয়ালেটে \(txType == "deposit" ? "৳\(Int(amount.rounded()).formatted()) যোগ হবে" : "৳\(Int(amount.rounded()).formatted()) অ্যাডজাস্টমেন্ট হবে")।")
+            }
+        }
+    }
+}
+
+// MARK: - Salary edit sheet (web "Update salary" modal —
+// PATCH /api/hr/employees/{emp_id}/salary)
+
+@available(iOS 17.0, *)
+private struct EmployeeSalaryEditSheet: View {
+    let employee: EmployeeRosterItem
+    let vm: EmployeeDetailVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+
+    @State private var newSalaryText = ""
+    @State private var effectiveDate = Date()
+    @State private var reason = ""
+    @State private var formError: String? = nil
+    @State private var showConfirm = false
+
+    private var newSalary: Int { Int((Double(newSalaryText) ?? 0).rounded()) }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Update salary for \(employee.name)").font(.headline)
+                if let err = formError {
+                    Label(err, systemImage: "exclamationmark.triangle")
+                        .font(.footnote).foregroundStyle(EmployeePalette.red500)
+                }
+                EmployeeField(label: "Current salary") {
+                    Text("৳\(employee.monthlySalary.formatted())")
+                        .font(.subheadline.monospaced())
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .employeeInputChrome(colorScheme)
+                }
+                EmployeeField(label: "New monthly salary (৳)") {
+                    TextField("\(employee.monthlySalary)", text: $newSalaryText)
+                        .font(.subheadline.monospaced())
+                        .keyboardType(.numberPad)
+                        .employeeInputChrome(colorScheme)
+                }
+                EmployeeField(label: "Effective from") {
+                    DatePicker("", selection: $effectiveDate, displayedComponents: .date)
+                        .labelsHidden()
+                }
+                Text("New monthly accrual will start from the effective date you choose (stored in audit for now). Past accruals are not recalculated.")
+                    .font(.system(size: 9)).foregroundStyle(.secondary)
+                EmployeeField(label: "Reason (optional)") {
+                    TextField("e.g. annual increment, role change", text: $reason, axis: .vertical)
+                        .lineLimit(2...3).font(.caption)
+                        .employeeInputChrome(colorScheme)
+                }
+                HStack(spacing: 10) {
+                    Button {
+                        formError = nil
+                        // Web submitSalary guards verbatim.
+                        guard newSalary > 0 else {
+                            formError = "Enter a valid salary amount"
+                            return
+                        }
+                        guard newSalary <= 1_000_000 else {
+                            formError = "Salary cannot exceed ৳1,000,000"
+                            return
+                        }
+                        guard newSalary != employee.monthlySalary else {
+                            formError = "New salary must differ from current salary"
+                            return
+                        }
+                        showConfirm = true
+                    } label: {
+                        if vm.savingSalary {
+                            ProgressView().frame(maxWidth: .infinity)
+                        } else {
+                            Text("Save").frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(EmployeePalette.coral)
+                    .disabled(vm.savingSalary)
+                    Button("Cancel") { dismiss() }.buttonStyle(.bordered)
+                }
+            }
+            .padding(18)
+        }
+        .presentationBackground { EmployeesAurora() }
+        .confirmationDialog(
+            "স্যালারি পরিবর্তন নিশ্চিত করুন",
+            isPresented: $showConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("স্যালারি আপডেট করুন", role: .destructive) {
+                Task {
+                    if await vm.patchSalary(
+                        empId: employee.empId, amount: newSalary,
+                        effectiveDate: employeeIsoDate(effectiveDate),
+                        reason: reason) {
+                        dismiss()
+                    } else {
+                        formError = vm.actionError
+                    }
+                }
+            }
+            Button("বাতিল", role: .cancel) {}
+        } message: {
+            Text("\(employee.name)-এর মাসিক বেতন ৳\(employee.monthlySalary.formatted()) থেকে ৳\(newSalary.formatted()) হবে।")
+        }
+    }
+}
+
+// MARK: - Salary correction sheet (web "Request salary correction" modal —
+// POST /api/payroll/salary-corrections; lands in the approvals system, same as web)
+
+@available(iOS 17.0, *)
+private struct EmployeeCorrectionSheet: View {
+    let employee: EmployeeRosterItem
+    let vm: EmployeeDetailVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+
+    private struct ReversalDraft: Identifiable {
+        let id = UUID()
+        var ledgerEntryId = ""
+        var amountText = ""
+        var reason = ""
+    }
+
+    @State private var accrualId = ""
+    @State private var proposedText = ""
+    @State private var reason = ""
+    @State private var reversals: [ReversalDraft] = []
+    @State private var formError: String? = nil
+    @State private var showConfirm = false
+
+    private var selectedAccrual: EmployeeWalletEntry? {
+        vm.salaryAccrualEntries.first { $0.entryId == accrualId }
+    }
+    private var proposedAmount: Int { Int((Double(proposedText) ?? 0).rounded()) }
+    private var delta: Int? {
+        guard let acc = selectedAccrual, proposedAmount != 0 else { return nil }
+        return proposedAmount - acc.amount
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Request salary correction for \(employee.name)").font(.headline)
+                if let err = formError {
+                    Label(err, systemImage: "exclamationmark.triangle")
+                        .font(.footnote).foregroundStyle(EmployeePalette.red500)
+                }
+                stepOne
+                stepTwo
+                stepThree
+                stepFour
+                footer
+            }
+            .padding(18)
+        }
+        .presentationBackground { EmployeesAurora() }
+        .confirmationDialog(
+            "সংশোধনের অনুরোধ নিশ্চিত করুন",
+            isPresented: $showConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("অনুমোদনের জন্য পাঠান") {
+                Task { await submit() }
+            }
+            Button("বাতিল", role: .cancel) {}
+        } message: {
+            Text("\(employee.name)-এর \(selectedAccrual?.periodYm ?? "—") অ্যাক্রুয়াল ৳\((selectedAccrual?.amount ?? 0).formatted()) → ৳\(proposedAmount.formatted()) করার অনুরোধ সুপার অ্যাডমিন অনুমোদনে যাবে।")
+        }
+    }
+
+    private func stepLabel(_ text: String) -> some View {
+        Text(text).font(.system(size: 9, weight: .black)).textCase(.uppercase)
+            .foregroundStyle(.secondary)
+    }
+
+    private var stepOne: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            stepLabel("Step 1 · Target accrual")
+            if vm.salaryAccrualEntries.isEmpty {
+                Text("No SALARY_ACCRUAL entries in this wallet yet.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            } else {
+                ForEach(vm.salaryAccrualEntries) { entry in
+                    let selected = accrualId == entry.entryId
+                    Button {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        accrualId = entry.entryId ?? ""
+                    } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                                .foregroundStyle(selected ? EmployeePalette.coral : .secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.periodYm ?? String((entry.date ?? "—").prefix(10)))
+                                    .font(.caption.weight(.bold))
+                                Text("৳\(entry.amount.formatted())")
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(EmployeePalette.accentText(colorScheme))
+                                if let note = entry.note, !note.isEmpty {
+                                    Text(note).font(.system(size: 9))
+                                        .foregroundStyle(.secondary).lineLimit(2)
+                                }
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(10)
+                        .background(
+                            selected ? EmployeePalette.coral.opacity(colorScheme == .dark ? 0.20 : 0.10)
+                                     : Color.white.opacity(colorScheme == .dark ? 0.05 : 0.35),
+                            in: RoundedRectangle(cornerRadius: 12))
+                        .overlay(RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(selected ? EmployeePalette.coral.opacity(0.5)
+                                                   : Color.white.opacity(colorScheme == .dark ? 0.10 : 0.4),
+                                          lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var stepTwo: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            stepLabel("Step 2 · New amount")
+            TextField(selectedAccrual.map { "Current ৳\($0.amount.formatted())" } ?? "Select accrual first",
+                      text: $proposedText)
+                .font(.subheadline.monospaced())
+                .keyboardType(.numberPad)
+                .disabled(selectedAccrual == nil)
+                .opacity(selectedAccrual == nil ? 0.5 : 1)
+                .employeeInputChrome(colorScheme)
+            if let delta {
+                Text("Change: \(delta >= 0 ? "+" : "−")৳\(abs(delta).formatted())")
+                    .font(.caption2.monospaced().weight(.bold))
+                    .foregroundStyle(delta >= 0 ? EmployeePalette.emerald600 : EmployeePalette.red500)
+            }
+        }
+    }
+
+    private var stepThree: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                stepLabel("Step 3 · Reverse other entries (optional)")
+                Spacer()
+                Button("+ Add reversal") {
+                    reversals.append(ReversalDraft())
+                }
+                .font(.caption2.weight(.semibold))
+                .disabled(selectedAccrual == nil)
+            }
+            if reversals.isEmpty {
+                Text("Use this to cancel a wrong withdrawal or adjustment when approving.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            } else {
+                ForEach($reversals) { $row in
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Reversal").font(.caption2).foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Remove") {
+                                reversals.removeAll { $0.id == row.id }
+                            }
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(EmployeePalette.red500)
+                        }
+                        Picker("Select ledger entry…", selection: $row.ledgerEntryId) {
+                            Text("Select ledger entry…").tag("")
+                            ForEach(vm.reversalCandidateEntries) { entry in
+                                Text("\((entry.type ?? "—").replacingOccurrences(of: "_", with: " ")) · ৳\(abs(entry.amount).formatted()) · \(String((entry.note ?? entry.entryId ?? "").prefix(40)))")
+                                    .tag(entry.entryId ?? "")
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .employeeInputChrome(colorScheme)
+                        TextField("Amount (+ credit back, − debit)", text: $row.amountText)
+                            .font(.caption.monospaced())
+                            .keyboardType(.numbersAndPunctuation)
+                            .employeeInputChrome(colorScheme)
+                        TextField("Why reverse this entry", text: $row.reason)
+                            .font(.caption)
+                            .employeeInputChrome(colorScheme)
+                    }
+                    .padding(10)
+                    .background(Color.white.opacity(colorScheme == .dark ? 0.05 : 0.35),
+                                in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+        }
+    }
+
+    private var stepFour: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            stepLabel("Step 4 · Reason (required)")
+            TextField("Explain why this accrual amount should change", text: $reason, axis: .vertical)
+                .lineLimit(3...5).font(.caption)
+                .employeeInputChrome(colorScheme)
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 10) {
+            Button {
+                formError = nil
+                if validate() { showConfirm = true }
+            } label: {
+                if vm.correctionSubmitting {
+                    ProgressView().frame(maxWidth: .infinity)
+                } else {
+                    Text("Submit for approval").frame(maxWidth: .infinity)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(EmployeePalette.coral)
+            .disabled(vm.correctionSubmitting || vm.salaryAccrualEntries.isEmpty)
+            Button("Cancel") { dismiss() }.buttonStyle(.bordered)
+        }
+    }
+
+    /// Web submitSalaryCorrection guards verbatim.
+    private func validate() -> Bool {
+        guard let acc = selectedAccrual, acc.entryId != nil else {
+            formError = "Select a salary accrual to correct"
+            return false
+        }
+        guard let period = acc.periodYm?.trimmingCharacters(in: .whitespaces), !period.isEmpty else {
+            formError = "Selected accrual is missing a period"
+            return false
+        }
+        guard proposedAmount > 0 else {
+            formError = "Proposed amount must be greater than zero"
+            return false
+        }
+        guard proposedAmount != acc.amount else {
+            formError = "Proposed amount must differ from the current accrual"
+            return false
+        }
+        guard reason.trimmingCharacters(in: .whitespacesAndNewlines).count >= 5 else {
+            formError = "Reason must be at least 5 characters"
+            return false
+        }
+        for row in reversals where !row.ledgerEntryId.trimmingCharacters(in: .whitespaces).isEmpty {
+            let amount = Int((Double(row.amountText) ?? 0).rounded())
+            if amount == 0 {
+                formError = "Each reversal needs a non-zero amount"
+                return false
+            }
+            if row.reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                formError = "Each reversal needs a reason"
+                return false
+            }
+        }
+        return true
+    }
+
+    private func submit() async {
+        guard let acc = selectedAccrual, let accId = acc.entryId,
+              let period = acc.periodYm?.trimmingCharacters(in: .whitespaces) else { return }
+        let revs: [(ledgerEntryId: String, amount: Int, reason: String)] = reversals.compactMap { row in
+            let entryId = row.ledgerEntryId.trimmingCharacters(in: .whitespaces)
+            guard !entryId.isEmpty else { return nil }
+            return (entryId,
+                    Int((Double(row.amountText) ?? 0).rounded()),
+                    row.reason.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if await vm.requestCorrection(
+            empId: employee.empId, accrualEntryId: accId, periodYm: period,
+            proposedAmount: proposedAmount,
+            reason: reason.trimmingCharacters(in: .whitespacesAndNewlines),
+            reversals: revs) {
+            dismiss()
+        } else {
+            formError = vm.actionError
+        }
     }
 }
 
