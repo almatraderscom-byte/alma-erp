@@ -1252,8 +1252,12 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         // (see ClaudeTopFade.swift) so the scroll-edge fade can be screenshotted headlessly.
         ClaudeTopFadeSelfTest.presentIfRequested(over: self)
         // DEBUG self-test hook: ALMA_OPEN_TAB=<0-4> jumps straight to a tab at launch, so
-        // sim proofs need no GUI clicks (computer-use can be busy with a parallel session).
-        if let t = ProcessInfo.processInfo.environment["ALMA_OPEN_TAB"], let i = Int(t),
+        // sim proofs need no GUI clicks. Read env OR launch argv (simctl passes KEY=val
+        // as a positional argument, not an env var).
+        let openTabRaw = ProcessInfo.processInfo.environment["ALMA_OPEN_TAB"]
+            ?? ProcessInfo.processInfo.arguments.first { $0.hasPrefix("ALMA_OPEN_TAB=") }?
+                .split(separator: "=").last.map(String.init)
+        if let t = openTabRaw, let i = Int(t),
            (0..<(viewControllers?.count ?? 0)).contains(i) {
             selectedIndex = i
             // The Capacitor Dashboard reparent can reset the selection right after the

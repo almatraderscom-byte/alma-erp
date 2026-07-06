@@ -143,11 +143,13 @@ final class AlmaVoiceEngine {
         pendingImages.compactMap { if case .ready(let f) = $0.state { return f } else { return nil } }
     }
 
-    /// TRUE streaming STT (words appear as spoken) — owner-tunable escape hatch:
-    /// if it ever misbehaves on device, set `alma-voice-streaming` = false and the
-    /// proven record-then-transcribe path is used. Default ON (web parity).
+    /// TRUE streaming STT (live words as spoken). DEFAULT OFF for this stabilization
+    /// build: the live path uses AVAudioEngine + a mic tap, the same surface that
+    /// (with the old .voiceChat VPIO session) crashed on device. OFF ⇒ the proven
+    /// record→/transcribe path (plain AVAudioRecorder, zero AVAudioEngine) — build-39
+    /// stable. Re-enable via `alma-voice-streaming` = true once device-confirmed.
     private var streamingEnabled: Bool {
-        (UserDefaults.standard.object(forKey: "alma-voice-streaming") as? Bool) ?? true
+        (UserDefaults.standard.object(forKey: "alma-voice-streaming") as? Bool) ?? false
     }
 
     private var recURL: URL {
@@ -174,9 +176,15 @@ final class AlmaVoiceEngine {
                 }
                 do {
                     let s = AVAudioSession.sharedInstance()
-                    try s.setCategory(.playAndRecord, mode: .voiceChat,
-                                      options: [.defaultToSpeaker, .allowBluetooth])
+                    // .default mode (NOT .voiceChat): voiceChat routes TTS to the
+                    // quiet earpiece AND enables Voice-Processing I/O, which fights
+                    // the AVAudioEngine mic tap (owner hit both live on device: near-
+                    // silent replies + crashes). .default + defaultToSpeaker + a forced
+                    // speaker route = loud playback and a plain, stable input tap.
+                    try s.setCategory(.playAndRecord, mode: .default,
+                                      options: [.defaultToSpeaker, .allowBluetoothA2DP])
                     try s.setActive(true)
+                    try? s.overrideOutputAudioPort(.speaker)
                     self.sessionReady = true
                 } catch {
                     self.errorToast = "অডিও চালু করা গেল না"
@@ -609,14 +617,20 @@ final class AlmaVoiceEngine {
             replyText += ev.delta ?? ""
             tts.feed(ev.delta ?? "")
         case "tool_start":
-            let name = ev.name ?? "টুল"
+            // Humanise the raw tool id for the step chip (get_pending_approvals →
+            // "Get Pending Approvals") — never show snake_case to the owner.
+            let raw = ev.name ?? "টুল"
+            let label = raw.contains("_")
+                ? raw.replacingOccurrences(of: "_", with: " ").capitalized
+                : raw
             cards.append(.init(id: ev.id ?? UUID().uuidString, kind: .tool, icon: "🔧",
-                               title: name, sub: "", status: "run"))
-            // Web: narrate the first tool immediately, then max ~1/6s.
-            if !narratedFirstTool || Date().timeIntervalSince(lastToolNarration) > 6 {
+                               title: label, sub: "", status: "run"))
+            // Speak a friendly, GENERIC "working on it" once per turn — never the raw
+            // tool name (owner heard "get_pending_approvals, স্যার" spoken aloud).
+            if !narratedFirstTool {
                 narratedFirstTool = true
                 lastToolNarration = Date()
-                tts.sayNow("\(name), স্যার…")
+                tts.sayNow("একটু দেখে নিচ্ছি, স্যার…")
             }
         case "tool_end":
             if let i = cards.firstIndex(where: { $0.id == ev.id }) {
@@ -723,12 +737,18 @@ final class AlmaVoiceEngine {
 
     func ttsDidStartFirstChunk() {
         lastAudioAt = Date()
+        // Recording can flip the route to the receiver; force the loud speaker back
+        // for the spoken reply (owner: replies were near-silent on device).
+        try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker)
         if state == .thinking || state == .transcribing { state = .speaking }
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         startBargeMonitor()
     }
 
     func ttsDidStartChunk(_ text: String) {
+        // Keep every spoken chunk on the loud speaker — the barge-in recorder can
+        // otherwise nudge the route back toward the quiet receiver mid-reply.
+        try? AVAudioSession.sharedInstance().overrideOutputAudioPort(.speaker)
         lastAudioAt = Date()
         if !nowLine.isEmpty { saidLines.append(nowLine) }
         if saidLines.count > 2 { saidLines.removeFirst(saidLines.count - 2) }
@@ -1194,8 +1214,12 @@ final class AlmaWakeWord {
     private var recycleTask: Task<Void, Never>?
     private(set) var active = false
 
+    // DEFAULT OFF for this stabilization build: the continuous SFSpeechRecognizer +
+    // its own AVAudioEngine mic tap is the biggest crash/mic-contention surface on
+    // device. Tap-to-talk works regardless. Flip `alma-wake-word` = true to opt in
+    // once the audio-session fix is confirmed stable on the owner's device.
     private var enabled: Bool {
-        (UserDefaults.standard.object(forKey: "alma-wake-word") as? Bool) ?? true
+        (UserDefaults.standard.object(forKey: "alma-wake-word") as? Bool) ?? false
     }
 
     /// The transcript tail counts as a wake hit on any close rendering of
@@ -1756,7 +1780,7 @@ struct AlmaVoiceConsoleView: View {
                 } else if engine.state == .idle {
                     (Text("আসসালামু আলাইকুম, ").foregroundStyle(muted)
                      + Text("Sir").foregroundStyle(gold)
-                     + Text("। «ALMA» বলুন কিংবা অর্বে ট্যাপ করুন।").foregroundStyle(muted))
+                     + Text("। অর্বে ট্যাপ করে বলুন।").foregroundStyle(muted))
                         .font(.system(size: 15))
                         .multilineTextAlignment(.center)
                 } else if engine.state == .listening {
