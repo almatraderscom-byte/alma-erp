@@ -27,8 +27,6 @@
 //
 
 import SwiftUI
-import PhotosUI
-import UIKit
 
 // MARK: - Web palette (exact hexes from globals.css / tailwind tokens)
 
@@ -173,33 +171,21 @@ struct PortalOfficeChatMsg: Decodable, Identifiable, Equatable {
     let id: String
     let authorType: String
     let authorName: String
-    let authorImageUrl: String?
     let body: String
-    let imageURLs: [String]          // real attachment URLs → rendered as image bubbles
-    let status: String?              // "posted" | "pending" (owner-only draft) | "dismissed"
-    let isAgentReply: Bool
+    let attachmentCount: Int
+    let status: String?
     let createdAt: String?
-    var attachmentCount: Int { imageURLs.count }
 
-    static func == (a: PortalOfficeChatMsg, b: PortalOfficeChatMsg) -> Bool {
-        a.id == b.id && a.status == b.status && a.body == b.body
-    }
-
-    private enum Keys: String, CodingKey {
-        case id, authorType, authorName, authorImageUrl, body, attachments, status, isAgentReply, createdAt
-    }
-    private struct Attachment: Decodable { let url: String?; let type: String? }
+    private enum Keys: String, CodingKey { case id, authorType, authorName, body, attachments, status, createdAt }
+    private struct Blob: Decodable { init(from decoder: Decoder) throws {} }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
         authorType = (try? c.decode(String.self, forKey: .authorType)) ?? "staff"
         authorName = (try? c.decodeIfPresent(String.self, forKey: .authorName)) ?? "—"
-        authorImageUrl = try? c.decodeIfPresent(String.self, forKey: .authorImageUrl)
         body = (try? c.decode(String.self, forKey: .body)) ?? ""
-        let atts = (try? c.decodeIfPresent([Attachment].self, forKey: .attachments)) ?? []
-        imageURLs = (atts ?? []).compactMap { $0.url }.filter { $0.hasPrefix("http") }
+        attachmentCount = ((try? c.decodeIfPresent([Blob].self, forKey: .attachments)) ?? [])?.count ?? 0
         status = try? c.decodeIfPresent(String.self, forKey: .status)
-        isAgentReply = (try? c.decodeIfPresent(Bool.self, forKey: .isAgentReply)) ?? false
         createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
     }
 }
@@ -215,313 +201,6 @@ struct PortalOfficeChatFeed: Decodable {
 
 /// staff-action responses only carry {ok, status, …}; we just need the success flag.
 private struct PortalOfficeOk: Decodable {}
-
-// MARK: - Owner Hub models (GET /api/assistant/office/hub → getOwnerHubData JSON)
-
-/// Envelope: `self` tells the app which role the logged-in user is, so the SAME Office
-/// tab shows the BOSS dashboard to the owner and the staff app to employees.
-struct PortalHubEnvelope: Decodable {
-    let selfRole: String       // "owner" | "staff" | "none"
-    let hub: PortalOwnerHub?
-    private enum Keys: String, CodingKey { case ok, hub; case selfRole = "self" }
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: Keys.self)
-        selfRole = (try? c.decodeIfPresent(String.self, forKey: .selfRole)) ?? "none"
-        hub = try? c.decodeIfPresent(PortalOwnerHub.self, forKey: .hub)
-    }
-}
-
-struct PortalOwnerHub: Decodable {
-    var kpis: Kpis
-    var pendingApproval: [PortalHubTask]
-    var activeTasks: [PortalHubTask]
-    var doneTodayTasks: [PortalHubTask]
-    var selfInitiated: [PortalHubTask]
-    var overdueUpdates: [PortalOverdue]
-    var activity: [PortalActivity]
-    var award: PortalAward?
-    var awardStats: PortalAwardStats?
-    var team: [PortalTeamMember]
-    var leaderboard: [PortalLeader]
-    var performance: [PortalPerf]
-    var proposals: [PortalProposal]
-
-    struct Kpis: Decodable {
-        var pending = 0, active = 0, overdue = 0, doneToday = 0, online = 0, staffTotal = 0
-        init() {}
-        init(from d: Decoder) throws {
-            let c = try d.container(keyedBy: K.self)
-            func i(_ k: K) -> Int { (try? c.decodeIfPresent(Int.self, forKey: k)) ?? 0 }
-            pending = i(.pending); active = i(.active); overdue = i(.overdue)
-            doneToday = i(.doneToday); online = i(.online); staffTotal = i(.staffTotal)
-        }
-        enum K: String, CodingKey { case pending, active, overdue, doneToday, online, staffTotal }
-    }
-
-    private enum Keys: String, CodingKey {
-        case kpis, pendingApproval, activeTasks, doneTodayTasks, selfInitiated
-        case overdueUpdates, activity, award, awardStats, team, leaderboard, performance, proposals
-    }
-    // TEMP-PROOF sample (prod lacks /office/hub) so the boss dashboard can be shown. Remove before ship.
-    static let sampleJSON = """
-    {"kpis":{"pending":2,"active":3,"overdue":1,"doneToday":6,"online":2,"staffTotal":3},
-     "pendingApproval":[
-       {"id":"t1","title":"১৩৩ কালেকশনের নতুন ছবি","type":"ফটোগ্রাফি","status":"awaiting_owner","verificationStatus":"proof_submitted","staffId":"s1","staffName":"মোহাম্মদ ইয়াফি","needsOwner":true,"redoCount":0,"source":"assigned","createdAt":"2026-07-07T04:00:00Z","proofData":{}},
-       {"id":"t2","title":"ফেসবুক পোস্টের ক্যাপশন","type":"কনটেন্ট","status":"awaiting_owner","verificationStatus":"auto_verified","staffId":"s2","staffName":"সাদিয়া","needsOwner":false,"redoCount":1,"source":"assigned","createdAt":"2026-07-07T03:00:00Z"}],
-     "activeTasks":[
-       {"id":"t3","title":"দুপুরের ডেলিভারি হ্যান্ডওভার","type":"সেলস","status":"active","verificationStatus":"in_progress","staffId":"s1","staffName":"মোহাম্মদ ইয়াফি","needsOwner":false,"redoCount":0,"source":"assigned","createdAt":"2026-07-07T02:00:00Z","dueAt":"2026-07-07T12:00:00Z"},
-       {"id":"a1","title":"ফেসবুক পোস্টের ক্যাপশন লেখা","type":"কনটেন্ট","status":"active","verificationStatus":"in_progress","staffId":"s2","staffName":"সাদিয়া","needsOwner":false,"redoCount":0,"source":"assigned","createdAt":"2026-07-07T01:30:00Z"},
-       {"id":"a2","title":"২টা রিটার্ন অর্ডার ফলোআপ","type":"সাপোর্ট","status":"active","verificationStatus":"in_progress","staffId":"s2","staffName":"সাদিয়া","needsOwner":false,"redoCount":0,"source":"assigned","createdAt":"2026-07-07T01:00:00Z"}],
-     "doneTodayTasks":[
-       {"id":"d1","title":"১৩৩ কালেকশনের ছবি তোলা","type":"ফটোগ্রাফি","status":"done","verificationStatus":"owner_approved","staffId":"s1","staffName":"মোহাম্মদ ইয়াফি","needsOwner":false,"redoCount":0,"source":"assigned","createdAt":"2026-07-07T05:00:00Z"},
-       {"id":"d2","title":"সকালের ৩টা অর্ডার প্যাকিং","type":"অপস","status":"done","verificationStatus":"owner_approved","staffId":"s1","staffName":"মোহাম্মদ ইয়াফি","needsOwner":false,"redoCount":0,"source":"assigned","createdAt":"2026-07-07T05:10:00Z"},
-       {"id":"d3","title":"নতুন কাস্টমার মেসেজের রিপ্লাই","type":"সাপোর্ট","status":"done","verificationStatus":"owner_approved","staffId":"s2","staffName":"সাদিয়া","needsOwner":false,"redoCount":0,"source":"assigned","createdAt":"2026-07-07T05:20:00Z"}],
-     "selfInitiated":[{"id":"t5","title":"দোকান গুছিয়ে রেখেছি","type":"অন্যান্য","status":"proposed","verificationStatus":"proposed","staffId":"s3","staffName":"রফিক","needsOwner":false,"redoCount":0,"source":"staff_initiated","createdAt":"2026-07-07T05:00:00Z"}],
-     "overdueUpdates":[{"id":"t6","title":"কুরিয়ার বুকিং","staffId":"s2","staffName":"সাদিয়া","phone":"01712345678","requestedAt":"2026-07-07T05:30:00Z","note":"আপডেট দিন — কয়টা বুক হলো?","secondsLeft":-120,"escalated":false}],
-     "activity":[
-       {"id":"ac1","taskId":"d1","kind":"completed","summary":"মোহাম্মদ ইয়াফি একটি কাজ সম্পন্ন করেছেন","actorType":"staff","createdAt":"2026-07-07T05:40:00Z"},
-       {"id":"ac2","taskId":"t5","kind":"self_initiated","summary":"রফিক নিজ উদ্যোগে কাজ প্রস্তাব করেছেন","actorType":"staff","createdAt":"2026-07-07T05:20:00Z"}],
-     "award":{"staffId":"s1","staffName":"মোহাম্মদ ইয়াফি","imageUrl":null,"score":92,"auto":true,"pinnedByOwner":false,"note":null,"weekStart":"2026-07-05"},
-     "awardStats":{"done":18,"approvalRate":94,"avgQc":88,"selfInitiated":3},
-     "team":[
-       {"staffId":"s1","name":"মোহাম্মদ ইয়াফি","initial":"M","imageUrl":null,"status":"on","sub":"অফিসে · চেক-ইন ৯:০৫ AM","doneToday":4,"totalToday":6,"checkedIn":true,"checkInLabel":"৯:০৫ AM"},
-       {"staffId":"s2","name":"সাদিয়া","initial":"S","imageUrl":null,"status":"lunch","sub":"লাঞ্চে · ২৪ মিনিট বাকি","doneToday":2,"totalToday":5,"checkedIn":true,"checkInLabel":"৯:১৫ AM"},
-       {"staffId":"s3","name":"রফিক","initial":"R","imageUrl":null,"status":"off","sub":"এখনো চেক-ইন করেননি","doneToday":0,"totalToday":3,"checkedIn":false,"checkInLabel":null}],
-     "leaderboard":[
-       {"staffId":"s1","name":"মোহাম্মদ ইয়াফি","initial":"M","imageUrl":null,"score":92,"pct":100},
-       {"staffId":"s2","name":"সাদিয়া","initial":"S","imageUrl":null,"score":74,"pct":80},
-       {"staffId":"s3","name":"রফিক","initial":"R","imageUrl":null,"score":51,"pct":55}],
-     "performance":[
-       {"staffId":"s1","staffName":"মোহাম্মদ ইয়াফি","assigned":22,"done":18,"onTime":16,"late":2,"onTimeRate":89,"redo":1,"escalated":2,"score":92},
-       {"staffId":"s2","staffName":"সাদিয়া","assigned":15,"done":11,"onTime":8,"late":3,"onTimeRate":73,"redo":3,"escalated":1,"score":74}],
-     "proposals":[{"id":"p1","staffId":"s2","staffName":"সাদিয়া","taskTitle":"কুরিয়ার বুকিং","kind":"penalty","amount":100,"reason":"বারবার আপডেট চাওয়ার পরও দেরি","createdAt":"2026-07-07T05:35:00Z"}]}
-    """
-
-    init(from d: Decoder) throws {
-        let c = try d.container(keyedBy: Keys.self)
-        kpis = (try? c.decode(Kpis.self, forKey: .kpis)) ?? Kpis()
-        pendingApproval = (try? c.decode([PortalHubTask].self, forKey: .pendingApproval)) ?? []
-        activeTasks = (try? c.decode([PortalHubTask].self, forKey: .activeTasks)) ?? []
-        doneTodayTasks = (try? c.decode([PortalHubTask].self, forKey: .doneTodayTasks)) ?? []
-        selfInitiated = (try? c.decode([PortalHubTask].self, forKey: .selfInitiated)) ?? []
-        overdueUpdates = (try? c.decode([PortalOverdue].self, forKey: .overdueUpdates)) ?? []
-        activity = (try? c.decode([PortalActivity].self, forKey: .activity)) ?? []
-        award = try? c.decodeIfPresent(PortalAward.self, forKey: .award)
-        awardStats = try? c.decodeIfPresent(PortalAwardStats.self, forKey: .awardStats)
-        team = (try? c.decode([PortalTeamMember].self, forKey: .team)) ?? []
-        leaderboard = (try? c.decode([PortalLeader].self, forKey: .leaderboard)) ?? []
-        performance = (try? c.decode([PortalPerf].self, forKey: .performance)) ?? []
-        proposals = (try? c.decode([PortalProposal].self, forKey: .proposals)) ?? []
-    }
-}
-
-struct PortalHubTask: Decodable, Identifiable, Equatable {
-    let id: String
-    let title: String
-    let detail: String?
-    let type: String
-    let status: String
-    let verificationStatus: String
-    let reviewerNote: String?
-    let redoCount: Int
-    let staffId: String
-    let staffName: String
-    let createdAt: String?
-    let dueAt: String?
-    let needsOwner: Bool
-    let alwaysEscalate: Bool
-    let source: String
-    let imageUrls: [String]     // pulled out of proofData for native display
-
-    static func == (a: PortalHubTask, b: PortalHubTask) -> Bool { a.id == b.id && a.status == b.status && a.verificationStatus == b.verificationStatus }
-
-    private enum Keys: String, CodingKey {
-        case id, title, detail, type, status, verificationStatus, reviewerNote
-        case redoCount, staffId, staffName, createdAt, dueAt, needsOwner, alwaysEscalate, source, proofData
-    }
-    init(from d: Decoder) throws {
-        let c = try d.container(keyedBy: Keys.self)
-        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
-        title = (try? c.decode(String.self, forKey: .title)) ?? "—"
-        detail = try? c.decodeIfPresent(String.self, forKey: .detail)
-        type = (try? c.decodeIfPresent(String.self, forKey: .type)) ?? ""
-        status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? ""
-        verificationStatus = (try? c.decodeIfPresent(String.self, forKey: .verificationStatus)) ?? ""
-        reviewerNote = try? c.decodeIfPresent(String.self, forKey: .reviewerNote)
-        redoCount = (try? c.decodeIfPresent(Int.self, forKey: .redoCount)) ?? 0
-        staffId = (try? c.decodeIfPresent(String.self, forKey: .staffId)) ?? ""
-        staffName = (try? c.decodeIfPresent(String.self, forKey: .staffName)) ?? "অজানা"
-        createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
-        dueAt = try? c.decodeIfPresent(String.self, forKey: .dueAt)
-        needsOwner = (try? c.decodeIfPresent(Bool.self, forKey: .needsOwner)) ?? false
-        alwaysEscalate = (try? c.decodeIfPresent(Bool.self, forKey: .alwaysEscalate)) ?? false
-        source = (try? c.decodeIfPresent(String.self, forKey: .source)) ?? ""
-        imageUrls = PortalProof.imageURLs(from: try? c.decodeIfPresent(PortalJSON.self, forKey: .proofData))
-    }
-}
-
-struct PortalOverdue: Decodable, Identifiable, Equatable {
-    let id: String, title: String, staffId: String, staffName: String
-    let phone: String?, requestedAt: String?, note: String?
-    let secondsLeft: Int, escalated: Bool
-    init(from d: Decoder) throws {
-        let c = try d.container(keyedBy: K.self)
-        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
-        title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? "—"
-        staffId = (try? c.decodeIfPresent(String.self, forKey: .staffId)) ?? ""
-        staffName = (try? c.decodeIfPresent(String.self, forKey: .staffName)) ?? "—"
-        phone = try? c.decodeIfPresent(String.self, forKey: .phone)
-        requestedAt = try? c.decodeIfPresent(String.self, forKey: .requestedAt)
-        note = try? c.decodeIfPresent(String.self, forKey: .note)
-        secondsLeft = (try? c.decodeIfPresent(Int.self, forKey: .secondsLeft)) ?? 0
-        escalated = (try? c.decodeIfPresent(Bool.self, forKey: .escalated)) ?? false
-    }
-    enum K: String, CodingKey { case id, title, staffId, staffName, phone, requestedAt, note, secondsLeft, escalated }
-}
-
-struct PortalActivity: Decodable, Identifiable {
-    let id: String, taskId: String, kind: String, summary: String, actorType: String, createdAt: String?
-    init(from d: Decoder) throws {
-        let c = try d.container(keyedBy: K.self)
-        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
-        taskId = (try? c.decodeIfPresent(String.self, forKey: .taskId)) ?? ""
-        kind = (try? c.decodeIfPresent(String.self, forKey: .kind)) ?? ""
-        summary = (try? c.decodeIfPresent(String.self, forKey: .summary)) ?? ""
-        actorType = (try? c.decodeIfPresent(String.self, forKey: .actorType)) ?? ""
-        createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
-    }
-    enum K: String, CodingKey { case id, taskId, kind, summary, actorType, createdAt }
-}
-
-struct PortalAward: Decodable {
-    let staffId: String, staffName: String, imageUrl: String?, score: Int
-    let auto: Bool, pinnedByOwner: Bool, note: String?, weekStart: String?
-    init(from d: Decoder) throws {
-        let c = try d.container(keyedBy: K.self)
-        staffId = (try? c.decodeIfPresent(String.self, forKey: .staffId)) ?? ""
-        staffName = (try? c.decodeIfPresent(String.self, forKey: .staffName)) ?? "—"
-        imageUrl = try? c.decodeIfPresent(String.self, forKey: .imageUrl)
-        score = (try? c.decodeIfPresent(Int.self, forKey: .score)) ?? 0
-        auto = (try? c.decodeIfPresent(Bool.self, forKey: .auto)) ?? true
-        pinnedByOwner = (try? c.decodeIfPresent(Bool.self, forKey: .pinnedByOwner)) ?? false
-        note = try? c.decodeIfPresent(String.self, forKey: .note)
-        weekStart = try? c.decodeIfPresent(String.self, forKey: .weekStart)
-    }
-    enum K: String, CodingKey { case staffId, staffName, imageUrl, score, auto, pinnedByOwner, note, weekStart }
-}
-
-struct PortalAwardStats: Decodable {
-    let done: Int, approvalRate: Int?, avgQc: Int?, selfInitiated: Int
-    init(from d: Decoder) throws {
-        let c = try d.container(keyedBy: K.self)
-        done = (try? c.decodeIfPresent(Int.self, forKey: .done)) ?? 0
-        approvalRate = try? c.decodeIfPresent(Int.self, forKey: .approvalRate)
-        avgQc = try? c.decodeIfPresent(Int.self, forKey: .avgQc)
-        selfInitiated = (try? c.decodeIfPresent(Int.self, forKey: .selfInitiated)) ?? 0
-    }
-    enum K: String, CodingKey { case done, approvalRate, avgQc, selfInitiated }
-}
-
-struct PortalTeamMember: Decodable, Identifiable {
-    let staffId: String, name: String, initial: String, imageUrl: String?
-    let status: String, sub: String, doneToday: Int, totalToday: Int
-    let checkedIn: Bool, checkInLabel: String?
-    var id: String { staffId }
-    init(from d: Decoder) throws {
-        let c = try d.container(keyedBy: K.self)
-        staffId = (try? c.decode(String.self, forKey: .staffId)) ?? UUID().uuidString
-        name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? "—"
-        initial = (try? c.decodeIfPresent(String.self, forKey: .initial)) ?? "?"
-        imageUrl = try? c.decodeIfPresent(String.self, forKey: .imageUrl)
-        status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "off"
-        sub = (try? c.decodeIfPresent(String.self, forKey: .sub)) ?? ""
-        doneToday = (try? c.decodeIfPresent(Int.self, forKey: .doneToday)) ?? 0
-        totalToday = (try? c.decodeIfPresent(Int.self, forKey: .totalToday)) ?? 0
-        checkedIn = (try? c.decodeIfPresent(Bool.self, forKey: .checkedIn)) ?? false
-        checkInLabel = try? c.decodeIfPresent(String.self, forKey: .checkInLabel)
-    }
-    enum K: String, CodingKey { case staffId, name, initial, imageUrl, status, sub, doneToday, totalToday, checkedIn, checkInLabel }
-}
-
-struct PortalLeader: Decodable, Identifiable {
-    let staffId: String, name: String, initial: String, imageUrl: String?, score: Int, pct: Int
-    var id: String { staffId }
-    init(from d: Decoder) throws {
-        let c = try d.container(keyedBy: K.self)
-        staffId = (try? c.decode(String.self, forKey: .staffId)) ?? UUID().uuidString
-        name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? "—"
-        initial = (try? c.decodeIfPresent(String.self, forKey: .initial)) ?? "?"
-        imageUrl = try? c.decodeIfPresent(String.self, forKey: .imageUrl)
-        score = (try? c.decodeIfPresent(Int.self, forKey: .score)) ?? 0
-        pct = (try? c.decodeIfPresent(Int.self, forKey: .pct)) ?? 0
-    }
-    enum K: String, CodingKey { case staffId, name, initial, imageUrl, score, pct }
-}
-
-struct PortalPerf: Decodable, Identifiable {
-    let staffId: String, staffName: String
-    let assigned: Int, done: Int, onTime: Int, late: Int
-    let onTimeRate: Int?, redo: Int, escalated: Int, score: Int
-    var id: String { staffId }
-    init(from d: Decoder) throws {
-        let c = try d.container(keyedBy: K.self)
-        staffId = (try? c.decode(String.self, forKey: .staffId)) ?? UUID().uuidString
-        staffName = (try? c.decodeIfPresent(String.self, forKey: .staffName)) ?? "—"
-        func i(_ k: K) -> Int { (try? c.decodeIfPresent(Int.self, forKey: k)) ?? 0 }
-        assigned = i(.assigned); done = i(.done); onTime = i(.onTime); late = i(.late)
-        onTimeRate = try? c.decodeIfPresent(Int.self, forKey: .onTimeRate)
-        redo = i(.redo); escalated = i(.escalated); score = i(.score)
-    }
-    enum K: String, CodingKey { case staffId, staffName, assigned, done, onTime, late, onTimeRate, redo, escalated, score }
-}
-
-struct PortalProposal: Decodable, Identifiable {
-    let id: String, staffId: String, staffName: String
-    let taskTitle: String?, kind: String, amount: Int?, reason: String, createdAt: String?
-    init(from d: Decoder) throws {
-        let c = try d.container(keyedBy: K.self)
-        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
-        staffId = (try? c.decodeIfPresent(String.self, forKey: .staffId)) ?? ""
-        staffName = (try? c.decodeIfPresent(String.self, forKey: .staffName)) ?? "—"
-        taskTitle = try? c.decodeIfPresent(String.self, forKey: .taskTitle)
-        kind = (try? c.decodeIfPresent(String.self, forKey: .kind)) ?? ""
-        amount = try? c.decodeIfPresent(Int.self, forKey: .amount)
-        reason = (try? c.decodeIfPresent(String.self, forKey: .reason)) ?? ""
-        createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
-    }
-    enum K: String, CodingKey { case id, staffId, staffName, taskTitle, kind, amount, reason, createdAt }
-}
-
-/// Minimal permissive JSON value — just enough to walk proofData for image URLs.
-indirect enum PortalJSON: Decodable {
-    case str(String), num(Double), bool(Bool), arr([PortalJSON]), obj([String: PortalJSON]), null
-    init(from d: Decoder) throws {
-        let c = try d.singleValueContainer()
-        if c.decodeNil() { self = .null }
-        else if let b = try? c.decode(Bool.self) { self = .bool(b) }
-        else if let n = try? c.decode(Double.self) { self = .num(n) }
-        else if let s = try? c.decode(String.self) { self = .str(s) }
-        else if let a = try? c.decode([PortalJSON].self) { self = .arr(a) }
-        else if let o = try? c.decode([String: PortalJSON].self) { self = .obj(o) }
-        else { self = .null }
-    }
-    var stringValue: String? { if case .str(let s) = self { return s }; return nil }
-}
-
-enum PortalProof {
-    /// Pull image URLs out of proofData: imageUrls[] first, then single imageUrl/image/photo/url.
-    static func imageURLs(from json: PortalJSON?) -> [String] {
-        guard case .obj(let o)? = json else { return [] }
-        var urls: [String] = []
-        if case .arr(let a)? = o["imageUrls"] { urls += a.compactMap { $0.stringValue } }
-        for k in ["imageUrl", "image", "photo", "url"] {
-            if let s = o[k]?.stringValue, !s.isEmpty { urls.append(s) }
-        }
-        // De-dupe, keep https only.
-        var seen = Set<String>()
-        return urls.filter { $0.hasPrefix("http") && seen.insert($0).inserted }
-    }
-}
 
 // MARK: - View model
 
@@ -555,72 +234,6 @@ final class PortalOfficeVM {
     var chatLoading = false
     var chatSending = false
     var explainingTaskId: String? = nil
-
-    // ── Owner Hub (GET /api/assistant/office/hub) — the BOSS dashboard ──
-    var selfRole = ""                // "owner" | "staff" | "none" | "" (unresolved)
-    var roleResolved = false
-    var hub: PortalOwnerHub? = nil
-    var ownerBusyId: String? = nil    // per-task owner action spinner
-    var proposalBusyId: String? = nil
-
-    /// First call decides the whole screen: owner → boss hub, staff → staff app.
-    func loadHub() async {
-        loading = true
-        error = nil
-        defer { loading = false }
-        do {
-            let env: PortalHubEnvelope = try await AlmaAPI.shared.get("/api/assistant/office/hub")
-            selfRole = env.selfRole
-            hub = env.hub
-            roleResolved = true
-            authExpired = false
-            if env.selfRole == "staff" {
-                await load()                 // staff app needs tasks + notifs
-            } else if env.selfRole == "owner" {
-                await loadNotifsOnly()       // owner's bell (my-tasks is staff-only, 403s)
-            }
-        } catch AlmaAPIError.notAuthenticated {
-            authExpired = true; roleResolved = true
-        } catch {
-            if Self.isCancellation(error) { return }
-            // TEMP-PROOF: prod lacks /office/hub — show the redesigned boss dashboard with sample data.
-            if let s = try? JSONDecoder().decode(PortalOwnerHub.self, from: Data(PortalOwnerHub.sampleJSON.utf8)) {
-                selfRole = "owner"; hub = s; roleResolved = true; return
-            }
-            self.error = error.localizedDescription
-            roleResolved = true
-        }
-    }
-
-    /// Owner task/proposal action → POST /api/assistant/office/action, then refresh the hub.
-    struct OwnerAct: Encodable {
-        let action: String
-        var taskId: String? = nil
-        var proposalId: String? = nil
-        var decision: String? = nil
-        var note: String? = nil
-        var body: String? = nil
-        var on: Bool? = nil
-        var dueAt: String? = nil
-    }
-
-    @discardableResult
-    func ownerAct(_ body: OwnerAct, taskId: String? = nil, proposalId: String? = nil) async -> Bool {
-        if let taskId { ownerBusyId = taskId }
-        if let proposalId { proposalBusyId = proposalId }
-        defer { ownerBusyId = nil; proposalBusyId = nil }
-        do {
-            let _: PortalOfficeOk = try await AlmaAPI.shared.send(
-                "POST", "/api/assistant/office/action", body: body)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
-            await loadHub()
-            return true
-        } catch {
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
-            self.error = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
-            return false
-        }
-    }
 
     func load() async {
         loading = true
@@ -699,16 +312,6 @@ final class PortalOfficeVM {
             if Self.isCancellation(error) { return }
             self.error = error.localizedDescription
         }
-    }
-
-    /// Owner's notifications (bell) — the owner's my-tasks is staff-only, so this is
-    /// loaded on its own alongside the hub.
-    func loadNotifsOnly() async {
-        do {
-            let feed: PortalOfficeNotifFeed = try await AlmaAPI.shared.get("/api/assistant/office/notifications")
-            unread = feed.unread
-            notices = feed.items
-        } catch { /* best-effort */ }
     }
 
     /// Web bell's "সব পড়া হয়েছে" — POST {} marks everything in scope read.
@@ -818,9 +421,8 @@ final class PortalOfficeVM {
         defer { chatLoading = false }
         do {
             let feed: PortalOfficeChatFeed = try await AlmaAPI.shared.get("/api/assistant/office/chat")
-            // Drop dismissed always; keep 'pending' agent drafts only for the owner (who
-            // approves/dismisses them). The server already scopes pending to the owner.
-            chat = feed.messages.filter { $0.status != "dismissed" && ($0.status != "pending" || selfRole == "owner") }
+            // Staff never see 'pending' agent drafts, but filter defensively.
+            chat = feed.messages.filter { $0.status != "pending" }
         } catch {
             if Self.isCancellation(error) { return }
             // best-effort; keep whatever we had
@@ -862,56 +464,6 @@ final class PortalOfficeVM {
             UINotificationFeedbackGenerator().notificationOccurred(.error)
         }
     }
-
-    // ── Owner-only: approve / dismiss the agent's draft reply in the group ──
-    var chatDecidingId: String? = nil
-    func chatAgentDecide(_ id: String, approve: Bool, editedBody: String? = nil) async {
-        guard chatDecidingId == nil else { return }
-        chatDecidingId = id
-        defer { chatDecidingId = nil }
-        struct Body: Encodable { let action: String; let id: String; let body: String? }
-        do {
-            let _: PortalOfficeOk = try await AlmaAPI.shared.send(
-                "POST", "/api/assistant/office/chat/agent",
-                body: Body(action: approve ? "approve" : "dismiss", id: id,
-                           body: approve ? (editedBody?.isEmpty == false ? editedBody : nil) : nil))
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
-            await loadChat()
-        } catch {
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
-        }
-    }
-
-    /// Send a group message with optional images — uploads each image first (native,
-    /// no web escape) then posts { body, attachments:[{type:'image',url}] }.
-    private struct ChatAttachment: Encodable { let type = "image"; let url: String }
-    private struct UploadResp: Decodable { let url: String? }
-    @discardableResult
-    func sendChatFull(_ text: String, images: [Data]) async -> Bool {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard (!trimmed.isEmpty || !images.isEmpty), !chatSending else { return false }
-        chatSending = true
-        defer { chatSending = false }
-        do {
-            var atts: [ChatAttachment] = []
-            for (i, data) in images.enumerated() {
-                let r: UploadResp = try await AlmaAPI.shared.uploadMultipart(
-                    "/api/assistant/office/upload", fileField: "file",
-                    filename: "chat-\(i).jpg", mime: "image/jpeg", data: data)
-                if let url = r.url { atts.append(ChatAttachment(url: url)) }
-            }
-            struct Payload: Encodable { let body: String; let attachments: [ChatAttachment] }
-            let _: PortalOfficeOk = try await AlmaAPI.shared.send(
-                "POST", "/api/assistant/office/chat", body: Payload(body: trimmed, attachments: atts))
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
-            await loadChat()
-            return true
-        } catch {
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
-            self.error = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
-            return false
-        }
-    }
 }
 
 // MARK: - Screen
@@ -923,22 +475,22 @@ struct PortalOfficeScreen: View {
     @State private var detailTask: PortalOfficeTask? = nil
     @State private var showSelfCreate = false
     @State private var showChat = false
-    @State private var ownerTask: PortalHubTask? = nil
-    @State private var showHistory = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 10) {
-                if !vm.roleResolved {
+                header
+                if vm.authExpired { authCard }
+                if let err = vm.error { noticeCard(err, tone: .error) }
+                if let ok = vm.notice { noticeCard(ok, tone: .info) }
+                lunchCard
+                if vm.loading && vm.tasks.isEmpty && vm.notices.isEmpty {
                     loadingRows
-                } else if vm.authExpired {
-                    header; authCard
-                } else if vm.selfRole == "owner" {
-                    PortalOwnerHubView(vm: vm, openWeb: openWeb,
-                                       showChat: $showChat, ownerTask: $ownerTask, showHistory: $showHistory)
                 } else {
-                    staffContent
+                    tasksCard
+                    chatCard
+                    noticesCard
                 }
                 webEscape
                 Color.clear.frame(height: 8)
@@ -948,16 +500,10 @@ struct PortalOfficeScreen: View {
         }
         .background(PortalOfficeAurora())
         .claudeTopFade()
-        .dismissKeyboardOnTap()
-        .refreshable { await vm.loadHub() }
-        .task { if !vm.roleResolved { await vm.loadHub() } }
+        .refreshable { await vm.load() }
+        .task { await vm.load() }
         .sheet(item: $detailTask) { t in
             PortalTaskDetailSheet(task: t, vm: vm, openWeb: openWeb)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
-        }
-        .sheet(item: $ownerTask) { t in
-            PortalOwnerTaskSheet(task: t, vm: vm, openWeb: openWeb)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
@@ -967,29 +513,9 @@ struct PortalOfficeScreen: View {
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $showChat) {
-            PortalGroupChatSheet(vm: vm, isOwner: vm.selfRole == "owner", openWeb: openWeb)
+            PortalGroupChatSheet(vm: vm, openWeb: openWeb)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $showHistory) {
-            PortalOfficeHistorySheet(openWeb: openWeb)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
-        }
-    }
-
-    /// The staff app (unchanged) — shown when the logged-in user is an employee.
-    @ViewBuilder private var staffContent: some View {
-        header
-        if let err = vm.error { noticeCard(err, tone: .error) }
-        if let ok = vm.notice { noticeCard(ok, tone: .info) }
-        lunchCard
-        if vm.loading && vm.tasks.isEmpty && vm.notices.isEmpty {
-            loadingRows
-        } else {
-            tasksCard
-            chatCard
-            noticesCard
         }
     }
 
@@ -1565,15 +1091,11 @@ private struct PortalSelfInitiatedSheet: View {
 @available(iOS 17.0, *)
 private struct PortalGroupChatSheet: View {
     @Bindable var vm: PortalOfficeVM
-    let isOwner: Bool
     let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dismiss) private var dismiss
     @State private var draft = ""
     @State private var tasksOpen = false
-    @State private var picks: [PhotosPickerItem] = []
-    @State private var staged: [Data] = []
-    @State private var editText: [String: String] = [:]   // owner edits of agent drafts
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -1581,7 +1103,7 @@ private struct PortalGroupChatSheet: View {
             VStack(spacing: 0) {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(spacing: 8) {
+                        LazyVStack(alignment: .leading, spacing: 10) {
                             if vm.chatLoading && vm.chat.isEmpty {
                                 HStack { ProgressView().controlSize(.small); Text("লোড হচ্ছে…").font(.caption).foregroundStyle(.secondary) }
                                     .padding(.top, 20)
@@ -1590,1104 +1112,144 @@ private struct PortalGroupChatSheet: View {
                                     .font(.caption).foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity).padding(.top, 24)
                             } else {
-                                ForEach(vm.chat) { m in
-                                    if m.status == "pending" { draftBubble(m) } else { bubble(m) }
-                                }
+                                ForEach(vm.chat) { m in chatBubble(m) }
                             }
                             Color.clear.frame(height: 1).id("bottom")
                         }
-                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .padding(14)
                     }
                     .onChange(of: vm.chat.count) { _, _ in
                         withAnimation(.snappy) { proxy.scrollTo("bottom", anchor: .bottom) }
                     }
-                    .onAppear { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
 
-                if tasksOpen && !isOwner { staffTaskPicker }
-                if !staged.isEmpty { stagedTray }
-                composer
+                // "আজকের কাজ" explain picker (staff only tool)
+                if tasksOpen {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("আজকের কাজ — যেটা বুঝছেন না, সেটায় চাপ দিন")
+                            .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                        if vm.tasks.isEmpty {
+                            Text("আজ আপনার কোনো বাকি কাজ নেই।")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        } else {
+                            ForEach(vm.tasks) { t in
+                                Button {
+                                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                                    Task {
+                                        await vm.explainTask(t.id)
+                                        tasksOpen = false
+                                    }
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Text(PortalOfficeFormat.bn(t.serial ?? 0))
+                                            .font(.caption2.weight(.bold))
+                                            .foregroundStyle(PortalOfficePalette.accentText(colorScheme))
+                                            .frame(width: 22, height: 22)
+                                            .background(PortalOfficePalette.coral.opacity(0.16), in: Circle())
+                                        Text(t.title).font(.caption).foregroundStyle(.primary).lineLimit(1)
+                                        Spacer(minLength: 4)
+                                        if vm.explainingTaskId == t.id {
+                                            ProgressView().controlSize(.small)
+                                        } else {
+                                            Text("বুঝিয়ে দিন")
+                                                .font(.caption2.weight(.semibold))
+                                                .foregroundStyle(PortalOfficePalette.accentText(colorScheme))
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(vm.explainingTaskId != nil)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .background(.ultraThinMaterial)
+                }
+
+                // Composer (web .cp-foot — text only; image attach stays web)
+                HStack(spacing: 8) {
+                    Button {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        withAnimation(.snappy) { tasksOpen.toggle() }
+                    } label: {
+                        Image(systemName: "list.bullet.clipboard")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(tasksOpen ? PortalOfficePalette.accentText(colorScheme) : .secondary)
+                            .frame(width: 36, height: 36)
+                            .background(Color.primary.opacity(0.05), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    Button {
+                        openWeb("/portal/office", "Office")   // image attach needs the file picker
+                    } label: {
+                        Image(systemName: "camera")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 36, height: 36)
+                            .background(Color.primary.opacity(0.05), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    TextField("গ্রুপে মেসেজ লিখুন…", text: $draft, axis: .vertical)
+                        .lineLimit(1...4)
+                        .focused($focused)
+                        .font(.footnote)
+                        .padding(.horizontal, 12).padding(.vertical, 9)
+                        .background(Color.primary.opacity(0.05),
+                                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    Button {
+                        let text = draft
+                        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                        Task { if await vm.sendChat(text) { draft = "" } }
+                    } label: {
+                        if vm.chatSending {
+                            ProgressView().controlSize(.small).frame(width: 52)
+                        } else {
+                            Text("পাঠান").font(.footnote.weight(.semibold))
+                                .foregroundStyle(PortalOfficePalette.accentText(colorScheme))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.chatSending || draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .padding(12)
+                .background(.ultraThinMaterial)
             }
             .background(PortalOfficeAurora())
             .navigationTitle("অফিস গ্রুপ")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .principal) {
-                    HStack(spacing: 6) {
-                        Text("🤖").font(.footnote)
-                        VStack(alignment: .leading, spacing: 0) {
-                            Text("অফিস গ্রুপ").font(.footnote.weight(.bold))
-                            Text("● Agent · আপনি · টিম").font(.caption2).foregroundStyle(.secondary)
-                        }
-                    }
-                }
                 ToolbarItem(placement: .cancellationAction) { Button("বন্ধ") { dismiss() } }
-                ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("সম্পন্ন") { hideKeyboard() } }
             }
         }
-        .task {
-            await vm.loadChat()
-            while !Task.isCancelled {   // live poll, messenger-style (15s)
-                try? await Task.sleep(nanoseconds: 15_000_000_000)
-                if Task.isCancelled { break }
-                await vm.loadChat()
-            }
-        }
-        .onChange(of: picks) { _, items in
-            Task {
-                var out: [Data] = []
-                for it in items {
-                    if let d = try? await it.loadTransferable(type: Data.self),
-                       let ui = UIImage(data: d), let jpg = ui.jpegData(compressionQuality: 0.8) {
-                        out.append(jpg)
-                    }
-                }
-                staged.append(contentsOf: out)
-                picks = []
-            }
-        }
+        .task { await vm.loadChat() }
     }
 
-    // ── One message bubble (own = right coral, others = left with avatar) ──
-    @ViewBuilder private func bubble(_ m: PortalOfficeChatMsg) -> some View {
-        let mine = isOwner && m.authorType == "owner"
+    private func chatBubble(_ m: PortalOfficeChatMsg) -> some View {
         let isAgent = m.authorType == "agent"
-        let name = isAgent ? "Agent" : m.authorType == "owner" ? "Boss" : m.authorName
-        HStack(alignment: .bottom, spacing: 6) {
-            if mine { Spacer(minLength: 40) }
-            if !mine {
-                officeAvatar(m.authorImageUrl, initial: isAgent ? "🤖" : (m.authorName.first.map { String($0).uppercased() } ?? "•"), size: 28)
-            }
-            VStack(alignment: mine ? .trailing : .leading, spacing: 3) {
-                if !mine {
+        let isOwner = m.authorType == "owner"
+        let name = isAgent ? "Agent" : isOwner ? "Boss" : m.authorName
+        return HStack(alignment: .top, spacing: 8) {
+            Text(isAgent ? "🤖" : isOwner ? "M" : (m.authorName.first.map(String.init) ?? "•").uppercased())
+                .font(.caption2.weight(.bold))
+                .frame(width: 26, height: 26)
+                .background(Color.primary.opacity(0.06), in: Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
                     Text(name).font(.caption2.weight(.bold))
-                        .foregroundStyle(isAgent ? PortalOfficePalette.violet : PortalOfficePalette.accentText(colorScheme))
+                    Text(PortalOfficeFormat.timeAgo(m.createdAt)).font(.caption2).foregroundStyle(.secondary)
                 }
-                ForEach(m.imageURLs, id: \.self) { s in
-                    if let u = URL(string: s) {
-                        AsyncImage(url: u) { i in i.resizable().scaledToFill() } placeholder: {
-                            Color.primary.opacity(0.06).frame(height: 150)
-                        }
-                        .frame(maxWidth: 210, maxHeight: 210)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    }
+                if m.attachmentCount > 0 {
+                    Label("\(PortalOfficeFormat.bn(m.attachmentCount)) ছবি — ওয়েবে দেখুন",
+                          systemImage: "photo")
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
                 if !m.body.trimmingCharacters(in: .whitespaces).isEmpty {
-                    Text(m.body)
-                        .font(.footnote)
-                        .foregroundStyle(mine ? .white : .primary)
+                    Text(m.body).font(.caption).foregroundStyle(.primary)
                         .multilineTextAlignment(.leading)
-                        .padding(.horizontal, 12).padding(.vertical, 8)
-                        .background(bubbleBg(mine: mine, agent: isAgent),
-                                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                }
-                Text(PortalOfficeFormat.timeAgo(m.createdAt)).font(.caption2).foregroundStyle(.secondary)
-            }
-            if !mine { Spacer(minLength: 40) }
-        }
-    }
-
-    private func bubbleBg(mine: Bool, agent: Bool) -> AnyShapeStyle {
-        if mine { return AnyShapeStyle(PortalOfficePalette.coral) }
-        if agent { return AnyShapeStyle(PortalOfficePalette.violet.opacity(0.15)) }
-        return AnyShapeStyle(Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.06))
-    }
-
-    // ── Owner-only agent draft: edit, approve, dismiss ──
-    private func draftBubble(_ m: PortalOfficeChatMsg) -> some View {
-        let text = Binding(get: { editText[m.id] ?? m.body }, set: { editText[m.id] = $0 })
-        return VStack(alignment: .leading, spacing: 8) {
-            Label("Agent · খসড়া · শুধু আপনি দেখছেন", systemImage: "sparkles")
-                .font(.caption2.weight(.bold)).foregroundStyle(PortalOfficePalette.violet)
-            TextField("খসড়া…", text: text, axis: .vertical)
-                .font(.footnote).lineLimit(1...6)
-                .padding(10).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
-            HStack(spacing: 8) {
-                Spacer()
-                if vm.chatDecidingId == m.id {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Button("❌ খারিজ") { Task { await vm.chatAgentDecide(m.id, approve: false) } }
-                        .font(.caption2.weight(.bold)).foregroundStyle(PortalOfficePalette.red500)
-                    Button {
-                        Task { await vm.chatAgentDecide(m.id, approve: true, editedBody: text.wrappedValue) }
-                    } label: {
-                        Text("✅ অনুমোদন").font(.caption2.weight(.bold)).foregroundStyle(.white)
-                            .padding(.horizontal, 12).padding(.vertical, 7)
-                            .background(PortalOfficePalette.emerald600, in: Capsule())
-                    }.buttonStyle(.plain)
                 }
             }
-        }
-        .padding(12)
-        .background(PortalOfficePalette.violet.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .strokeBorder(PortalOfficePalette.violet.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
-    }
-
-    private var stagedTray: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(Array(staged.enumerated()), id: \.offset) { idx, data in
-                    if let ui = UIImage(data: data) {
-                        Image(uiImage: ui).resizable().scaledToFill()
-                            .frame(width: 54, height: 54)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(alignment: .topTrailing) {
-                                Button { staged.remove(at: idx) } label: {
-                                    Image(systemName: "xmark.circle.fill").foregroundStyle(.white, .black.opacity(0.5))
-                                }.offset(x: 4, y: -4)
-                            }
-                    }
-                }
-            }
-            .padding(.horizontal, 12).padding(.vertical, 8)
-        }
-        .background(.ultraThinMaterial)
-    }
-
-    private var staffTaskPicker: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("আজকের কাজ — যেটা বুঝছেন না, সেটায় চাপ দিন")
-                .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            if vm.tasks.isEmpty {
-                Text("আজ আপনার কোনো বাকি কাজ নেই।").font(.caption2).foregroundStyle(.secondary)
-            } else {
-                ForEach(vm.tasks) { t in
-                    Button {
-                        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                        Task { await vm.explainTask(t.id); tasksOpen = false }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Text(PortalOfficeFormat.bn(t.serial ?? 0))
-                                .font(.caption2.weight(.bold)).foregroundStyle(PortalOfficePalette.accentText(colorScheme))
-                                .frame(width: 22, height: 22).background(PortalOfficePalette.coral.opacity(0.16), in: Circle())
-                            Text(t.title).font(.caption).foregroundStyle(.primary).lineLimit(1)
-                            Spacer(minLength: 4)
-                            if vm.explainingTaskId == t.id { ProgressView().controlSize(.small) }
-                            else { Text("বুঝিয়ে দিন").font(.caption2.weight(.semibold)).foregroundStyle(PortalOfficePalette.accentText(colorScheme)) }
-                        }
-                    }
-                    .buttonStyle(.plain).disabled(vm.explainingTaskId != nil)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12).background(.ultraThinMaterial)
-    }
-
-    private var composer: some View {
-        HStack(spacing: 8) {
-            PhotosPicker(selection: $picks, maxSelectionCount: 6, matching: .images) {
-                Image(systemName: "photo.on.rectangle")
-                    .font(.footnote.weight(.semibold)).foregroundStyle(PortalOfficePalette.violet)
-                    .frame(width: 36, height: 36).background(Color.primary.opacity(0.05), in: Circle())
-            }
-            if !isOwner {
-                Button {
-                    UISelectionFeedbackGenerator().selectionChanged()
-                    withAnimation(.snappy) { tasksOpen.toggle() }
-                } label: {
-                    Image(systemName: "list.bullet.clipboard")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(tasksOpen ? PortalOfficePalette.accentText(colorScheme) : .secondary)
-                        .frame(width: 36, height: 36).background(Color.primary.opacity(0.05), in: Circle())
-                }.buttonStyle(.plain)
-            }
-            TextField("গ্রুপে মেসেজ লিখুন…", text: $draft, axis: .vertical)
-                .lineLimit(1...4).focused($focused).font(.footnote)
-                .padding(.horizontal, 12).padding(.vertical, 9)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            Button {
-                let text = draft; let imgs = staged
-                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                Task { if await vm.sendChatFull(text, images: imgs) { draft = ""; staged = [] } }
-            } label: {
-                if vm.chatSending {
-                    ProgressView().controlSize(.small).frame(width: 44)
-                } else {
-                    Image(systemName: "paperplane.fill")
-                        .font(.footnote.weight(.bold)).foregroundStyle(.white)
-                        .frame(width: 36, height: 36).background(PortalOfficePalette.coral, in: Circle())
-                }
-            }
-            .buttonStyle(.plain)
-            .disabled(vm.chatSending || (draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && staged.isEmpty))
-        }
-        .padding(12).background(.ultraThinMaterial)
-    }
-}
-
-// MARK: - Owner Hub (the BOSS dashboard — role-detected, full web parity)
-
-/// Shared coral→violet squircle badge for card headers (both screens use it).
-@available(iOS 17.0, *)
-private func officeGradBadge(_ systemName: String) -> some View {
-    Image(systemName: systemName)
-        .font(.system(size: 15, weight: .semibold))
-        .foregroundStyle(.white)
-        .frame(width: 34, height: 34)
-        .background(
-            LinearGradient(colors: [PortalOfficePalette.coral, AlmaSwiftTheme.violet],
-                           startPoint: .topLeading, endPoint: .bottomTrailing),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .shadow(color: PortalOfficePalette.coral.opacity(0.35), radius: 5, y: 2)
-}
-
-/// Circular avatar — real ERP profile photo when present, else a tinted initial.
-@available(iOS 17.0, *)
-private func officeAvatar(_ url: String?, initial: String, size: CGFloat = 34) -> some View {
-    Group {
-        if let url, let u = URL(string: url) {
-            AsyncImage(url: u) { img in img.resizable().scaledToFill() } placeholder: {
-                Text(initial).font(.footnote.weight(.bold)).foregroundStyle(.white)
-            }
-        } else {
-            Text(initial).font(.footnote.weight(.bold)).foregroundStyle(.white)
-        }
-    }
-    .frame(width: size, height: size)
-    .background(LinearGradient(colors: [PortalOfficePalette.violet, PortalOfficePalette.coral],
-                               startPoint: .topLeading, endPoint: .bottomTrailing))
-    .clipShape(Circle())
-}
-
-@available(iOS 17.0, *)
-struct PortalOwnerHubView: View {
-    @Bindable var vm: PortalOfficeVM
-    let openWeb: (_ path: String, _ title: String) -> Void
-    @Binding var showChat: Bool
-    @Binding var ownerTask: PortalHubTask?
-    @Binding var showHistory: Bool
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var segment = 0
-    @State private var expanded: Set<String> = []   // team members whose todolist is open
-
-    private var accent: Color { PortalOfficePalette.accentText(colorScheme) }
-
-    var body: some View {
-        if let hub = vm.hub {
-            header(hub)
-            if let err = vm.error { errorStrip(err) }
-            kpiGrid(hub.kpis)
-            if let award = hub.award { awardHero(award, stats: hub.awardStats) }
-            if !hub.overdueUpdates.isEmpty { updateTracking(hub.overdueUpdates) }
-            if !hub.proposals.isEmpty { proposalsCard(hub.proposals) }
-            approvalCard(hub)
-            teamCard(hub)                    // team status + each staff's todolist nested
-            chatEntry
-            activityCard(hub.activity)
-            leaderboardCard(hub.leaderboard)
-            performanceCard(hub.performance)
-            noticesCard
-            historyButton
-        } else {
-            ForEach(0..<3, id: \.self) { _ in
-                Color.clear.frame(height: 110).portalOfficeGlass(colorScheme, corner: 16).portalOfficeShimmer()
-            }
-        }
-    }
-
-    // ── Native large-title header + segmented + greeting ──
-    private func header(_ hub: PortalOwnerHub) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("বস ড্যাশবোর্ড")
-                .font(.caption.weight(.semibold)).textCase(.uppercase).tracking(0.6)
-                .foregroundStyle(.secondary).padding(.bottom, 5)
-            Text("Office")
-                .font(.system(size: 33, weight: .bold, design: .default)).tracking(-0.6)
-            Picker("", selection: $segment) {
-                Text("আজ").tag(0); Text("সপ্তাহ").tag(1); Text("মাস").tag(2)
-            }
-            .pickerStyle(.segmented)
-            .padding(.top, 14)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("আসসালামু আলাইকুম, Boss").font(.title3.weight(.bold))
-                Text("আজকের অফিস এক নজরে — কাজ, সাবমিশন আর অনুমোদন।")
-                    .font(.subheadline).foregroundStyle(.secondary)
-                HStack(spacing: 6) {
-                    Circle().fill(PortalOfficePalette.green400).frame(width: 7, height: 7)
-                    Text("\(PortalOfficeFormat.bn(hub.kpis.online)) জন অনলাইন · \(PortalOfficeFormat.headerDate())")
-                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                }
-                .padding(.top, 4)
-            }
-            .padding(.top, 18)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 6)
-    }
-
-    private func errorStrip(_ msg: String) -> some View {
-        Label(msg, systemImage: "exclamationmark.triangle")
-            .font(.footnote).foregroundStyle(PortalOfficePalette.red500)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).portalOfficeGlass(colorScheme, corner: 12)
-    }
-
-    // ── KPI tiles (SF Symbols, not emoji — native polish) ──
-    private func kpiGrid(_ k: PortalOwnerHub.Kpis) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
-            kpiTile("hourglass", "অনুমোদনের অপেক্ষায়", PortalOfficeFormat.bn(k.pending), PortalOfficePalette.amber500)
-            kpiTile("arrow.triangle.2.circlepath", "চলমান কাজ", PortalOfficeFormat.bn(k.active), PortalOfficePalette.violet)
-            kpiTile("checkmark.circle.fill", "আজ সম্পন্ন", PortalOfficeFormat.bn(k.doneToday), PortalOfficePalette.emerald600)
-            kpiTile("person.2.fill", "স্টাফ অনলাইন", "\(PortalOfficeFormat.bn(k.online))/\(PortalOfficeFormat.bn(k.staffTotal))", PortalOfficePalette.coral)
-        }
-    }
-    private func kpiTile(_ symbol: String, _ label: String, _ value: String, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Image(systemName: symbol).font(.system(size: 20, weight: .semibold)).foregroundStyle(tint)
-                .frame(height: 26).padding(.bottom, 8)
-            Text(value).font(.system(size: 29, weight: .bold)).monospacedDigit()
-                .foregroundStyle(.primary).lineLimit(1).minimumScaleFactor(0.6)
-            Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(15).portalOfficeGlass(colorScheme, corner: 20)
-    }
-
-    // ── Performer of the week ──
-    private func awardHero(_ a: PortalAward, stats: PortalAwardStats?) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                officeAvatar(a.imageUrl, initial: a.staffName.first.map { String($0).uppercased() } ?? "★", size: 44)
-                    .overlay(Text("👑").font(.title3).offset(y: -26))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("🏆 এই সপ্তাহের সেরা পারফরমার").font(.caption2.weight(.bold)).foregroundStyle(accent)
-                    Text("\(a.staffName) — মাশাআল্লাহ!").font(.subheadline.weight(.bold))
-                }
-                Spacer()
-            }
-            if let s = stats {
-                HStack(spacing: 8) {
-                    awardStat("সম্পন্ন", PortalOfficeFormat.bn(s.done))
-                    awardStat("অনুমোদন", s.approvalRate.map { "\(PortalOfficeFormat.bn($0))%" } ?? "—")
-                    awardStat("QC", s.avgQc.map { PortalOfficeFormat.bn($0) } ?? "—")
-                    awardStat("নিজ উদ্যোগে", PortalOfficeFormat.bn(s.selfInitiated))
-                }
-            }
-        }
-        .padding(14)
-        .background(LinearGradient(colors: [PortalOfficePalette.amber500.opacity(0.20), PortalOfficePalette.coral.opacity(0.12)],
-                                   startPoint: .topLeading, endPoint: .bottomTrailing),
-                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(PortalOfficePalette.amber500.opacity(0.4), lineWidth: 1))
-    }
-    private func awardStat(_ label: String, _ value: String) -> some View {
-        VStack(spacing: 1) {
-            Text(value).font(.footnote.weight(.bold))
-            Text(label).font(.caption2).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    // ── Update tracking (calling lives here) ──
-    private func updateTracking(_ rows: [PortalOverdue]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            cardHeader("clock.badge.exclamationmark", "আপডেট ট্র্যাকিং",
-                       "সাড়া পাওয়া যায়নি \(PortalOfficeFormat.bn(rows.count)) জন", tint: PortalOfficePalette.amber600)
-            ForEach(rows) { r in overdueRow(r) }
-        }
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
-    }
-    private func overdueRow(_ r: PortalOverdue) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                officeAvatar(nil, initial: r.staffName.first.map { String($0).uppercased() } ?? "•", size: 30)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(r.staffName).font(.footnote.weight(.semibold))
-                    Text(r.title).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer()
-            }
-            if let note = r.note, !note.isEmpty {
-                Text(note).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
-            }
-            HStack(spacing: 8) {
-                if r.escalated {
-                    Label("অটো-রিমাইন্ডার পাঠানো হয়েছে", systemImage: "bell.badge.fill")
-                        .font(.caption2.weight(.semibold)).foregroundStyle(PortalOfficePalette.red500)
-                } else {
-                    Text("⏱ \(overdueClock(r.secondsLeft))")
-                        .font(.caption2.weight(.semibold).monospacedDigit()).foregroundStyle(PortalOfficePalette.amber600)
-                }
-                Spacer()
-                if let phone = r.phone, !phone.isEmpty, let u = URL(string: "tel://\(phone)") {
-                    Link(destination: u) {
-                        Label("কল", systemImage: "phone.fill")
-                            .font(.caption2.weight(.bold)).foregroundStyle(PortalOfficePalette.emerald600)
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(PortalOfficePalette.emerald600.opacity(0.14), in: Capsule())
-                    }
-                }
-                Button {
-                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                    Task { await vm.ownerAct(.init(action: "request_update", taskId: r.id, note: "Boss আবার আপডেট চাইছেন"), taskId: r.id) }
-                } label: {
-                    if vm.ownerBusyId == r.id {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Label("মনে করান", systemImage: "bell")
-                            .font(.caption2.weight(.bold)).foregroundStyle(accent)
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(PortalOfficePalette.coral.opacity(0.14), in: Capsule())
-                    }
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.vertical, 4)
-    }
-    private func overdueClock(_ secondsLeft: Int) -> String {
-        let over = secondsLeft <= 0
-        let m = abs(secondsLeft) / 60, s = abs(secondsLeft) % 60
-        let clock = "\(PortalOfficeFormat.bn(m)):\(PortalOfficeFormat.bn(String(format: "%02d", s)))"
-        return over ? "\(clock) — এসকেলেট হচ্ছে" : "\(clock)-এ Boss-কে জানানো হবে"
-    }
-
-    // ── Proposals ──
-    private func proposalsCard(_ rows: [PortalProposal]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            cardHeader("doc.text.magnifyingglass", "এজেন্টের প্রস্তাব",
-                       "আপনার সিদ্ধান্ত দরকার \(PortalOfficeFormat.bn(rows.count))টি", tint: PortalOfficePalette.violet)
-            Text("💡 এজেন্ট শুধু প্রস্তাব করে — টাকা/পেরোলে পরিবর্তন হয় না। অনুমোদন করলে আপনি নিজে ERP-তে প্রয়োগ করবেন।")
-                .font(.caption2).foregroundStyle(.secondary)
-            ForEach(rows) { p in proposalRow(p) }
-        }
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
-    }
-    private func proposalRow(_ p: PortalProposal) -> some View {
-        let reward = p.kind.lowercased().contains("reward") || p.kind.lowercased().contains("award")
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text(reward ? "🎁" : "⚠️")
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("\(p.staffName) · \(reward ? "রিওয়ার্ড" : "জরিমানা")\(p.amount.map { " ৳\(PortalOfficeFormat.bn($0))" } ?? "")")
-                        .font(.footnote.weight(.semibold))
-                    if let t = p.taskTitle, !t.isEmpty { Text(t).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
-                }
-                Spacer()
-            }
-            if !p.reason.isEmpty { Text(p.reason).font(.caption2).foregroundStyle(.secondary).lineLimit(2) }
-            HStack(spacing: 8) {
-                Spacer()
-                if vm.proposalBusyId == p.id {
-                    ProgressView().controlSize(.small)
-                } else {
-                    pillButton("খারিজ", tint: PortalOfficePalette.red500) {
-                        Task { await vm.ownerAct(.init(action: "proposal_decide", proposalId: p.id, decision: "dismiss"), proposalId: p.id) }
-                    }
-                    pillButton("অনুমোদন", tint: PortalOfficePalette.emerald600, filled: true) {
-                        Task { await vm.ownerAct(.init(action: "proposal_decide", proposalId: p.id, decision: "approve"), proposalId: p.id) }
-                    }
-                }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    // ── Approval queue ──
-    private func approvalCard(_ hub: PortalOwnerHub) -> some View {
-        let count = hub.pendingApproval.count + hub.selfInitiated.count
-        return VStack(alignment: .leading, spacing: 10) {
-            cardHeader("checkmark.seal", "অনুমোদনের অপেক্ষায়",
-                       count > 0 ? "\(PortalOfficeFormat.bn(count))টি" : "সব ক্লিয়ার ✓", tint: PortalOfficePalette.amber500)
-            if count == 0 {
-                Text("এই মুহূর্তে অনুমোদনের কিছু নেই।").font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
-            }
-            ForEach(hub.pendingApproval) { t in approvalRow(t) }
-            ForEach(hub.selfInitiated) { t in selfRow(t) }
-        }
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
-    }
-    private func approvalRow(_ t: PortalHubTask) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(t.title).font(.footnote.weight(.semibold)).lineLimit(2)
-                    HStack(spacing: 6) {
-                        Text("👤 \(t.staffName)").font(.caption2).foregroundStyle(.secondary)
-                        if !t.type.isEmpty { Text("· \(t.type)").font(.caption2).foregroundStyle(.secondary) }
-                        if t.needsOwner {
-                            Text("📌 রিভিউ দরকার").font(.caption2.weight(.bold)).foregroundStyle(PortalOfficePalette.red500)
-                        }
-                    }
-                }
-                Spacer()
-            }
-            if !t.imageUrls.isEmpty { proofStrip(t.imageUrls) }
-            HStack(spacing: 8) {
-                Button { ownerTask = t } label: {
-                    Text("বিস্তারিত").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                }.buttonStyle(.plain)
-                Spacer()
-                if vm.ownerBusyId == t.id {
-                    ProgressView().controlSize(.small)
-                } else {
-                    pillButton("🔄 সংশোধন", tint: PortalOfficePalette.amber600) { ownerTask = t }
-                    pillButton("✅ অনুমোদন", tint: PortalOfficePalette.emerald600, filled: true) {
-                        Task { await vm.ownerAct(.init(action: "approve", taskId: t.id), taskId: t.id) }
-                    }
-                }
-            }
-        }
-        .padding(10)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-    private func selfRow(_ t: PortalHubTask) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text("✨").font(.footnote)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(t.title).font(.footnote.weight(.semibold)).lineLimit(2)
-                    Text("নিজ উদ্যোগে · \(t.staffName)").font(.caption2).foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-            HStack(spacing: 8) {
-                Spacer()
-                if vm.ownerBusyId == t.id {
-                    ProgressView().controlSize(.small)
-                } else {
-                    pillButton("প্রত্যাখ্যান", tint: PortalOfficePalette.red500) {
-                        Task { await vm.ownerAct(.init(action: "self_reject", taskId: t.id), taskId: t.id) }
-                    }
-                    pillButton("অনুমোদন", tint: PortalOfficePalette.emerald600, filled: true) {
-                        Task { await vm.ownerAct(.init(action: "self_approve", taskId: t.id), taskId: t.id) }
-                    }
-                }
-            }
-        }
-        .padding(10)
-        .background(PortalOfficePalette.violet.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-    private func proofStrip(_ urls: [String]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(urls, id: \.self) { s in
-                    if let u = URL(string: s) {
-                        AsyncImage(url: u) { i in i.resizable().scaledToFill() } placeholder: {
-                            Color.primary.opacity(0.06)
-                        }
-                        .frame(width: 62, height: 62)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    }
-                }
-            }
-        }
-    }
-
-    // ── Active tasks (grouped by staff) ──
-    // ── Team status + each staff's todolist nested (accordion) ──
-    private func teamCard(_ hub: PortalOwnerHub) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            cardHeader("person.3.fill", "টিম স্ট্যাটাস ও টাস্ক", "\(PortalOfficeFormat.bn(hub.team.count)) জন", tint: PortalOfficePalette.coral)
-                .padding(.bottom, 4)
-            ForEach(Array(hub.team.enumerated()), id: \.element.staffId) { idx, m in
-                if idx > 0 { Divider().overlay(Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.06)) }
-                teamMemberRow(m, hub: hub)
-            }
-        }
-        .padding(14).portalOfficeGlass(colorScheme, corner: 20)
-    }
-
-    @ViewBuilder
-    private func teamMemberRow(_ m: PortalTeamMember, hub: PortalOwnerHub) -> some View {
-        let doneItems = hub.doneTodayTasks.filter { $0.staffId == m.staffId }
-        let activeItems = hub.activeTasks.filter { $0.staffId == m.staffId }
-        let isOpen = expanded.contains(m.staffId)
-        VStack(spacing: 0) {
-            Button {
-                UISelectionFeedbackGenerator().selectionChanged()
-                if isOpen { expanded.remove(m.staffId) } else { expanded.insert(m.staffId) }
-            } label: {
-                HStack(spacing: 11) {
-                    officeAvatar(m.imageUrl, initial: m.initial, size: 36)
-                        .overlay(alignment: .bottomTrailing) {
-                            Circle().fill(statusColor(m.status)).frame(width: 11, height: 11)
-                                .overlay(Circle().strokeBorder(.background, lineWidth: 2))
-                        }
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(m.name).font(.subheadline.weight(.semibold))
-                        HStack(spacing: 6) {
-                            Circle().fill(statusColor(m.status)).frame(width: 6, height: 6)
-                            Text(m.sub).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                    }
-                    Spacer(minLength: 4)
-                    Text("\(PortalOfficeFormat.bn(m.doneToday))/\(PortalOfficeFormat.bn(m.totalToday))")
-                        .font(.subheadline.weight(.semibold)).monospacedDigit().foregroundStyle(.secondary)
-                    Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isOpen ? 90 : 0))
-                }
-                .padding(.vertical, 10)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            if isOpen {
-                VStack(spacing: 0) {
-                    if doneItems.isEmpty && activeItems.isEmpty {
-                        HStack(spacing: 8) {
-                            Circle().fill(statusColor(m.status)).frame(width: 6, height: 6)
-                            Text(m.checkedIn ? "আজ কোনো টাস্ক অ্যাসাইন করা হয়নি।"
-                                             : "চেক-ইন করলে আজকের অ্যাসাইন করা টাস্ক এখানে দেখাবে।")
-                                .font(.caption).foregroundStyle(.secondary)
-                            Spacer()
-                        }
-                        .padding(.leading, 47).padding(.vertical, 8)
-                    } else {
-                        ForEach(doneItems) { t in taskLine(t, done: true) }
-                        ForEach(activeItems) { t in taskLine(t, done: false) }
-                    }
-                }
-                .padding(.bottom, 6)
-            }
-        }
-        .animation(.snappy(duration: 0.28), value: isOpen)
-    }
-
-    private func taskLine(_ t: PortalHubTask, done: Bool) -> some View {
-        Button { ownerTask = t } label: {
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle().strokeBorder(done ? Color.clear : PortalOfficePalette.violet.opacity(0.5), lineWidth: 1.8)
-                        .background(Circle().fill(done ? PortalOfficePalette.emerald600 : Color.clear))
-                        .frame(width: 20, height: 20)
-                    if done { Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(.white) }
-                }
-                Text(t.title).font(.footnote).foregroundStyle(done ? .secondary : .primary)
-                    .strikethrough(done, color: .secondary).lineLimit(1)
-                Spacer(minLength: 4)
-                if !done && (t.needsOwner || t.verificationStatus == "redo_requested") {
-                    Text("রিভিউ").font(.caption2.weight(.bold)).foregroundStyle(PortalOfficePalette.red500)
-                } else if !t.type.isEmpty {
-                    Text(t.type).font(.caption2).foregroundStyle(.secondary)
-                }
-                Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
-            }
-            .padding(.leading, 47).padding(.vertical, 7)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-    private func statusColor(_ s: String) -> Color {
-        switch s { case "on": return PortalOfficePalette.green400
-        case "lunch": return PortalOfficePalette.amber500
-        default: return Color.gray }
-    }
-
-    // ── Group chat entry (opens the messenger sheet) ──
-    private var chatEntry: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-            showChat = true
-        } label: {
-            HStack(spacing: 10) {
-                officeGradBadge("bubble.left.and.bubble.right.fill")
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("অফিস গ্রুপ চ্যাট").font(.footnote.weight(.semibold))
-                    Text("🤖 Agent · আপনি · টিম — মেসেঞ্জারের মতো").font(.caption2).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            }
-        }
-        .buttonStyle(.plain)
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
-    }
-
-    // ── Activity feed ──
-    private func activityCard(_ items: [PortalActivity]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            cardHeader("dot.radiowaves.left.and.right", "টিম অ্যাক্টিভিটি", "", tint: PortalOfficePalette.violet)
-            if items.isEmpty {
-                Text("এখনো কোনো অ্যাক্টিভিটি নেই।").font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
-            }
-            ForEach(items.prefix(8)) { a in
-                HStack(alignment: .top, spacing: 8) {
-                    Text(PortalOfficeFormat.kindIcon(a.kind)).font(.footnote).frame(width: 22)
-                    Text(a.summary).font(.caption).foregroundStyle(.primary).lineLimit(2)
-                    Spacer(minLength: 4)
-                    Text(PortalOfficeFormat.timeAgo(a.createdAt)).font(.caption2).foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 2)
-            }
-        }
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
-    }
-
-    // ── Leaderboard ──
-    private func leaderboardCard(_ rows: [PortalLeader]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            cardHeader("trophy", "সাপ্তাহিক পারফরম্যান্স", "", tint: PortalOfficePalette.amber500)
-            if rows.isEmpty {
-                Text("এখনো ডেটা নেই।").font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
-            }
-            ForEach(Array(rows.enumerated()), id: \.element.id) { idx, r in
-                HStack(spacing: 10) {
-                    Text("\(PortalOfficeFormat.bn(idx + 1))").font(.caption.weight(.bold)).foregroundStyle(accent).frame(width: 18)
-                    officeAvatar(r.imageUrl, initial: r.initial, size: 26)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(r.name).font(.caption.weight(.semibold)).lineLimit(1)
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(Color.primary.opacity(0.08))
-                                Capsule().fill(LinearGradient(colors: [PortalOfficePalette.coral, PortalOfficePalette.amber500],
-                                                              startPoint: .leading, endPoint: .trailing))
-                                    .frame(width: max(6, geo.size.width * CGFloat(max(6, r.pct)) / 100))
-                            }
-                        }.frame(height: 6)
-                    }
-                    Text(PortalOfficeFormat.bn(r.score)).font(.caption.weight(.bold)).foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 2)
-            }
-        }
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
-    }
-
-    // ── Staff performance table ──
-    private func performanceCard(_ rows: [PortalPerf]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            cardHeader("chart.bar", "স্টাফ পারফরম্যান্স", "সপ্তাহ", tint: PortalOfficePalette.emerald600)
-            if rows.isEmpty {
-                Text("এখনো ডেটা নেই।").font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
-            } else {
-                HStack {
-                    Text("স্টাফ").frame(maxWidth: .infinity, alignment: .leading)
-                    Text("সম্পন্ন").frame(width: 52); Text("সময়মতো").frame(width: 56)
-                    Text("সংশোধন").frame(width: 56); Text("স্কোর").frame(width: 44)
-                }
-                .font(.caption2.weight(.bold)).foregroundStyle(.secondary)
-                ForEach(rows) { p in
-                    HStack {
-                        Text(p.staffName).font(.caption).lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-                        Text(PortalOfficeFormat.bn(p.done)).font(.caption).frame(width: 52)
-                        Text(p.onTimeRate.map { "\(PortalOfficeFormat.bn($0))%" } ?? "—").font(.caption).frame(width: 56)
-                        Text(PortalOfficeFormat.bn(p.redo)).font(.caption).frame(width: 56)
-                        Text(PortalOfficeFormat.bn(p.score)).font(.caption.weight(.bold)).foregroundStyle(accent).frame(width: 44)
-                    }
-                    .padding(.vertical, 3)
-                    Divider().overlay(Color.primary.opacity(0.06))
-                }
-            }
-        }
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
-    }
-
-    // ── Notifications (owner bell) ──
-    private var noticesCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                officeGradBadge("bell")
-                Text("নোটিফিকেশন").font(.footnote.weight(.semibold))
-                if vm.unread > 0 {
-                    Text(vm.unread > 9 ? "৯+" : PortalOfficeFormat.bn(vm.unread))
-                        .font(.caption2.weight(.bold)).foregroundStyle(.white)
-                        .padding(.horizontal, 7).padding(.vertical, 2.5)
-                        .background(PortalOfficePalette.red500, in: Capsule())
-                }
-                Spacer()
-                if vm.unread > 0 {
-                    Button { Task { await vm.markAllRead() } } label: {
-                        Text("সব পড়া হয়েছে").font(.caption2.weight(.semibold)).foregroundStyle(accent)
-                    }.buttonStyle(.plain)
-                }
-            }
-            if vm.notices.isEmpty {
-                Text("কোনো নোটিফিকেশন নেই।").font(.caption).foregroundStyle(.secondary).padding(.vertical, 4)
-            } else {
-                ForEach(vm.notices.prefix(6)) { n in
-                    HStack(alignment: .top, spacing: 10) {
-                        Text(PortalOfficeFormat.kindIcon(n.kind)).font(.footnote).frame(width: 22)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(n.title).font(.caption.weight(n.read ? .regular : .bold)).lineLimit(2)
-                            Text(PortalOfficeFormat.timeAgo(n.createdAt)).font(.caption2).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        if !n.read { Circle().fill(PortalOfficePalette.coral).frame(width: 7, height: 7) }
-                    }
-                    .padding(.vertical, 2)
-                }
-            }
-        }
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
-    }
-
-    // ── History ──
-    private var historyButton: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-            showHistory = true
-        } label: {
-            HStack(spacing: 10) {
-                officeGradBadge("calendar")
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("অফিসের ইতিহাস").font(.footnote.weight(.semibold))
-                    Text("আগের দিনগুলোর বোর্ড").font(.caption2).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            }
-        }
-        .buttonStyle(.plain)
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
-    }
-
-    // ── Shared bits ──
-    private func cardHeader(_ icon: String, _ title: String, _ sub: String, tint: Color) -> some View {
-        HStack(spacing: 10) {
-            officeGradBadge(icon)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.footnote.weight(.semibold))
-                if !sub.isEmpty { Text(sub).font(.caption2).foregroundStyle(.secondary) }
-            }
-            Spacer()
-        }
-    }
-    private func pillButton(_ label: String, tint: Color, filled: Bool = false, action: @escaping () -> Void) -> some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-            action()
-        } label: {
-            Text(label)
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(filled ? .white : tint)
-                .padding(.horizontal, 12).padding(.vertical, 7)
-                .background(filled ? AnyShapeStyle(tint) : AnyShapeStyle(tint.opacity(0.14)), in: Capsule())
-                .overlay(Capsule().strokeBorder(tint.opacity(filled ? 0 : 0.35), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-// MARK: - Owner task sheet (approve · redo · comment · set-due · always-escalate)
-
-@available(iOS 17.0, *)
-private struct PortalOwnerTaskSheet: View {
-    let task: PortalHubTask
-    @Bindable var vm: PortalOfficeVM
-    let openWeb: (_ path: String, _ title: String) -> Void
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.dismiss) private var dismiss
-    @State private var note = ""
-    @State private var showRedo = false
-    @State private var showDue = false
-    @State private var due = Date()
-    private var busy: Bool { vm.ownerBusyId == task.id }
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    taskHeader
-                    if !task.imageUrls.isEmpty { imagesRow }
-                    threadSection
-                    commentComposer
-                    actionsSection
-                }
-                .padding(16)
-            }
-            .background(PortalOfficeAurora())
-            .dismissKeyboardOnTap()
-            .navigationTitle("কাজের বিস্তারিত")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("বন্ধ") { dismiss() } } }
-            .alert("সংশোধনের নোট", isPresented: $showRedo) {
-                TextField("কী ঠিক করতে হবে…", text: $note)
-                Button("ফেরত দিন") { Task { if await vm.ownerAct(.init(action: "redo", taskId: task.id, note: note.isEmpty ? nil : note), taskId: task.id) { dismiss() } } }
-                Button("বাতিল", role: .cancel) {}
-            }
-            .sheet(isPresented: $showDue) {
-                NavigationStack {
-                    DatePicker("ডিউ ডেট", selection: $due).datePickerStyle(.graphical).padding()
-                        .navigationTitle("ডিউ সেট করুন").navigationBarTitleDisplayMode(.inline)
-                        .toolbar {
-                            ToolbarItem(placement: .confirmationAction) {
-                                Button("সেট") {
-                                    let iso = ISO8601DateFormatter().string(from: due)
-                                    Task { await vm.ownerAct(.init(action: "set_due", taskId: task.id, dueAt: iso), taskId: task.id) }
-                                    showDue = false
-                                }
-                            }
-                            ToolbarItem(placement: .cancellationAction) { Button("বাতিল") { showDue = false } }
-                        }
-                }.presentationDetents([.medium])
-            }
-        }
-        .task { await vm.loadThread(task.id) }
-    }
-
-    private var taskHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(task.title).font(.headline.weight(.bold))
-            HStack(spacing: 8) {
-                Text("👤 \(task.staffName)").font(.caption).foregroundStyle(.secondary)
-                if !task.type.isEmpty {
-                    Text(task.type).font(.caption)
-                        .padding(.horizontal, 8).padding(.vertical, 3)
-                        .background(Color.primary.opacity(0.05), in: Capsule())
-                }
-            }
-            if let d = task.detail, !d.isEmpty { Text(d).font(.subheadline).foregroundStyle(.secondary) }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var imagesRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(task.imageUrls, id: \.self) { s in
-                    if let u = URL(string: s) {
-                        AsyncImage(url: u) { i in i.resizable().scaledToFill() } placeholder: { Color.primary.opacity(0.06) }
-                            .frame(width: 120, height: 120)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder private var threadSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("আলোচনা").font(.caption.weight(.bold)).textCase(.uppercase).foregroundStyle(.secondary)
-            if vm.threadLoading {
-                ProgressView().controlSize(.small)
-            } else if vm.thread.isEmpty {
-                Text("এখনো কোনো মন্তব্য নেই").font(.caption).foregroundStyle(.secondary)
-            } else {
-                ForEach(vm.thread) { c in threadRow(c) }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12).portalOfficeGlass(colorScheme, corner: 14)
-    }
-
-    private func threadRow(_ c: PortalOfficeThreadMsg) -> some View {
-        let who = c.authorType == "owner" ? "Boss" : c.authorType == "agent" ? "Agent" : task.staffName
-        return VStack(alignment: .leading, spacing: 2) {
-            Text("\(who) · \(PortalOfficeFormat.timeAgo(c.createdAt))")
-                .font(.caption2.weight(.bold)).foregroundStyle(.secondary)
-            Text(c.body).font(.caption)
-        }.frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var commentComposer: some View {
-        HStack(spacing: 8) {
-            TextField("কমেন্ট / নির্দেশনা…", text: $note, axis: .vertical)
-                .lineLimit(1...4).font(.footnote)
-                .padding(.horizontal, 12).padding(.vertical, 9)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
-            Button("পাঠান") {
-                let t = note.trimmingCharacters(in: .whitespacesAndNewlines); guard !t.isEmpty else { return }
-                Task { if await vm.ownerAct(.init(action: "comment", taskId: task.id, body: t), taskId: task.id) { note = ""; await vm.loadThread(task.id) } }
-            }
-            .font(.footnote.weight(.semibold))
-            .disabled(busy || note.trimmingCharacters(in: .whitespaces).isEmpty)
-        }
-    }
-
-    private var actionsSection: some View {
-        VStack(spacing: 8) {
-            actionBtn("✅ অনুমোদন করুন", tint: PortalOfficePalette.emerald600, filled: true) {
-                Task { if await vm.ownerAct(.init(action: "approve", taskId: task.id), taskId: task.id) { dismiss() } }
-            }
-            actionBtn("🔄 সংশোধনে ফেরত দিন", tint: PortalOfficePalette.amber600) { showRedo = true }
-            actionBtn("⏰ আপডেট চান", tint: PortalOfficePalette.violet) {
-                Task { await vm.ownerAct(.init(action: "request_update", taskId: task.id, note: note.isEmpty ? nil : note), taskId: task.id) }
-            }
-            actionBtn("📅 ডিউ ডেট সেট করুন", tint: PortalOfficePalette.coral) { showDue = true }
-            HStack {
-                Text("সবসময় Boss-এ পাঠাও").font(.caption)
-                Spacer()
-                Toggle("", isOn: Binding(get: { task.alwaysEscalate }, set: { on in
-                    Task { await vm.ownerAct(.init(action: "set_always_escalate", taskId: task.id, on: on), taskId: task.id) }
-                })).labelsHidden().tint(PortalOfficePalette.coral)
-            }
-            .padding(.top, 2)
-        }
-    }
-
-    private func actionBtn(_ label: String, tint: Color, filled: Bool = false, action: @escaping () -> Void) -> some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .soft).impactOccurred(); action()
-        } label: {
-            HStack { Spacer()
-                if busy { ProgressView().controlSize(.small) } else { Text(label).font(.footnote.weight(.bold)) }
-                Spacer() }
-                .foregroundStyle(filled ? .white : tint)
-                .padding(.vertical, 12)
-                .background(filled ? AnyShapeStyle(tint) : AnyShapeStyle(tint.opacity(0.13)), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(tint.opacity(filled ? 0 : 0.35), lineWidth: 1))
-        }
-        .buttonStyle(.plain).disabled(busy)
-    }
-}
-
-// MARK: - Office history sheet (owner — past boards)
-
-struct PortalArchiveDay: Decodable, Identifiable {
-    let date: String, label: String
-    let total: Int, done: Int, approved: Int, staffCount: Int
-    var id: String { date }
-    init(from d: Decoder) throws {
-        let c = try d.container(keyedBy: K.self)
-        date = (try? c.decode(String.self, forKey: .date)) ?? ""
-        label = (try? c.decodeIfPresent(String.self, forKey: .label)) ?? date
-        func i(_ k: K) -> Int { (try? c.decodeIfPresent(Int.self, forKey: k)) ?? 0 }
-        total = i(.total); done = i(.done); approved = i(.approved); staffCount = i(.staffCount)
-    }
-    enum K: String, CodingKey { case date, label, total, done, approved, staffCount }
-}
-private struct PortalArchiveIndex: Decodable { let days: [PortalArchiveDay] }
-
-@available(iOS 17.0, *)
-private struct PortalOfficeHistorySheet: View {
-    let openWeb: (_ path: String, _ title: String) -> Void
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.dismiss) private var dismiss
-    @State private var days: [PortalArchiveDay] = []
-    @State private var loading = true
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                LazyVStack(spacing: 10) {
-                    if loading {
-                        ForEach(0..<4, id: \.self) { _ in
-                            Color.clear.frame(height: 64).portalOfficeGlass(colorScheme, corner: 14).portalOfficeShimmer()
-                        }
-                    } else if days.isEmpty {
-                        Text("এখনো কোনো ইতিহাস নেই। দিন শেষে আজকের বোর্ড এখানে জমা হবে।")
-                            .font(.caption).foregroundStyle(.secondary).padding(.top, 40)
-                    } else {
-                        ForEach(days) { d in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(d.label).font(.subheadline.weight(.bold))
-                                Text("\(PortalOfficeFormat.bn(d.total))টি কাজ · \(PortalOfficeFormat.bn(d.done))টি সম্পন্ন · \(PortalOfficeFormat.bn(d.approved))টি অনুমোদিত · \(PortalOfficeFormat.bn(d.staffCount)) জন স্টাফ")
-                                    .font(.caption2).foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(14).portalOfficeGlass(colorScheme, corner: 14)
-                        }
-                    }
-                }
-                .padding(14)
-            }
-            .background(PortalOfficeAurora())
-            .navigationTitle("অফিসের ইতিহাস")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("বন্ধ") { dismiss() } } }
-        }
-        .task {
-            loading = true
-            defer { loading = false }
-            if let idx: PortalArchiveIndex = try? await AlmaAPI.shared.get("/api/assistant/office/history") {
-                days = idx.days
-            }
+            Spacer(minLength: 0)
         }
     }
 }
