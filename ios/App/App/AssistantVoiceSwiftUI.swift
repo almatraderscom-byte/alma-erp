@@ -1110,62 +1110,83 @@ final class AlmaTtsQueue: NSObject, AVAudioPlayerDelegate {
 }
 
 
-// MARK: - The console view — the owner's Voice Orb bundle, reproduced 1:1
+// MARK: - The console view — this session's WEB VoiceConsole design, 1:1
 //
-// Source of truth: voiceorbbundle/voice-orb-react.html + HANDOFF.md (owner
-// supplied, 2026-07-06): light-theme GLASS orb page — radial sky background,
-// uppercase status line (idle: "মাইকে ট্যাপ করে বলুন" with the verb in accent
-// blue #2f7fe0), sliders glyph top-right toggling light/dark, the layered glass
-// orb center (halo → contact shadow → sphere → subsurface → two counter-rotating
-// iridescent conic fluids → gloss → specular hotspots → fresnel ring, breathing
-// 6s idle / 2.6s thinking, floaty ±2.5% 6.5s, listening scale = 1 + level×0.10),
-// and two 64px white circle buttons at the bottom (mic — solid #2f7fe0 while
-// listening — and ✕). Functional extras kept subtle: transcript/subtitle lines
-// under the orb and the approval/ask cards, styled to the same light design.
+// The owner's iPhone app showed the web voice console (dark near-black canvas,
+// state-hued aurora + dot grid, a state-hued FLUID orb with a 72-bar reactive
+// ring, glass status badge, glowing spoken-subtitle caption, dark-glass action
+// cards, কথোপকথন dock) — going native lost that look. This view restores it in
+// SwiftUI, matching artifact ce8df7fd (src/agent/components/voice/VoiceConsole
+// + FluidOrb): tokens bg0 #04070D, ink #EAF2FB, muted #7C92A9, faint #55708C,
+// line rgba(160,200,240,.13), gold #E2B366, good #3BE08F; hues idle 168 /
+// listening 145 / thinking·transcribing 265 / speaking 210 / error 8.
+
+/// HSL → Color (the web uses HSL; SwiftUI's Color(hue:) is HSB). Faithful port.
+@available(iOS 17.0, *)
+func almaHSL(_ h: Double, _ s: Double, _ l: Double, _ a: Double = 1) -> Color {
+    let c = (1 - abs(2 * l - 1)) * s
+    let hp = (h.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360) / 60
+    let x = c * (1 - abs(hp.truncatingRemainder(dividingBy: 2) - 1))
+    var r = 0.0, g = 0.0, b = 0.0
+    switch hp {
+    case 0..<1: (r, g, b) = (c, x, 0)
+    case 1..<2: (r, g, b) = (x, c, 0)
+    case 2..<3: (r, g, b) = (0, c, x)
+    case 3..<4: (r, g, b) = (0, x, c)
+    case 4..<5: (r, g, b) = (x, 0, c)
+    default:    (r, g, b) = (c, 0, x)
+    }
+    let m = l - c / 2
+    return Color(red: r + m, green: g + m, blue: b + m, opacity: a)
+}
 
 @available(iOS 17.0, *)
 struct AlmaVoiceConsoleView: View {
     let vm: AssistantVM
     @State private var engine = AlmaVoiceEngine()
-    @State private var darkMode = false
     @Environment(\.dismiss) private var dismiss
 
-    private var accent: Color { Color(red: 0.184, green: 0.498, blue: 0.878) }      // #2f7fe0
-    private var textColor: Color {
-        darkMode ? Color(red: 0.859, green: 0.902, blue: 0.969)                      // #dbe6f7
-                 : Color(red: 0.169, green: 0.227, blue: 0.322)                      // #2b3a52
-    }
+    // Web palette tokens.
+    private let ink   = Color(red: 0.918, green: 0.949, blue: 0.984)   // #EAF2FB
+    private let muted = Color(red: 0.486, green: 0.573, blue: 0.663)   // #7C92A9
+    private let faint = Color(red: 0.333, green: 0.439, blue: 0.549)   // #55708C
+    private let gold  = Color(red: 0.886, green: 0.702, blue: 0.400)   // #E2B366
+    private let line  = Color(red: 0.627, green: 0.784, blue: 0.941).opacity(0.13)
+    private let good  = Color(red: 0.231, green: 0.878, blue: 0.561)   // #3BE08F
+    private let bg0   = Color(red: 0.016, green: 0.027, blue: 0.051)   // #04070D
+
+    private var hue: Double { engine.state.hue }
 
     var body: some View {
         ZStack {
-            background.ignoresSafeArea()
+            bg0.ignoresSafeArea()
+            aurora.ignoresSafeArea()
+            dotGrid.ignoresSafeArea()
+
             VStack(spacing: 0) {
                 topBar
-                Spacer(minLength: 6)
-                AlmaGlassOrbView(state: engine.state,
+                Spacer(minLength: 4)
+                stateBadge
+                    .padding(.bottom, 8)
+                AlmaFluidOrbView(state: engine.state,
                                  micLevel: engine.micLevel,
-                                 ttsLevel: engine.ttsLevel,
-                                 dark: darkMode)
+                                 ttsLevel: engine.ttsLevel)
                     .frame(width: orbSide, height: orbSide)
                     .contentShape(Circle())
                     .onTapGesture { engine.tapOrb() }
-                statusLine
-                    .padding(.top, 26)
-                transcriptAndCaption
+                voiceZone
+                    .padding(.top, 14)
                 cardsFeed
-                Spacer(minLength: 6)
-                controls
+                Spacer(minLength: 4)
+                dock
             }
         }
-        .preferredColorScheme(darkMode ? .dark : .light)
+        .preferredColorScheme(.dark)
         .onAppear {
             engine.chatVM = vm
             engine.begin()
-            // DEBUG self-test hook (env set only by local simctl self-tests).
             if let say = ProcessInfo.processInfo.environment["ALMA_VOICE_SAY"], !say.isEmpty {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
-                    engine.debugInjectUtterance(say)
-                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) { engine.debugInjectUtterance(say) }
             }
         }
         .onDisappear { engine.end() }
@@ -1173,7 +1194,7 @@ struct AlmaVoiceConsoleView: View {
             if let t = engine.errorToast {
                 Text(t)
                     .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(textColor)
+                    .foregroundStyle(muted)
                     .padding(.horizontal, 14).padding(.vertical, 9)
                     .background(.ultraThinMaterial, in: Capsule())
                     .padding(.top, 54)
@@ -1186,458 +1207,399 @@ struct AlmaVoiceConsoleView: View {
         }
     }
 
-    private var orbSide: CGFloat {
-        // clamp(220px, 60vw, 320px)
-        min(320, max(220, UIScreen.main.bounds.width * 0.60))
-    }
+    private var orbSide: CGFloat { min(300, max(220, UIScreen.main.bounds.width * 0.62)) }
 
-    /// Screen bg — radial-gradient(130% 120% at 50% 22%): light #ffffff→#eef4fc→#dde8f5,
-    /// dark #121826→#0a0e17→#04060c.
-    private var background: some View {
+    // ── Background: state-hued aurora + dot grid (web .aurora / .dotgrid) ──
+    private var aurora: some View {
         GeometryReader { geo in
-            RadialGradient(stops: darkMode
-                ? [.init(color: Color(red: 0.071, green: 0.094, blue: 0.149), location: 0),
-                   .init(color: Color(red: 0.039, green: 0.055, blue: 0.090), location: 0.55),
-                   .init(color: Color(red: 0.016, green: 0.024, blue: 0.047), location: 1)]
-                : [.init(color: .white, location: 0),
-                   .init(color: Color(red: 0.933, green: 0.957, blue: 0.988), location: 0.52),
-                   .init(color: Color(red: 0.867, green: 0.910, blue: 0.961), location: 1)],
-                center: .init(x: 0.5, y: 0.22),
-                startRadius: 0,
-                endRadius: max(geo.size.width, geo.size.height) * 1.25)
+            ZStack {
+                RadialGradient(colors: [almaHSL(hue, 0.80, 0.55, 0.13), .clear],
+                               center: .init(x: 0.5, y: 0.18),
+                               startRadius: 0, endRadius: max(geo.size.width, geo.size.height) * 0.7)
+                RadialGradient(colors: [almaHSL(hue + 40, 0.70, 0.45, 0.06), .clear],
+                               center: .init(x: 0.85, y: 0.95),
+                               startRadius: 0, endRadius: max(geo.size.width, geo.size.height) * 0.9)
+            }
+            .animation(.easeInOut(duration: 0.6), value: hue)
         }
     }
 
+    private var dotGrid: some View {
+        GeometryReader { geo in
+            Canvas { ctx, size in
+                let step: CGFloat = 26
+                let dot = Color(red: 0.588, green: 0.784, blue: 0.961).opacity(0.10)
+                var y: CGFloat = 0
+                while y < size.height {
+                    var x: CGFloat = 0
+                    while x < size.width {
+                        ctx.fill(Path(ellipseIn: CGRect(x: x, y: y, width: 1.4, height: 1.4)), with: .color(dot))
+                        x += step
+                    }
+                    y += step
+                }
+            }
+            .mask(
+                RadialGradient(colors: [.black, .black.opacity(0.0)],
+                               center: .init(x: 0.5, y: 0.22),
+                               startRadius: 0, endRadius: max(geo.size.width, geo.size.height) * 0.6)
+            )
+        }
+    }
+
+    // ── Top bar: web has a single ✕ close top-right ──
     private var topBar: some View {
         HStack {
-            Button {
-                engine.end()
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Color(red: 0.624, green: 0.690, blue: 0.784)) // #9fb0c8
-                    .frame(width: 44, height: 44)
-            }
             Spacer()
             Button {
-                UISelectionFeedbackGenerator().selectionChanged()
-                withAnimation(.easeInOut(duration: 0.35)) { darkMode.toggle() }
+                engine.end(); dismiss()
             } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 17, weight: .medium))
-                    .foregroundStyle(Color(red: 0.624, green: 0.690, blue: 0.784)) // #9fb0c8
-                    .frame(width: 44, height: 44)
+                Image(systemName: "xmark")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(muted)
+                    .frame(width: 40, height: 40)
+                    .background(Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.06), in: Circle())
+                    .overlay(Circle().strokeBorder(line, lineWidth: 1))
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
         .padding(.top, 6)
     }
 
-    /// Uppercase-styled status: idle shows "মাইকে ট্যাপ করে বলুন" with the verb in blue.
-    private var statusLine: some View {
-        Group {
-            if engine.state == .idle {
-                (Text("মাইকে ট্যাপ করে ").foregroundColor(textColor.opacity(0.55))
-                 + Text("বলুন").foregroundColor(accent))
-            } else {
-                Text(engine.state.statusText)
-                    .foregroundColor(engine.state == .error
-                                     ? Color(red: 0.878, green: 0.478, blue: 0.373)
-                                     : textColor.opacity(0.55))
-            }
+    // ── State badge: glass pill + glowing state-hued dot (web .statebadge) ──
+    private var stateBadge: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(almaHSL(hue, 0.85, 0.62))
+                .frame(width: 8, height: 8)
+                .shadow(color: almaHSL(hue, 0.85, 0.62), radius: 6)
+            Text(engine.state.statusText)
+                .font(.system(size: 13))
+                .foregroundStyle(muted)
         }
-        .font(.system(size: 13, weight: .semibold))
-        .tracking(1.8)
+        .padding(.horizontal, 14).padding(.vertical, 6)
+        .background(
+            LinearGradient(colors: [Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.08),
+                                    Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.02)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: Capsule())
+        .overlay(Capsule().strokeBorder(line, lineWidth: 1))
+        .animation(.easeInOut(duration: 0.4), value: hue)
     }
 
-    @ViewBuilder private var transcriptAndCaption: some View {
-        VStack(spacing: 7) {
-            // Previous exchange stays readable between turns — glancing away
-            // must not erase the last answer (web scrollback parity).
+    // ── Transcript pill + glowing subtitle / caption / history (web voicezone) ──
+    @ViewBuilder private var voiceZone: some View {
+        VStack(spacing: 10) {
+            // last exchange stays readable between turns
             if engine.state == .idle && engine.nowLine.isEmpty && !engine.lastA.isEmpty {
                 VStack(spacing: 2) {
                     if !engine.lastQ.isEmpty {
-                        Text(engine.lastQ)
-                            .font(.system(size: 12))
-                            .foregroundStyle(textColor.opacity(0.4))
-                            .lineLimit(1)
+                        Text(engine.lastQ).font(.system(size: 12)).foregroundStyle(faint).lineLimit(1)
                     }
-                    Text(engine.lastA)
-                        .font(.system(size: 13))
-                        .foregroundStyle(textColor.opacity(0.55))
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
+                    Text(engine.lastA).font(.system(size: 13)).foregroundStyle(muted)
+                        .multilineTextAlignment(.center).lineLimit(2)
                 }
                 .padding(.horizontal, 26)
             }
             if !engine.transcript.isEmpty && engine.state != .idle {
-                Text(engine.transcript)
-                    .font(.system(size: 13))
-                    .foregroundStyle(textColor.opacity(0.55))
-                    .lineLimit(1)
-                    .padding(.horizontal, 30)
+                HStack(spacing: 8) {
+                    Text("MIC").font(.system(size: 10.5, weight: .bold)).foregroundStyle(good)
+                    Text(engine.transcript).font(.system(size: 13.5)).foregroundStyle(muted).lineLimit(1)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 7)
+                .background(Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.06), in: Capsule())
+                .overlay(Capsule().strokeBorder(line, lineWidth: 1))
+                .padding(.horizontal, 24)
             }
-            if !engine.nowLine.isEmpty {
-                Text(engine.nowLine)
-                    .font(.system(size: 15.5, weight: .medium))
-                    .foregroundStyle(textColor)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 26)
-            } else if engine.state == .listening {
-                Text("চুপ করলেই পাঠিয়ে দেব — তাড়া নেই, \(engine.listenSeconds / 60):\(String(format: "%02d", engine.listenSeconds % 60))")
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(textColor.opacity(0.45))
+            // caption: glowing current line + dim said; else greeting/reply; idle hint
+            Group {
+                if engine.state == .speaking && !engine.nowLine.isEmpty {
+                    (Text(engine.saidLines.suffix(2).joined(separator: " ") + (engine.saidLines.isEmpty ? "" : " "))
+                        .foregroundStyle(faint)
+                     + Text(engine.nowLine).foregroundStyle(ink))
+                        .font(.system(size: 16.5, weight: .medium))
+                        .multilineTextAlignment(.center)
+                } else if !engine.replyText.isEmpty {
+                    Text(engine.replyText)
+                        .font(.system(size: 16.5)).foregroundStyle(ink)
+                        .multilineTextAlignment(.center).lineLimit(4)
+                } else if engine.state == .idle {
+                    (Text("বলুন, ").foregroundStyle(muted)
+                     + Text("Sir").foregroundStyle(gold)
+                     + Text(" — অর্বে ট্যাপ করুন।").foregroundStyle(muted))
+                        .font(.system(size: 15))
+                } else if engine.state == .listening {
+                    Text("চুপ করলেই পাঠিয়ে দেব — তাড়া নেই, \(engine.listenSeconds / 60):\(String(format: "%02d", engine.listenSeconds % 60))")
+                        .font(.system(size: 12, design: .monospaced)).foregroundStyle(faint)
+                }
             }
+            .padding(.horizontal, 26)
         }
-        .padding(.top, 12)
-        .frame(minHeight: 56, alignment: .top)
+        .frame(minHeight: 66, alignment: .top)
     }
 
+    // ── Dark-glass action cards (web .vc-card) ──
     @ViewBuilder private var cardsFeed: some View {
         if !engine.cards.isEmpty {
             ScrollView {
-                VStack(spacing: 8) {
-                    ForEach(engine.cards) { card in
-                        cardView(card)
-                    }
+                VStack(spacing: 9) {
+                    ForEach(engine.cards) { card in cardView(card) }
                 }
-                .padding(.horizontal, 22)
+                .padding(.horizontal, 20)
             }
-            .frame(maxHeight: 150)
+            .frame(maxHeight: 160)
+            .padding(.top, 6)
         }
     }
 
     @ViewBuilder private func cardView(_ card: AlmaVoiceEngine.Card) -> some View {
-        HStack(spacing: 10) {
-            Text(card.icon).font(.system(size: 14))
+        HStack(spacing: 11) {
+            Text(card.icon).font(.system(size: 15))
+                .frame(width: 32, height: 32)
+                .background(Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.07),
+                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(line, lineWidth: 1))
             VStack(alignment: .leading, spacing: 2) {
-                Text(card.title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(textColor)
-                    .lineLimit(2)
+                Text(card.title).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(ink).lineLimit(2)
                 if !card.sub.isEmpty {
-                    Text(card.sub)
-                        .font(.system(size: 11))
-                        .foregroundStyle(textColor.opacity(0.55))
-                        .lineLimit(1)
+                    Text(card.sub).font(.system(size: 11.5)).foregroundStyle(faint).lineLimit(1)
                 }
                 if card.kind == .ask && card.status == "wait" {
                     HStack(spacing: 6) {
                         ForEach(card.options.prefix(4), id: \.self) { opt in
-                            Button {
-                                engine.answer(card, option: opt)
-                            } label: {
-                                Text(opt)
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(accent)
-                                    .padding(.horizontal, 10).padding(.vertical, 4)
-                                    .background(accent.opacity(0.10), in: Capsule())
+                            Button { engine.answer(card, option: opt) } label: {
+                                Text(opt).font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(muted)
+                                    .padding(.horizontal, 11).padding(.vertical, 5)
+                                    .background(Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.07), in: Capsule())
+                                    .overlay(Capsule().strokeBorder(line, lineWidth: 1))
                             }
                         }
-                    }
-                    .padding(.top, 3)
+                    }.padding(.top, 3)
                 }
-                if card.kind == .approval && card.status == "wait" {
-                    HStack(spacing: 8) {
-                        Button {
-                            engine.approve(card, yes: true)
-                        } label: {
-                            Text("অনুমোদন")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 12).padding(.vertical, 5)
-                                .background(accent, in: Capsule())
-                        }
-                        Button {
-                            engine.approve(card, yes: false)
-                        } label: {
-                            Text("বাতিল")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(textColor.opacity(0.6))
-                                .padding(.horizontal, 12).padding(.vertical, 5)
-                                .background(textColor.opacity(0.06), in: Capsule())
-                        }
-                    }
-                    .padding(.top, 3)
-                }
+                if card.kind == .approval && card.status == "wait" { approveButtons(card) }
                 if card.kind == .modelSwitch && card.status == "wait" {
                     HStack(spacing: 8) {
-                        Button {
-                            engine.resolveModelSwitch(card, approve: true)
-                        } label: {
-                            Text("অনুমতি দিন")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 12).padding(.vertical, 5)
-                                .background(accent, in: Capsule())
-                        }
-                        Button {
-                            engine.resolveModelSwitch(card, approve: false)
-                        } label: {
-                            Text("থাক")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(textColor.opacity(0.6))
-                                .padding(.horizontal, 12).padding(.vertical, 5)
-                                .background(textColor.opacity(0.06), in: Capsule())
-                        }
-                    }
-                    .padding(.top, 3)
+                        pillButton("অনুমতি দিন", solid: true) { engine.resolveModelSwitch(card, approve: true) }
+                        pillButton("থাক", solid: false) { engine.resolveModelSwitch(card, approve: false) }
+                    }.padding(.top, 3)
                 }
             }
             Spacer(minLength: 0)
-            if card.kind == .tool {
-                if card.status == "run" { ProgressView().controlSize(.mini) }
-                else if card.status == "fail" {
-                    Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(.red)
-                } else {
-                    Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(.green)
-                }
-            }
+            trailingStatus(card)
         }
-        .padding(11)
-        .background((darkMode ? Color.white.opacity(0.06) : Color.white.opacity(0.9)),
-                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .strokeBorder(Color(red: 0.078, green: 0.157, blue: 0.314).opacity(darkMode ? 0.0 : 0.08), lineWidth: 1))
-        .shadow(color: Color(red: 0.275, green: 0.431, blue: 0.667).opacity(darkMode ? 0 : 0.10), radius: 10, y: 5)
+        .padding(13)
+        .background(
+            LinearGradient(colors: [Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.085),
+                                    Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.028)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(card.kind == .approval || card.kind == .modelSwitch
+                          ? gold.opacity(0.35) : line, lineWidth: 1))
+        .shadow(color: .black.opacity(0.4), radius: 10, y: 5)
     }
 
-    /// Bottom controls: mic (left, solid blue while listening) + ✕ (right) — 64px
-    /// white circles, black icons, exactly like the bundle.
-    private var controls: some View {
-        VStack(spacing: 10) {
-            HStack {
-                circleButton(icon: engine.state == .listening ? "mic.fill" : "mic",
-                             on: engine.state == .listening) {
-                    engine.tapOrb()
-                }
-                Spacer()
-                circleButton(icon: "xmark", on: false) {
-                    engine.end()
-                    dismiss()
-                }
-            }
-            .frame(maxWidth: 320)
-            .padding(.horizontal, 42)
-            // কথোপকথন mode — the one functional extra (auto-relisten), kept discreet.
-            Button {
-                engine.convoMode.toggle()
-                UISelectionFeedbackGenerator().selectionChanged()
-            } label: {
-                HStack(spacing: 5) {
-                    Circle().fill(engine.convoMode ? accent : textColor.opacity(0.3))
-                        .frame(width: 6, height: 6)
-                    Text(engine.convoMode ? "কথোপকথন চালু" : "কথোপকথন বন্ধ")
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(textColor.opacity(0.5))
-                }
-            }
-        }
-        .padding(.bottom, 24)
+    @ViewBuilder private func approveButtons(_ card: AlmaVoiceEngine.Card) -> some View {
+        HStack(spacing: 8) {
+            pillButton("অনুমোদন", solid: true) { engine.approve(card, yes: true) }
+            pillButton("বাতিল", solid: false) { engine.approve(card, yes: false) }
+        }.padding(.top, 3)
     }
 
-    private func circleButton(icon: String, on: Bool, action: @escaping () -> Void) -> some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            action()
-        } label: {
-            Image(systemName: icon)
-                .font(.system(size: 21, weight: .medium))
-                .foregroundStyle(on ? .white : Color(red: 0.063, green: 0.082, blue: 0.122)) // #10151f
-                .frame(width: 64, height: 64)
-                .background(on ? accent : Color.white.opacity(0.9), in: Circle())
-                .overlay(Circle().strokeBorder(Color(red: 0.078, green: 0.157, blue: 0.314).opacity(0.08), lineWidth: 1))
-                .shadow(color: on ? accent.opacity(0.45) : Color(red: 0.275, green: 0.431, blue: 0.667).opacity(0.22),
-                        radius: on ? 15 : 13, y: on ? 12 : 10)
+    private func pillButton(_ text: String, solid: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(text).font(.system(size: 12, weight: solid ? .semibold : .medium))
+                .foregroundStyle(solid ? Color(red: 0.016, green: 0.063, blue: 0.094) : muted)
+                .padding(.horizontal, 12).padding(.vertical, 5)
+                .background(solid
+                    ? AnyShapeStyle(LinearGradient(colors: [Color(red: 0.486, green: 0.890, blue: 0.784),
+                                                            Color(red: 0.306, green: 0.639, blue: 1.0)],
+                                                   startPoint: .topLeading, endPoint: .bottomTrailing))
+                    : AnyShapeStyle(Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.07)),
+                    in: Capsule())
+                .overlay(solid ? nil : Capsule().strokeBorder(line, lineWidth: 1))
         }
-        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder private func trailingStatus(_ card: AlmaVoiceEngine.Card) -> some View {
+        if card.kind == .tool {
+            if card.status == "run" { ProgressView().controlSize(.mini).tint(gold) }
+            else if card.status == "fail" {
+                Image(systemName: "xmark").font(.system(size: 10, weight: .bold)).foregroundStyle(Color(red: 0.949, green: 0.494, blue: 0.494))
+            } else {
+                Image(systemName: "checkmark").font(.system(size: 10, weight: .bold)).foregroundStyle(good)
+            }
+        } else if card.status != "wait" {
+            Text(card.status).font(.system(size: 11)).foregroundStyle(good)
+                .padding(.horizontal, 9).padding(.vertical, 3)
+                .background(good.opacity(0.10), in: Capsule())
+        }
+    }
+
+    // ── Dock: কথোপকথন chip + hint + চ্যাটে ফিরুন (web dock) ──
+    private var dock: some View {
+        VStack(spacing: 8) {
+            if engine.state == .speaking {
+                Text("ট্যাপ করে থামান ও কথা বলুন").font(.system(size: 12)).foregroundStyle(faint)
+            }
+            HStack(spacing: 10) {
+                Button {
+                    engine.convoMode.toggle()
+                    UISelectionFeedbackGenerator().selectionChanged()
+                } label: {
+                    HStack(spacing: 7) {
+                        Circle().fill(engine.convoMode ? good : faint)
+                            .frame(width: 7, height: 7)
+                            .shadow(color: engine.convoMode ? good : .clear, radius: 5)
+                        Text(engine.convoMode ? "কথোপকথন চালু" : "কথোপকথন বন্ধ")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(engine.convoMode ? muted : faint)
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 9)
+                    .background(Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.06), in: Capsule())
+                    .overlay(Capsule().strokeBorder(engine.convoMode ? good.opacity(0.3) : line, lineWidth: 1))
+                }
+                Button { engine.end(); dismiss() } label: {
+                    Text("চ্যাটে ফিরুন").font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(muted)
+                        .padding(.horizontal, 20).padding(.vertical, 9)
+                        .background(Color(red: 0.549, green: 0.745, blue: 0.941).opacity(0.06), in: Capsule())
+                        .overlay(Capsule().strokeBorder(line, lineWidth: 1))
+                }
+            }
+        }
+        .padding(.bottom, 22)
     }
 }
 
-// MARK: - The glass orb — bundle layer stack, 1:1
+// MARK: - The fluid orb — this session's web FluidOrb in SwiftUI
 //
-// halo → contact shadow → [circle-clipped: sphere → subsurf → fluid c1/c2 →
-// gloss → spec + spec.small → ring] with breathe (stage) + floaty (orb) motion.
+// Dark state-hued sphere (iridescent radial), breathing halo, molten core,
+// fresnel rim, two drifting conic fluids, and the 72-bar reactive waveform ring
+// (web FluidOrb's signature) — hue eased per state, ring driven by mic/tts level.
 
 @available(iOS 17.0, *)
-struct AlmaGlassOrbView: View {
+struct AlmaFluidOrbView: View {
     let state: AlmaVoiceState
     let micLevel: Double
     let ttsLevel: Double
-    let dark: Bool
 
-    /// Bundle timings.
-    private var breatheDuration: Double? {
+    private var breathe: Double? {
         switch state {
-        case .idle, .error: return 6.0
-        case .transcribing, .thinking: return 2.6
-        case .listening, .speaking: return nil       // JS drives scale from audio
+        case .idle, .error: return 4.6
+        case .transcribing, .thinking: return 1.7
+        case .listening, .speaking: return 2.8
         }
     }
-    private var c1Duration: Double {
+    private var spin1: Double {
         switch state {
         case .listening, .speaking: return 10
         case .transcribing, .thinking: return 4.5
         default: return 18
         }
     }
-    private var c2Duration: Double {
-        switch state {
-        case .transcribing, .thinking: return 6
-        default: return 26
-        }
-    }
 
     var body: some View {
         GeometryReader { geo in
             let side = min(geo.size.width, geo.size.height)
+            let h = state.hue
             TimelineView(.animation(minimumInterval: 1.0 / 30)) { tl in
                 let t = tl.date.timeIntervalSinceReferenceDate
-                // breathe: scale 1→1.04 ease-in-out; listening/speaking: 1 + level*0.10
                 let level = state == .speaking ? ttsLevel : micLevel
                 let scale: Double = {
-                    if let d = breatheDuration {
-                        return 1 + 0.02 * (1 - cos(2 * .pi * t / d))       // 1 ↔ 1.04
-                    }
-                    return 1 + min(1, max(0, level)) * 0.10
+                    if let d = breathe { return 1 + 0.028 * (1 - cos(2 * .pi * t / d)) }
+                    return 1
                 }()
-                // floaty: translateY -2.5% ↔ +2.5%, 6.5s
-                let floatY = -0.025 * cos(2 * .pi * t / 6.5) * side
-                // shadowPulse runs opposite the float
-                let shadowK = (1 - cos(2 * .pi * t / 6.5)) / 2              // 0…1
                 ZStack {
-                    // ── halo (inset -40%, blur 26) ─────────────────────────
-                    ZStack {
-                        RadialGradient(colors: dark
-                            ? [Color(red: 0.392, green: 0.706, blue: 1.0).opacity(0.7),
-                               Color(red: 0.314, green: 0.588, blue: 1.0).opacity(0.24), .clear]
-                            : [Color(red: 0.353, green: 0.667, blue: 1.0).opacity(0.5),
-                               Color(red: 0.314, green: 0.588, blue: 1.0).opacity(0.16), .clear],
-                            center: .init(x: 0.5, y: 0.46), startRadius: 0, endRadius: side * 0.9)
-                        RadialGradient(colors: dark
-                            ? [Color(red: 0.549, green: 0.471, blue: 1.0).opacity(0.4), .clear]
-                            : [Color(red: 0.471, green: 0.431, blue: 1.0).opacity(0.28), .clear],
-                            center: .init(x: 0.62, y: 0.60), startRadius: 0, endRadius: side * 0.72)
+                    // halo / bloom
+                    Circle()
+                        .fill(RadialGradient(colors: [almaHSL(h, 0.90, 0.60, 0.34),
+                                                      almaHSL(h, 0.90, 0.50, 0.10), .clear],
+                                             center: .init(x: 0.5, y: 0.45),
+                                             startRadius: 0, endRadius: side * 0.85))
+                        .frame(width: side * 1.5, height: side * 1.5)
+                        .blur(radius: 18)
+                        .scaleEffect(scale)
+
+                    // 72-bar reactive waveform ring (the web signature)
+                    Canvas { ctx, size in
+                        let cx = size.width / 2, cy = size.height / 2
+                        let base = size.width * 0.335
+                        for i in 0..<72 {
+                            let a = Double(i) / 72 * 2 * .pi - .pi / 2
+                            var amp = 1.5
+                            switch state {
+                            case .listening:
+                                amp = 2 + level * 22 * abs(sin(t * 2.1 + Double(i) * 0.7)) + Double.random(in: 0...3)
+                            case .speaking:
+                                let env = max(0, sin(t * 3.4)) * max(0, sin(t * 1.24 + 1.6))
+                                amp = 2 + (level > 0 ? level : env) * (6 + abs(sin(Double(i) * 1.3 + t * 5)) * 18)
+                            default:
+                                amp = 1.2 + sin(t * 0.9 + Double(i) * 0.35) * 0.8
+                            }
+                            let r1 = base, r2 = base + amp
+                            var p = Path()
+                            p.move(to: CGPoint(x: cx + cos(a) * r1, y: cy + sin(a) * r1))
+                            p.addLine(to: CGPoint(x: cx + cos(a) * r2, y: cy + sin(a) * r2))
+                            ctx.stroke(p, with: .color(almaHSL(h, 0.90, 0.68, 0.22 + amp / 40)),
+                                       style: StrokeStyle(lineWidth: 2.2, lineCap: .round))
+                        }
                     }
-                    .frame(width: side * 1.8, height: side * 1.8)
-                    .clipShape(Circle())
-                    .blur(radius: 26)
+                    .frame(width: side * 1.36, height: side * 1.36)
 
-                    // ── contact shadow (below, pulses opposite the float) ──
-                    Ellipse()
-                        .fill(RadialGradient(colors: dark
-                            ? [Color.black.opacity(0.55), .clear]
-                            : [Color(red: 0.118, green: 0.275, blue: 0.588).opacity(0.32), .clear],
-                            center: .center, startRadius: 0, endRadius: side * 0.32))
-                        .frame(width: side * 0.62, height: side * 0.08)
-                        .blur(radius: 9)
-                        .offset(y: side * 0.52)
-                        .scaleEffect(1 - 0.18 * shadowK)
-                        .opacity(0.85 - 0.30 * shadowK)
-
-                    // ── the orb (floaty) ───────────────────────────────────
+                    // the sphere (state-hued, dark edge) + fluids + rim + core
                     ZStack {
-                        // sphere — volumetric radial + inner shadows
-                        Circle().fill(
-                            RadialGradient(stops: [
-                                .init(color: .white, location: 0),
-                                .init(color: Color(red: 0.894, green: 0.949, blue: 1.0), location: 0.07),   // #e4f2ff
-                                .init(color: Color(red: 0.718, green: 0.867, blue: 1.0), location: 0.19),   // #b7ddff
-                                .init(color: Color(red: 0.494, green: 0.761, blue: 0.984), location: 0.36), // #7ec2fb
-                                .init(color: Color(red: 0.290, green: 0.596, blue: 0.933), location: 0.56), // #4a98ee
-                                .init(color: Color(red: 0.169, green: 0.451, blue: 0.847), location: 0.74), // #2b73d8
-                                .init(color: Color(red: 0.102, green: 0.337, blue: 0.741), location: 0.88), // #1a56bd
-                                .init(color: Color(red: 0.063, green: 0.247, blue: 0.573), location: 1),    // #103f92
-                            ], center: .init(x: 0.36, y: 0.28), startRadius: 0, endRadius: side * 0.72))
-                        // inset core shadow (bottom-right volume)
-                        Circle().fill(
-                            RadialGradient(colors: [.clear, Color(red: 0.035, green: 0.149, blue: 0.376).opacity(0.55)],
-                                           center: .init(x: 0.30, y: 0.24), startRadius: side * 0.30, endRadius: side * 0.62))
-                        // inset fill light (top-left)
-                        Circle().fill(
-                            RadialGradient(colors: [Color.white.opacity(0.5), .clear],
-                                           center: .init(x: 0.22, y: 0.18), startRadius: 0, endRadius: side * 0.42))
-                        // subsurface scattering
-                        Circle().fill(
-                            RadialGradient(colors: [Color(red: 0.588, green: 0.843, blue: 1.0).opacity(0.7),
-                                                    Color(red: 0.353, green: 0.667, blue: 1.0).opacity(0.2), .clear],
-                                           center: .init(x: 0.54, y: 0.68), startRadius: 0, endRadius: side * 0.42))
-                            .blendMode(.screen)
-                            .opacity(0.6)
-                        // fluid c1 — iridescent conic, screen, spin 18s (10/4.5 by state)
+                        Circle().fill(RadialGradient(stops: [
+                            .init(color: almaHSL(h, 0.95, 0.88), location: 0),
+                            .init(color: almaHSL(h, 0.92, 0.60), location: 0.42),
+                            .init(color: almaHSL(h, 0.88, 0.40), location: 0.74),
+                            .init(color: almaHSL(h + 18, 0.80, 0.16), location: 1),
+                        ], center: .init(x: 0.36, y: 0.28), startRadius: 0, endRadius: side * 0.6))
+                        // drifting conic fluid
                         Circle()
                             .fill(AngularGradient(colors: [
-                                Color(red: 0.561, green: 0.878, blue: 1.0),   // #8fe0ff
-                                Color(red: 0.290, green: 0.639, blue: 1.0),   // #4aa3ff
-                                Color(red: 0.416, green: 0.482, blue: 1.0),   // #6a7bff
-                                Color(red: 0.349, green: 0.902, blue: 1.0),   // #59e6ff
-                                Color(red: 0.247, green: 0.553, blue: 1.0),   // #3f8dff
-                                Color(red: 0.655, green: 0.769, blue: 1.0),   // #a7c4ff
-                                Color(red: 0.561, green: 0.878, blue: 1.0),   // wrap
-                            ], center: .center, angle: .degrees(t / c1Duration * 360)))
-                            .frame(width: side * 1.28, height: side * 1.28)
-                            .blur(radius: 16)
-                            .blendMode(.screen)
-                            .opacity(state == .thinking || state == .transcribing ? 0.7 : 0.55)
-                        // fluid c2 — counter-rotating, overlay
+                                almaHSL(h, 0.88, 0.62), almaHSL(h + 40, 0.85, 0.50),
+                                almaHSL(h - 30, 0.90, 0.66), almaHSL(h, 0.88, 0.62),
+                            ], center: .center, angle: .degrees(t / spin1 * 360)))
+                            .frame(width: side * 1.2, height: side * 1.2)
+                            .blur(radius: 14).blendMode(.screen)
+                            .opacity(state == .thinking || state == .transcribing ? 0.6 : 0.42)
+                        // molten core
                         Circle()
-                            .fill(AngularGradient(stops: [
-                                .init(color: .clear, location: 0),
-                                .init(color: Color(red: 0.498, green: 0.847, blue: 1.0).opacity(0.53), location: 0.22),
-                                .init(color: Color(red: 0.416, green: 0.482, blue: 1.0).opacity(0.40), location: 0.42),
-                                .init(color: .clear, location: 0.58),
-                                .init(color: Color(red: 0.341, green: 0.878, blue: 1.0).opacity(0.53), location: 0.78),
-                                .init(color: .clear, location: 1),
-                            ], center: .center, angle: .degrees(120 - t / c2Duration * 360)))
-                            .frame(width: side * 1.28, height: side * 1.28)
-                            .blur(radius: 16)
-                            .blendMode(.overlay)
-                            .opacity(0.45)
-                        // gloss — broad top reflection
-                        Ellipse().fill(
-                            RadialGradient(colors: [Color.white.opacity(0.55), .clear],
-                                           center: .center, startRadius: 0, endRadius: side * 0.37))
-                            .frame(width: side * 0.74, height: side * 0.42)
-                            .offset(y: -side * 0.38)
+                            .fill(RadialGradient(colors: [almaHSL(h, 1.0, 0.92, 0.9),
+                                                          almaHSL(h, 0.95, 0.70, 0.25), .clear],
+                                                 center: .center, startRadius: 0, endRadius: side * 0.16))
+                            .frame(width: side * 0.4, height: side * 0.4)
+                            .blur(radius: 3)
+                            .opacity(0.6 + 0.4 * (state == .speaking ? min(1, ttsLevel) : (1 - cos(2 * .pi * t / 2.0)) / 2))
+                        // upper-left gloss
+                        Ellipse().fill(RadialGradient(colors: [.white.opacity(0.5), .clear],
+                                                      center: .center, startRadius: 0, endRadius: side * 0.16))
+                            .frame(width: side * 0.28, height: side * 0.18)
+                            .offset(x: -side * 0.10, y: -side * 0.16)
                             .blendMode(.screen)
-                        // spec — tight hotspot (rotated ellipse, blur 2)
-                        Ellipse().fill(
-                            RadialGradient(colors: [Color.white.opacity(0.98),
-                                                    Color.white.opacity(0.5), .clear],
-                                           center: .init(x: 0.42, y: 0.40),
-                                           startRadius: 0, endRadius: side * 0.17))
-                            .frame(width: side * 0.34, height: side * 0.22)
-                            .rotationEffect(.degrees(-18))
-                            .offset(x: -side * 0.07, y: -side * 0.22)
-                            .blur(radius: 2)
-                        // spec.small
-                        Ellipse().fill(
-                            RadialGradient(colors: [.white, .clear], center: .center,
-                                           startRadius: 0, endRadius: side * 0.06))
-                            .frame(width: side * 0.12, height: side * 0.08)
-                            .offset(x: -side * 0.14, y: -side * 0.26)
-                        // fresnel ring just inside the edge
-                        Circle().fill(
-                            RadialGradient(stops: [
-                                .init(color: .clear, location: 0.66),
-                                .init(color: Color(red: 0.706, green: 0.863, blue: 1.0).opacity(0.35), location: 0.82),
-                                .init(color: Color.white.opacity(0.5), location: 0.90),
-                                .init(color: .clear, location: 0.96),
-                            ], center: .center, startRadius: 0, endRadius: side * 0.5))
+                        // fresnel rim
+                        Circle().fill(RadialGradient(stops: [
+                            .init(color: .clear, location: 0.66),
+                            .init(color: almaHSL(h + 18, 0.90, 0.72, 0.35), location: 0.86),
+                            .init(color: almaHSL(h + 18, 0.90, 0.80, 0.55), location: 0.94),
+                            .init(color: .clear, location: 1),
+                        ], center: .center, startRadius: 0, endRadius: side * 0.5))
                             .blendMode(.screen)
                     }
                     .frame(width: side, height: side)
                     .clipShape(Circle())
-                    .shadow(color: Color(red: 0.235, green: 0.471, blue: 1.0).opacity(0.30), radius: 35, y: 26)
-                    .offset(y: floatY)
+                    .shadow(color: almaHSL(h, 0.90, 0.45, 0.35), radius: 30, y: 18)
+                    .scaleEffect(scale)
                 }
-                .scaleEffect(scale)
                 .frame(width: geo.size.width, height: geo.size.height)
+                .animation(.easeInOut(duration: 0.5), value: h)
             }
         }
     }
 }
+
 
 // MARK: - Deterministic pre-TTS Bangla normalizer (inlined; Swift port of src/agent/lib/tts-normalize.ts)
 
