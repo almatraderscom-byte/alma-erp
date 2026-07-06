@@ -115,65 +115,181 @@ function roleLabelBn(role: string | null): string {
 }
 
 /**
- * Visual model picker — a horizontal row of saved-model photos the owner can TAP
- * to choose which face/body the shot uses (replaces the old name-only dropdown,
- * which gave no way to see or pick the actual person). Tapping the selected card
- * again clears the choice. Selection drives modelId in the workspace.
+ * Unified model input. Tapping it opens a chooser SHEET that first asks the owner
+ * whether to use a SAVED model (from the library) or UPLOAD a new photo — instead
+ * of the old behaviour where tapping "Model photo" jumped straight into the OS
+ * file picker with no way to reach the saved models. Saved-pick and upload are
+ * mutually exclusive: choosing one clears the other.
  */
-function ModelPicker({
+function ModelSlot({
   models,
   selectedId,
-  onSelect,
+  uploadPreview,
+  onPickSaved,
+  onUpload,
+  onClear,
+  required,
 }: {
   models: StudioModel[]
   selectedId: string
-  onSelect: (id: string) => void
+  uploadPreview: string | null
+  onPickSaved: (id: string) => void
+  onUpload: (f: File) => void
+  onClear: () => void
+  required?: boolean
 }) {
-  if (models.length === 0) return null
+  const [open, setOpen] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const selected = models.find((m) => m.id === selectedId) ?? null
+  const hasChoice = Boolean(selected || uploadPreview)
+
   return (
     <div>
-      <div className="mb-1.5 flex items-center justify-between">
-        <p className="text-[11px] font-semibold text-muted">সেভ করা মডেল বেছে নিন</p>
-        {selectedId && (
-          <button type="button" onClick={() => onSelect('')} className="text-[10px] font-semibold text-[#E07A5F]">
-            বাছাই বাদ দিন
-          </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          if (f) { onUpload(f); setOpen(false) }
+          e.target.value = ''
+        }}
+      />
+
+      {/* The slot — shows the current choice, or a prompt. Tap → chooser sheet. */}
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={cn(
+          'flex w-full items-center gap-3 rounded-2xl border-2 border-dashed p-2.5 text-left transition-colors',
+          hasChoice ? 'border-[#E07A5F]/30 bg-card/80' : 'border-border bg-card/80',
         )}
-      </div>
-      <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {models.map((m) => {
-          const active = selectedId === m.id
-          return (
-            <button
-              key={m.id}
-              type="button"
-              onClick={() => onSelect(active ? '' : m.id)}
-              className={cn(
-                'relative w-[74px] shrink-0 overflow-hidden rounded-xl border transition-all',
-                active ? 'border-[#E07A5F] ring-2 ring-[#E07A5F]/30' : 'border-border-subtle opacity-90',
-              )}
-              title={`${m.name} (${roleLabelBn(m.role)})`}
+      >
+        <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-bg-1 text-muted">
+          {selected?.imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={selected.imageUrl} alt={selected.name} className="h-full w-full object-cover" />
+          ) : uploadPreview ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={uploadPreview} alt="model" className="h-full w-full object-cover" />
+          ) : (
+            <UserSvg className="h-6 w-6" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          {selected ? (
+            <>
+              <p className="truncate text-[14px] font-bold text-cream">{selected.name}</p>
+              <p className="text-[11px] text-muted">সেভ করা মডেল · {roleLabelBn(selected.role)}</p>
+            </>
+          ) : uploadPreview ? (
+            <>
+              <p className="truncate text-[14px] font-bold text-cream">নতুন আপলোড করা ছবি</p>
+              <p className="text-[11px] text-muted">ট্যাপ করে বদলান</p>
+            </>
+          ) : (
+            <>
+              <p className="text-[14px] font-bold text-cream">
+                Model{required && <span className="text-[#E07A5F]"> *</span>}
+              </p>
+              <p className="text-[11px] text-muted">ট্যাপ করুন — সেভ করা মডেল বা নতুন ছবি</p>
+            </>
+          )}
+        </div>
+        <span className="shrink-0 rounded-full bg-[#E07A5F]/12 px-2.5 py-1 text-[11px] font-semibold text-[#E07A5F]">
+          {hasChoice ? 'বদলান' : 'বেছে নিন'}
+        </span>
+      </button>
+
+      {/* Chooser sheet: saved models grid + upload-new */}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-4"
+          >
+            <motion.div
+              initial={{ y: 40, opacity: 0.6 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 40, opacity: 0 }}
+              transition={{ type: 'spring', stiffness: 320, damping: 32 }}
+              onClick={(e) => e.stopPropagation()}
+              className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-t-3xl border border-border-subtle bg-card p-4 shadow-2xl sm:rounded-3xl"
+              style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
             >
-              <div className="aspect-[3/4] w-full bg-bg-1">
-                {m.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={m.imageUrl} alt={m.name} className="h-full w-full object-cover" />
-                ) : (
-                  <span className="grid h-full w-full place-items-center text-muted">
-                    <UserSvg className="h-6 w-6" />
-                  </span>
-                )}
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-[15px] font-bold text-cream">মডেল বেছে নিন</h3>
+                <button type="button" onClick={() => setOpen(false)} className="grid h-7 w-7 place-items-center rounded-full bg-white/8 text-muted">✕</button>
               </div>
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4">
-                <span className="block truncate text-left text-[10px] font-bold text-white">{m.name}</span>
-              </div>
-              {active && (
-                <span className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-[#E07A5F] text-[10px] text-white shadow">✓</span>
+
+              {models.length > 0 ? (
+                <>
+                  <p className="mb-2 text-[11px] font-semibold text-muted">সেভ করা মডেল থেকে</p>
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                    {models.map((m) => {
+                      const active = selectedId === m.id
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => { onPickSaved(m.id); setOpen(false) }}
+                          className={cn(
+                            'relative aspect-[3/4] overflow-hidden rounded-xl border transition-all',
+                            active ? 'border-[#E07A5F] ring-2 ring-[#E07A5F]/30' : 'border-border-subtle',
+                          )}
+                          title={`${m.name} (${roleLabelBn(m.role)})`}
+                        >
+                          {m.imageUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={m.imageUrl} alt={m.name} className="h-full w-full object-cover" />
+                          ) : (
+                            <span className="grid h-full w-full place-items-center bg-bg-1 text-muted"><UserSvg className="h-6 w-6" /></span>
+                          )}
+                          <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4">
+                            <span className="block truncate text-left text-[10px] font-bold text-white">{m.name}</span>
+                          </div>
+                          {active && (
+                            <span className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-[#E07A5F] text-[10px] text-white shadow">✓</span>
+                          )}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="my-3 flex items-center gap-2 text-[10px] text-muted">
+                    <span className="h-px flex-1 bg-border-subtle" /> অথবা <span className="h-px flex-1 bg-border-subtle" />
+                  </div>
+                </>
+              ) : (
+                <p className="mb-3 rounded-xl border border-border-subtle bg-bg-1 px-3 py-2.5 text-[11.5px] text-muted">
+                  লাইব্রেরিতে কোনো সেভ করা মডেল নেই। এখন একটা ছবি আপলোড করতে পারেন, অথবা <b className="text-cream">লাইব্রেরি</b> ট্যাবে গিয়ে মডেল সেভ করুন।
+                </p>
               )}
-            </button>
-          )
-        })}
-      </div>
+
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#E07A5F] py-3 text-[14px] font-bold text-white"
+              >
+                📁 নতুন ছবি আপলোড করুন
+              </button>
+
+              {hasChoice && (
+                <button
+                  type="button"
+                  onClick={() => { onClear(); setOpen(false) }}
+                  className="mt-2 w-full rounded-xl border border-border py-2.5 text-[12px] font-semibold text-muted"
+                >
+                  বাছাই বাদ দিন
+                </button>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
@@ -572,12 +688,26 @@ function StudioWorkspace({
               required
             />
           )}
-          {!isFamilyMerge && (modeDef.needsModel || mode === 'try_on') && (
-            <UploadTile
-              label="Model photo"
-              preview={modelPreview}
-              onFile={(f) => void upload(f, 'model').catch((e) => toast.error(String(e)))}
+          {!isFamilyMerge && (modeDef.needsModel || mode === 'product_to_model') && (
+            <ModelSlot
+              models={models}
+              selectedId={modelId}
+              uploadPreview={modelPreview}
               required={modeDef.needsModel}
+              onPickSaved={(id) => {
+                setModelId(id)
+                setModelPreview((p) => { if (p) URL.revokeObjectURL(p); return null })
+                setModelPath(null)
+              }}
+              onUpload={(f) => {
+                setModelId('')
+                void upload(f, 'model').catch((e) => toast.error(String(e)))
+              }}
+              onClear={() => {
+                setModelId('')
+                setModelPreview((p) => { if (p) URL.revokeObjectURL(p); return null })
+                setModelPath(null)
+              }}
             />
           )}
           {modeDef.needsSource && (
@@ -588,8 +718,6 @@ function StudioWorkspace({
               required
             />
           )}
-
-          <ModelPicker models={models} selectedId={modelId} onSelect={setModelId} />
         </div>
       </div>
 
