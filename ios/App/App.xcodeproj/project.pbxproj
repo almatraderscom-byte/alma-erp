@@ -38,6 +38,11 @@
 		F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A013 /* OrdersSwiftUI.swift */; };
 		F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A021 /* AssistantSwiftUI.swift */; };
 		F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */; };
+		F2AA7700000000000000B064 /* StaffMonitorSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */; };
+		F2AA7700000000000000B063 /* AgentGrowthSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A063 /* AgentGrowthSwiftUI.swift */; };
+		F2AA7700000000000000B062 /* KnownPeopleSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A062 /* KnownPeopleSwiftUI.swift */; };
+		F2AA7700000000000000B061 /* TradingStaffSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */; };
+		F2AA7700000000000000B060 /* CatalogImagesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A060 /* CatalogImagesSwiftUI.swift */; };
 		F2AA7700000000000000B05F /* AgentWhatsappSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */; };
 		F2AA7700000000000000B05E /* AgentCostsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */; };
 		F2AA7700000000000000B05D /* SettingsTelegramSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */; };
@@ -112,6 +117,11 @@
 		F2AA7700000000000000A013 /* OrdersSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrdersSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A021 /* AssistantSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantVoiceSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaffMonitorSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A063 /* AgentGrowthSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentGrowthSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A062 /* KnownPeopleSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnownPeopleSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradingStaffSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A060 /* CatalogImagesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogImagesSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentWhatsappSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCostsSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTelegramSwiftUI.swift; sourceTree = "<group>"; };
@@ -233,6 +243,11 @@
 				F2AA7700000000000000A013 /* OrdersSwiftUI.swift */,
 				F2AA7700000000000000A021 /* AssistantSwiftUI.swift */,
 				F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */,
+				F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */,
+				F2AA7700000000000000A063 /* AgentGrowthSwiftUI.swift */,
+				F2AA7700000000000000A062 /* KnownPeopleSwiftUI.swift */,
+				F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */,
+				F2AA7700000000000000A060 /* CatalogImagesSwiftUI.swift */,
 				F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */,
 				F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */,
 				F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */,
@@ -482,6 +497,11 @@
 				F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */,
 				F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */,
 				F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */,
+				F2AA7700000000000000B064 /* StaffMonitorSwiftUI.swift in Sources */,
+				F2AA7700000000000000B063 /* AgentGrowthSwiftUI.swift in Sources */,
+				F2AA7700000000000000B062 /* KnownPeopleSwiftUI.swift in Sources */,
+				F2AA7700000000000000B061 /* TradingStaffSwiftUI.swift in Sources */,
+				F2AA7700000000000000B060 /* CatalogImagesSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05F /* AgentWhatsappSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05E /* AgentCostsSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05D /* SettingsTelegramSwiftUI.swift in Sources */,

@@ -67,6 +67,11 @@ enum AlmaNativeRouter {
         case "/settings/telegram-ops": return host(SettingsTelegramScreen(openWeb: openWebForced), "Telegram Ops")
         case "/agent/costs": return host(AgentCostsScreen(openWeb: openWebForced), "Costs")
         case "/agent/whatsapp": return host(AgentWhatsappScreen(openWeb: openWebForced), "WhatsApp inbox")
+        case "/agent/catalog-images": return host(CatalogImagesScreen(openWeb: openWebForced), "Product Images")
+        case "/agent/trading-staff": return host(TradingStaffScreen(openWeb: openWebForced), "Trading staff")
+        case "/agent/known-people": return host(KnownPeopleScreen(openWeb: openWebForced), "Known people")
+        case "/agent/growth": return host(AgentGrowthScreen(openWeb: openWebForced), "Growth")
+        case "/agent/staff-monitor": return host(StaffMonitorScreen(openWeb: openWebForced), "Staff monitor")
         default:
             return nil
         }

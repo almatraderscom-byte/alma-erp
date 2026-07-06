@@ -108,11 +108,11 @@ are pre-assigned here so two sessions can never pick the same name.
 | Creative Studio | `/agent/creative-studio` | — (owner's no-LLM-judgment pipeline, heavy web UI) | web | KEEP_WEB | — |
 | WhatsApp inbox | `/agent/whatsapp` | `ios/App/App/AgentWhatsappSwiftUI.swift` | native | IN_REVIEW (marathon b7-8 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Costs | `/agent/costs` | `ios/App/App/AgentCostsSwiftUI.swift` | native | IN_REVIEW (marathon b7-8 2026-07-06, sim-build pending at marathon end) | marathon session |
-| Staff monitor | `/agent/staff-monitor` | `ios/App/App/StaffMonitorSwiftUI.swift` | web | NOT_STARTED | — |
-| Growth | `/agent/growth` | `ios/App/App/AgentGrowthSwiftUI.swift` | web | NOT_STARTED | — |
-| Known people | `/agent/known-people` | `ios/App/App/KnownPeopleSwiftUI.swift` | web | NOT_STARTED | — |
-| Catalog images | `/agent/catalog-images` | `ios/App/App/CatalogImagesSwiftUI.swift` | web | NOT_STARTED | — |
-| Trading staff | `/agent/trading-staff` | `ios/App/App/TradingStaffSwiftUI.swift` | web | NOT_STARTED | — |
+| Staff monitor | `/agent/staff-monitor` | `ios/App/App/StaffMonitorSwiftUI.swift` | native | IN_REVIEW (marathon b8 2026-07-06) | marathon session |
+| Growth | `/agent/growth` | `ios/App/App/AgentGrowthSwiftUI.swift` | native | IN_REVIEW (marathon b8 2026-07-06) | marathon session |
+| Known people | `/agent/known-people` | `ios/App/App/KnownPeopleSwiftUI.swift` | native | IN_REVIEW (marathon b8 2026-07-06) | marathon session |
+| Catalog images | `/agent/catalog-images` | `ios/App/App/CatalogImagesSwiftUI.swift` | native | IN_REVIEW (marathon b8 2026-07-06) | marathon session |
+| Trading staff | `/agent/trading-staff` | `ios/App/App/TradingStaffSwiftUI.swift` | native | IN_REVIEW (marathon b8 2026-07-06) | marathon session |
 | Live watch | `/agent/live-watch` | — (P3 companion feed, owner call) | web | KEEP_WEB | — |
 | Studio demo | `/agent/creative-studio-demo` | — (demo page) | web | KEEP_WEB | — |
 
