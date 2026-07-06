@@ -29,6 +29,8 @@ import SwiftUI
 import UIKit
 import AVFoundation
 import MetalKit
+import Speech
+import PhotosUI
 
 // MARK: - State + strings (web STATUS dict parity)
 
@@ -68,7 +70,13 @@ enum AlmaVoiceState: String {
 final class AlmaVoiceEngine {
     weak var chatVM: AssistantVM?
 
-    var state: AlmaVoiceState = .idle
+    var state: AlmaVoiceState = .idle {
+        didSet {
+            guard oldValue != state else { return }
+            // Wake word runs ONLY while idle (and the console is open).
+            if state == .idle, !closed { wake.start() } else if state != .idle { wake.stop() }
+        }
+    }
     var transcript = ""              // what the owner said (final)
     var replyText = ""               // full streamed reply
     var saidLines: [String] = []     // spoken sentences (dim)
@@ -118,6 +126,22 @@ final class AlmaVoiceEngine {
 
     private let tts = AlmaTtsQueue()
     private let streamer = AlmaStreamingSTT()
+    let wake = AlmaWakeWord()
+    fileprivate var startingListen = false   // a listen is spinning up (double-tap guard)
+
+    // Image attachments — voice parity with the chat composer. Photograph a
+    // product / paste a poster and the SAME multimodal turn the chat runs fires
+    // by voice. Uses the shared AgentFileRef + /api/assistant/upload.
+    struct PendingImage: Identifiable, Equatable {
+        enum State: Equatable { case uploading, ready(AgentFileRef), failed }
+        let id = UUID()
+        let image: UIImage
+        var state: State = .uploading
+    }
+    var pendingImages: [PendingImage] = []
+    private var readyImageFiles: [AgentFileRef] {
+        pendingImages.compactMap { if case .ready(let f) = $0.state { return f } else { return nil } }
+    }
 
     /// TRUE streaming STT (words appear as spoken) — owner-tunable escape hatch:
     /// if it ever misbehaves on device, set `alma-voice-streaming` = false and the
@@ -158,6 +182,8 @@ final class AlmaVoiceEngine {
                     self.errorToast = "অডিও চালু করা গেল না"
                 }
                 Task { await self.prefetchAcks() }
+                self.wake.engine = self
+                if self.state == .idle { self.wake.start() }
                 // Greeting, exactly like the web (500ms after open).
                 Task {
                     try? await Task.sleep(nanoseconds: 500_000_000)
@@ -170,6 +196,7 @@ final class AlmaVoiceEngine {
 
     func end() {
         closed = true
+        wake.stop()
         vadTask?.cancel(); vadTask = nil
         turnTask?.cancel(); turnTask = nil
         stopBargeMonitor()
@@ -208,6 +235,36 @@ final class AlmaVoiceEngine {
         runTurn(text)
     }
 
+    /// Attach a photo (chat composer parity) — optimistic thumbnail, uploads to
+    /// /api/assistant/upload, becomes a ready AgentFileRef sent with the next turn.
+    func attachImage(_ image: UIImage) {
+        guard let jpeg = image.jpegData(compressionQuality: 0.85) else { return }
+        let item = PendingImage(image: image)
+        pendingImages.append(item)
+        let fileId = item.id
+        Task { [weak self] in
+            struct UploadResponse: Decodable { let bucket: String; let path: String; let mediaType: String }
+            do {
+                let data = try await AssistantNet.uploadMultipart(
+                    path: "/api/assistant/upload", fileField: "file",
+                    filename: "photo-\(Int(Date().timeIntervalSince1970)).jpg",
+                    mime: "image/jpeg", data: jpeg,
+                    extraFields: ["conversationId": self?.chatVM?.conversationId ?? "general"])
+                let up = try JSONDecoder().decode(UploadResponse.self, from: data)
+                await MainActor.run {
+                    guard let self, let i = self.pendingImages.firstIndex(where: { $0.id == fileId }) else { return }
+                    self.pendingImages[i].state = .ready(.init(bucket: up.bucket, path: up.path, mediaType: up.mediaType))
+                }
+            } catch {
+                await MainActor.run {
+                    guard let self, let i = self.pendingImages.firstIndex(where: { $0.id == fileId }) else { return }
+                    self.pendingImages[i].state = .failed
+                }
+            }
+        }
+    }
+    func removeImage(_ id: UUID) { pendingImages.removeAll { $0.id == id } }
+
     /// Suggestion chips (design dock): run a normal voice turn from a canned prompt.
     func runChip(_ text: String) {
         guard state == .idle || state == .error else { return }
@@ -238,7 +295,9 @@ final class AlmaVoiceEngine {
     // ── Listening + calibrated VAD ─────────────────────────────────────────
 
     func startListening() {
-        guard sessionReady, state != .listening else { return }
+        guard sessionReady, state != .listening, !startingListen else { return }
+        startingListen = true
+        wake.stop()                      // free the mic for the STT engine
         stopBargeMonitor()
         tts.stopAll()
         if streamingEnabled {
@@ -278,8 +337,10 @@ final class AlmaVoiceEngine {
             listenSeconds = 0
             playMicChime()
             UISelectionFeedbackGenerator().selectionChanged()
+            startingListen = false
             runVAD()
         } catch {
+            startingListen = false
             errorToast = "মাইক্রোফোন ব্যবহার করা যাচ্ছে না — orb-এ ট্যাপ করে আবার চেষ্টা করুন।"
             state = .error
         }
@@ -290,6 +351,7 @@ final class AlmaVoiceEngine {
     /// Mic + socket are live — enter listening, exactly like the recorder path.
     func streamDidStart() {
         streamingActive = true
+        startingListen = false
         state = .listening
         nowLine = ""; saidLines = []; transcript = ""
         listenSeconds = 0
@@ -331,6 +393,40 @@ final class AlmaVoiceEngine {
         errorToast = msg
         tts.sayNow("শুনতে পাইনি স্যার — আরেকবার বলুন।")
         scheduleAutoListen()
+    }
+
+    /// Streaming socket never came up (or died) AFTER the owner spoke — the
+    /// mic-first buffer arrives here as a WAV and goes through the proven
+    /// /transcribe path, so connection latency can never eat his words.
+    func streamFallbackUpload(_ wav: Data) {
+        streamingActive = false
+        micLevel = 0
+        state = .transcribing
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        playAck()
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let data = try await AssistantNet.uploadMultipart(
+                    path: "/api/assistant/transcribe", fileField: "file",
+                    filename: "voice.wav", mime: "audio/wav", data: wav)
+                let t = try JSONDecoder().decode(TranscribeResponse.self, from: data)
+                let text = (t.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else {
+                    self.state = .idle
+                    self.errorToast = "শুনতে পাইনি স্যার — আরেকবার বলুন।"
+                    self.scheduleAutoListen()
+                    return
+                }
+                self.transcript = text
+                self.runTurn(text)
+            } catch {
+                self.state = .error
+                self.errorToast = "ট্রান্সক্রিপশন ব্যর্থ।"
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                if self.state == .error { self.state = .idle }
+            }
+        }
     }
 
     /// The calibrated VAD loop — the core fix for "starts before I speak".
@@ -456,6 +552,7 @@ final class AlmaVoiceEngine {
         let message: String
         let modelId: String?
         let voice: Bool
+        let files: [AgentFileRef]
         let resume: Resume?
         struct Resume: Encodable { let approve: Bool }
     }
@@ -473,11 +570,14 @@ final class AlmaVoiceEngine {
         tts.beginTurn()
         startHeartbeat()
 
+        let files = resume ? [] : readyImageFiles
         let body = VoiceChatBody(conversationId: chatVM?.conversationId,
                                  message: text,
                                  modelId: chatVM?.modelId ?? "auto",
                                  voice: true,
+                                 files: files,
                                  resume: resume ? .init(approve: true) : nil)
+        if !resume { pendingImages.removeAll() }
         turnTask?.cancel()
         turnTask = Task { [weak self] in
             guard let self else { return }
@@ -722,6 +822,7 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
 
     private var session: URLSession?
     private var ws: URLSessionWebSocketTask?
+    private var connectTask: Task<Void, Never>?
     private let audioEngine = AVAudioEngine()
     private var converter: AVAudioConverter?
     private var outFormat: AVAudioFormat?
@@ -744,6 +845,18 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
     private var failed = false
     private var partial = ""
 
+    // MIC-FIRST plumbing ("tap korle 3-4 sec por start hoy" fix): the mic starts
+    // the instant the owner taps; PCM buffers locally while the token + socket
+    // connect in the background, then flushes. If the socket never comes up, the
+    // buffered audio uploads to /transcribe as a WAV — the owner's words are
+    // NEVER lost to connection latency.
+    private let lock = NSLock()
+    private var pending: [Data] = []      // chunks awaiting the socket
+    private var fullAudio = Data()        // whole utterance (fallback upload)
+    private var socketOpen = false
+    private var connectFailed = false
+    private var wantCommit = false        // VAD ended before the socket was ready
+
     private struct TokenResp: Decodable { let key: String? }
 
     private func reset() {
@@ -751,37 +864,69 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         speechThresh = 0.045; sustainedMs = 0; spoke = false
         speechStartMs = 0; silenceMs = 0; lastSecond = -1
         committed = false; completedFired = false; failed = false; partial = ""
+        pending = []; fullAudio = Data()
+        socketOpen = false; connectFailed = false; wantCommit = false
     }
 
-    /// Mint token → open socket (awaited) → start mic. Throws on any pre-audio
-    /// failure (caller falls back to the recorder with no state changed yet).
+    /// MIC FIRST: start capturing immediately (throws only on a mic failure —
+    /// caller falls back to the recorder path with no state changed yet), then
+    /// mint the token + open the socket in the background.
     func start() async throws {
         reset()
-        // 1 — ephemeral token from our server (empty body; route reads none).
-        let data = try await AssistantNet.postJSONForData(path: "/api/assistant/stt-session", body: [:])
-        guard let key = (try? JSONDecoder().decode(TokenResp.self, from: data))?.key, !key.isEmpty else {
-            throw AlmaVoiceSTTError.noToken
-        }
-        // 2 — websocket. Browser-style subprotocol auth; NO ?model= query (that
-        // is invalid in transcription mode — the token already binds the session).
-        guard let url = URL(string: "wss://api.openai.com/v1/realtime") else { throw AlmaVoiceSTTError.badURL }
-        let sess = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
-        session = sess
-        let task = sess.webSocketTask(with: url, protocols: ["realtime", "openai-insecure-api-key.\(key)"])
-        ws = task
-        task.resume()
-        // Wait for the actual handshake (bad auth fails the upgrade → no didOpen).
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask { try await withCheckedThrowingContinuation { self.openCont = $0 } }
-            group.addTask { try await Task.sleep(nanoseconds: 6_000_000_000); throw AlmaVoiceSTTError.socket }
-            try await group.next()
-            group.cancelAll()
-        }
-        // 3 — mic tap; if this throws, tear the socket down and fall back.
-        do { try startMic() }
-        catch { closeSocket(); throw error }
-        receiveLoop()
+        try startMic()
         await MainActor.run { self.engine?.streamDidStart() }
+        connectTask = Task { [weak self] in await self?.connect() }
+    }
+
+    /// Token mint → socket handshake → force OUR endpointing → flush the buffer.
+    private func connect() async {
+        do {
+            let data = try await AssistantNet.postJSONForData(path: "/api/assistant/stt-session", body: [:])
+            guard let key = (try? JSONDecoder().decode(TokenResp.self, from: data))?.key, !key.isEmpty else {
+                throw AlmaVoiceSTTError.noToken
+            }
+            guard let url = URL(string: "wss://api.openai.com/v1/realtime") else { throw AlmaVoiceSTTError.badURL }
+            let sess = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+            session = sess
+            let task = sess.webSocketTask(with: url, protocols: ["realtime", "openai-insecure-api-key.\(key)"])
+            ws = task
+            task.resume()
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask { try await withCheckedThrowingContinuation { self.openCont = $0 } }
+                group.addTask { try await Task.sleep(nanoseconds: 8_000_000_000); throw AlmaVoiceSTTError.socket }
+                try await group.next()
+                group.cancelAll()
+            }
+            if failed { closeSocket(); return }
+            // Belt & braces for "nije nije kaj kore": even if the server session
+            // config ever changes, OUR adaptive VAD stays the only endpointer.
+            ws?.send(.string(#"{"type":"transcription_session.update","session":{"turn_detection":null}}"#)) { _ in }
+            receiveLoop()
+            let drained = markSocketOpenAndDrain()
+            if drained.abort { closeSocket(); return }   // no-speech already ended it
+            for c in drained.chunks { sendChunk(c) }
+            if drained.commitNow { ws?.send(.string(#"{"type":"input_audio_buffer.commit"}"#)) { _ in } }
+        } catch {
+            let doUpload = markConnectFailed()
+            closeSocket()
+            if doUpload { uploadBufferedWav() }
+            // else: mic keeps listening locally; endUtterance will upload the WAV.
+        }
+    }
+
+    /// Lock-guarded transitions for connect() (NSLock is not async-safe inline).
+    private func markSocketOpenAndDrain() -> (chunks: [Data], commitNow: Bool, abort: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        if committed && !wantCommit { return ([], false, true) }
+        let c = pending
+        pending = []
+        socketOpen = true
+        return (c, wantCommit, false)
+    }
+    private func markConnectFailed() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        connectFailed = true
+        return wantCommit && !completedFired && !failed
     }
 
     // Delegate: handshake completed → resolve the open continuation.
@@ -791,7 +936,7 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let c = openCont { c.resume(throwing: AlmaVoiceSTTError.socket); openCont = nil }
-        else { fail("সংযোগ কেটে গেছে") }
+        else if socketOpen && !committed { fail("সংযোগ কেটে গেছে") }
     }
 
     private func startMic() throws {
@@ -810,7 +955,7 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         try audioEngine.start()
     }
 
-    /// Audio tap: RMS → orb + our adaptive VAD; PCM16@24k → socket append.
+    /// Audio tap: RMS → orb + our adaptive VAD; PCM16@24k → socket (or buffer).
     private func onAudio(_ buf: AVAudioPCMBuffer, inFmt: AVAudioFormat) {
         if committed || failed { return }
         let frames = Int(buf.frameLength)
@@ -854,7 +999,7 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         if sec != lastSecond { lastSecond = sec; DispatchQueue.main.async { [weak self] in self?.engine?.streamSeconds(sec) } }
         elapsedMs += dtMs
 
-        // Convert to 24k mono int16 and stream the chunk.
+        // Convert to 24k mono int16; stream if the socket is live, buffer if not.
         guard let conv = converter, let out = outFormat else { return }
         let ratio = out.sampleRate / inFmt.sampleRate
         let cap = AVAudioFrameCount(Double(frames) * ratio + 16)
@@ -868,25 +1013,73 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         let n = Int(outBuf.frameLength)
         guard cErr == nil, n > 0, let i16 = outBuf.int16ChannelData?[0] else { return }
         let bytes = Data(bytes: i16, count: n * MemoryLayout<Int16>.size)
+        lock.lock()
+        if fullAudio.count < 9_200_000 { fullAudio.append(bytes) }   // ~190s cap
+        let open = socketOpen
+        if !open { pending.append(bytes) }
+        lock.unlock()
+        if open { sendChunk(bytes) }
+    }
+
+    private func sendChunk(_ bytes: Data) {
         let b64 = bytes.base64EncodedString()
         ws?.send(.string("{\"type\":\"input_audio_buffer.append\",\"audio\":\"\(b64)\"}")) { _ in }
     }
 
-    /// End of speech: stop the mic (privacy), commit, await the final transcript.
+    /// End of speech: stop the mic (privacy), commit (or fall back), await text.
     private func endUtterance(noSpeech: Bool) {
         if committed { return }
         committed = true
         stopMic()
         if noSpeech {
+            connectTask?.cancel()
             closeSocket()
             DispatchQueue.main.async { [weak self] in self?.engine?.streamNoSpeech() }
             return
         }
-        ws?.send(.string("{\"type\":\"input_audio_buffer.commit\"}")) { _ in }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 7) { [weak self] in
-            guard let self, !self.completedFired, !self.failed else { return }
-            self.fail("ট্রান্সক্রিপশন সময়মতো এলো না — আবার বলুন।")
+        lock.lock()
+        wantCommit = true
+        let open = socketOpen
+        let dead = connectFailed
+        lock.unlock()
+        if open {
+            ws?.send(.string(#"{"type":"input_audio_buffer.commit"}"#)) { _ in }
+        } else if dead {
+            uploadBufferedWav()
+            return
         }
+        // else: connect() commits (or uploads) when it resolves.
+        // Salvage watchdog: whatever happens to the socket, the owner's words
+        // reach /transcribe within 10s.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self, !self.completedFired, !self.failed else { return }
+            self.failed = true
+            self.closeSocket()
+            self.uploadBufferedWav()
+        }
+    }
+
+    /// Socket path failed after speech — upload the buffered utterance as WAV.
+    private func uploadBufferedWav() {
+        lock.lock(); let pcm = fullAudio; lock.unlock()
+        guard pcm.count > 6_000 else {
+            DispatchQueue.main.async { [weak self] in self?.engine?.streamNoSpeech() }
+            return
+        }
+        let wav = Self.wavData(pcm: pcm)
+        DispatchQueue.main.async { [weak self] in self?.engine?.streamFallbackUpload(wav) }
+    }
+
+    /// Minimal WAV container: PCM16 mono 24k.
+    static func wavData(pcm: Data, rate: Int = 24_000) -> Data {
+        var d = Data()
+        func le32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+        func le16(_ v: UInt16) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+        d.append(Data("RIFF".utf8)); le32(UInt32(36 + pcm.count)); d.append(Data("WAVE".utf8))
+        d.append(Data("fmt ".utf8)); le32(16); le16(1); le16(1)
+        le32(UInt32(rate)); le32(UInt32(rate * 2)); le16(2); le16(16)
+        d.append(Data("data".utf8)); le32(UInt32(pcm.count)); d.append(pcm)
+        return d
     }
 
     private func receiveLoop() {
@@ -894,7 +1087,7 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
             guard let self else { return }
             switch result {
             case .failure:
-                self.fail("সংযোগ কেটে গেছে — আবার বলুন।")
+                if !self.completedFired { self.fail("সংযোগ কেটে গেছে — আবার বলুন।") }
             case .success(let msg):
                 if case .string(let s) = msg { self.onWSText(s) }
                 if !self.completedFired && !self.failed { self.receiveLoop() }
@@ -914,13 +1107,24 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
                 DispatchQueue.main.async { [weak self] in self?.engine?.streamPartial(snap) }
             }
         case "conversation.item.input_audio_transcription.completed":
+            // Guard for "nije nije kaj kore": a completed transcript only ends
+            // the turn when OUR VAD committed it. A server-initiated commit
+            // (should never happen with turn_detection null) just updates the
+            // partial instead of firing a turn.
+            lock.lock(); let ours = committed && wantCommit; lock.unlock()
+            guard ours else {
+                if let t = obj["transcript"] as? String { partial = t }
+                return
+            }
             completedFired = true
             let text = (obj["transcript"] as? String) ?? partial
             closeSocket()
             DispatchQueue.main.async { [weak self] in self?.engine?.streamFinal(text) }
         case "error":
             let msg = ((obj["error"] as? [String: Any])?["message"] as? String) ?? "স্ট্রিমিং সমস্যা।"
-            fail(msg)
+            // Mid-listen socket error with audio in hand → salvage via upload.
+            lock.lock(); let salvage = committed && wantCommit && !completedFired; lock.unlock()
+            if salvage { failed = true; closeSocket(); uploadBufferedWav() } else { fail(msg) }
         default:
             break
         }
@@ -933,12 +1137,15 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         DispatchQueue.main.async { [weak self] in self?.engine?.streamError(msg) }
     }
 
-    /// Force-send now (owner tapped the orb while listening).
-    func finishNow() { endUtterance(noSpeech: false) }
+    /// Force-send now (owner tapped the orb while listening). If the VAD never
+    /// armed — nothing was said — the tap CANCELS instead of committing ambient
+    /// noise into a bogus turn.
+    func finishNow() { endUtterance(noSpeech: !spoke) }
 
     /// Hard stop with no callbacks (console closed / barge / teardown).
     func cancel() {
         failed = true
+        connectTask?.cancel()
         openCont?.resume(throwing: AlmaVoiceSTTError.socket); openCont = nil
         stopMic(); closeSocket()
     }
@@ -950,6 +1157,140 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
     private func closeSocket() {
         ws?.cancel(with: .goingAway, reason: nil); ws = nil
         session?.invalidateAndCancel(); session = nil
+    }
+}
+
+// MARK: - "ALMA" wake word (owner feature, 2026-07-06)
+//
+// While the console is OPEN and IDLE, an SFSpeechRecognizer listens for the
+// wake word — saying «ALMA» starts a listen exactly like tapping the orb.
+// It runs ONLY in idle (never while listening / thinking / speaking, so it
+// can't fight the STT mic or hear ALMA's own TTS), recycles its recognition
+// task every 50s (Apple's ~1min cap), and prefers on-device recognition.
+// Escape hatch: UserDefaults "alma-wake-word" = false.
+
+@available(iOS 17.0, *)
+@MainActor
+final class AlmaWakeWord {
+    weak var engine: AlmaVoiceEngine?
+
+    private let audioEngine = AVAudioEngine()
+    private var recognizer: SFSpeechRecognizer?
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+    private var tapOn = false
+    private var recycleTask: Task<Void, Never>?
+    private(set) var active = false
+
+    private var enabled: Bool {
+        (UserDefaults.standard.object(forKey: "alma-wake-word") as? Bool) ?? true
+    }
+
+    /// The transcript tail counts as a wake hit on any close rendering of
+    /// "ALMA" (en_US recognizer; the owner may say it inside a Bangla stream).
+    static func hit(_ transcript: String) -> Bool {
+        let tail = String(transcript.lowercased().suffix(28))
+        return ["alma", "almah", "aalma", "aluma", "alema", "আলমা"].contains { tail.contains($0) }
+    }
+
+    func start() {
+        guard enabled, !active else { return }
+        SFSpeechRecognizer.requestAuthorization { [weak self] auth in
+            DispatchQueue.main.async {
+                guard auth == .authorized else { return }
+                self?.begin()
+            }
+        }
+    }
+
+    private func begin() {
+        guard enabled, !active, let e = engine, e.state == .idle, !e.startingListen else { return }
+        let rec = SFSpeechRecognizer(locale: Locale(identifier: "en_US"))
+        guard let rec, rec.isAvailable else { return }
+        recognizer = rec
+        let req = SFSpeechAudioBufferRecognitionRequest()
+        req.shouldReportPartialResults = true
+        if rec.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = true }
+        request = req
+        let input = audioEngine.inputNode
+        let fmt = input.inputFormat(forBus: 0)
+        guard fmt.sampleRate > 0, fmt.channelCount > 0 else { return }
+        input.installTap(onBus: 0, bufferSize: 2_048, format: fmt) { [weak self] buf, _ in
+            self?.request?.append(buf)
+        }
+        tapOn = true
+        audioEngine.prepare()
+        do { try audioEngine.start() } catch { teardown(); return }
+        active = true
+        task = rec.recognitionTask(with: req) { [weak self] result, err in
+            if let r = result, Self.hit(r.bestTranscription.formattedString) {
+                DispatchQueue.main.async { self?.wakeHit() }
+            } else if err != nil {
+                DispatchQueue.main.async { self?.recycle() }
+            }
+        }
+        recycleTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 50_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.recycle()
+        }
+    }
+
+    private func wakeHit() {
+        guard let e = engine, e.state == .idle, active else { return }
+        stop()
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        e.startListening()
+    }
+
+    /// Apple caps continuous recognition (~1min) — tear down and re-arm.
+    private func recycle() {
+        guard active else { return }
+        teardown()
+        begin()
+    }
+
+    func stop() { teardown() }
+
+    private func teardown() {
+        recycleTask?.cancel(); recycleTask = nil
+        task?.cancel(); task = nil
+        request?.endAudio(); request = nil
+        if tapOn { audioEngine.inputNode.removeTap(onBus: 0); tapOn = false }
+        if audioEngine.isRunning { audioEngine.stop() }
+        active = false
+    }
+
+    /// SIM self-test hook (no mic on the build Mac): recognize a spoken-word
+    /// audio FILE through the same hit() gate and surface the verdict visibly.
+    /// Never fires in production — only the local simctl launch passes the arg.
+    func debugRecognizeFile(_ url: URL) {
+        SFSpeechRecognizer.requestAuthorization { [weak self] auth in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard auth == .authorized else {
+                    self.engine?.errorToast = "WAKE TEST: speech auth denied (\(auth.rawValue))"
+                    return
+                }
+                guard let rec = SFSpeechRecognizer(locale: Locale(identifier: "en_US")), rec.isAvailable else {
+                    self.engine?.errorToast = "WAKE TEST: recognizer unavailable"
+                    return
+                }
+                let req = SFSpeechURLRecognitionRequest(url: url)
+                rec.recognitionTask(with: req) { result, err in
+                    DispatchQueue.main.async {
+                        if let r = result, r.isFinal {
+                            let t = r.bestTranscription.formattedString
+                            let ok = AlmaWakeWord.hit(t)
+                            self.engine?.errorToast = ok ? "WAKE ✓ শুনেছি: «\(t)»" : "WAKE ✗ শুনেছি: «\(t)»"
+                            if ok { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+                        } else if let err {
+                            self.engine?.errorToast = "WAKE TEST: \(err.localizedDescription)"
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1135,10 +1476,9 @@ final class AlmaTtsQueue: NSObject, AVAudioPlayerDelegate {
 // chips, live action-card feed (header + count + border-sweep pop), কথোপকথন
 // dock. Tokens: ink #EAF2FB, muted #7C92A9, faint #55708C, gold #E2B366,
 // line rgba(160,200,240,.13), good #3BE08F; hues idle 168 / listening 145 /
-// thinking·transcribing 265 / speaking 210 / error 8.
-//
-// ALMA_VOICE_DEMO=1 (simctl launch env) shows a STATE PREVIEW bar + sample
-// cards for design verification — never set in production.
+// thinking·transcribing 265 / speaking 210 / error 8. No mock/demo data — the
+// feed and cards populate only from real SSE events (owner rule: production
+// builds carry no placeholder content).
 
 /// HSL → Color (the web uses HSL; SwiftUI's Color(hue:) is HSB). Faithful port.
 @available(iOS 17.0, *)
@@ -1165,11 +1505,19 @@ struct AlmaVoiceConsoleView: View {
     @State private var engine = AlmaVoiceEngine()
     @Environment(\.dismiss) private var dismiss
     @State private var liveBlink = false
+    @State private var photoItem: PhotosPickerItem?
 
-    /// Design-verification mode (simctl only): no live engine, STATE PREVIEW bar,
-    /// sample cards — so every state can be screenshotted without a microphone.
-    private let demoMode = ProcessInfo.processInfo.environment["ALMA_VOICE_DEMO"] == "1"
-        || ProcessInfo.processInfo.arguments.contains("ALMA_VOICE_DEMO=1")
+    /// DEBUG launch values (sim self-test only — simctl passes them as launch
+    /// arguments; production launches carry neither env nor these args).
+    private static func launchValue(_ key: String) -> String? {
+        if let v = ProcessInfo.processInfo.environment[key], !v.isEmpty { return v }
+        let prefix = key + "="
+        if let a = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix(prefix) }) {
+            let v = String(a.dropFirst(prefix.count))
+            return v.isEmpty ? nil : v
+        }
+        return nil
+    }
 
     // Web palette tokens.
     private let ink   = Color(red: 0.918, green: 0.949, blue: 0.984)   // #EAF2FB
@@ -1221,12 +1569,26 @@ struct AlmaVoiceConsoleView: View {
         .preferredColorScheme(.dark)
         .onAppear {
             engine.chatVM = vm
-            if demoMode { seedDemo() } else { engine.begin() }
-            if let say = ProcessInfo.processInfo.environment["ALMA_VOICE_SAY"], !say.isEmpty {
+            engine.begin()
+            if let say = Self.launchValue("ALMA_VOICE_SAY") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) { engine.debugInjectUtterance(say) }
             }
+            if let wav = Self.launchValue("ALMA_WAKE_TEST") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    engine.wake.debugRecognizeFile(URL(fileURLWithPath: wav))
+                }
+            }
         }
-        .onDisappear { if !demoMode { engine.end() } }
+        .onDisappear { engine.end() }
+        .onChange(of: photoItem) { _, item in
+            guard let item else { return }
+            Task {
+                if let data = try? await item.loadTransferable(type: Data.self),
+                   let img = UIImage(data: data) {
+                    await MainActor.run { engine.attachImage(img); photoItem = nil }
+                }
+            }
+        }
         .overlay(alignment: .top) {
             if let t = engine.errorToast {
                 Text(t)
@@ -1245,20 +1607,6 @@ struct AlmaVoiceConsoleView: View {
     }
 
     private var orbSide: CGFloat { min(300, max(220, UIScreen.main.bounds.width * 0.72)) }
-
-    /// Sample content so the design can be verified state-by-state in the sim.
-    private func seedDemo() {
-        engine.cards = [
-            .init(id: "demo-t1", kind: .tool, icon: "🪙", title: "CoinGecko থেকে লাইভ প্রাইস আনা", sub: "", status: "ok"),
-            .init(id: "demo-t2", kind: .tool, icon: "📈", title: "২৪ ঘণ্টার ট্রেন্ড বিশ্লেষণ", sub: "", status: "ok"),
-            .init(id: "demo-t3", kind: .tool, icon: "📝", title: "রিপোর্ট তৈরি", sub: "", status: "run"),
-            .init(id: "demo-c1", kind: .ask, icon: "🪙", title: "SUI লাইভ প্রাইস", sub: "CoinGecko · crypto-watch",
-                  status: "সম্পন্ন", big: "$3.42", delta: "▲ ২৪ ঘণ্টায় +৪.২%",
-                  spark: [12, 14, 13, 16, 15, 18, 17, 20, 19, 23, 22, 26]),
-            .init(id: "demo-c2", kind: .approval, icon: "🌐", title: "ওয়েবসাইট আপডেট", sub: "almatraders.com · hero-banner", status: "wait"),
-        ]
-        engine.replyText = "Sir, SUI এখন ৩.৪২ ডলারে — গত ২৪ ঘণ্টায় ৪.২% বেড়েছে। ট্রেন্ড ইতিবাচক, তবে ভলিউম কিছুটা কম।"
-    }
 
     // ── Background: state-hued aurora + dot grid (web .aurora / .dotgrid) ──
     private var aurora: some View {
@@ -1396,7 +1744,7 @@ struct AlmaVoiceConsoleView: View {
                 } else if engine.state == .idle {
                     (Text("আসসালামু আলাইকুম, ").foregroundStyle(muted)
                      + Text("Sir").foregroundStyle(gold)
-                     + Text("। আমি জেগে আছি — অর্বে ট্যাপ করে বলুন।").foregroundStyle(muted))
+                     + Text("। «ALMA» বলুন কিংবা অর্বে ট্যাপ করুন।").foregroundStyle(muted))
                         .font(.system(size: 15))
                         .multilineTextAlignment(.center)
                 } else if engine.state == .listening {
@@ -1483,6 +1831,35 @@ struct AlmaVoiceConsoleView: View {
             if engine.state == .speaking {
                 Text("ট্যাপ করে থামান ও কথা বলুন").font(.system(size: 12)).foregroundStyle(faint)
             }
+            // attached-image thumbnails (chat composer parity)
+            if !engine.pendingImages.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(engine.pendingImages) { img in
+                            ZStack(alignment: .topTrailing) {
+                                Image(uiImage: img.image).resizable().scaledToFill()
+                                    .frame(width: 52, height: 52)
+                                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(line, lineWidth: 1))
+                                    .overlay {
+                                        if case .uploading = img.state {
+                                            ZStack { Color.black.opacity(0.35); ProgressView().controlSize(.mini).tint(.white) }
+                                                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                                        } else if case .failed = img.state {
+                                            RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Color.red.opacity(0.25))
+                                        }
+                                    }
+                                Button { engine.removeImage(img.id) } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 15)).foregroundStyle(.white, .black.opacity(0.5))
+                                }
+                                .offset(x: 5, y: -5)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 22)
+                }
+            }
             // suggestion chips (web .chips) — canned voice prompts
             let chipsEnabled = engine.state == .idle || engine.state == .error
             VStack(spacing: 8) {
@@ -1492,8 +1869,14 @@ struct AlmaVoiceConsoleView: View {
                 }
                 chip("ওয়েবসাইট আপডেট করান", "ওয়েবসাইটে কী আপডেট করা দরকার, দেখে বলো।", enabled: chipsEnabled)
             }
-            if demoMode { demoStateBar }
             HStack(spacing: 10) {
+                PhotosPicker(selection: $photoItem, matching: .images) {
+                    Image(systemName: "photo")
+                        .font(.system(size: 14, weight: .medium)).foregroundStyle(muted)
+                        .frame(width: 38, height: 38)
+                        .background(glass.opacity(0.06), in: Circle())
+                        .overlay(Circle().strokeBorder(line, lineWidth: 1))
+                }
                 Button {
                     engine.convoMode.toggle()
                     UISelectionFeedbackGenerator().selectionChanged()
@@ -1541,25 +1924,6 @@ struct AlmaVoiceConsoleView: View {
         .opacity(enabled ? 1 : 0.45)
     }
 
-    /// STATE PREVIEW bar — demo/verification builds only (ALMA_VOICE_DEMO=1).
-    private var demoStateBar: some View {
-        HStack(spacing: 6) {
-            Text("STATE").font(.system(size: 10, weight: .semibold)).kerning(1.6).foregroundStyle(faint)
-            ForEach([AlmaVoiceState.idle, .listening, .thinking, .speaking, .error], id: \.self) { s in
-                Button {
-                    engine.state = s
-                } label: {
-                    Text(s.statusText)
-                        .font(.system(size: 11))
-                        .foregroundStyle(engine.state == s ? ink : muted)
-                        .padding(.horizontal, 11).padding(.vertical, 5)
-                        .background(glass.opacity(engine.state == s ? 0.11 : 0.05), in: Capsule())
-                        .overlay(Capsule().strokeBorder(
-                            engine.state == s ? almaHSL(hue, 0.80, 0.65, 0.6) : line, lineWidth: 1))
-                }
-            }
-        }
-    }
 }
 
 // MARK: - Feed card (web .card): glass, icon box, status pill, big number +

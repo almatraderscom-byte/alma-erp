@@ -185,3 +185,28 @@ xcrun simctl io "$UDID" screenshot /tmp/x.png      # flake-proof capture
   the waveform button in the composer (Assistant tab) instead.
 - Sim-verified all 5 states (screenshots shown to owner 2026-07-06). App lock:
   type the passcode via osascript keystroke AFTER `Simulator` is frontmost.
+
+## 8. 2026-07-06 UPDATE 2 — owner round: latency fix, wake word, no mock data
+
+- **Demo/mock data REMOVED** (owner order: production builds direct). No STATE
+  bar, no seeded cards. Debug hooks that inject REAL turns remain, launch-arg
+  form (env does not reach the app via simctl): `ALMA_VOICE_SAY="…"`,
+  `ALMA_WAKE_TEST=/path/to/spoken-alma.aiff` (recognizes the file through the
+  wake gate and toasts WAKE ✓/✗ — sim has no mic).
+- **Tap latency fix (mic-first streaming):** `AlmaStreamingSTT.start()` now
+  starts the MIC instantly (state flips to listening at tap), buffers PCM16
+  while the token+socket connect in the background, flushes on open. If the
+  socket fails/never opens after speech, the buffered utterance uploads as WAV
+  to `/api/assistant/transcribe` (salvage watchdog 10s) — words are never lost.
+- **Self-start guards:** client sends `transcription_session.update
+  turn_detection:null`; a `completed` transcript only fires a turn when OUR
+  VAD committed; tap-while-listening with NOTHING spoken cancels instead of
+  committing ambient noise; `startingListen` double-tap guard.
+- **"ALMA" wake word:** `AlmaWakeWord` (same file) — SFSpeechRecognizer
+  (en_US, on-device preferred), idle-only + console-open-only, auto stop on
+  any non-idle state (never fights the STT mic / hears own TTS), 50s task
+  recycle, escape hatch `alma-wake-word` UserDefault. Arm/disarm is driven by
+  `AlmaVoiceEngine.state.didSet`. `NSSpeechRecognitionUsageDescription` was
+  ALREADY in Info.plist (owner had applied it) — no frozen-file edit was made.
+- Real-mic feel (wake word + VAD + latency) still needs the owner's DEVICE
+  test — the Mac mini has no microphone.
