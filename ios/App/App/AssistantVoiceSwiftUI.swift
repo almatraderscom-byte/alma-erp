@@ -898,9 +898,11 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
                 group.cancelAll()
             }
             if failed { closeSocket(); return }
-            // Belt & braces for "nije nije kaj kore": even if the server session
-            // config ever changes, OUR adaptive VAD stays the only endpointer.
-            ws?.send(.string(#"{"type":"transcription_session.update","session":{"turn_detection":null}}"#)) { _ in }
+            // NOTE: no session.update is sent — the GA realtime API rejects the
+            // old transcription_session.update type (owner hit this live: the
+            // server error killed every listen). turn_detection:null is already
+            // baked into the session by /api/assistant/stt-session, and the
+            // "only OUR VAD commit fires a turn" guard covers the rest.
             receiveLoop()
             let drained = markSocketOpenAndDrain()
             if drained.abort { closeSocket(); return }   // no-speech already ended it
@@ -936,7 +938,7 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let c = openCont { c.resume(throwing: AlmaVoiceSTTError.socket); openCont = nil }
-        else if socketOpen && !committed { fail("সংযোগ কেটে গেছে") }
+        else if !completedFired { degradeToLocal() }
     }
 
     private func startMic() throws {
@@ -1059,6 +1061,19 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
+    /// Any socket trouble mid-listen: degrade SILENTLY to local capture — the
+    /// mic keeps running, and the utterance completes via the WAV upload path.
+    /// The owner never sees a raw API error for a transport hiccup.
+    private func degradeToLocal() {
+        lock.lock()
+        let mustUpload = committed && wantCommit && !completedFired && !failed
+        socketOpen = false
+        connectFailed = true
+        lock.unlock()
+        closeSocket()
+        if mustUpload { uploadBufferedWav() }
+    }
+
     /// Socket path failed after speech — upload the buffered utterance as WAV.
     private func uploadBufferedWav() {
         lock.lock(); let pcm = fullAudio; lock.unlock()
@@ -1087,7 +1102,7 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
             guard let self else { return }
             switch result {
             case .failure:
-                if !self.completedFired { self.fail("সংযোগ কেটে গেছে — আবার বলুন।") }
+                if !self.completedFired { self.degradeToLocal() }
             case .success(let msg):
                 if case .string(let s) = msg { self.onWSText(s) }
                 if !self.completedFired && !self.failed { self.receiveLoop() }
@@ -1121,10 +1136,7 @@ final class AlmaStreamingSTT: NSObject, URLSessionWebSocketDelegate {
             closeSocket()
             DispatchQueue.main.async { [weak self] in self?.engine?.streamFinal(text) }
         case "error":
-            let msg = ((obj["error"] as? [String: Any])?["message"] as? String) ?? "স্ট্রিমিং সমস্যা।"
-            // Mid-listen socket error with audio in hand → salvage via upload.
-            lock.lock(); let salvage = committed && wantCommit && !completedFired; lock.unlock()
-            if salvage { failed = true; closeSocket(); uploadBufferedWav() } else { fail(msg) }
+            degradeToLocal()
         default:
             break
         }
