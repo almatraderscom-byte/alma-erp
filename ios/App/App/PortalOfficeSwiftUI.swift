@@ -266,8 +266,8 @@ struct PortalOwnerHub: Decodable {
     static let sampleJSON = """
     {"kpis":{"pending":2,"active":3,"overdue":1,"doneToday":6,"online":2,"staffTotal":3},
      "pendingApproval":[
-       {"id":"t1","title":"১৩৩ কালেকশনের নতুন ছবি","type":"ফটোগ্রাফি","status":"awaiting_owner","verificationStatus":"proof_submitted","staffId":"s1","staffName":"মোহাম্মদ ইয়াফি","needsOwner":true,"redoCount":0,"source":"assigned","createdAt":"2026-07-07T04:00:00Z","proofData":{}},
-       {"id":"t2","title":"ফেসবুক পোস্টের ক্যাপশন","type":"কনটেন্ট","status":"awaiting_owner","verificationStatus":"auto_verified","staffId":"s2","staffName":"সাদিয়া","needsOwner":false,"redoCount":1,"source":"assigned","createdAt":"2026-07-07T03:00:00Z"}],
+       {"id":"t1","title":"১৩৩ কালেকশনের নতুন ছবি","type":"ফটোগ্রাফি","status":"awaiting_owner","verificationStatus":"proof_submitted","staffId":"s1","staffName":"মোহাম্মদ ইয়াফি","needsOwner":true,"redoCount":0,"source":"assigned","createdAt":"2026-07-07T04:00:00Z","proofData":{"imageUrls":["https://picsum.photos/seed/alma133a/700","https://picsum.photos/seed/alma133b/700","https://picsum.photos/seed/alma133c/700"]}},
+       {"id":"t2","title":"ফেসবুক পোস্টের ক্যাপশন","type":"কনটেন্ট","status":"awaiting_owner","verificationStatus":"auto_verified","staffId":"s2","staffName":"সাদিয়া","needsOwner":false,"redoCount":1,"source":"assigned","createdAt":"2026-07-07T03:00:00Z","proofData":{"imageUrl":"https://picsum.photos/seed/almafbpost/700"}}],
      "activeTasks":[
        {"id":"t3","title":"দুপুরের ডেলিভারি হ্যান্ডওভার","type":"সেলস","status":"active","verificationStatus":"in_progress","staffId":"s1","staffName":"মোহাম্মদ ইয়াফি","needsOwner":false,"redoCount":0,"source":"assigned","createdAt":"2026-07-07T02:00:00Z","dueAt":"2026-07-07T12:00:00Z"},
        {"id":"a1","title":"ফেসবুক পোস্টের ক্যাপশন লেখা","type":"কনটেন্ট","status":"active","verificationStatus":"in_progress","staffId":"s2","staffName":"সাদিয়া","needsOwner":false,"redoCount":0,"source":"assigned","createdAt":"2026-07-07T01:30:00Z"},
@@ -1564,8 +1564,31 @@ private struct PortalSelfInitiatedSheet: View {
 
 // MARK: - Group chat sheet (web GroupChat — send text + explain a task)
 
+/// Standalone entry point for the group chat when opened from the app-wide floating chat
+/// head (not from inside the office screen). Owns its own VM, resolves the viewer's role,
+/// then shows the same messenger sheet.
 @available(iOS 17.0, *)
-private struct PortalGroupChatSheet: View {
+struct OfficeChatStandalone: View {
+    var openWeb: (_ path: String, _ title: String) -> Void = { _, _ in }
+    @State private var vm = PortalOfficeVM()
+
+    var body: some View {
+        Group {
+            if vm.roleResolved {
+                PortalGroupChatSheet(vm: vm, isOwner: vm.selfRole == "owner", openWeb: openWeb)
+            } else {
+                ZStack {
+                    PortalOfficeAurora()
+                    ProgressView().tint(.white)
+                }
+                .task { await vm.loadHub() }
+            }
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+struct PortalGroupChatSheet: View {
     @Bindable var vm: PortalOfficeVM
     let isOwner: Bool
     let openWeb: (_ path: String, _ title: String) -> Void
@@ -1924,7 +1947,6 @@ struct PortalOwnerHubView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var segment = 0
     @State private var expanded: Set<String> = []   // team members whose todolist is open
-    @State private var preview: PortalImagePreview? = nil  // tapped proof image → full-screen viewer
 
     private var accent: Color { PortalOfficePalette.accentText(colorScheme) }
 
@@ -1945,7 +1967,6 @@ struct PortalOwnerHubView: View {
             performanceCard(hub.performance)
             noticesCard
             historyButton
-                .fullScreenCover(item: $preview) { PortalImageViewer(preview: $0) }
         } else {
             ForEach(0..<3, id: \.self) { _ in
                 Color.clear.frame(height: 110).portalOfficeGlass(colorScheme, corner: 16).portalOfficeShimmer()
@@ -2197,7 +2218,12 @@ struct PortalOwnerHubView: View {
                 }
                 Spacer()
             }
-            if !t.imageUrls.isEmpty { proofStrip(t.imageUrls) }
+            if !t.imageUrls.isEmpty {
+                proofStrip(t.imageUrls) { ownerTask = t }
+                Label("ছবিতে চাপ দিন — বড় দেখুন, কমেন্ট করুন ও অনুমোদন দিন",
+                      systemImage: "hand.tap.fill")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
             HStack(spacing: 8) {
                 Button { ownerTask = t } label: {
                     Text("বিস্তারিত").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
@@ -2243,18 +2269,20 @@ struct PortalOwnerHubView: View {
         .padding(10)
         .background(PortalOfficePalette.violet.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
-    private func proofStrip(_ urls: [String]) -> some View {
+    private func proofStrip(_ urls: [String], onTap: @escaping () -> Void) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(Array(urls.enumerated()), id: \.offset) { idx, s in
+            HStack(spacing: 8) {
+                ForEach(Array(urls.enumerated()), id: \.offset) { _, s in
                     if let u = URL(string: s) {
                         AsyncImage(url: u) { i in i.resizable().scaledToFill() } placeholder: {
                             Color.primary.opacity(0.06)
                         }
-                        .frame(width: 62, height: 62)
-                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .frame(width: 84, height: 84)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
                         .contentShape(Rectangle())
-                        .onTapGesture { preview = PortalImagePreview(urls: urls, index: idx) }
+                        .onTapGesture { onTap() }
                     }
                 }
             }
@@ -2558,6 +2586,7 @@ private struct PortalOwnerTaskSheet: View {
     @State private var showRedo = false
     @State private var showDue = false
     @State private var due = Date()
+    @State private var preview: PortalImagePreview? = nil   // tapped proof → full-screen zoom
     private var busy: Bool { vm.ownerBusyId == task.id }
 
     var body: some View {
@@ -2577,6 +2606,7 @@ private struct PortalOwnerTaskSheet: View {
             .navigationTitle("কাজের বিস্তারিত")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("বন্ধ") { dismiss() } } }
+            .fullScreenCover(item: $preview) { PortalImageViewer(preview: $0) }
             .alert("সংশোধনের নোট", isPresented: $showRedo) {
                 TextField("কী ঠিক করতে হবে…", text: $note)
                 Button("ফেরত দিন") { Task { if await vm.ownerAct(.init(action: "redo", taskId: task.id, note: note.isEmpty ? nil : note), taskId: task.id) { dismiss() } } }
@@ -2619,13 +2649,23 @@ private struct PortalOwnerTaskSheet: View {
     }
 
     private var imagesRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(task.imageUrls, id: \.self) { s in
-                    if let u = URL(string: s) {
-                        AsyncImage(url: u) { i in i.resizable().scaledToFill() } placeholder: { Color.primary.opacity(0.06) }
-                            .frame(width: 120, height: 120)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        VStack(alignment: .leading, spacing: 6) {
+            Label("কাজের প্রমাণ — বড় করে দেখতে ছবিতে চাপ দিন", systemImage: "photo.stack")
+                .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(Array(task.imageUrls.enumerated()), id: \.offset) { idx, s in
+                        if let u = URL(string: s) {
+                            AsyncImage(url: u) { i in i.resizable().scaledToFill() } placeholder: {
+                                ZStack { Color.primary.opacity(0.06); ProgressView() }
+                            }
+                            .frame(width: 230, height: 230)
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+                            .contentShape(Rectangle())
+                            .onTapGesture { preview = PortalImagePreview(urls: task.imageUrls, index: idx) }
+                        }
                     }
                 }
             }

@@ -41,6 +41,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             window?.makeKeyAndVisible()
         }
 
+        // App-wide floating office chat head (drag anywhere → snaps to edge, tap → group
+        // chat). Lives in its own passthrough window above the app, so it can't interfere
+        // with any existing screen. Deferred so the scene/window is fully up first.
+        if #available(iOS 17.0, *) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { FloatingChatHead.shared.install() }
+        }
+
         return true
     }
 

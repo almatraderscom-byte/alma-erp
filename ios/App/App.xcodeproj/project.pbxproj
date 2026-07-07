@@ -44,6 +44,7 @@
 		F2AA7700000000000000B061 /* TradingStaffSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */; };
 		F2AA7700000000000000B060 /* CatalogImagesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A060 /* CatalogImagesSwiftUI.swift */; };
 		F2AA7700000000000000B0FE /* KeyboardDismiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A0FE /* KeyboardDismiss.swift */; };
+		F2AA7701000000000000B0FE /* FloatingChatHead.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7701000000000000A0FE /* FloatingChatHead.swift */; };
 		F2AA7700000000000000B05F /* AgentWhatsappSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */; };
 		F2AA7700000000000000B05E /* AgentCostsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */; };
 		F2AA7700000000000000B05D /* SettingsTelegramSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */; };
@@ -124,6 +125,7 @@
 		F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradingStaffSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A060 /* CatalogImagesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogImagesSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A0FE /* KeyboardDismiss.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardDismiss.swift; sourceTree = "<group>"; };
+		F2AA7701000000000000A0FE /* FloatingChatHead.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingChatHead.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentWhatsappSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCostsSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTelegramSwiftUI.swift; sourceTree = "<group>"; };
@@ -251,6 +253,7 @@
 				F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */,
 				F2AA7700000000000000A060 /* CatalogImagesSwiftUI.swift */,
 				F2AA7700000000000000A0FE /* KeyboardDismiss.swift */,
+				F2AA7701000000000000A0FE /* FloatingChatHead.swift */,
 				F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */,
 				F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */,
 				F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */,
@@ -506,6 +509,7 @@
 				F2AA7700000000000000B061 /* TradingStaffSwiftUI.swift in Sources */,
 				F2AA7700000000000000B060 /* CatalogImagesSwiftUI.swift in Sources */,
 				F2AA7700000000000000B0FE /* KeyboardDismiss.swift in Sources */,
+				F2AA7701000000000000B0FE /* FloatingChatHead.swift in Sources */,
 				F2AA7700000000000000B05F /* AgentWhatsappSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05E /* AgentCostsSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05D /* SettingsTelegramSwiftUI.swift in Sources */,
