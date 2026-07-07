@@ -45,6 +45,10 @@ extension Notification.Name {
     /// Posted when the owner flips the SwiftUI-screens toggle — the tab controller
     /// rebuilds the affected tabs in place.
     static let almaSwiftUIFlagChanged = Notification.Name("almaSwiftUIFlagChanged")
+
+    /// Posted after any approve/reject (business or agent) so the Approvals tab badge
+    /// re-counts immediately instead of waiting for its 90s heartbeat.
+    static let almaApprovalsChanged = Notification.Name("almaApprovalsChanged")
 }
 
 // MARK: - Hosting controller
@@ -235,7 +239,9 @@ extension AlmaTabBarController {
                 },
                 toggleDark: { AlmaTheme.toggle() },
                 nativeScreensOn: AlmaSwiftUIFlag.isOn,
-                toggleNativeScreens: { AlmaSwiftUIFlag.isOn.toggle() })
+                toggleNativeScreens: { AlmaSwiftUIFlag.isOn.toggle() },
+                readBiometricLock: { [weak self] done in self?.readBiometricLock(done) },
+                setBiometricLock: { [weak self] on in self?.writeBiometricLock(on) })
             let host = AlmaHostingController(rootView: screen)
             host.title = "More"
             let nav = Self.darkNav(root: host, tabTitle: "More", icon: "ellipsis.circle", largeTitles: true)

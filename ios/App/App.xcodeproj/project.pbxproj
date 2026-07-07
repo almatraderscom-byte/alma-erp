@@ -43,6 +43,11 @@
 		F2AA7700000000000000B062 /* KnownPeopleSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A062 /* KnownPeopleSwiftUI.swift */; };
 		F2AA7700000000000000B061 /* TradingStaffSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */; };
 		F2AA7700000000000000B060 /* CatalogImagesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A060 /* CatalogImagesSwiftUI.swift */; };
+		F2AA7700000000000000B0FE /* KeyboardDismiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A0FE /* KeyboardDismiss.swift */; };
+		F2AA7701000000000000B0FE /* FloatingChatHead.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7701000000000000A0FE /* FloatingChatHead.swift */; };
+		F2AA7702000000000000B0FE /* AgoraIntercom.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7702000000000000A0FE /* AgoraIntercom.swift */; };
+		F2AA7703000000000000B0FE /* IntercomUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7703000000000000A0FE /* IntercomUI.swift */; };
+		F2AA7704000000000000B0FE /* PortalStaffOfficeSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */; };
 		F2AA7700000000000000B05F /* AgentWhatsappSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */; };
 		F2AA7700000000000000B05E /* AgentCostsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */; };
 		F2AA7700000000000000B05D /* SettingsTelegramSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */; };
@@ -123,6 +128,11 @@
 		F2AA7700000000000000A062 /* KnownPeopleSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnownPeopleSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradingStaffSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A060 /* CatalogImagesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogImagesSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A0FE /* KeyboardDismiss.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardDismiss.swift; sourceTree = "<group>"; };
+		F2AA7701000000000000A0FE /* FloatingChatHead.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingChatHead.swift; sourceTree = "<group>"; };
+		F2AA7702000000000000A0FE /* AgoraIntercom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgoraIntercom.swift; sourceTree = "<group>"; };
+		F2AA7703000000000000A0FE /* IntercomUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntercomUI.swift; sourceTree = "<group>"; };
+		F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalStaffOfficeSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentWhatsappSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCostsSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTelegramSwiftUI.swift; sourceTree = "<group>"; };
@@ -250,6 +260,11 @@
 				F2AA7700000000000000A062 /* KnownPeopleSwiftUI.swift */,
 				F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */,
 				F2AA7700000000000000A060 /* CatalogImagesSwiftUI.swift */,
+				F2AA7700000000000000A0FE /* KeyboardDismiss.swift */,
+				F2AA7701000000000000A0FE /* FloatingChatHead.swift */,
+				F2AA7702000000000000A0FE /* AgoraIntercom.swift */,
+				F2AA7703000000000000A0FE /* IntercomUI.swift */,
+				F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */,
 				F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */,
 				F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */,
 				F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */,
@@ -505,6 +520,11 @@
 				F2AA7700000000000000B062 /* KnownPeopleSwiftUI.swift in Sources */,
 				F2AA7700000000000000B061 /* TradingStaffSwiftUI.swift in Sources */,
 				F2AA7700000000000000B060 /* CatalogImagesSwiftUI.swift in Sources */,
+				F2AA7700000000000000B0FE /* KeyboardDismiss.swift in Sources */,
+				F2AA7701000000000000B0FE /* FloatingChatHead.swift in Sources */,
+				F2AA7702000000000000B0FE /* AgoraIntercom.swift in Sources */,
+				F2AA7703000000000000B0FE /* IntercomUI.swift in Sources */,
+				F2AA7704000000000000B0FE /* PortalStaffOfficeSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05F /* AgentWhatsappSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05E /* AgentCostsSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05D /* SettingsTelegramSwiftUI.swift in Sources */,
@@ -691,7 +711,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 40;
+				CURRENT_PROJECT_VERSION = 52;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -713,7 +733,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 40;
+				CURRENT_PROJECT_VERSION = 52;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -732,7 +752,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AlmaWidget/AlmaWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 40;
+				CURRENT_PROJECT_VERSION = 52;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AlmaWidget/Info.plist;
@@ -758,7 +778,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AlmaWidget/AlmaWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 40;
+				CURRENT_PROJECT_VERSION = 52;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AlmaWidget/Info.plist;

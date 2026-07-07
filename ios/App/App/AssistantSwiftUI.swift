@@ -3555,7 +3555,18 @@ struct AssistantScreen: View {
             // DEBUG self-test hooks (never fire in production — the env vars are only
             // set by the local `simctl launch` self-test, same pattern as
             // ALMA_OPEN_COMPANION / ALMA_FADE_DEMO):
-            let env = ProcessInfo.processInfo.environment
+            // Read from env OR launch arguments — `simctl launch <bundle> KEY=val`
+            // delivers KEY=val as a positional ARGUMENT, not an env var, so the
+            // headless self-tests must check both.
+            let rawEnv = ProcessInfo.processInfo.environment
+            let args = ProcessInfo.processInfo.arguments
+            func argFlag(_ k: String) -> Bool {
+                rawEnv[k] == "1" || args.contains("\(k)=1")
+            }
+            let env = rawEnv
+            if argFlag("ALMA_ASSISTANT_VOICE") {
+                Task { try? await Task.sleep(nanoseconds: 2_500_000_000); vm.showVoice = true }
+            }
             if env["ALMA_ASSISTANT_SIDEBAR"] == "1" {
                 Task { try? await Task.sleep(nanoseconds: 1_500_000_000); Self.presentDrawer(vm) }
             }

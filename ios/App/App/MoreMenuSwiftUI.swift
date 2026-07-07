@@ -47,10 +47,19 @@ struct MoreMenuScreen: View {
     var nativeScreensOn: Bool = true
     var toggleNativeScreens: (() -> Void)? = nil
 
+    /// iOS Face ID / Touch ID app-lock control. The enable flag lives in the web app's
+    /// localStorage (BiometricLockGate); the host reads/writes it via a live webview.
+    /// nil hides the row (e.g. previews / non-iOS hosts).
+    var readBiometricLock: ((@escaping (Bool) -> Void) -> Void)? = nil
+    var setBiometricLock: ((Bool) -> Void)? = nil
+
     @Environment(\.colorScheme) private var colorScheme
     /// Mirrors AlmaTheme.isDark for the switch + sun/moon icon; resynced on every
     /// almaThemeChanged broadcast so an external flip (e.g. web toggle) can't desync it.
     @State private var isDark = MoreTheme.isDark
+    /// Face ID lock switch position. Seeded from the local cache for an instant, correct
+    /// first paint; reconciled against the web localStorage value on appear.
+    @State private var faceLockOn = UserDefaults.standard.object(forKey: "alma-biometric-lock-cache") as? Bool ?? true
 
     // ── Menu data — EXACT copy of MoreMenuViewController's sections/items/paths/icons ──
 
@@ -144,6 +153,9 @@ struct MoreMenuScreen: View {
                         nativeScreensRow
                     }
                 }
+                if readBiometricLock != nil {
+                    section(header: "Security") { faceLockRow }
+                }
                 section(header: "Switch business") {
                     ForEach(Array(Self.businesses.enumerated()), id: \.element.name) { idx, biz in
                         row(divider: idx > 0, action: { openPath(biz.path, biz.name) }) {
@@ -165,12 +177,18 @@ struct MoreMenuScreen: View {
             .padding(.top, 8)
             .padding(.bottom, 28)
         }
-        .background(rootBg.ignoresSafeArea())
+        // The owner's aurora — the same ambient the Orders / Assistant surfaces wear, so
+        // More stops looking like a flat grey settings list and matches the app theme.
+        .background(OrdersAurora())
         // Claude-style top scroll-edge fade under the (transparent-glass) UIKit nav bar.
         .claudeTopFade()
         // External theme flips (web toggle, another screen) must move OUR switch too.
         .onReceive(NotificationCenter.default.publisher(for: MoreTheme.changed)) { _ in
             isDark = MoreTheme.isDark
+        }
+        // Reconcile the Face ID switch with the real web localStorage value on appear.
+        .onAppear {
+            readBiometricLock? { on in faceLockOn = on }
         }
     }
 
@@ -189,13 +207,17 @@ struct MoreMenuScreen: View {
     private func section(header: String, @ViewBuilder rows: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(header.uppercased())
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .font(.caption.weight(.bold))
+                .tracking(0.6)
+                // On the raw aurora (outside the card) headers need real contrast, not
+                // the washed-out .secondary the owner flagged as hard to read.
+                .foregroundStyle(colorScheme == .dark ? Color.white.opacity(0.72)
+                                                      : Color.black.opacity(0.55))
                 .padding(.leading, 14)
+            // Frosted-glass card so the aurora glows through but the rows stay crisp.
             VStack(spacing: 0) { rows() }
-                .background(cardBg, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                // Whisper of depth so light-mode white cards separate from the cream page.
-                .shadow(color: .black.opacity(colorScheme == .dark ? 0 : 0.05), radius: 8, y: 2)
+                .ordersGlass(colorScheme, corner: 16)
+                .shadow(color: .black.opacity(colorScheme == .dark ? 0.18 : 0.06), radius: 10, y: 3)
         }
     }
 
@@ -283,6 +305,40 @@ struct MoreMenuScreen: View {
             ))
             .labelsHidden()
             .tint(violet)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+    }
+
+    /// App-lock switch — Face ID / Touch ID gate on cold start + resume-after-idle.
+    /// Writes the web app's localStorage flag through the host; state seeds from the
+    /// local cache and reconciles with the real value on appear.
+    private var faceLockRow: some View {
+        let green = Color(red: 0.231, green: 0.784, blue: 0.522)
+        return HStack(spacing: 12) {
+            Image(systemName: "faceid")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(green)
+                .frame(width: 32, height: 32)
+                .background(green.opacity(colorScheme == .dark ? 0.18 : 0.12),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 1) {
+                Text("অ্যাপ লক (Face ID)").font(.body).foregroundStyle(.primary)
+                Text("অ্যাপ খুললে বা কিছুক্ষণ পর ফিরে এলে Face ID / Touch ID দিয়ে আনলক")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Toggle("App lock", isOn: Binding(
+                get: { faceLockOn },
+                set: { newValue in
+                    guard newValue != faceLockOn else { return }
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    faceLockOn = newValue
+                    setBiometricLock?(newValue)
+                }
+            ))
+            .labelsHidden()
+            .tint(green)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)

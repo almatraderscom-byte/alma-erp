@@ -386,6 +386,7 @@ final class ApprovalsVM {
             }
             withAnimation(.snappy) { approvals.removeAll { $0.id == approval.id } }
             totalPending = max(0, totalPending - 1)
+            NotificationCenter.default.post(name: .almaApprovalsChanged, object: nil)
             await load()   // refresh counts/by-module, keep numbers honest
         } catch {
             UINotificationFeedbackGenerator().notificationOccurred(.error)
@@ -469,6 +470,7 @@ final class ApprovalsVM {
         } catch {
             agentNotice = "নেটওয়ার্ক সমস্যা — আবার চেষ্টা করুন।"
         }
+        NotificationCenter.default.post(name: .almaApprovalsChanged, object: nil)
         await loadAgent()
     }
 }
