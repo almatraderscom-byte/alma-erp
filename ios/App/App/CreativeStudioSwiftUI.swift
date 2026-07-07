@@ -138,6 +138,17 @@ enum CS {
         [("premium", "প্রিমিয়াম"), ("festival", "ফেস্টিভাল"), ("offer", "অফার"), ("lifestyle", "লাইফস্টাইল")]
     static let families = ["Single", "বাবা+ছেলে", "মা+মেয়ে", "মা+ছেলে", "বাবা+মেয়ে", "কাপল", "পুরো ফ্যামিলি"]
     static let familyIds = ["single", "father_son", "mother_daughter", "mother_son", "father_daughter", "couple", "full_family"]
+    static let familyIcons = ["person.fill", "figure.and.child.holdinghands", "figure.and.child.holdinghands",
+                              "figure.and.child.holdinghands", "figure.and.child.holdinghands", "heart.fill",
+                              "figure.2.and.child.holdinghands"]
+
+    /// Proportional box (fits `maxSide`) for an "w:h" aspect string — drives the visual ratio frames.
+    static func ratioBox(_ s: String, maxSide: CGFloat) -> CGSize {
+        let p = s.split(separator: ":").compactMap { Double($0) }
+        guard p.count == 2, p[0] > 0, p[1] > 0 else { return CGSize(width: maxSide, height: maxSide) }
+        return p[0] >= p[1] ? CGSize(width: maxSide, height: maxSide * p[1] / p[0])
+                            : CGSize(width: maxSide * p[0] / p[1], height: maxSide)
+    }
     static let aspects = ["4:5", "1:1", "9:16", "16:9"]
     static let resolutions = ["1K", "2K", "4K"]
     static let genModes = ["Fast", "Balanced", "Quality"]
@@ -253,9 +264,15 @@ final class CreativeStudioVM {
 struct CreativeStudioScreen: View {
     @Environment(\.colorScheme) private var scheme
     @State private var vm = CreativeStudioVM()
-    @State private var tab: CSTab = .home
+    @State private var tab: CSTab
     /// Web fallback for anything not yet native (finishing editor, drive auth, etc.).
     let openWeb: (_ path: String, _ title: String) -> Void
+
+    /// `initialTab` lets a deep-link (or the verification harness) open straight to a tab.
+    init(openWeb: @escaping (_ path: String, _ title: String) -> Void, initialTab: CSTab = .home) {
+        self.openWeb = openWeb
+        _tab = State(initialValue: initialTab)
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -643,12 +660,14 @@ private struct CSCreateTab: View {
             if advOpen {
                 VStack(alignment: .leading, spacing: 0) {
                     Divider().overlay(AgentPalette(scheme).borderSubtle)
-                    advField("ফ্যামিলি প্রিসেট") { CSChipRow(items: CS.families, selectionIndex: $family) }
-                    advField("অ্যাসপেক্ট রেশিও") { CSSegment(items: CS.aspects, index: $aspect).padding(.horizontal, 16) }
-                    advField("রেজোলিউশন") { CSChipRow(items: CS.resolutions, selectionIndex: $resolution) }
-                    advField("কোয়ালিটি") { CSChipRow(items: CS.genModes, selectionIndex: $genMode) }
-                    advField("ব্যাকগ্রাউন্ড") { CSChipRow(items: CS.backgrounds, selectionIndex: $background) }
-                    Color.clear.frame(height: 8)
+                    advField("ফ্যামিলি প্রিসেট") { familyRail }
+                    advField("অ্যাসপেক্ট রেশিও") { aspectRow }
+                    HStack(alignment: .top, spacing: 14) {
+                        advField("রেজোলিউশন") { CSSegment(items: CS.resolutions, index: $resolution).padding(.leading, 16) }
+                        advField("কোয়ালিটি") { CSSegment(items: CS.genModes, index: $genMode).padding(.trailing, 16) }
+                    }
+                    advField("ব্যাকগ্রাউন্ড") { backgroundRail }
+                    Color.clear.frame(height: 10)
                 }
             }
         }
@@ -661,6 +680,100 @@ private struct CSCreateTab: View {
                 .foregroundStyle(AgentPalette(scheme).muted).padding(.horizontal, 16)
             content()
         }.padding(.vertical, 14)
+    }
+
+    // Family presets as icon pills (visual, not flat text chips).
+    private var familyRail: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 9) {
+                ForEach(Array(CS.families.enumerated()), id: \.offset) { i, name in
+                    let sel = family == i
+                    Button { family = i; CSHaptic.tap() } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: CS.familyIcons[i]).font(.system(size: 13, weight: .semibold))
+                            Text(name).font(.system(size: 12.5, weight: sel ? .bold : .medium))
+                        }
+                        .foregroundStyle(sel ? Color.white : AgentPalette(scheme).muted)
+                        .padding(.vertical, 9).padding(.horizontal, 13)
+                        .background {
+                            if sel { Capsule().fill(AgentPalette.coral).shadow(color: CS.ctaGlow, radius: 6, y: 3) }
+                            else { Capsule().fill(Color.white.opacity(scheme == .dark ? 0.06 : 0.5)); Capsule().strokeBorder(.white.opacity(0.08), lineWidth: 1) }
+                        }
+                    }.buttonStyle(.plain)
+                }
+            }.padding(.horizontal, 16)
+        }
+    }
+
+    // Aspect ratio as tappable proportional frames (the premium AI-app pattern).
+    private var aspectRow: some View {
+        HStack(spacing: 10) {
+            ForEach(Array(CS.aspects.enumerated()), id: \.offset) { i, r in
+                let sel = aspect == i
+                let sz = CS.ratioBox(r, maxSide: 34)
+                Button { aspect = i; CSHaptic.tap() } label: {
+                    VStack(spacing: 9) {
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .fill(sel ? AgentPalette.coral.opacity(0.22) : Color.white.opacity(0.06))
+                            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .strokeBorder(sel ? AgentPalette.coral : Color.white.opacity(0.32), lineWidth: sel ? 2 : 1.5))
+                            .frame(width: sz.width, height: sz.height)
+                            .frame(height: 40)
+                        Text(r).font(.system(size: 12, weight: sel ? .bold : .medium))
+                            .foregroundStyle(sel ? AgentPalette.coral : AgentPalette(scheme).muted)
+                    }
+                    .frame(maxWidth: .infinity).padding(.vertical, 11)
+                    .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(sel ? AgentPalette.coral.opacity(0.1) : Color.white.opacity(scheme == .dark ? 0.03 : 0.28)))
+                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(sel ? AgentPalette.coral.opacity(0.4) : Color.white.opacity(0.06), lineWidth: 1))
+                }.buttonStyle(.plain)
+            }
+        }.padding(.horizontal, 16)
+    }
+
+    // Background styles as real-photo thumbnails (+ a Custom tile).
+    private var backgroundRail: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(Array(CS.backgrounds.enumerated()), id: \.offset) { i, name in
+                    let sel = background == i
+                    Button { background = i; CSHaptic.tap() } label: {
+                        if name == "Custom" {
+                            VStack(spacing: 6) {
+                                Image(systemName: "plus").font(.system(size: 18, weight: .bold))
+                                Text("Custom").font(.system(size: 10.5, weight: .semibold))
+                            }
+                            .foregroundStyle(sel ? AgentPalette.coral : AgentPalette(scheme).muted)
+                            .frame(width: 92, height: 68)
+                            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.05)))
+                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .strokeBorder(style: StrokeStyle(lineWidth: 1.4, dash: [5]))
+                                .foregroundStyle(sel ? AgentPalette.coral.opacity(0.6) : .white.opacity(0.25)))
+                        } else {
+                            CSPhoto(url: bgURL(i), ratio: 92.0 / 68.0).frame(width: 92, height: 68)
+                                .overlay(alignment: .bottomLeading) {
+                                    Text(name).font(.system(size: 10.5, weight: .bold)).foregroundStyle(.white)
+                                        .padding(6).frame(maxWidth: .infinity, alignment: .leading)
+                                        .background(LinearGradient(colors: [.black.opacity(0.72), .clear], startPoint: .bottom, endPoint: .center))
+                                }
+                                .overlay(alignment: .topTrailing) {
+                                    if sel {
+                                        Image(systemName: "checkmark").font(.system(size: 9, weight: .heavy)).foregroundStyle(AgentPalette.coral)
+                                            .padding(4).background(.white, in: Circle()).padding(5)
+                                    }
+                                }
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .strokeBorder(sel ? Color.white : .white.opacity(0.1), lineWidth: sel ? 2 : 1))
+                        }
+                    }.buttonStyle(.plain)
+                }
+            }.padding(.horizontal, 16)
+        }
+    }
+    private func bgURL(_ i: Int) -> URL? {
+        vm.gallery.isEmpty ? nil : vm.gallery[(i + 2) % vm.gallery.count].imageURL
     }
 
     private var generateBar: some View {
@@ -1087,8 +1200,9 @@ private struct CSSegment: View {
             ForEach(Array(items.enumerated()), id: \.offset) { i, label in
                 Button { withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { index = i }; CSHaptic.tap() } label: {
                     Text(label).font(.system(size: 13.5, weight: .semibold))
+                        .lineLimit(1).minimumScaleFactor(0.7)
                         .foregroundStyle(index == i ? Color.white : AgentPalette(scheme).muted)
-                        .frame(maxWidth: .infinity).padding(.vertical, 10)
+                        .frame(maxWidth: .infinity).padding(.vertical, 10).padding(.horizontal, 2)
                         .background {
                             if index == i {
                                 RoundedRectangle(cornerRadius: 12, style: .continuous).fill(CS.cta)
