@@ -1708,6 +1708,37 @@ func almaHSL(_ h: Double, _ s: Double, _ l: Double, _ a: Double = 1) -> Color {
     return Color(red: r + m, green: g + m, blue: b + m, opacity: a)
 }
 
+// MARK: - Edge glow (LOCKED owner demo 2026-07-08) — screen rim breathes with speech
+
+@available(iOS 17.0, *)
+struct AlmaVoiceEdgeGlow: View {
+    var hue: Double
+    var level: Double
+    var active: Bool
+
+    var body: some View {
+        let tint = Color(hue: hue / 360.0, saturation: 0.9, brightness: 0.95)
+        let strength = active ? 0.22 + level * 0.78 : 0
+        ZStack {
+            // tight bright rim
+            Rectangle()
+                .strokeBorder(tint.opacity(0.85), lineWidth: 3)
+                .blur(radius: 7)
+            // mid bloom
+            Rectangle()
+                .strokeBorder(tint.opacity(0.5), lineWidth: 14)
+                .blur(radius: 24)
+            // deep wash
+            Rectangle()
+                .strokeBorder(tint.opacity(0.3), lineWidth: 44)
+                .blur(radius: 60)
+        }
+        .opacity(strength)
+        .animation(.easeOut(duration: 0.12), value: level)
+        .animation(.easeInOut(duration: 0.5), value: active)
+    }
+}
+
 @available(iOS 17.0, *)
 struct AlmaVoiceConsoleView: View {
     let vm: AssistantVM
@@ -1774,6 +1805,14 @@ struct AlmaVoiceConsoleView: View {
                 Spacer(minLength: 4)
                 dock
             }
+
+            // LOCKED (owner demo 2026-07-08): speech-synced edge glow — the whole
+            // screen's rim breathes with the live mic/TTS level in the state hue.
+            AlmaVoiceEdgeGlow(hue: hue,
+                              level: max(engine.micLevel, engine.ttsLevel),
+                              active: engine.state != .idle)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
         }
         .preferredColorScheme(.dark)
         .onAppear {

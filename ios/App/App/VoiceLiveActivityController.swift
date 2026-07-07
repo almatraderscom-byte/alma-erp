@@ -117,7 +117,10 @@ final class VoiceLiveActivityController {
         case .transcribing, .thinking:
             // gentle synthetic pulse — "ভাবছি" has no audio to meter
             raw = 0.18 + 0.14 * (0.5 + 0.5 * sin(Date().timeIntervalSinceReferenceDate * 2.4))
-        default: raw = 0
+        default:
+            // idle: soft traveling wave so the island ribbon never lies dead
+            // (LOCKED demo behavior — quiet braid keeps breathing)
+            raw = 0.10 + 0.06 * (0.5 + 0.5 * sin(Date().timeIntervalSinceReferenceDate * 1.7))
         }
         levels.removeFirst()
         levels.append(min(1, max(0.08, raw)))
