@@ -78,27 +78,27 @@ private struct AlmaIslandOrb: View {
 
     @ViewBuilder private func layers(t: Double) -> some View {
         ZStack {
-            // outer halo — the orb's own glow (the island pill can't glow outside)
+            // outer halo — tight so region clipping never shows a square edge
             Circle()
                 .fill(RadialGradient(
-                    colors: [hcol(hue, 0.9, 0.72, 0.45), hcol(hue, 0.9, 0.6, 0)],
-                    center: .center, startRadius: size * 0.28, endRadius: size * 0.9))
-                .frame(width: size * 1.8, height: size * 1.8)
-            // volumetric core, key light top-left
+                    colors: [hcol(hue, 0.9, 0.68, 0.35), hcol(hue, 0.9, 0.6, 0)],
+                    center: .center, startRadius: size * 0.42, endRadius: size * 0.62))
+                .frame(width: size * 1.25, height: size * 1.25)
+            // volumetric core — bright key light, DEEP dark rim (the 3D read)
             Circle()
                 .fill(RadialGradient(
                     stops: [
-                        .init(color: hcol(hue, 0.50, 1.00), location: 0),
-                        .init(color: hcol(hue, 0.85, 0.83), location: 0.30),
-                        .init(color: hcol(hue, 0.90, 0.50), location: 0.65),
-                        .init(color: hcol(hue, 0.90, 0.20), location: 1),
+                        .init(color: hcol(hue, 0.35, 1.00), location: 0),
+                        .init(color: hcol(hue, 0.80, 0.85), location: 0.24),
+                        .init(color: hcol(hue, 0.90, 0.46), location: 0.58),
+                        .init(color: hcol(hue, 0.92, 0.10), location: 1),
                     ],
                     center: UnitPoint(x: 0.33, y: 0.27),
-                    startRadius: 0, endRadius: size * 0.68))
-            // two counter-rotating iridescent fluids
+                    startRadius: 0, endRadius: size * 0.70))
+            // two counter-rotating iridescent fluids — crisp visible streaks
             if size >= 22 {
-                fluid(t: t, speed: 0.55, offset: 45, inset: 0.06, alpha: 0.50)
-                fluid(t: t, speed: -0.38, offset: -30, inset: 0.15, alpha: 0.42)
+                fluid(t: t, speed: 0.55, offset: 45, inset: 0.08, alpha: 0.65)
+                fluid(t: t, speed: -0.38, offset: -30, inset: 0.18, alpha: 0.55)
             }
             // glass gloss
             Ellipse()
@@ -107,9 +107,10 @@ private struct AlmaIslandOrb: View {
                 .frame(width: size * 0.46, height: size * 0.27)
                 .offset(x: -size * 0.15, y: -size * 0.30)
                 .blur(radius: max(0.5, size * 0.02))
-            // fresnel rim
+            // fresnel rim — brighter, sells the glass edge
             Circle()
-                .strokeBorder(hcol(hue, 0.9, 0.88, 0.35), lineWidth: max(0.6, size * 0.016))
+                .strokeBorder(hcol(hue, 0.85, 0.95, 0.55), lineWidth: max(0.8, size * 0.022))
+                .blur(radius: max(0.3, size * 0.008))
         }
         .frame(width: size, height: size)
     }
@@ -119,13 +120,13 @@ private struct AlmaIslandOrb: View {
             .fill(AngularGradient(
                 stops: [
                     .init(color: .clear, location: 0),
-                    .init(color: hcol(hue + offset, 0.9, 0.8, alpha), location: 0.22),
-                    .init(color: .clear, location: 0.46),
-                    .init(color: hcol(hue - offset * 0.7, 0.85, 0.7, alpha * 0.85), location: 0.72),
-                    .init(color: .clear, location: 1),
+                    .init(color: hcol(hue + offset, 0.95, 0.85, alpha), location: 0.20),
+                    .init(color: .clear, location: 0.42),
+                    .init(color: hcol(hue - offset * 0.7, 0.9, 0.75, alpha * 0.85), location: 0.68),
+                    .init(color: .clear, location: 0.95),
                 ], center: .center))
             .padding(size * inset)
-            .blur(radius: max(1, size * 0.05))
+            .blur(radius: max(0.6, size * 0.03))
             .rotationEffect(.radians(t * speed))
             .mask(Circle().padding(size * inset))
     }
@@ -149,7 +150,8 @@ private struct RibbonWave: View {
     private func draw(ctx: inout GraphicsContext, sz: CGSize, t: Double) {
         let mid = sz.height / 2
         let energy = levels.suffix(6).max() ?? 0.1
-        let A = (0.18 + energy * 0.82) * (sz.height / 2 - 1)
+        // demo parity: the braid stays clearly visible even at idle
+        let A = (0.38 + energy * 0.62) * (sz.height / 2 - 1)
         ctx.blendMode = .plusLighter
 
         // faint center axis the strands melt into at both ends
@@ -170,9 +172,9 @@ private struct RibbonWave: View {
                 let x = k * sz.width
                 let env = pow(sin(k * .pi), 1.2)
                 let li = min(levels.count - 1, Int(k * Double(levels.count - 1)))
-                let shape = 0.55 + levels[li] * 0.9               // waveform snapshot bends the braid
+                let shape = 0.72 + levels[li] * 0.7               // waveform snapshot bends the braid
                 let y = mid + env * A * sin(k * f * 6.283 + ph) * cos(k * 2.6 + t * 0.8 * pair) * shape
-                let th = 0.5 + env * (1.0 + energy * 3.0) * (1 + 0.55 * sin(k * 9 + t * 2.2 + Double(s) * 1.3))
+                let th = 0.7 + env * (1.4 + energy * 3.0) * (1 + 0.55 * sin(k * 9 + t * 2.2 + Double(s) * 1.3))
                 top.append(CGPoint(x: x, y: y - th))
                 bot.append(CGPoint(x: x, y: y + th))
             }
@@ -181,14 +183,14 @@ private struct RibbonWave: View {
             for p in top.dropFirst() { ribbon.addLine(to: p) }
             for p in bot.reversed() { ribbon.addLine(to: p) }
             ribbon.closeSubpath()
-            ctx.fill(ribbon, with: .color(hcol(hs, 0.92, 0.62, 0.30)))
+            ctx.fill(ribbon, with: .color(hcol(hs, 0.92, 0.65, 0.42)))
 
             var core = Path()
             core.move(to: CGPoint(x: top[0].x, y: (top[0].y + bot[0].y) / 2))
             for i in 1...n {
                 core.addLine(to: CGPoint(x: top[i].x, y: (top[i].y + bot[i].y) / 2))
             }
-            ctx.stroke(core, with: .color(hcol(hs, 1.0, 0.80, 0.45)), lineWidth: 0.8)
+            ctx.stroke(core, with: .color(hcol(hs, 1.0, 0.85, 0.65)), lineWidth: 1.0)
         }
         ctx.blendMode = .normal
     }
@@ -358,7 +360,6 @@ struct AlmaVoiceLiveActivity: Widget {
                             .frame(height: 30)
                             .frame(maxWidth: .infinity)
                     }
-                    .background(AuroraGlow(hue: hue).padding(-20))
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     HStack(alignment: .center, spacing: 10) {
