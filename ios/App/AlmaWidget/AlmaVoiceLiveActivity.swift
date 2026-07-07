@@ -337,10 +337,15 @@ struct AlmaVoiceLiveActivity: Widget {
             let hue = VoiceHue.hue(phase)
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    AlmaIslandOrb(size: 46, hue: hue)
-                        .frame(maxHeight: .infinity, alignment: .center)
-                        .padding(.leading, 8)
-                        .padding(.top, 6)
+                    // orb = "শুনুন" button: starts a listen in the background app
+                    // process without opening the app (AlmaVoiceListenIntent)
+                    Button(intent: AlmaVoiceListenIntent()) {
+                        AlmaIslandOrb(size: 46, hue: hue)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxHeight: .infinity, alignment: .center)
+                    .padding(.leading, 8)
+                    .padding(.top, 6)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     ElapsedTimer(startedAt: context.state.startedAt)

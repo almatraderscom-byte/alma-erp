@@ -42,6 +42,8 @@ struct AlmaVoiceActivityAttributes: ActivityAttributes {
 /// runs its normal end() teardown (mic, TTS, wake word, live activity).
 extension Notification.Name {
     static let almaVoiceEndRequested = Notification.Name("alma.voice.end.requested")
+    /// Island orb button → start listening without opening the app.
+    static let almaVoiceListenRequested = Notification.Name("alma.voice.listen.requested")
 }
 
 #if canImport(AppIntents)
@@ -65,6 +67,22 @@ struct AlmaVoiceEndIntent: LiveActivityIntent {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
         #endif
+        return .result()
+    }
+}
+
+/// Expanded-island orb button → the live engine starts a listen in the
+/// BACKGROUND app process (no app foregrounding). Owner ask 2026-07-08:
+/// "বাইরে থেকে দরকারমতো voice" without the tap bouncing him into the app.
+@available(iOS 17.0, *)
+struct AlmaVoiceListenIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "ALMA শুনুক"
+    static var isDiscoverable: Bool = false
+
+    func perform() async throws -> some IntentResult {
+        await MainActor.run {
+            NotificationCenter.default.post(name: .almaVoiceListenRequested, object: nil)
+        }
         return .result()
     }
 }

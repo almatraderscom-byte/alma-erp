@@ -94,6 +94,7 @@ final class AlmaVoiceEngine {
                 }
             }
             guard oldValue != state else { return }
+            if state == .error { keepAliveStop() }   // dead turn = release the hold
             refreshWake()
             liveActivity.phaseChanged()
             tr("state \(oldValue) → \(state)")
@@ -177,6 +178,10 @@ final class AlmaVoiceEngine {
     // Dynamic Island / Lock Screen Live Activity (docs/alma-live-activity-PLAN.md)
     private let liveActivity = VoiceLiveActivityController()
     private var liveActivityEndObserver: NSObjectProtocol?
+    // Conversation keep-alive + audio self-heal (owner bugs 2026-07-08: background
+    // re-listen died, foreground return needed an app kill)
+    private var keepAlive: AVAudioPlayer?
+    private var recoveryObservers: [NSObjectProtocol] = []
     fileprivate var startingListen = false   // a listen is spinning up (double-tap guard)
 
     // Image attachments — voice parity with the chat composer. Photograph a
@@ -225,6 +230,23 @@ final class AlmaVoiceEngine {
                 Task { @MainActor in self?.end() }
             }
         }
+        // Self-heal wiring (owner bugs 2026-07-08): foreground return, call/other-app
+        // interruption, media-services reset — and the island's "শুনুন" orb button.
+        if recoveryObservers.isEmpty {
+            let nc = NotificationCenter.default
+            recoveryObservers.append(nc.addObserver(
+                forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
+            ) { [weak self] _ in Task { @MainActor in self?.recoverAudio("foreground") } })
+            recoveryObservers.append(nc.addObserver(
+                forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+            ) { [weak self] note in Task { @MainActor in self?.handleInterruption(note) } })
+            recoveryObservers.append(nc.addObserver(
+                forName: AVAudioSession.mediaServicesWereResetNotification, object: nil, queue: .main
+            ) { [weak self] _ in Task { @MainActor in self?.recoverAudio("mediaReset") } })
+            recoveryObservers.append(nc.addObserver(
+                forName: .almaVoiceListenRequested, object: nil, queue: .main
+            ) { [weak self] _ in Task { @MainActor in self?.islandListen() } })
+        }
         AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -263,6 +285,9 @@ final class AlmaVoiceEngine {
 
     func end() {
         closed = true
+        keepAliveStop()
+        for ob in recoveryObservers { NotificationCenter.default.removeObserver(ob) }
+        recoveryObservers = []
         liveActivity.end()
         if let ob = liveActivityEndObserver {
             NotificationCenter.default.removeObserver(ob)
@@ -277,6 +302,83 @@ final class AlmaVoiceEngine {
         tts.stopAll()
         state = .idle
         Task { await chatVM?.loadMessages() }   // the voice turn lands in the thread
+    }
+
+    // ── Conversation keep-alive + audio self-heal ──────────────────────────
+    // Keep-alive: a looping SILENT player runs ONLY while a conversation is
+    // actively cycling (owner: never always-on). With the `audio` background
+    // mode it stops iOS suspending the app between turns, so backgrounded
+    // re-listen works and a mid-question exit can't truncate the mic. Released
+    // when the conversation goes idle, on error, on শেষ, on console close.
+
+    private static let silentWav: Data = {
+        var d = Data()
+        func le32(_ v: UInt32) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+        func le16(_ v: UInt16) { withUnsafeBytes(of: v.littleEndian) { d.append(contentsOf: $0) } }
+        let samples = 8000                                    // 1s mono 8kHz 16-bit
+        d.append("RIFF".data(using: .ascii)!); le32(UInt32(36 + samples * 2))
+        d.append("WAVEfmt ".data(using: .ascii)!); le32(16); le16(1); le16(1)
+        le32(8000); le32(16000); le16(2); le16(16)
+        d.append("data".data(using: .ascii)!); le32(UInt32(samples * 2))
+        d.append(Data(count: samples * 2))
+        return d
+    }()
+
+    private func keepAliveStart() {
+        guard keepAlive == nil else { return }
+        keepAlive = try? AVAudioPlayer(data: Self.silentWav)
+        keepAlive?.numberOfLoops = -1
+        keepAlive?.volume = 0
+        keepAlive?.play()
+        tr("keepAlive ON")
+    }
+
+    private func keepAliveStop() {
+        guard keepAlive != nil else { return }
+        keepAlive?.stop(); keepAlive = nil
+        tr("keepAlive off")
+    }
+
+    /// Post-background / post-interruption self-heal: reactivate the session and
+    /// clear stuck half-state, so the console NEVER needs an app kill again.
+    private func recoverAudio(_ why: String) {
+        guard !closed else { return }
+        let s = AVAudioSession.sharedInstance()
+        try? s.setCategory(.playAndRecord, mode: .default,
+                           options: [.defaultToSpeaker, .allowBluetoothA2DP])
+        try? s.setActive(true)
+        try? s.overrideOutputAudioPort(.speaker)
+        sessionReady = true
+        startingListen = false
+        if ttsActive && !tts.isAudiblyPlaying { ttsActive = false; ttsLevel = 0 }
+        if state == .listening && recorder == nil && !streamingActive { state = .idle }
+        if state == .speaking && !tts.isAudiblyPlaying { state = .idle }
+        refreshWake()
+        tr("recoverAudio(\(why))")
+    }
+
+    private func handleInterruption(_ note: Notification) {
+        guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+        if type == .began {
+            tr("audio INTERRUPTED")
+            keepAlive?.pause()
+        } else {
+            recoverAudio("interruption-ended")
+            keepAlive?.play()
+        }
+    }
+
+    /// Island orb button (AlmaVoiceListenIntent) — start listening WITHOUT
+    /// bringing the app forward; the intent runs in this process in background.
+    private func islandListen() {
+        guard !closed else { return }
+        recoverAudio("islandListen")
+        switch state {
+        case .speaking: tts.stopAll(); startListening()
+        case .idle, .error: startListening()
+        default: break
+        }
     }
 
     private func greeting() -> String {
@@ -394,6 +496,7 @@ final class AlmaVoiceEngine {
         guard !ttsActive else { tr("startListening BLOCKED (ttsActive)"); return }
         tr("startListening ALLOWED")
         startingListen = true
+        keepAliveStart()                 // conversation live → survive backgrounding
         wake.stop()                      // free the mic for the STT engine
         tts.stopAll()
         if streamingEnabled {
@@ -471,6 +574,7 @@ final class AlmaVoiceEngine {
     private func noSpeechEnded() {
         guard convoMode, !closed, emptyListens < 2 else {
             emptyListens = 0
+            keepAliveStop()              // conversation idle — release the audio hold
             playCloseChime()
             return
         }
@@ -904,7 +1008,7 @@ final class AlmaVoiceEngine {
         if !nowLine.isEmpty { saidLines.append(nowLine); nowLine = "" }
         if state == .speaking || state == .thinking {
             state = .idle
-            scheduleAutoListen()
+            if convoMode { scheduleAutoListen() } else { keepAliveStop() }
         }
     }
 
@@ -1460,6 +1564,9 @@ final class AlmaTtsQueue: NSObject, AVAudioPlayerDelegate {
     private var meterTask: Task<Void, Never>?
     private var pumping = false
     private var wasSilent = true             // fire ttsDidGoSilent once per silence edge
+
+    /// Recovery probe: is a chunk actually sounding right now? (Stuck-flag repair.)
+    var isAudiblyPlaying: Bool { player?.isPlaying ?? false }
 
     /// Reset the per-turn flags (greeting/acks must not count as the reply's
     /// first chunk — that kept the state stuck on "ভাবছি" during playback).
