@@ -1980,12 +1980,12 @@ struct PortalOwnerHubView: View {
             if let err = vm.error { errorStrip(err) }
             kpiGrid(hub.kpis)
             if let award = hub.award { awardHero(award, stats: hub.awardStats) }
-            if !hub.overdueUpdates.isEmpty { updateTracking(hub.overdueUpdates) }
             if !hub.proposals.isEmpty { proposalsCard(hub.proposals) }
             approvalCard(hub)
             teamCard(hub)                    // team status + each staff's todolist nested
             chatEntry
-            activityCard(hub.activity)
+            // "আপডেট ট্র্যাকিং" (overdueUpdates) + "টিম অ্যাক্টিভিটি" (activity feed) removed —
+            // owner found them cluttered/unprofessional; keep the leaner board.
             leaderboardCard(hub.leaderboard)
             performanceCard(hub.performance)
             noticesCard
