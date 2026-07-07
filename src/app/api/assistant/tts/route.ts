@@ -7,6 +7,14 @@ export const runtime = 'nodejs'
 export const maxDuration = 30
 
 /** Strip markdown before synthesis (asterisks, backticks, headings, etc.). */
+// Google TTS reads emoji aloud ("police siren sound" etc.) — strip them all first.
+function stripEmoji(text: string): string {
+  return text
+    .replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}\u{20E3}\u{1F1E6}-\u{1F1FF}]/gu, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
 function stripMarkdown(text: string): string {
   return text
     .replace(/#{1,6}\s+/g, '')         // headings
@@ -49,7 +57,7 @@ export async function POST(req: NextRequest) {
   if (!rawText) return Response.json({ error: 'text is required' }, { status: 400 })
 
   // Strip markdown and cap at ~600 chars
-  const cleaned = stripMarkdown(rawText)
+  const cleaned = stripEmoji(stripMarkdown(rawText))
   const text = cleaned.slice(0, 600)
   if (!text) return Response.json({ error: 'text is required' }, { status: 400 })
 

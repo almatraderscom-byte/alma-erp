@@ -55,6 +55,9 @@ struct AgentPalette {
                             : Color(red: 0.102, green: 0.102, blue: 0.180) } // #1a1a2e
     var muted: Color { dark ? Color(red: 0.682, green: 0.698, blue: 0.753)   // #aeb2c0
                             : Color(red: 0.392, green: 0.455, blue: 0.545) } // #64748b
+    /// slightly brighter muted — tool labels / secondary emphasis
+    var mutedHi: Color { dark ? Color(red: 0.820, green: 0.835, blue: 0.878)   // #d1d5e0
+                              : Color(red: 0.278, green: 0.333, blue: 0.412) } // #475569
     var card: Color  { dark ? Color(red: 0.125, green: 0.125, blue: 0.153)   // #202027
                             : .white }
     var borderSubtle: Color { dark ? Color.white.opacity(0.08) : Color.black.opacity(0.06) }
@@ -293,6 +296,7 @@ struct AgentChatMessage: Identifiable, Equatable {
         var headline: String
         var detail: String?          // full reasoning text (accordion)
         var tools: [Tool] = []
+        var live: Bool = false
     }
     struct ConfirmCard: Identifiable, Equatable {
         let id: String            // pendingActionId
@@ -308,8 +312,40 @@ struct AgentChatMessage: Identifiable, Equatable {
         var status: String        // pending | answered | superseded
         var selectedOption: String?
     }
+    /// Ordered SSE timeline — mirrors web `TimelineEntry` / server `usage.timeline`.
+    enum TimelineEntry: Equatable {
+        case think(String)
+        case tool(id: String, name: String, ok: Bool?, live: Bool, inputPretty: String?, resultFull: String?)
+    }
 
-    let id: String
+    /// One compact 44pt activity row inside the streaming turn (Claude parity).
+    struct ActivityBlock: Identifiable, Equatable {
+        enum Kind: Equatable { case thinking, search, tool }
+        let id: String
+        var kind: Kind
+        var label: String
+        var thinkFull: String = ""
+        var toolId: String? = nil
+        var ok: Bool? = nil
+        var live: Bool = false
+    }
+
+    /// Chronological turn content: prose and activity rows grow together, in order,
+    /// exactly as the SSE events arrive (Claude interleaved composition).
+    enum TurnBlock: Identifiable, Equatable {
+        case prose(id: String, text: String)
+        case activity(ActivityBlock)
+        var id: String {
+            switch self {
+            case .prose(let id, _): return id
+            case .activity(let a): return a.id
+            }
+        }
+    }
+
+    /// `var` (not `let`): the stream-tail merge keeps the local id when the server
+    /// copy arrives, so the row's SwiftUI identity never changes → prose never blinks.
+    var id: String
     let role: Role
     var text: String = ""
     var imagePaths: [String] = []
@@ -317,9 +353,12 @@ struct AgentChatMessage: Identifiable, Equatable {
     var confirmCards: [ConfirmCard] = []
     var askCards: [AskCard] = []
     var tools: [Tool] = []            // flat list (live streaming + fallback)
-    var phases: [Phase] = []          // Claude-style activity timeline (persisted msgs)
+    var timeline: [TimelineEntry] = []
+    var blocks: [TurnBlock] = []      // interleaved prose ↔ activity (streaming UI)
+    var phases: [Phase] = []          // Claude-style activity timeline (live + persisted)
     var thinking: String?
     var thinkingMs: Int?
+    var streamStartedAt: Date?
     var tokensIn: Int?
     var tokensOut: Int?
     var costUsd: String?
@@ -373,44 +412,194 @@ struct AgentChatMessage: Identifiable, Equatable {
             .init(id: t.id ?? "tool-\(wire.id)-\(i)", name: t.name ?? "?", ok: t.success,
                   preview: t.result, live: false, inputPretty: nil, resultFull: t.result)
         }
-        m.phases = Self.buildPhases(wire: wire, fallbackTools: m.tools)
+        m.phases = Self.buildPhases(timeline: Self.timelineFromWire(wire), messageId: wire.id, live: false,
+                                    fallbackTools: m.tools)
+        m.timeline = Self.timelineFromWire(wire)
         return m
     }
 
-    /// Web parity: derive phases from the persisted `timeline` — every `think` entry
-    /// starts a phase (first line = headline, full text = accordion detail) and the
-    /// `tool` entries that follow attach to it. Falls back to one phase around the
-    /// flat toolCalls when a message predates the timeline column.
-    static func buildPhases(wire: AgentMessageWire, fallbackTools: [Tool]) -> [Phase] {
-        var phases: [Phase] = []
-        var n = 0
-        for e in wire.timeline ?? [] {
-            n += 1
+    static func timelineFromWire(_ wire: AgentMessageWire) -> [TimelineEntry] {
+        (wire.timeline ?? []).compactMap { e -> TimelineEntry? in
             if e.t == "think" {
-                let full = (e.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let t = (e.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                return t.isEmpty ? nil : .think(t)
+            }
+            if e.t == "tool" {
+                return .tool(id: e.id ?? "tl-\(wire.id)", name: e.name ?? "টুল", ok: e.ok, live: false,
+                             inputPretty: e.input?.pretty(), resultFull: e.result)
+            }
+            return nil
+        }
+    }
+
+    // MARK: Live SSE timeline builders (web AgentApp parity)
+
+    static func appendThink(_ tl: [TimelineEntry], chunk: String) -> [TimelineEntry] {
+        var next = tl
+        if case .think(let prev)? = next.last {
+            next[next.count - 1] = .think(prev + chunk)
+        } else {
+            next.append(.think(chunk))
+        }
+        return next
+    }
+
+    static func pushOrUpdateTool(_ tl: [TimelineEntry], id: String, name: String,
+                                 inputPretty: String?) -> [TimelineEntry] {
+        var next = tl
+        if let idx = next.firstIndex(where: { if case .tool(let tid, _, _, _, _, _) = $0 { return tid == id }; return false }) {
+            if case .tool(_, let n, let ok, let live, _, let result) = next[idx] {
+                next[idx] = .tool(id: id, name: n, ok: ok, live: live, inputPretty: inputPretty ?? nil, resultFull: result)
+            }
+        } else {
+            next.append(.tool(id: id, name: name, ok: nil, live: true, inputPretty: inputPretty, resultFull: nil))
+        }
+        return next
+    }
+
+    static func finalizeTool(_ tl: [TimelineEntry], id: String, ok: Bool,
+                             result: String?) -> [TimelineEntry] {
+        tl.map { e in
+            if case .tool(let tid, let name, _, _, let input, _) = e, tid == id {
+                return TimelineEntry.tool(id: tid, name: name, ok: ok, live: false,
+                                          inputPretty: input, resultFull: result)
+            }
+            return e
+        }
+    }
+
+    // MARK: Interleaved TurnBlock builders (Claude composition — v3 demo parity)
+
+    /// First line of a think burst, cleaned + truncated, as the row label.
+    static func thinkLabel(_ full: String) -> String {
+        let firstLine = String(full.split(separator: "\n").first ?? "")
+            .replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "##", with: "")
+            .trimmingCharacters(in: .whitespaces)
+        if firstLine.isEmpty { return "Thinking" }
+        return firstLine.count > 64 ? String(firstLine.prefix(64)) + "…" : firstLine
+    }
+
+    /// text_delta → extend the last prose block, or open a new one after activity.
+    static func appendProseBlock(_ blocks: [TurnBlock], chunk: String, messageId: String) -> [TurnBlock] {
+        var next = blocks
+        if case .prose(let id, let text)? = next.last {
+            next[next.count - 1] = .prose(id: id, text: text + chunk)
+        } else {
+            next.append(.prose(id: "bp-\(messageId)-\(next.count)", text: chunk))
+        }
+        return next
+    }
+
+    /// thinking_delta → merge into the pending thinking row (ONE row per think burst;
+    /// a new burst starts only after prose or a tool interrupted the previous one).
+    static func appendThinkBlock(_ blocks: [TurnBlock], chunk: String, messageId: String) -> [TurnBlock] {
+        var next = blocks
+        if case .activity(var a)? = next.last, a.kind == .thinking {
+            a.thinkFull += chunk
+            a.label = thinkLabel(a.thinkFull)
+            next[next.count - 1] = .activity(a)
+        } else {
+            next.append(.activity(.init(id: "ba-\(messageId)-\(next.count)", kind: .thinking,
+                                        label: thinkLabel(chunk), thinkFull: chunk, live: true)))
+        }
+        return next
+    }
+
+    /// tool_start → one "Searched available tools" row before the first tool, then a tool row.
+    static func appendToolBlock(_ blocks: [TurnBlock], toolId: String, name: String,
+                                messageId: String) -> [TurnBlock] {
+        var next = blocks
+        let hasSearch = next.contains { if case .activity(let a) = $0 { return a.kind == .search }; return false }
+        if !hasSearch {
+            next.append(.activity(.init(id: "bs-\(messageId)", kind: .search,
+                                        label: "Searched available tools")))
+        }
+        let hasTool = next.contains { if case .activity(let a) = $0 { return a.toolId == toolId }; return false }
+        if !hasTool {
+            next.append(.activity(.init(id: "bt-\(messageId)-\(toolId)", kind: .tool,
+                                        label: name, toolId: toolId, live: true)))
+        }
+        return next
+    }
+
+    /// tool_end → settle the matching tool row.
+    static func finalizeToolBlock(_ blocks: [TurnBlock], toolId: String, ok: Bool) -> [TurnBlock] {
+        blocks.map { b in
+            if case .activity(var a) = b, a.toolId == toolId {
+                a.ok = ok
+                a.live = false
+                return .activity(a)
+            }
+            return b
+        }
+    }
+
+    static func syncTools(from timeline: [TimelineEntry]) -> [Tool] {
+        timeline.compactMap { e in
+            if case .tool(let id, let name, let ok, let live, let input, let result) = e {
+                return Tool(id: id, name: name, ok: ok, preview: result.map { String($0.prefix(160)) },
+                            live: live, inputPretty: input, resultFull: result)
+            }
+            return nil
+        }
+    }
+
+    static func refreshPhases(on message: inout AgentChatMessage, live: Bool) {
+        message.phases = buildPhases(timeline: message.timeline, messageId: message.id, live: live,
+                                     fallbackTools: message.tools)
+        message.tools = syncTools(from: message.timeline)
+    }
+
+    /// Web parity: derive phases from the ordered timeline stream.
+    static func buildPhases(timeline: [TimelineEntry], messageId: String, live: Bool,
+                            fallbackTools: [Tool]) -> [Phase] {
+        var phases: [Phase] = []
+        var cur: Phase?
+        var n = 0
+        for (idx, e) in timeline.enumerated() {
+            n += 1
+            let isLast = idx == timeline.count - 1
+            switch e {
+            case .think(let fullRaw):
+                let full = fullRaw.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !full.isEmpty else { continue }
-                // Headline = first line, markdown emphasis stripped (Gemini loves **…**).
-                let headline = String(full.split(separator: "\n").first ?? "")
+                let headlineRaw = String(full.split(separator: "\n").first ?? Substring(full))
                     .replacingOccurrences(of: "**", with: "")
                     .replacingOccurrences(of: "##", with: "")
                     .trimmingCharacters(in: .whitespaces)
-                phases.append(Phase(id: "ph-\(wire.id)-\(n)",
-                                    headline: headline.count > 120 ? String(headline.prefix(120)) + "…" : headline,
-                                    detail: full == headline ? nil : full))
-            } else if e.t == "tool" {
-                let tool = Tool(id: e.id ?? "tl-\(wire.id)-\(n)", name: e.name ?? "টুল",
-                                ok: e.ok, preview: e.result.map { String($0.prefix(160)) },
-                                live: false, inputPretty: e.input?.pretty(), resultFull: e.result)
-                if phases.isEmpty {
-                    phases.append(Phase(id: "ph-\(wire.id)-t\(n)", headline: tool.name, detail: nil))
+                let headline = headlineRaw.count > 120 ? String(headlineRaw.prefix(120)) + "…" : headlineRaw
+                let detail = full == headline ? nil : full
+                if let c = cur, !c.tools.isEmpty { phases.append(c); cur = nil }
+                if var c = cur {
+                    c.detail = c.detail.map { $0 + "\n\n" + full } ?? full
+                    c.headline = headline
+                    if live && isLast { c.live = true }
+                    cur = c
+                } else {
+                    cur = Phase(id: "ph-\(messageId)-\(n)", headline: headline, detail: detail,
+                                tools: [], live: live && isLast)
                 }
-                phases[phases.count - 1].tools.append(tool)
+            case .tool(let id, let name, let ok, let toolLive, let input, let result):
+                if cur == nil {
+                    cur = Phase(id: "ph-\(messageId)-t\(n)", headline: name, detail: nil, tools: [], live: false)
+                }
+                cur?.tools.append(Tool(id: id, name: name, ok: ok, preview: result.map { String($0.prefix(160)) },
+                                       live: toolLive, inputPretty: input, resultFull: result))
+                if toolLive { cur?.live = true }
             }
         }
+        if let c = cur { phases.append(c) }
         if phases.isEmpty && !fallbackTools.isEmpty {
-            phases = [Phase(id: "ph-\(wire.id)-flat", headline: "কাজের ধাপ", detail: nil, tools: fallbackTools)]
+            phases = [Phase(id: "ph-\(messageId)-flat", headline: "কাজের ধাপ", detail: nil,
+                            tools: fallbackTools, live: live)]
         }
         return phases
+    }
+
+    /// Legacy wire builder — delegates to the unified timeline path.
+    static func buildPhases(wire: AgentMessageWire, fallbackTools: [Tool]) -> [Phase] {
+        buildPhases(timeline: timelineFromWire(wire), messageId: wire.id, live: false, fallbackTools: fallbackTools)
     }
 }
 
@@ -521,6 +710,8 @@ final class AssistantVM {
 
     // Streaming state
     var isStreaming = false
+    /// The reply that just settled THIS session — its ALMA wordmark animates in (LOCKED §4).
+    var justSettledId: String?
     var thinkingLive = false        // spinner row before the first text token
     var currentTurnId: String?
     private var streamTask: Task<Void, Never>?
@@ -663,11 +854,87 @@ final class AssistantVM {
             let wire: [AgentMessageWire] = try await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/messages")
             // Never clobber an in-flight optimistic/streaming tail with the poll.
             guard !isStreaming else { return }
-            messages = wire.map(AgentChatMessage.from)
+            mergeServerMessages(wire)
             authExpired = false
             await loadOpenTasks()
         } catch AlmaAPIError.notAuthenticated { authExpired = true } catch {
             if showSpinner { errorToast = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription }
+        }
+    }
+
+    /// Local ("stream-…" / "local-…") id per server message id — keeps SwiftUI row
+    /// identity stable when the server copy of a just-streamed turn replaces the tail.
+    private var localIdByServerId: [String: String] = [:]
+
+    /// Server truth replaces the thread WITHOUT clobbering the freshly streamed tail:
+    /// the tail keeps its id (no remove+insert animation) and its richer streamed
+    /// content wherever the server copy is thinner. Fixes "prose vanishes at stream end".
+    private func mergeServerMessages(_ wire: [AgentMessageWire]) {
+        var incoming = wire.map(AgentChatMessage.from)
+
+        // Pair the optimistic user message + streamed assistant tail with their
+        // server rows (last user / last assistant AFTER that user message).
+        let lastServerUser = incoming.lastIndex(where: { $0.role == .user })
+        if let localUser = messages.last(where: { $0.role == .user && $0.id.hasPrefix("local-") }),
+           let uIdx = lastServerUser, localIdByServerId[incoming[uIdx].id] == nil {
+            localIdByServerId[incoming[uIdx].id] = localUser.id
+        }
+        var pairedTail = false
+        if let localTail = messages.last(where: { $0.role == .assistant && $0.id.hasPrefix("stream-") }) {
+            if let aIdx = incoming.lastIndex(where: { $0.role == .assistant }),
+               aIdx > (lastServerUser ?? -1) {
+                if localIdByServerId[incoming[aIdx].id] == nil {
+                    localIdByServerId[incoming[aIdx].id] = localTail.id
+                }
+                pairedTail = true
+            } else if localIdByServerId.values.contains(localTail.id) {
+                pairedTail = true   // paired on an earlier merge
+            }
+        }
+
+        for i in incoming.indices {
+            guard let lid = localIdByServerId[incoming[i].id],
+                  let old = messages.first(where: { $0.id == lid }) else { continue }
+            // Keep the richer streamed content when the server copy is thinner.
+            if incoming[i].text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                incoming[i].text = old.text
+            }
+            if incoming[i].timeline.isEmpty && !old.timeline.isEmpty {
+                incoming[i].timeline = old.timeline
+                incoming[i].phases = old.phases
+                incoming[i].tools = old.tools
+            }
+            incoming[i].blocks = old.blocks
+            if incoming[i].thinking == nil { incoming[i].thinking = old.thinking }
+            if incoming[i].thinkingMs == nil { incoming[i].thinkingMs = old.thinkingMs }
+            if old.role == .user, !old.localImages.isEmpty { incoming[i].localImages = old.localImages }
+            incoming[i].id = lid
+        }
+
+        // Server hasn't persisted the streamed reply yet → keep the local tail
+        // appended (it merges on the next poll). Prose must never disappear.
+        if !pairedTail,
+           let tail = messages.last(where: { $0.role == .assistant && $0.id.hasPrefix("stream-") }),
+           !tail.text.isEmpty {
+            var kept = tail
+            kept.isStreaming = false
+            incoming.append(kept)
+        }
+        messages = incoming
+    }
+
+    /// Stream ended: settle the tail in place FIRST (prose stays on screen), then
+    /// fold in server truth (card ids/statuses, tokens, cost) via the merge.
+    private func finalizeTurn() async {
+        if let i = messages.lastIndex(where: { $0.isStreaming }) { messages[i].isStreaming = false }
+        isStreaming = false
+        thinkingLive = false
+        justSettledId = messages.last(where: { $0.role == .assistant })?.id
+        guard let cid = conversationId else { return }
+        if let wire: [AgentMessageWire] = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/messages") {
+            mergeServerMessages(wire)
+            justSettledId = messages.last(where: { $0.role == .assistant })?.id
+            await loadOpenTasks()
         }
     }
 
@@ -938,6 +1205,7 @@ final class AssistantVM {
         isStreaming = true
         thinkingLive = true
         currentTurnId = nil
+        ensureStreamingTail()
 
         let body = ChatBody(conversationId: conversationId, message: text,
                             files: readyFiles, modelId: modelId ?? "auto")
@@ -979,10 +1247,11 @@ final class AssistantVM {
                     self?.handle(ev)
                 }
             }
-            // Server truth (final card ids/statuses, tool rows, cost) replaces the tail.
-            await loadMessages()
+            // Server truth (final card ids/statuses, tool rows, cost) merges into the
+            // tail in place — never a wholesale replace (prose must not blink).
+            await finalizeTurn()
         } catch is CancellationError {
-            await loadMessages()
+            await finalizeTurn()
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
         } catch {
@@ -1044,27 +1313,50 @@ final class AssistantVM {
         case "model_info":
             if let l = ev.label { modelLabel = l }
         case "thinking_delta":
-            thinkingLive = true
-        case "text_delta":
-            thinkingLive = false
             ensureStreamingTail()
             if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                let chunk = ev.delta ?? ""
+                messages[i].thinking = (messages[i].thinking ?? "") + chunk
+                messages[i].timeline = AgentChatMessage.appendThink(messages[i].timeline, chunk: chunk)
+                messages[i].blocks = AgentChatMessage.appendThinkBlock(
+                    messages[i].blocks, chunk: chunk, messageId: messages[i].id)
+                let live = messages[i].text.isEmpty
+                AgentChatMessage.refreshPhases(on: &messages[i], live: live)
+            }
+        case "text_delta":
+            ensureStreamingTail()
+            if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                if messages[i].text.isEmpty {
+                    if let start = messages[i].streamStartedAt {
+                        messages[i].thinkingMs = max(1, Int(Date().timeIntervalSince(start) * 1000))
+                    }
+                    AgentChatMessage.refreshPhases(on: &messages[i], live: false)
+                }
                 messages[i].text += ev.delta ?? ""
+                messages[i].blocks = AgentChatMessage.appendProseBlock(
+                    messages[i].blocks, chunk: ev.delta ?? "", messageId: messages[i].id)
             }
         case "tool_start":
             ensureStreamingTail()
             if let i = messages.lastIndex(where: { $0.isStreaming }) {
-                messages[i].tools.append(.init(id: ev.id ?? UUID().uuidString,
-                                               name: ev.name ?? "টুল", ok: nil, preview: nil, live: true,
-                                               inputPretty: ev.input?.pretty(), resultFull: nil))
+                let tid = ev.id ?? UUID().uuidString
+                messages[i].timeline = AgentChatMessage.pushOrUpdateTool(
+                    messages[i].timeline, id: tid, name: ev.name ?? "টুল",
+                    inputPretty: ev.input?.pretty())
+                messages[i].blocks = AgentChatMessage.appendToolBlock(
+                    messages[i].blocks, toolId: tid, name: ev.name ?? "টুল",
+                    messageId: messages[i].id)
+                AgentChatMessage.refreshPhases(on: &messages[i], live: messages[i].text.isEmpty)
             }
         case "tool_end":
             if let i = messages.lastIndex(where: { $0.isStreaming }),
-               let j = messages[i].tools.firstIndex(where: { $0.id == ev.id }) {
-                messages[i].tools[j].ok = ev.success
-                messages[i].tools[j].preview = ev.resultPreview
-                messages[i].tools[j].resultFull = ev.resultPreview
-                messages[i].tools[j].live = false
+               let tid = ev.id {
+                messages[i].timeline = AgentChatMessage.finalizeTool(
+                    messages[i].timeline, id: tid, ok: ev.success ?? true,
+                    result: ev.resultPreview)
+                messages[i].blocks = AgentChatMessage.finalizeToolBlock(
+                    messages[i].blocks, toolId: tid, ok: ev.success ?? true)
+                AgentChatMessage.refreshPhases(on: &messages[i], live: messages[i].text.isEmpty)
             }
         case "confirm_card":
             ensureStreamingTail()
@@ -1095,6 +1387,7 @@ final class AssistantVM {
         if messages.last?.isStreaming != true {
             var m = AgentChatMessage(id: "stream-\(UUID().uuidString)", role: .assistant)
             m.isStreaming = true
+            m.streamStartedAt = Date()
             messages.append(m)
         }
     }
@@ -1147,7 +1440,19 @@ final class AssistantVM {
         }
         let _: OkResponse? = try? await AlmaAPI.shared.send(
             "POST", "/api/assistant/ask-cards/\(cardId)/answer", body: ["option": option])
-        await loadMessages()
+        // Feed the choice back into the chat so the agent continues instantly (web onQuickSend parity).
+        send(option)
+    }
+
+    /// "আমার মত" — reject pending action, then send owner's correction as a new turn.
+    func submitOpinion(_ cardId: String, note: String) async {
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        setConfirmStatus(cardId, "rejected")
+        let _: OkResponse? = try? await AlmaAPI.shared.send(
+            "POST", "/api/assistant/actions/\(cardId)/reject")
+        send(trimmed)
     }
 
     // ── Attachments ────────────────────────────────────────────────────────
@@ -1420,10 +1725,10 @@ struct AgentMarkdownText: View {
         if let a = try? AttributedString(markdown: s,
                                          options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
             return Text(a)
-                .font(.system(size: 15))
+                .font(.system(size: 15.5, design: .serif))
                 .foregroundStyle(pal.ink)
         }
-        return Text(s).font(.system(size: 15)).foregroundStyle(pal.ink)
+        return Text(s).font(.system(size: 15.5, design: .serif)).foregroundStyle(pal.ink)
     }
 
     /// Web parity: fenced ```copy/caption/post/text = the branded coral copy card;
@@ -1443,10 +1748,15 @@ struct AgentMarkdownText: View {
                     Label("কপি করুন", systemImage: "doc.on.doc")
                         .font(.system(size: 11.5, weight: .semibold))
                         .foregroundStyle(isCopyCard ? AgentPalette.coral : Color.white.opacity(0.8))
+                        .padding(.horizontal, isCopyCard ? 10 : 0)
+                        .padding(.vertical, isCopyCard ? 5 : 0)
+                        .background(isCopyCard ? AgentPalette.coral.opacity(0.13) : .clear, in: Capsule())
+                        .overlay(Capsule().strokeBorder(
+                            isCopyCard ? AgentPalette.coral.opacity(0.45) : .clear, lineWidth: 1))
                 }
             }
             Text(body)
-                .font(.system(size: 13, design: isCopyCard ? .default : .monospaced))
+                .font(.system(size: 13.5, design: isCopyCard ? .serif : .monospaced))
                 .foregroundStyle(isCopyCard ? pal.ink : Color.white.opacity(0.92))
                 .lineSpacing(3)
                 .textSelection(.enabled)
@@ -1527,7 +1837,10 @@ struct AgentChatImage: View {
 struct AgentMessageRow: View {
     let message: AgentChatMessage
     let vm: AssistantVM
+    let showWorkingIndicator: Bool
+    let isLastAssistant: Bool
     let onToolTap: (AgentChatMessage.Tool) -> Void
+    let onActivitySheet: (AgentActivitySheetRequest) -> Void
     @Environment(\.colorScheme) private var scheme
     @State private var expandedLong = false
 
@@ -1586,68 +1899,126 @@ struct AgentMessageRow: View {
             .padding(.leading, 44)   // ~85% max width feel
             .padding(.bottom, 18)
         } else {
-            VStack(alignment: .leading, spacing: 10) {
-                // Claude-style activity timeline (persisted) or the live tool pill.
-                if !message.phases.isEmpty && !message.isStreaming {
-                    AgentActivityTimeline(message: message, pal: pal, onToolTap: onToolTap)
-                } else if !message.tools.isEmpty {
-                    AgentLiveToolList(tools: message.tools, pal: pal, onToolTap: onToolTap)
-                }
-                if !message.text.isEmpty {
-                    let long = message.text.count > 1500 && !message.isStreaming
-                    VStack(alignment: .leading, spacing: 4) {
-                        AgentMarkdownText(text: message.text, pal: pal)
-                            .frame(maxHeight: long && !expandedLong ? 340 : .infinity, alignment: .top)
-                            .clipped()
-                            .mask(
-                                LinearGradient(stops: long && !expandedLong
-                                    ? [.init(color: .black, location: 0), .init(color: .black, location: 0.78),
-                                       .init(color: .clear, location: 1)]
-                                    : [.init(color: .black, location: 0), .init(color: .black, location: 1)],
-                                    startPoint: .top, endPoint: .bottom))
-                            .overlay(alignment: .bottomTrailing) {
-                                if message.isStreaming { EmptyView() }
+            VStack(alignment: .leading, spacing: 8) {
+                let hasTimeline = !message.timeline.isEmpty
+                let hasSettledMeta = !message.phases.isEmpty || !(message.thinking ?? "").isEmpty
+                    || !message.tools.isEmpty
+                // LOCKED SPEC §1: NO glass card — plain on the aurora (Claude iOS).
+                    if !message.blocks.isEmpty {
+                        // Claude composition — chronological prose ↔ compact rows;
+                        // rows persist after settle (tap → sheets), prose never moves.
+                        AgentTurnBlocksView(message: message, pal: pal, onToolTap: onToolTap) { kind in
+                            onActivitySheet(.init(message: message, kind: kind))
+                        }
+                    } else {
+                        // Persisted history turn — one collapsed summary row above the prose.
+                        if !message.isStreaming && (hasTimeline || hasSettledMeta) {
+                            AgentSettledSummaryRow(message: message, pal: pal) {
+                                onActivitySheet(.init(message: message, kind: .summary))
                             }
-                        if long {
-                            Button {
-                                UISelectionFeedbackGenerator().selectionChanged()
-                                withAnimation(.easeOut(duration: 0.3)) { expandedLong.toggle() }
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Text(expandedLong ? "কম দেখুন" : "বিস্তারিত দেখুন")
-                                        .font(.system(size: 12, weight: .medium))
-                                    Image(systemName: "chevron.down")
-                                        .font(.system(size: 10))
-                                        .rotationEffect(.degrees(expandedLong ? 180 : 0))
+                        }
+                        if !message.text.isEmpty {
+                            let long = message.text.count > 1500 && !message.isStreaming
+                            VStack(alignment: .leading, spacing: 4) {
+                                if message.isStreaming {
+                                    HStack(alignment: .bottom, spacing: 2) {
+                                        AgentMarkdownText(text: message.text, pal: pal)
+                                            .modifier(AgentShimmerModifier())
+                                        AgentTypingCursor()
+                                    }
+                                } else {
+                                    AgentMarkdownText(text: message.text, pal: pal)
+                                        .frame(maxHeight: long && !expandedLong ? 340 : .infinity, alignment: .top)
+                                        .clipped()
+                                        .mask(
+                                            LinearGradient(stops: long && !expandedLong
+                                                ? [.init(color: .black, location: 0), .init(color: .black, location: 0.78),
+                                                   .init(color: .clear, location: 1)]
+                                                : [.init(color: .black, location: 0), .init(color: .black, location: 1)],
+                                                startPoint: .top, endPoint: .bottom))
                                 }
-                                .foregroundStyle(AgentPalette.coral.opacity(0.85))
+                                if long {
+                                    Button {
+                                        UISelectionFeedbackGenerator().selectionChanged()
+                                        withAnimation(.easeOut(duration: 0.3)) { expandedLong.toggle() }
+                                    } label: {
+                                        HStack(spacing: 4) {
+                                            Text(expandedLong ? "কম দেখুন" : "বিস্তারিত দেখুন")
+                                                .font(.system(size: 12, weight: .medium))
+                                            Image(systemName: "chevron.down")
+                                                .font(.system(size: 10))
+                                                .rotationEffect(.degrees(expandedLong ? 180 : 0))
+                                        }
+                                        .foregroundStyle(AgentPalette.coral.opacity(0.85))
+                                    }
+                                }
                             }
                         }
-                        if message.isStreaming && !message.text.isEmpty {
-                            AgentTypingCursor()
+                    }
+
+                    ForEach(message.imagePaths, id: \.self) { p in
+                        AgentChatImage(path: p, vm: vm)
+                    }
+                    ForEach(message.confirmCards) { card in
+                        AgentConfirmCardView(card: card, pal: pal, vm: vm) { approve in
+                            Task { await vm.approveAction(card.id, approve: approve) }
                         }
                     }
-                }
-                ForEach(message.imagePaths, id: \.self) { p in
-                    AgentChatImage(path: p, vm: vm)
-                }
-                ForEach(message.confirmCards) { card in
-                    AgentConfirmCardView(card: card, pal: pal) { approve in
-                        Task { await vm.approveAction(card.id, approve: approve) }
+                    if !message.askCards.isEmpty {
+                        AgentAskCardsPager(cards: message.askCards, pal: pal) { card, option in
+                            Task { await vm.answerAskCard(card.id, option: option) }
+                        }
                     }
-                }
-                ForEach(message.askCards) { card in
-                    AgentAskCardView(card: card, pal: pal) { option in
-                        Task { await vm.answerAskCard(card.id, option: option) }
+
+                    // Single starburst — bottom-left INSIDE the card while the turn runs.
+                    if showWorkingIndicator {
+                        AgentThinkingRow(mode: vm.liveMode, pal: pal)
+                            .padding(.top, 2)
                     }
-                }
-                // "✦ ALMA" byline + copy / listen / cost — web action row parity.
+
+                // ALMA wordmark footer + copy / listen / cost (LOCKED §4).
                 if !message.isStreaming && !message.text.isEmpty {
                     AgentMessageActions(message: message, vm: vm, pal: pal)
+                }
+                // "N কাজ বাকি" — end of last assistant reply (web AgentOpenTasksChip parity)
+                if isLastAssistant && !message.isStreaming && !vm.openTasks.isEmpty {
+                    AgentOpenTasksChipView(vm: vm, pal: pal)
+                        .padding(.top, 2)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 26)
+        }
+    }
+}
+
+/// LOCKED §3 — Claude text-shimmer: base opacity .35, white highlight sweeps
+/// left→right on a 1.8s loop while streaming; settle = normal full-color text.
+@available(iOS 17.0, *)
+struct AgentShimmerModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var sweep = false
+    func body(content: Content) -> some View {
+        if reduceMotion {
+            content
+        } else {
+            content
+                .opacity(0.28)
+                .overlay(
+                    GeometryReader { g in
+                        LinearGradient(colors: [.clear, .white, .clear],
+                                       startPoint: .leading, endPoint: .trailing)
+                            .frame(width: max(70, g.size.width * 0.5))
+                            .offset(x: sweep ? g.size.width : -g.size.width * 0.5)
+                    }
+                    .mask(content)
+                    .allowsHitTesting(false)
+                )
+                .onAppear {
+                    withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
+                        sweep = true
+                    }
+                }
         }
     }
 }
@@ -1735,235 +2106,6 @@ struct AlmaShimmerText: View {
     }
 }
 
-/// Persisted-message activity card: pinned summary → phases (headline + reasoning
-/// accordion + tool pill + tappable tool rows). Web AgentThread lines 629-893.
-@available(iOS 17.0, *)
-struct AgentActivityTimeline: View {
-    let message: AgentChatMessage
-    let pal: AgentPalette
-    let onToolTap: (AgentChatMessage.Tool) -> Void
-    @State private var openPhases: Set<String> = []
-    @State private var openPills: Set<String> = []
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            summaryLine
-            ForEach(Array(message.phases.enumerated()), id: \.element.id) { idx, phase in
-                phaseBlock(phase, isLast: idx == message.phases.count - 1)
-            }
-        }
-        .padding(.bottom, 2)
-    }
-
-    private var summaryLine: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "lightbulb")
-                .font(.system(size: 10.5))
-                .foregroundStyle(pal.muted)
-            Text(summaryText)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(pal.muted)
-            Text("\(almaBn(message.phases.count)) ধাপ")
-                .font(.system(size: 10))
-                .foregroundStyle(pal.muted.opacity(0.8))
-                .padding(.horizontal, 6).padding(.vertical, 1)
-                .background(pal.muted.opacity(0.10), in: Capsule())
-        }
-        .padding(.bottom, 6)
-    }
-
-    private var summaryText: String {
-        let tokenEst = max(1, (message.thinking?.count ?? 40) / 4)
-        if let ms = message.thinkingMs, ms > 0 {
-            return "\(almaBn(max(1, ms / 1000))) সেকেন্ড ধরে ভেবেছে · ~\(almaBn(tokenEst)) টোকেন"
-        }
-        return "কাজের ধাপ"
-    }
-
-    @ViewBuilder private func phaseBlock(_ phase: AgentChatMessage.Phase, isLast: Bool) -> some View {
-        let failed = phase.tools.contains { $0.ok == false }
-        HStack(alignment: .top, spacing: 8) {
-            // Rail: node + connector
-            VStack(spacing: 0) {
-                Circle()
-                    .fill(failed ? Color.red : AgentPalette.coral)
-                    .frame(width: 8, height: 8)
-                    .shadow(color: AgentPalette.coral.opacity(failed ? 0 : 0.35), radius: 3)
-                    .padding(.top, 5)
-                if !isLast {
-                    Rectangle().fill(pal.muted.opacity(0.15)).frame(width: 1)
-                }
-            }
-            .frame(width: 10)
-            VStack(alignment: .leading, spacing: 4) {
-                // Headline (tappable when there is a reasoning detail)
-                Button {
-                    guard phase.detail != nil else { return }
-                    UISelectionFeedbackGenerator().selectionChanged()
-                    withAnimation(.easeOut(duration: 0.18)) {
-                        if openPhases.contains(phase.id) { openPhases.remove(phase.id) }
-                        else { openPhases.insert(phase.id) }
-                    }
-                } label: {
-                    HStack(alignment: .top, spacing: 5) {
-                        Text(phase.headline)
-                            .font(.system(size: 13.5, weight: .semibold))
-                            .foregroundStyle(pal.ink)
-                            .multilineTextAlignment(.leading)
-                        if phase.detail != nil {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(pal.muted.opacity(0.6))
-                                .rotationEffect(.degrees(openPhases.contains(phase.id) ? 90 : 0))
-                                .padding(.top, 3)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                if openPhases.contains(phase.id), let detail = phase.detail {
-                    Text(detail)
-                        .font(.system(size: 12))
-                        .foregroundStyle(pal.muted)
-                        .lineSpacing(3)
-                        .padding(.leading, 10)
-                        .overlay(alignment: .leading) {
-                            Rectangle().fill(pal.muted.opacity(0.15)).frame(width: 2)
-                        }
-                        .transition(.opacity)
-                }
-                if !phase.tools.isEmpty {
-                    toolPill(phase)
-                    if openPills.contains(phase.id) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(phase.tools) { t in
-                                AgentToolRow(tool: t, pal: pal, onTap: onToolTap)
-                            }
-                        }
-                        .transition(.opacity)
-                    }
-                }
-            }
-            .padding(.bottom, isLast ? 0 : 10)
-        }
-    }
-
-    @ViewBuilder private func toolPill(_ phase: AgentChatMessage.Phase) -> some View {
-        let failed = phase.tools.contains { $0.ok == false }
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            withAnimation(.easeOut(duration: 0.18)) {
-                if openPills.contains(phase.id) { openPills.remove(phase.id) }
-                else { openPills.insert(phase.id) }
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Text("🔧").font(.system(size: 10.5))
-                Text("\(almaBn(phase.tools.count))টি টুল ব্যবহার হয়েছে")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(pal.muted)
-                if failed {
-                    Text("· ব্যর্থ").font(.system(size: 11.5)).foregroundStyle(.red)
-                }
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(pal.muted.opacity(0.6))
-                    .rotationEffect(.degrees(openPills.contains(phase.id) ? 90 : 0))
-            }
-            .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(pal.card.opacity(0.6), in: Capsule())
-            .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-/// One tool row — tap opens the glossy I/O bottom sheet.
-@available(iOS 17.0, *)
-struct AgentToolRow: View {
-    let tool: AgentChatMessage.Tool
-    let pal: AgentPalette
-    let onTap: (AgentChatMessage.Tool) -> Void
-
-    var body: some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            onTap(tool)
-        } label: {
-            HStack(alignment: .center, spacing: 6) {
-                if tool.live {
-                    AlmaSparklePulse(size: 13)
-                } else if tool.ok == false {
-                    Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(.red)
-                } else {
-                    Image(systemName: "checkmark").font(.system(size: 10, weight: .semibold)).foregroundStyle(AgentPalette.teal)
-                }
-                if tool.live {
-                    AlmaShimmerText(text: "চলছে · \(tool.name)",
-                                    font: .system(size: 12, weight: .medium), base: pal.muted)
-                } else {
-                    Text(tool.name)
-                        .font(.system(size: 12))
-                        .foregroundStyle(pal.muted)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 4)
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 9))
-                    .foregroundStyle(pal.muted.opacity(tool.inputPretty == nil && tool.resultFull == nil ? 0.25 : 0.7))
-            }
-            .padding(.horizontal, 8).padding(.vertical, 6)
-            .background(pal.card.opacity(0.4), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(pal.borderSubtle, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-/// Live (streaming) tool list — the same pill + rows, before phases exist.
-@available(iOS 17.0, *)
-struct AgentLiveToolList: View {
-    let tools: [AgentChatMessage.Tool]
-    let pal: AgentPalette
-    let onToolTap: (AgentChatMessage.Tool) -> Void
-    @State private var open = true
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Button {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                withAnimation(.easeOut(duration: 0.18)) { open.toggle() }
-            } label: {
-                HStack(spacing: 5) {
-                    if tools.contains(where: { $0.live }) {
-                        AlmaSparklePulse(size: 11)
-                    } else {
-                        Text("🔧").font(.system(size: 10.5))
-                    }
-                    Text("\(almaBn(tools.count))টি টুল ব্যবহার হয়েছে")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(pal.muted)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(pal.muted.opacity(0.6))
-                        .rotationEffect(.degrees(open ? 90 : 0))
-                }
-                .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(pal.card.opacity(0.6), in: Capsule())
-                .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-            if open {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(tools) { t in
-                        AgentToolRow(tool: t, pal: pal, onTap: onToolTap)
-                    }
-                }
-            }
-        }
-    }
-}
-
 /// The glossy tool I/O sheet — glides up from the bottom (web GlassSheet parity).
 @available(iOS 17.0, *)
 struct AgentToolIOSheet: View {
@@ -1975,7 +2117,9 @@ struct AgentToolIOSheet: View {
         let pal = AgentPalette(scheme)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Text("🔧").font(.system(size: 16))
+                Image(systemName: "wrench.and.screwdriver")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(AgentPalette.coral)
                 Text(tool.name)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(pal.ink)
@@ -2020,7 +2164,11 @@ struct AgentToolIOSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
-        .presentationBackground(.ultraThinMaterial)
+        .presentationCornerRadius(26)
+        .presentationBackground {
+            Color(red: 0.23, green: 0.23, blue: 0.275).opacity(0.42)
+                .background(.ultraThinMaterial)
+        }
     }
 
     private func badge(_ text: String, fg: Color, bg: Color, border: Color) -> some View {
@@ -2055,7 +2203,367 @@ struct AgentToolIOSheet: View {
     }
 }
 
-/// "✦ ALMA" byline + relative time + copy + listen + token cost (web action row).
+// MARK: - Thought process / Summary bottom sheet (Claude iOS parity)
+
+/// Opens when the owner taps a compact 🕐 Thinking / 🔍 Searched / settled summary row.
+@available(iOS 17.0, *)
+struct AgentActivitySheetRequest: Identifiable, Equatable {
+    enum Kind: Equatable { case thoughtProcess, summary }
+
+    let message: AgentChatMessage
+    let kind: Kind
+    var id: String { "\(message.id)-\(kind == .thoughtProcess ? "thought" : "summary")" }
+}
+
+@available(iOS 17.0, *)
+struct AgentThoughtProcessSheet: View {
+    let request: AgentActivitySheetRequest
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.dismiss) private var dismiss
+    @State private var openItems: Set<Int> = []
+
+    private var message: AgentChatMessage { request.message }
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(pal.muted)
+                        .frame(width: 32, height: 32)
+                        .background(Color.white.opacity(0.06), in: Circle())
+                }
+                Spacer()
+                Text(request.kind == .thoughtProcess ? "Thought process" : "Summary")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(pal.ink)
+                Spacer()
+                Color.clear.frame(width: 32, height: 32)
+            }
+            .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 10)
+            // Claude iOS: hair-thin coral rule under the sheet header.
+            Rectangle()
+                .fill(AgentPalette.coral.opacity(0.35))
+                .frame(height: 1)
+                .padding(.bottom, 2)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if request.kind == .thoughtProcess {
+                        thoughtProcessBody(pal)
+                    } else {
+                        summaryTimelineBody(pal)
+                    }
+                }
+                .padding(.horizontal, 16).padding(.bottom, 28)
+            }
+        }
+        .presentationDetents(request.kind == .thoughtProcess ? [.large] : [.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(22)
+        .presentationBackground {
+            // LOCKED §7 — glossy floating glass (model-switcher tone), aurora bleeds through.
+            Color(red: 0.23, green: 0.23, blue: 0.275).opacity(0.42)
+                .background(.ultraThinMaterial)
+        }
+    }
+
+    @ViewBuilder private func thoughtProcessBody(_ pal: AgentPalette) -> some View {
+        let prose = combinedThinkingText
+        if prose.isEmpty {
+            Text("এখনো কোনো চিন্তার বিবরণ নেই।")
+                .font(.system(size: 13))
+                .foregroundStyle(pal.muted)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+        } else {
+            // Claude iOS: the thought is plain prose on the sheet — no box around it.
+            Text(prose)
+                .font(.system(size: 15, design: .serif))
+                .foregroundStyle(pal.ink.opacity(0.92))
+                .lineSpacing(6)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 10)
+        }
+    }
+
+    @ViewBuilder private func summaryTimelineBody(_ pal: AgentPalette) -> some View {
+        if summaryItems.isEmpty {
+            Text("এই টার্নে কোনো কার্যকলাপ নেই।")
+                .font(.system(size: 13))
+                .foregroundStyle(pal.muted)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+        } else {
+            summaryHeader(pal)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(summaryItems.enumerated()), id: \.offset) { idx, item in
+                    summaryItemRow(item, index: idx, isLast: idx == summaryItems.count - 1, pal: pal)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func summaryHeader(_ pal: AgentPalette) -> some View {
+        let steps = max(message.tools.count, message.phases.count, 1)
+        let tok = max(1, combinedThinkingText.count / 4)
+        HStack(spacing: 8) {
+            Image(systemName: "clock")
+                .font(.system(size: 13))
+                .foregroundStyle(pal.muted)
+            Text(summaryHeaderText(steps: steps, tokens: tok))
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(pal.muted)
+            Spacer()
+            Text("\(almaBn(steps)) ধাপ")
+                .font(.system(size: 10))
+                .foregroundStyle(pal.muted.opacity(0.8))
+                .padding(.horizontal, 8).padding(.vertical, 2)
+                .background(pal.muted.opacity(0.10), in: Capsule())
+        }
+        .padding(.top, 10)
+        .padding(.bottom, 14)
+    }
+
+    private func summaryHeaderText(steps: Int, tokens: Int) -> String {
+        if let ms = message.thinkingMs, ms > 0 {
+            return "\(almaBn(max(1, ms / 1000))) সেকেন্ড ধরে ভেবেছে · ~\(almaBn(tokens)) টোকেন"
+        }
+        return "\(almaBn(steps)) ধাপ · কাজ সম্পন্ন"
+    }
+
+    /// Claude iOS Summary row: SF icon on a thin connector line, title, trailing
+    /// chevron; the detail (thought text / tool I/O) expands on tap.
+    @ViewBuilder private func summaryItemRow(_ item: SummaryItem, index: Int, isLast: Bool, pal: AgentPalette) -> some View {
+        let open = openItems.contains(index)
+        let hasDetail = (item.body?.isEmpty == false) || (item.input?.isEmpty == false)
+            || (item.output?.isEmpty == false)
+        HStack(alignment: .top, spacing: 12) {
+            VStack(spacing: 2) {
+                Image(systemName: item.icon)
+                    .font(.system(size: 13))
+                    .foregroundStyle(item.tint)
+                    .frame(width: 22, height: 22)
+                if !isLast {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.10))
+                        .frame(width: 1.5)
+                        .frame(maxHeight: .infinity)
+                }
+            }
+            .frame(width: 22)
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    guard hasDetail else { return }
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        if open { openItems.remove(index) } else { openItems.insert(index) }
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(item.title)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(pal.ink)
+                            .multilineTextAlignment(.leading)
+                        Spacer(minLength: 4)
+                        if hasDetail {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(pal.muted.opacity(0.55))
+                                .rotationEffect(.degrees(open ? 90 : 0))
+                        }
+                    }
+                    .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                if open {
+                    if let body = item.body, !body.isEmpty {
+                        Text(body)
+                            .font(.system(size: 13))
+                            .foregroundStyle(pal.mutedHi)
+                            .lineSpacing(5)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if let input = item.input, !input.isEmpty {
+                        sheetIOBlock(label: "ইনপুট · INPUT", text: input, pal: pal, failed: false)
+                    }
+                    if let output = item.output, !output.isEmpty {
+                        sheetIOBlock(label: "ফলাফল · OUTPUT", text: output, pal: pal, failed: item.failed)
+                    }
+                }
+            }
+            .padding(.bottom, isLast ? 0 : 18)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder private func sheetIOBlock(label: String, text: String, pal: AgentPalette, failed: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.8)
+                .foregroundStyle(pal.muted.opacity(0.7))
+            Text(text)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(failed ? Color.red.opacity(0.85) : pal.ink.opacity(0.85))
+                .lineSpacing(3)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color.black.opacity(0.25), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+    }
+
+    private var combinedThinkingText: String {
+        if let t = message.thinking?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
+            return t
+        }
+        let chunks = message.timeline.compactMap { e -> String? in
+            if case .think(let t) = e {
+                let s = t.trimmingCharacters(in: .whitespacesAndNewlines)
+                return s.isEmpty ? nil : s
+            }
+            return nil
+        }
+        return chunks.joined(separator: "\n\n")
+    }
+
+    private struct SummaryItem {
+        let icon: String            // SF Symbol name — never emoji
+        let title: String
+        let body: String?
+        let input: String?
+        let output: String?
+        let isThought: Bool
+        let failed: Bool
+        var tint: Color {
+            if failed { return .red }
+            if icon == "magnifyingglass" { return Color(red: 0.831, green: 0.659, blue: 0.294) } // gold
+            if icon == "wrench.and.screwdriver" { return AgentPalette.teal }
+            return Color.gray.opacity(0.7)
+        }
+    }
+
+    private var summaryItems: [SummaryItem] {
+        var out: [SummaryItem] = []
+        var sawSearch = false
+        var pendingThink: String?
+
+        func flushThink() {
+            guard let t = pendingThink else { return }
+            out.append(.init(icon: "clock", title: AgentChatMessage.thinkLabel(t),
+                             body: t, input: nil, output: nil, isThought: true, failed: false))
+            pendingThink = nil
+        }
+
+        for e in message.timeline {
+            switch e {
+            case .think(let t):
+                let line = t.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !line.isEmpty else { continue }
+                if pendingThink == nil { pendingThink = line }
+                else { pendingThink! += "\n\n" + line }
+            case .tool(let id, let name, let ok, _, let input, let result):
+                flushThink()
+                if !sawSearch {
+                    out.append(.init(icon: "magnifyingglass", title: "Searched available tools",
+                                     body: nil, input: nil, output: nil,
+                                     isThought: false, failed: false))
+                    sawSearch = true
+                }
+                let tool = message.tools.first { $0.id == id }
+                out.append(.init(icon: "wrench.and.screwdriver", title: name,
+                                 body: nil,
+                                 input: input ?? tool?.inputPretty,
+                                 output: result ?? tool?.resultFull ?? tool?.preview,
+                                 isThought: false, failed: ok == false))
+            }
+        }
+        flushThink()
+
+        if out.isEmpty, !message.phases.isEmpty {
+            for p in message.phases {
+                if let d = p.detail, !d.isEmpty {
+                    out.append(.init(icon: "clock", title: p.headline, body: d,
+                                     input: nil, output: nil, isThought: true, failed: false))
+                }
+                for t in p.tools {
+                    out.append(.init(icon: "wrench.and.screwdriver", title: t.name, body: nil,
+                                     input: t.inputPretty, output: t.resultFull ?? t.preview,
+                                     isThought: false, failed: t.ok == false))
+                }
+            }
+        }
+        return out
+    }
+}
+
+/// LOCKED §4 — ALMA wordmark (Claude Lottie parity): reply settles → burst pop-in
+/// (scale 0→1 + spin) → A·L·M·A letters stagger-slide out from behind it and STAY;
+/// next send → letters retract INTO the burst while the loader takes over.
+@available(iOS 17.0, *)
+struct AgentBrandWordmark: View {
+    let animateReveal: Bool          // true only on the just-settled reply
+    let isCurrent: Bool              // ONE burst per session — only the last settled reply has it
+    let vm: AssistantVM
+    @State private var shown = false
+    @State private var retracted = false
+    private static let letters = ["A", "L", "M", "A"]
+
+    var body: some View {
+        if isCurrent { currentBody } else { staticBody }
+    }
+
+    /// Older replies: the burst has moved on — plain small ALMA text only.
+    private var staticBody: some View {
+        Text("ALMA")
+            .font(.system(size: 11, weight: .bold))
+            .tracking(1.4)
+            .foregroundStyle(AgentPalette.coral.opacity(0.6))
+    }
+
+    private var currentBody: some View {
+        HStack(spacing: 5) {
+            AlmaStarburstLoader(mode: .idle, size: 15)
+                .scaleEffect(shown ? 1 : 0.01)
+                .rotationEffect(.degrees(shown ? 0 : -300))
+            HStack(spacing: 0.5) {
+                ForEach(Array(Self.letters.enumerated()), id: \.offset) { i, ch in
+                    Text(ch)
+                        .font(.system(size: 11.5, weight: .bold))
+                        .tracking(1.6)
+                        .foregroundStyle(AgentPalette.coral.opacity(0.95))
+                        .opacity(shown && !retracted ? 1 : 0)
+                        .offset(x: shown && !retracted ? 0 : -14)
+                        .animation(.spring(response: 0.5, dampingFraction: 0.86)
+                            .delay(retracted ? Double(3 - i) * 0.06 : 0.12 + Double(i) * 0.07),
+                                   value: shown && !retracted)
+                }
+            }
+            .clipped()
+        }
+        .onAppear {
+            if animateReveal {
+                withAnimation(.spring(response: 0.6, dampingFraction: 0.72)) { shown = true }
+                AlmaAgentTickHaptic.settleThud()
+            } else {
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { shown = true }
+            }
+        }
+        .onChange(of: vm.isStreaming) { _, streaming in
+            // পরের message → letters উল্টো stagger-এ burst-এর ভিতরে ঢুকে যায়।
+            if streaming && animateReveal { retracted = true }
+        }
+    }
+}
+
+/// ALMA wordmark + relative time + copy + listen + token cost (web action row).
 @available(iOS 17.0, *)
 struct AgentMessageActions: View {
     let message: AgentChatMessage
@@ -2065,13 +2573,12 @@ struct AgentMessageActions: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            HStack(spacing: 3) {
-                AlmaSparkleShape().fill(AgentPalette.coral.opacity(0.8)).frame(width: 10, height: 10)
-                Text("ALMA")
-                    .font(.system(size: 11, weight: .semibold))
-                    .tracking(0.5)
-                    .foregroundStyle(AgentPalette.coral.opacity(0.8))
-            }
+            AgentBrandWordmark(
+                animateReveal: vm.justSettledId == message.id,
+                isCurrent: vm.messages.last(where: {
+                    $0.role == .assistant && !$0.isStreaming && !$0.text.isEmpty
+                })?.id == message.id,
+                vm: vm)
             if let rel = relativeTime(message.createdAt) {
                 Text(rel).font(.system(size: 10)).foregroundStyle(pal.muted)
             }
@@ -2091,7 +2598,7 @@ struct AgentMessageActions: View {
             } label: {
                 Group {
                     if vm.ttsLoadingId == message.id {
-                        ProgressView().controlSize(.mini)
+                        AlmaMiniLoader(mode: .thinking, size: 14)
                     } else if vm.ttsPlayingId == message.id {
                         AgentPlayingBars()
                     } else {
@@ -2147,93 +2654,100 @@ struct AgentPlayingBars: View {
     }
 }
 
-/// The web AlmaSpinner, ported: mono glyph frames + rotating Bangla verbs, with
-/// mode-specific cadence (thinking 210ms / writing 130ms / searching 300ms).
-@available(iOS 17.0, *)
-struct AlmaSpinnerView: View {
-    let mode: String            // "thinking" | "writing" | "searching"
-    var size: CGFloat = 18
-    @State private var frameIdx = 0
-    @State private var verbIdx = 0
-    @State private var breathe = false
-    @State private var rotate = false
-
-    private static let frames = ["·", "✢", "✳\u{FE0E}", "✶\u{FE0E}", "✽\u{FE0E}", "✻\u{FE0E}", "✽\u{FE0E}", "✶\u{FE0E}", "✳\u{FE0E}", "✢"]
-    private static let color = Color(red: 0.910, green: 0.514, blue: 0.353) // #E8835A
-
-    private var verbs: [String] {
-        switch mode {
-        case "writing": return ["লিখছি", "সাজাচ্ছি", "তৈরি করছি", "গুছিয়ে লিখছি", "উত্তর লিখছি", "বাক্য সাজাচ্ছি", "শেষ করছি"]
-        case "searching": return ["খুঁজছি", "দেখছি", "পড়ছি", "তথ্য আনছি", "যাচাই করছি", "খুঁজে দেখছি", "মিলিয়ে দেখছি", "সংগ্রহ করছি"]
-        default: return ["ভাবছি", "চিন্তা করছি", "বুঝছি", "মনে করছি", "বিবেচনা করছি", "বিশ্লেষণ করছি", "মিলিয়ে দেখছি", "হিসাব করছি", "খেয়াল করছি"]
-        }
-    }
-    private var frameMs: UInt64 { mode == "writing" ? 130 : mode == "searching" ? 300 : 210 }
-    private var verbMs: UInt64 { mode == "writing" ? 1500 : mode == "searching" ? 1400 : 2000 }
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Text(Self.frames[frameIdx % Self.frames.count])
-                .font(.system(size: size, design: .monospaced))
-                .foregroundStyle(Self.color)
-                .frame(width: size * 1.2)
-                .shadow(color: Self.color.opacity(0.5), radius: 8)
-                .scaleEffect(mode == "searching" ? 1 : (breathe ? 1.05 : 0.96))
-                .opacity(mode == "searching" ? 1 : (breathe ? 1 : 0.78))
-                .rotationEffect(.degrees(mode == "searching" && rotate ? 360 : 0))
-            Text("\(verbs[verbIdx % verbs.count])…")
-                .font(.system(size: size * 0.62 + 2, weight: .medium))
-                .foregroundStyle(Self.color)
-        }
-        .task(id: mode) {
-            withAnimation(.easeInOut(duration: mode == "writing" ? 0.52 : 0.85).repeatForever(autoreverses: true)) { breathe = true }
-            if mode == "searching" {
-                withAnimation(.linear(duration: 1.25).repeatForever(autoreverses: false)) { rotate = true }
-            }
-            var ticks: UInt64 = 0
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: frameMs * 1_000_000)
-                frameIdx += 1
-                ticks += frameMs
-                if ticks >= verbMs { verbIdx += 1; ticks = 0 }
-            }
-        }
-    }
-}
-
 @available(iOS 17.0, *)
 struct AgentConfirmCardView: View {
     let card: AgentChatMessage.ConfirmCard
     let pal: AgentPalette
+    let vm: AssistantVM
     let onDecide: (Bool) -> Void
+    @State private var showOpinion = false
+    @State private var opinionText = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                Image(systemName: "checkmark.shield").font(.system(size: 12)).foregroundStyle(AgentPalette.coral)
+                Image(systemName: "bell.badge.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(AgentPalette.coral)
                 Text("অনুমোদন দরকার")
-                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(AgentPalette.coral)
+                    .font(.system(size: 12, weight: .semibold)).foregroundStyle(AgentPalette.coral)
                 Spacer()
                 if let c = card.costEstimate, c > 0 {
                     Text(String(format: "~$%.2f", c)).font(.system(size: 10.5)).foregroundStyle(pal.muted)
                 }
             }
+            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 8)
             Text(card.summary)
-                .font(.system(size: 13.5)).foregroundStyle(pal.ink).lineSpacing(2.5)
+                .font(.system(size: 14)).foregroundStyle(pal.ink).lineSpacing(3)
+                .padding(.horizontal, 16).padding(.bottom, 12)
             if card.status == "pending" {
-                HStack(spacing: 8) {
-                    Button { onDecide(true) } label: {
-                        Text("অনুমোদন")
-                            .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
-                            .padding(.horizontal, 16).padding(.vertical, 8)
-                            .background(AgentPalette.coral, in: Capsule())
+                if showOpinion {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "pencil.line")
+                                .font(.system(size: 12))
+                                .foregroundStyle(pal.mutedHi)
+                            Text("আপনার মত লিখুন")
+                                .font(.system(size: 12, weight: .semibold)).foregroundStyle(pal.mutedHi)
+                        }
+                        TextField("আপনার মতামত…", text: $opinionText, axis: .vertical)
+                            .font(.system(size: 14)).lineLimit(2...4)
+                            .padding(10)
+                            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+                            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(pal.borderSubtle))
+                        HStack(spacing: 8) {
+                            Button {
+                                Task { await vm.submitOpinion(card.id, note: opinionText) }
+                            } label: {
+                                Text("পাঠান")
+                                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                                    .padding(.horizontal, 16).padding(.vertical, 8)
+                                    .background(AgentPalette.coral, in: Capsule())
+                            }
+                            .disabled(opinionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            Button { showOpinion = false } label: {
+                                Text("বাতিল").font(.system(size: 13)).foregroundStyle(pal.muted)
+                            }
+                        }
                     }
-                    Button { onDecide(false) } label: {
-                        Text("বাতিল")
-                            .font(.system(size: 13, weight: .medium)).foregroundStyle(pal.muted)
-                            .padding(.horizontal, 14).padding(.vertical, 8)
-                            .background(pal.card.opacity(0.6), in: Capsule())
-                            .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
+                    .padding(.horizontal, 16).padding(.bottom, 14)
+                } else {
+                    VStack(spacing: 0) {
+                        HStack(spacing: 8) {
+                            Button { onDecide(true) } label: {
+                                Text("অনুমোদন")
+                                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+                                    .frame(maxWidth: .infinity).padding(.vertical, 10)
+                                    .background(AgentPalette.coral, in: RoundedRectangle(cornerRadius: 12))
+                            }
+                            Button { onDecide(false) } label: {
+                                Text("বাতিল")
+                                    .font(.system(size: 13, weight: .medium)).foregroundStyle(pal.muted)
+                                    .frame(maxWidth: .infinity).padding(.vertical, 10)
+                                    .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+                                    .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(pal.borderSubtle))
+                            }
+                        }
+                        .padding(.horizontal, 16).padding(.bottom, 10)
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            showOpinion = true
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "text.bubble")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(AgentPalette.coral.opacity(0.9))
+                                Text("আমার মত")
+                                    .font(.system(size: 14, weight: .medium)).foregroundStyle(pal.ink)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(pal.muted.opacity(0.5))
+                            }
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                        }
+                        .buttonStyle(.plain)
+                        .overlay(alignment: .top) { Rectangle().fill(pal.borderSubtle).frame(height: 1) }
                     }
                 }
             } else {
@@ -2242,12 +2756,13 @@ struct AgentConfirmCardView: View {
                     Text(statusLabel).font(.system(size: 12, weight: .medium))
                 }
                 .foregroundStyle(statusColor)
+                .padding(.horizontal, 16).padding(.bottom, 14)
             }
         }
-        .padding(13)
-        .background(AgentPalette.coral.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(AgentPalette.coral.opacity(0.25), lineWidth: 1))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
+        .shadow(color: .black.opacity(0.25), radius: 16, y: 6)
     }
 
     private var statusIcon: String {
@@ -2280,69 +2795,406 @@ struct AgentConfirmCardView: View {
 struct AgentAskCardView: View {
     let card: AgentChatMessage.AskCard
     let pal: AgentPalette
+    var pageIndex: Int? = nil          // 0-based; nil = single card, no pager header
+    var pageCount: Int = 1
+    var onPrev: (() -> Void)? = nil
+    var onNext: (() -> Void)? = nil
+    var onClose: (() -> Void)? = nil
     let onAnswer: (String) -> Void
+    @State private var chosen: String?
+    @State private var otherActive = false
+    @State private var otherText = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "questionmark.bubble").font(.system(size: 12)).foregroundStyle(AgentPalette.coral)
-                Text("আপনার সিদ্ধান্ত").font(.system(size: 11, weight: .semibold)).foregroundStyle(AgentPalette.coral)
-            }
-            Text(card.question).font(.system(size: 13.5)).foregroundStyle(pal.ink).lineSpacing(2.5)
+        VStack(alignment: .leading, spacing: 0) {
             if card.status == "pending" {
-                FlowishOptions(options: card.options, pal: pal, onAnswer: onAnswer)
-            } else if let sel = card.selectedOption {
-                HStack(spacing: 5) {
-                    Image(systemName: "checkmark.circle.fill").font(.system(size: 11))
-                    Text(sel).font(.system(size: 12, weight: .medium))
+                // Claude header: ‹ 1 of 3 › left, circular ✕ right.
+                if pageIndex != nil || onClose != nil {
+                    HStack(spacing: 4) {
+                        if let idx = pageIndex, pageCount > 1 {
+                            Button { onPrev?() } label: {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(idx > 0 ? pal.ink : pal.muted.opacity(0.35))
+                                    .frame(width: 28, height: 28)
+                            }
+                            .disabled(idx == 0)
+                            Text("\(almaBn(idx + 1)) / \(almaBn(pageCount))")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(pal.muted)
+                            Button { onNext?() } label: {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(idx < pageCount - 1 ? pal.ink : pal.muted.opacity(0.35))
+                                    .frame(width: 28, height: 28)
+                            }
+                            .disabled(idx >= pageCount - 1)
+                        }
+                        Spacer()
+                        if let onClose {
+                            Button {
+                                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                onClose()
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(pal.muted)
+                                    .frame(width: 28, height: 28)
+                                    .background(Color.white.opacity(0.06), in: Circle())
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12).padding(.top, 10)
                 }
-                .foregroundStyle(AgentPalette.teal)
+                Text(card.question)
+                    .font(.system(size: 15.5, weight: .semibold, design: .serif))
+                    .foregroundStyle(pal.ink)
+                    .lineSpacing(3)
+                    .padding(.horizontal, 18)
+                    .padding(.top, pageIndex != nil || onClose != nil ? 6 : 18)
+                    .padding(.bottom, 10)
+                VStack(spacing: 0) {
+                    ForEach(Array(card.options.enumerated()), id: \.offset) { idx, opt in
+                        let active = !otherActive && chosen == opt
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            chosen = opt; otherActive = false
+                            onAnswer(opt)
+                        } label: {
+                            HStack(spacing: 12) {
+                                // Claude: option number sits in a small frosted circle.
+                                Text("\(almaBn(idx + 1))")
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundStyle(active ? .white : pal.mutedHi)
+                                    .frame(width: 26, height: 26)
+                                    .background(active ? AnyShapeStyle(AgentPalette.coral)
+                                                       : AnyShapeStyle(Color.white.opacity(0.07)),
+                                                in: Circle())
+                                    .overlay(Circle().strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+                                Text(opt)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundStyle(pal.ink)
+                                    .multilineTextAlignment(.leading)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 16).padding(.vertical, 12)
+                        }
+                        .buttonStyle(.plain)
+                        if idx < card.options.count - 1 {
+                            Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1).padding(.leading, 18)
+                        }
+                    }
+                    Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1)
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        otherActive = true; chosen = nil
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 13))
+                                .foregroundStyle(pal.muted)
+                                .frame(width: 26, alignment: .center)
+                            Text("Type your answer…")
+                                .font(.system(size: 14)).foregroundStyle(otherActive ? pal.ink : pal.muted)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 16).padding(.vertical, 13)
+                    }
+                    .buttonStyle(.plain)
+                    if otherActive {
+                        HStack(spacing: 8) {
+                            TextField("আপনার মতামত…", text: $otherText)
+                                .font(.system(size: 14))
+                                .padding(10)
+                                .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+                            Button {
+                                let t = otherText.trimmingCharacters(in: .whitespacesAndNewlines)
+                                guard !t.isEmpty else { return }
+                                onAnswer(t)
+                            } label: {
+                                Image(systemName: "arrow.up.circle.fill")
+                                    .font(.system(size: 28))
+                                    .foregroundStyle(AgentPalette.coral)
+                            }
+                        }
+                        .padding(.horizontal, 18).padding(.bottom, 14)
+                    }
+                }
+            } else if let sel = card.selectedOption {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(card.question).font(.system(size: 13)).foregroundStyle(pal.muted)
+                    HStack(spacing: 5) {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 12))
+                        Text(sel).font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundStyle(AgentPalette.coral)
+                }
+                .padding(18)
             }
         }
-        .padding(13)
-        .background(AgentPalette.coral.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(AgentPalette.coral.opacity(0.25), lineWidth: 1))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
+        .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
+    }
+}
+
+/// Multiple ask cards → Claude "1 of N" pager: one card at a time, ‹ › to flip,
+/// ✕ collapses into a small reopen chip (the composer still works regardless).
+@available(iOS 17.0, *)
+struct AgentAskCardsPager: View {
+    let cards: [AgentChatMessage.AskCard]
+    let pal: AgentPalette
+    let onAnswer: (AgentChatMessage.AskCard, String) -> Void
+    @State private var index = 0
+    @State private var closed = false
+
+    var body: some View {
+        let idx = min(index, max(0, cards.count - 1))
+        let card = cards[idx]
+        Group {
+            if closed {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.snappy(duration: 0.22)) { closed = false }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "questionmark.circle")
+                            .font(.system(size: 12, weight: .medium))
+                        Text(cards.count > 1 ? "প্রশ্ন কার্ড · \(almaBn(cards.count))টি" : "প্রশ্ন কার্ড")
+                            .font(.system(size: 12, weight: .semibold))
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .opacity(0.6)
+                    }
+                    .foregroundStyle(AgentPalette.coral)
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .background(AgentPalette.coral.opacity(0.08), in: Capsule())
+                    .overlay(Capsule().strokeBorder(AgentPalette.coral.opacity(0.3), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            } else {
+                AgentAskCardView(
+                    card: card, pal: pal,
+                    pageIndex: cards.count > 1 ? idx : nil,
+                    pageCount: cards.count,
+                    onPrev: { withAnimation(.snappy(duration: 0.22)) { index = max(0, idx - 1) } },
+                    onNext: { withAnimation(.snappy(duration: 0.22)) { index = min(cards.count - 1, idx + 1) } },
+                    onClose: card.status == "pending"
+                        ? { withAnimation(.snappy(duration: 0.22)) { closed = true } } : nil
+                ) { option in
+                    onAnswer(card, option)
+                }
+                .id("\(card.id)-\(idx)")
+                .transition(.asymmetric(
+                    insertion: .move(edge: .trailing).combined(with: .opacity),
+                    removal: .opacity))
+            }
+        }
+        .onChange(of: cards.map(\.status)) { _, statuses in
+            // Answered → jump to the next still-pending card automatically.
+            if statuses.indices.contains(idx), statuses[idx] != "pending",
+               let next = statuses.firstIndex(of: "pending") {
+                withAnimation(.snappy(duration: 0.22)) { index = next }
+            }
+        }
+    }
+}
+
+/// One compact Claude-iOS activity row: small outline SF icon + muted label +
+/// trailing chevron. No emoji, no spinner — just like the Claude app rows.
+@available(iOS 17.0, *)
+struct AgentCompactActivityRow: View {
+    let icon: String
+    let label: String
+    var italic = false
+    var labelColor: Color
+    var iconColor: Color
+    var failed = false
+    var shimmer = false            // live headline while the model is thinking (Claude)
+    let onTap: () -> Void
+
+    var body: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            onTap()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: failed ? "xmark.circle" : icon)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(failed ? Color.red.opacity(0.8) : iconColor)
+                    .frame(width: 18, alignment: .center)
+                // Claude: chevron hugs the text; long labels truncate well before the
+                // screen edge (trailing gap keeps the row ending ~mid-right, never edge).
+                if shimmer {
+                    AlmaShimmerText(text: label,
+                                    font: .system(size: 14, weight: italic ? .regular : .medium),
+                                    base: labelColor)
+                        .lineLimit(1)
+                } else {
+                    Text(label)
+                        .font(.system(size: 14, weight: italic ? .regular : .medium))
+                        .italic(italic)
+                        .foregroundStyle(labelColor)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(labelColor.opacity(0.45))
+                Spacer(minLength: 0)
+            }
+            .padding(.trailing, 96)
+            .frame(minHeight: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Interleaved chronological turn content (Claude iOS): prose ↔ compact activity
+/// rows grow together in SSE order, and the rows STAY after the turn settles
+/// (tap → Thought process / Summary / tool I/O). Max 4 visible activity rows —
+/// older ones collapse into a single "আগের N ধাপ" row.
+@available(iOS 17.0, *)
+struct AgentTurnBlocksView: View {
+    let message: AgentChatMessage
+    let pal: AgentPalette
+    let onToolTap: (AgentChatMessage.Tool) -> Void
+    let onActivitySheet: (AgentActivitySheetRequest.Kind) -> Void
+
+    private static let maxVisibleRows = 4
+
+    var body: some View {
+        let activityIds: [String] = message.blocks.compactMap {
+            if case .activity = $0 { return $0.id }
+            return nil
+        }
+        let hiddenCount = max(0, activityIds.count - Self.maxVisibleRows)
+        let hidden = Set(activityIds.prefix(hiddenCount))
+        let lastBlockId = message.blocks.last?.id
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(message.blocks) { block in
+                switch block {
+                case .prose(let id, let text):
+                    proseBlock(text, isTail: id == lastBlockId && message.isStreaming)
+                case .activity(let a):
+                    if hidden.contains(a.id) {
+                        if a.id == activityIds[hiddenCount - 1] {
+                            AgentCompactActivityRow(icon: "clock.arrow.circlepath",
+                                                    label: "আগের \(almaBn(hiddenCount)) ধাপ",
+                                                    labelColor: pal.muted, iconColor: pal.muted) {
+                                onActivitySheet(.summary)
+                            }
+                        }
+                    } else {
+                        activityRow(a, isTail: block.id == lastBlockId && message.isStreaming)
+                    }
+                }
+            }
+        }
     }
 
-    private struct FlowishOptions: View {
-        let options: [String]
-        let pal: AgentPalette
-        let onAnswer: (String) -> Void
-        var body: some View {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(options, id: \.self) { opt in
-                    Button { onAnswer(opt) } label: {
-                        Text(opt)
-                            .font(.system(size: 12.5, weight: .medium))
-                            .foregroundStyle(pal.ink)
-                            .padding(.horizontal, 12).padding(.vertical, 7)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(pal.card.opacity(0.65), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                .strokeBorder(pal.borderSubtle, lineWidth: 1))
-                    }
+    @ViewBuilder private func proseBlock(_ text: String, isTail: Bool) -> some View {
+        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if isTail {
+                HStack(alignment: .bottom, spacing: 2) {
+                    AgentMarkdownText(text: text, pal: pal)
+                        .modifier(AgentShimmerModifier())
+                    AgentTypingCursor()
+                }
+                .padding(.vertical, 2)
+            } else {
+                AgentMarkdownText(text: text, pal: pal)
+                    .padding(.vertical, 2)
+            }
+        }
+    }
+
+    @ViewBuilder private func activityRow(_ a: AgentChatMessage.ActivityBlock, isTail: Bool = false) -> some View {
+        switch a.kind {
+        case .thinking:
+            // Tail thinking row = the LIVE changing headline → shimmer (Claude parity).
+            AgentCompactActivityRow(icon: "clock", label: a.label, italic: true,
+                                    labelColor: pal.muted, iconColor: pal.muted,
+                                    shimmer: isTail) {
+                onActivitySheet(.thoughtProcess)
+            }
+        case .search:
+            AgentCompactActivityRow(icon: "magnifyingglass", label: a.label,
+                                    labelColor: pal.muted, iconColor: pal.muted) {
+                onActivitySheet(.summary)
+            }
+        case .tool:
+            AgentCompactActivityRow(icon: "wrench.and.screwdriver", label: a.label,
+                                    labelColor: pal.mutedHi, iconColor: pal.muted,
+                                    failed: a.ok == false) {
+                if let t = message.tools.first(where: { $0.id == a.toolId }) {
+                    onToolTap(t)
+                } else {
+                    onActivitySheet(.summary)
                 }
             }
         }
     }
 }
 
-/// The live indicator row — AlmaSpinner (glyph + rotating Bangla verb) + the
-/// shimmering "ALMA · {model}" brand label. Web AgentThinkingIndicator parity.
+/// One-line settled summary when timeline metadata exists but rows are collapsed.
+@available(iOS 17.0, *)
+struct AgentSettledSummaryRow: View {
+    let message: AgentChatMessage
+    let pal: AgentPalette
+    let onTap: () -> Void
+
+    var body: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            onTap()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "clock")
+                    .font(.system(size: 13))
+                    .foregroundStyle(pal.muted)
+                    .frame(width: 18, alignment: .center)
+                Text(summaryText)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(pal.muted)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(pal.muted.opacity(0.5))
+            }
+            .frame(minHeight: 40)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var summaryText: String {
+        let steps = max(message.tools.count, message.phases.count)
+        if let ms = message.thinkingMs, ms > 0 {
+            let tok = max(1, ((message.thinking ?? "").count) / 4)
+            return "\(almaBn(max(1, ms / 1000))) সেকেন্ড ধরে ভেবেছে · ~\(almaBn(tok)) টোকেন · \(almaBn(max(1, steps))) ধাপ"
+        }
+        if steps > 0 { return "\(almaBn(steps)) ধাপ · কাজ সম্পন্ন" }
+        return "কাজ সম্পন্ন"
+    }
+}
+
+/// Live indicator — starburst only, left-aligned (Claude: no label beside spinner).
 @available(iOS 17.0, *)
 struct AgentThinkingRow: View {
-    let mode: String            // thinking | searching | writing
-    let modelLabel: String?
+    let mode: String
     let pal: AgentPalette
 
     var body: some View {
-        HStack(spacing: 10) {
-            AlmaSpinnerView(mode: mode, size: 18)
-            AlmaShimmerText(text: modelLabel.map { "ALMA · \($0)" } ?? "ALMA",
-                            font: .system(size: 12, weight: .medium), base: pal.muted)
+        HStack {
+            AlmaSpinnerView(mode: mode, size: 28, showVerb: false, haptics: true)
+            Spacer()
         }
-        .padding(.bottom, 22)
+        .padding(.leading, 0)
+        .padding(.bottom, 8)
     }
 }
 
@@ -2388,7 +3240,7 @@ struct AgentComposerView: View {
         .onChange(of: vm.dictatedText) { _, newValue in
             guard !newValue.isEmpty else { return }
             draft = draft.isEmpty ? newValue : draft + " " + newValue
-            vm.dictatedText = ""
+            Task { @MainActor in vm.dictatedText = "" }
         }
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
@@ -2445,7 +3297,7 @@ struct AgentComposerView: View {
                                 if f.state == .uploading {
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                                         .fill(Color.black.opacity(0.45))
-                                    ProgressView().tint(.white)
+                                    AlmaMiniLoader(mode: .thinking, size: 18)
                                 } else if f.state == .failed {
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                                         .fill(Color.red.opacity(0.4))
@@ -2504,7 +3356,7 @@ struct AgentComposerView: View {
             Button { vm.toggleRecording() } label: {
                 Group {
                     if vm.transcribing {
-                        ProgressView().controlSize(.small)
+                        AlmaMiniLoader(mode: .thinking, size: 16)
                     } else {
                         Image(systemName: vm.isRecording ? "stop.fill" : "mic")
                             .font(.system(size: 15, weight: .medium))
@@ -3289,10 +4141,10 @@ struct AgentEmptyStateView: View {
     }
 
     private var subtitle: String {
-        ["শুভ সকাল, Sir — দিনটা শুরু করি",
-         "শুভ দুপুর, Sir — কীভাবে সাহায্য করতে পারি",
-         "শুভ সন্ধ্যা, Sir — দিনটা গুছিয়ে নিই",
-         "শুভ রাত্রি, Sir — কী দেখে নেবো"][dayPart]
+        ["শুভ সকাল, Boss — দিনটা শুরু করি",
+         "শুভ দুপুর, Boss — কীভাবে সাহায্য করতে পারি",
+         "শুভ সন্ধ্যা, Boss — দিনটা গুছিয়ে নিই",
+         "শুভ রাত্রি, Boss — কী দেখে নেবো"][dayPart]
     }
 
     private var suggestions: [(String, String)] {
@@ -3335,127 +4187,233 @@ struct AgentEmptyStateView: View {
     }
 }
 
-/// "N কাজ বাকি" — glowing coral pill with a ping dot; expands into the task panel
-/// with চালিয়ে যাও / বাতিল actions (web AgentOpenTasksChip parity).
+/// LOCKED §9 — "N কাজ বাকি": chat shows ONLY a small collapsed glossy chip;
+/// tap → glossy bottom sheet with THREE actions per task: অনুমোদন · বাতিল · আমার মত.
+/// (Owner rule 2026-07-07: every approval ask = 3 buttons, never 2 — everywhere.)
 @available(iOS 17.0, *)
 struct AgentOpenTasksChipView: View {
     @Bindable var vm: AssistantVM
     let pal: AgentPalette
-    @State private var open = false
+    @State private var showSheet = false
     @State private var ping = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showSheet = true
+        } label: {
+            HStack(spacing: 7) {
+                ZStack {
+                    Circle()
+                        .fill(AgentPalette.coral.opacity(0.6))
+                        .frame(width: 7, height: 7)
+                        .scaleEffect(ping ? 2.2 : 1)
+                        .opacity(ping ? 0 : 0.7)
+                    Circle().fill(AgentPalette.coral).frame(width: 7, height: 7)
+                }
+                .onAppear {
+                    withAnimation(.easeOut(duration: 1.1).repeatForever(autoreverses: false)) { ping = true }
+                }
+                Text("\(almaBn(vm.openTasks.count))টা কাজ বাকি")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AgentPalette.coral)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(AgentPalette.coral.opacity(0.6))
+            }
+            .padding(.horizontal, 13).padding(.vertical, 8)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(AgentPalette.coral.opacity(0.4), lineWidth: 1))
+            .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+        }
+        .buttonStyle(.plain)
+        .padding(.bottom, 16)
+        .sheet(isPresented: $showSheet) {
+            AgentPendingTasksSheet(vm: vm)
+        }
+    }
+}
+
+/// The glossy pending-tasks sheet — same glass language as every other sheet.
+@available(iOS 17.0, *)
+struct AgentPendingTasksSheet: View {
+    @Bindable var vm: AssistantVM
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.dismiss) private var dismiss
+    @State private var opineForId: String?
+    @State private var opineText = ""
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(pal.muted)
+                        .frame(width: 32, height: 32)
+                        .background(Color.white.opacity(0.08), in: Circle())
+                }
+                Spacer()
+                Text(vm.openTasks.count == 1 ? "১টা কাজ বাকি" : "\(almaBn(vm.openTasks.count))টা কাজ বাকি")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(pal.ink)
+                Spacer()
+                Color.clear.frame(width: 32, height: 32)
+            }
+            .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 10)
+            Rectangle().fill(AgentPalette.coral.opacity(0.35)).frame(height: 1)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    ForEach(vm.openTasks) { task in
+                        taskBlock(task, pal: pal)
+                    }
+                    if vm.openTasks.isEmpty {
+                        Text("সব কাজ শেষ ✓")
+                            .font(.system(size: 13)).foregroundStyle(pal.muted)
+                            .frame(maxWidth: .infinity).padding(.vertical, 28)
+                    }
+                }
+                .padding(.horizontal, 18).padding(.top, 14).padding(.bottom, 26)
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(26)
+        .presentationBackground {
+            Color(red: 0.23, green: 0.23, blue: 0.275).opacity(0.42)
+                .background(.ultraThinMaterial)
+        }
+        .onChange(of: vm.openTasks.isEmpty) { _, empty in
+            if empty { dismiss() }
+        }
+    }
+
+    @ViewBuilder private func taskBlock(_ task: AgentOpenTask, pal: AgentPalette) -> some View {
+        let busy = vm.openTaskBusyId == task.id
+        VStack(alignment: .leading, spacing: 10) {
+            Text(task.title ?? task.note ?? "কাজ")
+                .font(.system(size: 14.5, design: .serif))
+                .foregroundStyle(pal.ink)
+                .lineSpacing(3)
+            if let age = task.ageMinutes {
+                Text(age < 60 ? "\(almaBn(age)) মিনিট আগে" : "\(almaBn(age / 60)) ঘণ্টা আগে")
+                    .font(.system(size: 11)).foregroundStyle(pal.muted)
+            }
+            HStack(spacing: 8) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    Task { await approve(task); dismiss() }
+                } label: {
+                    Group {
+                        if busy { ProgressView().controlSize(.mini).tint(.white) }
+                        else { Text("অনুমোদন").font(.system(size: 13, weight: .semibold)) }
+                    }
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity).padding(.vertical, 10)
+                    .background(
+                        LinearGradient(colors: [AgentPalette.coral, AgentPalette.coralDim],
+                                       startPoint: .topLeading, endPoint: .bottomTrailing),
+                        in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                    .shadow(color: AgentPalette.coral.opacity(0.3), radius: 6, y: 2)
+                }
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    Task { await reject(task); dismiss() }
+                } label: {
+                    Text("বাতিল")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(pal.mutedHi)
+                        .frame(maxWidth: .infinity).padding(.vertical, 10)
+                        .background(Color.white.opacity(0.08),
+                                    in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 13, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+                }
+            }
+            .disabled(busy)
             Button {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                withAnimation(.easeOut(duration: 0.2)) { open.toggle() }
-            } label: {
-                HStack(spacing: 8) {
-                    ZStack {
-                        Circle()
-                            .fill(AgentPalette.coral.opacity(0.6))
-                            .frame(width: 8, height: 8)
-                            .scaleEffect(ping ? 2.2 : 1)
-                            .opacity(ping ? 0 : 0.7)
-                        Circle().fill(AgentPalette.coral).frame(width: 8, height: 8)
-                    }
-                    .onAppear {
-                        withAnimation(.easeOut(duration: 1.1).repeatForever(autoreverses: false)) { ping = true }
-                    }
-                    Text("\(almaBn(vm.openTasks.count)) কাজ বাকি")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(AgentPalette.coral)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9))
-                        .foregroundStyle(pal.muted.opacity(0.6))
-                        .rotationEffect(.degrees(open ? 180 : 0))
+                withAnimation(.snappy(duration: 0.2)) {
+                    opineForId = opineForId == task.id ? nil : task.id
                 }
-                .padding(.horizontal, 12).padding(.vertical, 7)
-                .background(
-                    LinearGradient(colors: [AgentPalette.coral.opacity(0.10), AgentPalette.coralDim.opacity(0.06)],
-                                   startPoint: .leading, endPoint: .trailing),
-                    in: Capsule())
-                .overlay(Capsule().strokeBorder(AgentPalette.coral.opacity(0.3), lineWidth: 1))
+            } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: "text.bubble")
+                        .font(.system(size: 13))
+                        .foregroundStyle(AgentPalette.coral.opacity(0.9))
+                    Text("আমার মত")
+                        .font(.system(size: 14, weight: .medium)).foregroundStyle(pal.ink)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(pal.muted.opacity(0.5))
+                        .rotationEffect(.degrees(opineForId == task.id ? 90 : 0))
+                }
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            if open {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(vm.openTasks) { task in
-                        taskRow(task)
+            if opineForId == task.id {
+                HStack(spacing: 8) {
+                    TextField("আপনার মতামত লিখুন — ALMA সেই অনুযায়ী ঠিক করবে…",
+                              text: $opineText, axis: .vertical)
+                        .font(.system(size: 14)).lineLimit(2...4)
+                        .padding(10)
+                        .background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 13))
+                        .overlay(RoundedRectangle(cornerRadius: 13)
+                            .strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+                    Button {
+                        let t = opineText.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !t.isEmpty else { return }
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        Task { await opine(task, note: t); dismiss() }
+                    } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 38, height: 38)
+                            .background(
+                                LinearGradient(colors: [AgentPalette.coral, AgentPalette.coralDim],
+                                               startPoint: .topLeading, endPoint: .bottomTrailing),
+                                in: Circle())
                     }
                 }
-                .padding(8)
-                .background(pal.card.opacity(0.8), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.07), lineWidth: 1))
                 .transition(.opacity)
             }
         }
-        .padding(.bottom, 20)
+        .padding(14)
+        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.09), lineWidth: 1))
     }
 
-    @ViewBuilder private func taskRow(_ task: AgentOpenTask) -> some View {
-        let pending = task.kind == "approval_pending"
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 6) {
-                Text(pending ? "🔔" : "🔄").font(.system(size: 13))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(task.title ?? "কাজ")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(pal.ink)
-                        .lineLimit(2)
-                    if let age = task.ageMinutes {
-                        Text(age < 60 ? "\(almaBn(age)) মিনিট আগে" : "\(almaBn(age / 60)) ঘণ্টা আগে")
-                            .font(.system(size: 10)).foregroundStyle(pal.muted.opacity(0.7))
-                    }
-                }
-                Spacer()
-                Text(pending ? "অনুমোদন বাকি" : "অসম্পূর্ণ")
-                    .font(.system(size: 9.5, weight: .medium))
-                    .foregroundStyle(pending ? Color(red: 0.961, green: 0.620, blue: 0.043) : AgentPalette.coral)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background((pending ? Color(red: 0.961, green: 0.620, blue: 0.043) : AgentPalette.coral).opacity(0.15),
-                                in: RoundedRectangle(cornerRadius: 6))
-            }
-            if !pending {
-                if let note = task.note, !note.isEmpty {
-                    Text(note).font(.system(size: 11.5)).foregroundStyle(pal.muted).lineLimit(2)
-                }
-                HStack(spacing: 8) {
-                    Button {
-                        Task { await vm.continueOpenTask(task) }
-                    } label: {
-                        HStack(spacing: 4) {
-                            if vm.openTaskBusyId == task.id {
-                                ProgressView().controlSize(.mini).tint(.white)
-                            } else {
-                                Image(systemName: "play.fill").font(.system(size: 9))
-                            }
-                            Text("চালিয়ে যাও").font(.system(size: 12, weight: .semibold))
-                        }
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 12).padding(.vertical, 6)
-                        .background(AgentPalette.coral, in: RoundedRectangle(cornerRadius: 8))
-                    }
-                    Button {
-                        Task { await vm.cancelOpenTask(task) }
-                    } label: {
-                        Text("বাতিল")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(pal.muted)
-                            .padding(.horizontal, 12).padding(.vertical, 6)
-                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
-                    }
-                }
-            } else {
-                Text("নিচের অনুমোদন কার্ড থেকে সিদ্ধান্ত নিন (Approve / Reject)।")
-                    .font(.system(size: 10.5)).foregroundStyle(pal.muted)
-            }
+    private func approve(_ task: AgentOpenTask) async {
+        if task.kind == "approval_pending", let pid = task.pendingActionId {
+            await vm.approveAction(pid, approve: true)
+        } else {
+            await vm.continueOpenTask(task)
         }
-        .padding(10)
-        .background(Color.white.opacity(0.02), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .strokeBorder(Color.white.opacity(0.06), lineWidth: 1))
+    }
+
+    private func reject(_ task: AgentOpenTask) async {
+        if task.kind == "approval_pending", let pid = task.pendingActionId {
+            await vm.approveAction(pid, approve: false)
+        } else {
+            await vm.cancelOpenTask(task)
+        }
+    }
+
+    /// আমার মত — reject/park the pending work, then send the owner's note so the
+    /// agent self-corrects (LOCKED: the 3rd option, everywhere).
+    private func opine(_ task: AgentOpenTask, note: String) async {
+        if task.kind == "approval_pending", let pid = task.pendingActionId {
+            await vm.submitOpinion(pid, note: note)
+        } else {
+            vm.send(note)
+        }
+        await vm.loadOpenTasks()
     }
 }
 
@@ -3467,6 +4425,8 @@ struct AssistantScreen: View {
     @Environment(\.colorScheme) private var scheme
     @State private var nearBottom = true
     @State private var toolSheet: AgentChatMessage.Tool?
+    @State private var activitySheet: AgentActivitySheetRequest?
+    @State private var bottomScrollGeneration: UInt = 0
 
     let openWeb: (_ path: String, _ title: String) -> Void
     /// Wired by makeAssistantTab so the native bar buttons drive this screen.
@@ -3488,24 +4448,23 @@ struct AssistantScreen: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         if vm.loadingHistory && vm.messages.isEmpty {
-                            ProgressView().frame(maxWidth: .infinity).padding(.top, 80)
+                            AlmaPageLoader()
                         }
                         if !vm.loadingHistory && vm.messages.isEmpty && !vm.isStreaming {
                             AgentEmptyStateView(pal: pal) { vm.send($0) }
                         }
                         ForEach(vm.messages) { msg in
-                            AgentMessageRow(message: msg, vm: vm) { tool in
-                                toolSheet = tool
-                            }
+                            AgentMessageRow(
+                                message: msg, vm: vm,
+                                showWorkingIndicator: vm.isStreaming && msg.isStreaming
+                                    && msg.id == vm.messages.last(where: { $0.isStreaming })?.id,
+                                isLastAssistant: msg.role == .assistant
+                                    && msg.id == vm.messages.last(where: { $0.role == .assistant })?.id,
+                                onToolTap: { tool in toolSheet = tool },
+                                onActivitySheet: { activitySheet = $0 })
                             .transition(.asymmetric(
                                 insertion: .opacity.combined(with: .offset(y: 12)),
                                 removal: .opacity))
-                        }
-                        if vm.thinkingLive {
-                            AgentThinkingRow(mode: vm.liveMode, modelLabel: vm.modelLabel, pal: pal)
-                        }
-                        if !vm.openTasks.isEmpty && !vm.isStreaming && !vm.messages.isEmpty {
-                            AgentOpenTasksChipView(vm: vm, pal: pal)
                         }
                         Color.clear.frame(height: 4).id(Self.bottomID)
                     }
@@ -3515,14 +4474,28 @@ struct AssistantScreen: View {
                     .animation(.spring(response: 0.32, dampingFraction: 0.8), value: vm.messages.count)
                 }
                 .coordinateSpace(name: "agentscroll")
+                // Owner 2026-07-07: tap on any empty spot dismisses the keyboard
+                // (buttons/rows inside still win their own taps).
+                .onTapGesture {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                                    to: nil, from: nil, for: nil)
+                }
                 .onPreferenceChange(AgentScrollBottomKey.self) { distance in
-                    nearBottom = distance < 160
+                    let next = distance < 160
+                    if next != nearBottom { nearBottom = next }
                 }
                 .onChange(of: vm.messages.last?.text) { _, _ in
-                    if nearBottom { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+                    guard nearBottom else { return }
+                    scheduleScrollToBottom(proxy: proxy)
                 }
                 .onChange(of: vm.messages.count) { _, _ in
-                    withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+                    if vm.isStreaming {
+                        scheduleScrollToBottom(proxy: proxy)
+                    } else {
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo(Self.bottomID, anchor: .bottom)
+                        }
+                    }
                 }
                 .overlay(alignment: .bottom) {
                     // Web parity: centered 40pt frosted circle just above the composer.
@@ -3598,11 +4571,26 @@ struct AssistantScreen: View {
         .sheet(item: $toolSheet) { tool in
             AgentToolIOSheet(tool: tool)
         }
+        .sheet(item: $activitySheet) { req in
+            AgentThoughtProcessSheet(request: req)
+        }
         .overlay(alignment: .top) {
             if vm.authExpired { authBanner(pal) }
         }
         .overlay(alignment: .bottom) {
             if let toast = vm.errorToast { toastView(toast, pal) }
+        }
+    }
+
+    private func scheduleScrollToBottom(proxy: ScrollViewProxy) {
+        bottomScrollGeneration &+= 1
+        let gen = bottomScrollGeneration
+        Task { @MainActor in
+            // Coalesce rapid SSE text_delta bursts — avoids SwiftUI
+            // "onChange tried to update multiple times per frame" freeze.
+            try? await Task.sleep(for: .milliseconds(48))
+            guard gen == bottomScrollGeneration else { return }
+            proxy.scrollTo(Self.bottomID, anchor: .bottom)
         }
     }
 

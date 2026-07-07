@@ -39,6 +39,8 @@ struct MoreMenuScreen: View {
     let openPath: (_ path: String, _ title: String) -> Void
     /// Pushes the NATIVE Phone Companion screen (the "native:companion" row in UIKit).
     let openCompanion: () -> Void
+    /// DEBUG: pushes the native 12-spoke loader preview (native:spinner-preview row).
+    var openSpinnerPreview: (() -> Void)? = nil
     /// Flips the app-wide theme (host calls AlmaTheme; we never touch it directly).
     let toggleDark: () -> Void
     /// S6 escape hatch: the "Native স্ক্রিন" switch — flips AlmaSwiftUIFlag and the host
@@ -66,13 +68,18 @@ struct MoreMenuScreen: View {
     private struct MenuItem { let title: String; let icon: String; let path: String }
     private struct MenuGroup { let header: String; let items: [MenuItem] }
 
-    private static let groups: [MenuGroup] = [
-        // P3 mobile companion: "native:companion" is a sentinel — that row pushes the
-        // NATIVE companion screen (openCompanion) instead of a web view.
-        MenuGroup(header: "Agent", items: [
+    private static var groups: [MenuGroup] {
+        var agentItems: [MenuItem] = [
             MenuItem(title: "Phone Companion", icon: "iphone.radiowaves.left.and.right", path: "native:companion"),
             MenuItem(title: "Live Watch",      icon: "eye",                              path: "/agent/live-watch"),
-        ]),
+        ]
+        #if DEBUG
+        agentItems.append(MenuItem(title: "Loader Preview", icon: "sparkles", path: "native:spinner-preview"))
+        #endif
+        return [
+        // P3 mobile companion: "native:companion" is a sentinel — that row pushes the
+        // NATIVE companion screen (openCompanion) instead of a web view.
+        MenuGroup(header: "Agent", items: agentItems),
         MenuGroup(header: "Workspace", items: [
             MenuItem(title: "My Desk",        icon: "person.crop.square", path: "/portal"),
             MenuItem(title: "Office",         icon: "building.2",         path: "/portal/office"),
@@ -110,7 +117,8 @@ struct MoreMenuScreen: View {
             MenuItem(title: "Database",      icon: "cylinder.split.1x2", path: "/settings/database"),
             MenuItem(title: "Session",       icon: "key",                path: "/settings/session"),
         ]),
-    ]
+        ]
+    }
 
     /// The owner's 3 businesses. Switching is just navigation — the ERP derives the
     /// active business from the route (`/trading` → Trading, `/digital` → CDIT, `/` →
@@ -196,7 +204,9 @@ struct MoreMenuScreen: View {
 
     private func open(_ item: MenuItem) {
         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-        if item.path == "native:companion" { openCompanion() } else { openPath(item.path, item.title) }
+        if item.path == "native:companion" { openCompanion() }
+        else if item.path == "native:spinner-preview" { openSpinnerPreview?() }
+        else { openPath(item.path, item.title) }
     }
 
     // ── Section card scaffold ──
