@@ -94,3 +94,32 @@ reserved A040–A07F range, to avoid collisions).
   (a real z-order bug caught + fixed during sim verification).
 - Status: applied on `native/dashboard`, sim-built (iPhone 17 Pro Max) and verified light+dark with
   live production data. Owner will review before any TestFlight upload.
+
+---
+
+## Creative Studio — native page (branch `native/creative-studio`, 2026-07-07)
+
+Owner instruction 2026-07-07 lifts the `/agent/creative-studio` **KEEP_WEB** row: a native
+SwiftUI redesign was approved (image-forward "professional AI studio" layout on the shared
+aura theme). New owning file: **`ios/App/App/CreativeStudioSwiftUI.swift`** (self-contained;
+reuses `AgentAuroraBackground` + `AgentPalette` from `AssistantSwiftUI`, `AlmaAPI`,
+`.claudeTopFade`). Reads the SAME web APIs (config / gallery / brand-models / upload / run).
+
+Verified: `swiftc -typecheck` of the full SwiftUI graph incl. this file = **0 errors, 0
+warnings** (only the Agora-linked chain + Capacitor bridges excluded — they need the build-time
+`AgoraRtcKit` SDK and are unrelated). **NOT sim-installed yet — owner will say when.**
+
+Two central edits the owner applies at integration (both frozen files):
+
+1. **`ios/App/App/AlmaNativeRouter.swift`** — add one route row (screen owns its own chrome, so
+   the hosted nav bar is hidden via `.toolbar(.hidden)` inside the view):
+   ```swift
+   case "/agent/creative-studio": return host(CreativeStudioScreen(openWeb: openWebForced), "Creative Studio")
+   ```
+   (Or present full-screen from the floating chat-head quick actions if a tab-bar-free takeover
+   is preferred — the view already draws its own status-safe header + floating tab bar.)
+
+2. **`ios/App/App/App.xcodeproj/project.pbxproj`** — register `CreativeStudioSwiftUI.swift` in
+   the `App` target (add to Compile Sources), same as every other `*SwiftUI.swift` page.
+
+Then sim-build (iPhone 17 Pro Max) + verify light+dark before any TestFlight bump.
