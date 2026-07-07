@@ -79,6 +79,7 @@ final class AgoraIntercom: NSObject {
     var error: String? = nil
     var roster: [IntercomStaff] = []
     var recording = false             // PTT voice-note is capturing right now
+    var callPeer = "স্টাফ"            // who we're talking to (shown on the call screen)
 
     private var engine: AgoraRtcEngineKit?
     private var appId: String?
@@ -86,6 +87,8 @@ final class AgoraIntercom: NSObject {
     private var callTimer: Timer?
     private var ringTimer: Timer?
     private var remoteUids = Set<UInt>()   // remote parties currently on the call channel
+    private let ringtone = IntercomRingtone()   // ringback (caller) + incoming ring (callee)
+    private var handledCallIds = Set<String>()  // call broadcasts we've already surfaced
     // PTT persistent voice-note capture (separate from the ephemeral live channel).
     private var recorder: AVAudioRecorder?
     private var recordURL: URL?
@@ -135,11 +138,15 @@ final class AgoraIntercom: NSObject {
         remoteUids.removeAll()
         callSeconds = 0
         statusText = outgoing ? "রিং হচ্ছে…" : "কল ধরছেন…"
+        ringtone.stop()                          // any incoming ring stops the moment we act
         do {
             try await ensureMicPermission()
             try await join(channel: ch, publishMic: true)
             micMuted = false
-            if outgoing { startRingTimeout() }   // "কেউ ধরেনি" if unanswered
+            if outgoing {
+                startRingTimeout()               // "কেউ ধরেনি" if unanswered
+                ringtone.play(.ringback)         // caller hears the soft ring-back tone
+            }
         } catch {
             self.error = message(for: error)
             statusText = ""
@@ -155,6 +162,7 @@ final class AgoraIntercom: NSObject {
         statusText = "কল দিচ্ছি…"
         struct Body: Encodable { let kind = "call"; let targetStaffId: String }
         struct Resp: Decodable { let id: String? }
+        callPeer = roster.first { $0.id == staffId }?.name ?? "স্টাফ"
         do {
             let r: Resp = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/office/intercom", body: Body(targetStaffId: staffId))
@@ -190,6 +198,7 @@ final class AgoraIntercom: NSObject {
         engine?.leaveChannel(nil)
         stopCallTimer()
         stopRingTimeout()
+        ringtone.stop()
         mode = .idle
         connected = false
         remoteSpeaking = false
@@ -197,6 +206,38 @@ final class AgoraIntercom: NSObject {
         remoteUids.removeAll()
         channel = nil
     }
+
+    // ── App-wide incoming call (staff) ────────────────────────────────────────
+    struct IncomingCall: Equatable { let broadcastId: String; let channel: String; let caller: String }
+
+    /// The freshest still-ringing call addressed to me that I haven't surfaced yet.
+    /// FloatingChatHead polls this app-wide so a call rings on ANY screen.
+    func pendingIncomingCall() async -> IncomingCall? {
+        struct Mine: Decodable { let confirmedAt: String? }
+        struct B: Decodable { let id: String; let kind: String; let createdAt: String; let mine: Mine? }
+        struct Feed: Decodable { let broadcasts: [B] }
+        guard mode == .idle || mode == .listening,
+              let feed: Feed = try? await AlmaAPI.shared.get("/api/assistant/office/intercom")
+        else { return nil }
+        let iso = ISO8601DateFormatter()
+        // Newest first — ring only the most recent live call. `mine != nil` means the
+        // call is addressed to THIS staff (owner feeds have no `mine`, so the boss who
+        // placed the call never rings himself).
+        for b in feed.broadcasts.reversed() where b.kind == "call" && b.mine != nil {
+            guard !handledCallIds.contains(b.id) else { continue }
+            if let t = iso.date(from: b.createdAt), Date().timeIntervalSince(t) < 45 {
+                return IncomingCall(broadcastId: b.id, channel: "itc_\(b.id)", caller: "বস — মারুফ")
+            }
+        }
+        return nil
+    }
+
+    /// Mark a call surfaced (answered or declined) so we don't re-ring it every poll.
+    @MainActor func markCallHandled(_ broadcastId: String) { handledCallIds.insert(broadcastId) }
+
+    /// Start the loud incoming ring (callee side). Stopped by answering/declining/leave.
+    @MainActor func ringIncoming() { ringtone.play(.incoming) }
+    @MainActor func stopRinging() { ringtone.stop() }
 
     // ── PTT persistent voice-note (walkie-talkie that actually reaches staff) ──
     //
@@ -290,6 +331,9 @@ final class AgoraIntercom: NSObject {
         let tok = try await token(for: ch)
         try configureAudioSession()
         let e = engineFor(appId: tok.appId)
+        // Agora is single-channel per engine: if we were live-listening, leave that
+        // channel before joining the call channel (otherwise joinChannel errors -17).
+        if let prev = channel, prev != ch { e.leaveChannel(nil) }
         channel = ch
         e.setChannelProfile(.communication)
         e.enableAudio()
@@ -405,6 +449,7 @@ extension AgoraIntercom: AgoraRtcEngineDelegate {
                 self.mode = .calling
                 self.statusText = "কল চলছে"
                 self.stopRingTimeout()
+                self.ringtone.stop()          // both sides connected — silence the ring
                 self.startCallTimer()
             }
         }
@@ -440,5 +485,88 @@ extension AgoraIntercom: AgoraRtcEngineDelegate {
 
     func rtcEngine(_ engine: AgoraRtcEngineKit, didOccurError errorCode: AgoraErrorCode) {
         Task { @MainActor in self.error = "Agora ত্রুটি (\(errorCode.rawValue))" }
+    }
+}
+
+// MARK: - Ringtone (self-contained — synthesised in memory, no bundled audio files)
+
+/// `.ringback` = the soft tone the CALLER hears while waiting for an answer;
+/// `.incoming` = the louder double-ring the CALLEE hears. Loops until `stop()`.
+final class IntercomRingtone {
+    enum Kind { case ringback, incoming }
+    private var player: AVAudioPlayer?
+
+    func play(_ kind: Kind) {
+        stop()
+        do {
+            // The incoming ring plays BEFORE any Agora session exists → own the session
+            // as loud speaker playback (heard even on the silent switch). The ringback
+            // plays into Agora's already-active call session, so we don't reconfigure it.
+            if kind == .incoming {
+                let s = AVAudioSession.sharedInstance()
+                try s.setCategory(.playback, options: [.duckOthers])
+                try s.setActive(true)
+            }
+            let p = try AVAudioPlayer(data: IntercomRingtone.wav(for: kind))
+            p.numberOfLoops = -1
+            p.volume = kind == .incoming ? 1.0 : 0.55
+            p.prepareToPlay()
+            p.play()
+            player = p
+        } catch {
+            player = nil
+        }
+    }
+
+    func stop() {
+        player?.stop()
+        player = nil
+    }
+
+    /// One loop of the ring cadence as a 16-bit mono PCM WAV.
+    private static func wav(for kind: Kind) -> Data {
+        let sr = 16_000.0
+        let f1: Double, f2: Double
+        let segments: [(on: Bool, dur: Double)]
+        switch kind {
+        case .ringback:
+            f1 = 440; f2 = 480
+            segments = [(true, 1.0), (false, 2.0)]                              // ring · long gap
+        case .incoming:
+            f1 = 480; f2 = 620
+            segments = [(true, 0.4), (false, 0.2), (true, 0.4), (false, 1.4)]   // double-ring
+        }
+        var samples = [Int16]()
+        for seg in segments {
+            let n = Int(seg.dur * sr)
+            for i in 0..<n {
+                guard seg.on else { samples.append(0); continue }
+                let t = Double(i) / sr
+                // Blend two tones + a 20 ms fade at each edge so segments don't click.
+                let env = min(1.0, min(Double(i), Double(n - i)) / (sr * 0.02))
+                let v = (sin(2 * .pi * f1 * t) + sin(2 * .pi * f2 * t)) * 0.25 * env
+                samples.append(Int16(max(-1, min(1, v)) * 32_767))
+            }
+        }
+        return pcm16Wav(samples: samples, sampleRate: Int(sr))
+    }
+
+    private static func pcm16Wav(samples: [Int16], sampleRate: Int) -> Data {
+        let dataBytes = samples.count * 2
+        func u32(_ v: Int) -> [UInt8] { [UInt8(v & 0xff), UInt8((v >> 8) & 0xff), UInt8((v >> 16) & 0xff), UInt8((v >> 24) & 0xff)] }
+        func u16(_ v: Int) -> [UInt8] { [UInt8(v & 0xff), UInt8((v >> 8) & 0xff)] }
+        var d = Data()
+        d.append(contentsOf: Array("RIFF".utf8)); d.append(contentsOf: u32(36 + dataBytes))
+        d.append(contentsOf: Array("WAVE".utf8))
+        d.append(contentsOf: Array("fmt ".utf8)); d.append(contentsOf: u32(16))
+        d.append(contentsOf: u16(1)); d.append(contentsOf: u16(1))            // PCM · mono
+        d.append(contentsOf: u32(sampleRate)); d.append(contentsOf: u32(sampleRate * 2))
+        d.append(contentsOf: u16(2)); d.append(contentsOf: u16(16))           // block align · bits
+        d.append(contentsOf: Array("data".utf8)); d.append(contentsOf: u32(dataBytes))
+        for s in samples {
+            let u = UInt16(bitPattern: s)
+            d.append(UInt8(u & 0xff)); d.append(UInt8((u >> 8) & 0xff))
+        }
+        return d
     }
 }

@@ -14,7 +14,6 @@ struct IntercomView: View {
     @Environment(\.colorScheme) private var scheme
     @State private var vm = PortalOfficeVM()
     private let ic = AgoraIntercom.shared
-    @State private var incomingChannel: String? = nil
     @State private var voicePlayer: AVPlayer? = nil
     @State private var playedVoiceIds = Set<String>()
 
@@ -138,30 +137,17 @@ struct IntercomView: View {
             liveOrb(active: ic.connected, speaking: ic.remoteSpeaking)
             Text(ic.remoteSpeaking ? "🔊 বস বলছেন" : (ic.connected ? "শুনছেন… (লাইভ)" : "সংযোগ হচ্ছে…"))
                 .font(.title3.weight(.bold))
-            Text("বস লাইভ বললে এখানে সাথে সাথে শোনা যাবে।")
+            Text("বস ভয়েস পাঠালে এখানে সাথে সাথে বেজে উঠবে।")
                 .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            if let ch = incomingChannel {
-                VStack(spacing: 8) {
-                    Text("📞 বস কল করছেন").font(.subheadline.weight(.bold))
-                    bigButton("কল ধরুন", tint: PortalOfficePalette.emerald600, filled: true) {
-                        incomingChannel = nil
-                        Task { await ic.startCall(channel: ch, outgoing: false) }
-                    }
-                }
-                .padding(12)
-                .background(PortalOfficePalette.emerald600.opacity(0.14),
-                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
         }
         .frame(maxWidth: .infinity)
         .padding(18).portalOfficeGlass(scheme, corner: 22)
         .task {
             await ic.joinLive(asBroadcaster: false)
-            while !Task.isCancelled {                // poll for rings + new voice notes
-                if ic.mode != .calling && ic.mode != .ringing {
-                    incomingChannel = await ic.pendingCallChannel()
-                    await playPendingVoiceNotes()
-                }
+            // Incoming CALLS are handled app-wide by FloatingChatHead; here we only
+            // auto-play new voice notes while this screen is open.
+            while !Task.isCancelled {
+                if ic.mode != .calling && ic.mode != .ringing { await playPendingVoiceNotes() }
                 try? await Task.sleep(nanoseconds: 2_500_000_000)
             }
         }
@@ -248,6 +234,101 @@ struct IntercomView: View {
     private func timeStr(_ s: Int) -> String {
         String(format: "%02d:%02d", s / 60, s % 60)
     }
+}
+
+// MARK: - Incoming call (full-screen, app-wide — presented by FloatingChatHead)
+
+@available(iOS 17.0, *)
+struct IncomingCallView: View {
+    let incoming: AgoraIntercom.IncomingCall
+    @Environment(\.dismiss) private var dismiss
+    private let ic = AgoraIntercom.shared
+    @State private var answered = false
+    @State private var pulse = false
+
+    private var inCall: Bool { ic.mode == .calling || ic.mode == .ringing }
+
+    var body: some View {
+        ZStack {
+            LinearGradient(colors: [.black, PortalOfficePalette.violet.opacity(0.45)],
+                           startPoint: .top, endPoint: .bottom).ignoresSafeArea()
+            VStack(spacing: 20) {
+                Spacer()
+                officeAvatar(nil, initial: "M", size: 104)
+                    .scaleEffect(pulse ? 1.06 : 1)
+                    .shadow(color: PortalOfficePalette.emerald600.opacity(0.5), radius: pulse ? 26 : 10)
+                    .animation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true), value: pulse)
+                Text(incoming.caller).font(.title.weight(.bold)).foregroundStyle(.white)
+                Text(statusLine).font(.subheadline).foregroundStyle(.white.opacity(0.75))
+                if ic.mode == .calling {
+                    Text(timeStr(ic.callSeconds))
+                        .font(.title3.weight(.bold).monospacedDigit()).foregroundStyle(.white)
+                }
+                Spacer()
+                controls
+                Spacer().frame(height: 34)
+            }
+            .padding(24)
+        }
+        .onAppear {
+            pulse = true
+            ic.markCallHandled(incoming.broadcastId)   // don't re-ring this one
+            ic.ringIncoming()                          // loud incoming ring
+        }
+        .onChange(of: ic.mode) { _, m in
+            if answered && m == .idle { dismiss() }    // call ended / hung up
+        }
+        .onDisappear { if !inCall { ic.stopRinging() } }
+        .interactiveDismissDisabled(true)
+    }
+
+    private var statusLine: String {
+        if ic.mode == .calling { return ic.remoteSpeaking ? "🔊 কথা হচ্ছে" : "কল চলছে" }
+        if answered { return "সংযোগ হচ্ছে…" }
+        return "📞 অফিস কল করছে…"
+    }
+
+    @ViewBuilder private var controls: some View {
+        if ic.mode == .calling || (answered && ic.mode == .ringing) {
+            HStack(spacing: 12) {
+                circleBtn(ic.micMuted ? "mic.slash.fill" : "mic.fill",
+                          tint: .white.opacity(0.18)) { ic.toggleMute() }
+                circleBtn("phone.down.fill", tint: PortalOfficePalette.red500, big: true) {
+                    ic.leave(); dismiss()
+                }
+            }
+        } else {
+            HStack(spacing: 60) {
+                VStack(spacing: 8) {
+                    circleBtn("phone.down.fill", tint: PortalOfficePalette.red500, big: true) {
+                        ic.stopRinging(); ic.leave(); dismiss()
+                    }
+                    Text("প্রত্যাখ্যান").font(.caption).foregroundStyle(.white.opacity(0.8))
+                }
+                VStack(spacing: 8) {
+                    circleBtn("phone.fill", tint: PortalOfficePalette.emerald600, big: true) {
+                        answered = true
+                        ic.stopRinging()
+                        Task { await ic.startCall(channel: incoming.channel, outgoing: false) }
+                    }
+                    Text("গ্রহণ").font(.caption).foregroundStyle(.white.opacity(0.8))
+                }
+            }
+        }
+    }
+
+    private func circleBtn(_ icon: String, tint: Color, big: Bool = false, action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred(); action()
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: big ? 28 : 22, weight: .semibold)).foregroundStyle(.white)
+                .frame(width: big ? 72 : 58, height: big ? 72 : 58)
+                .background(tint, in: Circle())
+        }.buttonStyle(.plain)
+    }
+
+    private func timeStr(_ s: Int) -> String { String(format: "%02d:%02d", s / 60, s % 60) }
 }
 
 // MARK: - Chat-head long-press quick actions
