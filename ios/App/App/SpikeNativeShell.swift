@@ -995,7 +995,8 @@ final class MoreMenuViewController: UITableViewController {
         Section(header: "Workspace", items: [
             Item(title: "My Desk",        icon: "person.crop.square",  path: "/portal"),
             Item(title: "Office",         icon: "building.2",          path: "/portal/office"),
-            Item(title: "Product Images", icon: "photo.on.rectangle",  path: "/agent/catalog-images"),
+            Item(title: "Product Images",  icon: "photo.on.rectangle",  path: "/agent/catalog-images"),
+            Item(title: "Creative Studio", icon: "wand.and.stars",      path: "/agent/creative-studio"),
         ]),
         Section(header: "Money", items: [
             Item(title: "Finance",   icon: "banknote",           path: "/finance"),

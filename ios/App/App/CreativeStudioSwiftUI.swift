@@ -303,6 +303,7 @@ struct CreativeStudioScreen: View {
     @Environment(\.colorScheme) private var scheme
     @State private var vm = CreativeStudioVM()
     @State private var tab: CSTab
+    @State private var popNav: (() -> Void)?
     /// Web fallback for anything not yet native (finishing editor, drive auth, etc.).
     let openWeb: (_ path: String, _ title: String) -> Void
 
@@ -315,10 +316,11 @@ struct CreativeStudioScreen: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             AgentAuroraBackground()
+            CSNavPopper { popNav = $0 }.frame(width: 0, height: 0).allowsHitTesting(false)
 
             Group {
                 switch tab {
-                case .home:    CSHomeTab(vm: vm, go: { tab = $0 })
+                case .home:    CSHomeTab(vm: vm, go: { tab = $0 }, exit: { popNav?() })
                 case .create:  CSCreateTab(vm: vm, back: { tab = .home })
                 case .gallery: CSGalleryTab(vm: vm, openWeb: openWeb)
                 case .video:   CSVideoTab(vm: vm, openWeb: openWeb)
@@ -386,6 +388,7 @@ private struct CSTabBar: View {
 private struct CSHomeTab: View {
     let vm: CreativeStudioVM
     let go: (CSTab) -> Void
+    let exit: () -> Void
     @Environment(\.colorScheme) private var scheme
     @State private var filter = "সব"
 
@@ -418,7 +421,11 @@ private struct CSHomeTab: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 11) {
+            Button { exit(); CSHaptic.tap() } label: {
+                Image(systemName: "chevron.left").font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(AgentPalette(scheme).ink).frame(width: 38, height: 38).csGlass(scheme, corner: 999)
+            }.buttonStyle(.plain)
             VStack(alignment: .leading, spacing: 2) {
                 Text((vm.config?.organization ?? "ALMA Lifestyle").uppercased())
                     .font(.system(size: 10, weight: .bold)).tracking(1.4)
@@ -1559,6 +1566,36 @@ enum CSHaptic {
         #if canImport(UIKit)
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         #endif
+    }
+}
+
+/// The screen is a full-screen takeover (its own header + floating tab bar). This
+/// zero-size representable hides the pushed UIKit nav bar at the UIKit level (reliable
+/// even when hosted in a plain UINavigationController — the SwiftUI `.toolbar(.hidden)`
+/// modifier alone doesn't always propagate there), restores it on exit, and hands the
+/// header's back button a pop closure. The edge-swipe back still works too.
+@available(iOS 17.0, *)
+private struct CSNavPopper: UIViewControllerRepresentable {
+    let onReady: (@escaping () -> Void) -> Void
+    func makeUIViewController(context: Context) -> Controller { let c = Controller(); c.onReady = onReady; return c }
+    func updateUIViewController(_ vc: Controller, context: Context) {}
+
+    final class Controller: UIViewController {
+        var onReady: ((@escaping () -> Void) -> Void)?
+        private var wasHidden = false
+        override func viewDidLoad() { super.viewDidLoad(); view.isUserInteractionEnabled = false }
+        override func viewWillAppear(_ animated: Bool) {
+            super.viewWillAppear(animated)
+            if let nav = navigationController {
+                wasHidden = nav.isNavigationBarHidden
+                nav.setNavigationBarHidden(true, animated: animated)
+                onReady? { [weak nav] in nav?.popViewController(animated: true) }
+            }
+        }
+        override func viewWillDisappear(_ animated: Bool) {
+            super.viewWillDisappear(animated)
+            navigationController?.setNavigationBarHidden(wasHidden, animated: animated)
+        }
     }
 }
 

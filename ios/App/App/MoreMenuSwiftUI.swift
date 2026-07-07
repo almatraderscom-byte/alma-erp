@@ -74,9 +74,10 @@ struct MoreMenuScreen: View {
             MenuItem(title: "Live Watch",      icon: "eye",                              path: "/agent/live-watch"),
         ]),
         MenuGroup(header: "Workspace", items: [
-            MenuItem(title: "My Desk",        icon: "person.crop.square", path: "/portal"),
-            MenuItem(title: "Office",         icon: "building.2",         path: "/portal/office"),
-            MenuItem(title: "Product Images", icon: "photo.on.rectangle", path: "/agent/catalog-images"),
+            MenuItem(title: "My Desk",         icon: "person.crop.square", path: "/portal"),
+            MenuItem(title: "Office",          icon: "building.2",         path: "/portal/office"),
+            MenuItem(title: "Product Images",  icon: "photo.on.rectangle", path: "/agent/catalog-images"),
+            MenuItem(title: "Creative Studio", icon: "wand.and.stars",     path: "/agent/creative-studio"),
         ]),
         MenuGroup(header: "Money", items: [
             MenuItem(title: "Finance",  icon: "banknote",          path: "/finance"),

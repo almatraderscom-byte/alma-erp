@@ -123,3 +123,18 @@ Two central edits the owner applies at integration (both frozen files):
    the `App` target (add to Compile Sources), same as every other `*SwiftUI.swift` page.
 
 Then sim-build (iPhone 17 Pro Max) + verify light+dark before any TestFlight bump.
+
+### Creative Studio — UPDATE 2026-07-07 (integration APPLIED in-branch)
+
+Owner asked to make the whole branch build together. The two shared edits are now
+DONE on `native/creative-studio` (no longer pending):
+- `project.pbxproj` — `CreativeStudioSwiftUI.swift` registered in the App target (via xcodeproj gem).
+- `AlmaNativeRouter.swift` — `case "/agent/creative-studio"` added.
+- `MoreMenuSwiftUI.swift` + `SpikeNativeShell.swift` — "Creative Studio" menu row (Workspace group).
+- Screen hides the pushed nav bar at the UIKit level (CSNavPopper) → clean takeover, own back button.
+
+**Full-app BUILD SUCCEEDED** for iPhone 17 Pro Max sim (Capacitor + Agora + all screens + Creative
+Studio, 0 errors). At the 3-branch merge, expect the KNOWN mechanical conflicts on `project.pbxproj`
+(build-number + Compile Sources) and the two menu files — resolve by taking the union (keep every
+registered file + every menu row) and the highest build number. Everything else is page-owned and
+conflict-free.
