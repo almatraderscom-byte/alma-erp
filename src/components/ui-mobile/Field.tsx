@@ -44,7 +44,8 @@ export function Field({
 }
 
 const CONTROL_BASE =
-  'w-full rounded-xl border bg-card px-4 text-[16px] text-cream placeholder-muted ' +
+  // iOS 27: small-control radius (14px, var(--ios-radius-control) in src/styles/ios27.css)
+  'w-full rounded-[var(--ios-radius-control)] border bg-card px-4 text-[16px] text-cream placeholder-muted ' +
   'transition-colors focus:outline-none focus:border-gold/50 focus:ring-2 focus:ring-gold/15 ' +
   'disabled:opacity-50 disabled:bg-bg-2'
 

@@ -25,10 +25,16 @@ import styles from './TopScrollFade.module.css'
  * NativeShellBridge) — desktop / mobile-web keep their existing sticky headers and
  * see nothing. Mounted ONCE in app/layout.tsx so every route gets it.
  * pointer-events: none — taps always pass through; header controls live elsewhere.
+ *
+ * iOS 27: the wrapper also carries the global `.lg-scroll-edge` token class
+ * (src/styles/ios27.css — Scroll Edge Effect, blur radius var(--lg-scroll-edge-blur)
+ * = 10px with a 40%→100% mask fade). It layers the kit's progressive edge blur on
+ * top of the existing ramp; same height/position/z-index/gating (the CSS-module
+ * `html.alma-native` gate still controls display, so web/desktop see nothing).
  */
 export default function TopScrollFade() {
   return (
-    <div className={styles.fade} aria-hidden="true">
+    <div className={`${styles.fade} lg-scroll-edge`} aria-hidden="true">
       <span className={`${styles.layer} ${styles.b1}`} />
       <span className={`${styles.layer} ${styles.b2}`} />
       <span className={`${styles.layer} ${styles.b3}`} />

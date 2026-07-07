@@ -37,15 +37,15 @@ export function SheetModal({
       <div
         ref={sheetRef}
         className={cn(
-          'mobile-modal-shell w-full bg-card',
-          // Bottom sheet on phone, centered card from sm up.
-          'rounded-t-3xl sm:max-w-lg sm:rounded-3xl',
+          'mobile-modal-shell lg-material-strong w-full',
+          // Bottom sheet on phone (iOS 27 sheet radius), centered card from sm up.
+          'rounded-t-[var(--ios-radius-sheet)] sm:max-w-lg sm:rounded-[var(--ios-radius-card)]',
           className,
         )}
       >
         {/* Grab handle (phone only) — drag down to dismiss */}
-        <div {...handleProps} className="mobile-modal-header flex flex-col items-center pt-2 sm:pt-0">
-          <span className="h-1 w-10 rounded-full bg-border-strong sm:hidden" aria-hidden />
+        <div {...handleProps} className="mobile-modal-header flex flex-col items-center pt-1 sm:pt-0">
+          <span className="ios-grabber sm:hidden" aria-hidden />
           {title != null && (
             <div className="flex w-full items-center justify-between px-5 py-3">
               <h2 className="text-[16px] font-bold text-cream">{title}</h2>
@@ -65,7 +65,10 @@ export function SheetModal({
 
         {footer != null && (
           <div
-            className="mobile-modal-footer px-5 pt-3"
+            // Utilities out-rank the @layer components .mobile-modal-footer rules:
+            // hairline → iOS separator token, opaque bg → transparent so the
+            // sheet's liquid-glass frost shows through (blur kept as scroll-edge).
+            className="mobile-modal-footer border-[var(--ios-separator)] bg-transparent px-5 pt-3"
             style={{ paddingBottom: 'max(1rem, var(--kb-inset, 0px), env(safe-area-inset-bottom, 0px))' }}
           >
             {footer}
