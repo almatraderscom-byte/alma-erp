@@ -32,7 +32,7 @@ import UIKit
 
 // MARK: - Web palette (exact hexes from globals.css / tailwind tokens)
 
-private enum PortalOfficePalette {
+enum PortalOfficePalette {
     static let coral = AlmaSwiftTheme.coral                                  // web --c-accent  #E07A5F
     static let goldLt = Color(red: 0.957, green: 0.635, blue: 0.549)         // #F4A28C
     static let goldDim = Color(red: 0.769, green: 0.353, blue: 0.235)        // #C45A3C
@@ -1865,7 +1865,7 @@ private func officeGradBadge(_ systemName: String) -> some View {
 
 /// Circular avatar — real ERP profile photo when present, else a tinted initial.
 @available(iOS 17.0, *)
-private func officeAvatar(_ url: String?, initial: String, size: CGFloat = 34) -> some View {
+func officeAvatar(_ url: String?, initial: String, size: CGFloat = 34) -> some View {
     Group {
         if let url, let u = URL(string: url) {
             AsyncImage(url: u) { img in img.resizable().scaledToFill() } placeholder: {
@@ -2877,7 +2877,7 @@ private enum PortalOfficeFormat {
 // from the Orders/Assistant spec verbatim)
 
 @available(iOS 17.0, *)
-private struct PortalOfficeAurora: View {
+struct PortalOfficeAurora: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -2911,7 +2911,7 @@ private struct PortalOfficeAurora: View {
 }
 
 @available(iOS 17.0, *)
-private extension View {
+extension View {
     func portalOfficeGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))

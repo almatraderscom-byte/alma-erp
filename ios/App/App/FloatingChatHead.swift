@@ -62,6 +62,7 @@ final class FloatingChatHead {
 
         let b = FloatingHeadButton(frame: CGRect(x: 0, y: 0, width: size, height: size))
         b.onTap = { [weak self] in self?.openChat() }
+        b.onLongPress = { [weak self] in self?.openQuickActions() }
         b.onDragChanged = { [weak self] center in self?.button?.center = center }
         b.onDragEnded = { [weak self] center in self?.snap(to: center) }
         root.view.addSubview(b)
@@ -96,11 +97,50 @@ final class FloatingChatHead {
         UserDefaults.standard.set(Double(y), forKey: posKey)
     }
 
-    private func openChat() {
+    private func present<Content: View>(_ view: Content, fullScreen: Bool = false) {
         guard let w = overlay, let root = w.rootViewController else { return }
+        // Dismiss anything already up (e.g. the quick-actions sheet) before presenting.
+        let target = root.presentedViewController ?? root
         button?.isHidden = true
-        let host = ChatHostController(rootView: OfficeChatStandalone())
-        host.onDisappear = { [weak self] in self?.button?.isHidden = false }
+        let host = ChatHostController(rootView: view)
+        host.onDisappear = { [weak self] in
+            // Only restore the head once nothing is presented over the overlay.
+            if self?.overlay?.rootViewController?.presentedViewController == nil {
+                self?.button?.isHidden = false
+            }
+        }
+        if fullScreen {
+            host.modalPresentationStyle = .overFullScreen
+            host.view.backgroundColor = .clear
+        }
+        target.present(host, animated: true)
+    }
+
+    private func openChat() {
+        if #available(iOS 17.0, *) { present(OfficeChatStandalone()) }
+    }
+
+    private func openIntercom() {
+        if #available(iOS 17.0, *) { present(IntercomView()) }
+    }
+
+    private func openQuickActions() {
+        guard #available(iOS 17.0, *) else { return }
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        guard let root = overlay?.rootViewController else { return }
+        button?.isHidden = true
+        let actions = ChatHeadQuickActions(
+            onChat: { [weak self] in root.dismiss(animated: true) { self?.openChat() } },
+            onWalkie: { [weak self] in root.dismiss(animated: true) { self?.openIntercom() } },
+            onDismiss: { root.dismiss(animated: true) })
+        let host = ChatHostController(rootView: actions)
+        host.modalPresentationStyle = .overFullScreen
+        host.view.backgroundColor = .clear
+        host.onDisappear = { [weak self] in
+            if self?.overlay?.rootViewController?.presentedViewController == nil {
+                self?.button?.isHidden = false
+            }
+        }
         root.present(host, animated: true)
     }
 }
@@ -108,6 +148,7 @@ final class FloatingChatHead {
 /// The draggable coral→violet circle with a chat glyph.
 final class FloatingHeadButton: UIView {
     var onTap: (() -> Void)?
+    var onLongPress: (() -> Void)?
     var onDragChanged: ((CGPoint) -> Void)?
     var onDragEnded: ((CGPoint) -> Void)?
 
@@ -144,6 +185,9 @@ final class FloatingHeadButton: UIView {
 
         addGestureRecognizer(UIPanGestureRecognizer(target: self, action: #selector(pan(_:))))
         addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tap)))
+        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(longPress(_:)))
+        longPress.minimumPressDuration = 0.45
+        addGestureRecognizer(longPress)
         accessibilityLabel = "অফিস চ্যাট"
     }
 
@@ -157,6 +201,11 @@ final class FloatingHeadButton: UIView {
     @objc private func tap() {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         onTap?()
+    }
+
+    @objc private func longPress(_ g: UILongPressGestureRecognizer) {
+        guard g.state == .began else { return }
+        onLongPress?()
     }
 
     @objc private func pan(_ g: UIPanGestureRecognizer) {
