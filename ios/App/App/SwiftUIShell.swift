@@ -156,6 +156,38 @@ extension AlmaTabBarController {
         pushWeb(on: nav, path: path, title: title, icon: icon)
     }
 
+    /// Home tab (`/`). Owner lifted the FROZEN_CAPACITOR freeze (2026-07-06): when the
+    /// SwiftUI flag is on we show the native `DashboardScreen`, but the Capacitor bridge VC
+    /// stays MOUNTED behind it (DashboardHostController) so push / reminders / the N1–N5
+    /// bridges keep running — the reason the tab was frozen. Flag off → the plain Capacitor
+    /// dashboard, exactly as before. `detachDashboardVC` first frees the VC from any prior
+    /// parent so the live flag-toggle (onSwiftUIFlagChanged) can re-mount it cleanly.
+    func makeDashboardTab() -> UINavigationController {
+        guard let dvc = dashboardVC else {
+            // Unreachable in practice (set at init) — degrade to the web dashboard.
+            return webTab("/", "Dashboard", "square.grid.2x2")
+        }
+        detachDashboardVC(dvc)
+        if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *) {
+            let navRef = WeakRef<UINavigationController>()
+            let container = DashboardHostController(capacitor: dvc, openWeb: { [weak self] path, title in
+                self?.pushWeb(on: navRef.value, path: path, title: title, icon: "square.grid.2x2")
+            })
+            let nav = Self.darkNav(root: container, tabTitle: "Dashboard", icon: "square.grid.2x2", largeTitles: false)
+            navRef.value = nav
+            return nav
+        }
+        return Self.darkNav(root: dvc, tabTitle: "Dashboard", icon: "square.grid.2x2", largeTitles: false)
+    }
+
+    /// Free the Capacitor dashboard VC from whatever nav/container currently owns it, so it
+    /// can be re-mounted (its view + loaded ERP webview are preserved — no reload).
+    private func detachDashboardVC(_ dvc: UIViewController) {
+        dvc.willMove(toParent: nil)
+        dvc.view.removeFromSuperview()
+        dvc.removeFromParent()
+    }
+
     func makeOrdersTab() -> UINavigationController {
         if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *) {
             let navRef = WeakRef<UINavigationController>()
@@ -219,6 +251,7 @@ extension AlmaTabBarController {
     /// (makeAssistantTab lives in AssistantSwiftUI.swift.)
     @objc func onSwiftUIFlagChanged() {
         guard var vcs = viewControllers, vcs.count == 5 else { return }
+        vcs[0] = makeDashboardTab()   // native ⇄ Capacitor (VC stays mounted either way)
         vcs[1] = makeOrdersTab()
         vcs[2] = makeAssistantTab()
         vcs[3] = makeApprovalsTab()

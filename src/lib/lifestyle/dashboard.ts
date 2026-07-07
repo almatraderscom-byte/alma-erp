@@ -11,7 +11,11 @@ type QueryParams = Record<string, string>
 
 function metricsToDashboard(orders: Order[]): DashboardData {
   const metrics = aggregateDashboardMetrics(orders)
-  const { pending_count: _pc, cod_amount: _cod, ...kpis } = metrics.kpis
+  // Keep pending_count (the native dashboard's "Pending" KPI reads it); only cod_amount
+  // is dropped from the wire payload. daily_trend + top_products are additive fields the
+  // native Daily-Sales / Top-Products blocks consume (the web '/' page aggregates these
+  // client-side, so it never fetched them here).
+  const { cod_amount: _cod, ...kpis } = metrics.kpis
   return {
     kpis,
     by_status: metrics.by_status,
@@ -21,6 +25,8 @@ function metricsToDashboard(orders: Order[]): DashboardData {
     sla_breaches: metrics.sla_breaches,
     recent_orders: metrics.recent_orders,
     monthly_trend: metrics.monthly_trend,
+    daily_trend: metrics.daily_trend,
+    top_products: metrics.top_products,
     generated_at: new Date().toISOString(),
   }
 }

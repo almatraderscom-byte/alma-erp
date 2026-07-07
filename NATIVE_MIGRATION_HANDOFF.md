@@ -31,7 +31,7 @@ are pre-assigned here so two sessions can never pick the same name.
 ### Core tabs (native shell)
 | Page | Route | Owning files (writable scope) | Surface | Status | Owner |
 |---|---|---|---|---|---|
-| Dashboard | `/` | — (Capacitor `AlmaBridgeViewController` — push/reminders/N1–N5 live here) | mixed | FROZEN_CAPACITOR | — |
+| Dashboard | `/` | `ios/App/App/DashboardSwiftUI.swift` (shell wiring + pbxproj via SHARED_CHANGES_REQUESTED) | native | IN_PROGRESS (owner lifted freeze 2026-07-06; Lifestyle owner/admin view migrated — all web components + exact theme, typecheck green; N1–N5 push/reminders kept at shell level as flag-off fallback — sim-verify pending owner "build" go-ahead) | dashboard session |
 | Assistant (Claude surface) | `/agent` | `ios/App/App/AssistantSwiftUI.swift` | native | IN_REVIEW (owner instruction 2026-07-06 lifted KEEP_WEB; native chat sim-verified, see handoff §0-e; web fallback intact via flag) | assistant session |
 | Orders list | `/orders` | `ios/App/App/OrdersSwiftUI.swift` | native | DONE (b36) | main session |
 | Order create | `/orders/new` | `ios/App/App/OrderCreateSwiftUI.swift` | native | IN_REVIEW (b36 — owner's first live submit = e2e test) | main session |

@@ -48,3 +48,44 @@ Owner flips `[PENDING]` → `[✅ APPLIED <commit>]` or `[❌ REJECTED — reaso
 - APPLIED on `native/approvals-parity` (acting owner): `AlmaNativeRouter.swift` (new, A040/B040) + `SwiftUIShell.swift` `pushSmart` hook (More rows route to native screens when migrated; forced-web escape prevents recursion).
 - **pbxproj ID range reserved for this marathon: A040–A07F / B040–B07F** — other sessions please allocate below/above this range.
 - Marathon page files will be registered incrementally on this branch; final integration merge + sim-verified build happens at the end of the marathon.
+
+---
+## 2026-07-06 · native/dashboard session (owner-directed — freeze on `/` lifted)
+
+**Owner instruction (2026-07-06, chat):** lift the `FROZEN_CAPACITOR` freeze on the Lifestyle
+home dashboard (`/`) and migrate it to native SwiftUI (`DashboardSwiftUI.swift`), keeping every
+component + the exact theme; owner/admin scope only; verify N1–N5 push/reminders still fire;
+do NOT build until the owner confirms. Owned file `DashboardSwiftUI.swift` is on branch
+`native/dashboard`. **pbxproj ID range requested for this file: A080/B080** (above the marathon's
+reserved A040–A07F range, to avoid collisions).
+
+### [✅ APPLIED on branch — owner told dashboard session to do both items itself, 2026-07-07] dashboard — additive `/api/dashboard` fields for native parity
+- Session: native/dashboard   Date: 2026-07-06 (applied 2026-07-07)
+- File(s): `src/lib/lifestyle/dashboard.ts`, `src/types/index.ts` (web/ERP code — owner-directed exception)
+- Exact change: in `metricsToDashboard()`, add to the returned object:
+  `daily_trend: metrics.daily_trend,` and `top_products: metrics.top_products,` — and stop
+  stripping `pending_count` from `kpis` (currently `const { pending_count: _pc, cod_amount: _cod, ...kpis } = metrics.kpis`
+  drops it; keep `pending_count` in the returned `kpis`). Purely additive — no existing field changes.
+- Why: the native dashboard renders **Daily Sales**, **Top Products**, and the **Pending** KPI
+  from these fields. Without them those three blocks show their empty state. The web `/` page
+  aggregates client-side so it never noticed the omission; the web dashboard does not read this
+  route, so adding fields cannot break it. The Swift model decodes them optional-with-default, so
+  the app is correct both before and after this change (blocks just fill in once it lands).
+
+### [✅ APPLIED on branch — owner told dashboard session to do both items itself, 2026-07-07] dashboard — native home-tab wiring (frozen shell + pbxproj)
+- Session: native/dashboard   Date: 2026-07-06 (applied + sim-verified 2026-07-07)
+- File(s): `ios/App/App.xcodeproj/project.pbxproj`, `ios/App/App/SwiftUIShell.swift`, `ios/App/App/SpikeNativeShell.swift`, `ios/App/App/AlmaNativeRouter.swift`
+- Exact change: (1) pbxproj = 4 additive entries for `DashboardSwiftUI.swift` (ids `…A080`/`…B080`).
+  (2) SwiftUIShell = new `makeDashboardTab()` + `detachDashboardVC()`; `onSwiftUIFlagChanged` now
+  also swaps `vcs[0]`. (3) SpikeNativeShell = `dashboardVC` made internal (was `private`) so the
+  builder can mount it; `vcs[0]` init uses `makeDashboardTab()`; viewDidAppear gained the
+  `ALMA_DASH_APPEARANCE` debug hook (env-guarded, same pattern as `ALMA_OPEN_TAB`).
+  (4) AlmaNativeRouter = `case "/", "/dashboard": DashboardScreen`.
+- **Key design (the reason `/` was frozen):** the native `DashboardScreen` does NOT replace the
+  Capacitor bridge — `DashboardHostController` (in `DashboardSwiftUI.swift`) mounts the Capacitor
+  VC BEHIND the native dashboard (loaded + in-hierarchy, interaction disabled) so
+  `capacitorDidLoad()` + the ERP webview keep driving push / reminders / the N1–N5 bridges. The
+  native host has an OPAQUE app-colour backing so the webview can never bleed through on scroll
+  (a real z-order bug caught + fixed during sim verification).
+- Status: applied on `native/dashboard`, sim-built (iPhone 17 Pro Max) and verified light+dark with
+  live production data. Owner will review before any TestFlight upload.

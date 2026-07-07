@@ -1132,7 +1132,7 @@ final class MoreMenuViewController: UITableViewController {
 final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate {
     private let selection = UISelectionFeedbackGenerator()
     static let base = "https://alma-erp-six.vercel.app"
-    private weak var dashboardVC: UIViewController?
+    weak var dashboardVC: UIViewController?  // internal: makeDashboardTab() (SwiftUIShell.swift) mounts it
     /// Shared by every content web view (and the S6 SwiftUI screens' web escapes +
     /// the Companion) — one pool = one logged-in session everywhere.
     let contentPool = WKProcessPool()
@@ -1150,14 +1150,16 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         // other content tabs. Its web page-header is hidden via AlmaBridgeViewController.
         dashboard.title = "Dashboard"
 
-        // S6: Orders / Assistant / Approvals / More are SwiftUI when the flag is on
-        // (iOS 17+), web/UIKit otherwise — makeXxxTab() decides per launch, and the
-        // flag toggle in More swaps them live (onSwiftUIFlagChanged). Dashboard
-        // (Capacitor) is never swapped. Assistant's builder lives in
+        // S6: Dashboard / Orders / Assistant / Approvals / More are SwiftUI when the flag
+        // is on (iOS 17+), web/UIKit otherwise — makeXxxTab() decides per launch, and the
+        // flag toggle in More swaps them live (onSwiftUIFlagChanged). Dashboard (owner
+        // 2026-07-06, freeze lifted): the native DashboardScreen lays over the Capacitor
+        // bridge VC, which stays MOUNTED (DashboardHostController) so push / reminders /
+        // N1–N5 keep running — see makeDashboardTab(). Assistant's builder lives in
         // AssistantSwiftUI.swift (native chat; web fallback keeps the old segmented
         // Chat/Studio/WhatsApp/Monitor/Costs construction verbatim).
         viewControllers = [
-            Self.darkNav(root: dashboard, tabTitle: "Dashboard", icon: "square.grid.2x2", largeTitles: false),
+            makeDashboardTab(),
             makeOrdersTab(),
             makeAssistantTab(),
             makeApprovalsTab(),
@@ -1185,6 +1187,12 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         // The window doesn't exist during init-time applyTheme — re-assert here so the
         // window-level trait (sheet presentations) matches from the first frame on.
         view.window?.overrideUserInterfaceStyle = AlmaTheme.interfaceStyle
+        // DEBUG self-test hook: ALMA_DASH_APPEARANCE=light|dark flips the app theme via the
+        // REAL theme API (same as the More toggle) so a headless sim proof can capture both
+        // modes without GUI clicks. Never set on a real launch.
+        if let a = ProcessInfo.processInfo.environment["ALMA_DASH_APPEARANCE"] {
+            AlmaTheme.set(dark: a != "light")
+        }
         // DEBUG self-test hook: ALMA_FADE_DEMO=1 presents the ClaudeTopFade demo screen
         // (see ClaudeTopFade.swift) so the scroll-edge fade can be screenshotted headlessly.
         ClaudeTopFadeSelfTest.presentIfRequested(over: self)
