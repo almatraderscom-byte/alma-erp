@@ -223,11 +223,15 @@ private struct PortalOfficeOk: Decodable {}
 struct PortalHubEnvelope: Decodable {
     let selfRole: String       // "owner" | "staff" | "none"
     let hub: PortalOwnerHub?
-    private enum Keys: String, CodingKey { case ok, hub; case selfRole = "self" }
+    let staff: PortalStaffOffice?     // full staff-office payload (getStaffOfficeData)
+    let motivation: PortalMotivation? // shared daily motivation quote
+    private enum Keys: String, CodingKey { case ok, hub, staff, motivation; case selfRole = "self" }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         selfRole = (try? c.decodeIfPresent(String.self, forKey: .selfRole)) ?? "none"
         hub = try? c.decodeIfPresent(PortalOwnerHub.self, forKey: .hub)
+        staff = try? c.decodeIfPresent(PortalStaffOffice.self, forKey: .staff)
+        motivation = try? c.decodeIfPresent(PortalMotivation.self, forKey: .motivation)
     }
 }
 
@@ -564,6 +568,11 @@ final class PortalOfficeVM {
     var proposalBusyId: String? = nil
     var isSampleData = false          // true when the hub route is absent and we fell back to demo data
 
+    // ── Staff office (GET /api/assistant/office/hub → getStaffOfficeData) — the rich
+    //    staff app (performer hero, motivation, check-in, task cards, proof upload). ──
+    var staffData: PortalStaffOffice? = nil
+    var motivation: PortalMotivation? = nil
+
     /// First call decides the whole screen: owner → boss hub, staff → staff app.
     func loadHub() async {
         loading = true
@@ -577,7 +586,10 @@ final class PortalOfficeVM {
             roleResolved = true
             authExpired = false
             if env.selfRole == "staff" {
-                await load()                 // staff app needs tasks + notifs
+                staffData = env.staff
+                motivation = env.motivation
+                if let sd = env.staff { syncLunch(from: sd) }   // resume the 45-min timer
+                await load()                 // notices + the chat "আজকের কাজ" picker (my-tasks)
             } else if env.selfRole == "owner" {
                 await loadNotifsOnly()       // owner's bell (my-tasks is staff-only, 403s)
             }
@@ -923,6 +935,7 @@ struct PortalOfficeScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = PortalOfficeVM()
     @State private var detailTask: PortalOfficeTask? = nil
+    @State private var detailStaffTask: PortalStaffTask? = nil   // rich staff-task detail
     @State private var showSelfCreate = false
     @State private var showChat = false
     @State private var ownerTask: PortalHubTask? = nil
@@ -939,6 +952,11 @@ struct PortalOfficeScreen: View {
                 } else if vm.selfRole == "owner" {
                     PortalOwnerHubView(vm: vm, openWeb: openWeb,
                                        showChat: $showChat, ownerTask: $ownerTask, showHistory: $showHistory)
+                } else if let sd = vm.staffData {
+                    PortalStaffAppView(vm: vm, staff: sd, openWeb: openWeb,
+                                       onOpenTask: { detailStaffTask = $0 },
+                                       onSelfCreate: { showSelfCreate = true },
+                                       onOpenChat: { showChat = true })
                 } else {
                     staffContent
                 }
@@ -955,6 +973,11 @@ struct PortalOfficeScreen: View {
         .task { if !vm.roleResolved { await vm.loadHub() } }
         .sheet(item: $detailTask) { t in
             PortalTaskDetailSheet(task: t, vm: vm, openWeb: openWeb)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $detailStaffTask) { t in
+            PortalStaffTaskSheet(task: t, vm: vm)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
@@ -2815,7 +2838,7 @@ private struct PortalOfficeHistorySheet: View {
 
 // MARK: - Formatting helpers (web util parity)
 
-private enum PortalOfficeFormat {
+enum PortalOfficeFormat {
     /// ASCII digits → Bangla numerals — the web's `bn()` helper.
     private static let bnDigits: [Character] = ["০", "১", "২", "৩", "৪", "৫", "৬", "৭", "৮", "৯"]
     static func bn(_ n: Int) -> String { bn(String(n)) }
