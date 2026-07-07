@@ -1085,7 +1085,7 @@ struct DashboardScreen: View {
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .strokeBorder(DashPalette.amber500.opacity(0.35), lineWidth: 1))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(DashPressStyle())
     }
 
     // ── Date preset chips (web DateRangeFilter) ──
@@ -1174,6 +1174,7 @@ struct DashboardScreen: View {
                         spark: daily.map(\.revenue),
                         dates: daily.map(\.date),
                         trend: Self.trend(monthly.map(\.revenue)))
+            .dashPress { openWeb("/", "ড্যাশবোর্ড") }
     }
 
     /// The 8-KPI spec panel (hairline grid) — every compact/return KPI from the web page.
@@ -1225,6 +1226,7 @@ struct DashboardScreen: View {
                 DashLineChart(values: points.map(\.revenue), color: DashPalette.coral, height: 74).padding(.top, 4)
             }
         }
+        .dashPress()
     }
 
     private func orderStatusCompact(_ byStatus: [String: Int]) -> some View {
@@ -1245,6 +1247,7 @@ struct DashboardScreen: View {
                 .padding(.top, 2)
             }
         }
+        .dashPress()
     }
 
     private func categoryMixCompact(_ byCategory: [String: DashCategoryStat]) -> some View {
@@ -1262,6 +1265,7 @@ struct DashboardScreen: View {
                 .padding(.top, 2)
             }
         }
+        .dashPress()
     }
 
     private func channelCompact(_ bySource: [String: DashSourceStat]) -> some View {
@@ -1291,6 +1295,7 @@ struct DashboardScreen: View {
                 .padding(.top, 2)
             }
         }
+        .dashPress()
     }
 
     /// Two-column swatch legend under a compact donut (status / category breakdowns).
@@ -1456,7 +1461,7 @@ struct DashboardScreen: View {
                 VStack(spacing: 0) {
                     ForEach(Array(top.enumerated()), id: \.element.id) { i, p in
                         if i > 0 { Divider().opacity(0.3) }
-                        topProductRow(rank: i + 1, p)
+                        topProductRow(rank: i + 1, p).dashPress()
                     }
                 }
             }
@@ -1527,7 +1532,7 @@ struct DashboardScreen: View {
                             .padding(.vertical, 9).padding(.horizontal, 2)
                             .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(DashPressStyle())
                     }
                 }
             }
@@ -1559,6 +1564,7 @@ struct DashboardScreen: View {
                         .background(DashPalette.amber500.opacity(0.18), in: Capsule())
                 }
                 .padding(.vertical, 8)
+                .dashPress()
             }
         }
         .padding(14)
@@ -1585,7 +1591,7 @@ struct DashboardScreen: View {
                     active ? DashPalette.coral.opacity(0.55)
                            : Color.white.opacity(scheme == .dark ? 0.10 : 0.4), lineWidth: 1))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(DashPressStyle())
     }
 
     private func emptyChart(_ icon: String, _ title: String, _ desc: String) -> some View {
@@ -1842,6 +1848,7 @@ private struct StatBlock: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10).padding(.vertical, 11)
+        .dashPress()
     }
 }
 
@@ -1909,6 +1916,31 @@ private struct MiniChip: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 11).padding(.vertical, 10)
         .dashGlass(scheme, corner: 13)
+    }
+}
+
+// MARK: - Press feedback (Apple-style tactile touch on the dashboard's tappable surfaces)
+
+/// Subtle scale-down + soft haptic on touch, spring-back on release. A Button/ButtonStyle (not a
+/// raw 0-distance drag gesture) so it never fights the ScrollView's pan.
+@available(iOS 17.0, *)
+private struct DashPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .brightness(configuration.isPressed ? 0.05 : 0)
+            .animation(.spring(response: 0.32, dampingFraction: 0.62), value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, pressed in
+                if pressed { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }
+            }
+    }
+}
+
+@available(iOS 17.0, *)
+private extension View {
+    /// Wrap a (possibly non-interactive) card so it presses like an iOS cell. Optional tap action.
+    func dashPress(_ action: @escaping () -> Void = {}) -> some View {
+        Button(action: action, label: { self }).buttonStyle(DashPressStyle())
     }
 }
 
