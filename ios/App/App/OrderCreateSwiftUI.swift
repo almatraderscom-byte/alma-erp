@@ -267,6 +267,8 @@ struct OrderCreateSheet: View {
     @State private var query = ""
     @State private var pickingGroup: StockGroup? = nil   // group awaiting a size choice
     @State private var items: [FormItem] = []
+    @State private var isAdding = false                  // "আরেকটা পণ্য যোগ করুন" flow open
+    @FocusState private var searchFocused: Bool
     // Totals
     @State private var shipping = 0
     @State private var discount = 0
@@ -299,9 +301,26 @@ struct OrderCreateSheet: View {
     private var phoneValid: Bool {
         phone.filter(\.isNumber).range(of: "^01[3-9][0-9]{8}$", options: .regularExpression) != nil
     }
+
+    // ── Loss guard (owner rule) ── an order may NOT be created at a loss.
+    /// Lines whose sell price is below their buying (raw inventory) cost.
+    private var belowCostItems: [FormItem] {
+        items.filter { ($0.stock.buyingPrice ?? 0) > 0 && $0.sellPrice < ($0.stock.buyingPrice ?? 0) }
+    }
+    /// The order is a loss if any line sells below cost OR the estimated profit is negative.
+    private var isLossOrder: Bool { !belowCostItems.isEmpty || estimatedProfit < 0 }
+    /// Plain-Bangla reason shown to the owner when the order is blocked for a loss.
+    private var lossReason: String? {
+        guard isLossOrder else { return nil }
+        if let first = belowCostItems.first {
+            return "\(first.groupKey) — বিক্রয়মূল্য কেনা দামের (৳\(first.stock.buyingPrice ?? 0)) নিচে। ক্ষতিতে অর্ডার তৈরি করা যাবে না।"
+        }
+        return "এই অর্ডারে ৳\(abs(estimatedProfit).formatted()) ক্ষতি হচ্ছে। বিক্রয়মূল্য বাড়ান বা খরচ কমান — ক্ষতিতে অর্ডার তৈরি করা যাবে না।"
+    }
+
     private var canSubmit: Bool {
         !customer.trimmingCharacters(in: .whitespaces).isEmpty && phoneValid && !items.isEmpty
-            && items.allSatisfy { $0.qty >= 1 && $0.sellPrice > 0 } && !submitting
+            && items.allSatisfy { $0.qty >= 1 && $0.sellPrice > 0 } && !isLossOrder && !submitting
     }
 
     var body: some View {
@@ -373,33 +392,64 @@ struct OrderCreateSheet: View {
                 }
                 .padding(.vertical, 6)
             } else {
-                glassField("কালেকশন কোড / SKU / নাম", text: $query)
-                    .onChange(of: query) { pickingGroup = nil }
-                if !query.isEmpty && pickingGroup == nil { groupResults }
-                if let g = pickingGroup { sizePicker(g) }
-            }
-            ForEach($items) { $item in
-                cartLine($item).padding(.top, 8)
-            }
-            if items.isEmpty && !catalogLoading && query.isEmpty {
-                Text("কোড লিখে খুঁজুন → সাইজ বাছুন → কার্টে যোগ হবে। একাধিক পণ্য যোগ করা যায়।")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .padding(.top, 2)
-            }
-            if !items.isEmpty {
-                divider
-                Button {
-                    query = ""
-                    pickingGroup = nil
-                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                } label: {
-                    Label("আরেকটা পণ্য যোগ করুন", systemImage: "plus.circle.fill")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(AlmaSwiftTheme.coral)
+                // Cart lines first (a normal cart reads top-to-bottom), then the add
+                // controls. Each cartLine is its own glass card, so no divider between.
+                ForEach($items) { $item in
+                    cartLine($item).padding(.top, 8)
                 }
-                .padding(.top, 2)
+                // Show the search/picker when the cart is empty OR the owner tapped "add
+                // another"; otherwise show the button that reveals it. This is what makes a
+                // 2nd, 3rd… product addable — the picker re-appears right where you act.
+                if items.isEmpty || isAdding {
+                    if !items.isEmpty { divider }
+                    searchArea
+                } else {
+                    divider
+                    addAnotherButton
+                }
+                if items.isEmpty && query.isEmpty {
+                    Text("কোড লিখে খুঁজুন → সাইজ বাছুন → কার্টে যোগ হবে। একাধিক পণ্য যোগ করা যায়।")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .padding(.top, 2)
+                }
             }
         }
+    }
+
+    /// The collection search field + results + size/variant picker. Used both for the
+    /// first product and (via "আরেকটা পণ্য যোগ করুন") every product after it.
+    @ViewBuilder
+    private var searchArea: some View {
+        glassField("কালেকশন কোড / SKU / নাম", text: $query)
+            .focused($searchFocused)
+            .onChange(of: query) { pickingGroup = nil }
+        if !query.isEmpty && pickingGroup == nil { groupResults }
+        if let g = pickingGroup { sizePicker(g) }
+        if !items.isEmpty {
+            Button("বাতিল") {
+                isAdding = false
+                query = ""
+                pickingGroup = nil
+                searchFocused = false
+            }
+            .font(.caption).foregroundStyle(.secondary)
+            .padding(.top, 4)
+        }
+    }
+
+    private var addAnotherButton: some View {
+        Button {
+            isAdding = true
+            query = ""
+            pickingGroup = nil
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            searchFocused = true
+        } label: {
+            Label("আরেকটা পণ্য যোগ করুন", systemImage: "plus.circle.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(AlmaSwiftTheme.coral)
+        }
+        .padding(.top, 2)
     }
 
     /// Collections matching the query (grouped stock) — like the web's code lookup.
@@ -550,8 +600,17 @@ struct OrderCreateSheet: View {
             HStack(spacing: 10) {
                 if let group { sizeSwitchMenu(item, group) }
                 Spacer()
+                // Quantity: show the live count next to the −/+ stepper. (The stepper's own
+                // label is hidden by SwiftUI, so without this explicit number the owner sees
+                // no quantity when picking a product or tapping +.)
+                Text("পরিমাণ").font(.caption).foregroundStyle(.secondary)
+                Text("\(it.qty)")
+                    .font(.callout.weight(.bold)).monospacedDigit()
+                    .frame(minWidth: 24)
+                    .foregroundStyle(AlmaSwiftTheme.coral)
+                    .contentTransition(.numericText())
                 Stepper(value: item.qty, in: 1...max(1, it.stock.available ?? 1)) {
-                    Text("×\(it.qty)").font(.subheadline.weight(.semibold))
+                    EmptyView()
                 }
                 .labelsHidden()
                 .fixedSize()
@@ -568,6 +627,12 @@ struct OrderCreateSheet: View {
                 Spacer()
                 Text("৳\(it.subtotal.formatted())")
                     .font(.subheadline.weight(.bold)).foregroundStyle(AlmaSwiftTheme.coral)
+            }
+            // Below-cost warning on the offending line (buying price is known only to the owner).
+            if (it.stock.buyingPrice ?? 0) > 0, it.sellPrice < (it.stock.buyingPrice ?? 0) {
+                Label("বিক্রয়মূল্য কেনা দামের (৳\(it.stock.buyingPrice ?? 0)) নিচে",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2.weight(.semibold)).foregroundStyle(.red)
             }
         }
         .padding(12)
@@ -650,9 +715,12 @@ struct OrderCreateSheet: View {
             summaryRow("মোট পরিশোধ্য", payable, bold: true)
             summaryRow("বাকি", due)
             HStack {
-                Text("আনুমানিক লাভ").font(.subheadline)
+                // Label flips to "ক্ষতি" (loss) when profit is negative — never call a loss "লাভ".
+                Text(estimatedProfit >= 0 ? "আনুমানিক লাভ" : "আনুমানিক ক্ষতি")
+                    .font(.subheadline.weight(estimatedProfit >= 0 ? .regular : .semibold))
+                    .foregroundStyle(estimatedProfit >= 0 ? Color.primary : Color.red)
                 Spacer()
-                Text("৳\(estimatedProfit.formatted())")
+                Text("৳\(abs(estimatedProfit).formatted())")
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(estimatedProfit >= 0
                         ? Color(red: 0.133, green: 0.773, blue: 0.369) : .red)
@@ -692,6 +760,18 @@ struct OrderCreateSheet: View {
             if let e = errorMsg {
                 Text(e).font(.footnote).foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            // Loss guard: explain why the button is locked so the owner can fix the price.
+            if let loss = lossReason {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.footnote).foregroundStyle(.red)
+                    Text(loss).font(.footnote.weight(.semibold)).foregroundStyle(.red)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color.red.opacity(0.12),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
             Button {
                 Task { await submit() }
@@ -780,12 +860,25 @@ struct OrderCreateSheet: View {
     private func appendItem(group: StockGroup, stock: AlmaStockItem, display: String,
                             sizeGroup: String, variantGroup: String) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        let price = priceBySku[stock.sku ?? ""] ?? priceBySku[group.key] ?? stock.buyingPrice ?? 0
+        let price = defaultSellPrice(for: stock, group: group)
         items.append(FormItem(groupKey: group.key, collectionType: group.collectionType,
                               stock: stock, displaySize: display,
                               sizeGroup: sizeGroup, variantGroup: variantGroup, sellPrice: price))
         query = ""
         pickingGroup = nil
+        isAdding = false
+        searchFocused = false
+    }
+
+    /// The default SELL price to pre-fill (web parity: use the product master's
+    /// `default_price`, matched by stock SKU → collection code → product name; NEVER the
+    /// buying price). Returns 0 when unknown so the owner types the sell price himself.
+    private func defaultSellPrice(for stock: AlmaStockItem, group: StockGroup) -> Int {
+        for key in [stock.sku, group.key, group.product, stock.product] {
+            let k = (key ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+            if !k.isEmpty, let p = priceBySku[k], p > 0 { return p }
+        }
+        return 0
     }
 
     /// Strip the pool word ("133 ADULT" → "133") so the group title reads as the
@@ -817,9 +910,16 @@ struct OrderCreateSheet: View {
             }
         }
         groups = g
+        // Key the default SELL price by product SKU and NAME (both normalized), so the
+        // native picker can resolve it by stock SKU, collection code, or product name —
+        // mirrors the web's productByCode map (sku/id/name). Only positive prices count.
         var map: [String: Int] = [:]
         for p in products?.products ?? [] {
-            if let sku = p.sku, let price = p.defaultPrice { map[sku] = price }
+            guard let price = p.defaultPrice, price > 0 else { continue }
+            for key in [p.sku, p.name] {
+                let k = (key ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+                if !k.isEmpty, map[k] == nil { map[k] = price }
+            }
         }
         priceBySku = map
     }
