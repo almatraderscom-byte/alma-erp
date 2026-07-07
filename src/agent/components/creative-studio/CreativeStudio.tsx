@@ -1466,6 +1466,56 @@ function UploadTile({
 const isPendingStatus = (s: string) => s === 'approved' || s === 'pending' || s === 'processing'
 const isFailedStatus = (s: string) => s === 'failed' || s === 'error' || s === 'rejected'
 
+const BN_DIGITS = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯']
+const toBanglaDigits = (n: number) => String(n).split('').map((c) => (c >= '0' && c <= '9' ? BN_DIGITS[+c] : c)).join('')
+
+/**
+ * Generating tile — replaces the plain spinner. A percentage climbs 1→~95%
+ * (eased by elapsed time; it never fakes 100% — that only lands when the real
+ * image arrives) while a coral fill rises from the bottom and a light shimmer
+ * sweeps across, so the tile visibly "fills up" as the render progresses.
+ */
+function GeneratingTile({ createdAt, label = 'তৈরি হচ্ছে…' }: { createdAt: string; label?: string }) {
+  const [pct, setPct] = useState(3)
+  useEffect(() => {
+    const start = new Date(createdAt).getTime() || Date.now()
+    // Typical render ~38s; approach 95% asymptotically and hold — completion snaps to 100.
+    const EST = 38_000
+    const id = setInterval(() => {
+      const elapsed = Date.now() - start
+      const target = 95 * (1 - Math.exp(-elapsed / EST))
+      setPct((p) => (target > p ? p + (target - p) * 0.25 : p))
+    }, 120)
+    return () => clearInterval(id)
+  }, [createdAt])
+
+  return (
+    <div className="absolute inset-0 overflow-hidden">
+      {/* rising fill */}
+      <div
+        className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#E07A5F]/45 via-[#E07A5F]/20 to-[#E07A5F]/5 transition-[height] duration-200 ease-out"
+        style={{ height: `${pct}%` }}
+      />
+      {/* fill top edge glow */}
+      <div className="absolute inset-x-0 h-[2px] bg-[#E07A5F]/70 shadow-[0_0_10px_2px_rgba(224,122,95,0.5)] transition-[bottom] duration-200 ease-out" style={{ bottom: `${pct}%` }} />
+      {/* shimmer sweep */}
+      <motion.div
+        className="pointer-events-none absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-white/12 to-transparent"
+        initial={{ x: '-140%' }}
+        animate={{ x: '340%' }}
+        transition={{ duration: 1.7, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      {/* number */}
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5">
+        <span className="text-[28px] font-extrabold leading-none tabular-nums text-cream drop-shadow">
+          {toBanglaDigits(Math.round(pct))}%
+        </span>
+        <span className="text-[10px] font-medium text-muted">{label}</span>
+      </div>
+    </div>
+  )
+}
+
 function GalleryView() {
   const [items, setItems] = useState<GalleryItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -1616,17 +1666,21 @@ function GalleryView() {
                       // eslint-disable-next-line jsx-a11y/media-has-caption
                       <video src={item.previewUrl} className="h-full w-full object-cover" playsInline muted />
                     ) : (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={item.thumbUrl ?? item.previewUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+                      <motion.div
+                        className="h-full w-full"
+                        initial={{ clipPath: 'inset(100% 0% 0% 0%)', opacity: 0.4 }}
+                        animate={{ clipPath: 'inset(0% 0% 0% 0%)', opacity: 1 }}
+                        transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={item.thumbUrl ?? item.previewUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+                      </motion.div>
                     )
+                  ) : pending ? (
+                    <GeneratingTile createdAt={item.createdAt} label={isVideo ? 'ভিডিও হচ্ছে…' : 'তৈরি হচ্ছে…'} />
                   ) : (
                     <div className="flex h-full flex-col items-center justify-center gap-2 p-2 text-center">
-                      {pending ? (
-                        <>
-                          <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
-                          <span className="text-[10px] font-medium text-muted">তৈরি হচ্ছে…</span>
-                        </>
-                      ) : failed ? (
+                      {failed ? (
                         <span className="flex flex-col items-center gap-1.5">
                           <span className="text-[10px] font-medium text-red-400">
                             ব্যর্থ{item.error ? ` · ${item.error.slice(0, 40)}` : ''}
