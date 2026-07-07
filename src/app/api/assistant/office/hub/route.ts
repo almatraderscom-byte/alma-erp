@@ -3,15 +3,19 @@
  * Read-only self/role probe for the native iOS app.
  *
  * Tells the app whether the logged-in user is the office owner (boss) or a
- * staff member, and — for the owner only — returns the full Owner Hub data
- * (pending-approval queue, update-tracking, team status, leaderboard) as JSON.
+ * staff member. For the owner it returns the full Owner Hub data (pending-approval
+ * queue, update-tracking, team status, leaderboard); for a staff member it returns
+ * the full Staff Office data (today's tasks, proofs, award, lunch, attendance) plus
+ * the shared daily motivation — the same payload the web staff page renders — so the
+ * native staff office has everything in one call.
  */
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { getOwnerHubData } from '@/agent/lib/office-hub'
+import { getOwnerHubData, getStaffOfficeData } from '@/agent/lib/office-hub'
+import { dailyMotivation } from '@/agent/lib/office-motivation'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -36,7 +40,14 @@ export async function GET(req: NextRequest) {
       where: { userId: token.sub, active: true },
       select: { id: true, name: true, businessId: true, userId: true },
     })
-    if (staff) return Response.json({ ok: true, self: 'staff' })
+    if (staff) {
+      return Response.json({
+        ok: true,
+        self: 'staff',
+        staff: await getStaffOfficeData(staff),
+        motivation: dailyMotivation(),
+      })
+    }
 
     return Response.json({ ok: true, self: 'none' })
   } catch (e) {
