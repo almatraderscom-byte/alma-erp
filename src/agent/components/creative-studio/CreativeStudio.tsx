@@ -349,6 +349,236 @@ const MODEL_ROLES = [
   { id: 'daughter', label: 'মেয়ে (৫–১০)' },
 ] as const
 
+type FamilyRole = 'father' | 'mother' | 'son' | 'daughter'
+
+// Which saved roles each family preset needs. The family chain resolves people
+// BY ROLE from the library (not per-shot multi-select), so a preset can only run
+// once every role below is saved. Drives the pre-Run checklist so missing models
+// are visible up front instead of failing at Run time.
+const FAMILY_REQUIRED_ROLES: Record<string, FamilyRole[]> = {
+  father_son: ['father', 'son'],
+  mother_son: ['mother', 'son'],
+  mother_daughter: ['mother', 'daughter'],
+  father_daughter: ['father', 'daughter'],
+  couple: ['father', 'mother'],
+  full_family: ['father', 'mother', 'son', 'daughter'],
+}
+
+/**
+ * Quick add-model bottom-sheet. Self-contained: pick a photo, name it, save it to
+ * the library. `lockedRole` forces the role (used by the family checklist's "add
+ * son/daughter" shortcut) so the owner can't accidentally save the wrong role.
+ */
+function AddModelSheet({
+  lockedRole,
+  onClose,
+  onSaved,
+}: {
+  lockedRole?: string
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [preview, setPreview] = useState<string | null>(null)
+  const [path, setPath] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [name, setName] = useState('')
+  const [role, setRole] = useState(lockedRole ?? 'single')
+  const [saving, setSaving] = useState(false)
+
+  const onPick = (f: File) => {
+    setPreview((p) => { if (p) URL.revokeObjectURL(p); return URL.createObjectURL(f) })
+    setPath(null)
+    setUploading(true)
+    void uploadStudioFile(f, 'model-library')
+      .then((p) => setPath(p))
+      .catch((err) => toast.error(String(err)))
+      .finally(() => setUploading(false))
+  }
+
+  const save = async () => {
+    if (!name.trim() || !path) { toast.error('নাম আর ছবি — দুটোই দরকার'); return }
+    setSaving(true)
+    try {
+      await saveModel({
+        id: name.trim().toLowerCase().replace(/\s+/g, '-'),
+        name: name.trim(),
+        imagePath: path,
+        role,
+      })
+      toast.success(`মডেল "${name}" সেভ হলো`)
+      if (preview) URL.revokeObjectURL(preview)
+      onSaved()
+      onClose()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const lockedLabel = MODEL_ROLES.find((r) => r.id === lockedRole)?.label
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={() => !saving && onClose()}
+      className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-4"
+    >
+      <motion.div
+        initial={{ y: 40, opacity: 0.6 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: 40, opacity: 0 }}
+        transition={{ type: 'spring', stiffness: 320, damping: 32 }}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-t-3xl border border-border-subtle bg-card p-4 shadow-2xl sm:rounded-3xl"
+        style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+      >
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) onPick(f); e.target.value = '' }}
+        />
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-[15px] font-bold text-cream">
+            {lockedLabel ? `${lockedLabel} মডেল যোগ করুন` : 'নতুন মডেল যোগ করুন'}
+          </h3>
+          <button type="button" onClick={() => !saving && onClose()} className="grid h-7 w-7 place-items-center rounded-full bg-white/8 text-muted">✕</button>
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="relative h-40 w-32 shrink-0 overflow-hidden rounded-xl border-2 border-dashed border-border bg-bg-1"
+          >
+            {preview ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={preview} alt="preview" className="h-full w-full object-cover" />
+            ) : (
+              <span className="grid h-full w-full place-items-center px-2 text-center text-[11px] text-muted">ট্যাপ করে ছবি দিন</span>
+            )}
+            {uploading && (
+              <div className="absolute inset-0 grid place-items-center bg-black/40">
+                <span className="h-6 w-6 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+              </div>
+            )}
+          </button>
+
+          <div className="flex min-w-0 flex-1 flex-col gap-2.5">
+            <div>
+              <label className="mb-1 block text-[10.5px] font-semibold text-muted">নাম</label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="যেমন: Rakib"
+                className="w-full rounded-xl border border-border bg-bg-1 px-3 py-2.5 text-[13px] text-cream outline-none focus:border-[#E07A5F]/50"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[10.5px] font-semibold text-muted">ধরন</label>
+              {lockedRole ? (
+                <span className="inline-block rounded-full bg-[#E07A5F] px-3 py-1.5 text-[11px] font-bold text-white">{lockedLabel}</span>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {MODEL_ROLES.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => setRole(r.id)}
+                      className={cn(
+                        'rounded-full px-2.5 py-1.5 text-[11px] font-semibold transition-colors',
+                        role === r.id ? 'bg-[#E07A5F] text-white' : 'border border-border bg-bg-1 text-muted',
+                      )}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          disabled={saving || uploading || !path || !name.trim()}
+          onClick={() => void save()}
+          className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#E07A5F] py-3 text-[14px] font-bold text-white transition-opacity disabled:opacity-40"
+        >
+          {saving ? (
+            <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> সেভ হচ্ছে…</>
+          ) : uploading ? 'ছবি আপলোড হচ্ছে…' : 'সেভ করুন'}
+        </button>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+/**
+ * Pre-Run family checklist. When a family preset is active it lists the roles the
+ * shot needs, marks each saved (✓ with the model's face) or missing (⚠ "যোগ করুন"),
+ * so the owner sees up front what's required instead of hitting a Run-time error.
+ */
+function FamilyRoleChecklist({
+  preset,
+  models,
+  onAddRole,
+}: {
+  preset: string
+  models: StudioModel[]
+  onAddRole: (role: FamilyRole) => void
+}) {
+  const required = FAMILY_REQUIRED_ROLES[preset]
+  if (!required) return null
+  const byRole = new Map(models.filter((m) => m.role).map((m) => [m.role as string, m]))
+  const missing = required.filter((r) => !byRole.has(r))
+
+  return (
+    <div className="rounded-2xl border border-border-subtle bg-card/70 p-3">
+      <p className="mb-2 text-[11.5px] font-semibold text-cream">
+        এই ফ্যামিলি শটে যা লাগবে {missing.length === 0 ? '· সব প্রস্তুত ✅' : `· ${missing.length}টি বাকি`}
+      </p>
+      <div className="flex flex-col gap-1.5">
+        {required.map((r) => {
+          const m = byRole.get(r)
+          return (
+            <div key={r} className="flex items-center gap-2.5">
+              <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-bg-1 text-muted">
+                {m?.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={m.imageUrl} alt={m.name} className="h-full w-full object-cover" />
+                ) : (
+                  <UserSvg className="h-4 w-4" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[12px] font-semibold text-cream">{roleLabelBn(r)}</p>
+                <p className="truncate text-[10px] text-muted">{m ? m.name : 'সেভ করা নেই'}</p>
+              </div>
+              {m ? (
+                <span className="shrink-0 text-[13px] text-emerald-400">✓</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onAddRole(r)}
+                  className="shrink-0 rounded-full bg-[#E07A5F] px-3 py-1.5 text-[11px] font-bold text-white"
+                >
+                  যোগ করুন
+                </button>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 // These modes carry no product image, so the Gemini fallback (which requires a
 // product) can't serve them — they only render through FASHN. Gate them in the
 // UI so the owner never picks a mode that will fail server-side.
@@ -524,6 +754,17 @@ function StudioWorkspace({
   const isFamilyMerge =
     familyPreset === 'full_family' && (mode === 'product_to_model' || mode === 'try_on')
 
+  // A role-based family preset is active (baba+chele etc., but NOT the full_family
+  // merge which has its own two-upload UI). When active, the single-model slot is
+  // replaced by the role checklist — members come from the library by role.
+  const familyActive =
+    !isFamilyMerge
+    && (mode === 'product_to_model' || mode === 'try_on')
+    && familyPreset !== 'single'
+    && Boolean(FAMILY_REQUIRED_ROLES[familyPreset])
+  // which role's add-model sheet is open (from the family checklist)
+  const [addRoleSheet, setAddRoleSheet] = useState<FamilyRole | null>(null)
+
   // Any multi-person family preset (baba+chele, ma+meye, full family) must render on
   // Gemini — FASHN tryon-max is single-person only and can't place 2+ people. The
   // backend already forces this; mirror it in the UI so the Run button / provider
@@ -651,11 +892,18 @@ function StudioWorkspace({
     if (mode === 'image_to_video') return Boolean(sourcePath || productPath || modelPath)
     // Family merge needs BOTH uploaded images (1st = baba+chele, 2nd = ma+meye).
     if (isFamilyMerge) return Boolean((sourcePath ?? productPath) && secondSourcePath)
+    // Role-based family: members come from the library by role — need the product +
+    // every required role saved (the checklist shows what's missing).
+    if (familyActive) {
+      if (modeDef.needsProduct && !productPath) return false
+      const have = new Set(models.filter((m) => m.role).map((m) => m.role))
+      return (FAMILY_REQUIRED_ROLES[familyPreset] ?? []).every((r) => have.has(r))
+    }
     if (modeDef.needsProduct && !productPath) return false
     if (modeDef.needsModel && !modelPath && !modelId) return false
     if (modeDef.needsSource && !sourcePath) return false
     return true
-  }, [mode, modeDef, productPath, modelPath, modelId, sourcePath, isFamilyMerge, secondSourcePath])
+  }, [mode, modeDef, productPath, modelPath, modelId, sourcePath, isFamilyMerge, secondSourcePath, familyActive, familyPreset, models])
 
   const handleRun = async () => {
     if (!canRun) {
@@ -752,7 +1000,7 @@ function StudioWorkspace({
               required
             />
           )}
-          {!isFamilyMerge && (modeDef.needsModel || mode === 'product_to_model') && (
+          {!isFamilyMerge && !familyActive && (modeDef.needsModel || mode === 'product_to_model') && (
             <ModelSlot
               models={models}
               selectedId={modelId}
@@ -774,6 +1022,13 @@ function StudioWorkspace({
               }}
             />
           )}
+          {familyActive && (
+            <FamilyRoleChecklist
+              preset={familyPreset}
+              models={models}
+              onAddRole={(r) => setAddRoleSheet(r)}
+            />
+          )}
           {modeDef.needsSource && (
             <UploadTile
               label={mode === 'image_to_video' ? 'Source image for reel' : 'Source image'}
@@ -784,6 +1039,16 @@ function StudioWorkspace({
           )}
         </div>
       </div>
+
+      <AnimatePresence>
+        {addRoleSheet && (
+          <AddModelSheet
+            lockedRole={addRoleSheet}
+            onClose={() => setAddRoleSheet(null)}
+            onSaved={() => void reloadModels()}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Bottom control dock — FASHN-style */}
       <div
