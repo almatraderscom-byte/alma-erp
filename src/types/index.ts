@@ -94,6 +94,12 @@ export interface DashboardData {
   recent_orders: Partial<Order>[]
   generated_at: string
   monthly_trend?: Array<{ month: string; revenue: number; profit: number; orders: number; cogs: number }>
+  daily_trend?: Array<{ date: string; revenue: number; profit: number; orders: number }>
+  top_products?: Array<{
+    product: string; orders: number; revenue: number; profit: number; pieces: number
+    top_size: { label: string; pieces: number } | null
+    group_details: Array<{ group: string; pieces: number; size_breakdown: Array<{ label: string; pieces: number }> }>
+  }>
   expense_by_cat?: Record<string, number>
   total_expenses?: number
   cash_balance?: number
