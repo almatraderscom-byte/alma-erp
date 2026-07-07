@@ -37,9 +37,12 @@ import UIKit
 final class DashboardHostController: UIViewController {
     private let capacitor: UIViewController
     private let host: UIHostingController<DashboardScreen>
+    private let openWeb: (_ path: String, _ title: String) -> Void
+    private var assistiveNav: AgentAssistiveNav?
 
     init(capacitor: UIViewController, openWeb: @escaping (_ path: String, _ title: String) -> Void) {
         self.capacitor = capacitor
+        self.openWeb = openWeb
         self.host = UIHostingController(rootView: DashboardScreen(openWeb: openWeb))
         super.init(nibName: nil, bundle: nil)
         title = "Dashboard"
@@ -80,16 +83,164 @@ final class DashboardHostController: UIViewController {
             host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
+
+        // 3) Assistive-touch dock (owner-liked, 2026-07-07): a draggable floating shortcut
+        //    button (reuses AgentAssistiveNav) laid full-bleed over the native dashboard — its
+        //    hitTest passes touches through except the FAB, so the scroll stays interactive.
+        //    Items = the owner's chosen shortcuts (max 5, persisted) + Edit; the pickable route
+        //    catalog is role-gated via an owner probe (the same 403 signal the To-Do chip uses).
+        Task { @MainActor [weak self] in
+            let owner = await Self.probeOwner()
+            self?.buildDock(owner: owner)
+        }
     }
 
     /// The Capacitor WKWebView re-asserts itself to the front when its content loads or
     /// scrolls; without this it would cover the native dashboard as the owner scrolls down.
-    /// Re-pin the native host on top on every layout pass so it always stays in front.
+    /// Re-pin the native host (then the floating dock) on top on every layout pass.
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        if host.view.superview === view, view.subviews.last !== host.view {
-            view.bringSubviewToFront(host.view)
+        if host.view.superview === view { view.bringSubviewToFront(host.view) }
+        if let nav = assistiveNav, nav.superview === view { view.bringSubviewToFront(nav) }
+    }
+
+    /// Owner probe — the To-Do route (SUPER_ADMIN-only) answers 403 for everyone else, so a
+    /// clean fetch means the owner. Same signal the dashboard's To-Do chip already trusts.
+    private static func probeOwner() async -> Bool {
+        do { let _: TodosEnvelope = try await AlmaAPI.shared.get("/api/assistant/todos"); return true }
+        catch { return false }
+    }
+
+    /// (Re)build the floating shortcut dock from the persisted selection, role-gated.
+    private func buildDock(owner: Bool) {
+        assistiveNav?.removeFromSuperview()
+        let available = DashShortcutCatalog.available(owner: owner)
+        let byPath = Dictionary(available.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+        let chosen = DashShortcutStore.load().compactMap { byPath[$0] }.prefix(5)
+        var items: [AgentAssistiveNav.Item] = chosen.map { sc in
+            AgentAssistiveNav.Item(title: sc.title, icon: sc.icon) { [weak self] in
+                self?.openWeb(sc.path, sc.title)
+            }
         }
+        items.append(AgentAssistiveNav.Item(title: "এডিট", icon: "slider.horizontal.3") { [weak self] in
+            self?.presentShortcutEditor(owner: owner)
+        })
+        let nav = AgentAssistiveNav(items: items)
+        view.addSubview(nav)
+        nav.attach(to: view, tabBarHeight: 49)
+        assistiveNav = nav
+        view.setNeedsLayout()
+    }
+
+    /// Present the shortcut editor (choose up to 5 from the role-available catalog).
+    private func presentShortcutEditor(owner: Bool) {
+        let editor = ShortcutEditorView(
+            available: DashShortcutCatalog.available(owner: owner),
+            initial: DashShortcutStore.load(),
+            onSave: { [weak self] chosen in
+                DashShortcutStore.save(chosen)
+                self?.dismiss(animated: true)
+                self?.buildDock(owner: owner)
+            },
+            onCancel: { [weak self] in self?.dismiss(animated: true) })
+        present(UIHostingController(rootView: editor), animated: true)
+    }
+}
+
+// MARK: - Assistive-touch shortcut dock (owner-liked — draggable, Edit, max 5, role-based)
+
+/// One dock shortcut → an ERP route opened via `openWeb`. `icon` is an SF Symbol name.
+private struct DashShortcut { let path: String; let title: String; let icon: String }
+
+private enum DashShortcutCatalog {
+    /// Full catalog (owner / admin). Titles Bangla, icons SF Symbols.
+    static let all: [DashShortcut] = [
+        DashShortcut(path: "/orders",     title: "অর্ডার",        icon: "shippingbox"),
+        DashShortcut(path: "/invoice",    title: "ইনভয়েস",       icon: "doc.text"),
+        DashShortcut(path: "/payroll",    title: "পেরোল",         icon: "banknote"),
+        DashShortcut(path: "/analytics",  title: "অ্যানালিটিক্স", icon: "chart.bar.xaxis"),
+        DashShortcut(path: "/inventory",  title: "ইনভেন্টরি",     icon: "archivebox"),
+        DashShortcut(path: "/expenses",   title: "খরচ",           icon: "creditcard"),
+        DashShortcut(path: "/finance",    title: "ফাইন্যান্স",    icon: "dollarsign.circle"),
+        DashShortcut(path: "/attendance", title: "হাজিরা",        icon: "clock"),
+        DashShortcut(path: "/employees",  title: "কর্মী",         icon: "person.2"),
+        DashShortcut(path: "/crm",        title: "সিআরএম",        icon: "person.crop.circle"),
+        DashShortcut(path: "/briefing",   title: "ব্রিফিং",       icon: "newspaper"),
+        DashShortcut(path: "/portal",     title: "আমার ডেস্ক",    icon: "person.text.rectangle"),
+    ]
+    /// Pages a non-owner (staff) may open. Everything else is owner-only.
+    static let staffPaths: Set<String> = ["/orders", "/invoice", "/attendance", "/portal"]
+    static func available(owner: Bool) -> [DashShortcut] {
+        owner ? all : all.filter { staffPaths.contains($0.path) }
+    }
+    static let defaultPaths = ["/orders", "/invoice", "/payroll", "/analytics"]
+}
+
+private enum DashShortcutStore {
+    private static let key = "alma.dashboard.assistive.shortcuts.v1"
+    static func load() -> [String] {
+        (UserDefaults.standard.array(forKey: key) as? [String]) ?? DashShortcutCatalog.defaultPaths
+    }
+    static func save(_ paths: [String]) {
+        UserDefaults.standard.set(Array(paths.prefix(5)), forKey: key)
+    }
+}
+
+/// The Edit sheet — pick up to 5 shortcuts from the role-available catalog.
+@available(iOS 17.0, *)
+private struct ShortcutEditorView: View {
+    let available: [DashShortcut]
+    let onSave: ([String]) -> Void
+    let onCancel: () -> Void
+    @State private var chosen: [String]
+
+    init(available: [DashShortcut], initial: [String],
+         onSave: @escaping ([String]) -> Void, onCancel: @escaping () -> Void) {
+        self.available = available
+        self.onSave = onSave
+        self.onCancel = onCancel
+        let valid = Set(available.map(\.path))
+        _chosen = State(initialValue: initial.filter { valid.contains($0) })
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(available, id: \.path) { sc in
+                        Button { toggle(sc.path) } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: sc.icon).frame(width: 26).foregroundStyle(DashPalette.coral)
+                                Text(sc.title).foregroundStyle(.primary)
+                                Spacer()
+                                if chosen.contains(sc.path) {
+                                    Image(systemName: "checkmark").font(.body.weight(.bold))
+                                        .foregroundStyle(DashPalette.coral)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!chosen.contains(sc.path) && chosen.count >= 5)
+                    }
+                } header: {
+                    Text("শর্টকাট বেছে নিন")
+                } footer: {
+                    Text("সর্বোচ্চ ৫টি · এখন \(bnN(chosen.count))টি বেছে নেওয়া হয়েছে")
+                }
+            }
+            .navigationTitle("ডক এডিট")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("বাতিল") { onCancel() } }
+                ToolbarItem(placement: .confirmationAction) { Button("সেভ") { onSave(chosen) }.fontWeight(.bold) }
+            }
+        }
+    }
+
+    private func toggle(_ p: String) {
+        if let i = chosen.firstIndex(of: p) { chosen.remove(at: i) }
+        else if chosen.count < 5 { chosen.append(p) }
     }
 }
 
@@ -148,6 +299,16 @@ private func bnN(_ n: Int) -> String { bnD(dashGrouped(abs(n))).prependingMinus(
 private func bnTk(_ n: Int) -> String { (n < 0 ? "-৳" : "৳") + bnD(dashGrouped(abs(n))) }
 /// Percent in Bangla digits: 85→"৮৫%".
 private func bnPct(_ n: Int) -> String { bnD(String(abs(n))).prependingMinus(n < 0) + "%" }
+
+/// Short Bengali month names (index 0 = January) for the hero x-axis.
+private let dashBnMonths = ["জানু", "ফেব", "মার্চ", "এপ্রি", "মে", "জুন",
+                            "জুলা", "আগ", "সেপ", "অক্টো", "নভে", "ডিসে"]
+/// "2026-06-08" → "৮ জুন" (Bangla day + short Bengali month). Empty on a bad string.
+private func bnDayMonth(_ iso: String) -> String {
+    let p = iso.split(separator: "-")
+    guard p.count >= 3, let m = Int(p[1]), (1...12).contains(m), let d = Int(p[2]) else { return "" }
+    return bnD(String(d)) + " " + dashBnMonths[m - 1]
+}
 
 private extension String {
     func prependingMinus(_ yes: Bool) -> String { yes ? "-" + self : self }
@@ -818,13 +979,23 @@ struct DashboardScreen: View {
                     if vm.loading && vm.data == nil {
                         loadingRows
                     } else if let d = vm.data {
-                        kpiBento(d.kpis, daily: d.dailyTrend, monthly: d.monthlyTrend)
-                        dailySalesCard(d.dailyTrend).id("charts")
+                        // ── Command Deck (owner-confirmed 2026-07-07): commanding hero + integrated
+                        //    chart, an 8-KPI hairline spec-panel, a 2-col chart grid + wide charts,
+                        //    then hairline lists. Same content as the web page — only the layout is
+                        //    elevated. All figures pure Bangla; theme = the app aura tokens.
+                        commandHero(d.kpis, daily: d.dailyTrend, monthly: d.monthlyTrend)
+                        statBlock(d.kpis, monthly: d.monthlyTrend)
+                        sectionLabel("বিশ্লেষণ")
+                        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                                  spacing: 12) {
+                            dailySalesCompact(d.dailyTrend)
+                            orderStatusCompact(d.byStatus)
+                            categoryMixCompact(d.byCategory)
+                            channelCompact(d.bySource)
+                        }
+                        .id("charts")
                         monthlyRevenueCard(d.monthlyTrend)
-                        revenueTrendCard(d.monthlyTrend)
-                        orderStatusCard(d.byStatus).id("charts2")
-                        categoryMixCard(d.byCategory)
-                        channelCard(d.bySource)
+                        revenueTrendCard(d.monthlyTrend).id("charts2")
                         topProductsCard(d.topProducts).id("lists")
                         recentOrdersCard(d.recentOrders)
                         if !d.slaBreaches.isEmpty { slaDetailCard(d.slaBreaches) }
@@ -980,6 +1151,150 @@ struct DashboardScreen: View {
         let pct = (Double(last - prev) / Double(prev)) * 100
         guard abs(pct) <= 300 else { return nil }
         return pct
+    }
+
+    // ── Command Deck: hero + hairline stat panel + section labels + compact chart cells ──
+
+    /// The commanding revenue hero — big value, real trend pill, avg-order meta, and a large
+    /// integrated area chart with a Bangla date axis.
+    @ViewBuilder
+    private func commandHero(_ k: DashKpis, daily: [DashDailyPoint], monthly: [DashMonthlyPoint]) -> some View {
+        let avg = k.totalOrders > 0 ? k.totalRevenue / k.totalOrders : 0
+        CommandHeroCard(value: bnTk(k.totalRevenue),
+                        avgOrder: bnTk(avg),
+                        spark: daily.map(\.revenue),
+                        dates: daily.map(\.date),
+                        trend: Self.trend(monthly.map(\.revenue)))
+    }
+
+    /// The 8-KPI spec panel (hairline grid) — every compact/return KPI from the web page.
+    @ViewBuilder
+    private func statBlock(_ k: DashKpis, monthly: [DashMonthlyPoint]) -> some View {
+        let avg = k.totalOrders > 0 ? k.totalRevenue / k.totalOrders : 0
+        StatBlock(items: [
+            StatItem(k: "নিট মুনাফা", v: bnTk(k.netProfit), tint: DashPalette.signed(k.netProfit, scheme),
+                     pct: Self.trend(monthly.map(\.profit)), sub: "রিটার্ন লস বাদে"),
+            StatItem(k: "মোট অর্ডার", v: bnN(k.totalOrders), tint: DashPalette.info,
+                     pct: Self.trend(monthly.map(\.orders)), sub: "এই রেঞ্জে"),
+            StatItem(k: "ডেলিভারড", v: bnN(k.deliveredCount), tint: DashPalette.violet,
+                     sub: "\(bnPct(k.deliveryRate)) রেট"),
+            StatItem(k: "রিটার্ন লস", v: bnTk(k.totalReturnsLoss), tint: DashPalette.red500,
+                     sub: "\(bnN(k.returnedUnpaidCount)) রিফিউজড"),
+            StatItem(k: "রিটার্ন রেট", v: bnPct(k.returnRate),
+                     tint: k.returnRate > 20 ? DashPalette.red500
+                         : k.returnRate > 10 ? DashPalette.warning(scheme) : .primary,
+                     sub: "রিফিউজড \(bnPct(k.returnRateRefused))"),
+            StatItem(k: "পেন্ডিং", v: k.pendingCount.map { bnN($0) } ?? "—", tint: DashPalette.warning(scheme),
+                     sub: "অ্যাকশন বাকি"),
+            StatItem(k: "রিয়েলাইজড", v: bnTk(k.realizedProfit), tint: DashPalette.positive(scheme),
+                     sub: "ডেলিভারড"),
+            StatItem(k: "গড় অর্ডার", v: bnTk(avg), tint: .primary, sub: "প্রতি অর্ডার"),
+        ])
+    }
+
+    private func sectionLabel(_ text: String, trailing: String? = nil) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(text.uppercased()).font(.system(size: 11, weight: .bold)).tracking(0.9)
+                .foregroundStyle(.secondary)
+            Spacer()
+            if let trailing {
+                Text(trailing).font(.caption.weight(.bold)).foregroundStyle(DashPalette.accentText(scheme))
+            }
+        }
+        .padding(.horizontal, 4).padding(.top, 2)
+    }
+
+    // Compact 2-col chart cells (Command Deck grid).
+
+    private func dailySalesCompact(_ points: [DashDailyPoint]) -> some View {
+        ChartCard(title: "দৈনিক বিক্রি", subtitle: nil) {
+            if points.isEmpty {
+                emptyChart("◈", "নেই", "অন্য রেঞ্জ দিন")
+            } else {
+                DashLineChart(values: points.map(\.revenue), color: DashPalette.coral, height: 74).padding(.top, 4)
+            }
+        }
+    }
+
+    private func orderStatusCompact(_ byStatus: [String: Int]) -> some View {
+        let slices = byStatus
+            .filter { !["Cancelled", "CANCELLED"].contains($0.key) }
+            .sorted { $0.value > $1.value }
+        let total = slices.reduce(0) { $0 + $1.value }
+        let coloured = slices.enumerated().map { ($1.key, $1.value, DashPalette.chart[$0 % DashPalette.chart.count]) }
+        return ChartCard(title: "অর্ডার স্ট্যাটাস", subtitle: nil) {
+            if coloured.isEmpty {
+                emptyChart("◫", "নেই", "ফিল্টার বদলান")
+            } else {
+                VStack(spacing: 10) {
+                    DashDonut(slices: coloured, size: 104, lineWidth: 15,
+                              centerTop: bnN(total), centerBottom: "মোট")
+                    donutLegend(coloured)
+                }
+                .padding(.top, 2)
+            }
+        }
+    }
+
+    private func categoryMixCompact(_ byCategory: [String: DashCategoryStat]) -> some View {
+        let top = byCategory.sorted { $0.value.orders > $1.value.orders }.prefix(5)
+        let coloured = top.enumerated().map { ($1.key, $1.value.orders, DashPalette.chart[$0 % DashPalette.chart.count]) }
+        return ChartCard(title: "ক্যাটাগরি", subtitle: nil) {
+            if coloured.isEmpty {
+                emptyChart("◧", "নেই", "অর্ডার এলে দেখাবে")
+            } else {
+                VStack(spacing: 10) {
+                    DashDonut(slices: coloured, size: 104, lineWidth: 15,
+                              centerTop: bnN(coloured.count), centerBottom: "টাইপ")
+                    donutLegend(coloured)
+                }
+                .padding(.top, 2)
+            }
+        }
+    }
+
+    private func channelCompact(_ bySource: [String: DashSourceStat]) -> some View {
+        let rows = bySource.sorted { $0.value.orders > $1.value.orders }
+        let maxV = max(rows.map { $0.value.orders }.max() ?? 1, 1)
+        return ChartCard(title: "চ্যানেল", subtitle: nil) {
+            if rows.isEmpty {
+                emptyChart("◩", "নেই", "ফিল্টার বদলান")
+            } else {
+                VStack(spacing: 9) {
+                    ForEach(Array(rows.enumerated()), id: \.offset) { i, r in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 6) {
+                                Text(r.key).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
+                                Spacer(minLength: 2)
+                                Text(bnN(r.value.orders)).font(.system(size: 10, weight: .bold))
+                            }
+                            GeometryReader { geo in
+                                Capsule().fill(DashPalette.chart[i % DashPalette.chart.count])
+                                    .frame(width: max(geo.size.width * CGFloat(r.value.orders) / CGFloat(maxV), 5))
+                            }
+                            .frame(height: 6)
+                        }
+                        .animation(.spring(duration: 0.5, bounce: 0.2).delay(Double(i) * 0.03), value: maxV)
+                    }
+                }
+                .padding(.top, 2)
+            }
+        }
+    }
+
+    /// Two-column swatch legend under a compact donut (status / category breakdowns).
+    private func donutLegend(_ items: [(String, Int, Color)]) -> some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)],
+                  alignment: .leading, spacing: 5) {
+            ForEach(Array(items.enumerated()), id: \.offset) { _, it in
+                HStack(spacing: 5) {
+                    RoundedRectangle(cornerRadius: 2).fill(it.2).frame(width: 7, height: 7)
+                    Text(it.0).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer(minLength: 2)
+                    Text(bnN(it.1)).font(.system(size: 9, weight: .bold))
+                }
+            }
+        }
     }
 
     // ── Daily Sales (web DailySalesChart — native area/line) ──
@@ -1390,6 +1705,135 @@ private struct RevenueHeroCard: View {
     private func stripTaka(_ s: String) -> String { s.hasPrefix("৳") ? String(s.dropFirst()) : s }
 }
 
+// MARK: - Command Deck hero + spec panel
+
+/// The commanding revenue hero (Command Deck): big value + real trend pill + avg-order meta
+/// + a large integrated area chart with a Bangla date axis.
+@available(iOS 17.0, *)
+private struct CommandHeroCard: View {
+    @Environment(\.colorScheme) private var scheme
+    let value: String
+    let avgOrder: String
+    let spark: [Int]
+    let dates: [String]
+    let trend: Double?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("মোট আয় · REVENUE").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                    .foregroundStyle(DashPalette.accentText(scheme))
+                Spacer()
+                if let trend { TrendChip(pct: trend) }
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text("৳").font(.title.weight(.bold)).foregroundStyle(.secondary)
+                Text(stripTaka(value)).font(.system(size: 40, weight: .heavy)).monospacedDigit()
+                    .minimumScaleFactor(0.6).lineLimit(1).contentTransition(.numericText())
+            }
+            .padding(.top, 8)
+            Text("গড় অর্ডার \(avgOrder)").font(.caption2).foregroundStyle(.secondary).padding(.top, 5)
+            if !spark.isEmpty {
+                DashLineChart(values: spark, color: DashPalette.coral, height: 112).padding(.top, 10)
+                if let axis = axisLabels {
+                    HStack(spacing: 0) {
+                        ForEach(Array(axis.enumerated()), id: \.offset) { i, t in
+                            Text(t).font(.system(size: 9)).foregroundStyle(.secondary)
+                            if i < axis.count - 1 { Spacer(minLength: 0) }
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: 22, style: .continuous).fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+                LinearGradient(colors: [DashPalette.coral.opacity(scheme == .dark ? 0.16 : 0.12), .clear],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+                HStack(spacing: 0) { Rectangle().fill(DashPalette.coral).frame(width: 3); Spacer(minLength: 0) }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
+            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+    }
+
+    /// 4 evenly-spaced Bangla date ticks (last = "আজ"); nil when there are too few dates.
+    private var axisLabels: [String]? {
+        let valid = dates.filter { !$0.isEmpty }
+        guard valid.count >= 4 else { return nil }
+        let n = valid.count - 1
+        var out = [0, n / 3, (2 * n) / 3, n].map { bnDayMonth(valid[$0]) }
+        if out.contains(where: { $0.isEmpty }) { return nil }
+        out[out.count - 1] = "আজ"
+        return out
+    }
+
+    private func stripTaka(_ s: String) -> String { s.hasPrefix("৳") ? String(s.dropFirst()) : s }
+}
+
+/// One cell of the KPI spec panel.
+private struct StatItem: Identifiable {
+    let id = UUID()
+    let k: String
+    let v: String
+    let tint: Color
+    var pct: Double? = nil
+    var sub: String? = nil
+}
+
+/// The 8-KPI hairline spec panel (4×2) — the Command Deck's calm, data-dense stat block.
+@available(iOS 17.0, *)
+private struct StatBlock: View {
+    @Environment(\.colorScheme) private var scheme
+    let items: [StatItem]
+
+    var body: some View {
+        let hair = Color.primary.opacity(scheme == .dark ? 0.10 : 0.12)
+        VStack(spacing: 0) {
+            row(0, hair: hair)
+            Rectangle().fill(hair).frame(height: 1)
+            row(4, hair: hair)
+        }
+        .dashGlass(scheme, corner: 18)
+    }
+
+    private func row(_ start: Int, hair: Color) -> some View {
+        HStack(spacing: 0) {
+            ForEach(0..<4, id: \.self) { i in
+                if i > 0 { Rectangle().fill(hair).frame(width: 1) }
+                if start + i < items.count {
+                    cell(items[start + i])
+                } else {
+                    Color.clear.frame(maxWidth: .infinity)
+                }
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func cell(_ it: StatItem) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(it.k.uppercased()).font(.system(size: 8.5, weight: .bold)).tracking(0.3)
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
+            Text(it.v).font(.system(size: 15, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(it.tint).lineLimit(1).minimumScaleFactor(0.55)
+                .contentTransition(.numericText())
+            if let p = it.pct {
+                TrendChip(pct: p)
+            } else if let s = it.sub {
+                Text(s).font(.system(size: 8.5)).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10).padding(.vertical, 11)
+    }
+}
+
 /// One KPI tile — optional trend pill, optional right-side ring (Delivered).
 @available(iOS 17.0, *)
 private struct KpiTile: View {
@@ -1650,6 +2094,12 @@ private struct DashMonthlyBars: View {
 @available(iOS 17.0, *)
 private struct DashDonut: View {
     let slices: [(String, Int, Color)]
+    var size: CGFloat = 150
+    var lineWidth: CGFloat = 20
+    /// Centre label override — defaults to the total (web parity); Command Deck passes
+    /// e.g. "২৮"/"মোট" (status) or "৫"/"টাইপ" (category).
+    var centerTop: String? = nil
+    var centerBottom: String = "total"
     private var total: Int { max(slices.reduce(0) { $0 + $1.1 }, 1) }
 
     var body: some View {
@@ -1657,15 +2107,16 @@ private struct DashDonut: View {
             ForEach(Array(segments.enumerated()), id: \.offset) { _, seg in
                 Circle()
                     .trim(from: seg.start, to: seg.end)
-                    .stroke(seg.color, style: StrokeStyle(lineWidth: 20, lineCap: .butt))
+                    .stroke(seg.color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
                     .rotationEffect(.degrees(-90))
             }
             VStack(spacing: 0) {
-                Text(bnN(total)).font(.headline.weight(.bold))
-                Text("total").font(.caption2).foregroundStyle(.secondary)
+                Text(centerTop ?? bnN(total))
+                    .font(.system(size: size < 120 ? 15 : 18, weight: .bold)).monospacedDigit()
+                Text(centerBottom).font(.caption2).foregroundStyle(.secondary)
             }
         }
-        .frame(width: 150, height: 150)
+        .frame(width: size, height: size)
         .frame(maxWidth: .infinity)
         .animation(.spring(duration: 0.6, bounce: 0.1), value: slices.map { $0.1 })
     }
