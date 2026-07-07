@@ -95,6 +95,7 @@ final class AlmaVoiceEngine {
             }
             guard oldValue != state else { return }
             refreshWake()
+            liveActivity.phaseChanged()
             tr("state \(oldValue) → \(state)")
         }
     }
@@ -173,6 +174,9 @@ final class AlmaVoiceEngine {
     private let tts = AlmaTtsQueue()
     private let streamer = AlmaStreamingSTT()
     let wake = AlmaWakeWord()
+    // Dynamic Island / Lock Screen Live Activity (docs/alma-live-activity-PLAN.md)
+    private let liveActivity = VoiceLiveActivityController()
+    private var liveActivityEndObserver: NSObjectProtocol?
     fileprivate var startingListen = false   // a listen is spinning up (double-tap guard)
 
     // Image attachments — voice parity with the chat composer. Photograph a
@@ -210,6 +214,17 @@ final class AlmaVoiceEngine {
     func begin() {
         closed = false
         tts.engine = self
+        // Island up for the whole session; the island's End button posts
+        // almaVoiceEndRequested (AlmaVoiceEndIntent runs in this process).
+        liveActivity.engine = self
+        liveActivity.start()
+        if liveActivityEndObserver == nil {
+            liveActivityEndObserver = NotificationCenter.default.addObserver(
+                forName: .almaVoiceEndRequested, object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.end() }
+            }
+        }
         AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -248,6 +263,11 @@ final class AlmaVoiceEngine {
 
     func end() {
         closed = true
+        liveActivity.end()
+        if let ob = liveActivityEndObserver {
+            NotificationCenter.default.removeObserver(ob)
+            liveActivityEndObserver = nil
+        }
         wake.stop()
         vadTask?.cancel(); vadTask = nil
         turnTask?.cancel(); turnTask = nil
@@ -264,12 +284,12 @@ final class AlmaVoiceEngine {
         cal.timeZone = TimeZone(identifier: "Asia/Dhaka") ?? .current
         let h = cal.component(.hour, from: Date())
         let word = h >= 5 && h < 12 ? "সুপ্রভাত" : h < 17 ? "শুভ দুপুর" : h < 21 ? "শুভ সন্ধ্যা" : "শুভ রাত্রি"
-        return "\(word) স্যার — বলুন, কী করতে হবে।"
+        return "\(word) বস — বলুন, কী করতে হবে।"
     }
 
-    /// Pre-synthesize the rotating acknowledgements ("জি স্যার।"…) for instant playback.
+    /// Pre-synthesize the rotating acknowledgements ("জি বস।"…) for instant playback.
     private func prefetchAcks() async {
-        let acks = ["জি স্যার।", "আচ্ছা স্যার, দেখছি।", "ঠিক আছে স্যার।", "জি, এক্ষুনি দেখছি।"]
+        let acks = ["জি বস।", "আচ্ছা বস, দেখছি।", "ঠিক আছে বস।", "জি, এক্ষুনি দেখছি।"]
         for a in acks.shuffled().prefix(2) {
             if let d = try? await AssistantNet.postJSONForData(path: "/api/assistant/tts", body: ["text": a]) {
                 ackData.append(d)
@@ -466,7 +486,7 @@ final class AlmaVoiceEngine {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else {
             state = .idle
-            errorToast = "শুনতে পাইনি স্যার — আরেকবার বলুন।"
+            errorToast = "শুনতে পাইনি বস — আরেকবার বলুন।"
             scheduleAutoListen()
             return
         }
@@ -480,7 +500,7 @@ final class AlmaVoiceEngine {
         // owner can't read a toast), then keep the conversation loop alive.
         state = .idle
         errorToast = msg
-        tts.sayNow("শুনতে পাইনি স্যার — আরেকবার বলুন।")
+        tts.sayNow("শুনতে পাইনি বস — আরেকবার বলুন।")
         scheduleAutoListen()
     }
 
@@ -503,7 +523,7 @@ final class AlmaVoiceEngine {
                 let text = (t.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else {
                     self.state = .idle
-                    self.errorToast = "শুনতে পাইনি স্যার — আরেকবার বলুন।"
+                    self.errorToast = "শুনতে পাইনি বস — আরেকবার বলুন।"
                     self.scheduleAutoListen()
                     return
                 }
@@ -607,7 +627,7 @@ final class AlmaVoiceEngine {
         micLevel = 0
         state = .transcribing
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        playAck()                                    // instant "জি স্যার।"
+        playAck()                                    // instant "জি বস।"
         Task { [weak self] in
             guard let self else { return }
             guard let audio = try? Data(contentsOf: self.recURL), audio.count > 3_000 else {
@@ -623,7 +643,7 @@ final class AlmaVoiceEngine {
                 let text = (t.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else {
                     self.state = .idle
-                    self.errorToast = "শুনতে পাইনি স্যার — আরেকবার বলুন।"
+                    self.errorToast = "শুনতে পাইনি বস — আরেকবার বলুন।"
                     self.scheduleAutoListen()
                     return
                 }
@@ -634,8 +654,8 @@ final class AlmaVoiceEngine {
                 // error orb — recover to idle and (in convo mode) re-listen so the
                 // owner just speaks again. Speak the retry so a hands-free owner hears it.
                 self.state = .idle
-                self.errorToast = "একটু গোলমাল হলো স্যার — আরেকবার বলুন।"
-                self.tts.sayNow("শুনতে একটু সমস্যা হলো স্যার, আরেকবার বলুন।")
+                self.errorToast = "একটু গোলমাল হলো বস — আরেকবার বলুন।"
+                self.tts.sayNow("শুনতে একটু সমস্যা হলো বস, আরেকবার বলুন।")
                 self.scheduleAutoListen()
             }
         }
@@ -695,7 +715,7 @@ final class AlmaVoiceEngine {
                 self.tts.finishFeed()
             } catch is CancellationError {
             } catch {
-                self.tts.sayNow("দুঃখিত স্যার, একটা সমস্যা হয়েছে — একটু পরে আরেকবার বলুন।")
+                self.tts.sayNow("দুঃখিত বস, একটা সমস্যা হয়েছে — একটু পরে আরেকবার বলুন।")
                 self.errorToast = "উত্তর পেতে ব্যর্থ"
                 self.tts.finishFeed()
             }
@@ -720,11 +740,11 @@ final class AlmaVoiceEngine {
             cards.append(.init(id: ev.id ?? UUID().uuidString, kind: .tool, icon: "🔧",
                                title: label, sub: "", status: "run"))
             // Speak a friendly, GENERIC "working on it" once per turn — never the raw
-            // tool name (owner heard "get_pending_approvals, স্যার" spoken aloud).
+            // tool name (owner heard "get_pending_approvals, বস" spoken aloud).
             if !narratedFirstTool {
                 narratedFirstTool = true
                 lastToolNarration = Date()
-                tts.sayNow("একটু দেখে নিচ্ছি, স্যার…")
+                tts.sayNow("একটু দেখে নিচ্ছি, বস…")
             }
         case "tool_end":
             if let i = cards.firstIndex(where: { $0.id == ev.id }) {
@@ -738,14 +758,14 @@ final class AlmaVoiceEngine {
                 cards.append(.init(id: aid, kind: .ask, icon: "❓", title: q, sub: "",
                                    status: "wait", options: opts, askCardId: aid))
                 tts.sayNow(q)
-                if !opts.isEmpty { tts.sayNow("\(opts.joined(separator: ", নাকি ")) — কোনটা, স্যার?") }
+                if !opts.isEmpty { tts.sayNow("\(opts.joined(separator: ", নাকি ")) — কোনটা, বস?") }
             }
         case "confirm_card":
             if let pid = ev.pendingActionId {
                 cards.append(.init(id: pid, kind: .approval, icon: "🛡️",
                                    title: "আপনার অনুমোদন দরকার",
                                    sub: ev.summary ?? "", status: "wait", pendingActionId: pid))
-                tts.sayNow("স্যার, একটা অনুমোদন দরকার — \(String((ev.summary ?? "").prefix(120)))")
+                tts.sayNow("বস, একটা অনুমোদন দরকার — \(String((ev.summary ?? "").prefix(120)))")
             }
         case "verification_retry":
             // The head is self-correcting — in voice this reads as a hang unless
@@ -753,7 +773,7 @@ final class AlmaVoiceEngine {
             if !verificationSaid {
                 verificationSaid = true
                 lastAudioAt = Date()
-                tts.sayNow("একটু যাচাই করে ঠিক করে নিচ্ছি, স্যার…")
+                tts.sayNow("একটু যাচাই করে ঠিক করে নিচ্ছি, বস…")
             }
         case "model_switch_required":
             // A premium head needs the owner's OK. Spoken + a tappable card;
@@ -762,11 +782,11 @@ final class AlmaVoiceEngine {
                                icon: "🧠", title: "শক্তিশালী মডেলের অনুমতি দরকার",
                                sub: "", status: "wait"))
             lastAudioAt = Date()
-            tts.sayNow("এটার জন্য আরও শক্তিশালী মডেল দরকার, স্যার — অনুমতি দিলে এগিয়ে যাই।")
+            tts.sayNow("এটার জন্য আরও শক্তিশালী মডেল দরকার, বস — অনুমতি দিলে এগিয়ে যাই।")
         case "done":
             break
         case "error":
-            tts.sayNow("দুঃখিত স্যার, একটা সমস্যা হয়েছে — একটু পরে আরেকবার বলুন।")
+            tts.sayNow("দুঃখিত বস, একটা সমস্যা হয়েছে — একটু পরে আরেকবার বলুন।")
         default:
             break
         }
@@ -787,14 +807,14 @@ final class AlmaVoiceEngine {
                     self.turnTask?.cancel()
                     self.tts.stopAll()
                     self.state = .idle
-                    self.tts.sayNow("দুঃখিত স্যার, উত্তরটা আটকে গেল — আরেকবার বলুন।")
+                    self.tts.sayNow("দুঃখিত বস, উত্তরটা আটকে গেল — আরেকবার বলুন।")
                     self.scheduleAutoListen()
                     continue
                 }
                 guard self.state == .thinking else { continue }
                 if Date().timeIntervalSince(self.lastAudioAt) > 14 {
                     self.lastAudioAt = Date()
-                    self.tts.sayNow("এখনো কাজ চলছে স্যার, একটু সময় দিন…")
+                    self.tts.sayNow("এখনো কাজ চলছে বস, একটু সময় দিন…")
                 }
             }
         }
@@ -809,7 +829,7 @@ final class AlmaVoiceEngine {
         }
         Task { [weak self] in
             await self?.chatVM?.approveAction(pid, approve: yes)
-            self?.tts.sayNow(yes ? "অনুমোদন করে দিয়েছি স্যার, কাজ এগোচ্ছে।" : "বাতিল করে দিয়েছি, স্যার।")
+            self?.tts.sayNow(yes ? "অনুমোদন করে দিয়েছি বস, কাজ এগোচ্ছে।" : "বাতিল করে দিয়েছি, বস।")
         }
     }
 
@@ -836,7 +856,7 @@ final class AlmaVoiceEngine {
             tts.stopAll()
             runTurn(lastUserText, resume: true)
         } else {
-            tts.sayNow("আচ্ছা স্যার, তাহলে বাদ দিলাম।")
+            tts.sayNow("আচ্ছা বস, তাহলে বাদ দিলাম।")
         }
     }
 
@@ -2982,7 +3002,7 @@ private let almaTERM_MAP: [(String, String)] = [
     ("ETH", "ইথেরিয়াম"),
     ("OK", "ওকে"),
     ("Sir", "বস"),
-    ("স্যার", "বস"),
+    ("বস", "বস"),
     ("AI", "এআই"),
     ("API", "এপিআই"),
     ("URL", "ইউআরএল"),

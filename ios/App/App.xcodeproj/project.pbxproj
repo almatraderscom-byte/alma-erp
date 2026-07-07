@@ -37,6 +37,11 @@
 		C1AA3300000000000000B003 /* AlmaBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A003 /* AlmaBridgeViewController.swift */; };
 		C1AA3300000000000000B004 /* PulseLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A004 /* PulseLiveActivity.swift */; };
 		C1AA3300000000000000B005 /* PulseActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A001 /* PulseActivityAttributes.swift */; };
+		A3CC8800000000000000B001 /* AlmaVoiceActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3CC8800000000000000A001 /* AlmaVoiceActivityAttributes.swift */; };
+		A3CC8800000000000000B002 /* VoiceLiveActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3CC8800000000000000A002 /* VoiceLiveActivityController.swift */; };
+		A3CC8800000000000000B003 /* AlmaVoiceLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3CC8800000000000000A003 /* AlmaVoiceLiveActivity.swift */; };
+		A3CC8800000000000000B004 /* AlmaVoiceActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3CC8800000000000000A001 /* AlmaVoiceActivityAttributes.swift */; };
+		A3CC8800000000000000B005 /* AlmaStarburstSpinner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A023 /* AlmaStarburstSpinner.swift */; };
 		C6A88A8FC60371085CFB3D09 /* cs_sample_0.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 59423C6C3ED49CE9F31ED592 /* cs_sample_0.jpg */; };
 		CD24687123B1E85C414A573D /* cs_sample_6.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 0CE6BFDD03747701FD223CA6 /* cs_sample_6.jpg */; };
 		D1AA4400000000000000B001 /* NativeIntelligenceBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */; };
@@ -174,6 +179,9 @@
 		C1AA3300000000000000A002 /* LiveActivityBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityBridge.swift; sourceTree = "<group>"; };
 		C1AA3300000000000000A003 /* AlmaBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaBridgeViewController.swift; sourceTree = "<group>"; };
 		C1AA3300000000000000A004 /* PulseLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseLiveActivity.swift; sourceTree = "<group>"; };
+		A3CC8800000000000000A001 /* AlmaVoiceActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaVoiceActivityAttributes.swift; sourceTree = "<group>"; };
+		A3CC8800000000000000A002 /* VoiceLiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceLiveActivityController.swift; sourceTree = "<group>"; };
+		A3CC8800000000000000A003 /* AlmaVoiceLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaVoiceLiveActivity.swift; sourceTree = "<group>"; };
 		D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeIntelligenceBridge.swift; sourceTree = "<group>"; };
 		E1AA5500000000000000A001 /* NativeSpeechBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpeechBridge.swift; sourceTree = "<group>"; };
 		B2CC8800000000000000A001 /* AlmaCompanion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaCompanion.swift; sourceTree = "<group>"; };
@@ -285,6 +293,9 @@
 		C1AA3300000000000000A002 /* LiveActivityBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityBridge.swift; sourceTree = "<group>"; };
 		C1AA3300000000000000A003 /* AlmaBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaBridgeViewController.swift; sourceTree = "<group>"; };
 		C1AA3300000000000000A004 /* PulseLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseLiveActivity.swift; sourceTree = "<group>"; };
+		A3CC8800000000000000A001 /* AlmaVoiceActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaVoiceActivityAttributes.swift; sourceTree = "<group>"; };
+		A3CC8800000000000000A002 /* VoiceLiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceLiveActivityController.swift; sourceTree = "<group>"; };
+		A3CC8800000000000000A003 /* AlmaVoiceLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaVoiceLiveActivity.swift; sourceTree = "<group>"; };
 		D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeIntelligenceBridge.swift; sourceTree = "<group>"; };
 		E1AA5500000000000000A001 /* NativeSpeechBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpeechBridge.swift; sourceTree = "<group>"; };
 		E4D7D31FF1297D19D3B7C7F2 /* CreativeStudioSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CreativeStudioSwiftUI.swift; sourceTree = "<group>"; };
@@ -404,6 +415,8 @@
 				C1AA3300000000000000A001 /* PulseActivityAttributes.swift */,
 				C1AA3300000000000000A002 /* LiveActivityBridge.swift */,
 				C1AA3300000000000000A003 /* AlmaBridgeViewController.swift */,
+				A3CC8800000000000000A001 /* AlmaVoiceActivityAttributes.swift */,
+				A3CC8800000000000000A002 /* VoiceLiveActivityController.swift */,
 				D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */,
 				E1AA5500000000000000A001 /* NativeSpeechBridge.swift */,
 				B2CC8800000000000000A001 /* AlmaCompanion.swift */,
@@ -492,6 +505,7 @@
 				B1AA2200000000000000A003 /* AlmaWidgetBundle.swift */,
 				B1AA2200000000000000A004 /* AlmaWidget.swift */,
 				C1AA3300000000000000A004 /* PulseLiveActivity.swift */,
+				A3CC8800000000000000A003 /* AlmaVoiceLiveActivity.swift */,
 				B1AA2200000000000000A005 /* Info.plist */,
 				F1AA6600000000000000A003 /* AlmaWidget.entitlements */,
 			);
@@ -687,6 +701,8 @@
 				C1AA3300000000000000B001 /* PulseActivityAttributes.swift in Sources */,
 				C1AA3300000000000000B002 /* LiveActivityBridge.swift in Sources */,
 				C1AA3300000000000000B003 /* AlmaBridgeViewController.swift in Sources */,
+				A3CC8800000000000000B001 /* AlmaVoiceActivityAttributes.swift in Sources */,
+				A3CC8800000000000000B002 /* VoiceLiveActivityController.swift in Sources */,
 				D1AA4400000000000000B001 /* NativeIntelligenceBridge.swift in Sources */,
 				E1AA5500000000000000B001 /* NativeSpeechBridge.swift in Sources */,
 				B2CC8800000000000000B001 /* AlmaCompanion.swift in Sources */,
@@ -760,6 +776,9 @@
 				B1AA2200000000000000B001 /* AlmaWidgetBundle.swift in Sources */,
 				C1AA3300000000000000B004 /* PulseLiveActivity.swift in Sources */,
 				C1AA3300000000000000B005 /* PulseActivityAttributes.swift in Sources */,
+				A3CC8800000000000000B003 /* AlmaVoiceLiveActivity.swift in Sources */,
+				A3CC8800000000000000B004 /* AlmaVoiceActivityAttributes.swift in Sources */,
+				A3CC8800000000000000B005 /* AlmaStarburstSpinner.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -907,7 +926,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 56;
+				CURRENT_PROJECT_VERSION = 57;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -929,7 +948,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 56;
+				CURRENT_PROJECT_VERSION = 57;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -948,7 +967,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AlmaWidget/AlmaWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 56;
+				CURRENT_PROJECT_VERSION = 57;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AlmaWidget/Info.plist;
@@ -970,7 +989,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = AlmaWidget/AlmaWidget.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 56;
+				CURRENT_PROJECT_VERSION = 57;
 				DEVELOPMENT_TEAM = 5D9FLR3MMA;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = AlmaWidget/Info.plist;

@@ -50,6 +50,14 @@ public class LiveActivityBridgePlugin: CAPPlugin, CAPBridgedPlugin {
                 return
             }
 
+            // The voice session owns the island while it runs — don't let the
+            // web's pulse tick steal the compact slot mid-conversation.
+            if #available(iOS 17.0, *),
+               !Activity<AlmaVoiceActivityAttributes>.activities.isEmpty {
+                call.resolve(["started": false, "reason": "voice_active"])
+                return
+            }
+
             let state = PulseActivityAttributes.ContentState(
                 ordersToday: ordersToday,
                 statusLine: statusLine,

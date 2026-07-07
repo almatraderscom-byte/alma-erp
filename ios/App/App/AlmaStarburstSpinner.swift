@@ -351,6 +351,11 @@ struct AlmaSpinnerView: View {
 
 // MARK: - Preview screen (More → Loader Preview, DEBUG)
 
+// App target only: uses AgentPalette / AgentThinkingRow / AgentAuroraBackground.
+// This file is ALSO compiled into AlmaWidgetExtension (the island needs
+// AlmaOrganicBurst), and the appex links no Pods — so canImport(Capacitor) is
+// a clean app-vs-appex compile gate for the app-only tail of the file.
+#if canImport(Capacitor)
 @available(iOS 17.0, *)
 struct AlmaSpinnerPreviewScreen: View {
     @State private var mode: AlmaStarburstMode = .thinking
@@ -360,16 +365,22 @@ struct AlmaSpinnerPreviewScreen: View {
 
     private var cream: Color { Color(red: 0.929, green: 0.890, blue: 0.855) }
 
+    // Self-contained colors — this file also compiles in the widget extension,
+    // where AgentPalette/AgentAuroraBackground don't exist.
+    private var ink: Color { scheme == .dark ? Color(red: 0.969, green: 0.973, blue: 0.988) : Color(red: 0.102, green: 0.102, blue: 0.180) }
+    private var muted: Color { Color(red: 0.682, green: 0.698, blue: 0.753) }
+    private var cardBg: Color { scheme == .dark ? Color(red: 0.125, green: 0.125, blue: 0.153) : .white }
+    private var coral: Color { Color(red: 0.878, green: 0.478, blue: 0.373) }
+
     var body: some View {
-        let pal = AgentPalette(scheme)
         ScrollView {
             VStack(spacing: 28) {
                 Text("Organic starburst")
                     .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(pal.ink)
+                    .foregroundStyle(ink)
                 Text("দুই layer: smooth rotation (৪s/২.৫s/১.৫s per rev) + ৪-frame hand-drawn boil")
                     .font(.system(size: 13))
-                    .foregroundStyle(pal.muted)
+                    .foregroundStyle(muted)
                     .multilineTextAlignment(.center)
 
                 ZStack {
@@ -380,7 +391,7 @@ struct AlmaSpinnerPreviewScreen: View {
                 }
                 Text(statusLine)
                     .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(pal.muted)
+                    .foregroundStyle(muted)
 
                 HStack(spacing: 10) {
                     AlmaStarburstLoader(mode: mode, size: 32)
@@ -388,9 +399,9 @@ struct AlmaSpinnerPreviewScreen: View {
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(pal.card.opacity(0.7), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .background(cardBg.opacity(0.7), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(pal.borderSubtle, lineWidth: 1))
+                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
 
                 HStack(spacing: 8) {
                     ForEach(AlmaStarburstMode.allCases) { m in
@@ -401,9 +412,9 @@ struct AlmaSpinnerPreviewScreen: View {
                         } label: {
                             Text(label(for: m))
                                 .font(.system(size: 11.5, weight: .semibold))
-                                .foregroundStyle(mode == m ? .white : pal.ink)
+                                .foregroundStyle(mode == m ? .white : ink)
                                 .padding(.horizontal, 10).padding(.vertical, 8)
-                                .background(mode == m ? AgentPalette.coral : pal.card.opacity(0.6),
+                                .background(mode == m ? coral : cardBg.opacity(0.6),
                                             in: Capsule())
                         }
                         .buttonStyle(.plain)
@@ -412,15 +423,18 @@ struct AlmaSpinnerPreviewScreen: View {
 
                 Toggle("Auto-cycle every 8s", isOn: $autoCycle)
                     .font(.system(size: 14))
-                    .tint(AgentPalette.coral)
+                    .tint(coral)
                     .padding(.horizontal, 4)
 
-                AgentThinkingRow(mode: mode.rawValue, pal: pal)
+                HStack { AlmaSpinnerView(mode: mode.rawValue, size: 28, showVerb: false, haptics: false); Spacer() }
                     .padding(.top, 8)
             }
             .padding(20)
         }
-        .background(AgentAuroraBackground().ignoresSafeArea())
+        .background(
+            LinearGradient(colors: [Color(red: 0.078, green: 0.078, blue: 0.094),
+                                    Color(red: 0.13, green: 0.10, blue: 0.18)],
+                           startPoint: .top, endPoint: .bottom).ignoresSafeArea())
         .navigationTitle("Loader Preview")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { AlmaAgentTickHaptic.prepare() }
@@ -483,4 +497,5 @@ struct AlmaSpinnerPreviewScreen: View {
 #Preview("Preview screen") {
     NavigationStack { AlmaSpinnerPreviewScreen() }
 }
+#endif
 #endif
