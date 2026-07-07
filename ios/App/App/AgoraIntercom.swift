@@ -65,21 +65,31 @@ struct IntercomFeedLite: Decodable {
 final class AgoraIntercom: NSObject {
     static let shared = AgoraIntercom()
 
-    enum Mode: Equatable { case idle, listening, broadcasting, calling }
+    /// `ringing` = a 1:1 call is placed/answered but the other party hasn't joined yet
+    /// (WhatsApp-style — no call timer until both are actually on the channel).
+    enum Mode: Equatable { case idle, listening, broadcasting, calling, ringing }
 
     var mode: Mode = .idle
     var connected = false
     var remoteSpeaking = false        // someone else is publishing audio right now
+    var localSpeaking = false         // WE are publishing voice right now (live orb animation)
     var micMuted = false
     var callSeconds = 0
     var statusText = ""
     var error: String? = nil
     var roster: [IntercomStaff] = []
+    var recording = false             // PTT voice-note is capturing right now
 
     private var engine: AgoraRtcEngineKit?
     private var appId: String?
     private var channel: String?
     private var callTimer: Timer?
+    private var ringTimer: Timer?
+    private var remoteUids = Set<UInt>()   // remote parties currently on the call channel
+    // PTT persistent voice-note capture (separate from the ephemeral live channel).
+    private var recorder: AVAudioRecorder?
+    private var recordURL: URL?
+    private var recordStart: Date?
 
     // ── Public API ──────────────────────────────────────────────────────────
 
@@ -114,17 +124,22 @@ final class AgoraIntercom: NSObject {
     }
 
     /// Start / answer a 1:1 call on a per-pair channel. Both sides join the same name.
+    /// `outgoing` = we placed the call (ring until the other side joins); a call NEVER
+    /// starts its timer here — the timer starts in `didJoinedOfUid` when a remote appears,
+    /// exactly like WhatsApp/Messenger. `mode` is set to `.ringing` BEFORE joining so the
+    /// join-completion delegate can flip us to `.calling` without a race.
     @MainActor
-    func startCall(channel ch: String) async {
+    func startCall(channel ch: String, outgoing: Bool) async {
         error = nil
-        statusText = "কল সংযোগ হচ্ছে…"
+        mode = .ringing
+        remoteUids.removeAll()
+        callSeconds = 0
+        statusText = outgoing ? "রিং হচ্ছে…" : "কল ধরছেন…"
         do {
             try await ensureMicPermission()
             try await join(channel: ch, publishMic: true)
-            mode = .calling
             micMuted = false
-            statusText = "কল চলছে"
-            startCallTimer()
+            if outgoing { startRingTimeout() }   // "কেউ ধরেনি" if unanswered
         } catch {
             self.error = message(for: error)
             statusText = ""
@@ -133,6 +148,7 @@ final class AgoraIntercom: NSObject {
     }
 
     /// Owner rings ONE staff: create a call broadcast (pushes the staff) then join itc_<id>.
+    /// We RING (no timer) until the staff actually joins the channel.
     @MainActor
     func ownerCall(staffId: String) async {
         error = nil
@@ -143,7 +159,7 @@ final class AgoraIntercom: NSObject {
             let r: Resp = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/office/intercom", body: Body(targetStaffId: staffId))
             guard let id = r.id, !id.isEmpty else { throw IntercomError.callFailed }
-            await startCall(channel: "itc_\(id)")
+            await startCall(channel: "itc_\(id)", outgoing: true)
         } catch {
             self.error = message(for: error)
             statusText = ""
@@ -173,10 +189,84 @@ final class AgoraIntercom: NSObject {
     func leave() {
         engine?.leaveChannel(nil)
         stopCallTimer()
+        stopRingTimeout()
         mode = .idle
         connected = false
         remoteSpeaking = false
+        localSpeaking = false
+        remoteUids.removeAll()
         channel = nil
+    }
+
+    // ── PTT persistent voice-note (walkie-talkie that actually reaches staff) ──
+    //
+    // The old native walkie-talkie was live-Agora-ONLY: staff heard nothing unless they
+    // happened to be on the intercom screen, and nothing landed in the group. The web
+    // instead records the press, uploads it, and it shows as a voice message the staff
+    // poll + auto-play (online or not). This mirrors that: press → record → upload.
+
+    /// Begin recording the owner's press-and-hold voice note.
+    @MainActor
+    func pttStart() async {
+        error = nil
+        do {
+            try await ensureMicPermission()
+            let s = AVAudioSession.sharedInstance()
+            try s.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
+            try s.setActive(true)
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("itc-\(UUID().uuidString).m4a")
+            let settings: [String: Any] = [
+                AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+                AVSampleRateKey: 44_100,
+                AVNumberOfChannelsKey: 1,
+                AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
+            ]
+            let rec = try AVAudioRecorder(url: url, settings: settings)
+            guard rec.record() else { throw IntercomError.callFailed }
+            recorder = rec
+            recordURL = url
+            recordStart = Date()
+            recording = true
+            localSpeaking = true
+            statusText = "🔴 রেকর্ড হচ্ছে — বলুন"
+        } catch {
+            self.error = message(for: error)
+            recording = false
+        }
+    }
+
+    /// Stop the press, upload the clip as a group voice message. `minSec` guards taps.
+    @MainActor
+    func pttStop() async {
+        guard recording, let rec = recorder, let url = recordURL else {
+            recording = false; localSpeaking = false; return
+        }
+        rec.stop()
+        recorder = nil
+        recording = false
+        localSpeaking = false
+        let dur = max(1, Int((recordStart.map { Date().timeIntervalSince($0) } ?? 1).rounded()))
+        recordURL = nil
+        recordStart = nil
+        // Too-short taps are noise, not messages.
+        if dur < 1 { try? FileManager.default.removeItem(at: url); statusText = ""; return }
+        statusText = "পাঠানো হচ্ছে…"
+        do {
+            guard let data = try? Data(contentsOf: url), !data.isEmpty else {
+                throw IntercomError.callFailed
+            }
+            struct SendResp: Decodable { let ok: Bool?; let id: String? }
+            let _: SendResp = try await AlmaAPI.shared.uploadMultipart(
+                "/api/assistant/office/intercom",
+                fileField: "audio", filename: "voice.m4a", mime: "audio/mp4", data: data,
+                fields: ["durationSec": String(dur), "targetStaffId": ""])
+            statusText = "✅ স্টাফদের কাছে পাঠানো হয়েছে"
+        } catch {
+            self.error = message(for: error)
+            statusText = ""
+        }
+        try? FileManager.default.removeItem(at: url)
     }
 
     // ── Internals ───────────────────────────────────────────────────────────
@@ -246,6 +336,45 @@ final class AgoraIntercom: NSObject {
     }
     private func stopCallTimer() { callTimer?.invalidate(); callTimer = nil; callSeconds = 0 }
 
+    /// While ringing, give up after 45s if nobody answers.
+    private func startRingTimeout() {
+        stopRingTimeout()
+        ringTimer = Timer.scheduledTimer(withTimeInterval: 45, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.mode == .ringing else { return }
+                self.error = "কেউ কল ধরেনি"
+                self.leave()
+            }
+        }
+    }
+    private func stopRingTimeout() { ringTimer?.invalidate(); ringTimer = nil }
+
+    /// Staff poll: any voice broadcast addressed to me that I haven't played yet →
+    /// its (id, audioUrl). The staff UI plays it and marks the receipt.
+    struct PendingVoice { let id: String; let url: String }
+    func pendingVoiceNotes() async -> [PendingVoice] {
+        struct Bc: Decodable {
+            let id: String; let kind: String; let audioUrl: String?
+            struct Mine: Decodable { let playedAt: String? }
+            let mine: Mine?
+        }
+        struct Feed: Decodable { let broadcasts: [Bc] }
+        guard let feed: Feed = try? await AlmaAPI.shared.get("/api/assistant/office/intercom") else { return [] }
+        return feed.broadcasts.compactMap { b in
+            guard b.kind == "voice", b.mine?.playedAt == nil,
+                  let u = b.audioUrl, !u.isEmpty else { return nil }
+            return PendingVoice(id: b.id, url: u)
+        }
+    }
+
+    /// Advance my receipt after auto-playing a voice note.
+    func markVoicePlayed(_ broadcastId: String) async {
+        struct Body: Encodable { let broadcastId: String; let action = "played" }
+        struct Ok: Decodable { let ok: Bool? }
+        let _: Ok? = try? await AlmaAPI.shared.send(
+            "POST", "/api/assistant/office/intercom/receipt", body: Body(broadcastId: broadcastId))
+    }
+
     private func message(for error: Error) -> String {
         if case IntercomError.micDenied = error {
             return "মাইক্রোফোন অনুমতি দিন — সেটিংস → ALMA ERP → মাইক্রোফোন।"
@@ -267,10 +396,28 @@ extension AgoraIntercom: AgoraRtcEngineDelegate {
         Task { @MainActor in self.connected = true }
     }
 
+    /// A REMOTE party joined the channel. For a 1:1 call this is "the other side answered" —
+    /// the ONLY moment the WhatsApp-style call timer is allowed to start.
+    func rtcEngine(_ engine: AgoraRtcEngineKit, didJoinedOfUid uid: UInt, elapsed: Int) {
+        Task { @MainActor in
+            self.remoteUids.insert(uid)
+            if self.mode == .ringing {
+                self.mode = .calling
+                self.statusText = "কল চলছে"
+                self.stopRingTimeout()
+                self.startCallTimer()
+            }
+        }
+    }
+
     func rtcEngine(_ engine: AgoraRtcEngineKit, reportAudioVolumeIndicationOfSpeakers speakers: [AgoraRtcAudioVolumeInfo], totalVolume: Int) {
         // uid 0 == the local user; a remote speaker with voice-activity means "someone's talking".
         let remote = speakers.contains { $0.uid != 0 && ($0.vad == 1 || $0.volume > 8) }
-        Task { @MainActor in if self.remoteSpeaking != remote { self.remoteSpeaking = remote } }
+        let local = speakers.contains { $0.uid == 0 && $0.volume > 12 }
+        Task { @MainActor in
+            if self.remoteSpeaking != remote { self.remoteSpeaking = remote }
+            if self.localSpeaking != local { self.localSpeaking = local }
+        }
     }
 
     func rtcEngine(_ engine: AgoraRtcEngineKit, remoteAudioStateChangedOfUid uid: UInt, state: AgoraAudioRemoteState, reason: AgoraAudioRemoteReason, elapsed: Int) {
@@ -280,7 +427,15 @@ extension AgoraIntercom: AgoraRtcEngineDelegate {
     }
 
     func rtcEngine(_ engine: AgoraRtcEngineKit, didOfflineOfUid uid: UInt, reason: AgoraUserOfflineReason) {
-        Task { @MainActor in self.remoteSpeaking = false }
+        Task { @MainActor in
+            self.remoteUids.remove(uid)
+            self.remoteSpeaking = false
+            // In a 1:1 call, the other side leaving = hang up. End the call on our side too.
+            if (self.mode == .calling || self.mode == .ringing), self.remoteUids.isEmpty {
+                self.statusText = "কল শেষ"
+                self.leave()
+            }
+        }
     }
 
     func rtcEngine(_ engine: AgoraRtcEngineKit, didOccurError errorCode: AgoraErrorCode) {

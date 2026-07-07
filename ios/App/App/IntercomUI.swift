@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AVFoundation
 
 @available(iOS 17.0, *)
 struct IntercomView: View {
@@ -14,6 +15,8 @@ struct IntercomView: View {
     @State private var vm = PortalOfficeVM()
     private let ic = AgoraIntercom.shared
     @State private var incomingChannel: String? = nil
+    @State private var voicePlayer: AVPlayer? = nil
+    @State private var playedVoiceIds = Set<String>()
 
     private var isOwner: Bool { vm.selfRole == "owner" }
     private var accent: Color { PortalOfficePalette.accentText(scheme) }
@@ -25,7 +28,7 @@ struct IntercomView: View {
                 ScrollView {
                     VStack(spacing: 16) {
                         if let e = ic.error { errorStrip(e) }
-                        if ic.mode == .calling {
+                        if ic.mode == .calling || ic.mode == .ringing {
                             callBar
                         } else if !vm.roleResolved {
                             ProgressView().tint(.white).padding(.top, 70)
@@ -52,34 +55,51 @@ struct IntercomView: View {
         .onDisappear { ic.leave() }
     }
 
-    // ── Owner: live broadcast ──
+    // ── Owner: press-and-hold voice note (reaches ALL staff, lands in the group) ──
     private var ownerBroadcast: some View {
         VStack(spacing: 14) {
-            liveOrb(active: ic.mode == .broadcasting, speaking: ic.mode == .broadcasting)
-            Text(ic.mode == .broadcasting ? "🔴 লাইভ — আপনি বলছেন" : "🎙️ লাইভ ওয়াকি-টকি")
+            liveOrb(active: ic.recording, speaking: ic.recording || ic.localSpeaking)
+            Text(ic.recording ? "🔴 রেকর্ড হচ্ছে — বলুন" : "🎙️ চেপে ধরে বলুন")
                 .font(.title3.weight(.bold))
-            Text(ic.mode == .broadcasting
-                 ? "সব স্টাফের ফোনে এখনই আপনার কথা শোনা যাচ্ছে।"
-                 : "চালু করলে আপনার কথা সরাসরি সব স্টাফের ফোনে শোনা যাবে।")
+            Text(ic.recording
+                 ? "ছেড়ে দিলে সব স্টাফের ফোনে ভয়েস চলে যাবে।"
+                 : "মাইক চেপে ধরে বলুন — ছাড়লেই সব স্টাফ গ্রুপে ভয়েসটি পাবে (অনলাইন না থাকলেও)।")
                 .font(.subheadline).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            if ic.mode == .broadcasting {
-                HStack(spacing: 10) {
-                    bigButton(ic.micMuted ? "🔇 আনমিউট" : "🎙️ মিউট",
-                              tint: PortalOfficePalette.violet) { ic.toggleMute() }
-                    bigButton("বন্ধ করুন", tint: PortalOfficePalette.red500, filled: true) { ic.leave() }
-                }
-            } else {
-                bigButton("লাইভ শুরু করুন", tint: PortalOfficePalette.coral, filled: true) {
-                    Task { await ic.joinLive(asBroadcaster: true) }
-                }
-            }
+
+            // Press-and-hold PTT — record on press, upload on release.
+            pttButton
+
             if !ic.statusText.isEmpty {
                 Text(ic.statusText).font(.caption).foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity)
         .padding(18).portalOfficeGlass(scheme, corner: 22)
+    }
+
+    private var pttButton: some View {
+        let tint = ic.recording ? PortalOfficePalette.red500 : PortalOfficePalette.coral
+        return Text(ic.recording ? "ছেড়ে দিন — পাঠাতে" : "🎙️ চেপে ধরুন")
+            .font(.headline.weight(.bold)).foregroundStyle(.white)
+            .frame(maxWidth: .infinity).padding(.vertical, 20)
+            .background(tint, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .scaleEffect(ic.recording ? 1.03 : 1)
+            .animation(.easeInOut(duration: 0.2), value: ic.recording)
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        if !ic.recording {
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            Task { await ic.pttStart() }
+                        }
+                    }
+                    .onEnded { _ in
+                        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                        Task { await ic.pttStop() }
+                    }
+            )
     }
 
     // ── Owner: per-staff 1:1 call ──
@@ -125,7 +145,7 @@ struct IntercomView: View {
                     Text("📞 বস কল করছেন").font(.subheadline.weight(.bold))
                     bigButton("কল ধরুন", tint: PortalOfficePalette.emerald600, filled: true) {
                         incomingChannel = nil
-                        Task { await ic.startCall(channel: ch) }
+                        Task { await ic.startCall(channel: ch, outgoing: false) }
                     }
                 }
                 .padding(12)
@@ -137,23 +157,52 @@ struct IntercomView: View {
         .padding(18).portalOfficeGlass(scheme, corner: 22)
         .task {
             await ic.joinLive(asBroadcaster: false)
-            while !Task.isCancelled {                // poll for an incoming ring
-                if ic.mode != .calling { incomingChannel = await ic.pendingCallChannel() }
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            while !Task.isCancelled {                // poll for rings + new voice notes
+                if ic.mode != .calling && ic.mode != .ringing {
+                    incomingChannel = await ic.pendingCallChannel()
+                    await playPendingVoiceNotes()
+                }
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
             }
         }
     }
 
-    // ── Active call bar (both sides) ──
+    /// Auto-play any voice note the boss sent that I haven't heard yet (online or not).
+    @MainActor
+    private func playPendingVoiceNotes() async {
+        let pending = await ic.pendingVoiceNotes()
+        for v in pending where !playedVoiceIds.contains(v.id) {
+            guard let url = URL(string: v.url) else { continue }
+            playedVoiceIds.insert(v.id)
+            try? AVAudioSession.sharedInstance().setCategory(.playback, options: [.defaultToSpeaker])
+            try? AVAudioSession.sharedInstance().setActive(true)
+            let p = AVPlayer(url: url)
+            voicePlayer = p
+            p.play()
+            await ic.markVoicePlayed(v.id)
+            break   // one at a time — the next poll picks up the rest
+        }
+    }
+
+    // ── Active call bar (both sides) — ringing until the other side joins ──
     private var callBar: some View {
-        VStack(spacing: 14) {
-            liveOrb(active: true, speaking: ic.remoteSpeaking)
-            Text(ic.remoteSpeaking ? "🔊 কথা হচ্ছে" : "📞 কল চলছে").font(.title3.weight(.bold))
-            Text(timeStr(ic.callSeconds)).font(.title2.weight(.bold).monospacedDigit()).foregroundStyle(.secondary)
+        let ringing = ic.mode == .ringing
+        return VStack(spacing: 14) {
+            // While ringing, keep the orb pulsing so it clearly reads as "not connected yet".
+            liveOrb(active: true, speaking: ringing || ic.remoteSpeaking)
+            Text(ringing ? "📞 রিং হচ্ছে…" : (ic.remoteSpeaking ? "🔊 কথা হচ্ছে" : "📞 কল চলছে"))
+                .font(.title3.weight(.bold))
+            // No timer until connected — WhatsApp-style.
+            Text(ringing ? "অপর পক্ষ ধরার অপেক্ষায়…" : timeStr(ic.callSeconds))
+                .font(ringing ? .subheadline : .title2.weight(.bold).monospacedDigit())
+                .foregroundStyle(.secondary)
             HStack(spacing: 10) {
-                bigButton(ic.micMuted ? "🔇 আনমিউট" : "🎙️ মিউট",
-                          tint: PortalOfficePalette.violet) { ic.toggleMute() }
-                bigButton("কল কাটুন", tint: PortalOfficePalette.red500, filled: true) { ic.leave() }
+                if !ringing {
+                    bigButton(ic.micMuted ? "🔇 আনমিউট" : "🎙️ মিউট",
+                              tint: PortalOfficePalette.violet) { ic.toggleMute() }
+                }
+                bigButton(ringing ? "বাতিল" : "কল কাটুন",
+                          tint: PortalOfficePalette.red500, filled: true) { ic.leave() }
             }
         }
         .frame(maxWidth: .infinity)
