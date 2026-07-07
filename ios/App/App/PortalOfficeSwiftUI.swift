@@ -562,6 +562,7 @@ final class PortalOfficeVM {
     var hub: PortalOwnerHub? = nil
     var ownerBusyId: String? = nil    // per-task owner action spinner
     var proposalBusyId: String? = nil
+    var isSampleData = false          // true when the hub route is absent and we fell back to demo data
 
     /// First call decides the whole screen: owner → boss hub, staff → staff app.
     func loadHub() async {
@@ -572,6 +573,7 @@ final class PortalOfficeVM {
             let env: PortalHubEnvelope = try await AlmaAPI.shared.get("/api/assistant/office/hub")
             selfRole = env.selfRole
             hub = env.hub
+            isSampleData = false
             roleResolved = true
             authExpired = false
             if env.selfRole == "staff" {
@@ -585,7 +587,7 @@ final class PortalOfficeVM {
             if Self.isCancellation(error) { return }
             // TEMP-PROOF: prod lacks /office/hub — show the redesigned boss dashboard with sample data.
             if let s = try? JSONDecoder().decode(PortalOwnerHub.self, from: Data(PortalOwnerHub.sampleJSON.utf8)) {
-                selfRole = "owner"; hub = s; roleResolved = true; return
+                selfRole = "owner"; hub = s; isSampleData = true; roleResolved = true; return
             }
             self.error = error.localizedDescription
             roleResolved = true
@@ -1574,6 +1576,7 @@ private struct PortalGroupChatSheet: View {
     @State private var picks: [PhotosPickerItem] = []
     @State private var staged: [Data] = []
     @State private var editText: [String: String] = [:]   // owner edits of agent drafts
+    @State private var preview: PortalImagePreview? = nil  // tapped image → full-screen viewer
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -1646,6 +1649,7 @@ private struct PortalGroupChatSheet: View {
                 picks = []
             }
         }
+        .fullScreenCover(item: $preview) { PortalImageViewer(preview: $0) }
     }
 
     // ── One message bubble (own = right coral, others = left with avatar) ──
@@ -1663,13 +1667,15 @@ private struct PortalGroupChatSheet: View {
                     Text(name).font(.caption2.weight(.bold))
                         .foregroundStyle(isAgent ? PortalOfficePalette.violet : PortalOfficePalette.accentText(colorScheme))
                 }
-                ForEach(m.imageURLs, id: \.self) { s in
+                ForEach(Array(m.imageURLs.enumerated()), id: \.offset) { idx, s in
                     if let u = URL(string: s) {
                         AsyncImage(url: u) { i in i.resizable().scaledToFill() } placeholder: {
                             Color.primary.opacity(0.06).frame(height: 150)
                         }
                         .frame(maxWidth: 210, maxHeight: 210)
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .contentShape(Rectangle())
+                        .onTapGesture { preview = PortalImagePreview(urls: m.imageURLs, index: idx) }
                     }
                 }
                 if !m.body.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -1852,6 +1858,62 @@ private func officeAvatar(_ url: String?, initial: String, size: CGFloat = 34) -
     .clipShape(Circle())
 }
 
+/// Identifiable payload so `.fullScreenCover(item:)` can open the zoomable viewer.
+struct PortalImagePreview: Identifiable {
+    let id = UUID()
+    let urls: [String]
+    let index: Int
+}
+
+/// Full-screen image viewer — swipe between images, pinch/double-tap to zoom, tap ✕
+/// to dismiss. Lets the Boss actually read a staff proof photo (was capped at a thumbnail).
+@available(iOS 17.0, *)
+struct PortalImageViewer: View {
+    let preview: PortalImagePreview
+    @Environment(\.dismiss) private var dismiss
+    @State private var selection: Int
+    @State private var scale: CGFloat = 1
+
+    init(preview: PortalImagePreview) {
+        self.preview = preview
+        _selection = State(initialValue: preview.index)
+    }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
+            TabView(selection: $selection) {
+                ForEach(Array(preview.urls.enumerated()), id: \.offset) { i, s in
+                    if let u = URL(string: s) {
+                        AsyncImage(url: u) { img in
+                            img.resizable().scaledToFit()
+                                .scaleEffect(i == selection ? scale : 1)
+                                .gesture(
+                                    MagnificationGesture()
+                                        .onChanged { scale = max(1, min($0, 4)) }
+                                        .onEnded { _ in withAnimation(.snappy) { scale = 1 } }
+                                )
+                                .onTapGesture(count: 2) {
+                                    withAnimation(.snappy) { scale = scale > 1 ? 1 : 2.5 }
+                                }
+                        } placeholder: {
+                            ProgressView().tint(.white)
+                        }
+                        .tag(i)
+                    }
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: preview.urls.count > 1 ? .automatic : .never))
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.headline.weight(.bold)).foregroundStyle(.white)
+                    .padding(11).background(.ultraThinMaterial, in: Circle())
+            }
+            .padding(.horizontal, 18).padding(.top, 8)
+        }
+    }
+}
+
 @available(iOS 17.0, *)
 struct PortalOwnerHubView: View {
     @Bindable var vm: PortalOfficeVM
@@ -1862,12 +1924,14 @@ struct PortalOwnerHubView: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var segment = 0
     @State private var expanded: Set<String> = []   // team members whose todolist is open
+    @State private var preview: PortalImagePreview? = nil  // tapped proof image → full-screen viewer
 
     private var accent: Color { PortalOfficePalette.accentText(colorScheme) }
 
     var body: some View {
         if let hub = vm.hub {
             header(hub)
+            if vm.isSampleData { demoStrip }
             if let err = vm.error { errorStrip(err) }
             kpiGrid(hub.kpis)
             if let award = hub.award { awardHero(award, stats: hub.awardStats) }
@@ -1881,6 +1945,7 @@ struct PortalOwnerHubView: View {
             performanceCard(hub.performance)
             noticesCard
             historyButton
+                .fullScreenCover(item: $preview) { PortalImageViewer(preview: $0) }
         } else {
             ForEach(0..<3, id: \.self) { _ in
                 Color.clear.frame(height: 110).portalOfficeGlass(colorScheme, corner: 16).portalOfficeShimmer()
@@ -1916,6 +1981,20 @@ struct PortalOwnerHubView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 6)
+    }
+
+    /// Shown only in the demo/sample state (the /hub route isn't on production yet), so the
+    /// Boss knows these names/numbers aren't his real staff until the route is deployed.
+    private var demoStrip: some View {
+        Label("ডেমো ডেটা দেখানো হচ্ছে — লাইভ অফিস ডেটার জন্য hub রুট প্রোডাকশনে ডিপ্লয় হলে আসল স্টাফ ও টাস্ক দেখাবে।",
+              systemImage: "info.circle.fill")
+            .font(.caption2.weight(.medium)).foregroundStyle(PortalOfficePalette.amber600)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(11)
+            .background(PortalOfficePalette.amber500.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(PortalOfficePalette.amber500.opacity(0.3), lineWidth: 1))
     }
 
     private func errorStrip(_ msg: String) -> some View {
@@ -2167,13 +2246,15 @@ struct PortalOwnerHubView: View {
     private func proofStrip(_ urls: [String]) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                ForEach(urls, id: \.self) { s in
+                ForEach(Array(urls.enumerated()), id: \.offset) { idx, s in
                     if let u = URL(string: s) {
                         AsyncImage(url: u) { i in i.resizable().scaledToFill() } placeholder: {
                             Color.primary.opacity(0.06)
                         }
                         .frame(width: 62, height: 62)
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .contentShape(Rectangle())
+                        .onTapGesture { preview = PortalImagePreview(urls: urls, index: idx) }
                     }
                 }
             }
