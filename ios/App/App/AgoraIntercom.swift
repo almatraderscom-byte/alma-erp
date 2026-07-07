@@ -205,6 +205,7 @@ final class AgoraIntercom: NSObject {
         localSpeaking = false
         remoteUids.removeAll()
         channel = nil
+        statusText = ""          // never leave a stale "রিং হচ্ছে…" behind the owner view
     }
 
     // ── App-wide incoming call (staff) ────────────────────────────────────────
@@ -388,6 +389,9 @@ final class AgoraIntercom: NSObject {
                 guard let self, self.mode == .ringing else { return }
                 self.error = "কেউ কল ধরেনি"
                 self.leave()
+                // Clear the notice after a few seconds so it doesn't read as a live error.
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                if self.error == "কেউ কল ধরেনি" { self.error = nil }
             }
         }
     }
