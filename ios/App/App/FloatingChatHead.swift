@@ -43,6 +43,8 @@ final class FloatingChatHead {
     private let margin: CGFloat = 12
     private let posKey = "office.chathead.y"
     private var onRight = true
+    private var callWatch: Timer?
+    private var incomingUp = false
 
     /// Create the overlay window + head. Safe to call more than once (no-op after first).
     func install() {
@@ -70,6 +72,37 @@ final class FloatingChatHead {
 
         overlay = w
         DispatchQueue.main.async { [weak self] in self?.placeInitial() }
+        startCallWatch()
+    }
+
+    // ── App-wide incoming-call ring ───────────────────────────────────────────
+    // Polls the intercom feed on ANY screen so a staff member's phone rings a real
+    // incoming call (native, loud) wherever they are — not only on the intercom tab.
+
+    private func startCallWatch() {
+        guard callWatch == nil else { return }
+        callWatch = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.pollIncoming() }
+        }
+    }
+
+    @MainActor private func pollIncoming() async {
+        guard !incomingUp,
+              overlay?.rootViewController?.presentedViewController == nil else { return }
+        if AgoraIntercom.shared.mode == .calling || AgoraIntercom.shared.mode == .ringing { return }
+        guard let inc = await AgoraIntercom.shared.pendingIncomingCall() else { return }
+        incomingUp = true
+        let host = ChatHostController(rootView: IncomingCallView(incoming: inc))
+        host.modalPresentationStyle = .overFullScreen
+        host.view.backgroundColor = .clear
+        host.onDisappear = { [weak self] in
+            self?.incomingUp = false
+            if self?.overlay?.rootViewController?.presentedViewController == nil {
+                self?.button?.isHidden = false
+            }
+        }
+        button?.isHidden = true
+        overlay?.rootViewController?.present(host, animated: true)
     }
 
     private func placeInitial() {
