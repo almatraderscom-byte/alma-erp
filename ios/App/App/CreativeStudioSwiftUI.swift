@@ -85,10 +85,11 @@ private struct CSRunPayload: Encodable {
     var resolution: String?
     var generationMode: String?
     var vibe: String?
+    var numImages: Int?
 
     enum CodingKeys: String, CodingKey {
         case mode, provider, productImagePath, familyPreset, backgroundPrompt
-        case aspectRatio, resolution, generationMode, vibe
+        case aspectRatio, resolution, generationMode, vibe, numImages
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -101,6 +102,7 @@ private struct CSRunPayload: Encodable {
         try c.encodeIfPresent(resolution, forKey: .resolution)
         try c.encodeIfPresent(generationMode, forKey: .generationMode)
         try c.encodeIfPresent(vibe, forKey: .vibe)
+        try c.encodeIfPresent(numImages, forKey: .numImages)
     }
 }
 
@@ -225,7 +227,8 @@ final class CreativeStudioVM {
 
     /// Upload one product photo then queue a generation for the chosen mode/options.
     func generate(imageData: Data, mode: CS.Mode, provider: String,
-                  family: String?, aspect: String, resolution: String, genMode: String, vibe: String) async {
+                  family: String?, aspect: String, resolution: String, genMode: String, vibe: String,
+                  numImages: Int = 2) async {
         guard !generating else { return }
         generating = true
         defer { generating = false }
@@ -241,7 +244,7 @@ final class CreativeStudioVM {
                 mode: mode.id, provider: provider, productImagePath: path,
                 familyPreset: family, backgroundPrompt: nil,
                 aspectRatio: aspect, resolution: resolution.lowercased(),
-                generationMode: genMode.lowercased(), vibe: vibe)
+                generationMode: genMode.lowercased(), vibe: vibe, numImages: numImages)
             let res: CSRunResponse = try await AlmaAPI.shared.send("POST", "/api/assistant/creative-studio/run", body: payload)
             toast = res.message ?? "জেনারেশন শুরু হয়েছে — গ্যালারিতে আসবে"
             if let g: CSGalleryResponse = try? await AlmaAPI.shared.get(
@@ -256,7 +259,42 @@ final class CreativeStudioVM {
     }
 
     func flash(_ msg: String) { toast = msg }
+
+    // ── Model library actions (wired to the same web APIs) ──────────────────
+    private struct CSAction: Encodable { let action: String; let id: String }
+    private struct CSOK: Decodable { let ok: Bool? }
+
+    func setDefaultModel(_ id: String) async {
+        do {
+            let _: CSOK = try await AlmaAPI.shared.send("POST", "/api/assistant/brand-models",
+                                                        body: CSAction(action: "set_default", id: id))
+            if let m: CSModelsResponse = try? await AlmaAPI.shared.get("/api/assistant/brand-models") { models = m.models }
+            toast = "ডিফল্ট মডেল সেট হলো"
+        } catch { toast = "সেট করা গেল না" }
+    }
+    func removeModel(_ id: String) async {
+        do {
+            let _: CSOK = try await AlmaAPI.shared.send("POST", "/api/assistant/brand-models",
+                                                        body: CSAction(action: "remove", id: id))
+            models.removeAll { $0.id == id }
+            toast = "মডেল মুছে ফেলা হলো"
+        } catch { toast = "মুছতে পারলাম না" }
+    }
+
+    // ── Scene feedback on an executed creative (CS4 weighting) ──────────────
+    private struct CSFeedback: Encodable { let pendingActionId: String; let verdict: String }
+    func rate(_ item: CSGalleryItem, _ verdict: String) async {
+        do {
+            let _: CSOK = try await AlmaAPI.shared.send("POST", "/api/assistant/creative-studio/feedback",
+                                                        body: CSFeedback(pendingActionId: item.id, verdict: verdict))
+            toast = verdict == "good" ? "এই ধরনের সিন বেশি আসবে" : "এই সিন কম আসবে"
+        } catch { toast = "নোট করা গেল না" }
+    }
 }
+
+/// The web Creative Studio path — every heavy sub-feature (finishing editor, audio
+/// lab, video upload/finish, logo, drive, settings) opens here until it's native.
+let CS_WEB_PATH = "/agent/creative-studio"
 
 // MARK: - Root screen (custom chrome + floating tab bar over the shared aura)
 
@@ -282,9 +320,9 @@ struct CreativeStudioScreen: View {
                 switch tab {
                 case .home:    CSHomeTab(vm: vm, go: { tab = $0 })
                 case .create:  CSCreateTab(vm: vm, back: { tab = .home })
-                case .gallery: CSGalleryTab(vm: vm)
-                case .video:   CSVideoTab(vm: vm)
-                case .library: CSLibraryTab(vm: vm)
+                case .gallery: CSGalleryTab(vm: vm, openWeb: openWeb)
+                case .video:   CSVideoTab(vm: vm, openWeb: openWeb)
+                case .library: CSLibraryTab(vm: vm, openWeb: openWeb)
                 }
             }
             .transition(.opacity)
@@ -505,9 +543,13 @@ private struct CSCreateTab: View {
     @State private var resolution = 1
     @State private var genMode = 1
     @State private var background = 0
+    @State private var numImages = 2
+    @State private var providerPick = 0   // 0 = FASHN Pro, 1 = Gemini
 
+    private var bothProviders: Bool { (vm.config?.fashnConfigured ?? false) && (vm.config?.geminiConfigured ?? false) }
     private var provider: String {
         if mode.fashnOnly { return "fashn" }
+        if bothProviders { return providerPick == 0 ? "fashn" : "gemini" }
         return (vm.config?.fashnConfigured ?? false) ? "fashn" : "gemini"
     }
 
@@ -667,6 +709,12 @@ private struct CSCreateTab: View {
                         advField("কোয়ালিটি") { CSSegment(items: CS.genModes, index: $genMode).padding(.trailing, 16) }
                     }
                     advField("ব্যাকগ্রাউন্ড") { backgroundRail }
+                    if bothProviders && !mode.fashnOnly {
+                        advField("ইঞ্জিন") {
+                            CSSegment(items: ["FASHN Pro", "Gemini"], index: $providerPick).padding(.horizontal, 16)
+                        }
+                    }
+                    advField("কয়টি ছবি") { imageCountStepper }
                     Color.clear.frame(height: 10)
                 }
             }
@@ -776,6 +824,23 @@ private struct CSCreateTab: View {
         vm.gallery.isEmpty ? nil : vm.gallery[(i + 2) % vm.gallery.count].imageURL
     }
 
+    private var imageCountStepper: some View {
+        HStack(spacing: 16) {
+            ForEach(1...4, id: \.self) { n in
+                Button { numImages = n; CSHaptic.tap() } label: {
+                    Text(almaBn(n)).font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(numImages == n ? Color.white : AgentPalette(scheme).muted)
+                        .frame(width: 46, height: 40)
+                        .background {
+                            if numImages == n { RoundedRectangle(cornerRadius: 12, style: .continuous).fill(AgentPalette.coral) }
+                            else { RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(scheme == .dark ? 0.05 : 0.4)) }
+                        }
+                }.buttonStyle(.plain)
+            }
+            Spacer()
+        }.padding(.horizontal, 16)
+    }
+
     private var generateBar: some View {
         Button { Task { await runGenerate() } } label: {
             HStack(spacing: 9) {
@@ -816,7 +881,7 @@ private struct CSCreateTab: View {
         await vm.generate(imageData: data, mode: mode, provider: provider,
                           family: family == 0 ? nil : CS.familyIds[family],
                           aspect: CS.aspects[aspect], resolution: CS.resolutions[resolution],
-                          genMode: CS.genModes[genMode], vibe: CS.vibes[vibe].id)
+                          genMode: CS.genModes[genMode], vibe: CS.vibes[vibe].id, numImages: numImages)
     }
 }
 
@@ -825,6 +890,7 @@ private struct CSCreateTab: View {
 @available(iOS 17.0, *)
 private struct CSGalleryTab: View {
     let vm: CreativeStudioVM
+    let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.colorScheme) private var scheme
     @State private var detail: CSGalleryItem?
 
@@ -863,7 +929,8 @@ private struct CSGalleryTab: View {
         .claudeTopFade(useNativeEdgeEffect: false)
         .refreshable { await vm.loadAll() }
         .sheet(item: $detail) { item in
-            CSDetailSheet(item: item).presentationDetents([.large]).presentationDragIndicator(.visible)
+            CSDetailSheet(item: item, vm: vm, openWeb: openWeb)
+                .presentationDetents([.large]).presentationDragIndicator(.visible)
         }
     }
 }
@@ -873,6 +940,7 @@ private struct CSGalleryTab: View {
 @available(iOS 17.0, *)
 private struct CSVideoTab: View {
     let vm: CreativeStudioVM
+    let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.colorScheme) private var scheme
     @State private var vibe = 0
     @State private var template = 0
@@ -902,10 +970,15 @@ private struct CSVideoTab: View {
                 CSSegment(items: CS.audioModes, index: $audioMode).padding(.horizontal, 18)
                 secLabel("মিউজিক বেড")
                 CSChipRow(items: CS.musicVibes, selectionIndex: $music)
-                Button { vm.flash("রিল রেন্ডার শুরু — গ্যালারিতে আসবে") } label: {
-                    Label("রিল রেন্ডার করো", systemImage: "film")
-                        .font(.system(size: 16, weight: .bold)).foregroundStyle(.white).frame(maxWidth: .infinity).padding(17)
-                        .background(CS.cta, in: RoundedRectangle(cornerRadius: 20, style: .continuous)).shadow(color: CS.ctaGlow, radius: 16, y: 9)
+                Button { openWeb(CS_WEB_PATH, "ভিডিও স্টুডিও"); CSHaptic.tap() } label: {
+                    VStack(spacing: 3) {
+                        Label("ভিডিও স্টুডিওতে যান — আপলোড ও রেন্ডার", systemImage: "film")
+                            .font(.system(size: 15.5, weight: .bold)).foregroundStyle(.white)
+                        Text("শুট আপলোড · মিউজিক লাইব্রেরি · কভার · ভয়েসওভার · টেমপ্লেট ফিনিশিং")
+                            .font(.system(size: 10.5)).foregroundStyle(.white.opacity(0.85))
+                    }
+                    .frame(maxWidth: .infinity).padding(.vertical, 15).padding(.horizontal, 14)
+                    .background(CS.cta, in: RoundedRectangle(cornerRadius: 20, style: .continuous)).shadow(color: CS.ctaGlow, radius: 16, y: 9)
                 }.buttonStyle(.plain).padding(.horizontal, 18).padding(.top, 24)
                 Color.clear.frame(height: 96)
             }
@@ -968,8 +1041,12 @@ private struct CSVideoTab: View {
 @available(iOS 17.0, *)
 private struct CSLibraryTab: View {
     let vm: CreativeStudioVM
+    let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.colorScheme) private var scheme
     @State private var finish = 0
+    @State private var logoOn = true
+    @State private var codeOn = true
+    @State private var confirmDelete: CSModel?
 
     private let finishModes: [(icon: String, name: String, sub: String)] = [
         ("square.stack.3d.up", "মডেল ওভারলে", "মডেলের ওপর লোগো + কোড"),
@@ -987,13 +1064,64 @@ private struct CSLibraryTab: View {
 
                 CSSectionHeader(title: "সেভ করা মডেল", trailing: "\(almaBn(vm.models.count))টি", action: nil).padding(.horizontal, 18)
                 modelGrid
+
                 CSSectionHeader(title: "ফিনিশিং", trailing: "logo · code · hook", action: nil).padding(.horizontal, 18)
                 finishRail
+                finishOptions
+                CSSectionHeader(title: "আরও স্টুডিও টুল", trailing: nil, action: nil).padding(.horizontal, 18)
+                moreTools
                 Color.clear.frame(height: 96)
             }
         }
         .claudeTopFade(useNativeEdgeEffect: false)
         .refreshable { await vm.loadAll() }
+        .alert("মডেল মুছবেন?", isPresented: Binding(get: { confirmDelete != nil }, set: { if !$0 { confirmDelete = nil } })) {
+            Button("বাতিল", role: .cancel) {}
+            Button("মুছুন", role: .destructive) { if let m = confirmDelete { Task { await vm.removeModel(m.id) } } }
+        } message: { Text(confirmDelete?.name ?? "") }
+    }
+
+    // Logo/code toggles + a working apply button (per-image finishing opens the web editor).
+    private var finishOptions: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 0) {
+                CSToggleRow(title: "লোগো বসাও", sub: "নিচের কোণে ওয়াটারমার্ক", on: $logoOn)
+                Divider().overlay(AgentPalette(scheme).borderSubtle).padding(.horizontal, 16)
+                CSToggleRow(title: "প্রাইস কোড + হুক", sub: "অফার টেক্সট ওভারলে", on: $codeOn)
+            }.csGlass(scheme, corner: 20).padding(.horizontal, 18).padding(.top, 16)
+
+            Button { openWeb(CS_WEB_PATH, "ফিনিশিং এডিটর"); CSHaptic.tap() } label: {
+                Label("ছবি বেছে ফিনিশিং এডিটর খুলুন", systemImage: "slider.horizontal.below.rectangle")
+                    .font(.system(size: 15.5, weight: .bold)).foregroundStyle(.white).frame(maxWidth: .infinity).padding(16)
+                    .background(CS.cta, in: RoundedRectangle(cornerRadius: 18, style: .continuous)).shadow(color: CS.ctaGlow, radius: 14, y: 8)
+            }.buttonStyle(.plain).padding(.horizontal, 18).padding(.top, 14)
+            Text("লোগো, রং, ফন্ট আপনার ব্র্যান্ড সেটিং থেকেই আসে — প্রতি ছবির কোড ও hook এডিটরে লিখুন।")
+                .font(.system(size: 11.5)).foregroundStyle(AgentPalette(scheme).muted)
+                .padding(.horizontal, 22).padding(.top, 9)
+        }
+    }
+
+    // Reachable entries for the heavy web-only tools (nothing is lost / no dead ends).
+    private var moreTools: some View {
+        VStack(spacing: 10) {
+            toolRow("🎙️ অডিও ল্যাব", "ভয়েস, মিউজিক, উইশ গান, SFX", "waveform")
+            toolRow("🖼️ ব্র্যান্ড লোগো", "লোগো আপলোড / বদলান", "photo.badge.plus")
+            toolRow("☁️ Google Drive", "ছবি/ভিডিও অটো-ব্যাকআপ", "arrow.up.doc")
+            toolRow("⚙️ স্টুডিও সেটিংস", "QC মান · Telegram নোটিফাই", "gearshape")
+        }.padding(.horizontal, 18)
+    }
+    private func toolRow(_ title: String, _ sub: String, _ icon: String) -> some View {
+        Button { openWeb(CS_WEB_PATH, title); CSHaptic.tap() } label: {
+            HStack(spacing: 13) {
+                Image(systemName: icon).font(.system(size: 17)).foregroundStyle(AgentPalette.coralLt).frame(width: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 14.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).ink)
+                    Text(sub).font(.system(size: 11.5)).foregroundStyle(AgentPalette(scheme).muted)
+                }
+                Spacer()
+                Image(systemName: "arrow.up.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(AgentPalette(scheme).muted)
+            }.padding(14).csGlass(scheme, corner: 18)
+        }.buttonStyle(.plain)
     }
 
     private var modelGrid: some View {
@@ -1007,23 +1135,48 @@ private struct CSLibraryTab: View {
                         }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
                         .background(LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .bottom, endPoint: .center))
                     }
+                    .overlay(alignment: .topLeading) {
+                        if m.isDefault == true {
+                            Label("ডিফল্ট", systemImage: "star.fill").font(.system(size: 9.5, weight: .bold))
+                                .foregroundStyle(Color(red: 0.17, green: 0.12, blue: 0))
+                                .padding(.vertical, 4).padding(.horizontal, 8)
+                                .background(Color(red: 0.91, green: 0.72, blue: 0.27), in: Capsule()).padding(9)
+                        }
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        HStack(spacing: 6) {
+                            if m.isDefault != true {
+                                iconChip("star") { Task { await vm.setDefaultModel(m.id) } }
+                            }
+                            iconChip("trash") { confirmDelete = m }
+                        }.padding(9)
+                    }
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.1), lineWidth: 1))
             }
             addModelCard
         }.padding(.horizontal, 18)
     }
+    private func iconChip(_ icon: String, _ tap: @escaping () -> Void) -> some View {
+        Button { tap(); CSHaptic.tap() } label: {
+            Image(systemName: icon).font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+                .frame(width: 28, height: 28).background(.black.opacity(0.45), in: Circle())
+                .overlay(Circle().strokeBorder(.white.opacity(0.15), lineWidth: 1))
+        }.buttonStyle(.plain)
+    }
 
     private var addModelCard: some View {
-        VStack(spacing: 9) {
-            ZStack { RoundedRectangle(cornerRadius: 14).fill(CS.cta).frame(width: 44, height: 44)
-                Image(systemName: "plus").font(.system(size: 22, weight: .bold)).foregroundStyle(.white) }
-            Text("নতুন মডেল").font(.system(size: 13, weight: .bold)).foregroundStyle(AgentPalette(scheme).muted)
-        }
-        .frame(maxWidth: .infinity).aspectRatio(0.75, contentMode: .fit)
-        .csGlass(scheme, corner: 20)
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
-            .strokeBorder(style: StrokeStyle(lineWidth: 1.4, dash: [6])).foregroundStyle(.white.opacity(0.2)))
+        Button { openWeb(CS_WEB_PATH, "নতুন মডেল"); CSHaptic.tap() } label: {
+            VStack(spacing: 9) {
+                ZStack { RoundedRectangle(cornerRadius: 14).fill(CS.cta).frame(width: 44, height: 44)
+                    Image(systemName: "plus").font(.system(size: 22, weight: .bold)).foregroundStyle(.white) }
+                Text("নতুন মডেল").font(.system(size: 13, weight: .bold)).foregroundStyle(AgentPalette(scheme).muted)
+            }
+            .frame(maxWidth: .infinity).aspectRatio(0.75, contentMode: .fit)
+            .csGlass(scheme, corner: 20)
+            .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(style: StrokeStyle(lineWidth: 1.4, dash: [6])).foregroundStyle(.white.opacity(0.2)))
+        }.buttonStyle(.plain)
     }
 
     private var finishRail: some View {
@@ -1284,6 +1437,8 @@ private struct CSToggleRow: View {
 @available(iOS 17.0, *)
 private struct CSDetailSheet: View {
     let item: CSGalleryItem
+    let vm: CreativeStudioVM
+    let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.colorScheme) private var scheme
     @Environment(\.dismiss) private var dismiss
     @State private var rating: String?
@@ -1302,9 +1457,13 @@ private struct CSDetailSheet: View {
                 }.padding(.horizontal, 18).padding(.top, 8)
 
                 HStack(spacing: 10) {
-                    actionButton("ডাউনলোড", "arrow.down.to.line", primary: true)
-                    actionButton("এডিট", "pencil", primary: false)
-                    actionButton("পোস্ট", "square.and.arrow.up", primary: false)
+                    if let url = item.imageURL {
+                        ShareLink(item: url) { actionLabel("ডাউনলোড", "arrow.down.to.line", primary: true) }
+                    }
+                    actionButton("এডিট", "pencil", primary: false) { openWeb(CS_WEB_PATH, "ফিনিশিং এডিটর") }
+                    if let url = item.imageURL {
+                        ShareLink(item: url) { actionLabel("শেয়ার", "square.and.arrow.up", primary: false) }
+                    }
                 }.padding(.horizontal, 18).padding(.top, 18)
 
                 if item.isExecuted {
@@ -1322,7 +1481,7 @@ private struct CSDetailSheet: View {
         Text(t).font(.system(size: 11, weight: .medium)).foregroundStyle(AgentPalette(scheme).muted)
             .padding(.vertical, 4).padding(.horizontal, 10).csGlass(scheme, corner: 999)
     }
-    private func actionButton(_ label: String, _ icon: String, primary: Bool) -> some View {
+    private func actionLabel(_ label: String, _ icon: String, primary: Bool) -> some View {
         VStack(spacing: 6) {
             Image(systemName: icon).font(.system(size: 19))
             Text(label).font(.system(size: 11, weight: .semibold))
@@ -1335,8 +1494,11 @@ private struct CSDetailSheet: View {
         }
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.white.opacity(0.08), lineWidth: primary ? 0 : 1))
     }
+    private func actionButton(_ label: String, _ icon: String, primary: Bool, _ tap: @escaping () -> Void) -> some View {
+        Button { tap(); CSHaptic.tap() } label: { actionLabel(label, icon, primary: primary) }.buttonStyle(.plain)
+    }
     private func rateButton(_ label: String, _ key: String) -> some View {
-        Button { rating = key; CSHaptic.tap() } label: {
+        Button { rating = key; Task { await vm.rate(item, key) }; CSHaptic.tap() } label: {
             Text(label).font(.system(size: 13, weight: .bold))
                 .foregroundStyle(rating == key && key == "good" ? Color(red: 0.03, green: 0.07, blue: 0.05) : AgentPalette(scheme).ink)
                 .frame(maxWidth: .infinity).padding(13)
