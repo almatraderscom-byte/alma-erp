@@ -57,9 +57,9 @@ export const Card = forwardRef<HTMLDivElement, {
     <div
       ref={ref}
       className={cn(
-        // Floating (iOS / Claude-app) look: soft layered shadow + pillowy corners
-        // so every card visibly lifts off the page. Applies app-wide via this base.
-        'min-w-0 rounded-3xl border bg-card/80 shadow-float',
+        // Floating (iOS 27) look: 26px concentric corner radius from Apple's
+        // iOS 27 kit + soft layered shadow so every card lifts off the page.
+        'min-w-0 rounded-[26px] border bg-card/80 shadow-float',
         gold ? 'border-gold/30' : 'border-border-subtle',
         interactive && 'card-interactive',
         className,
@@ -219,7 +219,7 @@ export function PageHeader({
 
   return (
     <header
-      className="page-header sticky top-0 border-b border-border-subtle bg-card/80 px-4 pb-4 backdrop-blur md:px-8"
+      className="page-header lg-navbar sticky top-0 px-4 pb-3.5 md:px-8"
       // Pad the sticky header below the status bar / Dynamic Island so the title and
       // action buttons never render under the notch on iPhone (and notched Android).
       style={{ zIndex: PLATFORM_Z.stickyBanner, paddingTop: 'max(1rem, env(safe-area-inset-top))' }}
@@ -228,9 +228,9 @@ export function PageHeader({
         <div className="flex min-w-0 items-center gap-2.5" data-ph-titlerow>
           <PageBackButton />
           <div className="min-w-0">
-            <h1 className="truncate text-base font-bold tracking-tight text-cream md:text-lg">{title}</h1>
+            <h1 className="truncate text-[22px] font-bold leading-7 tracking-[-0.26px] text-cream md:text-lg md:tracking-tight">{title}</h1>
             {subtitle != null && subtitle !== '' && (
-              <p className="mt-0.5 truncate text-[11px] text-muted">{subtitle}</p>
+              <p className="mt-0.5 truncate text-[13px] leading-[18px] tracking-[-0.08px] text-muted">{subtitle}</p>
             )}
           </div>
         </div>
@@ -268,8 +268,9 @@ export function Button({
   className?: string
   type?: 'button' | 'submit'
 }) {
-  const base = 'inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl font-semibold transition-all duration-150 disabled:opacity-50 disabled:saturate-[0.85] disabled:cursor-not-allowed disabled:active:scale-100 active:scale-[0.98] md:min-h-0'
-  const sizes = { xs: 'px-2.5 py-1.5 text-[11px] min-h-[36px] md:min-h-0', sm: 'px-3.5 py-2 text-xs', md: 'px-5 py-2.5 text-sm' }
+  // iOS 27: buttons are capsules (full pill radius), 44pt touch target.
+  const base = 'inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full font-semibold transition-all duration-150 disabled:opacity-50 disabled:saturate-[0.85] disabled:cursor-not-allowed disabled:active:scale-100 active:scale-[0.97] md:min-h-0'
+  const sizes = { xs: 'px-3 py-1.5 text-[11px] min-h-[36px] md:min-h-0', sm: 'px-4 py-2 text-xs', md: 'px-5 py-2.5 text-sm' }
   const variants = {
     gold:      'bg-gold/10 border border-gold/30 text-gold-dim hover:bg-gold/20 hover:shadow-gold-sm',
     secondary: 'bg-bg-2 border border-border-subtle text-cream hover:bg-bg-3 hover:border-border-strong hover:shadow-card',
@@ -297,7 +298,7 @@ export function Input({ className, error, ...props }: React.InputHTMLAttributes<
       {...props}
       aria-invalid={error || undefined}
       className={cn(
-        'w-full rounded-xl bg-card border px-4 py-3 text-sm text-cream placeholder-muted transition-all focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed',
+        'w-full rounded-[14px] bg-card border px-4 py-3 text-sm text-cream placeholder-muted transition-all focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed',
         error
           ? 'border-danger/60 focus:border-danger focus:ring-2 focus:ring-danger/30'
           : 'border-border-strong focus:border-gold/60 focus:ring-2 focus:ring-gold/25 focus:shadow-gold-sm',
@@ -314,7 +315,7 @@ export function SearchInput({ value, onChange, placeholder }: { value: string; o
       <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted text-sm">⌕</span>
       <input
         value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder ?? 'Search…'}
-        className="w-full bg-card border border-border-strong rounded-xl pl-9 pr-4 py-2.5 text-sm text-cream placeholder-muted focus:outline-none focus:border-gold/50 transition-colors"
+        className="w-full bg-card border border-border-strong rounded-full pl-9 pr-4 py-2.5 text-sm text-cream placeholder-muted focus:outline-none focus:border-gold/50 transition-colors"
       />
     </div>
   )
@@ -326,7 +327,7 @@ export function Select({ value, onChange, options, className }: {
 }) {
   return (
     <select value={value} onChange={e => onChange(e.target.value)}
-      className={cn('bg-card border border-border-strong rounded-xl px-3 py-2.5 text-sm text-cream focus:outline-none focus:border-gold/50 transition-colors cursor-pointer', className)}>
+      className={cn('bg-card border border-border-strong rounded-[14px] px-3 py-2.5 text-sm text-cream focus:outline-none focus:border-gold/50 transition-colors cursor-pointer', className)}>
       {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   )
