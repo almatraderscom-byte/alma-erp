@@ -1014,6 +1014,7 @@ struct DashboardScreen: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.top, 4)
+                .background(ScrollTouchFix())
             }
             .onChange(of: vm.data != nil) { _, ready in
                 if ready, let a = debugAnchor {
@@ -1927,21 +1928,77 @@ private struct MiniChip: View {
 private struct DashPressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .brightness(configuration.isPressed ? 0.05 : 0)
-            .animation(.spring(response: 0.32, dampingFraction: 0.62), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .opacity(configuration.isPressed ? 0.86 : 1)
+            .animation(.spring(response: 0.35, dampingFraction: 0.55), value: configuration.isPressed)
             .onChange(of: configuration.isPressed) { _, pressed in
-                if pressed { UIImpactFeedbackGenerator(style: .soft).impactOccurred() }
+                if pressed { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
             }
+    }
+}
+
+/// Immediate press feedback that does NOT depend on the scroll view's `delaysContentTouches`
+/// (a Button/ButtonStyle press is withheld ~0.15s inside a scroll view, so a quick tap looked
+/// like nothing). A 0-distance drag as a `simultaneousGesture` fires on touch-DOWN at once, and
+/// coexists with the scroll pan — moving past a small threshold cancels the press so scrolling
+/// still works; a release without movement fires the tap action.
+@available(iOS 17.0, *)
+private struct DashPressable: ViewModifier {
+    let action: () -> Void
+    @State private var pressed = false
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(pressed ? 0.94 : 1)
+            .opacity(pressed ? 0.86 : 1)
+            .animation(.spring(response: 0.34, dampingFraction: 0.58), value: pressed)
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { v in
+                        let moved = abs(v.translation.width) > 8 || abs(v.translation.height) > 8
+                        if moved {
+                            if pressed { pressed = false }
+                        } else if !pressed {
+                            pressed = true
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        }
+                    }
+                    .onEnded { v in
+                        let moved = abs(v.translation.width) > 8 || abs(v.translation.height) > 8
+                        if pressed && !moved { action() }
+                        pressed = false
+                    }
+            )
     }
 }
 
 @available(iOS 17.0, *)
 private extension View {
-    /// Wrap a (possibly non-interactive) card so it presses like an iOS cell. Optional tap action.
+    /// Press like an iOS cell — subtle scale-down + dim + soft haptic on touch, spring-back on
+    /// release; optional tap action. Fires immediately on touch-down (see DashPressable).
     func dashPress(_ action: @escaping () -> Void = {}) -> some View {
-        Button(action: action, label: { self }).buttonStyle(DashPressStyle())
+        modifier(DashPressable(action: action))
     }
+}
+
+/// Turns OFF `delaysContentTouches` on the ENCLOSING scroll view only (walks up from a hidden
+/// backing view). Without this, UIScrollView waits ~0.15s before showing a button's pressed
+/// state — so a quick tap looks like nothing happened. Scoped to the dashboard's scroll view;
+/// no global `UIScrollView.appearance()` side effects on the other native pages.
+private struct ScrollTouchFix: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let v = UIView(frame: .zero)
+        v.isUserInteractionEnabled = false
+        DispatchQueue.main.async { [weak v] in
+            var s = v?.superview
+            while let cur = s {
+                if let scroll = cur as? UIScrollView { scroll.delaysContentTouches = false; break }
+                s = cur.superview
+            }
+        }
+        return v
+    }
+    func updateUIView(_ uiView: UIView, context: Context) {}
 }
 
 // MARK: - Card chrome (chart + list containers)
