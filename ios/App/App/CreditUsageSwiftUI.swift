@@ -1,30 +1,37 @@
 //
 //  CreditUsageSwiftUI.swift
-//  ALMA ERP — the redesigned agent cost dashboard as a native SwiftUI screen.
+//  ALMA ERP — the redesigned agent cost dashboard as a native SwiftUI screen (v4).
 //
-//  Replaces the old AgentCostsScreen ("Monitor") with a professional, Apple-grade
-//  two-pane page (owner design, 2026-07-07):
-//    • USAGE — big live spend hero with a 1D/7D/30D/Custom range switch, a
-//      Screen-Time-style stacked daily bar chart (real per-provider daily data),
-//      a swipe wallet of provider credit/balance cards, model breakdown, budget bar.
-//    • LOGS — ALMA ERP's end-to-end cost ledger: every chat/voice/image/call/research
-//      event grouped by Dhaka day, filter chips, tap-to-expand single-event detail.
+//  Replaces the old AgentCostsScreen ("Monitor") with an Apple-grade two-pane page
+//  (owner design 2026-07, market-researched against OpenRouter / Anthropic Console /
+//  Vercel AI Gateway, and Apple's iOS 26 Liquid-Glass + spatial-layering HIG):
+//
+//    MATERIAL DISCIPLINE — glass floats, solid anchors data:
+//      • Glass (.ultraThinMaterial + lit edge) → floating CONTROLS: the Usage/Logs
+//        segment, the range switch, filter chips, the web-escape button, sheets.
+//      • Solid (opaque surface) → dense DATA: the spend hero, the ledger, model
+//        breakdown, provider wallet, budget — clean high-contrast, no translucency.
+//
+//    USAGE — big live spend hero with a 1D/7D/30D/Custom range switch and an
+//      INTERACTIVE stacked daily bar chart: tap a bar to drill into that day (the
+//      hero number + readout retarget, other bars dim). Provider credit wallet,
+//      model breakdown, budget, avg-TTFT stat.
+//    LOGS — ALMA ERP's end-to-end cost ledger grouped by Dhaka day; tap a row for
+//      token intelligence (input / output / cached / TTFT / latency). 20s live refresh.
+//
+//  iOS effects: selection haptics (.sensoryFeedback), spring drill-down, numeric
+//  count-up (.contentTransition), scroll-in transitions, pressable rows, a breathing
+//  "today" endpoint, and animated live-row insertion.
 //
 //  Data (all live, owner-only, cookie-bridged via AlmaAPI):
-//    GET /api/assistant/costs/summary   → today/month/forecast USD, byModel, byProvider,
-//                                         dailyLast30 (per-provider daily), budgets.
-//    GET /api/assistant/costs/balances  → per-provider live balances + spend.
-//    GET /api/assistant/costs/logs      → recent per-event ledger (model, tokens, cost).
-//  Budget CONFIG / CSV stay on the web — the footer escape hatch opens /agent/costs.
-//  Read-only by design (no writes from this screen).
-//
-//  Parallel-session rule: this file owns its aurora + glass helpers (no cross-page
-//  imports), so the shared Aura look is duplicated from the Orders/Assistant spec.
+//    GET /api/assistant/costs/summary · /balances · /logs.
+//  Budget config / CSV stay on the web — footer escape opens /agent/costs.
+//  Parallel-session rule: page-owned material/aurora helpers (no cross-page imports).
 //
 
 import SwiftUI
 
-// MARK: - Palette (exact web PROVIDER_COLORS / globals.css tokens)
+// MARK: - Palette (exact web PROVIDER_COLORS)
 
 private enum CUPalette {
     static let coral = Color(red: 0.878, green: 0.478, blue: 0.373)   // #E07A5F
@@ -36,34 +43,28 @@ private enum CUPalette {
     static let amber = Color(red: 0.878, green: 0.663, blue: 0.294)   // #E0A94B
     static let red = Color(red: 0.894, green: 0.459, blue: 0.420)     // #E4756B
 
-    /// Web PROVIDER_COLORS (same hexes used by the recharts dashboard).
     static func provider(_ id: String) -> Color {
         switch id {
-        case "anthropic": return coral                                       // #E07A5F
-        case "openai": return sage                                           // #81B29A
-        case "openrouter": return violet                                     // #A78BFA
-        case "gemini": return Color(red: 0.231, green: 0.510, blue: 0.965)   // #3B82F6
-        case "google_tts": return Color(red: 0.545, green: 0.361, blue: 0.965) // #8B5CF6
-        case "twilio": return gold                                           // #D4A84B
-        case "elevenlabs": return Color(red: 0.925, green: 0.282, blue: 0.600) // #EC4899
-        case "veo": return Color(red: 0.055, green: 0.647, blue: 0.914)      // #0EA5E9
-        default: return Color(red: 0.580, green: 0.639, blue: 0.722)         // #94a3b8
+        case "anthropic": return coral
+        case "openai": return sage
+        case "openrouter": return violet
+        case "gemini": return Color(red: 0.231, green: 0.510, blue: 0.965)
+        case "google_tts": return Color(red: 0.545, green: 0.361, blue: 0.965)
+        case "twilio": return gold
+        case "elevenlabs": return Color(red: 0.925, green: 0.282, blue: 0.600)
+        case "veo": return Color(red: 0.055, green: 0.647, blue: 0.914)
+        default: return Color(red: 0.580, green: 0.639, blue: 0.722)
         }
     }
-    /// Deterministic colour cycle for model bars (web MODEL_CHART_COLORS order).
     static let modelCycle: [Color] = [
-        coral, sage, violet,
-        Color(red: 0.231, green: 0.510, blue: 0.965), gold,
-        Color(red: 0.925, green: 0.282, blue: 0.600),
-        Color(red: 0.055, green: 0.647, blue: 0.914),
-        Color(red: 0.063, green: 0.725, blue: 0.506),
-        Color(red: 0.961, green: 0.620, blue: 0.043),
+        coral, sage, violet, Color(red: 0.231, green: 0.510, blue: 0.965), gold,
+        Color(red: 0.925, green: 0.282, blue: 0.600), Color(red: 0.055, green: 0.647, blue: 0.914),
+        Color(red: 0.063, green: 0.725, blue: 0.506), Color(red: 0.961, green: 0.620, blue: 0.043),
         Color(red: 0.388, green: 0.400, blue: 0.945),
     ]
     static func model(_ i: Int) -> Color { modelCycle[i % modelCycle.count] }
-
     static func accentText(_ s: ColorScheme) -> Color {
-        s == .dark ? goldLt : Color(red: 0.706, green: 0.333, blue: 0.184)   // #B4552F on cream
+        s == .dark ? goldLt : Color(red: 0.706, green: 0.333, blue: 0.184)
     }
     static func balance(_ usd: Double?, free: Bool) -> Color {
         if free { return emerald }
@@ -77,19 +78,13 @@ private enum CUPalette {
 private enum CULabel {
     static func provider(_ id: String) -> String {
         switch id {
-        case "anthropic": return "Anthropic"
-        case "openai": return "OpenAI"
-        case "openrouter": return "OpenRouter"
-        case "gemini": return "Gemini"
-        case "google_tts": return "Google TTS"
-        case "twilio": return "Twilio"
-        case "elevenlabs": return "ElevenLabs"
-        case "veo": return "VEO 3"
-        case "oxylabs": return "Oxylabs"
-        default: return id.isEmpty ? "অন্যান্য" : id
+        case "anthropic": return "Anthropic"; case "openai": return "OpenAI"
+        case "openrouter": return "OpenRouter"; case "gemini": return "Gemini"
+        case "google_tts": return "Google TTS"; case "twilio": return "Twilio"
+        case "elevenlabs": return "ElevenLabs"; case "veo": return "VEO 3"
+        case "oxylabs": return "Oxylabs"; default: return id.isEmpty ? "অন্যান্য" : id
         }
     }
-    /// SF Symbol for a cost-event kind — makes the ledger read at a glance.
     static func icon(kind: String, provider: String) -> String {
         let k = kind.lowercased()
         if k.contains("image") || k.contains("nano") || k.contains("veo") { return "photo" }
@@ -102,7 +97,6 @@ private enum CULabel {
         if k.contains("ops") || k.contains("tool") { return "terminal.fill" }
         return "sparkles"
     }
-    /// Short role/kind tag shown next to the model name.
     static func roleTag(kind: String) -> String {
         let k = kind.lowercased()
         if k.contains("cs_") { return "cs" }
@@ -118,7 +112,7 @@ private enum CULabel {
     }
 }
 
-// MARK: - Flexible decode (costs are USD decimals; API mixes number/string shapes)
+// MARK: - Flexible decode
 
 private enum CUFlex {
     static func double<K: CodingKey>(_ c: KeyedDecodingContainer<K>, _ k: K) -> Double? {
@@ -137,8 +131,6 @@ private enum CUFlex {
 
 // MARK: - Models
 
-/// One day of dailyLast30 — the API row is `{date, <provider>: usd, …, total}`.
-/// We keep the per-provider split (minus non-USD oxylabs credits) for the stack.
 struct CUDay: Decodable, Identifiable, Equatable {
     let date: String
     let total: Double
@@ -157,15 +149,14 @@ struct CUDay: Decodable, Identifiable, Equatable {
             switch key.stringValue {
             case "date": date = (try? c.decode(String.self, forKey: key)) ?? ""
             case "total": total = CUFlex.double(c, key) ?? 0
-            case "oxylabs": break // prepaid credits, not USD — excluded from the $ chart
-            default:
-                if let v = CUFlex.double(c, key), v != 0 { prov[key.stringValue] = v }
+            case "oxylabs": break
+            default: if let v = CUFlex.double(c, key), v != 0 { prov[key.stringValue] = v }
             }
         }
         self.date = date; self.total = total; self.providers = prov
     }
-    /// USD sum of the plotted providers (oxylabs already excluded above).
     var plottedTotal: Double { providers.values.reduce(0, +) }
+    var topProvider: String? { providers.max { $0.value < $1.value }?.key }
 }
 
 struct CUModelRow: Decodable, Identifiable, Equatable {
@@ -258,8 +249,8 @@ struct CUBalances: Decodable {
     }
 }
 
-/// One ledger event. `latencyMs`/`ok` are decoded when the backend adds them, and
-/// simply stay nil until then (the row hides those bits gracefully).
+/// One ledger event. `latencyMs` / `ttftMs` / `cachedTokens` / `ok` decode when the
+/// backend adds them, and stay nil until then (the row hides those bits gracefully).
 struct CULogEvent: Decodable, Identifiable, Equatable {
     let id: String
     let occurredAt: String
@@ -269,11 +260,14 @@ struct CULogEvent: Decodable, Identifiable, Equatable {
     let costUsd: Double
     let inputTokens: Int?
     let outputTokens: Int?
+    let cachedTokens: Int?
     let latencyMs: Int?
+    let ttftMs: Int?
     let ok: Bool?
 
     private enum K: String, CodingKey {
-        case id, occurredAt, provider, model, kind, costUsd, inputTokens, outputTokens, latencyMs, ok
+        case id, occurredAt, provider, model, kind, costUsd, inputTokens, outputTokens
+        case cachedTokens, latencyMs, ttftMs, ok
     }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: K.self)
@@ -284,7 +278,9 @@ struct CULogEvent: Decodable, Identifiable, Equatable {
         costUsd = CUFlex.double(c, .costUsd) ?? 0
         inputTokens = CUFlex.int(c, .inputTokens)
         outputTokens = CUFlex.int(c, .outputTokens)
+        cachedTokens = CUFlex.int(c, .cachedTokens)
         latencyMs = CUFlex.int(c, .latencyMs)
+        ttftMs = CUFlex.int(c, .ttftMs)
         ok = try? c.decodeIfPresent(Bool.self, forKey: .ok)
         id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? "\(provider)-\(occurredAt)-\(kind)"
     }
@@ -296,7 +292,7 @@ private struct CULogsResponse: Decodable { let events: [CULogEvent] }
 enum CURange: String, CaseIterable, Identifiable {
     case d1 = "1D", d7 = "7D", d30 = "30D", custom = "Custom"
     var id: String { rawValue }
-    var days: Int { self == .d1 ? 1 : self == .d7 ? 7 : 30 }
+    var unitIsHour: Bool { self == .d1 }
 }
 
 // MARK: - View model
@@ -308,7 +304,6 @@ final class CreditUsageVM {
     var balances: CUBalances? = nil
     var events: [CULogEvent] = []
     var loading = false
-    var refreshingLogs = false
     var error: String? = nil
     var authExpired = false
 
@@ -322,9 +317,7 @@ final class CreditUsageVM {
         do {
             summary = try await AlmaAPI.shared.get("/api/assistant/costs/summary")
             authExpired = false
-            if let b: CUBalances = try? await AlmaAPI.shared.get("/api/assistant/costs/balances") {
-                balances = b
-            }
+            if let b: CUBalances = try? await AlmaAPI.shared.get("/api/assistant/costs/balances") { balances = b }
             await loadLogs()
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
@@ -333,23 +326,17 @@ final class CreditUsageVM {
             self.error = error.localizedDescription
         }
     }
-
-    func loadLogs(silent: Bool = false) async {
-        if silent { refreshingLogs = true }
-        defer { refreshingLogs = false }
-        if let r: CULogsResponse = try? await AlmaAPI.shared.get(
-            "/api/assistant/costs/logs", query: ["limit": "120"]) {
+    func loadLogs() async {
+        if let r: CULogsResponse = try? await AlmaAPI.shared.get("/api/assistant/costs/logs", query: ["limit": "120"]) {
             events = r.events
         }
     }
-
     static func isCancellation(_ error: Error) -> Bool {
         if error is CancellationError { return true }
         if case AlmaAPIError.transport(let t) = error, (t as? URLError)?.code == .cancelled { return true }
         return (error as? URLError)?.code == .cancelled
     }
 
-    // ── Derived: the days visible for the current range ──
     var visibleDays: [CUDay] {
         guard let all = summary?.dailyLast30, !all.isEmpty else { return [] }
         switch range {
@@ -363,13 +350,12 @@ final class CreditUsageVM {
         }
     }
     var rangeTotal: Double { visibleDays.reduce(0) { $0 + $1.plottedTotal } }
-    /// Per-provider USD summed across the visible window (for the legend), high→low.
+    var avgPerDay: Double { rangeTotal / Double(max(visibleDays.count, 1)) }
     var rangeByProvider: [(String, Double)] {
         var acc: [String: Double] = [:]
         for d in visibleDays { for (k, v) in d.providers { acc[k, default: 0] += v } }
         return acc.sorted { $0.value > $1.value }
     }
-    /// Canonical stack order so colours are stable day-to-day.
     var stackOrder: [String] { rangeByProvider.map(\.0) }
 
     var filteredEvents: [CULogEvent] {
@@ -379,20 +365,24 @@ final class CreditUsageVM {
             case "Gemini": return e.provider == "gemini"
             case "Anthropic": return e.provider == "anthropic"
             case "OpenRouter": return e.provider == "openrouter"
-            case "Voice": return e.provider == "google_tts" || e.kind.lowercased().contains("tts")
-                || e.kind.lowercased().contains("stt") || e.kind.lowercased().contains("whisper")
+            case "Voice": return e.provider == "google_tts" || ["tts", "stt", "whisper"].contains { e.kind.lowercased().contains($0) }
             case "Image": return e.kind.lowercased().contains("image")
             case "ব্যর্থ": return e.ok == false
             default: return true
             }
         }
     }
-    /// Ledger grouped by Dhaka day (newest day first), each with its USD subtotal.
     var groupedEvents: [(day: String, subtotal: Double, items: [CULogEvent])] {
         let groups = Dictionary(grouping: filteredEvents) { CUFormat.dayKey($0.occurredAt) }
         return groups.map { (day: $0.key, subtotal: $0.value.reduce(0) { $0 + $1.costUsd }, items: $0.value) }
             .sorted { ($0.items.first?.occurredAt ?? "") > ($1.items.first?.occurredAt ?? "") }
     }
+    var avgTtft: Int? {
+        let vals = events.compactMap { $0.ttftMs }
+        guard !vals.isEmpty else { return nil }
+        return vals.reduce(0, +) / vals.count
+    }
+    var failedCount: Int { events.filter { $0.ok == false }.count }
 }
 
 // MARK: - Screen
@@ -401,12 +391,12 @@ final class CreditUsageVM {
 struct CreditUsageScreen: View {
     @Environment(\.colorScheme) private var scheme
     @State private var vm = CreditUsageVM()
-    @State private var pane = 0            // 0 = Usage, 1 = Logs
-    @State private var showCustomSheet = false
+    @State private var pane = 0
+    @State private var selectedBar: Int? = nil
     @State private var expanded: Set<String> = []
+    @State private var showCustomSheet = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
-    // A quiet heartbeat so the ledger feels live while the owner watches it.
     private let liveTimer = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -416,9 +406,7 @@ struct CreditUsageScreen: View {
                 if vm.authExpired { authCard }
                 if let err = vm.error { errorCard(err) }
                 if vm.loading && vm.summary == nil { loadingRows }
-
                 if pane == 0 { usagePane } else { logsPane }
-
                 webEscape
                 Color.clear.frame(height: 8)
             }
@@ -426,168 +414,179 @@ struct CreditUsageScreen: View {
         }
         .background(CUAurora())
         .claudeTopFade()
+        .scrollDismissesKeyboard(.interactively)
         .refreshable { await vm.load() }
         .task { await vm.load() }
         .onReceive(liveTimer) { _ in
             guard pane == 1, !vm.loading else { return }
-            Task { await vm.loadLogs(silent: true) }
+            Task { await vm.loadLogs() }
         }
         .sheet(isPresented: $showCustomSheet) { customSheet }
+        .sensoryFeedback(.selection, trigger: pane)
+        .sensoryFeedback(.selection, trigger: vm.range)
+        .sensoryFeedback(.impact(weight: .light), trigger: selectedBar)
+        .sensoryFeedback(.selection, trigger: vm.logFilter)
     }
 
-    // ── Usage / Logs segmented switch ──
     private var paneSwitch: some View {
-        Picker("", selection: $pane) {
-            Text("Usage").tag(0); Text("Logs").tag(1)
-        }
-        .pickerStyle(.segmented)
-        .padding(.bottom, 2)
+        CUSegment(items: ["Usage", "Logs"], selection: $pane, scheme: scheme)
+            .padding(.bottom, 2)
     }
 
-    // ═══════════════ USAGE PANE ═══════════════
+    // ═══════════════ USAGE ═══════════════
 
     @ViewBuilder private var usagePane: some View {
         if let s = vm.summary {
-            spendHero(s)
-            if let b = vm.balances, !b.providers.isEmpty { walletRow(b) }
-            statTrio(s)
-            if !s.byModel.isEmpty { modelBreakdown(s) }
-            if let bud = budgetCard(s) { bud }
+            spendHero(s).cuAppear(0)
+            if let b = vm.balances, !b.providers.isEmpty { walletRow(b).cuAppear(1) }
+            statTrio(s).cuAppear(2)
+            if !s.byModel.isEmpty { modelBreakdown(s).cuAppear(3) }
+            if let bud = budgetCard(s) { bud.cuAppear(4) }
         }
     }
 
     private func spendHero(_ s: CUSummary) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let sel = selectedBar.flatMap { i in vm.visibleDays.indices.contains(i) ? vm.visibleDays[i] : nil }
+        let shown = sel?.plottedTotal ?? (vm.range == .d1 ? s.todayUsd : vm.rangeTotal)
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
                 Text("এই সময়ের খরচ · CREDIT USAGE")
-                    .font(.system(size: 10, weight: .bold)).textCase(.uppercase)
-                    .kerning(0.6).foregroundStyle(.secondary)
+                    .font(.system(size: 10, weight: .bold)).textCase(.uppercase).kerning(0.6).foregroundStyle(.secondary)
                 Spacer()
                 rangePicker
             }
-            Text(CUFormat.usd(vm.range == .d1 ? s.todayUsd : vm.rangeTotal))
+            Text(CUFormat.usd(shown))
                 .font(.system(size: 44, weight: .bold, design: .rounded).monospacedDigit())
                 .foregroundStyle(CUPalette.accentText(scheme))
                 .lineLimit(1).minimumScaleFactor(0.5)
-                .padding(.top, 9).padding(.bottom, 3)
+                .padding(.top, 10).padding(.bottom, 4)
                 .contentTransition(.numericText())
-                .animation(.snappy, value: vm.rangeTotal)
-            heroDelta(s).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
+                .animation(.spring(duration: 0.4), value: shown)
+            if let sel {
+                HStack(spacing: 7) {
+                    Circle().fill(CUPalette.provider(sel.topProvider ?? "")).frame(width: 6, height: 6)
+                    Text("\(CUFormat.dayLabel(sel.date)) · \(CULabel.provider(sel.topProvider ?? "")) শীর্ষে")
+                }
+                .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(CUPalette.accentText(scheme))
+                .transition(.opacity)
+            } else {
+                Text(deltaLine(s)).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(.secondary)
+            }
             if vm.range == .custom {
                 Button { showCustomSheet = true } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "calendar").foregroundStyle(CUPalette.coral)
-                        Text("\(CUFormat.pretty(vm.customFrom)) – \(CUFormat.pretty(vm.customTo))")
-                            .font(.system(size: 12, weight: .semibold))
+                        Text("\(CUFormat.pretty(vm.customFrom)) – \(CUFormat.pretty(vm.customTo))").font(.system(size: 12, weight: .semibold))
                         Image(systemName: "chevron.down").font(.system(size: 9)).foregroundStyle(.tertiary)
                     }
-                    .padding(.horizontal, 13).padding(.vertical, 9)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .overlay(Capsule().strokeBorder(.white.opacity(scheme == .dark ? 0.1 : 0.4), lineWidth: 1))
+                    .padding(.horizontal, 13).padding(.vertical, 9).cuGlass(scheme, corner: 12)
                 }
-                .buttonStyle(.plain).padding(.top, 12)
+                .buttonStyle(CUPress()).padding(.top, 12)
             }
-            stackedChart
+            chart(s)
             legend
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .cuGlass(scheme, corner: 20)
+        .padding(18).cuRaised(scheme, corner: 24)
     }
 
-    @ViewBuilder private func heroDelta(_ s: CUSummary) -> some View {
+    private func deltaLine(_ s: CUSummary) -> String {
         switch vm.range {
-        case .d1:
-            Label("গতকালের তুলনায় আজকের খরচ", systemImage: "arrow.up.right")
-                .labelStyle(.titleAndIcon).foregroundStyle(CUPalette.emerald)
-        case .custom:
-            Text("\(vm.visibleDays.count) দিন · গড় \(CUFormat.usd(avgPerDay))/দিন")
-        default:
-            Text("পূর্বাভাস ~\(CUFormat.usd(s.forecastUsd)) · গড় \(CUFormat.usd(avgPerDay))/দিন")
+        case .d1: return "আজকের খরচ · একটি bar-এ ট্যাপ করুন →"
+        case .custom: return "\(vm.visibleDays.count) দিন · গড় \(CUFormat.usd(vm.avgPerDay))/দিন"
+        default: return "পূর্বাভাস ~\(CUFormat.usd(s.forecastUsd)) · গড় \(CUFormat.usd(vm.avgPerDay))/দিন · ট্যাপ →"
         }
-    }
-    private var avgPerDay: Double {
-        let n = max(vm.visibleDays.count, 1); return vm.rangeTotal / Double(n)
     }
 
     private var rangePicker: some View {
         HStack(spacing: 1) {
             ForEach(CURange.allCases) { r in
                 Button {
-                    vm.range = r
+                    withAnimation(.spring(duration: 0.35)) { vm.range = r; selectedBar = nil }
                     if r == .custom { showCustomSheet = true }
                 } label: {
-                    Text(r.rawValue)
-                        .font(.system(size: 11, weight: .bold))
+                    Text(r.rawValue).font(.system(size: 11, weight: .bold))
                         .foregroundStyle(vm.range == r ? Color.primary : .secondary)
                         .padding(.horizontal, 9).padding(.vertical, 5)
-                        .background(vm.range == r ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(Color.clear),
-                                    in: RoundedRectangle(cornerRadius: 7))
+                        .background {
+                            if vm.range == r {
+                                RoundedRectangle(cornerRadius: 7).fill(.ultraThinMaterial)
+                                    .overlay(RoundedRectangle(cornerRadius: 7).fill(.white.opacity(scheme == .dark ? 0.12 : 0.5)))
+                            }
+                        }
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(2)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
+        .padding(2).cuGlass(scheme, corner: 10)
     }
 
-    // Screen-Time-style stacked daily bars from real per-provider data.
-    private var stackedChart: some View {
+    // Interactive stacked daily chart with tap-to-drill.
+    private func chart(_ s: CUSummary) -> some View {
         let days = vm.visibleDays
         let maxT = max(days.map(\.plottedTotal).max() ?? 0, 0.0001)
         let order = vm.stackOrder
         return VStack(spacing: 8) {
-            HStack(alignment: .bottom, spacing: days.count > 20 ? 2 : 3) {
-                if days.isEmpty {
-                    Text("এখনো কোনো খরচ নেই").font(.caption).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity).frame(height: 106)
-                } else {
-                    ForEach(Array(days.enumerated()), id: \.element.id) { idx, d in
-                        stackColumn(d, order: order, maxT: maxT, isLast: idx == days.count - 1)
+            ZStack(alignment: .bottom) {
+                VStack(spacing: 0) { ForEach(0..<4, id: \.self) { _ in
+                    Rectangle().fill(Color.primary.opacity(0.05)).frame(height: 1); Spacer() } }
+                    .frame(height: 118)
+                HStack(alignment: .bottom, spacing: days.count > 20 ? 2 : 3) {
+                    if days.isEmpty {
+                        Text("এখনো কোনো খরচ নেই").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                    } else {
+                        ForEach(Array(days.enumerated()), id: \.element.id) { idx, d in
+                            column(d, order: order, maxT: maxT, idx: idx, isLast: idx == days.count - 1)
+                        }
                     }
                 }
+                .frame(height: 118)
             }
-            .frame(height: 106)
+            .frame(height: 118)
             if let first = days.first, let last = days.last {
                 HStack {
-                    Text(CUFormat.axis(first.date)).font(.system(size: 9)).foregroundStyle(.tertiary)
-                    Spacer()
-                    Text(CUFormat.axis(last.date)).font(.system(size: 9)).foregroundStyle(.tertiary)
+                    Text(CUFormat.axis(first.date)); Spacer(); Text(vm.range == .d1 ? "এখন" : CUFormat.axis(last.date))
                 }
+                .font(.system(size: 9)).foregroundStyle(.tertiary)
             }
         }
-        .padding(.top, 16)
+        .padding(.top, 18)
     }
 
-    private func stackColumn(_ d: CUDay, order: [String], maxT: Double, isLast: Bool) -> some View {
-        let h = max(CGFloat(d.plottedTotal / maxT) * 106, d.plottedTotal > 0 ? 3 : 1)
+    private func column(_ d: CUDay, order: [String], maxT: Double, idx: Int, isLast: Bool) -> some View {
+        let h = max(CGFloat(d.plottedTotal / maxT) * 118, d.plottedTotal > 0 ? 3 : 1)
+        let dimmed = selectedBar != nil && selectedBar != idx
         return VStack(spacing: 1.5) {
             ForEach(order.reversed(), id: \.self) { p in
                 let v = d.providers[p] ?? 0
                 if v > 0 {
-                    let segH = max(h * CGFloat(v / max(d.plottedTotal, 0.0001)), 1.5)
-                    Rectangle().fill(CUPalette.provider(p)).frame(height: segH)
+                    Rectangle().fill(CUPalette.provider(p))
+                        .frame(height: max(h * CGFloat(v / max(d.plottedTotal, 0.0001)), 1.5))
+                        .brightness(selectedBar == idx ? 0.12 : 0)
                 }
             }
         }
         .frame(maxWidth: .infinity)
         .frame(height: h, alignment: .bottom)
-        .frame(maxHeight: 106, alignment: .bottom)
         .clipShape(RoundedRectangle(cornerRadius: 2.5))
-        .overlay(alignment: .bottom) {
-            if isLast { // live "today" bar breathes gently
-                RoundedRectangle(cornerRadius: 2.5).fill(Color.white.opacity(0.001))
-                    .frame(height: h)
-                    .modifier(CUPulse())
+        .opacity(dimmed ? 0.32 : 1)
+        .overlay(alignment: .top) {
+            if isLast && selectedBar == nil {
+                Circle().fill(CUPalette.goldLt).frame(width: 5, height: 5)
+                    .offset(y: -9).modifier(CUPulse())
             }
         }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.spring(duration: 0.3)) { selectedBar = (selectedBar == idx ? nil : idx) }
+        }
+        .animation(.easeOut(duration: 0.2), value: dimmed)
     }
 
     private var legend: some View {
-        let items = vm.rangeByProvider.prefix(6)
         let grand = max(vm.rangeTotal, 0.0001)
-        return FlowRow(spacing: 14, lineSpacing: 8) {
-            ForEach(Array(items), id: \.0) { p, v in
+        return CUFlow(spacing: 14, lineSpacing: 8) {
+            ForEach(Array(vm.rangeByProvider.prefix(6)), id: \.0) { p, v in
                 HStack(spacing: 6) {
                     RoundedRectangle(cornerRadius: 2).fill(CUPalette.provider(p)).frame(width: 8, height: 8)
                     Text(CULabel.provider(p)).font(.system(size: 11, weight: .semibold))
@@ -596,24 +595,17 @@ struct CreditUsageScreen: View {
                 }
             }
         }
-        .padding(.top, 14)
-        .overlay(alignment: .top) { Divider().opacity(0.5) }
+        .padding(.top, 14).overlay(alignment: .top) { Divider().opacity(0.5) }
     }
 
-    // Provider credit/balance wallet — refined frosted cards, brand accent line.
     private func walletRow(_ b: CUBalances) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Provider ক্রেডিট").font(.system(size: 13, weight: .bold))
-                Spacer()
+                Text("Provider ক্রেডিট").font(.system(size: 13, weight: .bold)); Spacer()
                 Text("← swipe").font(.system(size: 10.5)).foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 3)
+            }.padding(.horizontal, 3)
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 11) {
-                    ForEach(b.providers) { row in walletCard(row) }
-                }
-                .padding(.horizontal, 1)
+                HStack(spacing: 11) { ForEach(b.providers) { walletCard($0) } }.padding(.horizontal, 1)
             }
         }
     }
@@ -621,59 +613,43 @@ struct CreditUsageScreen: View {
         let tint = CUPalette.provider(row.id)
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Text(String(row.label.prefix(1)))
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .frame(width: 24, height: 24)
-                    .background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: 7))
-                    .foregroundStyle(tint)
+                Text(String(row.label.prefix(1))).font(.system(size: 12, weight: .bold, design: .rounded))
+                    .frame(width: 24, height: 24).background(tint.opacity(0.16), in: RoundedRectangle(cornerRadius: 7)).foregroundStyle(tint)
                 Text(row.label).font(.system(size: 12.5, weight: .bold)).lineLimit(1)
                 Spacer(minLength: 4)
-                Text(row.free ? "FREE" : "LIVE")
-                    .font(.system(size: 8, weight: .heavy)).kerning(0.5)
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(Color.primary.opacity(0.08), in: Capsule())
-                    .foregroundStyle(.secondary)
+                Text(row.free ? "FREE" : "LIVE").font(.system(size: 8, weight: .heavy)).kerning(0.5)
+                    .padding(.horizontal, 6).padding(.vertical, 2).background(Color.primary.opacity(0.08), in: Capsule()).foregroundStyle(.secondary)
             }
             Text(row.free ? "Free" : (row.balanceUsd.map { CUFormat.usd($0) } ?? "—"))
                 .font(.system(size: 22, weight: .bold, design: .rounded).monospacedDigit())
-                .foregroundStyle(CUPalette.balance(row.balanceUsd, free: row.free))
-                .padding(.top, 13)
+                .foregroundStyle(CUPalette.balance(row.balanceUsd, free: row.free)).padding(.top, 13)
             Text("আজ \(CUFormat.usd(row.todayUsd ?? 0)) · মাস \(CUFormat.usd(row.monthUsd ?? 0))")
                 .font(.system(size: 9.5).monospacedDigit()).foregroundStyle(.secondary).padding(.top, 3)
         }
-        .padding(14)
-        .frame(width: 158, alignment: .leading)
-        .cuGlass(scheme, corner: 17)
-        .overlay(alignment: .top) {
-            RoundedRectangle(cornerRadius: 2).fill(tint).frame(height: 2.5)
-                .padding(.horizontal, 14).padding(.top, 0)
-        }
+        .padding(14).frame(width: 158, alignment: .leading).cuSolid(scheme, corner: 17)
+        .overlay(alignment: .top) { RoundedRectangle(cornerRadius: 2).fill(tint).frame(height: 2.5).padding(.horizontal, 14) }
     }
 
     private func statTrio(_ s: CUSummary) -> some View {
         HStack(spacing: 9) {
-            statPill("এই মাস", CUFormat.usd(s.monthUsd))
-            statPill("আজ", CUFormat.usd(s.todayUsd))
-            statPill("পূর্বাভাস", CUFormat.usd(s.forecastUsd))
+            statPill("মোট রিকোয়েস্ট", "\(vm.events.count)")
+            statPill("আজ খরচ", CUFormat.usd(s.todayUsd))
+            statPill("গড় TTFT", vm.avgTtft.map { CUFormat.ms($0) } ?? "—")
         }
     }
     private func statPill(_ k: String, _ v: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(k).font(.system(size: 9)).foregroundStyle(.secondary)
-            Text(v).font(.system(size: 17, weight: .bold, design: .rounded).monospacedDigit())
-                .lineLimit(1).minimumScaleFactor(0.6)
+            Text(v).font(.system(size: 17, weight: .bold, design: .rounded).monospacedDigit()).lineLimit(1).minimumScaleFactor(0.6)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12).cuGlass(scheme, corner: 15)
+        .frame(maxWidth: .infinity, alignment: .leading).padding(12).cuSolid(scheme, corner: 15)
     }
 
     private func modelBreakdown(_ s: CUSummary) -> some View {
         let maxMonth = max(s.byModel.map(\.monthUsd).max() ?? 0, 0.0001)
         return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("মডেল অনুযায়ী খরচ").font(.system(size: 13, weight: .bold))
-                Spacer(); Text("এই মাস").font(.system(size: 11)).foregroundStyle(.secondary)
-            }
+            HStack { Text("মডেল অনুযায়ী খরচ").font(.system(size: 13, weight: .bold)); Spacer()
+                Text("এই মাস").font(.system(size: 11)).foregroundStyle(.secondary) }
             ForEach(Array(s.byModel.prefix(8).enumerated()), id: \.element.id) { idx, m in
                 let tint = CUPalette.model(idx)
                 VStack(alignment: .leading, spacing: 5) {
@@ -695,7 +671,7 @@ struct CreditUsageScreen: View {
                 if idx < min(s.byModel.count, 8) - 1 { Divider().opacity(0.4) }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading).padding(16).cuGlass(scheme, corner: 18)
+        .frame(maxWidth: .infinity, alignment: .leading).padding(16).cuSolid(scheme, corner: 18)
     }
 
     private func budgetCard(_ s: CUSummary) -> AnyView? {
@@ -704,23 +680,16 @@ struct CreditUsageScreen: View {
         guard hasDaily || hasMonthly else { return nil }
         return AnyView(
             VStack(alignment: .leading, spacing: 10) {
-                Text("রিমেইনিং বাজেট").font(.system(size: 10, weight: .bold)).textCase(.uppercase)
-                    .kerning(0.5).foregroundStyle(.secondary)
-                if hasMonthly, let pct = s.monthlyBudgetPct, let cap = s.budgets.monthlyUsd {
-                    budgetRow(spent: s.monthUsd, cap: cap, pct: pct, label: "এই মাস")
-                }
-                if hasDaily, let pct = s.dailyBudgetPct, let cap = s.budgets.dailyUsd {
-                    budgetRow(spent: s.todayUsd, cap: cap, pct: pct, label: "আজ")
-                }
+                Text("রিমেইনিং বাজেট").font(.system(size: 10, weight: .bold)).textCase(.uppercase).kerning(0.5).foregroundStyle(.secondary)
+                if hasMonthly, let pct = s.monthlyBudgetPct, let cap = s.budgets.monthlyUsd { budgetRow(spent: s.monthUsd, cap: cap, pct: pct, label: "এই মাস") }
+                if hasDaily, let pct = s.dailyBudgetPct, let cap = s.budgets.dailyUsd { budgetRow(spent: s.todayUsd, cap: cap, pct: pct, label: "আজ") }
             }
-            .frame(maxWidth: .infinity, alignment: .leading).padding(16).cuGlass(scheme, corner: 18)
-        )
+            .frame(maxWidth: .infinity, alignment: .leading).padding(16).cuSolid(scheme, corner: 18))
     }
     private func budgetRow(spent: Double, cap: Double, pct: Double, label: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("\(label) · \(CUFormat.usd(cap - spent)) বাকি").font(.system(size: 12, weight: .semibold))
-                Spacer()
+                Text("\(label) · \(CUFormat.usd(max(cap - spent, 0))) বাকি").font(.system(size: 12, weight: .semibold)); Spacer()
                 Text("\(Int(pct.rounded()))%").font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(pct >= 100 ? CUPalette.red : pct >= 80 ? CUPalette.amber : CUPalette.accentText(scheme))
             }
@@ -734,33 +703,27 @@ struct CreditUsageScreen: View {
         }
     }
 
-    // ═══════════════ LOGS PANE ═══════════════
+    // ═══════════════ LOGS ═══════════════
 
     private var logsPane: some View {
         VStack(spacing: 12) {
-            filterChips
-            logStatTrio
-            Text("ALMA ERP-এর প্রতিটি খরচ — chat · voice · image · call · research — end to end। row-তে ট্যাপ করে single-event বিস্তারিত।")
-                .font(.system(size: 11)).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 3)
+            filterChips.cuAppear(0)
+            logStatTrio.cuAppear(1)
+            Text("ALMA ERP-এর প্রতিটি খরচ — chat · voice · image · call · research — end to end। row-তে ট্যাপ করে input/output/cached/TTFT বিস্তারিত।")
+                .font(.system(size: 11)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 3)
             if vm.groupedEvents.isEmpty && !vm.loading {
-                Text("এখনো কোনো ইভেন্ট নেই").font(.caption).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity).padding(.vertical, 30)
+                Text("এখনো কোনো ইভেন্ট নেই").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 30)
             }
-            ForEach(vm.groupedEvents, id: \.day) { group in
+            ForEach(Array(vm.groupedEvents.enumerated()), id: \.element.day) { gi, group in
                 HStack(alignment: .firstTextBaseline) {
-                    Text(group.day).font(.system(size: 11.5, weight: .bold))
-                    Spacer()
-                    Text(CUFormat.usd(group.subtotal))
-                        .font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
+                    Text(group.day).font(.system(size: 11.5, weight: .bold)); Spacer()
+                    Text(CUFormat.usd(group.subtotal)).font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
                         .foregroundStyle(CUPalette.accentText(scheme))
-                }
-                .padding(.horizontal, 4).padding(.top, 4)
+                }.padding(.horizontal, 4).padding(.top, 4)
                 VStack(spacing: 0) {
                     ForEach(group.items) { e in logRow(e) }
                 }
-                .padding(.horizontal, 14).padding(.vertical, 2)
-                .cuGlass(scheme, corner: 18)
+                .cuSolid(scheme, corner: 18).cuAppear(gi + 2)
             }
         }
     }
@@ -770,27 +733,24 @@ struct CreditUsageScreen: View {
             HStack(spacing: 7) {
                 ForEach(["সব", "Gemini", "Anthropic", "OpenRouter", "Voice", "Image", "ব্যর্থ"], id: \.self) { f in
                     let on = vm.logFilter == f
-                    Button { vm.logFilter = f } label: {
+                    Button { withAnimation(.easeOut(duration: 0.2)) { vm.logFilter = f } } label: {
                         Text(f).font(.system(size: 11.5, weight: .semibold))
                             .foregroundStyle(on ? CUPalette.accentText(scheme) : .secondary)
                             .padding(.horizontal, 13).padding(.vertical, 7)
-                            .background(on ? CUPalette.coral.opacity(0.16) : Color.primary.opacity(0.05), in: Capsule())
+                            .background(on ? AnyShapeStyle(CUPalette.coral.opacity(0.16)) : AnyShapeStyle(Color.primary.opacity(0.05)), in: Capsule())
                             .overlay(Capsule().strokeBorder(on ? CUPalette.coral.opacity(0.4) : Color.clear, lineWidth: 1))
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CUPress())
                 }
-            }
-            .padding(.horizontal, 1)
+            }.padding(.horizontal, 1)
         }
     }
-
     private var logStatTrio: some View {
         let today = vm.groupedEvents.first
-        let failed = vm.events.filter { $0.ok == false }.count
         return HStack(spacing: 9) {
             statPill("আজকের ইভেন্ট", "\(today?.items.count ?? 0)")
             statPill("আজ খরচ", CUFormat.usd(today?.subtotal ?? 0))
-            statPill("ব্যর্থ", "\(failed)")
+            statPill("ব্যর্থ", "\(vm.failedCount)")
         }
     }
 
@@ -799,27 +759,28 @@ struct CreditUsageScreen: View {
         let isOpen = expanded.contains(e.id)
         return VStack(spacing: 0) {
             Button {
-                if isOpen { expanded.remove(e.id) } else { expanded.insert(e.id) }
+                withAnimation(.spring(duration: 0.3)) {
+                    if isOpen { expanded.remove(e.id) } else { expanded.insert(e.id) }
+                }
             } label: {
                 HStack(spacing: 11) {
                     Image(systemName: CULabel.icon(kind: e.kind, provider: e.provider))
-                        .font(.system(size: 14)).foregroundStyle(tint)
-                        .frame(width: 33, height: 33)
+                        .font(.system(size: 14)).foregroundStyle(tint).frame(width: 33, height: 33)
                         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
-                            Text(e.model ?? CULabel.provider(e.provider))
-                                .font(.system(size: 12.5, weight: .bold)).lineLimit(1)
-                            Text(CULabel.roleTag(kind: e.kind))
-                                .font(.system(size: 8.5, weight: .semibold))
-                                .padding(.horizontal, 6).padding(.vertical, 1)
-                                .background(Color.primary.opacity(0.08), in: Capsule())
-                                .foregroundStyle(.secondary)
+                            Text(e.model ?? CULabel.provider(e.provider)).font(.system(size: 12.5, weight: .bold)).lineLimit(1)
+                            Text(CULabel.roleTag(kind: e.kind)).font(.system(size: 8.5, weight: .semibold))
+                                .padding(.horizontal, 6).padding(.vertical, 1).background(Color.primary.opacity(0.08), in: Capsule()).foregroundStyle(.secondary)
                         }
                         HStack(spacing: 9) {
                             Text(CUFormat.time(e.occurredAt))
                             if let i = e.inputTokens, let o = e.outputTokens {
-                                Text("↓\(CUFormat.tok(i)) ↑\(CUFormat.tok(o))")
+                                HStack(spacing: 5) {
+                                    Text("↓\(CUFormat.tok(i))").foregroundStyle(CUPalette.sage)
+                                    Text("↑\(CUFormat.tok(o))").foregroundStyle(CUPalette.violet)
+                                    if let ca = e.cachedTokens, ca > 0 { Text("⚡\(CUFormat.tok(ca))").foregroundStyle(.tertiary) }
+                                }
                             }
                             if let ms = e.latencyMs { Text("⏱ \(CUFormat.ms(ms))") }
                         }
@@ -827,42 +788,37 @@ struct CreditUsageScreen: View {
                     }
                     Spacer(minLength: 4)
                     VStack(alignment: .trailing, spacing: 3) {
-                        Text(CUFormat.usd(e.costUsd))
-                            .font(.system(size: 13.5, weight: .bold, design: .rounded).monospacedDigit())
+                        Text(CUFormat.usd(e.costUsd)).font(.system(size: 13.5, weight: .bold, design: .rounded).monospacedDigit())
                         if let ok = e.ok {
-                            Label(ok ? "সফল" : "ব্যর্থ", systemImage: "circle.fill")
-                                .font(.system(size: 8.5, weight: .semibold))
+                            Label(ok ? "সফল" : "ব্যর্থ", systemImage: "circle.fill").font(.system(size: 8.5, weight: .semibold))
                                 .foregroundStyle(ok ? CUPalette.emerald : CUPalette.red)
                         }
                     }
                 }
-                .padding(.vertical, 11)
-                .contentShape(Rectangle())
+                .padding(.horizontal, 14).padding(.vertical, 11).contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            if isOpen { logDetail(e) }
-            Divider().opacity(0.4)
+            .buttonStyle(CUPressRow())
+            if isOpen { logDetail(e).transition(.opacity.combined(with: .move(edge: .top))) }
+            Divider().opacity(0.4).padding(.leading, 14)
         }
     }
 
     private func logDetail(_ e: CULogEvent) -> some View {
-        let cols = [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)]
-        return LazyVGrid(columns: cols, alignment: .leading, spacing: 9) {
-            detailCell("Provider", CULabel.provider(e.provider))
-            detailCell("Kind", e.kind.isEmpty ? "—" : e.kind)
-            if let i = e.inputTokens { detailCell("Input", "\(i.formatted()) tok") }
-            if let o = e.outputTokens { detailCell("Output", "\(o.formatted()) tok") }
-            if let ms = e.latencyMs { detailCell("Latency", CUFormat.ms(ms)) }
+        let cols = Array(repeating: GridItem(.flexible(), alignment: .leading), count: 3)
+        return LazyVGrid(columns: cols, alignment: .leading, spacing: 10) {
+            detailCell("Input", e.inputTokens.map { "\(CUFormat.tok($0))" } ?? "—")
+            detailCell("Output", e.outputTokens.map { "\(CUFormat.tok($0))" } ?? "—")
+            detailCell("Cached", e.cachedTokens.map { "\(CUFormat.tok($0))" } ?? "—")
+            detailCell("TTFT", e.ttftMs.map { CUFormat.ms($0) } ?? "—")
+            detailCell("Latency", e.latencyMs.map { CUFormat.ms($0) } ?? "—")
             detailCell("Cost", CUFormat.usd(e.costUsd))
         }
-        .padding(12)
-        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 13))
-        .padding(.bottom, 8)
+        .padding(14).padding(.top, 2)
     }
     private func detailCell(_ k: String, _ v: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(k).font(.system(size: 9, weight: .semibold)).textCase(.uppercase).kerning(0.4).foregroundStyle(.tertiary)
-            Text(v).font(.system(size: 12, weight: .semibold).monospacedDigit())
+            Text(k).font(.system(size: 8.5, weight: .semibold)).textCase(.uppercase).kerning(0.4).foregroundStyle(.tertiary)
+            Text(v).font(.system(size: 12, weight: .bold).monospacedDigit())
         }
     }
 
@@ -873,43 +829,80 @@ struct CreditUsageScreen: View {
                 DatePicker("শুরু", selection: $vm.customFrom, in: earliest...Date(), displayedComponents: .date)
                 DatePicker("শেষ", selection: $vm.customTo, in: earliest...Date(), displayedComponents: .date)
             }
-            .navigationTitle("কাস্টম রেঞ্জ")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("প্রয়োগ") { vm.range = .custom; showCustomSheet = false }
-                }
-            }
+            .navigationTitle("কাস্টম রেঞ্জ").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) {
+                Button("প্রয়োগ") { withAnimation(.spring) { vm.range = .custom; selectedBar = nil }; showCustomSheet = false } } }
         }
         .presentationDetents([.height(240)])
     }
-    private var earliest: Date {
-        Calendar.current.date(byAdding: .day, value: -29, to: Date()) ?? Date()
-    }
+    private var earliest: Date { Calendar.current.date(byAdding: .day, value: -29, to: Date()) ?? Date() }
 
     // ── Shared ──
     private var authCard: some View {
         VStack(spacing: 10) {
             Text("সেশন পাওয়া যায়নি — একবার ওয়েব ভিউতে লগইন করুন").font(.subheadline)
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
-        }.frame(maxWidth: .infinity).padding(20).cuGlass(scheme, corner: 16)
+        }.frame(maxWidth: .infinity).padding(20).cuSolid(scheme, corner: 16)
     }
     private func errorCard(_ msg: String) -> some View {
-        Label(msg, systemImage: "exclamationmark.triangle")
-            .font(.footnote).foregroundStyle(CUPalette.red)
-            .frame(maxWidth: .infinity, alignment: .leading).padding(12).cuGlass(scheme, corner: 12)
+        Label(msg, systemImage: "exclamationmark.triangle").font(.footnote).foregroundStyle(CUPalette.red)
+            .frame(maxWidth: .infinity, alignment: .leading).padding(12).cuSolid(scheme, corner: 12)
     }
     private var loadingRows: some View {
-        ForEach(0..<3, id: \.self) { _ in
-            Color.clear.frame(height: 120).cuGlass(scheme, corner: 18).cuShimmer()
-        }
+        ForEach(0..<3, id: \.self) { _ in Color.clear.frame(height: 120).cuSolid(scheme, corner: 18).cuShimmer() }
     }
     private var webEscape: some View {
         Button { openWeb("/agent/costs", "Costs") } label: {
-            Label("বাজেট কনফিগ / CSV — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote).frame(maxWidth: .infinity)
+            Label("বাজেট কনফিগ / CSV — ওয়েবে খুলুন", systemImage: "safari").font(.footnote).frame(maxWidth: .infinity).padding(.vertical, 12)
         }
-        .buttonStyle(.plain).foregroundStyle(.secondary).padding(.vertical, 6)
+        .buttonStyle(CUPress()).foregroundStyle(.secondary).cuGlass(scheme, corner: 14).padding(.top, 2)
+    }
+}
+
+// MARK: - Custom glass segmented control
+
+@available(iOS 17.0, *)
+private struct CUSegment: View {
+    let items: [String]
+    @Binding var selection: Int
+    let scheme: ColorScheme
+    @Namespace private var ns
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(Array(items.enumerated()), id: \.offset) { i, t in
+                Button { withAnimation(.spring(duration: 0.3)) { selection = i } } label: {
+                    Text(t).font(.system(size: 13, weight: .bold)).foregroundStyle(selection == i ? Color.primary : .secondary)
+                        .frame(maxWidth: .infinity).padding(.vertical, 9)
+                        .background {
+                            if selection == i {
+                                RoundedRectangle(cornerRadius: 11).fill(.ultraThinMaterial)
+                                    .overlay(RoundedRectangle(cornerRadius: 11).fill(.white.opacity(scheme == .dark ? 0.14 : 0.7)))
+                                    .matchedGeometryEffect(id: "seg", in: ns)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3).cuGlass(scheme, corner: 14)
+    }
+}
+
+// MARK: - Button styles (press effects)
+
+@available(iOS 17.0, *)
+private struct CUPress: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .animation(.spring(duration: 0.25), value: configuration.isPressed)
+    }
+}
+@available(iOS 17.0, *)
+private struct CUPressRow: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.background(Color.primary.opacity(configuration.isPressed ? 0.05 : 0))
+            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
     }
 }
 
@@ -920,49 +913,39 @@ private enum CUFormat {
         let digits = (n < 0.01 && n > 0) ? 4 : 2
         return "$" + String(format: "%.\(digits)f", n)
     }
-    static func tok(_ n: Int) -> String {
-        if n >= 1000 { return String(format: "%.1fk", Double(n) / 1000) }
-        return "\(n)"
-    }
-    static func ms(_ ms: Int) -> String {
-        ms >= 1000 ? String(format: "%.1fs", Double(ms) / 1000) : "\(ms)ms"
-    }
+    static func tok(_ n: Int) -> String { n >= 1000 ? String(format: "%.1fk", Double(n) / 1000) : "\(n)" }
+    static func ms(_ ms: Int) -> String { ms >= 1000 ? String(format: "%.1fs", Double(ms) / 1000) : "\(ms)ms" }
     static func ymd(_ d: Date) -> String {
-        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
-        f.timeZone = TimeZone(identifier: "Asia/Dhaka"); return f.string(from: d)
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.timeZone = TimeZone(identifier: "Asia/Dhaka"); return f.string(from: d)
     }
     static func pretty(_ d: Date) -> String {
-        let f = DateFormatter(); f.dateFormat = "d MMM"; f.locale = Locale(identifier: "bn_BD")
-        f.timeZone = TimeZone(identifier: "Asia/Dhaka"); return f.string(from: d)
+        let f = DateFormatter(); f.dateFormat = "d MMM"; f.locale = Locale(identifier: "bn_BD"); f.timeZone = TimeZone(identifier: "Asia/Dhaka"); return f.string(from: d)
     }
-    /// "2026-07-05" → "07-05"
     static func axis(_ ymd: String) -> String { ymd.count > 5 ? String(ymd.dropFirst(5)) : ymd }
-
-    private static let iso: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f
-    }()
-    private static let isoPlain: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime]; return f
-    }()
+    /// "2026-07-05" → Bangla "৫ জুলাই" for the drill-down readout.
+    static func dayLabel(_ ymd: String) -> String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.timeZone = TimeZone(identifier: "Asia/Dhaka")
+        guard let d = f.date(from: ymd) else { return axis(ymd) }
+        let o = DateFormatter(); o.dateFormat = "d MMM"; o.locale = Locale(identifier: "bn_BD"); o.timeZone = f.timeZone
+        return o.string(from: d)
+    }
+    private static let iso: ISO8601DateFormatter = { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]; return f }()
+    private static let isoPlain: ISO8601DateFormatter = { let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime]; return f }()
     private static func parse(_ s: String) -> Date? { iso.date(from: s) ?? isoPlain.date(from: s) }
-
     static func time(_ iso: String) -> String {
         guard let d = parse(iso) else { return "" }
-        let f = DateFormatter(); f.dateFormat = "h:mm a"; f.locale = Locale(identifier: "bn_BD")
-        f.timeZone = TimeZone(identifier: "Asia/Dhaka"); return f.string(from: d)
+        let f = DateFormatter(); f.dateFormat = "h:mm a"; f.locale = Locale(identifier: "bn_BD"); f.timeZone = TimeZone(identifier: "Asia/Dhaka"); return f.string(from: d)
     }
-    /// Dhaka-day header key: আজ / গতকাল / "d MMM".
     static func dayKey(_ iso: String) -> String {
         guard let d = parse(iso) else { return "—" }
         var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(identifier: "Asia/Dhaka")!
         if cal.isDateInToday(d) { return "আজ" }
         if cal.isDateInYesterday(d) { return "গতকাল" }
-        let f = DateFormatter(); f.dateFormat = "d MMM"; f.locale = Locale(identifier: "bn_BD")
-        f.timeZone = cal.timeZone; return f.string(from: d)
+        let f = DateFormatter(); f.dateFormat = "d MMM"; f.locale = Locale(identifier: "bn_BD"); f.timeZone = cal.timeZone; return f.string(from: d)
     }
 }
 
-// MARK: - Aurora + glass + helpers (page-owned copies — parallel-session rule)
+// MARK: - Aurora + materials (page-owned)
 
 @available(iOS 17.0, *)
 private struct CUAurora: View {
@@ -971,21 +954,19 @@ private struct CUAurora: View {
         ZStack {
             if scheme == .dark {
                 LinearGradient(stops: [
-                    .init(color: Color(red: 0.067, green: 0.067, blue: 0.169), location: 0.0),
-                    .init(color: Color(red: 0.141, green: 0.102, blue: 0.271), location: 0.30),
-                    .init(color: Color(red: 0.247, green: 0.137, blue: 0.322), location: 0.58),
-                    .init(color: Color(red: 0.416, green: 0.184, blue: 0.251), location: 1.0),
+                    .init(color: Color(red: 0.055, green: 0.051, blue: 0.133), location: 0.0),
+                    .init(color: Color(red: 0.114, green: 0.086, blue: 0.251), location: 0.30),
+                    .init(color: Color(red: 0.200, green: 0.114, blue: 0.278), location: 0.58),
+                    .init(color: Color(red: 0.318, green: 0.157, blue: 0.235), location: 1.0),
                 ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [CUPalette.violet.opacity(0.28), .clear],
-                               center: .init(x: 0.14, y: 0.10), startRadius: 10, endRadius: 420)
-                RadialGradient(colors: [Color(red: 0.745, green: 0.329, blue: 0.431).opacity(0.22), .clear],
-                               center: .init(x: 0.9, y: 0.92), startRadius: 20, endRadius: 470)
+                RadialGradient(colors: [CUPalette.violet.opacity(0.26), .clear], center: .init(x: 0.5, y: -0.04), startRadius: 10, endRadius: 440)
+                RadialGradient(colors: [Color(red: 0.9, green: 0.47, blue: 0.59).opacity(0.16), .clear], center: .init(x: 0.9, y: 0.9), startRadius: 20, endRadius: 460)
             } else {
-                Color(red: 0.945, green: 0.937, blue: 0.969)
+                Color(red: 0.933, green: 0.925, blue: 0.957)
                 LinearGradient(stops: [
-                    .init(color: Color(red: 0.914, green: 0.894, blue: 0.961), location: 0.0),
-                    .init(color: Color(red: 0.945, green: 0.937, blue: 0.969), location: 0.48),
-                    .init(color: Color(red: 0.973, green: 0.925, blue: 0.933), location: 1.0),
+                    .init(color: Color(red: 0.906, green: 0.890, blue: 0.953), location: 0.0),
+                    .init(color: Color(red: 0.933, green: 0.925, blue: 0.957), location: 0.48),
+                    .init(color: Color(red: 0.961, green: 0.921, blue: 0.933), location: 1.0),
                 ], startPoint: .top, endPoint: .bottom)
             }
         }.ignoresSafeArea()
@@ -994,44 +975,71 @@ private struct CUAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func cuGlass(_ s: ColorScheme, corner: CGFloat = 16) -> some View {
+    /// SOLID: opaque content surface for dense data (no translucency — 2026 HIG).
+    func cuSolid(_ s: ColorScheme, corner: CGFloat = 16) -> some View {
         self
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
-            .background(Color.white.opacity(s == .dark ? 0.03 : 0.4),
+            .background((s == .dark ? Color(red: 0.078, green: 0.071, blue: 0.114) : .white),
                         in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous)
-                .strokeBorder(Color.white.opacity(s == .dark ? 0.08 : 0.5), lineWidth: 1))
+                .strokeBorder(Color.white.opacity(s == .dark ? 0.055 : 0.6), lineWidth: 1))
+            .shadow(color: .black.opacity(s == .dark ? 0.4 : 0.08), radius: 14, y: 8)
+    }
+    /// RAISED: a step above solid — the hero. Gentle gradient + deeper shadow.
+    func cuRaised(_ s: ColorScheme, corner: CGFloat = 22) -> some View {
+        self
+            .background(
+                (s == .dark
+                 ? LinearGradient(colors: [Color(red: 0.106, green: 0.094, blue: 0.149), Color(red: 0.078, green: 0.063, blue: 0.098)], startPoint: .top, endPoint: .bottom)
+                 : LinearGradient(colors: [.white, .white], startPoint: .top, endPoint: .bottom)),
+                in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .strokeBorder(Color.white.opacity(s == .dark ? 0.07 : 0.7), lineWidth: 1))
+            .shadow(color: .black.opacity(s == .dark ? 0.5 : 0.12), radius: 22, y: 12)
+    }
+    /// GLASS: translucent floating control (liquid-glass) — nav/segment/chip/sheet.
+    func cuGlass(_ s: ColorScheme, corner: CGFloat = 14) -> some View {
+        self
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .background(Color.white.opacity(s == .dark ? 0.06 : 0.35), in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .strokeBorder(LinearGradient(colors: [.white.opacity(s == .dark ? 0.3 : 0.85), .white.opacity(s == .dark ? 0.06 : 0.3)], startPoint: .top, endPoint: .bottom), lineWidth: 1))
     }
     func cuShimmer() -> some View { modifier(CUShimmer()) }
+    /// Subtle scroll-in appear (staggered by index).
+    func cuAppear(_ i: Int) -> some View { modifier(CUAppear(index: i)) }
 }
 
 @available(iOS 17.0, *)
 private struct CUShimmer: ViewModifier {
     @State private var phase: CGFloat = -1
     func body(content: Content) -> some View {
-        content.overlay(
-            LinearGradient(colors: [.clear, .white.opacity(0.18), .clear], startPoint: .leading, endPoint: .trailing)
-                .offset(x: phase * 320).clipped()
-        ).onAppear { withAnimation(.linear(duration: 1.15).repeatForever(autoreverses: false)) { phase = 1.5 } }
+        content.overlay(LinearGradient(colors: [.clear, .white.opacity(0.14), .clear], startPoint: .leading, endPoint: .trailing).offset(x: phase * 320).clipped())
+            .onAppear { withAnimation(.linear(duration: 1.15).repeatForever(autoreverses: false)) { phase = 1.5 } }
     }
 }
-
-/// Gentle live-bar breathe for the "today" column.
 @available(iOS 17.0, *)
 private struct CUPulse: ViewModifier {
     @State private var on = false
     func body(content: Content) -> some View {
-        content.overlay(
-            Rectangle().fill(Color.white.opacity(on ? 0.16 : 0.0))
-        )
-        .onAppear { withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) { on = true } }
+        content.scaleEffect(on ? 1.5 : 1).opacity(on ? 0.4 : 1)
+            .onAppear { withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { on = true } }
+    }
+}
+@available(iOS 17.0, *)
+private struct CUAppear: ViewModifier {
+    let index: Int
+    @State private var shown = false
+    func body(content: Content) -> some View {
+        content.opacity(shown ? 1 : 0).offset(y: shown ? 0 : 14)
+            .onAppear {
+                withAnimation(.spring(duration: 0.5).delay(Double(min(index, 6)) * 0.05)) { shown = true }
+            }
     }
 }
 
-/// Minimal wrapping HStack for the legend (avoids clipping when providers are many).
-private struct FlowRow: Layout {
-    var spacing: CGFloat = 10
-    var lineSpacing: CGFloat = 8
+/// Minimal wrapping layout for the legend.
+private struct CUFlow: Layout {
+    var spacing: CGFloat = 10; var lineSpacing: CGFloat = 8
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let maxW = proposal.width ?? .infinity
         var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0
@@ -1044,7 +1052,7 @@ private struct FlowRow: Layout {
     }
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let maxW = bounds.width
-        var x: CGFloat = bounds.minX, y: CGFloat = bounds.minY, rowH: CGFloat = 0
+        var x = bounds.minX, y = bounds.minY, rowH: CGFloat = 0
         for v in subviews {
             let s = v.sizeThatFits(.unspecified)
             if x - bounds.minX + s.width > maxW { x = bounds.minX; y += rowH + lineSpacing; rowH = 0 }
