@@ -111,6 +111,7 @@ private struct CSRunPayload: Encodable {
 enum CS {
     static func url(_ raw: String?) -> URL? {
         guard let raw, !raw.isEmpty else { return nil }
+        if raw.hasPrefix("cs-asset:") { return URL(string: raw) }   // bundled sample image
         return URL(string: raw, relativeTo: AlmaAPI.baseURL)
     }
 
@@ -159,6 +160,45 @@ enum CS {
         [("ঝলক", "fast cut · 15s"), ("স্টোরি", "9:16 · 30s"), ("শোকেস", "slow pan · 20s"), ("অফার", "bold text · 12s")]
     static let audioModes = ["শুটের অডিও", "শুধু মিউজিক", "কথা+মিউজিক"]
     static let musicVibes = ["উৎসব", "শান্ত", "এনার্জেটিক"]
+
+    // ── Real ALMA storefront photos — inspiration/fallback so NO image slot is ever an
+    //    empty grey box (offline / first run / before the live gallery loads). Replaced
+    //    by the owner's real creatives the moment they arrive. ────────────────────────
+    static let sampleBase = "https://awugvcjezittjjgfysuk.supabase.co/storage/v1/object/public"
+    private static let sampleRows: [(mode: String, status: String, summary: String, path: String, video: Bool)] = [
+        ("product_to_model", "executed", "ঈদ কাপল সিন",       "/homepage-images/community/6/1780392101632-b6vvu9e3.png", false),
+        ("full_family",      "executed", "রয়্যাল পার্পল সেট",  "/homepage-images/family-matching/family-2/1780479017186-qquen24a.jpg", false),
+        ("face_to_model",    "executed", "রুফটপ সানসেট",      "/homepage-images/community/2/1780392047620-hwhoa2rg.png", false),
+        ("try_on",           "pending",  "ক্যাফে এডিটোরিয়াল",  "/homepage-images/community/3/1780392056751-e38xx8al.png", false),
+        ("full_family",      "executed", "লেকসাইড ফ্যামিলি",   "/homepage-images/hero/1780374913900-5c2zmugf.png", false),
+        ("full_family",      "executed", "গোল্ডেন ফ্লোরাল",    "/homepage-images/family-matching/family-3/1780479038063-d42lnr7m.jpg", false),
+        ("try_on",           "executed", "মেরুন ঘরোয়া",        "/homepage-images/community/1/1780392035487-ajngphwl.png", false),
+        ("full_family",      "pending",  "স্টিল ব্লু সেট",      "/homepage-images/family-matching/family-4/1780479054969-gzc3j1ky.jpg", false),
+        ("image_to_video",   "executed", "টিল ফ্যামিলি রিল",    "/homepage-images/categories/panjabi/1780298751895-ohymdgcw.jpg", true),
+        ("product_to_model", "executed", "গ্রিন ম্যাচিং সেট",   "/homepage-images/family-matching/family-1/1780478990705-ye50ig3w.jpg", false),
+        ("product_to_model", "executed", "কোড ২২৩ · বাবা+ছেলে", "/product-images/family-sets/product-code-223/1780475637562-z0fkefqc.jpg", false),
+        ("model_swap",       "executed", "কোড ৬০৯ · সেট",       "/product-images/family-sets/product-code-609/1780472405753-1gmn4wtn.jpg", false),
+    ]
+    private static func esc(_ s: String) -> String { s.replacingOccurrences(of: "\"", with: "\\\"") }
+    static var sampleGallery: [CSGalleryItem] {
+        // Point at BUNDLED sample photos (cs-asset:) so they render instantly, zero network.
+        let items = sampleRows.enumerated().map { i, r in
+            "{\"id\":\"sample-\(i)\",\"type\":\"\(r.video ? "video_gen" : "image")\",\"status\":\"\(r.status)\",\"summary\":\"\(esc(r.summary))\",\"mode\":\"\(r.mode)\",\"provider\":\"fashn\",\"previewUrl\":\"cs-asset:cs_sample_\(i)\",\"thumbUrl\":\"cs-asset:cs_sample_\(i)\"}"
+        }.joined(separator: ",")
+        return (try? JSONDecoder().decode([CSGalleryItem].self, from: Data("[\(items)]".utf8))) ?? []
+    }
+    static var sampleModels: [CSModel] {
+        let rows: [(String, String, Bool)] = [
+            ("আয়েশা", "female · 34 shot", true),
+            ("রাফি", "male · 21 shot", false),
+            ("তানভীর", "male · 18 shot", false),
+            ("সাকিব", "male · 12 shot", false),
+        ]
+        let items = rows.enumerated().map { i, m in
+            "{\"id\":\"sm-\(i)\",\"name\":\"\(esc(m.0))\",\"role\":\"\(esc(m.1))\",\"isDefault\":\(m.2),\"imageUrl\":\"cs-asset:cs_model_\(i)\"}"
+        }.joined(separator: ",")
+        return (try? JSONDecoder().decode(CSModelsResponse.self, from: Data("{\"models\":[\(items)]}".utf8)))?.models ?? []
+    }
 
     /// The brand coral → rose CTA gradient (echoes the aura's coral→pink blobs).
     static var cta: LinearGradient {
@@ -223,6 +263,10 @@ final class CreativeStudioVM {
         if let gal { gallery = gal.items }
         if let mods { models = mods.models }
         authExpired = (cfg == nil && gal == nil)
+        // Never show empty grey slots: fall back to real ALMA sample photos until the
+        // owner's own creatives/models load. Replaced automatically when live data arrives.
+        if gallery.isEmpty { gallery = CS.sampleGallery }
+        if models.isEmpty { models = CS.sampleModels }
     }
 
     /// Upload one product photo then queue a generation for the chosen mode/options.
@@ -1225,7 +1269,12 @@ private struct CSPhoto: View {
     var body: some View {
         Rectangle().fill(placeholder).aspectRatio(ratio, contentMode: .fit)
             .overlay {
-                if let url {
+                if let url, url.scheme == "cs-asset" {
+                    // Bundled ALMA sample photo — renders instantly, zero network.
+                    if let img = CSPhoto.bundled(String(url.absoluteString.dropFirst(9))) {
+                        Image(uiImage: img).resizable().scaledToFill()
+                    } else { fallback }
+                } else if let url {
                     AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.25))) { phase in
                         switch phase {
                         case .success(let img): img.resizable().scaledToFill()
@@ -1243,6 +1292,12 @@ private struct CSPhoto: View {
     }
     private var fallback: some View {
         Image(systemName: "photo").font(.system(size: 26)).foregroundStyle(.white.opacity(0.28))
+    }
+
+    /// Load a bundled sample JPEG (flat in the app bundle). Cached by UIImage internally.
+    static func bundled(_ name: String) -> UIImage? {
+        if let path = Bundle.main.path(forResource: name, ofType: "jpg") { return UIImage(contentsOfFile: path) }
+        return UIImage(named: name)
     }
 }
 
