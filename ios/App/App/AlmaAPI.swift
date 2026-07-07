@@ -309,32 +309,6 @@ final class AlmaAPI: NSObject {
             ? Date(timeIntervalSince1970: value / 1000)
             : Date(timeIntervalSince1970: value)
     }
-
-    /// multipart/form-data upload over the SAME cookie-bridged session — so native
-    /// screens can post images (office chat, proof photos) without the web escape hatch.
-    func uploadMultipart<T: Decodable>(_ path: String, fileField: String, filename: String,
-                                       mime: String, data fileData: Data,
-                                       fields: [String: String] = [:]) async throws -> T {
-        let boundary = "alma-\(UUID().uuidString)"
-        var body = Data()
-        func line(_ s: String) { body.append(s.data(using: .utf8)!) }
-        for (k, v) in fields {
-            line("--\(boundary)\r\n")
-            line("Content-Disposition: form-data; name=\"\(k)\"\r\n\r\n")
-            line("\(v)\r\n")
-        }
-        line("--\(boundary)\r\n")
-        line("Content-Disposition: form-data; name=\"\(fileField)\"; filename=\"\(filename)\"\r\n")
-        line("Content-Type: \(mime)\r\n\r\n")
-        body.append(fileData)
-        line("\r\n--\(boundary)--\r\n")
-
-        var request = makeRequest(method: "POST", path: path, query: [:], bodyData: nil)
-        request.httpBody = body
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        let respData = try await perform(request: request)
-        return try decode(respData)
-    }
 }
 
 // MARK: - Redirect blocking

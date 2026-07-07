@@ -237,6 +237,12 @@ extension AlmaTabBarController {
                     host.hidesBottomBarWhenPushed = false
                     navRef.value?.pushViewController(host, animated: true)
                 },
+                openSpinnerPreview: {
+                    let host = AlmaHostingController(
+                        rootView: NavigationStack { AlmaSpinnerPreviewScreen() })
+                    host.title = "Loader Preview"
+                    navRef.value?.pushViewController(host, animated: true)
+                },
                 toggleDark: { AlmaTheme.toggle() },
                 nativeScreensOn: AlmaSwiftUIFlag.isOn,
                 toggleNativeScreens: { AlmaSwiftUIFlag.isOn.toggle() },

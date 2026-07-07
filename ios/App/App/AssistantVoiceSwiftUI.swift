@@ -76,8 +76,23 @@ enum AlmaVoiceState: String {
 final class AlmaVoiceEngine {
     weak var chatVM: AssistantVM?
 
+    private var thinkHeartbeat: Task<Void, Never>?
     var state: AlmaVoiceState = .idle {
         didSet {
+            // LOCKED-ADJ: silence-filler heartbeat — soft haptic every 1.6s while thinking.
+            thinkHeartbeat?.cancel()
+            if state == .thinking || state == .transcribing {
+                thinkHeartbeat = Task { @MainActor in
+                    let gen = UIImpactFeedbackGenerator(style: .soft)
+                    gen.prepare()
+                    while !Task.isCancelled {
+                        try? await Task.sleep(nanoseconds: 1_600_000_000)
+                        guard !Task.isCancelled else { return }
+                        gen.impactOccurred(intensity: 0.45)
+                        gen.prepare()
+                    }
+                }
+            }
             guard oldValue != state else { return }
             refreshWake()
             tr("state \(oldValue) → \(state)")
@@ -1923,13 +1938,18 @@ struct AlmaVoiceConsoleView: View {
                      + Text(engine.nowLine).foregroundStyle(ink))
                         .font(.system(size: 16.5, weight: .medium))
                         .multilineTextAlignment(.center)
+                        .lineLimit(7)
+                        .truncationMode(.head)
                 } else if !engine.replyText.isEmpty {
+                    // Full reply readable: head-truncate → পুরনো লেখা সরে যায়, শেষটা সবসময় দেখা যায়।
                     goldSir(engine.replyText)
                         .font(.system(size: 16.5))
-                        .multilineTextAlignment(.center).lineLimit(4)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(7)
+                        .truncationMode(.head)
                 } else if engine.state == .idle {
                     (Text("আসসালামু আলাইকুম, ").foregroundStyle(muted)
-                     + Text("Sir").foregroundStyle(gold)
+                     + Text("Boss").foregroundStyle(gold)
                      + Text("। অর্বে ট্যাপ করে বলুন।").foregroundStyle(muted))
                         .font(.system(size: 15))
                         .multilineTextAlignment(.center)
@@ -1955,7 +1975,7 @@ struct AlmaVoiceConsoleView: View {
         var out = Text("")
         var rest = Substring(text)
         while true {
-            let rs = ["Sir", "স্যার"].compactMap { rest.range(of: $0) }.min { $0.lowerBound < $1.lowerBound }
+            let rs = ["Boss", "বস", "Sir", "স্যার"].compactMap { rest.range(of: $0) }.min { $0.lowerBound < $1.lowerBound }
             guard let r = rs else { break }
             out = out + Text(String(rest[..<r.lowerBound])).foregroundStyle(ink)
             out = out + Text(String(rest[r])).foregroundStyle(gold)
@@ -2046,15 +2066,7 @@ struct AlmaVoiceConsoleView: View {
                     .padding(.horizontal, 22)
                 }
             }
-            // suggestion chips (web .chips) — canned voice prompts
-            let chipsEnabled = engine.state == .idle || engine.state == .error
-            VStack(spacing: 8) {
-                HStack(spacing: 9) {
-                    chip("SUI প্রাইস জিজ্ঞেস করুন", "সুই কয়েনের দাম এখন কত?", enabled: chipsEnabled)
-                    chip("খরচ এন্ট্রি দিন", "একটা খরচ এন্ট্রি করতে চাই।", enabled: chipsEnabled)
-                }
-                chip("ওয়েবসাইট আপডেট করান", "ওয়েবসাইটে কী আপডেট করা দরকার, দেখে বলো।", enabled: chipsEnabled)
-            }
+            // (demo chips removed — owner 2026-07-07: dead taps, cleaner console)
             HStack(spacing: 10) {
                 PhotosPicker(selection: $photoItem, matching: .images) {
                     Image(systemName: "photo")
@@ -2969,7 +2981,8 @@ private let almaTERM_MAP: [(String, String)] = [
     ("BTC", "বিটিসি"),
     ("ETH", "ইথেরিয়াম"),
     ("OK", "ওকে"),
-    ("Sir", "স্যার"),
+    ("Sir", "বস"),
+    ("স্যার", "বস"),
     ("AI", "এআই"),
     ("API", "এপিআই"),
     ("URL", "ইউআরএল"),
@@ -3080,6 +3093,13 @@ func almaNormalizeForTTS(_ input: String) -> String {
     if text.isEmpty { return text }
 
     var out = text
+
+    // Boss rule: TTS must never speak emoji descriptions — drop all emoji scalars.
+    out = String(out.unicodeScalars.filter { sc in
+        !(sc.properties.isEmojiPresentation
+          || (sc.properties.isEmoji && sc.value > 0x238C)
+          || sc.value == 0xFE0F || sc.value == 0x200D)
+    })
 
     // (a) Currency.
     // Taka symbol prefix: ৳1,250 / ৳1250

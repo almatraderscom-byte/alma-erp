@@ -1,0 +1,876 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ALMA × Claude চ্যাট প্রিভিউ</title>
+<style>
+  :root{
+    --bg:#141418; --ink:#f7f8fc; --muted:#aeb2c0; --muted-hi:#d1d5e0;
+    --coral:#E07A5F; --coral-dim:#C45A3C; --teal:#81B29A; --burst:#d97757;
+    --gold:#D4A84B; --hair:rgba(255,255,255,.08);
+    /* iOS glossy floating glass — model-switcher card-এর মতো, সব জায়গায় এক */
+    --glass-bg:rgba(58,58,70,.42);
+    --glass-blur:blur(34px) saturate(170%);
+    --glass-border:rgba(255,255,255,.16);
+    --glass-shadow:0 18px 50px rgba(0,0,0,.45);
+    /* Claude prose serif (Bangla সহ) */
+    --serif:'Charter','Iowan Old Style','Palatino','Noto Serif Bengali','Tiro Bangla',Georgia,serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    background:#0b0b0e;color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Noto Sans Bengali",sans-serif;
+    display:flex;flex-direction:column;align-items:center;
+  }
+  .note{
+    max-width:430px;width:100%;padding:10px 16px 6px;font-size:12px;color:var(--muted);
+    line-height:1.5;text-align:center;
+  }
+  .note b{color:var(--coral)}
+
+  /* ── Phone ── */
+  .phone{
+    position:relative;width:100%;max-width:430px;flex:1;min-height:0;
+    height:min(880px,calc(100dvh - 120px));
+    border:1px solid rgba(255,255,255,.10);border-radius:28px;overflow:hidden;
+    display:flex;flex-direction:column;background:var(--bg);
+    box-shadow:0 18px 60px rgba(0,0,0,.55);
+  }
+  @media (max-width:440px){ .phone{border-radius:0;border:none;height:calc(100dvh - 116px)} }
+
+  .aurora{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+  .aurora i{position:absolute;border-radius:50%;filter:blur(70px);animation:drift 26s ease-in-out infinite alternate}
+  .aurora .a1{width:360px;height:360px;top:2%;left:-14%;background:rgba(56,128,255,.55)}
+  .aurora .a2{width:390px;height:390px;top:14%;right:-16%;background:rgba(124,77,255,.5);animation-delay:-8s}
+  .aurora .a3{width:340px;height:340px;top:48%;left:-10%;background:rgba(214,51,255,.42);animation-delay:-14s}
+  .aurora .a4{width:380px;height:380px;bottom:-6%;right:-12%;background:rgba(255,46,134,.5);animation-delay:-19s}
+  @keyframes drift{to{transform:translate(26px,-22px)}}
+  @media (prefers-reduced-motion:reduce){ .aurora i{animation:none} }
+
+  .shell{position:relative;z-index:2;display:flex;flex-direction:column;height:100%;min-height:0}
+
+  .topnav{display:flex;align-items:center;justify-content:space-between;padding:14px 14px 8px}
+  .topnav h1{font-size:17px;font-weight:700;letter-spacing:.3px}
+  .nav-btn{
+    width:36px;height:36px;border-radius:50%;border:1px solid var(--hair);
+    background:rgba(255,255,255,.07);backdrop-filter:blur(10px);
+    display:grid;place-items:center;color:var(--ink);
+  }
+  .nav-btn.coral{background:linear-gradient(135deg,var(--coral),var(--coral-dim));border:none;color:#fff}
+  .nav-btn svg{width:16px;height:16px}
+
+  .chat{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:6px 16px 10px;scroll-behavior:smooth}
+
+  .user-row{display:flex;justify-content:flex-end;margin:6px 0 16px}
+  .user-bubble{
+    max-width:86%;padding:12px 16px;font-size:15px;line-height:1.5;color:#fff;
+    background:linear-gradient(135deg,var(--coral),var(--coral-dim));
+    border-radius:20px;border-bottom-right-radius:6px;
+    box-shadow:0 4px 14px rgba(224,122,95,.22);
+  }
+
+  /* ── Claude turn: plain on aurora, NO big card ── */
+  .blk{animation:fadeUp .3s ease-out both}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){ .blk{animation:none} }
+
+  .prose{
+    font-family:var(--serif);
+    font-size:15.5px;line-height:1.75;letter-spacing:.002em;color:var(--ink);
+    margin:6px 0 10px;word-wrap:break-word;
+  }
+  .prose strong{font-weight:650;color:#fff}
+  .prose em{color:var(--muted)}
+  /* Claude text-shimmer — base opacity ~.35, সাদা highlight ১.৮s পরপর বাম→ডান sweep */
+  .prose.stream, .prose.stream *{
+    background:linear-gradient(100deg, rgba(247,248,252,.35) 26%, #ffffff 46%, rgba(247,248,252,.35) 66%);
+    background-size:220% 100%;
+    -webkit-background-clip:text;background-clip:text;
+    -webkit-text-fill-color:transparent;color:transparent;
+    animation:shim 1.8s linear infinite;
+  }
+  @keyframes shim{from{background-position:130% 0}to{background-position:-90% 0}}
+  @media (prefers-reduced-motion:reduce){ .prose.stream,.prose.stream *{animation:none;-webkit-text-fill-color:currentColor;color:var(--ink);background:none} }
+  .caret{display:inline-block;width:2px;height:1.05em;margin-left:1px;background:rgba(224,122,95,.85);
+    vertical-align:text-bottom;animation:blink .85s steps(2) infinite;-webkit-text-fill-color:initial}
+  @keyframes blink{50%{opacity:0}}
+
+  .row{
+    display:flex;align-items:center;gap:9px;min-height:40px;margin:0 -6px;
+    padding:0 6px;border-radius:10px;cursor:pointer;user-select:none;
+  }
+  .row:active{background:rgba(255,255,255,.05)}
+  .row .ico{width:17px;height:17px;flex-shrink:0;color:var(--muted)}
+  .row .ico svg{width:100%;height:100%;display:block}
+  .row .lbl{flex:1;font-size:14px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row.think .lbl{font-style:italic}
+  .row.tool .lbl{color:var(--muted-hi);font-weight:500;font-style:normal}
+  .row .chev{color:var(--muted);opacity:.5;flex-shrink:0}
+  .row .chev svg{width:12px;height:12px;display:block}
+
+  .burst-slot{height:46px;display:flex;align-items:center;margin:2px 0 6px}
+  .burst-slot canvas{display:block;margin-left:-9px}
+
+  .foot{display:flex;align-items:center;gap:8px;margin:2px 0 14px;font-size:11px;color:var(--muted)}
+  .foot .brand{display:flex;align-items:center;gap:4px;color:rgba(224,122,95,.9);font-weight:650;letter-spacing:.4px}
+
+  /* ── ALMA wordmark reveal (Claude Lottie parity) ──
+     reply শেষ → burst pop-in (scale+spin) → letters পেছন থেকে stagger slide-out, থেকে যায়;
+     পরের message-এ letters উল্টো ঢুকে যায়, burst-ই আবার loader হয় */
+  .brand-anim{display:inline-flex;align-items:center;gap:5px}
+  .brand-burst-wrap{width:24px;height:24px;display:grid;place-items:center;flex-shrink:0}
+  .brand-burst-wrap canvas{display:block}
+  .brand-anim.in .brand-burst-wrap{animation:burstIn .85s cubic-bezier(.34,1.28,.4,1) both}
+  @keyframes burstIn{from{transform:scale(0) rotate(-300deg)}to{transform:scale(1) rotate(0deg)}}
+  .brand-word{display:inline-flex;overflow:hidden;color:rgba(224,122,95,.95);
+    font-weight:750;font-size:12px;letter-spacing:.16em}
+  .brand-word i{font-style:normal;display:inline-block;transform:translateX(-130%);opacity:0;
+    transition:transform .5s cubic-bezier(.22,1,.36,1),opacity .38s ease}
+  .brand-anim.in .brand-word i{transform:none;opacity:1}
+  .brand-anim.in .brand-word i:nth-child(1){transition-delay:.12s}
+  .brand-anim.in .brand-word i:nth-child(2){transition-delay:.19s}
+  .brand-anim.in .brand-word i:nth-child(3){transition-delay:.26s}
+  .brand-anim.in .brand-word i:nth-child(4){transition-delay:.33s}
+  .brand-anim.out .brand-word i{transform:translateX(-130%);opacity:0}
+  .brand-anim.out .brand-word i:nth-child(4){transition-delay:0s}
+  .brand-anim.out .brand-word i:nth-child(3){transition-delay:.06s}
+  .brand-anim.out .brand-word i:nth-child(2){transition-delay:.12s}
+  .brand-anim.out .brand-word i:nth-child(1){transition-delay:.18s}
+  .brand-anim.out .brand-burst-wrap{animation:none}
+  @media (prefers-reduced-motion:reduce){
+    .brand-anim.in .brand-burst-wrap{animation:none}
+    .brand-word i,.brand-anim.in .brand-word i{transition:none;transform:none;opacity:1}
+  }
+  .foot .fbtn{width:26px;height:26px;border-radius:8px;border:none;background:transparent;color:var(--muted);
+    display:grid;place-items:center;cursor:pointer}
+  .foot .fbtn svg{width:14px;height:14px}
+  /* token — এক পাশে (ডানে), কখনো ভাঙবে না */
+  .foot .tok{margin-left:auto;font-family:ui-monospace,'SF Mono',monospace;font-size:10px;opacity:.8;white-space:nowrap}
+
+  /* ── এক glossy glass ভাষা — ask / pending / copy সব card-এ ── */
+  .gcard{
+    border-radius:22px;overflow:hidden;
+    background:var(--glass-bg);
+    backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+    border:1px solid var(--glass-border);
+    box-shadow:var(--glass-shadow), inset 0 1px 0 rgba(255,255,255,.09);
+  }
+
+  /* ask card */
+  .ask{margin:2px 0 14px}
+  .ask-head{display:flex;align-items:center;gap:2px;padding:10px 12px 0}
+  .ask-head .pg{font-size:13px;color:var(--muted);font-weight:500;padding:0 6px;font-variant-numeric:tabular-nums}
+  .ask-head .hbtn{width:28px;height:28px;border-radius:50%;border:none;background:transparent;color:var(--ink);
+    display:grid;place-items:center;cursor:pointer;transition:transform .15s}
+  .ask-head .hbtn:active{transform:scale(.86)}
+  .ask-head .hbtn.dim{color:rgba(174,178,192,.35)}
+  .ask-head .hbtn.x{margin-left:auto;background:rgba(255,255,255,.10)}
+  .ask-head .hbtn svg{width:13px;height:13px}
+  .ask-page{animation:pageIn .34s cubic-bezier(.3,1.25,.45,1) both}
+  .ask-page.back{animation-name:pageInL}
+  @keyframes pageIn{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:none}}
+  @keyframes pageInL{from{opacity:0;transform:translateX(-30px)}to{opacity:1;transform:none}}
+  .ask-q{font-family:var(--serif);font-size:15.5px;font-weight:650;padding:6px 18px 10px;line-height:1.5}
+  .opt{
+    display:flex;align-items:center;gap:12px;padding:12px 16px;cursor:pointer;
+    border-top:1px solid rgba(255,255,255,.08);font-size:14px;font-weight:500;
+    transition:background .15s;
+  }
+  .opt:active{background:rgba(255,255,255,.07)}
+  .opt .n{
+    width:26px;height:26px;border-radius:50%;flex-shrink:0;display:grid;place-items:center;
+    background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.10);
+    font-size:13px;font-weight:650;color:var(--muted-hi);
+  }
+  .opt.on .n{background:var(--coral);color:#fff;border-color:transparent}
+  .opt.on{color:var(--coral)}
+  .opt.type{color:var(--muted);font-weight:400}
+  .opt.type .n{background:transparent;border:none}
+  .opt.type .n svg{width:14px;height:14px}
+  .reopen-chip{
+    display:inline-flex;align-items:center;gap:7px;margin:0 0 14px;padding:8px 14px;border-radius:999px;
+    background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+    border:1px solid rgba(224,122,95,.4);color:var(--coral);
+    font-size:12px;font-weight:650;cursor:pointer;box-shadow:var(--glass-shadow);
+  }
+  .reopen-chip svg{width:11px;height:11px}
+  .pdot{position:relative;width:7px;height:7px;border-radius:50%;background:var(--coral);flex-shrink:0}
+  .pdot::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:2px solid rgba(224,122,95,.5);animation:ping 1.2s ease-out infinite}
+
+  /* copy-to-paste card — পোস্ট/ক্যাপশন এলে আলাদা box */
+  .copycard{margin:2px 0 14px}
+  .copy-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px 8px}
+  .copy-head .tag{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;letter-spacing:.6px;color:var(--coral)}
+  .copy-head .tag svg{width:12px;height:12px}
+  .copy-btn{
+    display:flex;align-items:center;gap:5px;padding:6px 12px;border-radius:999px;border:1px solid rgba(224,122,95,.45);
+    background:rgba(224,122,95,.13);color:var(--coral);font-size:11.5px;font-weight:650;cursor:pointer;
+    font-family:inherit;transition:transform .15s;
+  }
+  .copy-btn:active{transform:scale(.94)}
+  .copy-btn svg{width:12px;height:12px}
+  .copy-body{
+    font-family:var(--serif);font-size:14px;line-height:1.7;color:var(--ink);
+    padding:2px 16px 14px;white-space:pre-wrap;
+  }
+
+  /* pending-task card — ৩টা বাটন: অনুমোদন · বাতিল · আমার মত */
+  .pend{margin:0 0 14px}
+  .pend-head{display:flex;align-items:center;gap:8px;padding:13px 16px 4px}
+  .pend-head .dot{position:relative;width:8px;height:8px;border-radius:50%;background:var(--coral);flex-shrink:0}
+  .pend-head .dot::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:2px solid rgba(224,122,95,.5);animation:ping 1.2s ease-out infinite}
+  @keyframes ping{from{transform:scale(.5);opacity:1}to{transform:scale(1.5);opacity:0}}
+  .pend-head b{font-size:13px;color:var(--coral);font-weight:700}
+  .pend-head span{margin-left:auto;font-size:10.5px;color:var(--muted)}
+  .pend-title{font-family:var(--serif);font-size:14.5px;line-height:1.55;padding:2px 16px 12px;color:var(--ink)}
+  .pend-btns{display:flex;gap:8px;padding:0 14px 12px}
+  .pbtn{
+    flex:1;padding:10px 0;border-radius:13px;border:none;font-size:13px;font-weight:650;cursor:pointer;
+    font-family:inherit;transition:transform .15s;
+  }
+  .pbtn:active{transform:scale(.96)}
+  .pbtn.ok{background:linear-gradient(135deg,var(--coral),var(--coral-dim));color:#fff;box-shadow:0 4px 12px rgba(224,122,95,.3)}
+  .pbtn.no{background:rgba(255,255,255,.08);color:var(--muted-hi);border:1px solid rgba(255,255,255,.12)}
+  .pend-opine{
+    display:flex;align-items:center;gap:9px;padding:12px 16px;cursor:pointer;
+    border-top:1px solid rgba(255,255,255,.08);font-size:14px;font-weight:500;color:var(--ink);
+  }
+  .pend-opine:active{background:rgba(255,255,255,.06)}
+  .pend-opine svg{width:15px;height:15px;color:var(--coral)}
+  .pend-opine .chev{margin-left:auto;color:var(--muted);opacity:.5}
+  .pend-opine .chev svg{width:11px;height:11px;color:var(--muted)}
+  .opine-box{display:flex;gap:8px;padding:0 14px 14px}
+  .opine-box textarea{
+    flex:1;resize:none;border:1px solid rgba(255,255,255,.14);border-radius:13px;
+    background:rgba(0,0,0,.22);color:var(--ink);font-family:inherit;font-size:14px;
+    padding:10px 12px;outline:none;min-height:44px;
+  }
+  .opine-box textarea:focus{border-color:rgba(224,122,95,.5)}
+  .opine-send{
+    width:40px;height:40px;border-radius:50%;border:none;align-self:flex-end;
+    background:linear-gradient(135deg,var(--coral),var(--coral-dim));color:#fff;cursor:pointer;
+    display:grid;place-items:center;
+  }
+  .opine-send svg{width:15px;height:15px}
+  .pend-status{display:flex;align-items:center;gap:7px;padding:0 16px 14px;font-size:13px;font-weight:600}
+  .pend-status svg{width:14px;height:14px}
+  .pend-status.ok{color:var(--teal)} .pend-status.no{color:var(--muted)} .pend-status.op{color:var(--coral)}
+
+  /* scroll-to-bottom — glossy ভাসমান বোতাম (web parity) */
+  .scrolldn{
+    position:absolute;left:50%;bottom:118px;transform:translateX(-50%) scale(.7);z-index:6;
+    width:42px;height:42px;border-radius:50%;border:1px solid var(--glass-border);
+    background:var(--glass-bg);backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+    color:var(--ink);display:grid;place-items:center;cursor:pointer;
+    box-shadow:var(--glass-shadow);opacity:0;pointer-events:none;
+    transition:opacity .25s,transform .25s cubic-bezier(.3,1.3,.5,1);
+  }
+  .scrolldn.show{opacity:1;pointer-events:auto;transform:translateX(-50%) scale(1)}
+  .scrolldn svg{width:16px;height:16px}
+
+  /* composer + tabbar */
+  .composer-wrap{position:relative;z-index:3;padding:0 12px 6px}
+  .composer{
+    background:rgba(28,28,34,.55);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    border:1px solid var(--hair);border-radius:24px;padding:8px;
+  }
+  .composer .in{width:100%;border:none;background:transparent;color:var(--ink);font-size:16px;
+    padding:6px 10px 4px;outline:none;font-family:inherit}
+  .composer .in::placeholder{color:rgba(174,178,192,.6)}
+  .cbar{display:flex;align-items:center;gap:5px;padding:2px 2px 0}
+  .cbar .pill{font-size:10.5px;color:var(--muted);padding:5px 10px;border-radius:999px;
+    background:rgba(255,255,255,.05);border:1px solid var(--hair);max-width:150px;
+    overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .cbar .sp{flex:1}
+  .cbar .rnd{width:36px;height:36px;border-radius:50%;border:none;background:transparent;
+    color:var(--muted);display:grid;place-items:center;cursor:pointer}
+  .cbar .rnd svg{width:16px;height:16px}
+  .cbar .rnd.voice{color:var(--teal)}
+  .cbar .rnd.send{background:linear-gradient(135deg,var(--coral),var(--coral-dim));color:#fff;
+    box-shadow:0 3px 10px rgba(224,122,95,.35)}
+  .tabbar{
+    position:relative;z-index:3;display:flex;justify-content:space-around;
+    padding:7px 6px calc(10px + env(safe-area-inset-bottom));
+    background:rgba(20,20,24,.85);backdrop-filter:blur(14px);border-top:1px solid var(--hair);
+  }
+  .tab{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:9.5px;color:var(--muted)}
+  .tab svg{width:19px;height:19px}
+  .tab.on{color:#f4a28c}
+  .tab.on .ti{background:rgba(236,120,100,.3);border-radius:12px;padding:3px 12px}
+
+  /* ── iOS glossy floating sheet (model-switcher-এর মতো) ── */
+  .backdrop{position:absolute;inset:0;z-index:8;background:rgba(0,0,0,.4);
+    opacity:0;pointer-events:none;transition:opacity .25s}
+  .backdrop.open{opacity:1;pointer-events:auto}
+  .sheet{
+    position:absolute;left:8px;right:8px;bottom:8px;z-index:9;max-height:86%;
+    display:flex;flex-direction:column;
+    background:var(--glass-bg);
+    backdrop-filter:var(--glass-blur);-webkit-backdrop-filter:var(--glass-blur);
+    border-radius:26px;border:1px solid var(--glass-border);
+    box-shadow:var(--glass-shadow), inset 0 1px 0 rgba(255,255,255,.09);
+    transform:translateY(112%);transition:transform .36s cubic-bezier(.32,.72,0,1);
+  }
+  .sheet.medium{max-height:58%}
+  .sheet.open{transform:translateY(0)}
+  .grab{width:38px;height:5px;border-radius:3px;background:rgba(255,255,255,.25);margin:9px auto 4px;flex-shrink:0}
+  .sh-head{display:grid;grid-template-columns:36px 1fr 36px;align-items:center;padding:2px 14px 10px;flex-shrink:0}
+  .sh-head .x{width:32px;height:32px;border-radius:50%;border:none;background:rgba(255,255,255,.12);
+    color:var(--ink);display:grid;place-items:center;cursor:pointer}
+  .sh-head .x svg{width:13px;height:13px}
+  .sh-head h4{text-align:center;font-size:15px;font-weight:650}
+  .sh-rule{height:1px;background:rgba(224,122,95,.4);flex-shrink:0}
+  .sh-body{overflow-y:auto;padding:14px 18px 26px;flex:1}
+  .thought{font-family:var(--serif);font-size:15px;line-height:1.75;color:rgba(247,248,252,.93);white-space:pre-wrap}
+
+  .tl-item{display:flex;gap:12px}
+  .tl-rail{display:flex;flex-direction:column;align-items:center;width:22px;flex-shrink:0}
+  .tl-rail .tico{width:22px;height:22px;display:grid;place-items:center;color:var(--muted)}
+  .tl-rail .tico svg{width:14px;height:14px}
+  .tl-rail .line{width:1.5px;flex:1;background:rgba(255,255,255,.14);margin:2px 0}
+  .tl-main{flex:1;padding-bottom:18px;min-width:0}
+  .tl-head{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:500;padding:2px 0;cursor:pointer}
+  .tl-head .chev{margin-left:auto;color:var(--muted);opacity:.55;transition:transform .18s}
+  .tl-head .chev svg{width:11px;height:11px;display:block}
+  .tl-item.open .tl-head .chev{transform:rotate(90deg)}
+  .tl-body{display:none;margin-top:6px;font-size:13px;line-height:1.6;color:var(--muted-hi)}
+  .tl-item.open .tl-body{display:block}
+  .tl-body pre{font-family:ui-monospace,'SF Mono',monospace;font-size:11px;color:var(--ink);
+    background:rgba(0,0,0,.3);border:1px solid var(--hair);border-radius:10px;padding:10px;
+    margin-top:6px;white-space:pre-wrap;word-break:break-word;overflow-x:auto}
+  .tl-item .tico.gold{color:var(--gold)} .tl-item .tico.teal{color:var(--teal)}
+
+  .ctrl{position:absolute;top:58px;right:12px;z-index:7;display:flex;gap:6px}
+  .ctrl button{
+    display:flex;align-items:center;gap:5px;padding:7px 12px;border-radius:999px;border:1px solid rgba(224,122,95,.4);
+    background:rgba(20,20,24,.7);backdrop-filter:blur(10px);color:var(--coral);
+    font-size:12px;font-weight:650;cursor:pointer;font-family:inherit;
+  }
+  .ctrl button svg{width:11px;height:11px}
+
+  .burst-test{
+    max-width:430px;width:100%;display:flex;justify-content:space-around;gap:8px;
+    padding:10px 12px 16px;
+  }
+  .burst-test>div{display:flex;flex-direction:column;align-items:center;gap:2px}
+  .burst-test span{font-size:10.5px;color:var(--muted);text-align:center;line-height:1.4}
+  .burst-test b{color:var(--muted-hi);font-weight:600}
+</style>
+
+<div class="note"><b>ALMA × Claude প্রিভিউ v4</b> — reply শেষে burst pop-in + A·L·M·A stagger reveal (Claude Lottie), থেকে যায়; পরের ▶-এ letters burst-এ ঢুকে যায় · haptic sync spec (native) · আগের সব ফিচার। ▶ দু'বার চাপুন — cycle টা দেখুন।</div>
+
+<div class="phone">
+  <div class="aurora"><i class="a1"></i><i class="a2"></i><i class="a3"></i><i class="a4"></i></div>
+  <div class="shell">
+    <div class="topnav">
+      <button class="nav-btn" aria-label="menu"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 4h12M2 8h12M2 12h12"/></svg></button>
+      <h1>ALMA AI</h1>
+      <button class="nav-btn coral" aria-label="new chat"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg></button>
+    </div>
+
+    <div class="ctrl">
+      <button id="btnPlay"><svg viewBox="0 0 10 12" fill="currentColor"><path d="M0 0l10 6-10 6z"/></svg> চালান</button>
+    </div>
+
+    <div class="chat" id="chat"></div>
+
+    <button class="scrolldn" id="scrollDn" aria-label="scroll to bottom">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v10M3.5 8.5 8 13l4.5-4.5"/></svg>
+    </button>
+
+    <div class="composer-wrap">
+      <div class="composer">
+        <input class="in" id="composerIn" placeholder="বার্তা লিখুন…" readonly>
+        <div class="cbar">
+          <button class="rnd" aria-label="attach"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg></button>
+          <span class="pill">Auto · Gemini 3.1 Pro</span>
+          <span class="sp"></span>
+          <button class="rnd" aria-label="mic"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5"/><path d="M3 8a5 5 0 0 0 10 0M8 13v2"/></svg></button>
+          <button class="rnd voice" aria-label="voice"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 6v4M5 4v8M8 2v12M11 4v8M14 6v4"/></svg></button>
+          <button class="rnd send" id="btnSend" aria-label="send">
+            <svg id="sendIco" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg>
+            <svg id="stopIco" viewBox="0 0 16 16" fill="currentColor" style="display:none"><rect x="4" y="4" width="8" height="8" rx="1.5"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="tabbar">
+      <div class="tab"><span class="ti"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5.5" height="5.5" rx="1.5"/><rect x="10.5" y="2" width="5.5" height="5.5" rx="1.5"/><rect x="2" y="10.5" width="5.5" height="5.5" rx="1.5"/><rect x="10.5" y="10.5" width="5.5" height="5.5" rx="1.5"/></svg></span>Dashboard</div>
+      <div class="tab"><span class="ti"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M9 2 3 5v8l6 3 6-3V5z"/><path d="M3 5l6 3 6-3M9 8v8"/></svg></span>Orders</div>
+      <div class="tab on"><span class="ti"><svg viewBox="0 0 18 18" fill="currentColor"><path d="M9 2c.3 2.9 1.4 4.6 4.5 5-3.1.4-4.2 2.1-4.5 5-.3-2.9-1.4-4.6-4.5-5C7.6 6.6 8.7 4.9 9 2z"/><path d="M14 10c.15 1.5.7 2.3 2.2 2.5-1.5.2-2.05 1-2.2 2.5-.15-1.5-.7-2.3-2.2-2.5 1.5-.2 2.05-1 2.2-2.5z"/></svg></span>Assistant</div>
+      <div class="tab"><span class="ti"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 1.8 11 3h2.6l.9 2.4 1.7 1.8-.9 2.3.4 2.6-2.3 1.2L12 15.6l-2.6-.5-2.6.5-1.4-2.3-2.3-1.2.4-2.6L2.6 7.2 4.3 5.4 5.2 3H7.8z"/><path d="m6.5 9 1.8 1.8L12 7.2"/></svg></span>Approvals</div>
+      <div class="tab"><span class="ti"><svg viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="1.5"/><circle cx="9" cy="9" r="1.5"/><circle cx="14" cy="9" r="1.5"/></svg></span>More</div>
+    </div>
+
+    <div class="backdrop" id="backdrop"></div>
+    <div class="sheet" id="sheet">
+      <div class="grab"></div>
+      <div class="sh-head">
+        <button class="x" id="sheetX"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg></button>
+        <h4 id="sheetTitle">Summary</h4><span></span>
+      </div>
+      <div class="sh-rule"></div>
+      <div class="sh-body" id="sheetBody"></div>
+    </div>
+  </div>
+</div>
+
+<div class="burst-test">
+  <div><canvas data-bmode="thinking"></canvas><span><b>ভাবছে</b><br>medium · জীবন্ত boil</span></div>
+  <div><canvas data-bmode="writing"></canvas><span><b>লিখছে</b><br>হঠাৎ দ্রুত + hand-drawn</span></div>
+  <div><canvas data-bmode="processing"></canvas><span><b>টুল চালাচ্ছে</b><br>dot ring · fast spin</span></div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  /* ══ Claude organic starburst — REAL vertex-level boil (hand-drawn) ══ */
+  const BURST_D = 'm19.6 66.5 19.7-11 .3-1-.3-.5h-1l-3.3-.2-11.2-.3L14 53l-9.5-.5-2.4-.5L0 49l.2-1.5 2-1.3 2.9.2 6.3.5 9.5.6 6.9.4L38 49.1h1.6l.2-.7-.5-.4-.4-.4L29 41l-10.6-7-5.6-4.1-3-2-1.5-2-.6-4.2 2.7-3 3.7.3.9.2 3.7 2.9 8 6.1L37 36l1.5 1.2.6-.4.1-.3-.7-1.1L33 25l-6-10.4-2.7-4.3-.7-2.6c-.3-1-.4-2-.4-3l3-4.2L28 0l4.2.6L33.8 2l2.6 6 4.1 9.3L47 29.9l2 3.8 1 3.4.3 1h.7v-.5l.5-7.2 1-8.7 1-11.2.3-3.2 1.6-3.8 3-2L61 2.6l2 2.9-.3 1.8-1.1 7.7L59 27.1l-1.5 8.2h.9l1-1.1 4.1-5.4 6.9-8.6 3-3.5L77 13l2.3-1.8h4.3l3.1 4.7-1.4 4.9-4.4 5.6-3.7 4.7-5.3 7.1-3.2 5.7.3.4h.7l12-2.6 6.4-1.1 7.6-1.3 3.5 1.6.4 1.6-1.4 3.4-8.2 2-9.6 2-14.3 3.3-.2.1.2.3 6.4.6 2.8.2h6.8l12.6 1 3.3 2 1.9 2.7-.3 2-5.1 2.6-6.8-1.6-16-3.8-5.4-1.3h-.8v.4l4.6 4.5 8.3 7.5L89 80.1l.5 2.4-1.3 2-1.4-.2-9.2-7-3.6-3-8-6.8h-.5v.7l1.8 2.7 9.8 14.7.5 4.5-.7 1.4-2.6 1-2.7-.6-5.8-8-6-9-4.7-8.2-.5.4-2.9 30.2-1.3 1.5-3 1.2-2.5-2-1.4-3 1.4-6.2 1.6-8 1.3-6.4 1.2-7.9.7-2.6v-.2H49L43 72l-9 12.3-7.2 7.6-1.7.7-3-1.5.3-2.8L24 86l10-12.8 6-7.9 4-4.6-.1-.5h-.3L17.2 77.4l-4.7.6-2-2 .2-3 1-1 8-5.5Z';
+  const BURST_FILL = '#d97757';
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* path → segment list (m/l/h/v/c/z, rel+abs) — boil-এ প্রতিটা বিন্দু নড়ে */
+  function parsePath(d) {
+    const tk = d.match(/[a-zA-Z]|-?\d*\.?\d+/g);
+    const segs = [];
+    let i = 0, x = 0, y = 0, sx = 0, sy = 0, cmd = '';
+    const num = () => parseFloat(tk[i++]);
+    while (i < tk.length) {
+      if (/[a-zA-Z]/.test(tk[i])) { cmd = tk[i++]; }
+      const rel = cmd === cmd.toLowerCase();
+      switch (cmd.toLowerCase()) {
+        case 'm': { const a = num(), b = num(); x = rel ? x+a : a; y = rel ? y+b : b; sx = x; sy = y;
+          segs.push({ c:'M', p:[x, y] }); cmd = rel ? 'l' : 'L'; break; }
+        case 'l': { const a = num(), b = num(); x = rel ? x+a : a; y = rel ? y+b : b;
+          segs.push({ c:'L', p:[x, y] }); break; }
+        case 'h': { const a = num(); x = rel ? x+a : a; segs.push({ c:'L', p:[x, y] }); break; }
+        case 'v': { const b = num(); y = rel ? y+b : b; segs.push({ c:'L', p:[x, y] }); break; }
+        case 'c': { const n = [num(),num(),num(),num(),num(),num()];
+          const p = rel ? [x+n[0],y+n[1],x+n[2],y+n[3],x+n[4],y+n[5]] : n;
+          x = p[4]; y = p[5]; segs.push({ c:'C', p }); break; }
+        case 'z': segs.push({ c:'Z', p:[] }); x = sx; y = sy; break;
+        default: i++;
+      }
+    }
+    return segs;
+  }
+  const SEGS = parsePath(BURST_D);
+
+  /* ৪টা distinct hand-drawn frame — stop-motion line boil (১০-১২fps),
+     displacement ≤৩% (100-unit space-এ ≤3), zero-mean → optical center স্থির */
+  const BOIL_FRAMES = 4;
+  const NOISE = Array.from({ length: BOIL_FRAMES }, (_, f) =>
+    SEGS.map((s, si) => s.p.map((_, pi) =>
+      Math.sin(f * 2.1 + si * 1.37 + pi * 2.9) * 0.85 +
+      Math.sin(f * 4.3 + si * 0.53 + pi * 1.1) * 0.45
+    )));
+  const pathCache = new Map();
+  function boiledPath(frame, amp) {
+    const key = frame + ':' + amp.toFixed(2);
+    let p = pathCache.get(key);
+    if (p) return p;
+    p = new Path2D();
+    const nf = NOISE[frame];
+    for (let si = 0; si < SEGS.length; si++) {
+      const s = SEGS[si], o = nf[si];
+      if (s.c === 'M') p.moveTo(s.p[0] + o[0]*amp, s.p[1] + o[1]*amp);
+      else if (s.c === 'L') p.lineTo(s.p[0] + o[0]*amp, s.p[1] + o[1]*amp);
+      else if (s.c === 'C') p.bezierCurveTo(s.p[0]+o[0]*amp, s.p[1]+o[1]*amp,
+        s.p[2]+o[2]*amp, s.p[3]+o[3]*amp, s.p[4]+o[4]*amp, s.p[5]+o[5]*amp);
+      else p.closePath();
+    }
+    pathCache.set(key, p);
+    return p;
+  }
+
+  /* দুই layer আলাদা:
+     ► rotation = OUTER, buttery-smooth 60fps linear — thinking 4s/rev · writing 2.5s/rev
+     ► boil = INNER, ৪ frame @ ~11fps steps — hand-drawn stop-motion */
+  const MODES = {
+    thinking:   { periodMs:4000, amp:0.20, bspeed:0.055, boilAmp:2.0, boilMs:90, dot:0 },
+    writing:    { periodMs:2500, amp:0.24, bspeed:0.130, boilAmp:2.4, boilMs:85, dot:0 },
+    processing: { periodMs:1500, amp:0.06, bspeed:0.075, boilAmp:0.6, boilMs:85, dot:1 },
+    idle:       { periodMs:1e12, amp:0,    bspeed:0,     boilAmp:1.1, boilMs:120, dot:0 }, // footer wordmark — ঘোরে না, শুধু মৃদু জীবন্ত boil
+  };
+
+  function makeBurst(canvas, visualPx) {
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    const box = Math.round(visualPx * 46 / 28);      // বড় box — breathe/boil কখনো কাটবে না
+    canvas.width = box * dpr; canvas.height = box * dpr;
+    canvas.style.width = box + 'px'; canvas.style.height = box + 'px';
+    const ctx = canvas.getContext('2d');
+    const st = { mode:'thinking', rot:0, phase:0, dotMix:0, boilF:0, boilAcc:0, last:0, raf:0, dead:false };
+    function frame(now) {
+      if (st.dead) return;
+      const t = MODES[st.mode], dt = Math.min(50, now - (st.last || now)); st.last = now;
+      st.dotMix += (t.dot - st.dotMix) * 0.1;
+      st.rot += (Math.PI * 2) * dt / t.periodMs;   // time-based → dt যাই হোক, রোটেশন মসৃণ
+      st.phase += t.bspeed;
+      st.boilAcc += dt;
+      if (st.boilAcc >= t.boilMs) { st.boilAcc = 0; st.boilF = (st.boilF + 1) % BOIL_FRAMES; }
+      const breathe = 1 + Math.sin(st.phase) * t.amp;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, box, box);
+      ctx.translate(box/2, box/2);
+      ctx.rotate(st.rot);
+      ctx.scale(breathe, breathe);
+      const u = visualPx / 100;
+      ctx.scale(u, u); ctx.translate(-50, -50);
+      ctx.globalAlpha = 1 - st.dotMix * 0.92;
+      ctx.fillStyle = BURST_FILL;
+      ctx.fill(boiledPath(st.boilF, t.boilAmp));      // ← প্রতিটা বিন্দু কাঁপে = hand-drawn
+      if (st.dotMix > 0.02) {
+        ctx.globalAlpha = st.dotMix;
+        for (let i = 0; i < 12; i++) {
+          const a = (i/12) * Math.PI*2 - Math.PI/2;
+          ctx.beginPath(); ctx.arc(50 + 35*Math.cos(a), 50 + 35*Math.sin(a), 3.1, 0, Math.PI*2); ctx.fill();
+        }
+      }
+      ctx.globalAlpha = 1;
+      st.raf = requestAnimationFrame(frame);
+    }
+    if (reduceMotion) {
+      const u = visualPx/100;
+      ctx.setTransform(dpr,0,0,dpr,0,0); ctx.translate(box/2,box/2); ctx.scale(u,u); ctx.translate(-50,-50);
+      ctx.fillStyle = BURST_FILL; ctx.fill(boiledPath(0, 1));
+    } else st.raf = requestAnimationFrame(frame);
+    return { set mode(m){ st.mode = m; }, kill(){ st.dead = true; cancelAnimationFrame(st.raf); } };
+  }
+
+  /* ══ icons ══ */
+  const I = {
+    clock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="6.2"/><path d="M8 4.8V8l2.2 1.6"/></svg>',
+    search:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="7" cy="7" r="4.6"/><path d="m10.6 10.6 3 3"/></svg>',
+    tool:  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 4.5a3 3 0 0 0 4 4L15 10l-3.6 3.6a1.4 1.4 0 0 1-2 0L6.9 11 3 14.9M2.6 5.6l2.8 2.8L8 5.8 5.2 3z"/></svg>',
+    chev:  '<svg viewBox="0 0 8 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m1.5 1.5 4.5 4.5-4.5 4.5"/></svg>',
+    copy:  '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="4.5" y="4.5" width="8" height="8" rx="1.6"/><path d="M9.5 4.5v-1a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h1"/></svg>',
+    spk:   '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M2 5.2v3.6h2.2L8 11.5v-9L4.2 5.2z"/><path d="M10 4.6a3.4 3.4 0 0 1 0 4.8" stroke-linecap="round"/></svg>',
+    spark: '<svg viewBox="0 0 12 12" fill="currentColor"><path d="M6 0c.25 2.4 1.15 3.8 3.7 4.1C7.15 4.5 6.25 5.9 6 8.3 5.75 5.9 4.85 4.5 2.3 4.1 4.85 3.8 5.75 2.4 6 0z"/></svg>',
+    pencil:'<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="m9.7 2 2.3 2.3-7.4 7.4-3 .7.7-3z"/></svg>',
+    cl:    '<svg viewBox="0 0 8 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 1.5 2 6l4.5 4.5"/></svg>',
+    x:     '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg>',
+    check: '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m2.5 7.5 3 3 6-7"/></svg>',
+    bubble:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M14 7.6c0 2.9-2.7 5.2-6 5.2-.7 0-1.4-.1-2-.3L3 13.5l.8-2.3C2.7 10.3 2 9 2 7.6 2 4.7 4.7 2.4 8 2.4s6 2.3 6 5.2z"/></svg>',
+    up:    '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 12V2M2.8 6.2 7 2l4.2 4.2"/></svg>',
+  };
+
+  /* ══ demo content ══ */
+  const USER_MSG = 'Ajke sale ase kono? page, website, fb sob check koro, r ekta post draft koro';
+  const THINK_1  = 'আজকের সেল রিপোর্ট বের করছি — ওয়েবসাইট আর ফেসবুক পেজ দুটোই দেখব।';
+  const THOUGHT_FULL = 'Sir আজকের বিক্রির খবর চাইছেন — ওয়েবসাইট, ফেসবুক পেজ সব মিলিয়ে, সাথে একটা পোস্ট ড্রাফটও।\n\nপ্রথমে get_sales_summary দিয়ে আজকের অর্ডার আর টাকার অঙ্ক আনব, তারপর get_fb_recent_posts দিয়ে পেজের এনগেজমেন্ট দেখব। দুটো মিলিয়ে ছোট্ট রিপোর্ট, তারপর বেস্ট-সেলার ধরে পোস্ট ড্রাফট করে কপি-বক্সে দিয়ে দেব।';
+  const P1 = 'Sir, আজকের ছবিটা এক নজরে দেখে নিচ্ছি — ওয়েবসাইট আর ফেসবুক দুটোই চেক করছি।';
+  const P2 = 'আজ এখন পর্যন্ত <strong>১২টি অর্ডার — ৳১৮,৪৫০</strong>। গতকালের এই সময়ের চেয়ে <strong>+২২%</strong> এগিয়ে আছেন। সবচেয়ে বেশি চলছে <strong>কিডস টি-শার্ট (৫টি)</strong>।';
+  const P3 = 'ফেসবুক পেজে সকালের পোস্টটা ভালো যাচ্ছে — <strong>৩৮টি রিঅ্যাকশন, ৬টি মেসেজ</strong>। ২টা মেসেজে সাইজ জানতে চেয়েছে, রিপ্লাই পেন্ডিং।';
+  const P4 = 'বেস্ট-সেলার কিডস টি-শার্ট ধরে পোস্টটা ড্রাফট করে দিলাম — নিচের বক্স থেকে সরাসরি কপি করুন:';
+  const COPY_POST = '🌟 ছোটদের প্রিয় টি-শার্ট আবার স্টকে!\n\nনরম কটন, আরামদায়ক ফিট — গরমেও ঠান্ডা। আজই ৫টা বিক্রি হয়ে গেছে 🎉\n\n✅ সাইজ: ২-১০ বছর\n✅ দাম: মাত্র ৳৪৫০\n✅ ক্যাশ অন ডেলিভারি\n\nঅর্ডার করতে ইনবক্স করুন 💬\n#ALMALifestyle #KidsFashion';
+  const ASK_Q = 'মেসেজগুলোর রিপ্লাই কীভাবে করব?';
+  const ASK_OPTS = ['আমি ড্রাফট করি, আপনি দেখে পাঠাবেন', 'CS টিমকে টাস্ক দিয়ে দাও', 'এখন থাক, পরে দেখব'];
+  const TOOLS = [
+    { name:'get_sales_summary',  in:'{ "date": "2026-07-07", "business": "ALMA_LIFESTYLE" }', out:'{ "orders": 12, "revenue": 18450, "top": "kids-tshirt", "vs_yesterday": "+22%" }' },
+    { name:'get_fb_recent_posts', in:'{ "limit": 3 }', out:'{ "posts": 3, "reactions": 38, "unread_messages": 6, "pending_size_queries": 2 }' },
+  ];
+
+  /* ══ DOM helpers ══ */
+  const chat = document.getElementById('chat');
+  const sheet = document.getElementById('sheet'), backdrop = document.getElementById('backdrop');
+  const sheetTitle = document.getElementById('sheetTitle'), sheetBody = document.getElementById('sheetBody');
+  const sendIco = document.getElementById('sendIco'), stopIco = document.getElementById('stopIco');
+  const composerIn = document.getElementById('composerIn');
+  const scrollDn = document.getElementById('scrollDn');
+  const el = (cls, html) => { const d = document.createElement('div'); d.className = cls; if (html) d.innerHTML = html; return d; };
+  const bottom = () => { chat.scrollTop = chat.scrollHeight; };
+  const FAST = location.search.includes('fast');   // হেডless টেস্টের shortcut — UI-তে প্রভাব নেই
+  const sleep = ms => new Promise(r => setTimeout(r, (reduceMotion || FAST) ? 0 : ms));
+
+  /* scroll-to-bottom glossy button (web parity) */
+  chat.addEventListener('scroll', () => {
+    const gap = chat.scrollHeight - chat.scrollTop - chat.clientHeight;
+    scrollDn.classList.toggle('show', gap > 140);
+  });
+  scrollDn.onclick = () => chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' });
+
+  /* haptic (preview): Android Chrome-এ বাজে; iOS-এ native Core Haptics দিয়ে হবে —
+     sync spec: প্রতি revolution-এ soft tick · mode বদলে medium · settle-এ thud */
+  const buzz = p => { try { navigator.vibrate && navigator.vibrate(p); } catch (e) {} };
+
+  function openSheet(title, html, medium) {
+    sheetTitle.textContent = title;
+    sheetBody.innerHTML = html;
+    sheet.classList.toggle('medium', !!medium);
+    sheet.classList.add('open'); backdrop.classList.add('open');
+    sheetBody.querySelectorAll('.tl-head').forEach(h =>
+      h.addEventListener('click', () => h.closest('.tl-item').classList.toggle('open')));
+  }
+  function closeSheet(){ sheet.classList.remove('open'); backdrop.classList.remove('open'); }
+  document.getElementById('sheetX').onclick = closeSheet;
+  backdrop.onclick = closeSheet;
+
+  const thoughtSheet = () => openSheet('Thought process', `<div class="thought">${THOUGHT_FULL}</div>`);
+  function summarySheet() {
+    const items = [
+      { ico:I.clock, cls:'', title:THINK_1, det:THOUGHT_FULL.split('\n\n')[1] },
+      { ico:I.search, cls:'gold', title:'Searched available tools', det:null },
+      ...TOOLS.map(t => ({ ico:I.tool, cls:'teal', title:t.name, det:`<b>Input</b><pre>${t.in}</pre><b>Output</b><pre>${t.out}</pre>` })),
+    ];
+    openSheet('Summary', items.map((it, i) => `
+      <div class="tl-item">
+        <div class="tl-rail"><span class="tico ${it.cls}">${it.ico}</span>${i < items.length-1 ? '<span class="line"></span>' : ''}</div>
+        <div class="tl-main">
+          <div class="tl-head">${it.title}${it.det ? `<span class="chev">${I.chev}</span>` : ''}</div>
+          ${it.det ? `<div class="tl-body">${it.det}</div>` : ''}
+        </div>
+      </div>`).join(''), true);
+  }
+
+  function activityRow(kind, label, onTap) {
+    const ico = kind === 'think' ? I.clock : kind === 'search' ? I.search : I.tool;
+    const r = el(`row ${kind === 'think' ? 'think' : kind === 'tool' ? 'tool' : ''} blk`,
+      `<span class="ico">${ico}</span><span class="lbl">${label}</span><span class="chev">${I.chev}</span>`);
+    r.addEventListener('click', onTap);
+    chat.appendChild(r); bottom();
+    return r;
+  }
+
+  /* prose stream — Claude text-shimmer সহ */
+  async function streamProse(html, turnBurst) {
+    turnBurst && (turnBurst.mode = 'writing');
+    const p = el('prose blk stream');
+    chat.appendChild(p);
+    const tmp = document.createElement('div'); tmp.innerHTML = html;
+    const plain = tmp.textContent;
+    if (!reduceMotion && !FAST) {
+      let n = 0;
+      while (n < plain.length) {
+        n = Math.min(plain.length, n + 2 + Math.floor(Math.random()*3));
+        p.textContent = plain.slice(0, n);
+        bottom();
+        await sleep(34);
+      }
+      await sleep(250);
+    }
+    p.classList.remove('stream');           // settle → shimmer থেমে normal রঙ
+    p.innerHTML = html; bottom();
+  }
+
+  let playing = false, burstCtl = null;
+  let brandCtl = null, brandEl = null;
+
+  /* reply শেষে footer wordmark: burst pop-in + A·L·M·A stagger slide-out (Claude Lottie) */
+  function renderBrandFooter(foot) {
+    const holder = foot.querySelector('.brand-slot');
+    brandEl = el('brand-anim');
+    brandEl.innerHTML = `
+      <span class="brand-burst-wrap"><canvas></canvas></span>
+      <span class="brand-word"><i>A</i><i>L</i><i>M</i><i>A</i></span>`;
+    holder.replaceWith(brandEl);
+    brandCtl = makeBurst(brandEl.querySelector('canvas'), 17);
+    brandCtl.mode = 'idle';
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      brandEl.classList.add('in');
+      buzz([12, 70, 16]);                       // settle thud
+    }));
+  }
+
+  /* পরের message: letters উল্টো stagger-এ burst-এর ভিতরে ঢুকে যায় */
+  async function retractBrand() {
+    if (!brandEl) return;
+    brandEl.classList.remove('in');
+    brandEl.classList.add('out');
+    buzz(8);
+    await sleep(560);
+    if (brandCtl) { brandCtl.kill(); brandCtl = null; }
+    brandEl = null;
+  }
+
+  async function play() {
+    if (playing) return;
+    playing = true;
+    await retractBrand();                        // আগের wordmark গুটিয়ে যায়, তারপর কাজ শুরু
+    chat.innerHTML = '';
+    closeSheet();
+    sendIco.style.display = 'none'; stopIco.style.display = 'block';
+    composerIn.placeholder = 'ALMA কাজ করছে…';
+
+    const u = el('user-row blk'); u.innerHTML = `<div class="user-bubble">${USER_MSG}</div>`;
+    chat.appendChild(u); bottom();
+    await sleep(500);
+
+    const slot = el('burst-slot blk');
+    const cv = document.createElement('canvas');
+    slot.appendChild(cv); chat.appendChild(slot); bottom();
+    burstCtl && burstCtl.kill();
+    burstCtl = makeBurst(cv, 28);
+    burstCtl.mode = 'thinking';
+    buzz(12);
+    await sleep(1700);
+
+    chat.insertBefore(activityRow('think', THINK_1, thoughtSheet), slot);
+    bottom();
+    await sleep(1300);
+
+    chat.removeChild(slot);
+    await streamProse(P1, burstCtl); chat.appendChild(slot); bottom();
+    await sleep(300);
+
+    burstCtl.mode = 'processing';
+    buzz(8);
+    chat.insertBefore(activityRow('search', 'Searched available tools', summarySheet), slot);
+    await sleep(1100);
+    chat.insertBefore(activityRow('tool', TOOLS[0].name, summarySheet), slot);
+    await sleep(1300);
+
+    chat.removeChild(slot);
+    await streamProse(P2, burstCtl); chat.appendChild(slot); bottom();
+    await sleep(250);
+
+    burstCtl.mode = 'processing';
+    buzz(8);
+    chat.insertBefore(activityRow('tool', TOOLS[1].name, summarySheet), slot);
+    await sleep(1200);
+
+    chat.removeChild(slot);
+    await streamProse(P3, burstCtl); chat.appendChild(slot); bottom();
+    await sleep(200);
+
+    chat.removeChild(slot);
+    await streamProse(P4, burstCtl);
+
+    renderCopyCard();                        // ← copy-to-paste box
+    await sleep(400);
+
+    burstCtl.kill(); burstCtl = null;
+    const foot = el('foot blk', `
+      <span class="brand-slot"></span><span>এইমাত্র</span>
+      <button class="fbtn">${I.copy}</button><button class="fbtn">${I.spk}</button>
+      <span class="tok">↑৭৭,৫১৮ ↓৮৯২ · $০.০০৭৬</span>`);
+    chat.appendChild(foot);
+    renderBrandFooter(foot);                    // burst pop-in + ALMA slide-out, থেকে যায়
+    bottom();
+    await sleep(500);
+
+    renderPendingCard();                     // ← "১টা কাজ বাকি" glossy, ৩ বাটন
+    await sleep(500);
+    renderAskCard();                         // ← ‹ ১/৩ › question card
+    sendIco.style.display = 'block'; stopIco.style.display = 'none';
+    composerIn.placeholder = 'বার্তা লিখুন…';
+    playing = false;
+  }
+
+  /* copy-to-paste glossy box */
+  function renderCopyCard() {
+    const card = el('gcard copycard blk', `
+      <div class="copy-head">
+        <span class="tag">${I.pencil} কপি করার জন্য · FB পোস্ট</span>
+        <button class="copy-btn">${I.copy} কপি করুন</button>
+      </div>
+      <div class="copy-body">${COPY_POST}</div>`);
+    const btn = card.querySelector('.copy-btn');
+    btn.onclick = async () => {
+      try { await navigator.clipboard.writeText(COPY_POST); } catch (e) {}
+      btn.innerHTML = `${I.check} কপি হয়েছে`;
+      setTimeout(() => { btn.innerHTML = `${I.copy} কপি করুন`; }, 1800);
+    };
+    chat.appendChild(card); bottom();
+  }
+
+  /* pending — চ্যাটে ছোট collapsed chip; tap করলে নিচ থেকে glossy sheet,
+     সেখানে সবসময় ৩টা option: অনুমোদন · বাতিল · আমার মত */
+  function renderPendingCard() {
+    const chip = el('reopen-chip blk');
+    let state = 'pending', opineOpen = false;
+    const paintChip = () => {
+      chip.innerHTML =
+        state === 'pending' ? `<span class="pdot"></span> ১টা কাজ বাকি ${I.chev}`
+        : state === 'ok'    ? `${I.check} অনুমোদিত`
+        : state === 'no'    ? `${I.x} বাতিল করা হয়েছে`
+        : `${I.bubble} মতামত পাঠানো হয়েছে`;
+      chip.style.opacity = state === 'pending' ? '1' : '.75';
+    };
+    const paintSheet = () => {
+      sheetBody.innerHTML = `
+        <div class="pend-title" style="padding:4px 0 4px">FB মেসেজ ২টার সাইজ-রিপ্লাই ড্রাফট রেডি — পাঠানোর অনুমোদন লাগবে।</div>
+        <div style="font-size:11px;color:var(--muted);padding:0 0 14px">৮ মিনিট আগে · WhatsApp CS</div>
+        <div class="pend-btns" style="padding:0 0 4px">
+          <button class="pbtn ok" data-a="ok">অনুমোদন</button>
+          <button class="pbtn no" data-a="no">বাতিল</button>
+        </div>
+        <div class="pend-opine" data-a="op" style="border-top:none;padding:12px 2px">${I.bubble} আমার মত <span class="chev">${I.chev}</span></div>
+        ${opineOpen ? `
+        <div class="opine-box" style="padding:0 0 8px">
+          <textarea placeholder="আপনার মতামত লিখুন — ALMA সেই অনুযায়ী ঠিক করবে…"></textarea>
+          <button class="opine-send" data-a="send">${I.up}</button>
+        </div>` : ''}`;
+      sheetBody.querySelectorAll('[data-a]').forEach(b => b.onclick = () => {
+        const a = b.dataset.a;
+        if (a === 'ok') { state = 'ok'; closeSheet(); }
+        else if (a === 'no') { state = 'no'; closeSheet(); }
+        else if (a === 'op') { opineOpen = !opineOpen; paintSheet(); return; }
+        else if (a === 'send') {
+          const t = sheetBody.querySelector('textarea');
+          if (!t || !t.value.trim()) return;
+          state = 'opined'; closeSheet();
+        }
+        paintChip();
+      });
+    };
+    chip.onclick = () => {
+      if (state !== 'pending') return;
+      sheetTitle.textContent = '১টা কাজ বাকি';
+      sheet.classList.add('medium');
+      paintSheet();
+      sheet.classList.add('open'); backdrop.classList.add('open');
+    };
+    paintChip();
+    chat.appendChild(chip); bottom();
+  }
+
+  /* ask card — ‹ ১/৩ › + ✕, iOS spring page transition */
+  function renderAskCard() {
+    let page = 0, answered = {}, lastDir = 1;
+    const card = el('gcard ask blk');
+    const bn = ['১','২','৩'];
+    const paint = () => {
+      const sel = answered[page];
+      card.innerHTML = `
+        <div class="ask-head">
+          <button class="hbtn ${page===0?'dim':''}" data-a="prev">${I.cl}</button>
+          <span class="pg">${bn[page]} / ৩</span>
+          <button class="hbtn ${page===2?'dim':''}" data-a="next">${I.chev}</button>
+          <button class="hbtn x" data-a="x">${I.x}</button>
+        </div>
+        <div class="ask-page ${lastDir < 0 ? 'back' : ''}">
+          <div class="ask-q">${ASK_Q}${page>0 ? ` <em style="font-weight:400;color:var(--muted)">(ডেমো পেজ ${bn[page]})</em>`:''}</div>
+          ${ASK_OPTS.map((o,i)=>`<div class="opt ${sel===i?'on':''}" data-i="${i}"><span class="n">${sel===i?'✓':bn[i]}</span>${o}</div>`).join('')}
+          <div class="opt type"><span class="n">${I.pencil}</span>Type your answer…</div>
+        </div>`;
+      card.querySelectorAll('[data-a]').forEach(b => b.onclick = () => {
+        const a = b.dataset.a;
+        if (a==='prev' && page>0) { lastDir = -1; page--; }
+        if (a==='next' && page<2) { lastDir = 1; page++; }
+        if (a==='x') {
+          const chip = el('reopen-chip blk');
+          chip.innerHTML = `${I.spark} প্রশ্ন কার্ড · ৩টি`;
+          chip.onclick = () => { chip.replaceWith(card); paint(); bottom(); };
+          card.replaceWith(chip); return;
+        }
+        paint();
+      });
+      card.querySelectorAll('.opt[data-i]').forEach(o => o.onclick = () => {
+        answered[page] = +o.dataset.i; paint();
+      });
+    };
+    paint();
+    chat.appendChild(card); bottom();
+  }
+
+  document.getElementById('btnPlay').onclick = play;
+  document.getElementById('btnSend').onclick = play;
+
+  document.querySelectorAll('.burst-test canvas').forEach(cv => {
+    const ctl = makeBurst(cv, 30);
+    ctl.mode = cv.dataset.bmode;
+  });
+
+  play();
+})();
+</script>
