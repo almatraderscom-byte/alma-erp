@@ -39,6 +39,7 @@ final class DashboardHostController: UIViewController {
     private let host: UIHostingController<DashboardScreen>
     private let openWeb: (_ path: String, _ title: String) -> Void
     private var assistiveNav: AgentAssistiveNav?
+    private var dockBuilt = false
 
     init(capacitor: UIViewController, openWeb: @escaping (_ path: String, _ title: String) -> Void) {
         self.capacitor = capacitor
@@ -84,11 +85,19 @@ final class DashboardHostController: UIViewController {
             host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
 
-        // 3) Assistive-touch dock (owner-liked, 2026-07-07): a draggable floating shortcut
-        //    button (reuses AgentAssistiveNav) laid full-bleed over the native dashboard — its
-        //    hitTest passes touches through except the FAB, so the scroll stays interactive.
-        //    Items = the owner's chosen shortcuts (max 5, persisted) + Edit; the pickable route
-        //    catalog is role-gated via an owner probe (the same 403 signal the To-Do chip uses).
+    }
+
+    /// Assistive-touch dock (owner-liked, 2026-07-07): a draggable floating shortcut button
+    /// (reuses AgentAssistiveNav) laid full-bleed over the native dashboard — its hitTest passes
+    /// touches through except the FAB, so the scroll stays interactive. Built in viewDidAppear
+    /// (NOT viewDidLoad) so it latches its rest position against the FINAL bounds + safe-area —
+    /// otherwise it snaps to an early, too-high mid-screen spot. Items = the owner's chosen
+    /// shortcuts (max 5, persisted) + Edit; the pickable catalog is role-gated via an owner probe
+    /// (the same 403 signal the To-Do chip uses).
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard !dockBuilt else { return }
+        dockBuilt = true
         Task { @MainActor [weak self] in
             let owner = await Self.probeOwner()
             self?.buildDock(owner: owner)
@@ -984,7 +993,7 @@ struct DashboardScreen: View {
                         //    then hairline lists. Same content as the web page — only the layout is
                         //    elevated. All figures pure Bangla; theme = the app aura tokens.
                         commandHero(d.kpis, daily: d.dailyTrend, monthly: d.monthlyTrend)
-                        statBlock(d.kpis, monthly: d.monthlyTrend)
+                        statBlock(d.kpis, monthly: d.monthlyTrend, byStatus: d.byStatus)
                         sectionLabel("বিশ্লেষণ")
                         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
                                   spacing: 12) {
@@ -1055,20 +1064,20 @@ struct DashboardScreen: View {
 
     private func slaBanner(_ breaches: [DashSlaBreach]) -> some View {
         let ids = breaches.prefix(3).map { "#\($0.id)" }.joined(separator: ", ")
-        let extra = breaches.count > 3 ? " +\(breaches.count - 3) more" : ""
+        let extra = breaches.count > 3 ? " +\(bnN(breaches.count - 3)) আরও" : ""
         return Button {
             openWeb("/orders?status=sla", "Orders")
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: "bolt.fill").foregroundStyle(DashPalette.warning(scheme))
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("\(breaches.count) order\(breaches.count > 1 ? "s" : "") need attention")
+                    Text("\(bnN(breaches.count))টি অর্ডারে মনোযোগ দরকার")
                         .font(.footnote.weight(.bold)).foregroundStyle(DashPalette.warning(scheme))
                     Text(ids + extra).font(.caption2).foregroundStyle(DashPalette.warning(scheme).opacity(0.85))
                         .lineLimit(1)
                 }
                 Spacer()
-                Text("View all →").font(.caption2.weight(.bold)).foregroundStyle(DashPalette.warning(scheme))
+                Text("সব দেখুন →").font(.caption2.weight(.bold)).foregroundStyle(DashPalette.warning(scheme))
             }
             .padding(12)
             .background(DashPalette.amber500.opacity(scheme == .dark ? 0.16 : 0.12),
@@ -1169,13 +1178,15 @@ struct DashboardScreen: View {
 
     /// The 8-KPI spec panel (hairline grid) — every compact/return KPI from the web page.
     @ViewBuilder
-    private func statBlock(_ k: DashKpis, monthly: [DashMonthlyPoint]) -> some View {
+    private func statBlock(_ k: DashKpis, monthly: [DashMonthlyPoint], byStatus: [String: Int]) -> some View {
         let avg = k.totalOrders > 0 ? k.totalRevenue / k.totalOrders : 0
+        // Pending: prefer the KPI field; fall back to the status breakdown so the cell shows a
+        // real number even before the additive `pending_count` server field is deployed.
+        let pending = k.pendingCount ?? byStatus.first { $0.key.lowercased() == "pending" }?.value
         StatBlock(items: [
             StatItem(k: "নিট মুনাফা", v: bnTk(k.netProfit), tint: DashPalette.signed(k.netProfit, scheme),
-                     pct: Self.trend(monthly.map(\.profit)), sub: "রিটার্ন লস বাদে"),
-            StatItem(k: "মোট অর্ডার", v: bnN(k.totalOrders), tint: DashPalette.info,
-                     pct: Self.trend(monthly.map(\.orders)), sub: "এই রেঞ্জে"),
+                     sub: "রিটার্ন লস বাদে"),
+            StatItem(k: "মোট অর্ডার", v: bnN(k.totalOrders), tint: DashPalette.info, sub: "এই রেঞ্জে"),
             StatItem(k: "ডেলিভারড", v: bnN(k.deliveredCount), tint: DashPalette.violet,
                      sub: "\(bnPct(k.deliveryRate)) রেট"),
             StatItem(k: "রিটার্ন লস", v: bnTk(k.totalReturnsLoss), tint: DashPalette.red500,
@@ -1184,7 +1195,7 @@ struct DashboardScreen: View {
                      tint: k.returnRate > 20 ? DashPalette.red500
                          : k.returnRate > 10 ? DashPalette.warning(scheme) : .primary,
                      sub: "রিফিউজড \(bnPct(k.returnRateRefused))"),
-            StatItem(k: "পেন্ডিং", v: k.pendingCount.map { bnN($0) } ?? "—", tint: DashPalette.warning(scheme),
+            StatItem(k: "পেন্ডিং", v: pending.map { bnN($0) } ?? "—", tint: DashPalette.warning(scheme),
                      sub: "অ্যাকশন বাকি"),
             StatItem(k: "রিয়েলাইজড", v: bnTk(k.realizedProfit), tint: DashPalette.positive(scheme),
                      sub: "ডেলিভারড"),
@@ -1313,10 +1324,10 @@ struct DashboardScreen: View {
     // ── Monthly Revenue (web MonthlyRevenueChart — native bars + profit overlay) ──
 
     private func monthlyRevenueCard(_ points: [DashMonthlyPoint]) -> some View {
-        ChartCard(title: "Monthly Revenue", subtitle: vm.preset.label,
-                  legend: [("Revenue", DashPalette.coral), ("Profit", DashPalette.positive(scheme))]) {
+        ChartCard(title: "মাসিক আয়", subtitle: "শেষ ৬ মাস",
+                  legend: [("আয়", DashPalette.coral), ("মুনাফা", DashPalette.positive(scheme))]) {
             if points.isEmpty {
-                emptyChart("◈", "No data", "Monthly breakdown appears when orders exist")
+                emptyChart("◈", "নেই", "অর্ডার এলে মাসিক হিসাব দেখাবে")
             } else {
                 DashMonthlyBars(points: points).padding(.top, 8)
             }
@@ -1326,10 +1337,10 @@ struct DashboardScreen: View {
     // ── Revenue & Profit Trend (web RevenueChart — native dual line) ──
 
     private func revenueTrendCard(_ points: [DashMonthlyPoint]) -> some View {
-        ChartCard(title: "Revenue & Profit Trend", subtitle: vm.preset.label,
-                  legend: [("Revenue", DashPalette.coral), ("Profit", DashPalette.positive(scheme))]) {
+        ChartCard(title: "আয় ও মুনাফা ট্রেন্ড", subtitle: "শেষ ৬ মাস",
+                  legend: [("আয়", DashPalette.coral), ("মুনাফা", DashPalette.positive(scheme))]) {
             if points.isEmpty {
-                emptyChart("◈", "No data", "Revenue chart appears once orders exist")
+                emptyChart("◈", "নেই", "অর্ডার এলে ট্রেন্ড দেখাবে")
             } else {
                 ZStack {
                     DashLineChart(values: points.map(\.revenue), color: DashPalette.coral, height: 160, fill: false)
@@ -1438,9 +1449,9 @@ struct DashboardScreen: View {
 
     private func topProductsCard(_ products: [DashTopProduct]) -> some View {
         let top = Array(products.prefix(5))
-        return ListCard(title: "Top Products", subtitle: vm.preset.label) {
+        return ListCard(title: "টপ প্রোডাক্ট", subtitle: nil) {
             if top.isEmpty {
-                emptyChart("◧", "No products", "Top sellers appear when orders exist")
+                emptyChart("◧", "নেই", "অর্ডার এলে টপ প্রোডাক্ট দেখাবে")
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(top.enumerated()), id: \.element.id) { i, p in
@@ -1461,14 +1472,14 @@ struct DashboardScreen: View {
                             in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 Text(p.product).font(.caption.weight(.semibold)).lineLimit(1)
-                Text("\(bnN(p.orders)) orders" + (p.pieces > 0 ? " · \(bnN(p.pieces)) pcs" : ""))
+                Text("\(bnN(p.orders)) অর্ডার" + (p.pieces > 0 ? " · \(bnN(p.pieces)) পিস" : ""))
                     .font(.caption2).foregroundStyle(.secondary)
                 if let firstGroup = p.groupDetails.first {
                     Text(p.groupDetails.prefix(2).map(\.line).joined(separator: " | "))
                         .font(.caption2).foregroundStyle(DashPalette.positive(scheme)).lineLimit(1)
                         .id(firstGroup.group)
                 } else if let ts = p.topSize {
-                    Text("Top: \(ts.label) · \(bnN(ts.pieces)) pcs")
+                    Text("টপ: \(ts.label) · \(bnN(ts.pieces)) পিস")
                         .font(.caption2).foregroundStyle(DashPalette.positive(scheme)).lineLimit(1)
                 }
             }
@@ -1489,10 +1500,10 @@ struct DashboardScreen: View {
 
     private func recentOrdersCard(_ orders: [DashRecentOrder]) -> some View {
         let recent = Array(orders.prefix(6))
-        return ListCard(title: "Recent Orders", subtitle: nil,
-                        action: ("View all →", { openWeb("/orders", "Orders") })) {
+        return ListCard(title: "সাম্প্রতিক অর্ডার", subtitle: nil,
+                        action: ("সব দেখুন →", { openWeb("/orders", "Orders") })) {
             if recent.isEmpty {
-                emptyChart("◫", "No orders", "Recent orders appear for the selected date range")
+                emptyChart("◫", "নেই", "এই রেঞ্জে কোনো অর্ডার নেই")
             } else {
                 VStack(spacing: 0) {
                     ForEach(Array(recent.enumerated()), id: \.element.id) { i, o in
@@ -1529,7 +1540,7 @@ struct DashboardScreen: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "bolt.fill").foregroundStyle(DashPalette.warning(scheme))
-                Text("SLA Alerts — \(breaches.count) order\(breaches.count > 1 ? "s" : "")")
+                Text("SLA অ্যালার্ট — \(bnN(breaches.count))টি অর্ডার")
                     .font(.subheadline.weight(.bold)).foregroundStyle(DashPalette.warning(scheme))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
