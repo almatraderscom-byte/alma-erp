@@ -50,6 +50,8 @@
 		F2AA7704000000000000B0FE /* PortalStaffOfficeSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */; };
 		F2AA7700000000000000B05F /* AgentWhatsappSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */; };
 		F2AA7700000000000000B05E /* AgentCostsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */; };
+		F2AA7700000000000000B101 /* CreditUsageSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A101 /* CreditUsageSwiftUI.swift */; };
+		F2AA7700000000000000B102 /* SubscriptionsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A102 /* SubscriptionsSwiftUI.swift */; };
 		F2AA7700000000000000B05D /* SettingsTelegramSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */; };
 		F2AA7700000000000000B05C /* SettingsSessionSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05C /* SettingsSessionSwiftUI.swift */; };
 		F2AA7700000000000000B05B /* SettingsBrandingSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05B /* SettingsBrandingSwiftUI.swift */; };
@@ -135,6 +137,8 @@
 		F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalStaffOfficeSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentWhatsappSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCostsSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A101 /* CreditUsageSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreditUsageSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A102 /* SubscriptionsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionsSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTelegramSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A05C /* SettingsSessionSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSessionSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A05B /* SettingsBrandingSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsBrandingSwiftUI.swift; sourceTree = "<group>"; };
@@ -267,6 +271,8 @@
 				F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */,
 				F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */,
 				F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */,
+				F2AA7700000000000000A101 /* CreditUsageSwiftUI.swift */,
+				F2AA7700000000000000A102 /* SubscriptionsSwiftUI.swift */,
 				F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */,
 				F2AA7700000000000000A05C /* SettingsSessionSwiftUI.swift */,
 				F2AA7700000000000000A05B /* SettingsBrandingSwiftUI.swift */,
@@ -527,6 +533,8 @@
 				F2AA7704000000000000B0FE /* PortalStaffOfficeSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05F /* AgentWhatsappSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05E /* AgentCostsSwiftUI.swift in Sources */,
+				F2AA7700000000000000B101 /* CreditUsageSwiftUI.swift in Sources */,
+				F2AA7700000000000000B102 /* SubscriptionsSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05D /* SettingsTelegramSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05C /* SettingsSessionSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05B /* SettingsBrandingSwiftUI.swift in Sources */,

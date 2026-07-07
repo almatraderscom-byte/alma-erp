@@ -72,6 +72,8 @@ struct MoreMenuScreen: View {
         MenuGroup(header: "Agent", items: [
             MenuItem(title: "Phone Companion", icon: "iphone.radiowaves.left.and.right", path: "native:companion"),
             MenuItem(title: "Live Watch",      icon: "eye",                              path: "/agent/live-watch"),
+            MenuItem(title: "Credit Usage",    icon: "chart.bar.xaxis",                  path: "/agent/credit-usage"),
+            MenuItem(title: "Subscriptions",   icon: "repeat.circle",                    path: "/agent/subscriptions"),
         ]),
         MenuGroup(header: "Workspace", items: [
             MenuItem(title: "My Desk",        icon: "person.crop.square", path: "/portal"),
