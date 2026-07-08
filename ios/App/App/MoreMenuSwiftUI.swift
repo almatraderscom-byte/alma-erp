@@ -1425,7 +1425,7 @@ private struct MoreChangePasswordSheet: View {
     @State private var newPassword = ""
     @State private var confirm = ""
     @State private var busy = false
-    @State private var error: String?
+    @State private var errorText: String?
 
     private var valid: Bool {
         !current.isEmpty && newPassword.count >= 8 && newPassword == confirm
@@ -1453,8 +1453,8 @@ private struct MoreChangePasswordSheet: View {
                     Text("দুইবার লেখা password মিলছে না")
                         .font(.caption).foregroundStyle(Color(red: 0.878, green: 0.478, blue: 0.373))
                 }
-                if let error {
-                    Text(error).font(.caption)
+                if let errorText {
+                    Text(errorText).font(.caption)
                         .foregroundStyle(Color(red: 0.878, green: 0.478, blue: 0.373))
                 }
                 Button {
@@ -1489,7 +1489,7 @@ private struct MoreChangePasswordSheet: View {
     private func submit() async {
         busy = true
         defer { busy = false }
-        error = nil
+        errorText = nil
         struct Body: Encodable { let currentPassword: String; let newPassword: String }
         do {
             let resp: MoreOkResponse = try await AlmaAPI.shared.send(
@@ -1499,17 +1499,17 @@ private struct MoreChangePasswordSheet: View {
                 UINotificationFeedbackGenerator().notificationOccurred(.success)
                 dismiss()
             } else {
-                error = "পরিবর্তন হয়নি — আবার চেষ্টা করুন"
+                errorText = "পরিবর্তন হয়নি — আবার চেষ্টা করুন"
             }
         } catch let e as AlmaAPIError {
             if case .http(let status, let bodyText) = e, status == 400,
                bodyText.contains("incorrect") {
-                error = "বর্তমান password ভুল"
+                errorText = "বর্তমান password ভুল"
             } else {
-                error = "পরিবর্তন হয়নি — আবার চেষ্টা করুন"
+                errorText = "পরিবর্তন হয়নি — আবার চেষ্টা করুন"
             }
         } catch {
-            error = "পরিবর্তন হয়নি — নেটওয়ার্ক দেখে আবার চেষ্টা করুন"
+            errorText = "পরিবর্তন হয়নি — নেটওয়ার্ক দেখে আবার চেষ্টা করুন"
         }
     }
 }
@@ -1524,7 +1524,7 @@ private struct MoreEditContactSheet: View {
     @State private var name = ""
     @State private var phone = ""
     @State private var busy = false
-    @State private var error: String?
+    @State private var errorText: String?
 
     var body: some View {
         ScrollView {
@@ -1543,8 +1543,8 @@ private struct MoreEditContactSheet: View {
                         .padding(.horizontal, 14).padding(.vertical, 13)
                 }
                 .ordersGlass(scheme, corner: AlmaSwiftTheme.rCard)
-                if let error {
-                    Text(error).font(.caption)
+                if let errorText {
+                    Text(errorText).font(.caption)
                         .foregroundStyle(Color(red: 0.878, green: 0.478, blue: 0.373))
                 }
                 Button {
@@ -1577,7 +1577,7 @@ private struct MoreEditContactSheet: View {
     private func submit() async {
         busy = true
         defer { busy = false }
-        error = nil
+        errorText = nil
         struct Body: Encodable { let name: String; let phone: String }
         do {
             let trimmedName = name.trimmingCharacters(in: .whitespaces)
@@ -1589,7 +1589,7 @@ private struct MoreEditContactSheet: View {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             dismiss()
         } catch {
-            error = "সেভ হয়নি — আবার চেষ্টা করুন"
+            errorText = "সেভ হয়নি — আবার চেষ্টা করুন"
         }
     }
 }
