@@ -226,20 +226,13 @@ struct PaymentAccountsScreen: View {
         .task { await vm.load() }
     }
 
-    /// Web panel header: title strip + the exact explainer line.
+    /// Web panel header as the bento dark hero (owner spec 2026-07-08) — COUNTS ONLY
+    /// (this screen has no balances): accounts on file + verified/pending split, all
+    /// derived from the same list the cards below render. Explainer line kept verbatim.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("PAYMENT ACCOUNTS")
-                .font(.caption2.weight(.heavy))
-                .kerning(1.4)
-                .foregroundStyle(PaymentAccountPalette.accentText(colorScheme))
-            Text("Used for salary payouts, wallet advances, and withdrawals. Numbers are masked on shared screens.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .paymentAccountsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        PayBentoHeroCard(total: vm.methods.count,
+                         verified: vm.methods.filter { $0.isVerified == true }.count,
+                         pending: vm.methods.filter { $0.isVerified != true }.count)
     }
 
     /// Business scope chips — the web page reads it from BusinessContext; natively
@@ -576,6 +569,119 @@ private struct PaymentAccountsShimmer: ViewModifier {
 @available(iOS 17.0, *)
 private extension View {
     func paymentAccountsShimmer() -> some View { modifier(PaymentAccountsShimmer()) }
+}
+
+// MARK: - Bento components (PaymentAccounts-owned copies of the Dashboard board
+// language — per-file copies are this repo's parallel-session convention)
+
+/// Central motion gate — count-ups freeze under Reduce Motion / Low Power.
+@available(iOS 17.0, *)
+private func payMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number (0 → target on appear, old → new on refresh) — one Animatable
+/// interpolation, no timers; snaps straight to the value when motion is limited.
+@available(iOS 17.0, *)
+private struct PayCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        PayCountUpText(value: shown)
+            .animation(payMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if payMotionOK(reduceMotion) {
+                    appeared = true
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct PayCountUpText: View, Animatable {
+    var value: Double
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text("\(Int(value.rounded()))")
+    }
+}
+
+/// The dark hero anchor — deliberately dark in BOTH schemes (Dashboard hero recipe:
+/// deep indigo base + violet/coral washes + a sage hint). Accounts-on-file count-up
+/// plus the Verified / Pending-verify split; the web explainer line kept verbatim.
+@available(iOS 17.0, *)
+private struct PayBentoHeroCard: View {
+    let total: Int
+    let verified: Int
+    let pending: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("পেমেন্ট অ্যাকাউন্ট · PAYMENT ACCOUNTS")
+                .font(.system(size: 10, weight: .bold)).tracking(0.8)
+                .foregroundStyle(PaymentAccountPalette.goldLt)
+            PayCountUp(target: total)
+                .font(.system(size: 40, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(.white)
+                .lineLimit(1).minimumScaleFactor(0.6)
+                .padding(.top, 8)
+            Text("Used for salary payouts, wallet advances, and withdrawals. Numbers are masked on shared screens.")
+                .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.top, 5)
+
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "Verified", value: verified,
+                         tint: PaymentAccountPalette.green400, sub: "যাচাই হয়েছে")
+                Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+                    .padding(.vertical, 2).padding(.horizontal, 14)
+                heroStat(label: "Pending verify", value: pending,
+                         tint: pending > 0 ? PaymentAccountPalette.amber500 : .white,
+                         sub: "যাচাই বাকি")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [AlmaSwiftTheme.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Always the board's dark anchor — force dark traits inside the card.
+        .environment(\.colorScheme, .dark)
+    }
+
+    private func heroStat(label: String, value: Int, tint: Color, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.5)
+                .foregroundStyle(.white.opacity(0.55))
+            PayCountUp(target: value)
+                .font(.system(size: 20, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+        }
+    }
 }
 
 // MARK: - Preview (stubbed — live data needs the app session)
