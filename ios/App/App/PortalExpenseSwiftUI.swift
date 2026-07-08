@@ -265,7 +265,8 @@ struct PortalExpenseScreen: View {
         .padding(.top, 4)
     }
 
-    // ── Summary cards (web: অপেক্ষমাণ / অনুমোদিত + wallet link) ──
+    // ── Summary cards (web: অপেক্ষমাণ / অনুমোদিত + wallet link) — light bento pass
+    //    (owner spec 2026-07-08): soft amber/emerald accent washes, same numbers. ──
 
     private var summaryCards: some View {
         HStack(spacing: 10) {
@@ -281,6 +282,11 @@ struct PortalExpenseScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
+            .background {
+                LinearGradient(colors: [PortalExpensePalette.amber500.opacity(colorScheme == .dark ? 0.14 : 0.10), .clear],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            }
             .portalExpenseGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -302,6 +308,11 @@ struct PortalExpenseScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
+            .background {
+                LinearGradient(colors: [PortalExpensePalette.emerald600.opacity(colorScheme == .dark ? 0.14 : 0.10), .clear],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            }
             .portalExpenseGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
