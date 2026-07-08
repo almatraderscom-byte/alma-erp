@@ -214,9 +214,15 @@ enum OrderStatusMeta {
 @available(iOS 17.0, *)
 @Observable
 final class OrdersVM {
-    var orders: [AlmaOrder] = []
-    var byStatus: [String: Int] = [:]
-    var total = 0
+    /// The FULL window (all statuses), exactly as the server returns it — already
+    /// archive-stripped. Every chip count + KPI is derived from THIS, so the numbers
+    /// can never disagree with the cards on screen (the server's summary counts archived
+    /// rows the list omits, so we never trust it — owner bug 2026-07-06).
+    var allOrders: [AlmaOrder] = []
+    var orders: [AlmaOrder] = []       // the visible slice = allOrders filtered by statusFilter
+    var byStatus: [String: Int] = [:]  // per-status counts over the whole window (chip counts)
+    var windowCount = 0                // all orders in the window (the "All" chip)
+    var total = 0                      // KPI ORDERS = what's actually shown for the active filter
     var revenue = 0
     var profit = 0
     var statusFilter: String? = nil
@@ -240,11 +246,13 @@ final class OrdersVM {
         defer { loading = false }
         do {
             let (start, end) = dateFilter.range
-            let isReturns = statusFilter == Self.returnsSentinel
+            // ALWAYS fetch the whole window (no server status filter) so the chip counts
+            // and the visible list come from ONE source of truth. The status filter is
+            // applied client-side in applyFilter() — this makes chip taps instant AND
+            // keeps every count exactly equal to the cards you see when you tap it.
             let resp: OrdersListResponse = try await AlmaAPI.shared.get(
                 "/api/orders/orders",
                 query: ["business_id": "ALMA_LIFESTYLE",
-                        "status": isReturns ? nil : statusFilter,
                         "payment": payment,
                         "source": source,
                         "startDate": start,
@@ -252,18 +260,14 @@ final class OrdersVM {
                         "search": search.isEmpty ? nil : search,
                         "limit": "500"])
             var list = resp.orders
-            if isReturns { list = list.filter { Self.returnStatuses.contains($0.status) } }
             switch sort {   // web sort options: newest (server order) / oldest / price / profit
             case "oldest": list.reverse()
             case "price": list.sort { ($0.sellPrice ?? 0) > ($1.sellPrice ?? 0) }
             case "profit": list.sort { ($0.profit ?? 0) > ($1.profit ?? 0) }
             default: break
             }
-            orders = list
-            byStatus = resp.summary?.byStatus ?? [:]
-            total = resp.summary?.total ?? resp.orders.count
-            revenue = resp.summary?.totalRevenue ?? 0
-            profit = resp.summary?.totalProfit ?? 0
+            allOrders = list
+            applyFilter()
             authExpired = false
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
@@ -272,10 +276,40 @@ final class OrdersVM {
         }
     }
 
+    /// Re-derive the visible list + all counts from `allOrders` for the active status
+    /// filter. Pure/local — no network — so tapping a status chip is instant and the
+    /// numbers are guaranteed to match the rows shown.
+    func applyFilter() {
+        // Chip counts: per-status over the whole window (independent of the active chip,
+        // exactly like the web header — each chip shows what you'd get if you tapped it).
+        var counts: [String: Int] = [:]
+        for o in allOrders { counts[o.status, default: 0] += 1 }
+        byStatus = counts
+        windowCount = allOrders.count
+
+        // Visible slice for the active filter.
+        let visible: [AlmaOrder]
+        if statusFilter == Self.returnsSentinel {
+            visible = allOrders.filter { Self.returnStatuses.contains($0.status) }
+        } else if let s = statusFilter {
+            visible = allOrders.filter { $0.status == s }
+        } else {
+            visible = allOrders
+        }
+        orders = visible
+        total = visible.count
+        // KPIs reflect exactly what's on screen (self-consistent with ordersSummaryFromSlice:
+        // revenue = Delivered sell price, profit = realized profit on Delivered rows).
+        revenue = visible.reduce(0) { $0 + ($1.status == "Delivered" ? ($1.sellPrice ?? 0) : 0) }
+        profit  = visible.reduce(0) { $0 + ($1.status == "Delivered" ? ($1.profit ?? 0) : 0) }
+    }
+
     /// Optimistic status change with rollback — same behavior the web drawer has.
     func setStatus(_ order: AlmaOrder, to status: String, reason: String? = nil) async -> Bool {
         let old = order.status
-        if let i = orders.firstIndex(where: { $0.id == order.id }) { orders[i].status = status }
+        // Optimistic: update the source of truth (allOrders) and re-derive everything.
+        if let i = allOrders.firstIndex(where: { $0.id == order.id }) { allOrders[i].status = status }
+        applyFilter()
         do {
             var body: [String: String] = ["id": order.id, "status": status]
             if let reason { body["reason"] = reason }
@@ -284,7 +318,8 @@ final class OrdersVM {
             await load() // refresh counts + row (server may cascade fields)
             return true
         } catch {
-            if let i = orders.firstIndex(where: { $0.id == order.id }) { orders[i].status = old }
+            if let i = allOrders.firstIndex(where: { $0.id == order.id }) { allOrders[i].status = old }
+            applyFilter()
             UINotificationFeedbackGenerator().notificationOccurred(.error)
             self.error = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
             return false
@@ -345,6 +380,7 @@ struct OrdersScreen: View {
         .claudeTopFade(useNativeEdgeEffect: false)
         .refreshable { await vm.load() }
         .scrollDismissesKeyboard(.immediately)
+        .dismissKeyboardOnTap()   // tap empty space to close the search keyboard
         .task { await vm.load() }
         .sheet(item: $selected) { order in
             OrderDetailSheet(order: order, vm: vm, openWeb: openWeb)
@@ -423,7 +459,7 @@ struct OrdersScreen: View {
             statCard("ORDERS", "\(vm.total)", .primary)
             statCard("REVENUE", AlmaSwiftTheme.takaShort(vm.revenue), AlmaSwiftTheme.coral)
             statCard("PROFIT", AlmaSwiftTheme.takaShort(vm.profit),
-                     vm.profit >= 0 ? Color.green : Color.red)
+                     vm.profit >= 0 ? AlmaSwiftTheme.ios27Green(colorScheme) : AlmaSwiftTheme.ios27Red(colorScheme))
         }
     }
 
@@ -435,7 +471,7 @@ struct OrdersScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .ordersGlass(colorScheme, corner: 14)
+        .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Channel / payment / sort (the web header's dropdowns, as one native menu) ──
@@ -471,7 +507,7 @@ struct OrdersScreen: View {
                 .font(.title3)
                 .foregroundStyle(AlmaSwiftTheme.violet)
                 .frame(width: 42, height: 42)
-                .ordersGlass(colorScheme, corner: 14)
+                .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -500,7 +536,7 @@ struct OrdersScreen: View {
     private var chipsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                chip(nil, label: "All", count: vm.total)
+                chip(nil, label: "All", count: vm.windowCount)
                 chip(OrdersVM.returnsSentinel, label: "All Returns",
                      count: OrdersVM.returnStatuses.reduce(0) { $0 + (vm.byStatus[$1] ?? 0) })
                 ForEach(OrderStatusMeta.filterable, id: \.self) { s in
@@ -518,7 +554,7 @@ struct OrdersScreen: View {
         return Button {
             UISelectionFeedbackGenerator().selectionChanged()
             vm.statusFilter = status
-            Task { await vm.load() }
+            vm.applyFilter()   // instant, local — counts stay perfectly in sync with the rows
         } label: {
             HStack(spacing: 5) {
                 if let status { Circle().fill(OrderStatusMeta.tint(status)).frame(width: 7, height: 7) }
@@ -556,7 +592,7 @@ struct OrdersScreen: View {
                 .autocorrectionDisabled()
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
-        .ordersGlass(colorScheme, corner: 14)
+        .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var newOrderFAB: some View {
@@ -585,13 +621,13 @@ struct OrdersScreen: View {
         }
         .frame(maxWidth: .infinity)
         .padding(20)
-        .ordersGlass(colorScheme, corner: 16)
+        .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func errorCard(_ message: String) -> some View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.footnote)
-            .foregroundStyle(.red)
+            .foregroundStyle(AlmaSwiftTheme.ios27Red(colorScheme))
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
             .ordersGlass(colorScheme, corner: 12)
@@ -601,7 +637,7 @@ struct OrdersScreen: View {
         ForEach(0..<6, id: \.self) { _ in
             Color.clear
                 .frame(height: 92)
-                .ordersGlass(colorScheme, corner: 16)
+                .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .shimmering()
         }
     }
@@ -648,8 +684,8 @@ private struct OrderCard: View {
             }
         }
         .padding(14)
-        .ordersGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
     }
 
     private var productLine: String {
@@ -731,7 +767,7 @@ private struct OrderDetailSheet: View {
             }
         }
         .padding(14)
-        .ordersGlass(colorScheme, corner: 14)
+        .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
     @Environment(\.colorScheme) private var colorScheme
 
@@ -812,34 +848,57 @@ private struct OrderDetailSheet: View {
 @available(iOS 17.0, *)
 struct OrdersAurora: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
 
     var body: some View {
-        ZStack {
-            if scheme == .dark {
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.075, green: 0.063, blue: 0.196), location: 0.0),  // deep indigo
-                    .init(color: Color(red: 0.216, green: 0.125, blue: 0.439), location: 0.32), // violet
-                    .init(color: Color(red: 0.478, green: 0.176, blue: 0.494), location: 0.62), // purple-magenta
-                    .init(color: Color(red: 0.706, green: 0.255, blue: 0.404), location: 1.0),  // pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.35), .clear],
-                               center: .init(x: 0.15, y: 0.18), startRadius: 10, endRadius: 420)
-                RadialGradient(colors: [Color(red: 0.93, green: 0.42, blue: 0.55).opacity(0.30), .clear],
-                               center: .init(x: 0.9, y: 0.85), startRadius: 20, endRadius: 480)
-            } else {
-                AlmaSwiftTheme.rootBg(.light)
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.902, green: 0.882, blue: 0.973), location: 0.0),  // pale violet
-                    .init(color: Color(red: 0.949, green: 0.941, blue: 0.972), location: 0.45), // cream
-                    .init(color: Color(red: 0.988, green: 0.918, blue: 0.925), location: 1.0),  // pale pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.14), .clear],
-                               center: .init(x: 0.12, y: 0.15), startRadius: 10, endRadius: 380)
-                RadialGradient(colors: [AlmaSwiftTheme.coral.opacity(0.12), .clear],
-                               center: .init(x: 0.9, y: 0.9), startRadius: 20, endRadius: 420)
+        let dark = scheme == .dark
+        // Agent-parity living aurora (web --aurora-blob-1…5): five blurred colour blobs
+        // drifting corner-to-corner over the page canvas. Owner directive 2026-07-08:
+        // every native page shares the Assistant tab's moving aurora.
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        .fill(b.color)
+                        .frame(width: b.size, height: b.size)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                        .blur(radius: 70)
+                }
             }
+            .onAppear { updateDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Battery guard: drift only when the owner allows motion — Reduce Motion and
+    /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+        }
     }
 }
 
@@ -872,10 +931,10 @@ struct OrdersGlassCard<Content: View>: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),
-                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(Color.white.opacity(scheme == .dark ? 0.12 : 0.5), lineWidth: 1))
     }
 }

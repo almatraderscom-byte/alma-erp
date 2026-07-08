@@ -31,57 +31,57 @@ are pre-assigned here so two sessions can never pick the same name.
 ### Core tabs (native shell)
 | Page | Route | Owning files (writable scope) | Surface | Status | Owner |
 |---|---|---|---|---|---|
-| Dashboard | `/` | — (Capacitor `AlmaBridgeViewController` — push/reminders/N1–N5 live here) | mixed | FROZEN_CAPACITOR | — |
+| Dashboard | `/` | `ios/App/App/DashboardSwiftUI.swift` (shell wiring + pbxproj via SHARED_CHANGES_REQUESTED) | native | IN_PROGRESS (owner lifted freeze 2026-07-06; Lifestyle owner/admin view migrated — all web components + exact theme, typecheck green; N1–N5 push/reminders kept at shell level as flag-off fallback — sim-verify pending owner "build" go-ahead) | dashboard session |
 | Assistant (Claude surface) | `/agent` | `ios/App/App/AssistantSwiftUI.swift` | native | IN_REVIEW (owner instruction 2026-07-06 lifted KEEP_WEB; native chat sim-verified, see handoff §0-e; web fallback intact via flag) | assistant session |
 | Orders list | `/orders` | `ios/App/App/OrdersSwiftUI.swift` | native | DONE (b36) | main session |
 | Order create | `/orders/new` | `ios/App/App/OrderCreateSwiftUI.swift` | native | IN_REVIEW (b36 — owner's first live submit = e2e test) | main session |
-| Approvals | `/approvals` | `ios/App/App/ApprovalsSwiftUI.swift` | native | DONE (b35, v1 — payout detail pending) | main session |
+| Approvals | `/approvals` | `ios/App/App/ApprovalsSwiftUI.swift` | native | IN_REVIEW (v2 web-parity 2026-07-06: web colours/blocks + Agent view + KPI strip + withdraw txn-id + leave/salary/payout digests; iOS-polish agent cards; sim-verified light+dark on branch `native/approvals-parity`) | approvals session |
 | More menu | (native) | `ios/App/App/MoreMenuSwiftUI.swift` | native | DONE (b35) | main session |
 | Phone Companion | (native) | `ios/App/App/CompanionSwiftUI.swift` (chrome only; `AlmaCompanion.swift` is FROZEN) | native | DONE (b35) | main session |
 
 ### Money
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
-| Finance | `/finance` | `ios/App/App/FinanceSwiftUI.swift` | web | NOT_STARTED | — |
-| Office fund | `/finance/office-fund` | `ios/App/App/OfficeFundSwiftUI.swift` | web | NOT_STARTED | — |
-| Expenses | `/expenses` | `ios/App/App/ExpensesSwiftUI.swift` | web | NOT_STARTED | — |
-| Payroll | `/payroll` | `ios/App/App/PayrollSwiftUI.swift` | web | NOT_STARTED | — |
-| Invoices | `/invoice` | `ios/App/App/InvoicesSwiftUI.swift` | web | NOT_STARTED | — |
+| Finance | `/finance` | `ios/App/App/FinanceSwiftUI.swift` | native | IN_REVIEW (marathon b1 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Office fund | `/finance/office-fund` | `ios/App/App/OfficeFundSwiftUI.swift` | native | IN_REVIEW (marathon b2 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Expenses | `/expenses` | `ios/App/App/ExpensesSwiftUI.swift` | native | IN_REVIEW (marathon b1 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Payroll | `/payroll` | `ios/App/App/PayrollSwiftUI.swift` | native | IN_REVIEW (marathon b1 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Invoices | `/invoice` | `ios/App/App/InvoicesSwiftUI.swift` | native | IN_REVIEW (marathon b1 2026-07-06, sim-build pending at marathon end) | marathon session |
 | Invoice share | `/invoice/share/[slug]` | — (public link, stays web) | web | KEEP_WEB | — |
 
 ### Operations
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
-| Inventory | `/inventory` | `ios/App/App/InventorySwiftUI.swift` | web | NOT_STARTED | — |
-| Supplier import | `/inventory/supplier-import` | `ios/App/App/SupplierImportSwiftUI.swift` | web | NOT_STARTED | — |
-| Activity | `/activity` | `ios/App/App/ActivitySwiftUI.swift` | web | NOT_STARTED | — |
-| Task Spotlight | `/operations/task-spotlight` | `ios/App/App/TaskSpotlightSwiftUI.swift` | web | NOT_STARTED | — |
-| Business archive | `/operations/business-archive` | `ios/App/App/BusinessArchiveSwiftUI.swift` | web | NOT_STARTED | — |
-| System diagnostics | `/operations/system-diagnostics` | `ios/App/App/SystemDiagnosticsSwiftUI.swift` | web | NOT_STARTED | — |
+| Inventory | `/inventory` | `ios/App/App/InventorySwiftUI.swift` | native | IN_REVIEW (marathon b2 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Supplier import | `/inventory/supplier-import` | `ios/App/App/SupplierImportSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Activity | `/activity` | `ios/App/App/ActivitySwiftUI.swift` | native | IN_REVIEW (marathon b2 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Task Spotlight | `/operations/task-spotlight` | `ios/App/App/TaskSpotlightSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Business archive | `/operations/business-archive` | `ios/App/App/BusinessArchiveSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
+| System diagnostics | `/operations/system-diagnostics` | `ios/App/App/SystemDiagnosticsSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
 
 ### People
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
-| Employees | `/employees` | `ios/App/App/EmployeesSwiftUI.swift` | web | NOT_STARTED | — |
-| Employee detail | `/employees/[id]` | (same file as Employees — one session owns both) | web | NOT_STARTED | — |
-| Attendance | `/attendance` | `ios/App/App/AttendanceSwiftUI.swift` | web | NOT_STARTED | — |
-| CRM | `/crm` | `ios/App/App/CrmSwiftUI.swift` | web | NOT_STARTED | — |
+| Employees | `/employees` | `ios/App/App/EmployeesSwiftUI.swift` | native | IN_REVIEW (marathon b2 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Employee detail | `/employees/[id]` | (same file as Employees — one session owns both) | native | IN_REVIEW (marathon b2 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Attendance | `/attendance` | `ios/App/App/AttendanceSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
+| CRM | `/crm` | `ios/App/App/CrmSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
 
 ### Insights
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
-| Analytics | `/analytics` | `ios/App/App/AnalyticsSwiftUI.swift` | web | NOT_STARTED | — |
-| Insights | `/insights` | `ios/App/App/InsightsSwiftUI.swift` | web | NOT_STARTED | — |
-| Briefing | `/briefing` | `ios/App/App/BriefingSwiftUI.swift` | web | NOT_STARTED | — |
-| Audit | `/audit` | `ios/App/App/AuditSwiftUI.swift` | web | NOT_STARTED | — |
+| Analytics | `/analytics` | `ios/App/App/AnalyticsSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Insights | `/insights` | `ios/App/App/InsightsSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Briefing | `/briefing` | `ios/App/App/BriefingSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Audit | `/audit` | `ios/App/App/AuditSwiftUI.swift` | native | IN_REVIEW (marathon b3-4 2026-07-06, sim-build pending at marathon end) | marathon session |
 
 ### Portal (staff desk)
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
-| My Desk | `/portal` | `ios/App/App/PortalSwiftUI.swift` | web | NOT_STARTED | — |
-| Portal expense | `/portal/expense` | `ios/App/App/PortalExpenseSwiftUI.swift` | web | NOT_STARTED | — |
-| Office | `/portal/office` | `ios/App/App/PortalOfficeSwiftUI.swift` | web | NOT_STARTED | — |
-| Payment accounts | `/portal/payment-accounts` | `ios/App/App/PaymentAccountsSwiftUI.swift` | web | NOT_STARTED | — |
+| My Desk | `/portal` | `ios/App/App/PortalSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Portal expense | `/portal/expense` | `ios/App/App/PortalExpenseSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Office | `/portal/office` | `ios/App/App/PortalOfficeSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Payment accounts | `/portal/payment-accounts` | `ios/App/App/PaymentAccountsSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
 
 ### Trading business
 | Page | Route | Owning files | Surface | Status | Owner |
@@ -106,26 +106,26 @@ are pre-assigned here so two sessions can never pick the same name.
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
 | Creative Studio | `/agent/creative-studio` | — (owner's no-LLM-judgment pipeline, heavy web UI) | web | KEEP_WEB | — |
-| WhatsApp inbox | `/agent/whatsapp` | `ios/App/App/AgentWhatsappSwiftUI.swift` | web | NOT_STARTED | — |
-| Costs | `/agent/costs` | `ios/App/App/AgentCostsSwiftUI.swift` | web | NOT_STARTED | — |
-| Staff monitor | `/agent/staff-monitor` | `ios/App/App/StaffMonitorSwiftUI.swift` | web | NOT_STARTED | — |
-| Growth | `/agent/growth` | `ios/App/App/AgentGrowthSwiftUI.swift` | web | NOT_STARTED | — |
-| Known people | `/agent/known-people` | `ios/App/App/KnownPeopleSwiftUI.swift` | web | NOT_STARTED | — |
-| Catalog images | `/agent/catalog-images` | `ios/App/App/CatalogImagesSwiftUI.swift` | web | NOT_STARTED | — |
-| Trading staff | `/agent/trading-staff` | `ios/App/App/TradingStaffSwiftUI.swift` | web | NOT_STARTED | — |
+| WhatsApp inbox | `/agent/whatsapp` | `ios/App/App/AgentWhatsappSwiftUI.swift` | native | IN_REVIEW (marathon b7-8 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Costs | `/agent/costs` | `ios/App/App/AgentCostsSwiftUI.swift` | native | IN_REVIEW (marathon b7-8 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Staff monitor | `/agent/staff-monitor` | `ios/App/App/StaffMonitorSwiftUI.swift` | native | IN_REVIEW (marathon b8 2026-07-06) | marathon session |
+| Growth | `/agent/growth` | `ios/App/App/AgentGrowthSwiftUI.swift` | native | IN_REVIEW (marathon b8 2026-07-06) | marathon session |
+| Known people | `/agent/known-people` | `ios/App/App/KnownPeopleSwiftUI.swift` | native | IN_REVIEW (marathon b8 2026-07-06) | marathon session |
+| Catalog images | `/agent/catalog-images` | `ios/App/App/CatalogImagesSwiftUI.swift` | native | IN_REVIEW (marathon b8 2026-07-06) | marathon session |
+| Trading staff | `/agent/trading-staff` | `ios/App/App/TradingStaffSwiftUI.swift` | native | IN_REVIEW (marathon b8 2026-07-06) | marathon session |
 | Live watch | `/agent/live-watch` | — (P3 companion feed, owner call) | web | KEEP_WEB | — |
 | Studio demo | `/agent/creative-studio-demo` | — (demo page) | web | KEEP_WEB | — |
 
 ### Settings
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
-| Users | `/settings/users` | `ios/App/App/SettingsUsersSwiftUI.swift` | web | NOT_STARTED | — |
-| Notifications | `/settings/notifications` | `ios/App/App/SettingsNotificationsSwiftUI.swift` | web | NOT_STARTED | — |
-| Branding | `/settings/branding` | `ios/App/App/SettingsBrandingSwiftUI.swift` | web | NOT_STARTED | — |
-| SMS | `/settings/sms` | `ios/App/App/SettingsSmsSwiftUI.swift` | web | NOT_STARTED | — |
-| Telegram Ops | `/settings/telegram-ops` | `ios/App/App/SettingsTelegramSwiftUI.swift` | web | NOT_STARTED | — |
-| Database | `/settings/database` | `ios/App/App/SettingsDatabaseSwiftUI.swift` | web | NOT_STARTED | — |
-| Session | `/settings/session` | `ios/App/App/SettingsSessionSwiftUI.swift` | web | NOT_STARTED | — |
+| Users | `/settings/users` | `ios/App/App/SettingsUsersSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Notifications | `/settings/notifications` | `ios/App/App/SettingsNotificationsSwiftUI.swift` | native | IN_REVIEW (marathon b5-6 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Branding | `/settings/branding` | `ios/App/App/SettingsBrandingSwiftUI.swift` | native | IN_REVIEW (marathon b7-8 2026-07-06, sim-build pending at marathon end) | marathon session |
+| SMS | `/settings/sms` | `ios/App/App/SettingsSmsSwiftUI.swift` | native | IN_REVIEW (marathon b7-8 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Telegram Ops | `/settings/telegram-ops` | `ios/App/App/SettingsTelegramSwiftUI.swift` | native | IN_REVIEW (marathon b7-8 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Database | `/settings/database` | `ios/App/App/SettingsDatabaseSwiftUI.swift` | native | IN_REVIEW (marathon b7-8 2026-07-06, sim-build pending at marathon end) | marathon session |
+| Session | `/settings/session` | `ios/App/App/SettingsSessionSwiftUI.swift` | native | IN_REVIEW (marathon b7-8 2026-07-06, sim-build pending at marathon end) | marathon session |
 
 ### Never migrated (auth / legal / misc web-only)
 `/login`, `/forgot-password`, `/reset-password` (auth = web, cookies feed the native session),

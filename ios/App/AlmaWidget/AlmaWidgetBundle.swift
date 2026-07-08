@@ -19,12 +19,21 @@ struct AlmaWidgetBundle: WidgetBundle {
         // Live Activity — iOS 16.1+ only. WidgetBundle bodies can't hold a bare
         // `if #available`, so the availability check lives in a builder member.
         pulseLiveActivity
+        voiceLiveActivity
     }
 
     @WidgetBundleBuilder
     private var pulseLiveActivity: some Widget {
         if #available(iOS 16.1, *) {
             PulseLiveActivity()
+        }
+    }
+
+    // ALMA voice-session island — iOS 17+ (LiveActivityIntent End button).
+    @WidgetBundleBuilder
+    private var voiceLiveActivity: some Widget {
+        if #available(iOS 17.0, *) {
+            AlmaVoiceLiveActivity()
         }
     }
 }

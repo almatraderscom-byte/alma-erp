@@ -30,6 +30,8 @@ export async function PATCH(
   if (body.nextRenewalAt != null) data.nextRenewalAt = new Date(String(body.nextRenewalAt))
   if (body.category != null) data.category = body.category ? String(body.category) : null
   if (body.notes != null) data.notes = body.notes ? String(body.notes) : null
+  if (body.plan != null) data.plan = body.plan ? String(body.plan) : null
+  if (body.paymentMethod != null) data.paymentMethod = body.paymentMethod ? String(body.paymentMethod) : null
   if (body.active != null) data.active = Boolean(body.active)
 
   const row = await db.agentSubscription.update({ where: { id: params.id }, data })

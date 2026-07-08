@@ -13,7 +13,8 @@
 //    • change feed → the same "almaThemeChanged" notification, by string name
 //    • toggle      → a `toggleDark` closure the host wires to AlmaTheme.toggle/set
 //  Colours are derived from the SwiftUI colorScheme (the hosting nav controller sets
-//  overrideUserInterfaceStyle from AlmaTheme), so the screen restyles for free on flip.
+//  overrideUserInterfaceStyle from AlmaTheme), so the screen restyles for free on flip;
+//  the UserDefaults read only drives the switch position + sun/moon icon.
 //
 //  Data: ONE cookie-authenticated fetch (AlmaAPI) of /api/assistant/more-pulse —
 //  identity + alerts + progress together. If that route is unavailable (agent flag
@@ -160,7 +161,7 @@ final class MoreVM {
     var alerts: [MorePulseAlert] = []
     var progress: MorePulseProgress?
     /// True once ANY load attempt finished — flips the hero cards from their
-    /// shimmer-quiet loading look to real content / empty states.
+    /// quiet loading look to real content / empty states.
     var loadedOnce = false
 
     private var lastLoad: Date?
@@ -221,6 +222,8 @@ struct MoreMenuScreen: View {
     let openPath: (_ path: String, _ title: String) -> Void
     /// Pushes the NATIVE Phone Companion screen (the "native:companion" row in UIKit).
     let openCompanion: () -> Void
+    /// DEBUG: pushes the native 12-spoke loader preview (native:spinner-preview row).
+    var openSpinnerPreview: (() -> Void)? = nil
     /// Flips the app-wide theme (host calls AlmaTheme; we never touch it directly).
     let toggleDark: () -> Void
     /// S6 escape hatch: the "Native স্ক্রিন" switch — flips AlmaSwiftUIFlag and the host
@@ -228,6 +231,13 @@ struct MoreMenuScreen: View {
     /// (nil hides the row) so previews / other hosts don't need it.
     var nativeScreensOn: Bool = true
     var toggleNativeScreens: (() -> Void)? = nil
+
+    /// iOS Face ID / Touch ID app-lock control. The enable flag lives in the web app's
+    /// localStorage (BiometricLockGate); the host reads/writes it via a live webview.
+    /// nil hides the row (e.g. previews / non-iOS hosts).
+    var readBiometricLock: ((@escaping (Bool) -> Void) -> Void)? = nil
+    var setBiometricLock: ((Bool) -> Void)? = nil
+
     /// Fired when the logged-in user's name arrives — the host sets it as the nav
     /// large title (Watch-app style "Alex's Apple Watch" slot). Optional for previews.
     var onUserName: (String) -> Void = { _ in }
@@ -236,27 +246,38 @@ struct MoreMenuScreen: View {
     /// Mirrors AlmaTheme.isDark for the switch + sun/moon icon; resynced on every
     /// almaThemeChanged broadcast so an external flip (e.g. web toggle) can't desync it.
     @State private var isDark = MoreTheme.isDark
+    /// Face ID lock switch position. Seeded from the local cache for an instant, correct
+    /// first paint; reconciled against the web localStorage value on appear.
+    @State private var faceLockOn = UserDefaults.standard.object(forKey: "alma-biometric-lock-cache") as? Bool ?? true
     @State private var vm = MoreVM()
     @State private var expandedGroups: Set<String> = MoreExpandState.load()
     @State private var showBusinessSheet = false
 
-    // ── Menu data — same items as the pre-redesign screen; "Switch business" moved
-    //    to the glossy pill + sheet, so it is no longer a list section ──
+    // ── Menu data — same items as before; "Switch business" moved to the glossy
+    //    pill + sheet, so it is no longer a list section ──
 
     fileprivate struct MenuItem { let title: String; let icon: String; let path: String }
     fileprivate struct MenuGroup { let header: String; let icon: String; let items: [MenuItem] }
 
-    private static let groups: [MenuGroup] = [
+    private static var groups: [MenuGroup] {
         // P3 mobile companion: "native:companion" is a sentinel — that row pushes the
         // NATIVE companion screen (openCompanion) instead of a web view.
-        MenuGroup(header: "Agent", icon: "sparkles", items: [
+        var agentItems: [MenuItem] = [
             MenuItem(title: "Phone Companion", icon: "iphone.radiowaves.left.and.right", path: "native:companion"),
             MenuItem(title: "Live Watch",      icon: "eye",                              path: "/agent/live-watch"),
-        ]),
+            MenuItem(title: "Credit Usage",    icon: "chart.bar.xaxis",                  path: "/agent/credit-usage"),
+            MenuItem(title: "Subscriptions",   icon: "repeat.circle",                    path: "/agent/subscriptions"),
+        ]
+        #if DEBUG
+        agentItems.append(MenuItem(title: "Loader Preview", icon: "sparkles", path: "native:spinner-preview"))
+        #endif
+        return [
+        MenuGroup(header: "Agent", icon: "sparkles", items: agentItems),
         MenuGroup(header: "Workspace", icon: "square.grid.2x2", items: [
-            MenuItem(title: "My Desk",        icon: "person.crop.square", path: "/portal"),
-            MenuItem(title: "Office",         icon: "building.2",         path: "/portal/office"),
-            MenuItem(title: "Product Images", icon: "photo.on.rectangle", path: "/agent/catalog-images"),
+            MenuItem(title: "My Desk",         icon: "person.crop.square", path: "/portal"),
+            MenuItem(title: "Office",          icon: "building.2",         path: "/portal/office"),
+            MenuItem(title: "Product Images",  icon: "photo.on.rectangle", path: "/agent/catalog-images"),
+            MenuItem(title: "Creative Studio", icon: "wand.and.stars",     path: "/agent/creative-studio"),
         ]),
         MenuGroup(header: "Money", icon: "banknote", items: [
             MenuItem(title: "Finance",  icon: "banknote",          path: "/finance"),
@@ -290,7 +311,8 @@ struct MoreMenuScreen: View {
             MenuItem(title: "Database",      icon: "cylinder.split.1x2", path: "/settings/database"),
             MenuItem(title: "Session",       icon: "key",                path: "/settings/session"),
         ]),
-    ]
+        ]
+    }
 
     /// The owner's 3 businesses. Switching is just navigation — the ERP derives the
     /// active business from the route (`/trading` → Trading, `/digital` → CDIT, `/` →
@@ -340,12 +362,17 @@ struct MoreMenuScreen: View {
                         nativeScreensRow
                     }
                 }
+                if readBiometricLock != nil {
+                    section(header: "Security") { faceLockRow }
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 28)
         }
-        .background(rootBg.ignoresSafeArea())
+        // The owner's aurora — the same ambient the Orders / Assistant surfaces wear, so
+        // More stops looking like a flat grey settings list and matches the app theme.
+        .background(OrdersAurora())
         .refreshable { await vm.load() }
         // Claude-style top scroll-edge fade under the (transparent-glass) UIKit nav bar.
         .claudeTopFade()
@@ -360,6 +387,10 @@ struct MoreMenuScreen: View {
         }
         .onChange(of: vm.userName) { _, name in
             if !name.isEmpty { onUserName(name) }
+        }
+        // Reconcile the Face ID switch with the real web localStorage value on appear.
+        .onAppear {
+            readBiometricLock? { on in faceLockOn = on }
         }
         .sheet(isPresented: $showBusinessSheet) {
             MoreBusinessSheet(
@@ -402,7 +433,7 @@ struct MoreMenuScreen: View {
                         .foregroundStyle(violet)
                         .frame(width: 32, height: 32)
                         .background(violet.opacity(colorScheme == .dark ? 0.18 : 0.12),
-                                    in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                     Text(group.header)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(.primary)
@@ -445,33 +476,40 @@ struct MoreMenuScreen: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .background(cardBg, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        // Whisper of depth so light-mode white cards separate from the cream page.
-        .shadow(color: .black.opacity(colorScheme == .dark ? 0 : 0.05), radius: 8, y: 2)
+        // Frosted-glass card so the aurora glows through but the rows stay crisp.
+        .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        .shadow(color: .black.opacity(colorScheme == .dark ? 0.18 : 0.06), radius: 10, y: 3)
     }
 
     // ── Row actions ──
 
     private func open(_ item: MenuItem) {
         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-        if item.path == "native:companion" { openCompanion() } else { openPath(item.path, item.title) }
+        if item.path == "native:companion" { openCompanion() }
+        else if item.path == "native:spinner-preview" { openSpinnerPreview?() }
+        else { openPath(item.path, item.title) }
     }
 
-    // ── Section card scaffold (non-collapsible, used by Appearance) ──
+    // ── Section card scaffold (non-collapsible, used by Appearance / Security) ──
 
-    /// Small uppercase header + rounded-16 card of rows (the "inset grouped" look,
-    /// hand-built because List can't sit on the app's custom cream/aurora background).
+    /// Small uppercase header + rounded card of rows (the "inset grouped" look,
+    /// hand-built because List can't sit on the app's aurora background).
     @ViewBuilder
     private func section(header: String, @ViewBuilder rows: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(header.uppercased())
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .font(.caption.weight(.bold))
+                .tracking(0.6)
+                // On the raw aurora (outside the card) headers need real contrast, not
+                // the washed-out .secondary the owner flagged as hard to read.
+                .foregroundStyle(colorScheme == .dark ? Color.white.opacity(0.72)
+                                                      : Color.black.opacity(0.55))
                 .padding(.leading, 14)
+            // Frosted-glass card so the aurora glows through but the rows stay crisp.
             VStack(spacing: 0) { rows() }
-                .background(cardBg, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .shadow(color: .black.opacity(colorScheme == .dark ? 0 : 0.05), radius: 8, y: 2)
+                .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+                .shadow(color: .black.opacity(colorScheme == .dark ? 0.18 : 0.06), radius: 10, y: 3)
         }
     }
 
@@ -485,7 +523,7 @@ struct MoreMenuScreen: View {
                 .foregroundStyle(violet)
                 .frame(width: 32, height: 32)
                 .background(violet.opacity(colorScheme == .dark ? 0.18 : 0.12),
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             Text(item.title)
                 .font(.body)
                 .foregroundStyle(.primary)
@@ -503,7 +541,7 @@ struct MoreMenuScreen: View {
                 .foregroundStyle(isDark ? violet : Color.orange)
                 .frame(width: 32, height: 32)
                 .background((isDark ? violet : Color.orange).opacity(isDark ? 0.18 : 0.12),
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             Text("Dark Mode")
                 .font(.body)
                 .foregroundStyle(.primary)
@@ -523,6 +561,40 @@ struct MoreMenuScreen: View {
         .padding(.vertical, 11)
     }
 
+    /// App-lock switch — Face ID / Touch ID gate on cold start + resume-after-idle.
+    /// Writes the web app's localStorage flag through the host; state seeds from the
+    /// local cache and reconciles with the real value on appear.
+    private var faceLockRow: some View {
+        let green = Color(red: 0.231, green: 0.784, blue: 0.522)
+        return HStack(spacing: 12) {
+            Image(systemName: "faceid")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(green)
+                .frame(width: 32, height: 32)
+                .background(green.opacity(colorScheme == .dark ? 0.18 : 0.12),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            VStack(alignment: .leading, spacing: 1) {
+                Text("অ্যাপ লক (Face ID)").font(.body).foregroundStyle(.primary)
+                Text("অ্যাপ খুললে বা কিছুক্ষণ পর ফিরে এলে Face ID / Touch ID দিয়ে আনলক")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Toggle("App lock", isOn: Binding(
+                get: { faceLockOn },
+                set: { newValue in
+                    guard newValue != faceLockOn else { return }
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    faceLockOn = newValue
+                    setBiometricLock?(newValue)
+                }
+            ))
+            .labelsHidden()
+            .tint(green)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+    }
+
     /// "Native স্ক্রিন" switch — OFF instantly restores the web Orders/Approvals and the
     /// UIKit More menu (one-tap escape if a native screen misbehaves; no reinstall).
     private var nativeScreensRow: some View {
@@ -532,7 +604,7 @@ struct MoreMenuScreen: View {
                 .foregroundStyle(Color(red: 0.878, green: 0.478, blue: 0.373))
                 .frame(width: 32, height: 32)
                 .background(Color(red: 0.878, green: 0.478, blue: 0.373).opacity(colorScheme == .dark ? 0.18 : 0.12),
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             VStack(alignment: .leading, spacing: 1) {
                 Text("Native স্ক্রিন").font(.body).foregroundStyle(.primary)
                 Text("বন্ধ করলে আগের ওয়েব স্ক্রিন ফিরবে").font(.caption).foregroundStyle(.secondary)
@@ -564,8 +636,10 @@ private struct MoreHeroRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text("TODAY")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .font(.caption.weight(.bold))
+                .tracking(0.6)
+                .foregroundStyle(scheme == .dark ? Color.white.opacity(0.72)
+                                                 : Color.black.opacity(0.55))
                 .padding(.leading, 14)
             ScrollView(.horizontal) {
                 HStack(spacing: 12) {
@@ -586,7 +660,7 @@ private struct MoreHeroRow: View {
 }
 
 /// Shared premium card scaffold: soft two-stop gradient, glass top highlight,
-/// hairline border, continuous 22pt corners. Colours differ per card + theme.
+/// hairline border, continuous iOS-27 card corners. Colours differ per card + theme.
 @available(iOS 17.0, *)
 private struct HeroCardChrome<Content: View>: View {
     let light: (Color, Color)
@@ -607,9 +681,9 @@ private struct HeroCardChrome<Content: View>: View {
                 LinearGradient(colors: [.white.opacity(scheme == .dark ? 0.10 : 0.35), .clear],
                                startPoint: .top, endPoint: .center)
                     .allowsHitTesting(false))
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
                     .strokeBorder(.white.opacity(scheme == .dark ? 0.08 : 0.55), lineWidth: 1))
             .shadow(color: .black.opacity(scheme == .dark ? 0.35 : 0.08), radius: 10, y: 4)
     }
@@ -943,7 +1017,7 @@ private struct MoreBusinessSheet: View {
                     .buttonStyle(MoreRowButtonStyle())
                 }
             }
-            .background(cardBg, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(cardBg, in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)

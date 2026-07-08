@@ -2800,6 +2800,10 @@ model AgentSubscription {
   category      String?
   notes         String?  @db.Text
   active        Boolean  @default(true)
+  // Owner-facing manual-tracker fields (native Subscriptions screen, 2026-07):
+  // the plan tier name (e.g. "Google AI Pro") and a payment-method label.
+  plan          String?
+  paymentMethod String?  @map("payment_method")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 

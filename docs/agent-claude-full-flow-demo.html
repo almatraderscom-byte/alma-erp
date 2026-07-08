@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>ALMA — Claude Full Turn Flow (Thinking → Tool → Writing)</title>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg0:#141418;--ink:#f7f8fc;--cream:#ece8e4;--muted:#aeb2c0;
+      --coral:#E07A5F;--coral-dim:#C45A3C;--fill:#d97757;--gold:#E8B84A;
+      --glass:rgba(28,28,34,.55);--hairline:rgba(255,255,255,.08);
+      --success:#81B29A;
+    }
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif;
+      background:#0a0a0c;color:var(--ink);min-height:100dvh;
+      display:flex;flex-direction:column;align-items:center;padding:12px 12px 28px;
+      -webkit-font-smoothing:antialiased;
+    }
+    .intro{max-width:430px;width:100%;margin-bottom:10px}
+    .intro h1{font-size:17px;font-weight:700;margin-bottom:4px}
+    .intro p{font-size:12px;color:var(--muted);line-height:1.55}
+    .controls{
+      max-width:430px;width:100%;display:flex;flex-wrap:wrap;gap:8px;
+      margin-bottom:10px;align-items:center;
+    }
+    .btn{
+      border:1px solid var(--hairline);background:rgba(255,255,255,.06);
+      color:var(--ink);font-size:12px;font-weight:600;padding:8px 14px;
+      border-radius:999px;cursor:pointer;
+    }
+    .btn.primary{background:var(--coral);border-color:transparent;color:#fff}
+    .btn.on{background:rgba(224,122,95,.25);border-color:rgba(224,122,95,.45)}
+    .phase-strip{
+      max-width:430px;width:100%;display:flex;gap:6px;margin-bottom:12px;
+    }
+    .phase-chip{
+      flex:1;text-align:center;font-size:10px;font-weight:700;letter-spacing:.04em;
+      text-transform:uppercase;padding:8px 4px;border-radius:10px;
+      background:rgba(255,255,255,.04);color:var(--muted);border:1px solid transparent;
+      transition:all .25s;
+    }
+    .phase-chip.active{color:#fff;background:rgba(224,122,95,.22);border-color:rgba(224,122,95,.35)}
+    .phase-chip.done{color:var(--success);background:rgba(129,178,154,.12)}
+
+    /* Phone */
+    .phone{
+      width:min(390px,100%);height:min(844px,calc(100dvh - 200px));
+      border-radius:44px;overflow:hidden;position:relative;
+      border:1px solid rgba(255,255,255,.12);box-shadow:0 24px 80px rgba(0,0,0,.55);
+      display:flex;flex-direction:column;
+    }
+    .aurora{position:absolute;inset:0;background:var(--bg0);overflow:hidden}
+    .aurora .b{position:absolute;border-radius:50%;filter:blur(70px);animation:drift 26s ease-in-out infinite alternate}
+    .b1{width:380px;height:380px;top:8%;left:-10%;background:rgba(56,128,255,.55)}
+    .b2{width:400px;height:400px;bottom:15%;right:-15%;background:rgba(255,46,134,.45);animation-delay:-8s}
+    .b3{width:360px;height:360px;top:50%;left:-5%;background:rgba(214,51,255,.42);animation-delay:-14s}
+    @keyframes drift{to{transform:translate(30px,-25px)}}
+    .island{position:absolute;top:11px;left:50%;transform:translateX(-50%);width:126px;height:36px;background:#000;border-radius:20px;z-index:25}
+    .status-bar{height:54px;padding:14px 28px 0;display:flex;justify-content:space-between;font-size:15px;font-weight:600;z-index:20;position:relative}
+    .shell{position:relative;z-index:5;flex:1;display:flex;flex-direction:column;min-height:0}
+
+    .topnav{display:flex;align-items:center;justify-content:space-between;padding:4px 16px 8px}
+    .topnav h2{font-size:17px;font-weight:700}
+    .icon-btn{width:36px;height:36px;border-radius:50%;border:1px solid var(--hairline);background:rgba(255,255,255,.06);display:grid;place-items:center}
+    .plus-btn{width:36px;height:36px;border-radius:50%;border:none;background:linear-gradient(135deg,var(--coral),var(--coral-dim));color:#fff;font-size:22px}
+
+    .chat{flex:1;overflow-y:auto;padding:8px 16px 8px;scroll-behavior:smooth}
+    .user-row{display:flex;justify-content:flex-end;margin-bottom:18px}
+    .user-bubble{
+      max-width:85%;padding:12px 16px;border-radius:20px;border-bottom-right-radius:6px;
+      background:linear-gradient(135deg,var(--coral),var(--coral-dim));color:#fff;
+      font-size:15px;line-height:1.45;box-shadow:0 4px 14px rgba(224,122,95,.22);
+    }
+
+    /* ── Timeline (Claude activity card) ── */
+    .timeline{margin-bottom:14px;transition:opacity .3s}
+    .tl-summary{
+      display:flex;align-items:center;gap:6px;margin-bottom:10px;
+      font-size:11.5px;font-weight:500;color:var(--muted);
+    }
+    .tl-summary .pill{
+      font-size:10px;padding:1px 7px;border-radius:999px;
+      background:rgba(255,255,255,.06);color:rgba(174,178,192,.85);
+    }
+    .spin-ring{
+      width:12px;height:12px;border-radius:50%;
+      border:1.5px solid rgba(232,184,74,.35);border-top-color:var(--gold);
+      animation:spin .75s linear infinite;flex-shrink:0;
+    }
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .tl-phase{padding-left:22px;position:relative;margin-bottom:6px}
+    .tl-phase::before{
+      content:'';position:absolute;left:7px;top:6px;bottom:-6px;width:1px;
+      background:rgba(255,255,255,.1);
+    }
+    .tl-phase:last-child::before{display:none}
+    .tl-node{
+      position:absolute;left:2px;top:5px;width:10px;height:10px;border-radius:50%;
+      background:var(--gold);box-shadow:0 0 8px rgba(232,184,74,.35);
+    }
+    .tl-node.live{
+      background:transparent;border:1.5px solid rgba(232,184,74,.4);border-top-color:var(--gold);
+      animation:spin .8s linear infinite;
+    }
+    .tl-headline{
+      font-size:13.5px;font-weight:600;line-height:1.35;letter-spacing:-.01em;
+      color:var(--cream);margin-bottom:6px;min-height:1.35em;
+    }
+    .tl-tool-pill{
+      display:inline-flex;align-items:center;gap:5px;margin-top:2px;
+      padding:5px 11px;border-radius:999px;font-size:11.5px;color:var(--muted);
+      background:rgba(255,255,255,.05);border:1px solid var(--hairline);
+    }
+    .tl-tool-pill .chev{font-size:8px;opacity:.6;transition:transform .2s}
+    .tl-tool-pill.open .chev{transform:rotate(90deg)}
+    .tl-tools{margin-top:8px;display:flex;flex-direction:column;gap:5px;overflow:hidden;
+      max-height:0;opacity:0;transition:max-height .25s ease,opacity .2s}
+    .tl-tools.open{max-height:120px;opacity:1}
+    .tl-tool-row{
+      display:flex;align-items:center;gap:7px;padding:7px 9px;border-radius:8px;
+      font-size:12px;background:rgba(255,255,255,.04);border:1px solid var(--hairline);
+    }
+    .tl-tool-row.live .label{
+      background:linear-gradient(90deg,var(--muted) 0%,var(--fill) 45%,var(--muted) 90%);
+      background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;
+      animation:shimmer 1.4s linear infinite;font-weight:600;
+    }
+    .tl-tool-row.done .label{color:var(--muted)}
+    .tl-tool-row.done .ico{color:var(--success)}
+    .tl-complete{
+      display:flex;align-items:center;gap:6px;margin:6px 0 4px;
+      font-size:12.5px;font-weight:600;color:var(--gold);
+    }
+    .tl-complete .mini-burst{width:14px;height:14px;color:var(--gold);animation:pulse 1s ease-in-out infinite}
+    @keyframes shimmer{to{background-position:220% 0}}
+    @keyframes pulse{0%,100%{transform:scale(.92);opacity:.8}50%{transform:scale(1.06);opacity:1}}
+
+    /* ── Prose (Claude typography) ── */
+    .prose-wrap{overflow:hidden;max-height:0;opacity:0;transition:max-height .35s ease,opacity .3s}
+    .prose-wrap.visible{max-height:800px;opacity:1}
+    .prose{
+      font-size:15px;line-height:1.65;letter-spacing:-.008em;color:var(--cream);
+      font-weight:400;word-wrap:break-word;
+    }
+    .prose.reveal{
+      -webkit-mask-image:linear-gradient(to bottom,#000 0%,#000 72%,rgba(0,0,0,.45) 92%,rgba(0,0,0,.12) 100%);
+      mask-image:linear-gradient(to bottom,#000 0%,#000 72%,rgba(0,0,0,.45) 92%,rgba(0,0,0,.12) 100%);
+    }
+    .prose h3{font-size:15px;font-weight:600;margin:0 0 10px;color:var(--cream)}
+    .prose p{margin:0 0 14px}
+    .prose p:last-child{margin-bottom:0}
+    .prose ul{margin:0 0 14px;padding-left:1.25rem}
+    .prose li{margin-bottom:6px;line-height:1.6}
+    .prose strong{font-weight:600;color:#fff}
+    .prose em{font-style:italic;color:var(--muted)}
+    .cursor{
+      display:inline-block;width:2px;height:1.05em;margin-left:1px;
+      background:rgba(224,122,95,.65);vertical-align:text-bottom;
+      animation:blink .85s steps(2) infinite;
+    }
+    @keyframes blink{50%{opacity:0}}
+
+    /* ── Bottom working row (inside assistant turn — Claude pattern) ── */
+    .working-row{
+      display:flex;align-items:center;gap:10px;margin-top:14px;padding-top:2px;
+      transition:opacity .25s;
+    }
+    .working-row.hidden{opacity:0;height:0;margin:0;overflow:hidden;padding:0}
+    .burst-slot{width:28px;height:28px;flex-shrink:0}
+    .burst-slot svg{display:block;width:100%;height:100%;overflow:visible}
+    .work-verb{font-size:15px;font-weight:500;color:var(--fill)}
+    .work-brand{
+      font-size:12px;font-weight:500;margin-left:auto;
+      background:linear-gradient(90deg,var(--muted) 0%,var(--fill) 45%,var(--muted) 90%);
+      background-size:220% 100%;-webkit-background-clip:text;background-clip:text;
+      color:transparent;animation:shimmer 2.2s linear infinite;
+    }
+
+    /* Footer (settled) */
+    .footer{
+      margin-top:16px;display:flex;flex-wrap:wrap;align-items:center;gap:8px;
+      font-size:11px;color:var(--muted);opacity:0;transition:opacity .4s;
+    }
+    .footer.show{opacity:1}
+    .footer .brand{color:rgba(224,122,95,.85);font-weight:600;display:inline-flex;align-items:center;gap:4px}
+    .footer .stats{margin-left:auto;font-size:10px;opacity:.75;font-variant-numeric:tabular-nums}
+
+    /* Composer + tabs (unchanged ALMA) */
+    .composer-wrap{padding:0 12px 6px;z-index:10}
+    .composer{
+      background:var(--glass);backdrop-filter:blur(20px);border:1px solid var(--hairline);
+      border-radius:24px;padding:8px;
+    }
+    .composer input{width:100%;border:none;background:transparent;color:var(--ink);font-size:16px;padding:8px 10px 4px;outline:none}
+    .composer input::placeholder{color:var(--muted)}
+    .composer-bar{display:flex;align-items:center;gap:6px;padding:2px 4px}
+    .composer-bar .pill{font-size:11px;color:var(--muted);padding:5px 10px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid var(--hairline);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .composer-bar .sp{flex:1}
+    .composer-bar .round{width:36px;height:36px;border-radius:50%;border:none;background:rgba(255,255,255,.06);color:var(--muted)}
+    .composer-bar .send{background:linear-gradient(135deg,var(--coral),var(--coral-dim));color:#fff}
+    .tabbar{
+      display:flex;justify-content:space-around;padding:6px 8px 22px;
+      background:rgba(20,20,24,.82);backdrop-filter:blur(16px);border-top:1px solid var(--hairline);z-index:10;
+    }
+    .tab{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10px;color:var(--muted)}
+    .tab.on{color:#f4a28c}
+    .tab.on .tab-ico{background:rgba(236,120,100,.35);border-radius:14px;padding:4px 14px;box-shadow:0 0 20px rgba(236,120,100,.25)}
+    .tab-ico{font-size:18px;padding:4px 8px}
+
+    .spec{
+      max-width:430px;width:100%;margin-top:12px;font-size:11px;color:var(--muted);
+      line-height:1.55;background:rgba(255,255,255,.04);border:1px solid var(--hairline);
+      border-radius:12px;padding:12px 14px;
+    }
+    .spec b{color:var(--cream)}
+    .hidden{display:none!important}
+  </style>
+</head>
+<body>
+  <div class="intro">
+    <h1>Claude full turn — Thinking → Tool → Writing</h1>
+    <p>ALMA theme same. Sequential flow like Claude app + our web AgentApp SSE order. ▶ Play full turn.</p>
+  </div>
+
+  <div class="phase-strip">
+    <div class="phase-chip" id="chipThink">① Thinking</div>
+    <div class="phase-chip" id="chipTool">② Tool</div>
+    <div class="phase-chip" id="chipWrite">③ Writing</div>
+    <div class="phase-chip" id="chipDone">④ Done</div>
+  </div>
+
+  <div class="controls">
+    <button class="btn primary" id="btnPlay" type="button">▶ Play full turn</button>
+    <button class="btn" id="btnStepThink" type="button">① Think</button>
+    <button class="btn" id="btnStepTool" type="button">② Tool</button>
+    <button class="btn" id="btnStepWrite" type="button">③ Write</button>
+    <button class="btn" id="btnReset" type="button">↺ Reset</button>
+  </div>
+
+  <div class="phone" id="phone">
+    <div class="aurora"><div class="b b1"></div><div class="b b2"></div><div class="b b3"></div></div>
+    <div class="island"></div>
+    <div class="status-bar"><span>5:17</span><span>📶 🔋</span></div>
+    <div class="shell">
+      <header class="topnav">
+        <div class="icon-btn">☰</div>
+        <h2>ALMA AI</h2>
+        <button class="plus-btn" type="button">+</button>
+      </header>
+
+      <main class="chat" id="chat">
+        <div class="user-row">
+          <div class="user-bubble">Ajker namaz baki ase?</div>
+        </div>
+
+        <section class="assistant-turn" id="turn">
+          <!-- Timeline -->
+          <div class="timeline" id="timeline">
+            <div class="tl-summary" id="tlSummary">
+              <span class="spin-ring" id="tlSpin"></span>
+              <span id="tlSummaryText">কাজ করছি…</span>
+              <span class="pill" id="tlTokenPill">~০ টোকেন</span>
+              <span class="pill" id="tlStepPill">১ ধাপ</span>
+            </div>
+            <div class="tl-phase" id="tlPhase">
+              <span class="tl-node live" id="tlNode"></span>
+              <div class="tl-headline" id="tlHeadline"></div>
+              <div class="tl-tool-pill hidden" id="tlToolPill">
+                🔧 <span id="tlToolCount">০টি টুল ব্যবহার হয়েছে</span> <span class="chev">›</span>
+              </div>
+              <div class="tl-tools" id="tlTools"></div>
+              <div class="tl-complete hidden" id="tlComplete">
+                <svg class="mini-burst" viewBox="0 0 100 100"><path fill="currentColor" d="m19.6 66.5 19.7-11 .3-1-.3-.5h-1l-3.3-.2-11.2-.3L14 53l-9.5-.5-2.4-.5L0 49l.2-1.5 2-1.3 2.9.2 6.3.5 9.5.6 6.9.4L38 49.1h1.6l.2-.7-.5-.4-.4-.4L29 41l-10.6-7-5.6-4.1-3-2-1.5-2-.6-4.2 2.7-3 3.7.3.9.2 3.7 2.9 8 6.1L37 36l1.5 1.2.6-.4.1-.3-.7-1.1L33 25l-6-10.4-2.7-4.3-.7-2.6c-.3-1-.4-2-.4-3l3-4.2L28 0l4.2.6L33.8 2l2.6 6 4.1 9.3L47 29.9l2 3.8 1 3.4.3 1h.7v-.5l.5-7.2 1-8.7 1-11.2.3-3.2 1.6-3.8 3-2L61 2.6l2 2.9-.3 1.8-1.1 7.7L59 27.1l-1.5 8.2h.9l1-1.1 4.1-5.4 6.9-8.6 3-3.5L77 13l2.3-1.8h4.3l3.1 4.7-1.4 4.9-4.4 5.6-3.7 4.7-5.3 7.1-3.2 5.7.3.4h.7l12-2.6 6.4-1.1 7.6-1.3 3.5 1.6.4 1.6-1.4 3.4-8.2 2-9.6 2-14.3 3.3-.2.1.2.3 6.4.6 2.8.2h6.8l12.6 1 3.3 2 1.9 2.7-.3 2-5.1 2.6-6.8-1.6-16-3.8-5.4-1.3h-.8v.4l4.6 4.5 8.3 7.5L89 80.1l.5 2.4-1.3 2-1.4-.2-9.2-7-3.6-3-8-6.8h-.5v.7l1.8 2.7 9.8 14.7.5 4.5-.7 1.4-2.6 1-2.7-.6-5.8-8-6-9-4.7-8.2-.5.4-2.9 30.2-1.3 1.5-3 1.2-2.5-2-1.4-3 1.4-6.2 1.6-8 1.3-6.4 1.2-7.9.7-2.6v-.2H49L43 72l-9 12.3-7.2 7.6-1.7.7-3-1.5.3-2.8L24 86l10-12.8 6-7.9 4-4.6-.1-.5h-.3L17.2 77.4l-4.7.6-2-2 .2-3 1-1 8-5.5Z"/></svg>
+                <span id="tlCompleteText">সম্পন্ন · নামাজের সময়</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Reply prose -->
+          <div class="prose-wrap" id="proseWrap">
+            <div class="prose" id="prose"><span id="proseText"></span><span class="cursor" id="cursor"></span></div>
+          </div>
+
+          <!-- Working indicator (Claude: bottom of live turn) -->
+          <div class="working-row" id="working">
+            <div class="burst-slot"><svg id="burstSvg" viewBox="0 0 100 100" aria-hidden></svg></div>
+            <span class="work-verb" id="workVerb">ভাবছি…</span>
+            <span class="work-brand" id="workBrand">ALMA · DeepSeek V4 Flash</span>
+          </div>
+
+          <!-- Settled footer -->
+          <div class="footer" id="footer">
+            <span class="brand">◆ ALMA</span>
+            <span>এইমাত্র</span>
+            <span>📋 🔊</span>
+            <span class="stats">↑77,518 ↓892 · $0.0076</span>
+          </div>
+        </section>
+      </main>
+
+      <div class="composer-wrap">
+        <div class="composer">
+          <input placeholder="বার্তা লিখুন…" readonly />
+          <div class="composer-bar">
+            <button class="round" type="button">+</button>
+            <span class="pill">DeepSeek V4 Flash (…)</span>
+            <span class="sp"></span>
+            <button class="round" type="button">🎤</button>
+            <button class="round" type="button">〰</button>
+            <button class="round send" type="button">↑</button>
+          </div>
+        </div>
+      </div>
+      <nav class="tabbar">
+        <div class="tab"><span class="tab-ico">▦</span>Dashboard</div>
+        <div class="tab"><span class="tab-ico">📦</span>Orders</div>
+        <div class="tab on"><span class="tab-ico">✦</span>Assistant</div>
+        <div class="tab"><span class="tab-ico">✓</span>Approvals</div>
+        <div class="tab"><span class="tab-ico">⋯</span>More</div>
+      </nav>
+    </div>
+  </div>
+
+  <div class="spec" id="spec">
+    <b>Flow:</b> ① Thinking (timeline live + starburst breathe + "ভাবছি") → ② Tool (dot ring + pill expands + "চলছে · tool") → ③ Writing (timeline past tense + prose stream + "লিখছি") → ④ Done (footer, working row hides).
+  </div>
+
+<script>
+(() => {
+  const BURST = 'm19.6 66.5 19.7-11 .3-1-.3-.5h-1l-3.3-.2-11.2-.3L14 53l-9.5-.5-2.4-.5L0 49l.2-1.5 2-1.3 2.9.2 6.3.5 9.5.6 6.9.4L38 49.1h1.6l.2-.7-.5-.4-.4-.4L29 41l-10.6-7-5.6-4.1-3-2-1.5-2-.6-4.2 2.7-3 3.7.3.9.2 3.7 2.9 8 6.1L37 36l1.5 1.2.6-.4.1-.3-.7-1.1L33 25l-6-10.4-2.7-4.3-.7-2.6c-.3-1-.4-2-.4-3l3-4.2L28 0l4.2.6L33.8 2l2.6 6 4.1 9.3L47 29.9l2 3.8 1 3.4.3 1h.7v-.5l.5-7.2 1-8.7 1-11.2.3-3.2 1.6-3.8 3-2L61 2.6l2 2.9-.3 1.8-1.1 7.7L59 27.1l-1.5 8.2h.9l1-1.1 4.1-5.4 6.9-8.6 3-3.5L77 13l2.3-1.8h4.3l3.1 4.7-1.4 4.9-4.4 5.6-3.7 4.7-5.3 7.1-3.2 5.7.3.4h.7l12-2.6 6.4-1.1 7.6-1.3 3.5 1.6.4 1.6-1.4 3.4-8.2 2-9.6 2-14.3 3.3-.2.1.2.3 6.4.6 2.8.2h6.8l12.6 1 3.3 2 1.9 2.7-.3 2-5.1 2.6-6.8-1.6-16-3.8-5.4-1.3h-.8v.4l4.6 4.5 8.3 7.5L89 80.1l.5 2.4-1.3 2-1.4-.2-9.2-7-3.6-3-8-6.8h-.5v.7l1.8 2.7 9.8 14.7.5 4.5-.7 1.4-2.6 1-2.7-.6-5.8-8-6-9-4.7-8.2-.5.4-2.9 30.2-1.3 1.5-3 1.2-2.5-2-1.4-3 1.4-6.2 1.6-8 1.3-6.4 1.2-7.9.7-2.6v-.2H49L43 72l-9 12.3-7.2 7.6-1.7.7-3-1.5.3-2.8L24 86l10-12.8 6-7.9 4-4.6-.1-.5h-.3L17.2 77.4l-4.7.6-2-2 .2-3 1-1 8-5.5Z'
+  const FILL = '#d97757'
+  const BOIL = [-0.028, 0.022, -0.014, 0.032, -0.024, 0.026, -0.018, 0.02]
+  const MODES = {
+    thinking: { rot: 0.004, breathe: 0.30, breatheSpd: 0.092, boil: 12.5, boilInterval: 78, dotMix: 0 },
+    tool:     { rot: 0.062, breathe: 0.06, breatheSpd: 0.055, boil: 3.5, boilInterval: 85, dotMix: 1 },
+    writing:  { rot: 0.015, breathe: 0.20, breatheSpd: 0.095, boil: 5, boilInterval: 85, dotMix: 0 },
+  }
+
+  const HEADLINE = 'The owner is asking about remaining prayers today — I should check the Dhaka prayer schedule.'
+  const FINAL_HTML = `<h3>আজকের বাকি নামাজ 🕌</h3>
+<p><strong>ঢাকা</strong> — আজ <strong>৭ জুলাই, ২০২৬</strong></p>
+<ul>
+<li>🌅 <strong>ফজর</strong> — ৪:১৮ AM <em>(হয়ে গেছে)</em></li>
+<li>☀️ <strong>জোহর</strong> — ১২:০৮ PM <em>(হয়ে গেছে)</em></li>
+<li>🌤 <strong>আসর</strong> — ৪:৫২ PM</li>
+<li>🌇 <strong>মাগরিব</strong> — ৬:১৭ PM</li>
+<li>🌙 <strong>এশা</strong> — ৭:৩২ PM</li>
+</ul>
+<p>ফজর, জোহর, আসর — <strong>অতীত</strong>। মাগরিব ও এশা <strong>বাকি</strong>।</p>`
+
+  let animMode = 'thinking'
+  let cur = { rot: 0, phase: 0, dotMix: 0 }
+  let boilFrame = 0, lastBoil = 0
+  const filterId = 'boil-' + Math.random().toString(36).slice(2, 8)
+  let playAbort = null
+  let thinkSec = 0, thinkTimer = null
+
+  const els = {
+    burstSvg: document.getElementById('burstSvg'),
+    workVerb: document.getElementById('workVerb'),
+    workBrand: document.getElementById('workBrand'),
+    tlHeadline: document.getElementById('tlHeadline'),
+    tlSummaryText: document.getElementById('tlSummaryText'),
+    tlTokenPill: document.getElementById('tlTokenPill'),
+    tlSpin: document.getElementById('tlSpin'),
+    tlNode: document.getElementById('tlNode'),
+    tlToolPill: document.getElementById('tlToolPill'),
+    tlTools: document.getElementById('tlTools'),
+    tlComplete: document.getElementById('tlComplete'),
+    proseWrap: document.getElementById('proseWrap'),
+    prose: document.getElementById('prose'),
+    proseText: document.getElementById('proseText'),
+    cursor: document.getElementById('cursor'),
+    working: document.getElementById('working'),
+    footer: document.getElementById('footer'),
+    chat: document.getElementById('chat'),
+    spec: document.getElementById('spec'),
+    chips: ['chipThink','chipTool','chipWrite','chipDone'].map(id => document.getElementById(id)),
+  }
+
+  function sleep(ms) {
+    return new Promise((res, rej) => {
+      const t = setTimeout(res, ms)
+      if (playAbort) playAbort.timeouts.push(t)
+      if (playAbort?.signal) {
+        playAbort.signal.addEventListener('abort', () => { clearTimeout(t); rej(new Error('abort')) })
+      }
+    })
+  }
+
+  function setChip(idx) {
+    els.chips.forEach((c, i) => {
+      c.classList.remove('active','done')
+      if (i < idx) c.classList.add('done')
+      if (i === idx) c.classList.add('active')
+    })
+  }
+
+  function ensureFilter(svg, scale) {
+    let defs = svg.querySelector('defs')
+    if (!defs) { defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs'); svg.prepend(defs) }
+    let f = defs.querySelector('#' + filterId)
+    if (!f) {
+      f = document.createElementNS('http://www.w3.org/2000/svg', 'filter')
+      f.id = filterId
+      f.setAttribute('x','-22%'); f.setAttribute('y','-22%')
+      f.setAttribute('width','144%'); f.setAttribute('height','144%')
+      f.innerHTML = `<feTurbulence type="fractalNoise" baseFrequency="0.018" numOctaves="2" seed="2" result="n"/>
+        <feDisplacementMap in="SourceGraphic" in2="n" scale="${scale}" xChannelSelector="R" yChannelSelector="G"/>`
+      defs.appendChild(f)
+    }
+    const turb = f.querySelector('feTurbulence')
+    const disp = f.querySelector('feDisplacementMap')
+    const off = BOIL[boilFrame]
+    turb.setAttribute('baseFrequency', String(Math.max(0.006, 0.018 + off)))
+    turb.setAttribute('seed', String((boilFrame * 11 + 3) % 97))
+    disp.setAttribute('scale', String(scale + Math.sin(performance.now() * 0.013) * 2.8))
+  }
+
+  function drawDots(g, mix, rot) {
+    if (mix < 0.03) return
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2 - Math.PI / 2 + rot
+      const cx = 50 + 35 * Math.cos(a), cy = 50 + 35 * Math.sin(a)
+      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+      dot.setAttribute('cx', cx); dot.setAttribute('cy', cy)
+      dot.setAttribute('r', '3.1'); dot.setAttribute('fill', FILL)
+      dot.setAttribute('opacity', String(mix))
+      g.appendChild(dot)
+    }
+  }
+
+  function renderBurst() {
+    const m = MODES[animMode]
+    const p = m
+    const scale = 1 + Math.sin(cur.phase) * p.breathe
+    const svg = els.burstSvg
+    svg.innerHTML = ''
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+    svg.appendChild(defs)
+    if (p.boil > 1) ensureFilter(svg, p.boil)
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+    const deg = (cur.rot * 180 / Math.PI) % 360
+    g.setAttribute('transform', `translate(50 50) rotate(${deg}) scale(${scale}) translate(-50 -50)`)
+    if (p.boil > 1) g.setAttribute('filter', `url(#${filterId})`)
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+    path.setAttribute('d', BURST); path.setAttribute('fill', FILL)
+    path.setAttribute('opacity', String(1 - cur.dotMix * 0.92))
+    g.appendChild(path)
+    drawDots(g, cur.dotMix, cur.rot)
+    svg.appendChild(g)
+  }
+
+  function tick(now) {
+    const m = MODES[animMode]
+    cur.rot += m.rot
+    cur.phase += m.breatheSpd
+    cur.dotMix += (m.dotMix - cur.dotMix) * 0.1
+    if (now - lastBoil >= m.boilInterval) { lastBoil = now; boilFrame = (boilFrame + 1) % BOIL.length }
+    renderBurst()
+    requestAnimationFrame(tick)
+  }
+
+  function setAnimMode(mode, verb, brand) {
+    animMode = mode
+    if (verb) els.workVerb.textContent = verb
+    if (brand !== undefined) els.workBrand.textContent = brand
+    els.workBrand.classList.toggle('hidden', brand === null)
+    if (brand === null) els.workBrand.classList.add('hidden')
+    else els.workBrand.classList.remove('hidden')
+  }
+
+  function resetTurn() {
+    if (playAbort) { playAbort.abort(); playAbort = null }
+    clearInterval(thinkTimer)
+    thinkSec = 0
+    setChip(-1)
+    els.tlHeadline.textContent = ''
+    els.tlSummaryText.textContent = 'কাজ করছি…'
+    els.tlTokenPill.textContent = '~০ টোকেন'
+    els.tlSpin.classList.remove('hidden')
+    els.tlNode.className = 'tl-node live'
+    els.tlToolPill.classList.add('hidden')
+    els.tlTools.classList.remove('open')
+    els.tlTools.innerHTML = ''
+    els.tlComplete.classList.add('hidden')
+    els.proseWrap.classList.remove('visible')
+    els.prose.classList.remove('reveal')
+    els.proseText.innerHTML = ''
+    els.cursor.classList.add('hidden')
+    els.working.classList.remove('hidden')
+    els.footer.classList.remove('show')
+    setAnimMode('thinking', 'ভাবছি…', 'ALMA · DeepSeek V4 Flash')
+    els.spec.innerHTML = '<b>Ready.</b> Press ▶ Play full turn — Claude sequence: Think → Tool → Write → Done.'
+  }
+
+  async function typeHeadline(text, speed = 22) {
+    els.tlHeadline.textContent = ''
+    for (let i = 0; i < text.length; i++) {
+      els.tlHeadline.textContent += text[i]
+      els.tlTokenPill.textContent = '~' + Math.round((i + 1) / 4) + ' টোকেন'
+      if (i % 3 === 0) els.chat.scrollTop = els.chat.scrollHeight
+      await sleep(speed)
+    }
+  }
+
+  async function phaseThinking() {
+    setChip(0)
+    setAnimMode('thinking', 'ভাবছি…', 'ALMA · DeepSeek V4 Flash')
+    els.spec.innerHTML = '<b>① Thinking</b> — timeline live "কাজ করছি…", headline builds, starburst mut↔খোলা breathe. No reply text yet (Claude rule).'
+    thinkSec = 0
+    thinkTimer = setInterval(() => {
+      thinkSec++
+      els.tlSummaryText.textContent = `কাজ করছি… · ${thinkSec}s`
+    }, 1000)
+    await typeHeadline(HEADLINE, 18)
+    await sleep(800)
+  }
+
+  async function phaseTool() {
+    setChip(1)
+    setAnimMode('tool', 'Using alma-erp…', null)
+    els.spec.innerHTML = '<b>② Tool search</b> — starburst dot ring + spin, pill opens, "চলছে · get_prayer_schedule" shimmer row (web streamMode=searching).'
+    els.tlToolPill.classList.remove('hidden')
+    document.getElementById('tlToolCount').textContent = '১টি টুল ব্যবহার হয়েছে'
+    els.tlToolPill.classList.add('open')
+    els.tlTools.classList.add('open')
+    els.tlTools.innerHTML = `<div class="tl-tool-row live" id="toolRow">
+      <span class="ico">✦</span><span class="label">চলছে · get_prayer_schedule</span></div>`
+    els.chat.scrollTop = els.chat.scrollHeight
+    await sleep(2200)
+    // Tool complete beat
+    els.tlComplete.classList.remove('hidden')
+    document.getElementById('toolRow').className = 'tl-tool-row done'
+    document.getElementById('toolRow').innerHTML = '<span class="ico">✓</span><span class="label">get_prayer_schedule</span>'
+    await sleep(900)
+    els.tlComplete.classList.add('hidden')
+  }
+
+  async function phaseWriting() {
+    setChip(2)
+    clearInterval(thinkTimer)
+    setAnimMode('writing', 'লিখছি…', 'ALMA · DeepSeek V4 Flash')
+    els.spec.innerHTML = '<b>③ Writing</b> — timeline → past tense, prose streams with bottom fade + inline cursor (Claude cds-reveal).'
+
+    // Timeline settles (first text token — web parity)
+    els.tlSpin.classList.add('hidden')
+    els.tlNode.className = 'tl-node'
+    els.tlSummaryText.textContent = `${thinkSec || 8} সেকেন্ড ধরে ভেবেছে`
+    els.tlTokenPill.textContent = '~৫৯১ টোকেন'
+    els.tlHeadline.textContent = 'নামাজের সময়সূচি যাচাই করছি…'
+    els.tlToolPill.classList.remove('open')
+    els.tlTools.classList.remove('open')
+
+    els.proseWrap.classList.add('visible')
+    els.prose.classList.add('reveal')
+    els.cursor.classList.remove('hidden')
+
+    const plain = FINAL_HTML.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+    els.proseText.textContent = ''
+    for (let i = 0; i < plain.length; i += 3) {
+      els.proseText.textContent = plain.slice(0, i + 3)
+      els.chat.scrollTop = els.chat.scrollHeight
+      await sleep(24)
+    }
+    els.proseText.innerHTML = FINAL_HTML
+    els.prose.classList.remove('reveal')
+    els.cursor.classList.add('hidden')
+  }
+
+  async function phaseDone() {
+    setChip(3)
+    els.working.classList.add('hidden')
+    els.footer.classList.add('show')
+    els.spec.innerHTML = '<b>④ Done</b> — working row hidden, footer visible, timeline collapsed. Turn complete.'
+    els.chat.scrollTop = els.chat.scrollHeight
+  }
+
+  async function playFullTurn() {
+    if (playAbort) playAbort.abort()
+    playAbort = { aborted: false, timeouts: [], signal: { listeners: [] } }
+    playAbort.abort = () => { playAbort.aborted = true; clearInterval(thinkTimer) }
+    resetTurn()
+    try {
+      await phaseThinking()
+      await phaseTool()
+      await phaseWriting()
+      await phaseDone()
+    } catch (e) {
+      if (e.message !== 'abort') throw e
+    }
+  }
+
+  document.getElementById('btnPlay').onclick = () => playFullTurn()
+  document.getElementById('btnReset').onclick = resetTurn
+  document.getElementById('btnStepThink').onclick = async () => { resetTurn(); await phaseThinking() }
+  document.getElementById('btnStepTool').onclick = async () => {
+    resetTurn(); await phaseThinking(); await phaseTool()
+  }
+  document.getElementById('btnStepWrite').onclick = async () => {
+    resetTurn(); await phaseThinking(); await phaseTool(); await phaseWriting()
+  }
+
+  resetTurn()
+  requestAnimationFrame(tick)
+})()
+</script>
+</body>
+</html>

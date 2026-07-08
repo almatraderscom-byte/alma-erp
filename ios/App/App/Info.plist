@@ -39,6 +39,8 @@
 	<string>ALMA ERP uses Face ID to unlock the app and protect your business data.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
+	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>ALMA ERP uses the camera to capture and upload product photos and attachments.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
@@ -57,6 +59,7 @@
 	<array>
 		<string>remote-notification</string>
 		<string>fetch</string>
+		<string>audio</string>
 	</array>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
