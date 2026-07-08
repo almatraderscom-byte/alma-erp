@@ -880,14 +880,22 @@ private struct CrmAurora: View {
                                center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
                 ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
                     Circle()
-                        .fill(b.color)
-                        .frame(width: b.size, height: b.size)
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
                         .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
                                   y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
-                        .blur(radius: 70)
                 }
             }
             .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
             .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
                 .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
@@ -897,12 +905,23 @@ private struct CrmAurora: View {
 
     /// Battery guard: drift only when the owner allows motion — Reduce Motion and
     /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
     private func updateDrift() {
         if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
             var tx = Transaction(); tx.disablesAnimations = true
             withTransaction(tx) { drift = false }
         } else if !drift {
-            withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
         }
     }
 }
