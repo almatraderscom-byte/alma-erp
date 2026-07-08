@@ -1,0 +1,123 @@
+# TestFlight upload — MANUAL ONLY. This workflow never runs on push, so
+# simulator testing / normal commits can never accidentally burn a TestFlight
+# build. To ship: GitHub → Actions → "iOS TestFlight Upload" → Run workflow.
+#
+# Signing: Xcode cloud signing via an App Store Connect API key
+# (-allowProvisioningUpdates). No certificate export needed on the Mac.
+# Build numbers: Xcode's manageAppVersionAndBuildNumber (default) asks App
+# Store Connect for the next free build number, so no collisions with builds
+# uploaded from the owner's Mac.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   ASC_KEY_ID      — App Store Connect API key ID (e.g. ABC123XYZ)
+#   ASC_ISSUER_ID   — issuer ID (UUID from the API Keys page)
+#   ASC_PRIVATE_KEY — full contents of the downloaded AuthKey_XXXX.p8 file
+
+name: iOS TestFlight Upload
+
+on:
+  workflow_dispatch:
+    inputs:
+      marketing_version:
+        description: 'App version shown to testers (e.g. 1.1). Leave empty to keep the current project version.'
+        required: false
+        default: ''
+
+concurrency:
+  group: ios-testflight
+  cancel-in-progress: false
+
+env:
+  TEAM_ID: 5D9FLR3MMA
+
+jobs:
+  build-and-upload:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode on the runner
+        run: |
+          XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install JS dependencies (Capacitor plugins)
+        run: npm ci --ignore-scripts
+
+      - name: Sync Capacitor iOS project
+        run: npx cap sync ios
+
+      - name: Install CocoaPods
+        working-directory: ios/App
+        run: pod install
+
+      - name: Write App Store Connect API key
+        env:
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          printf '%s' "$ASC_PRIVATE_KEY" > "$RUNNER_TEMP/AuthKey.p8"
+
+      - name: Archive (Release, cloud signing)
+        working-directory: ios/App
+        env:
+          MARKETING_VERSION_INPUT: ${{ inputs.marketing_version }}
+        run: |
+          EXTRA=""
+          if [ -n "$MARKETING_VERSION_INPUT" ]; then
+            EXTRA="MARKETING_VERSION=$MARKETING_VERSION_INPUT"
+          fi
+          xcodebuild archive \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" \
+            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            $EXTRA
+
+      - name: Write export options
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>destination</key>
+            <string>upload</string>
+            <key>teamID</key>
+            <string>$TEAM_ID</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>uploadSymbols</key>
+            <true/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Upload to TestFlight
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/AuthKey.p8" \
+            -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}"
+
+      - name: Clean up API key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
