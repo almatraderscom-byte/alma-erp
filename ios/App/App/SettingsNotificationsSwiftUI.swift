@@ -375,14 +375,22 @@ struct SettingsNotifScreen: View {
         }
     }
 
+    /// Light bento pass (owner spec 2026-07-08): tile skin with a soft coral wash —
+    /// same values, presentation only.
     private func kpiCard(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            Text(value).font(.headline.weight(.bold))
+            Text(label).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary)
+            Text(value).font(.system(size: 17, weight: .heavy)).monospacedDigit()
                 .foregroundStyle(SettingsNotifPalette.accentText(colorScheme))
         }
         .frame(minWidth: 84, alignment: .leading)
-        .padding(12)
+        .padding(.horizontal, 13).padding(.vertical, 12)
+        .background {
+            LinearGradient(colors: [SettingsNotifPalette.coral.opacity(colorScheme == .dark ? 0.14 : 0.10), .clear],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        }
         .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
