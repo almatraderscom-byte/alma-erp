@@ -10,9 +10,6 @@ name: iOS Simulator Build (no TestFlight)
 
 on:
   workflow_dispatch:
-  # TEMP verification trigger (owner-sanctioned pattern) — REVERT after green.
-  push:
-    branches: ['claude/ios-swiftui-design-build-dw04ik']
 
 concurrency:
   group: ios-simulator-${{ github.ref }}
