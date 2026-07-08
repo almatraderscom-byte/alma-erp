@@ -23,18 +23,28 @@ export const maxDuration = 60
 
 // How long a memory must sit unused before it becomes a cleanup candidate.
 const STALE_DAYS = 45
-const MAX_CANDIDATES = 12
+const MAX_CANDIDATES = 30
 
 function checkToken(req: NextRequest): boolean {
-  const expected = process.env.AGENT_INTERNAL_TOKEN
-  if (!expected) return false
   const auth = req.headers.get('authorization') ?? ''
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
-  try {
-    return timingSafeEqual(Buffer.from(token), Buffer.from(expected))
-  } catch {
-    return false
+  // Accept the VPS worker token AND Vercel cron (Bearer CRON_SECRET) — the VPS
+  // scheduler never actually fired this route (zero memory_cleanup rows ever,
+  // verified 2026-07-08), so a Vercel cron now guarantees the weekly run.
+  for (const expected of [process.env.AGENT_INTERNAL_TOKEN, process.env.CRON_SECRET]) {
+    if (!expected) continue
+    try {
+      if (timingSafeEqual(Buffer.from(token), Buffer.from(expected))) return true
+    } catch {
+      /* length mismatch — try next */
+    }
   }
+  return false
+}
+
+/** Vercel crons call with GET — same auth, same weekly run. */
+export async function GET(req: NextRequest) {
+  return POST(req)
 }
 
 export async function POST(req: NextRequest) {
@@ -45,14 +55,44 @@ export async function POST(req: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
 
+  // ── Phase 0: HARD-RULE auto-deletes (owner rule 2026-07-08, no card needed) ──
+  // 1. EXPIRED temporaries: already classified day-scoped/short-lived — being past
+  //    expiry IS the owner's standing approval to remove them.
+  // 2. EXACT DUPLICATES: identical unpinned content in the same scope (the head
+  //    used to re-save the same observation daily) — keep the newest row only.
+  let expiredDeleted = 0
+  let duplicatesDeleted = 0
+  try {
+    const exp = await db.agentMemory.deleteMany({
+      where: { pinned: false, expiresAt: { lt: new Date() } },
+    })
+    expiredDeleted = exp.count ?? 0
+  } catch (err) {
+    console.warn('[memory-revision] expired delete failed:', err instanceof Error ? err.message : String(err))
+  }
+  try {
+    duplicatesDeleted = await db.$executeRawUnsafe(
+      `DELETE FROM agent_memory a
+       USING agent_memory b
+       WHERE a.pinned = false AND b.pinned = false
+         AND a.scope = b.scope AND a.content = b.content
+         AND a."createdAt" < b."createdAt"`,
+    )
+  } catch (err) {
+    console.warn('[memory-revision] duplicate delete failed:', err instanceof Error ? err.message : String(err))
+  }
+
   // One revision card at a time — if the owner hasn't resolved last week's list,
-  // don't pile a second one on top of it.
+  // don't pile a second one on top of it (auto-deletes above still ran).
   const open = await db.agentPendingAction.findFirst({
     where: { type: 'memory_cleanup', status: 'pending' },
     select: { id: true },
   })
   if (open) {
-    return NextResponse.json({ ok: true, skipped: 'previous_revision_pending', pendingActionId: open.id })
+    return NextResponse.json({
+      ok: true, skipped: 'previous_revision_pending', pendingActionId: open.id,
+      expiredDeleted, duplicatesDeleted,
+    })
   }
 
   const cutoff = new Date(Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000)
@@ -89,10 +129,36 @@ export async function POST(req: NextRequest) {
     },
   })
 
+  // LEGACY day-scoped junk: rows saved BEFORE the expiry hard rule existed
+  // ("৮ জুলাই ছুটি", daily salah logs) carry no expires_at, so the stale-45d
+  // filter misses them for weeks. Surface them on the owner card right away.
+  try {
+    const { isEphemeralDayFact } = await import('@/agent/lib/agent-memory')
+    const seen = new Set(candidates.map((c) => c.id))
+    const legacyPool: typeof candidates = await db.agentMemory.findMany({
+      where: { pinned: false, expiresAt: null },
+      orderBy: { createdAt: 'asc' },
+      take: 500,
+      select: {
+        id: true, content: true, scope: true, importance: true,
+        accessCount: true, createdAt: true, lastUsedAt: true,
+      },
+    })
+    for (const row of legacyPool) {
+      if (candidates.length >= MAX_CANDIDATES) break
+      if (!seen.has(row.id) && isEphemeralDayFact(row.content)) {
+        candidates.push(row)
+        seen.add(row.id)
+      }
+    }
+  } catch (err) {
+    console.warn('[memory-revision] legacy ephemeral scan failed:', err instanceof Error ? err.message : String(err))
+  }
+
   const totalMemories = await db.agentMemory.count()
 
   if (candidates.length === 0) {
-    return NextResponse.json({ ok: true, candidates: 0, totalMemories })
+    return NextResponse.json({ ok: true, candidates: 0, totalMemories, expiredDeleted, duplicatesDeleted })
   }
 
   const lines = candidates.map((c, i) => {
@@ -142,5 +208,7 @@ export async function POST(req: NextRequest) {
     candidates: candidates.length,
     totalMemories,
     pendingActionId: action.id,
+    expiredDeleted,
+    duplicatesDeleted,
   })
 }

@@ -140,7 +140,13 @@ async function getOrCreateHeartbeatConversation(date: string): Promise<string> {
       title: `💓 এজেন্ট হার্টবিট — ${date}`,
       source: 'heartbeat',
       businessId: BUSINESS_ID,
-      modelId: 'claude-sonnet-4-6',
+      // COST BUG FIX (2026-07-08, verified in agent_cost_events): this used to
+      // hardcode 'claude-sonnet-4-6'. Any turn that entered this conversation
+      // via its saved modelId (owner reply, follow-up crons) hit the explicit-pin
+      // path, and ANTHROPIC_HEAD_DOWN silently redirected it to Gemini 3.1 Pro —
+      // so "cheap" autonomous wakes billed $2/M-input Pro rates ($1.40/wk).
+      // Pin the conversation to the cheap head the tick itself already uses.
+      modelId: heartbeatHeadModelId(),
     },
   })
   await prisma.agentKvSetting.upsert({

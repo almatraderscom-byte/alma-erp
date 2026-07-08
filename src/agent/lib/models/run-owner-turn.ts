@@ -115,9 +115,12 @@ async function loadPinnedMemories(
     const rows: Array<{ id: string; content: string; scope: string; metadata: unknown }> =
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (prisma as any).agentMemory.findMany({
-        where: personalMode
-          ? { pinned: true, scope: 'personal' }
-          : { pinned: true, scope: { not: 'personal' } },
+        where: {
+          ...(personalMode
+            ? { pinned: true, scope: 'personal' }
+            : { pinned: true, scope: { not: 'personal' } }),
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
         orderBy: { createdAt: 'desc' },
         take: 60,
         select: { id: true, content: true, scope: true, metadata: true },
@@ -228,9 +231,9 @@ async function* runAlternateProviderTurn(
       if (fresh.status === 'prayed_on_time' || fresh.status === 'prayed_late') {
         intakeContextBlock =
           `[SALAH CONFIRMED — CONSCIENCE NUDGE]\n` +
-          `Sir just told you he prayed ${fresh.waqt} (${fresh.date}); it is ALREADY saved — do NOT call mark_salah for it. ` +
-          `Reply in warm Bangla, addressing him as Sir: (1) a short Alhamdulillah / du'a that Allah accepts it, ` +
-          `(2) then ONE gentle conscience question — ask softly whether he prayed in jamaat or alone ("জামাতে পড়লেন নাকি একা, Sir?"), ` +
+          `Boss just told you he prayed ${fresh.waqt} (${fresh.date}); it is ALREADY saved — do NOT call mark_salah for it. ` +
+          `Reply in warm Bangla, addressing him ONLY as Boss (never Sir/স্যার — owner rule 2026-07-07): (1) a short Alhamdulillah / du'a that Allah accepts it, ` +
+          `(2) then ONE gentle conscience question — ask softly whether he prayed in jamaat or alone ("জামাতে পড়লেন নাকি একা, Boss?"), ` +
           `framed with love and trust, never accusing. Keep it to 2 lines. This gentle question is intentional and owner-requested.`
       } else if (fresh.status === 'qaza' || fresh.status === 'missed') {
         intakeContextBlock =

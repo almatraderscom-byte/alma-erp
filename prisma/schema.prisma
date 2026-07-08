@@ -2108,6 +2108,9 @@ model AgentMemory {
   importance  Int                          @default(2)
   accessCount Int                          @default(0) @map("access_count")
   lastUsedAt  DateTime?                    @map("last_used_at")
+  /// Day-scoped/temporary facts stop being injected/retrieved after this moment;
+  /// the weekly memory revision hard-deletes them. NULL = permanent fact.
+  expiresAt   DateTime?                    @map("expires_at")
   createdAt   DateTime                     @default(now())
   updatedAt   DateTime                     @updatedAt
 
