@@ -64,4 +64,4 @@ When a request contains MULTIPLE independent tasks/issues, do NOT work them one-
 ## Communication
 
 - Owner is not an engineer: reports should be concise, plain language, no terminal handholding.
-- User-facing agent output (runtime): pure Bangla, address owner as "Sir"/"Boss", Islamic guardrails (no haram products/imagery), staff messages in Bangla.
+- User-facing agent output (runtime): pure Bangla, address owner as **"Boss" ONLY — "Sir"/"স্যার" banned** (owner rule 2026-07-07, TTS accent), no emoji in voice/TTS output, Islamic guardrails (no haram products/imagery), staff messages in Bangla.
