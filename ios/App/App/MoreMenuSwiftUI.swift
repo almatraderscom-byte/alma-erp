@@ -28,6 +28,8 @@
 
 import SwiftUI
 import UIKit
+import PhotosUI
+import WebKit
 
 // MARK: - Theme bridge (no import of SpikeNativeShell types)
 
@@ -44,6 +46,9 @@ extension Notification.Name {
     /// Posted by the host's glossy "Business" bar-button pill (SwiftUIShell.makeMoreTab);
     /// the screen answers by presenting the business-switcher sheet.
     static let almaShowBusinessSwitch = Notification.Name("almaShowBusinessSwitch")
+    /// Posted by the host's round avatar bar button (top-right); the screen answers
+    /// by presenting the profile sheet.
+    static let almaShowProfile = Notification.Name("almaShowProfile")
 }
 
 // MARK: - /api/assistant/more-pulse models (defensive decoding — one bad field
@@ -53,13 +58,19 @@ struct MorePulseUser: Decodable {
     let name: String
     let isOwner: Bool
     let businessAccess: [String]
+    let email: String?
+    let phone: String?
+    let profileImageUrl: String?
 
-    enum CodingKeys: String, CodingKey { case name, isOwner, businessAccess }
+    enum CodingKeys: String, CodingKey { case name, isOwner, businessAccess, email, phone, profileImageUrl }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = (try? c.decode(String.self, forKey: .name)) ?? ""
         isOwner = (try? c.decode(Bool.self, forKey: .isOwner)) ?? false
         businessAccess = (try? c.decode([String].self, forKey: .businessAccess)) ?? []
+        email = try? c.decodeIfPresent(String.self, forKey: .email)
+        phone = try? c.decodeIfPresent(String.self, forKey: .phone)
+        profileImageUrl = try? c.decodeIfPresent(String.self, forKey: .profileImageUrl)
     }
 }
 
@@ -144,6 +155,9 @@ private struct MoreMeResponse: Decodable {
         let name: String?
         let businessAccess: String?
         let isSystemOwner: Bool?
+        let email: String?
+        let phone: String?
+        let profileImageUrl: String?
     }
     let user: MeUser?
 }
@@ -155,6 +169,10 @@ private struct MoreMeResponse: Decodable {
 final class MoreVM {
     var userName: String = ""
     var isOwner = false
+    var email: String?
+    var phone: String?
+    /// Relative or absolute URL of the avatar (cookie-authed GET); nil = none set.
+    var profileImageUrl: String?
     /// Business ids the user may switch to (ALMA_LIFESTYLE / ALMA_TRADING /
     /// CREATIVE_DIGITAL_IT). Empty = unknown yet → the sheet shows all three.
     var allowedBusinessIds: [String] = []
@@ -180,6 +198,9 @@ final class MoreVM {
                 userName = u.name
                 isOwner = u.isOwner
                 allowedBusinessIds = u.businessAccess
+                email = u.email
+                phone = u.phone
+                profileImageUrl = u.profileImageUrl
             }
             alerts = pulse.alerts
             progress = pulse.progress
@@ -191,6 +212,9 @@ final class MoreVM {
                    let u = me.user {
                     userName = u.name ?? ""
                     isOwner = u.isSystemOwner ?? false
+                    email = u.email
+                    phone = u.phone
+                    profileImageUrl = u.profileImageUrl
                     allowedBusinessIds = (u.businessAccess ?? "")
                         .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
                         .filter { !$0.isEmpty }
@@ -211,6 +235,64 @@ private enum MoreExpandState {
     }
     static func save(_ groups: Set<String>) {
         UserDefaults.standard.set(Array(groups).sorted(), forKey: key)
+    }
+}
+
+// MARK: - Accent (web colour variant) bridge
+
+/// The web app's 5 accent presets (src/lib/theme.ts — single source of truth for the
+/// values). The choice lives in the `alma-accent` COOKIE (SSR reads it before paint),
+/// so native "applies" a variant by writing that cookie into the shared
+/// WKWebsiteDataStore — every web surface picks it up on its next page load. Native
+/// chrome keeps the app's locked violet/coral glass (owner spec); the swatches here
+/// mirror the web's exact hexes.
+enum AlmaAccent: String, CaseIterable {
+    case coral, blue, green, violet, amber
+
+    static let defaultsKey = "alma-accent"
+    static let cookieName = "alma-accent"
+
+    var label: String {
+        switch self {
+        case .coral: return "Coral"
+        case .blue: return "Blue"
+        case .green: return "Green"
+        case .violet: return "Violet"
+        case .amber: return "Amber"
+        }
+    }
+    /// Swatch colour — same hex the web maps to --c-accent (theme.ts).
+    var color: Color {
+        switch self {
+        case .coral: return Color(red: 224/255, green: 122/255, blue: 95/255)   // #E07A5F
+        case .blue: return Color(red: 59/255, green: 130/255, blue: 246/255)    // #3B82F6
+        case .green: return Color(red: 34/255, green: 167/255, blue: 122/255)   // #22A77A
+        case .violet: return Color(red: 139/255, green: 92/255, blue: 246/255)  // #8B5CF6
+        case .amber: return Color(red: 217/255, green: 152/255, blue: 49/255)   // #D99831
+        }
+    }
+
+    static var current: AlmaAccent {
+        AlmaAccent(rawValue: UserDefaults.standard.string(forKey: defaultsKey) ?? "") ?? .coral
+    }
+
+    /// Persist locally + write the web's cookie (1 year, path /, same attributes the
+    /// web sets). Web pages restyle on their next load — same one-way native→web
+    /// model AlmaTheme uses for dark mode.
+    static func set(_ accent: AlmaAccent) {
+        UserDefaults.standard.set(accent.rawValue, forKey: defaultsKey)
+        guard let host = AlmaAPI.baseURL.host,
+              let cookie = HTTPCookie(properties: [
+                  .name: cookieName,
+                  .value: accent.rawValue,
+                  .domain: host,
+                  .path: "/",
+                  .expires: Date(timeIntervalSinceNow: 365 * 86_400),
+                  .secure: "TRUE",
+              ]) else { return }
+        DispatchQueue.main.async {
+            WKWebsiteDataStore.default().httpCookieStore.setCookie(cookie)
+        }
     }
 }
 
@@ -241,17 +323,15 @@ struct MoreMenuScreen: View {
     /// Fired when the logged-in user's name arrives — the host sets it as the nav
     /// large title (Watch-app style "Alex's Apple Watch" slot). Optional for previews.
     var onUserName: (String) -> Void = { _ in }
+    /// Fired when the avatar URL arrives/changes — the host refreshes the round
+    /// profile bar button (top-right). Optional for previews.
+    var onProfileImageUrl: (String?) -> Void = { _ in }
 
     @Environment(\.colorScheme) private var colorScheme
-    /// Mirrors AlmaTheme.isDark for the switch + sun/moon icon; resynced on every
-    /// almaThemeChanged broadcast so an external flip (e.g. web toggle) can't desync it.
-    @State private var isDark = MoreTheme.isDark
-    /// Face ID lock switch position. Seeded from the local cache for an instant, correct
-    /// first paint; reconciled against the web localStorage value on appear.
-    @State private var faceLockOn = UserDefaults.standard.object(forKey: "alma-biometric-lock-cache") as? Bool ?? true
     @State private var vm = MoreVM()
     @State private var expandedGroups: Set<String> = MoreExpandState.load()
     @State private var showBusinessSheet = false
+    @State private var showProfileSheet = false
 
     // ── Menu data — same items as before; "Switch business" moved to the glossy
     //    pill + sheet, so it is no longer a list section ──
@@ -352,18 +432,10 @@ struct MoreMenuScreen: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 22) {
                 MoreHeroRow(vm: vm, openPath: openPath)
+                // Appearance/Security switches live in the PROFILE sheet now (owner
+                // spec 2026-07-08): More is pure navigation, profile is personal.
                 ForEach(Self.groups, id: \.header) { group in
                     collapsibleGroup(group)
-                }
-                section(header: "Appearance") {
-                    darkModeRow
-                    if toggleNativeScreens != nil {
-                        Divider().padding(.leading, 58)
-                        nativeScreensRow
-                    }
-                }
-                if readBiometricLock != nil {
-                    section(header: "Security") { faceLockRow }
                 }
             }
             .padding(.horizontal, 16)
@@ -377,20 +449,19 @@ struct MoreMenuScreen: View {
         // Claude-style top scroll-edge fade under the (transparent-glass) UIKit nav bar.
         .claudeTopFade()
         .task { await vm.loadIfStale() }
-        // External theme flips (web toggle, another screen) must move OUR switch too.
-        .onReceive(NotificationCenter.default.publisher(for: MoreTheme.changed)) { _ in
-            isDark = MoreTheme.isDark
-        }
         // The host's glossy "Business" pill (bar button) asks us to present the sheet.
         .onReceive(NotificationCenter.default.publisher(for: .almaShowBusinessSwitch)) { _ in
             showBusinessSheet = true
         }
+        // The host's round avatar bar button (top-right) asks for the profile sheet.
+        .onReceive(NotificationCenter.default.publisher(for: .almaShowProfile)) { _ in
+            showProfileSheet = true
+        }
         .onChange(of: vm.userName) { _, name in
             if !name.isEmpty { onUserName(name) }
         }
-        // Reconcile the Face ID switch with the real web localStorage value on appear.
-        .onAppear {
-            readBiometricLock? { on in faceLockOn = on }
+        .onChange(of: vm.profileImageUrl) { _, url in
+            onProfileImageUrl(url)
         }
         .sheet(isPresented: $showBusinessSheet) {
             MoreBusinessSheet(
@@ -401,6 +472,21 @@ struct MoreMenuScreen: View {
                     openPath(biz.path, biz.name)
                 })
             .presentationDetents([.medium])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showProfileSheet) {
+            MoreProfileSheet(
+                vm: vm,
+                toggleDark: toggleDark,
+                nativeScreensOn: nativeScreensOn,
+                toggleNativeScreens: toggleNativeScreens,
+                readBiometricLock: readBiometricLock,
+                setBiometricLock: setBiometricLock,
+                openPath: { path, title in
+                    showProfileSheet = false
+                    openPath(path, title)
+                })
+            .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
     }
@@ -491,28 +577,6 @@ struct MoreMenuScreen: View {
         else { openPath(item.path, item.title) }
     }
 
-    // ── Section card scaffold (non-collapsible, used by Appearance / Security) ──
-
-    /// Small uppercase header + rounded card of rows (the "inset grouped" look,
-    /// hand-built because List can't sit on the app's aurora background).
-    @ViewBuilder
-    private func section(header: String, @ViewBuilder rows: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(header.uppercased())
-                .font(.caption.weight(.bold))
-                .tracking(0.6)
-                // On the raw aurora (outside the card) headers need real contrast, not
-                // the washed-out .secondary the owner flagged as hard to read.
-                .foregroundStyle(colorScheme == .dark ? Color.white.opacity(0.72)
-                                                      : Color.black.opacity(0.55))
-                .padding(.leading, 14)
-            // Frosted-glass card so the aurora glows through but the rows stay crisp.
-            VStack(spacing: 0) { rows() }
-                .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
-                .shadow(color: .black.opacity(colorScheme == .dark ? 0.18 : 0.06), radius: 10, y: 3)
-        }
-    }
-
     // ── Row labels ──
 
     /// Module row: SF Symbol in a violet-tinted rounded square (premium-iOS icon chip).
@@ -530,99 +594,6 @@ struct MoreMenuScreen: View {
         }
     }
 
-    /// Appearance row — the app-wide Dark Mode switch. Icon mirrors the UIKit cell
-    /// (moon = violet in dark, sun = orange in light). The Toggle's setter only calls
-    /// the host's toggleDark(); state comes BACK via the almaThemeChanged broadcast,
-    /// keeping AlmaTheme the single source of truth.
-    private var darkModeRow: some View {
-        HStack(spacing: 12) {
-            Image(systemName: isDark ? "moon.fill" : "sun.max.fill")
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(isDark ? violet : Color.orange)
-                .frame(width: 32, height: 32)
-                .background((isDark ? violet : Color.orange).opacity(isDark ? 0.18 : 0.12),
-                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
-            Text("Dark Mode")
-                .font(.body)
-                .foregroundStyle(.primary)
-            Spacer(minLength: 8)
-            Toggle("Dark Mode", isOn: Binding(
-                get: { isDark },
-                set: { newValue in
-                    guard newValue != isDark else { return }
-                    UISelectionFeedbackGenerator().selectionChanged() // same tick as UIKit
-                    toggleDark()
-                }
-            ))
-            .labelsHidden()
-            .tint(violet)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-    }
-
-    /// App-lock switch — Face ID / Touch ID gate on cold start + resume-after-idle.
-    /// Writes the web app's localStorage flag through the host; state seeds from the
-    /// local cache and reconciles with the real value on appear.
-    private var faceLockRow: some View {
-        let green = Color(red: 0.231, green: 0.784, blue: 0.522)
-        return HStack(spacing: 12) {
-            Image(systemName: "faceid")
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(green)
-                .frame(width: 32, height: 32)
-                .background(green.opacity(colorScheme == .dark ? 0.18 : 0.12),
-                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
-            VStack(alignment: .leading, spacing: 1) {
-                Text("অ্যাপ লক (Face ID)").font(.body).foregroundStyle(.primary)
-                Text("অ্যাপ খুললে বা কিছুক্ষণ পর ফিরে এলে Face ID / Touch ID দিয়ে আনলক")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
-            Toggle("App lock", isOn: Binding(
-                get: { faceLockOn },
-                set: { newValue in
-                    guard newValue != faceLockOn else { return }
-                    UISelectionFeedbackGenerator().selectionChanged()
-                    faceLockOn = newValue
-                    setBiometricLock?(newValue)
-                }
-            ))
-            .labelsHidden()
-            .tint(green)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-    }
-
-    /// "Native স্ক্রিন" switch — OFF instantly restores the web Orders/Approvals and the
-    /// UIKit More menu (one-tap escape if a native screen misbehaves; no reinstall).
-    private var nativeScreensRow: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "swift")
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(Color(red: 0.878, green: 0.478, blue: 0.373))
-                .frame(width: 32, height: 32)
-                .background(Color(red: 0.878, green: 0.478, blue: 0.373).opacity(colorScheme == .dark ? 0.18 : 0.12),
-                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Native স্ক্রিন").font(.body).foregroundStyle(.primary)
-                Text("বন্ধ করলে আগের ওয়েব স্ক্রিন ফিরবে").font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
-            Toggle("Native screens", isOn: Binding(
-                get: { nativeScreensOn },
-                set: { _ in
-                    UISelectionFeedbackGenerator().selectionChanged()
-                    toggleNativeScreens?()
-                }
-            ))
-            .labelsHidden()
-            .tint(Color(red: 0.878, green: 0.478, blue: 0.373))
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-    }
 }
 
 // MARK: - Hero cards ("My Faces" slot — clock · alerts · progress)
@@ -963,6 +934,663 @@ private struct HeroPressStyle: ButtonStyle {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.spring(response: 0.3, dampingFraction: 0.8), value: configuration.isPressed)
+    }
+}
+
+// MARK: - Profile sheet (opened by the round avatar bar button, top-right)
+
+/// Absolute URL for API-relative paths like /api/users/{id}/profile-image —
+/// URLSession/AsyncImage send the synced session cookies for the ERP host.
+private func almaAbsoluteURL(_ s: String?) -> URL? {
+    guard let s, !s.isEmpty else { return nil }
+    if s.hasPrefix("http") { return URL(string: s) }
+    return URL(string: s, relativeTo: AlmaAPI.baseURL)
+}
+
+private struct MoreAvatarUploadResponse: Decodable {
+    let ok: Bool?
+    let profileImageUrl: String?
+}
+private struct MoreOkResponse: Decodable { let ok: Bool? }
+private struct MoreCsrfResponse: Decodable { let csrfToken: String? }
+
+/// Square-crop (centre) + downscale + JPEG-encode a picked photo into the web
+/// endpoint's `data:` URL format. 640px is plenty for a 120pt avatar and stays
+/// far under the server's 8 MB decoded-buffer cap.
+private func almaAvatarDataURL(_ image: UIImage, maxSide: CGFloat = 640) -> String? {
+    let side = min(image.size.width, image.size.height)
+    let origin = CGPoint(x: (image.size.width - side) / 2, y: (image.size.height - side) / 2)
+    let target = min(side, maxSide)
+    let renderer = UIGraphicsImageRenderer(size: CGSize(width: target, height: target))
+    let squared = renderer.image { _ in
+        // Draw the FULL image scaled so the centre square lands exactly on the
+        // target canvas; everything outside the square falls off the edges.
+        let scale = target / side
+        image.draw(in: CGRect(x: -origin.x * scale, y: -origin.y * scale,
+                              width: image.size.width * scale, height: image.size.height * scale))
+    }
+    guard let jpeg = squared.jpegData(compressionQuality: 0.85) else { return nil }
+    return "data:image/jpeg;base64,\(jpeg.base64EncodedString())"
+}
+
+@available(iOS 17.0, *)
+private struct MoreProfileSheet: View {
+    let vm: MoreVM
+    let toggleDark: () -> Void
+    var nativeScreensOn: Bool
+    var toggleNativeScreens: (() -> Void)?
+    var readBiometricLock: ((@escaping (Bool) -> Void) -> Void)?
+    var setBiometricLock: ((Bool) -> Void)?
+    /// Web push (used to reach the login page after sign-out).
+    let openPath: (_ path: String, _ title: String) -> Void
+
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.dismiss) private var dismiss
+    /// Mirrors AlmaTheme.isDark; resynced on every almaThemeChanged broadcast.
+    @State private var isDark = MoreTheme.isDark
+    /// Face ID switch — seeded from cache, reconciled with web localStorage on appear.
+    @State private var faceLockOn = UserDefaults.standard.object(forKey: "alma-biometric-lock-cache") as? Bool ?? true
+    @State private var accent = AlmaAccent.current
+    @State private var photoItem: PhotosPickerItem?
+    @State private var uploadingPhoto = false
+    @State private var photoError: String?
+    @State private var showPasswordSheet = false
+    @State private var showContactSheet = false
+    @State private var confirmSignOut = false
+    @State private var signingOut = false
+
+    private var violet: Color { Color(red: 0.655, green: 0.545, blue: 0.980) }
+    private var coral: Color { Color(red: 0.878, green: 0.478, blue: 0.373) }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 22) {
+                header
+                appearanceCard
+                securityCard
+                accountCard
+                signOutCard
+                versionFooter
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 26)
+            .padding(.bottom, 30)
+        }
+        .background(OrdersAurora())
+        .onReceive(NotificationCenter.default.publisher(for: MoreTheme.changed)) { _ in
+            isDark = MoreTheme.isDark
+        }
+        .onAppear { readBiometricLock? { on in faceLockOn = on } }
+        .sheet(isPresented: $showPasswordSheet) {
+            MoreChangePasswordSheet()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showContactSheet) {
+            MoreEditContactSheet(vm: vm)
+                .presentationDetents([.medium])
+                .presentationDragIndicator(.visible)
+        }
+        .confirmationDialog("সাইন আউট করবেন?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+            Button("সাইন আউট", role: .destructive) { Task { await signOut() } }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+
+    // ── Header: round avatar + camera badge + identity ──
+
+    private var header: some View {
+        VStack(spacing: 10) {
+            ZStack(alignment: .bottomTrailing) {
+                Group {
+                    if let url = almaAbsoluteURL(vm.profileImageUrl) {
+                        AsyncImage(url: url) { phase in
+                            if let image = phase.image {
+                                image.resizable().scaledToFill()
+                            } else {
+                                initialsCircle
+                            }
+                        }
+                    } else {
+                        initialsCircle
+                    }
+                }
+                .frame(width: 120, height: 120)
+                .clipShape(Circle())
+                .overlay(Circle().strokeBorder(.white.opacity(scheme == .dark ? 0.18 : 0.75), lineWidth: 3))
+                .shadow(color: .black.opacity(scheme == .dark ? 0.4 : 0.12), radius: 12, y: 5)
+                .overlay {
+                    if uploadingPhoto {
+                        Circle().fill(.black.opacity(0.35))
+                        ProgressView().tint(.white)
+                    }
+                }
+
+                // Camera badge = the photo picker (upload / change).
+                PhotosPicker(selection: $photoItem, matching: .images, photoLibrary: .shared()) {
+                    Image(systemName: "camera.fill")
+                        .font(.footnote.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(violet, in: Circle())
+                        .overlay(Circle().strokeBorder(.white.opacity(0.9), lineWidth: 2))
+                }
+                .disabled(uploadingPhoto)
+            }
+            .onChange(of: photoItem) { _, item in
+                guard let item else { return }
+                Task { await uploadPhoto(item) }
+            }
+
+            VStack(spacing: 3) {
+                Text(vm.userName.isEmpty ? "—" : vm.userName)
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.primary)
+                if let email = vm.email, !email.isEmpty {
+                    Text(email).font(.footnote).foregroundStyle(.secondary)
+                }
+                Text(vm.isOwner ? "Owner" : "Staff")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(vm.isOwner ? coral : violet)
+                    .padding(.horizontal, 10).padding(.vertical, 3)
+                    .background((vm.isOwner ? coral : violet).opacity(0.14), in: Capsule())
+            }
+            if let photoError {
+                Text(photoError).font(.caption).foregroundStyle(coral)
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var initialsCircle: some View {
+        ZStack {
+            LinearGradient(colors: [violet.opacity(0.85), coral.opacity(0.75)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+            Text(String(vm.userName.prefix(1)).uppercased())
+                .font(.system(size: 48, weight: .bold, design: .rounded))
+                .foregroundStyle(.white)
+        }
+    }
+
+    private func uploadPhoto(_ item: PhotosPickerItem) async {
+        photoError = nil
+        uploadingPhoto = true
+        defer { uploadingPhoto = false; photoItem = nil }
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data),
+                  let dataURL = almaAvatarDataURL(image) else {
+                photoError = "ছবিটা পড়া যায়নি — অন্য একটা ছবি চেষ্টা করুন"
+                return
+            }
+            struct Body: Encodable { let image_data_url: String }
+            let resp: MoreAvatarUploadResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/users/me/profile-image", body: Body(image_data_url: dataURL))
+            if resp.ok == true {
+                // ?v=timestamp in the returned URL busts AsyncImage/URLCache.
+                vm.profileImageUrl = resp.profileImageUrl
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } else {
+                photoError = "আপলোড হয়নি — আবার চেষ্টা করুন"
+            }
+        } catch {
+            photoError = "আপলোড হয়নি — নেটওয়ার্ক দেখে আবার চেষ্টা করুন"
+        }
+    }
+
+    // ── Appearance: dark mode · accent variants · native screens ──
+
+    private var appearanceCard: some View {
+        profileSection(header: "Appearance") {
+            // Dark Mode (moved here from the More list — owner spec).
+            profileRow(icon: isDark ? "moon.fill" : "sun.max.fill",
+                       tint: isDark ? violet : .orange, title: "Dark Mode") {
+                Toggle("Dark Mode", isOn: Binding(
+                    get: { isDark },
+                    set: { newValue in
+                        guard newValue != isDark else { return }
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        toggleDark()
+                    }
+                ))
+                .labelsHidden()
+                .tint(violet)
+            }
+            Divider().padding(.leading, 58)
+            // Accent variants — the web menu's colour presets, now native.
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 12) {
+                    Image(systemName: "paintpalette.fill")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(accent.color)
+                        .frame(width: 32, height: 32)
+                        .background(accent.color.opacity(scheme == .dark ? 0.18 : 0.12),
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    Text("Accent Color").font(.body).foregroundStyle(.primary)
+                    Spacer(minLength: 8)
+                    Text(accent.label).font(.caption).foregroundStyle(.secondary)
+                }
+                HStack(spacing: 14) {
+                    ForEach(AlmaAccent.allCases, id: \.rawValue) { option in
+                        Button {
+                            UISelectionFeedbackGenerator().selectionChanged()
+                            accent = option
+                            AlmaAccent.set(option)
+                        } label: {
+                            ZStack {
+                                Circle().fill(option.color)
+                                if option == accent {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption.weight(.heavy))
+                                        .foregroundStyle(.white)
+                                }
+                            }
+                            .frame(width: 30, height: 30)
+                            .overlay(Circle().strokeBorder(
+                                option == accent ? option.color.opacity(0.45) : .clear, lineWidth: 3)
+                                .padding(-4))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Spacer()
+                }
+                .padding(.leading, 44)
+                Text("ওয়েব পেজগুলোতে পরের লোড থেকে নতুন রং কার্যকর হবে")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .padding(.leading, 44)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            if toggleNativeScreens != nil {
+                Divider().padding(.leading, 58)
+                profileRow(icon: "swift", tint: coral, title: "Native স্ক্রিন",
+                           subtitle: "বন্ধ করলে আগের ওয়েব স্ক্রিন ফিরবে") {
+                    Toggle("Native screens", isOn: Binding(
+                        get: { nativeScreensOn },
+                        set: { _ in
+                            UISelectionFeedbackGenerator().selectionChanged()
+                            toggleNativeScreens?()
+                        }
+                    ))
+                    .labelsHidden()
+                    .tint(coral)
+                }
+            }
+        }
+    }
+
+    // ── Security: Face ID lock · change password ──
+
+    private var securityCard: some View {
+        let green = Color(red: 0.231, green: 0.784, blue: 0.522)
+        return profileSection(header: "Security") {
+            if readBiometricLock != nil {
+                profileRow(icon: "faceid", tint: green, title: "অ্যাপ লক (Face ID)",
+                           subtitle: "অ্যাপ খুললে বা কিছুক্ষণ পর ফিরে এলে Face ID / Touch ID দিয়ে আনলক") {
+                    Toggle("App lock", isOn: Binding(
+                        get: { faceLockOn },
+                        set: { newValue in
+                            guard newValue != faceLockOn else { return }
+                            UISelectionFeedbackGenerator().selectionChanged()
+                            faceLockOn = newValue
+                            setBiometricLock?(newValue)
+                        }
+                    ))
+                    .labelsHidden()
+                    .tint(green)
+                }
+                Divider().padding(.leading, 58)
+            }
+            Button {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                showPasswordSheet = true
+            } label: {
+                profileRow(icon: "key.fill", tint: violet, title: "Password পরিবর্তন") {
+                    Image(systemName: "chevron.right")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(MoreRowButtonStyle())
+        }
+    }
+
+    // ── Account: name/phone (editable) · email (admin-managed) ──
+
+    private var accountCard: some View {
+        profileSection(header: "Account") {
+            Button {
+                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                showContactSheet = true
+            } label: {
+                profileRow(icon: "person.text.rectangle", tint: violet, title: "নাম ও ফোন",
+                           subtitle: [vm.userName, vm.phone ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")) {
+                    Image(systemName: "chevron.right")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(MoreRowButtonStyle())
+            Divider().padding(.leading, 58)
+            // Email is the login identifier — self-service change has no backend
+            // (only admins via /api/users/[id]), so it is shown read-only on purpose.
+            profileRow(icon: "envelope.fill", tint: .secondary, title: "Email",
+                       subtitle: (vm.email?.isEmpty == false ? vm.email! : "সেট করা নেই")
+                           + " · পরিবর্তনের জন্য অ্যাডমিন") {
+                Image(systemName: "lock.fill")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    // ── Sign out + version ──
+
+    private var signOutCard: some View {
+        Button {
+            confirmSignOut = true
+        } label: {
+            HStack {
+                Spacer()
+                if signingOut {
+                    ProgressView().tint(coral)
+                } else {
+                    Image(systemName: "rectangle.portrait.and.arrow.right")
+                        .font(.subheadline.weight(.semibold))
+                    Text("সাইন আউট").font(.body.weight(.semibold))
+                }
+                Spacer()
+            }
+            .foregroundStyle(coral)
+            .padding(.vertical, 13)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(MoreRowButtonStyle())
+        .disabled(signingOut)
+        .ordersGlass(scheme, corner: AlmaSwiftTheme.rCard)
+        .shadow(color: .black.opacity(scheme == .dark ? 0.18 : 0.06), radius: 10, y: 3)
+    }
+
+    private var versionFooter: some View {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"
+        return Text("ALMA ERP v\(version) (\(build))")
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+    }
+
+    /// NextAuth sign-out, natively: CSRF token → form-POST /api/auth/signout →
+    /// purge the session cookies from BOTH cookie jars (URLSession + WKWebView)
+    /// so no surface stays half-logged-in → land on the web login page.
+    private func signOut() async {
+        signingOut = true
+        defer { signingOut = false }
+        do {
+            let csrf: MoreCsrfResponse = try await AlmaAPI.shared.get("/api/auth/csrf")
+            guard let token = csrf.csrfToken, !token.isEmpty else { return }
+            var request = URLRequest(url: AlmaAPI.baseURL.appendingPathComponent("api/auth/signout"))
+            request.httpMethod = "POST"
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            let encoded = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? token
+            request.httpBody = "csrfToken=\(encoded)&json=true".data(using: .utf8)
+            _ = try await URLSession.shared.data(for: request)
+        } catch {
+            // Even if the POST failed, fall through to the local purge — the user
+            // asked to sign out; a dead session cookie must not keep them "in".
+        }
+        await purgeSessionCookies()
+        AlmaAPI.shared.invalidateCookieCache()
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        dismiss()
+        openPath("/login", "Login")
+    }
+
+    private func purgeSessionCookies() async {
+        // URLSession jar
+        for cookie in HTTPCookieStorage.shared.cookies ?? []
+        where cookie.name.contains("next-auth.session-token") {
+            HTTPCookieStorage.shared.deleteCookie(cookie)
+        }
+        // WKWebView jar (shared by every web tab)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async {
+                let store = WKWebsiteDataStore.default().httpCookieStore
+                store.getAllCookies { cookies in
+                    let session = cookies.filter { $0.name.contains("next-auth.session-token") }
+                    guard !session.isEmpty else { continuation.resume(); return }
+                    var remaining = session.count
+                    for cookie in session {
+                        store.delete(cookie) {
+                            remaining -= 1
+                            if remaining == 0 { continuation.resume() }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Shared scaffolding (glass cards on the aurora, same look as More) ──
+
+    @ViewBuilder
+    private func profileSection(header: String, @ViewBuilder rows: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(header.uppercased())
+                .font(.caption.weight(.bold))
+                .tracking(0.6)
+                .foregroundStyle(scheme == .dark ? Color.white.opacity(0.72)
+                                                 : Color.black.opacity(0.55))
+                .padding(.leading, 14)
+            VStack(spacing: 0) { rows() }
+                .ordersGlass(scheme, corner: AlmaSwiftTheme.rCard)
+                .shadow(color: .black.opacity(scheme == .dark ? 0.18 : 0.06), radius: 10, y: 3)
+        }
+    }
+
+    @ViewBuilder
+    private func profileRow(icon: String, tint: Color, title: String,
+                            subtitle: String? = nil,
+                            @ViewBuilder trailing: () -> some View) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(tint)
+                .frame(width: 32, height: 32)
+                .background(tint.opacity(scheme == .dark ? 0.18 : 0.12),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.body).foregroundStyle(.primary)
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+            }
+            Spacer(minLength: 8)
+            trailing()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+    }
+}
+
+// MARK: - Change-password sheet (POST /api/users/me/password)
+
+@available(iOS 17.0, *)
+private struct MoreChangePasswordSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @State private var current = ""
+    @State private var newPassword = ""
+    @State private var confirm = ""
+    @State private var busy = false
+    @State private var error: String?
+
+    private var valid: Bool {
+        !current.isEmpty && newPassword.count >= 8 && newPassword == confirm
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Password পরিবর্তন")
+                    .font(.title3.weight(.bold))
+                    .padding(.top, 18)
+                VStack(spacing: 0) {
+                    secureRow("বর্তমান password", text: $current)
+                    Divider().padding(.leading, 14)
+                    secureRow("নতুন password (কমপক্ষে ৮ অক্ষর)", text: $newPassword)
+                    Divider().padding(.leading, 14)
+                    secureRow("নতুন password আবার লিখুন", text: $confirm)
+                }
+                .ordersGlass(scheme, corner: AlmaSwiftTheme.rCard)
+                if !newPassword.isEmpty && newPassword.count < 8 {
+                    Text("নতুন password কমপক্ষে ৮ অক্ষরের হতে হবে")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                if !confirm.isEmpty && confirm != newPassword {
+                    Text("দুইবার লেখা password মিলছে না")
+                        .font(.caption).foregroundStyle(Color(red: 0.878, green: 0.478, blue: 0.373))
+                }
+                if let error {
+                    Text(error).font(.caption)
+                        .foregroundStyle(Color(red: 0.878, green: 0.478, blue: 0.373))
+                }
+                Button {
+                    Task { await submit() }
+                } label: {
+                    HStack {
+                        Spacer()
+                        if busy { ProgressView().tint(.white) }
+                        else { Text("পরিবর্তন করুন").font(.body.weight(.semibold)) }
+                        Spacer()
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.vertical, 13)
+                    .background(Color(red: 0.655, green: 0.545, blue: 0.980).opacity(valid ? 1 : 0.4),
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                }
+                .disabled(!valid || busy)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+        }
+        .background(OrdersAurora())
+    }
+
+    private func secureRow(_ placeholder: String, text: Binding<String>) -> some View {
+        SecureField(placeholder, text: text)
+            .textContentType(.password)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+    }
+
+    private func submit() async {
+        busy = true
+        defer { busy = false }
+        error = nil
+        struct Body: Encodable { let currentPassword: String; let newPassword: String }
+        do {
+            let resp: MoreOkResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/users/me/password",
+                body: Body(currentPassword: current, newPassword: newPassword))
+            if resp.ok == true {
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                dismiss()
+            } else {
+                error = "পরিবর্তন হয়নি — আবার চেষ্টা করুন"
+            }
+        } catch let e as AlmaAPIError {
+            if case .http(let status, let bodyText) = e, status == 400,
+               bodyText.contains("incorrect") {
+                error = "বর্তমান password ভুল"
+            } else {
+                error = "পরিবর্তন হয়নি — আবার চেষ্টা করুন"
+            }
+        } catch {
+            error = "পরিবর্তন হয়নি — নেটওয়ার্ক দেখে আবার চেষ্টা করুন"
+        }
+    }
+}
+
+// MARK: - Edit name/phone sheet (PATCH /api/users/me)
+
+@available(iOS 17.0, *)
+private struct MoreEditContactSheet: View {
+    let vm: MoreVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @State private var name = ""
+    @State private var phone = ""
+    @State private var busy = false
+    @State private var error: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("নাম ও ফোন")
+                    .font(.title3.weight(.bold))
+                    .padding(.top, 18)
+                VStack(spacing: 0) {
+                    TextField("নাম", text: $name)
+                        .textContentType(.name)
+                        .padding(.horizontal, 14).padding(.vertical, 13)
+                    Divider().padding(.leading, 14)
+                    TextField("ফোন (01… / +880…)", text: $phone)
+                        .textContentType(.telephoneNumber)
+                        .keyboardType(.phonePad)
+                        .padding(.horizontal, 14).padding(.vertical, 13)
+                }
+                .ordersGlass(scheme, corner: AlmaSwiftTheme.rCard)
+                if let error {
+                    Text(error).font(.caption)
+                        .foregroundStyle(Color(red: 0.878, green: 0.478, blue: 0.373))
+                }
+                Button {
+                    Task { await submit() }
+                } label: {
+                    HStack {
+                        Spacer()
+                        if busy { ProgressView().tint(.white) }
+                        else { Text("সেভ করুন").font(.body.weight(.semibold)) }
+                        Spacer()
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.vertical, 13)
+                    .background(Color(red: 0.655, green: 0.545, blue: 0.980)
+                        .opacity(name.trimmingCharacters(in: .whitespaces).isEmpty ? 0.4 : 1),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                }
+                .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || busy)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+        }
+        .background(OrdersAurora())
+        .onAppear {
+            name = vm.userName
+            phone = vm.phone ?? ""
+        }
+    }
+
+    private func submit() async {
+        busy = true
+        defer { busy = false }
+        error = nil
+        struct Body: Encodable { let name: String; let phone: String }
+        do {
+            let trimmedName = name.trimmingCharacters(in: .whitespaces)
+            let trimmedPhone = phone.trimmingCharacters(in: .whitespaces)
+            let _: MoreOkResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/users/me", body: Body(name: trimmedName, phone: trimmedPhone))
+            vm.userName = trimmedName
+            vm.phone = trimmedPhone.isEmpty ? nil : trimmedPhone
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            dismiss()
+        } catch {
+            error = "সেভ হয়নি — আবার চেষ্টা করুন"
+        }
     }
 }
 

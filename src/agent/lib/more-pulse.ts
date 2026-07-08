@@ -49,8 +49,18 @@ export type MorePulseProgress = {
   monthlyLabel: string
 }
 
+export type MorePulseUser = {
+  name: string
+  isOwner: boolean
+  businessAccess: string[]
+  /** For the native profile header/avatar — null when the user has none set. */
+  email: string | null
+  phone: string | null
+  profileImageUrl: string | null
+}
+
 export type MorePulse = {
-  user: { name: string; isOwner: boolean; businessAccess: string[] }
+  user: MorePulseUser
   alerts: MorePulseAlert[]
   progress: MorePulseProgress
 }
@@ -491,7 +501,24 @@ export async function buildMorePulse(args: {
   /** Owner-only: which business to aggregate (validated by the route). */
   ownerBusinessId: string
 }): Promise<MorePulse> {
-  const user = { name: args.name, isOwner: args.isOwner, businessAccess: args.businessAccess }
+  // Contact + avatar aren't in the JWT — one cheap indexed read; the native
+  // profile header degrades to initials/placeholder if it fails.
+  const contact = await safe(
+    null as { email: string | null; phone: string | null; profileImageUrl: string | null } | null,
+    () =>
+      prisma.user.findUnique({
+        where: { id: args.userId },
+        select: { email: true, phone: true, profileImageUrl: true },
+      }),
+  )
+  const user: MorePulseUser = {
+    name: args.name,
+    isOwner: args.isOwner,
+    businessAccess: args.businessAccess,
+    email: contact?.email ?? null,
+    phone: contact?.phone ?? null,
+    profileImageUrl: contact?.profileImageUrl ?? null,
+  }
 
   if (args.isOwner) {
     // Owner view — rollups across the selected business.
