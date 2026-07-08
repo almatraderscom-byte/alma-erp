@@ -4742,11 +4742,33 @@ extension AlmaTabBarController {
                     navRef.value?.pushViewController(vc, animated: true)
                 }
             }
+            // Prefer the NATIVE screen (AlmaNativeRouter) when SwiftUI screens are on;
+            // fall back to the web tab exactly like webPushItem otherwise. Without this the
+            // assistive "Studio" tab always opened the web page even though the native
+            // Creative Studio ships in the build (owner report, build 62).
+            func nativePushItem(_ title: String, _ path: String) -> AgentAssistiveNav.Item {
+                AgentAssistiveNav.Item(title: title, icon: Self.assistantSectionIcon(title)) {
+                    let pushWeb: (_ p: String, _ t: String) -> Void = { p, t in
+                        let vc = AlmaWebTabViewController(url: URL(string: Self.base + p)!,
+                                                          processPool: pool, tabTitle: t,
+                                                          systemImage: "sparkles", hideWebHeader: true)
+                        vc.hidesBottomBarWhenPushed = false
+                        navRef.value?.pushViewController(vc, animated: true)
+                    }
+                    if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *),
+                       let native = AlmaNativeRouter.screen(for: path, openWebForced: pushWeb) {
+                        native.hidesBottomBarWhenPushed = false
+                        navRef.value?.pushViewController(native, animated: true)
+                    } else {
+                        pushWeb(path, title)
+                    }
+                }
+            }
             let assistive = AgentAssistiveNav(items: [
                 AgentAssistiveNav.Item(title: "Chat", icon: Self.assistantSectionIcon("Chat")) {
                     navRef.value?.popToRootViewController(animated: true)
                 },
-                webPushItem("Studio", "/agent/creative-studio"),
+                nativePushItem("Studio", "/agent/creative-studio"),
                 webPushItem("WhatsApp", "/agent/whatsapp"),
                 webPushItem("Monitor", "/agent/staff-monitor"),
                 webPushItem("Costs", "/agent/costs"),
