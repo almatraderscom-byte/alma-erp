@@ -183,15 +183,85 @@ extension AlmaTabBarController {
                 },
                 toggleDark: { AlmaTheme.toggle() },
                 nativeScreensOn: AlmaSwiftUIFlag.isOn,
-                toggleNativeScreens: { AlmaSwiftUIFlag.isOn.toggle() })
+                toggleNativeScreens: { AlmaSwiftUIFlag.isOn.toggle() },
+                // Watch-app layout: the large title becomes the logged-in user's
+                // name once identity loads ("Alex's Apple Watch" slot). The root
+                // host is addressed through the WEAK navRef — a closure captured
+                // by the rootView must not retain its own hosting controller.
+                onUserName: { name in
+                    navRef.value?.viewControllers.first?.title = name
+                })
             let host = AlmaHostingController(rootView: screen)
             host.title = "More"
+            // The fixed glossy "Business" pill, top-left like the Watch app's
+            // "All Watches" — a bar button so it stays anchored while the list
+            // scrolls. It only posts a notification; the SwiftUI screen presents
+            // the switcher sheet (single owner of presentation state).
+            host.navigationItem.leftBarButtonItem = Self.businessPillBarButton()
             let nav = Self.darkNav(root: host, tabTitle: "More", icon: "ellipsis.circle", largeTitles: true)
             navRef.value = nav
             return nav
         }
         return Self.darkNav(root: MoreMenuViewController(processPool: contentPool),
                             tabTitle: "More", icon: "ellipsis.circle", largeTitles: true)
+    }
+
+    /// The glossy "Business" switcher pill (Watch-app "All Watches" style): a frosted
+    /// capsule with a building glyph + label + tiny up/down chevron. Adaptive
+    /// materials/colours (.systemThinMaterial + .label) so theme flips restyle it for
+    /// free via the nav's overrideUserInterfaceStyle — no manual almaThemeChanged work.
+    private static func businessPillBarButton() -> UIBarButtonItem {
+        let container = UIButton(type: .custom, primaryAction: UIAction { _ in
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            NotificationCenter.default.post(name: .almaShowBusinessSwitch, object: nil)
+        })
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
+        blur.translatesAutoresizingMaskIntoConstraints = false
+        blur.layer.cornerRadius = 16
+        blur.clipsToBounds = true
+        blur.isUserInteractionEnabled = false
+        container.addSubview(blur)
+
+        let icon = UIImageView(image: UIImage(
+            systemName: "building.2.fill",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)))
+        icon.tintColor = .label
+        let label = UILabel()
+        label.text = "Business"
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = .label
+        let chevron = UIImageView(image: UIImage(
+            systemName: "chevron.up.chevron.down",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 9, weight: .bold)))
+        chevron.tintColor = .secondaryLabel
+
+        let stack = UIStackView(arrangedSubviews: [icon, label, chevron])
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 5
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.isUserInteractionEnabled = false
+        blur.contentView.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            container.heightAnchor.constraint(equalToConstant: 32),
+            blur.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            blur.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            blur.topAnchor.constraint(equalTo: container.topAnchor),
+            blur.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: blur.contentView.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: blur.contentView.trailingAnchor, constant: -12),
+            stack.centerYAnchor.constraint(equalTo: blur.contentView.centerYAnchor),
+        ])
+
+        // Hairline ring like glassBarButton — visible enough to read as a control,
+        // quiet enough to stay glassy. .separator adapts to light/dark on its own.
+        container.layer.cornerRadius = 16
+        container.layer.borderWidth = 1
+        container.layer.borderColor = UIColor.separator.withAlphaComponent(0.35).cgColor
+        return UIBarButtonItem(customView: container)
     }
 
     /// Swap Orders / Assistant / Approvals / More in place when the owner flips the
