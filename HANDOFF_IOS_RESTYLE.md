@@ -48,13 +48,18 @@ curl -sL https://download.swift.org/swift-6.0.3-release/ubuntu2404/swift-6.0.3-R
 
 The bento recipe = copy the pattern from `DashboardSwiftUI.swift` (~line 1556-2040: `dashMotionOK`, `DashCountUp(+Text)`, `DashMiniBar`, `DashRing`, `BentoRingTile`, `BentoStatTile`, `bentoWash`, `BentoHeroCard`) or the compact version in `ApprovalsSwiftUI.swift` (`Apv*`, end of file). Per-file PRIVATE copies with a file prefix (repo convention, no cross-file imports). Hero = dark in both schemes (indigo 0.094/0.082/0.157 + violet .32 topLeading + coral .30 bottomTrailing + sage radial hint, white .16 stroke, `.environment(\.colorScheme,.dark)`). Rules per file: keep EVERY metric/field/action/VM/API/`.claudeTopFade()` identical; money via the file's own helpers; LazyVStack/Grid; motion gated; **no new blur/repeatForever/Timers**; forms/chat-like screens get a LIGHT glass pass only, never forced bento.
 
-~~1–13 DONE (see §3.9)~~ — remaining:
+**QUEUE COMPLETE (2026-07-08 session b).** Items 1–13: full bento (see §3.9). Items 14–25:
 
-14. `PortalSwiftUI.swift`, 15. `PortalExpenseSwiftUI.swift`, 16. `BusinessArchiveSwiftUI.swift`, 17. `SupplierImportSwiftUI.swift`, 18. `OrderCreateSwiftUI.swift` (form — light pass), 19-25. `Settings*SwiftUI.swift` ×7 (light pass: stat strip only where counts exist, MoreMenu-style icon-chip rows; Database/Session are sensitive)
+- 14 **Portal** — light pass: tone-washed wallet stat tiles (request-form-heavy screen, no forced bento).
+- 15 **PortalExpense** — light pass: amber/emerald washes on the two summary cards.
+- 16 **BusinessArchive** — NO CHANGE NEEDED (no count strip; module rows already icon-chip style).
+- 17 **SupplierImport** — full bento (`Sup*` hero: products + categories/new/active).
+- 18 **OrderCreate** — NO CHANGE (form; light-pass rule says never force bento — nothing off-theme found).
+- 19–25 **Settings ×7** — SMS / Users / Notifications strips re-skinned as accent-wash tiles (`kpiCard` only); Branding / Database / Session / Telegram have no count strips → NO CHANGE (Database/Session sensitive, untouched).
 
-Batch rhythm: restyle 2-4 files → parse each → commit+push → after a few batches run ONE CI verification (temp trigger, revert after green).
+**NEXT SESSION = Mac session (§5):** simulator self-test every restyled page light+dark, batch fixes, ONE TestFlight build. Owner checklist addition → §6 last line covers the new pages.
 
-⚠️ **CI temp-trigger state (2026-07-08 session b):** `.github/workflows/ios-simulator.yml` currently carries the TEMP `push:` trigger for this branch (branch-only, no paths filter). Every push auto-runs the sim compile; concurrency cancels stale runs. **After the final green run: REVERT the trigger back to workflow_dispatch-only.** If a session ends before that, the next session must check this FIRST.
+⚠️ **CI temp-trigger state:** `.github/workflows/ios-simulator.yml` carried a TEMP `push:` trigger during this session. It must be (or already is) reverted to workflow_dispatch-only after the final green — verify the file's `on:` block has NO `push:` entry before doing anything else.
 
 ## 5. MAC SESSION PROTOCOL (owner pastes this file there too)
 
