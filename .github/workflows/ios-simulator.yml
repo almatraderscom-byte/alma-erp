@@ -10,11 +10,6 @@ name: iOS Simulator Build (no TestFlight)
 
 on:
   workflow_dispatch:
-  # TEMPORARY (one verification run for the profile-section change) — removed
-  # right after this run goes green; the workflow is manual-only by owner rule.
-  push:
-    branches: ['claude/ios-swiftui-design-build-dw04ik']
-    paths: ['ios/**']
 
 concurrency:
   group: ios-simulator-${{ github.ref }}
