@@ -357,31 +357,26 @@ struct CrmScreen: View {
         }
     }
 
-    // ── KPI strip (web: Total / Lifetime Revenue / VIP / Avg CLV / High Risk) ──
+    // ── KPI board (web: Total / Lifetime Revenue / VIP / Avg CLV / High Risk) —
+    //    bento language (owner spec 2026-07-08): lifetime revenue = the dark hero
+    //    anchor with customers/VIP split, CLV + high-risk = 2 accent tiles.
+    //    Same numbers, same tints — presentation only. ──
 
     private var kpiStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        VStack(spacing: 10) {
+            CrmBentoHeroCard(revenue: vm.totalRevenue,
+                             customers: vm.customers.count,
+                             vips: vm.vipCount)
             HStack(spacing: 10) {
-                kpiCard("TOTAL CUSTOMERS", "\(vm.customers.count)", .primary)
-                kpiCard("LIFETIME REVENUE", AlmaSwiftTheme.takaShort(vm.totalRevenue), CrmPalette.goldLt)
-                kpiCard("VIP", "\(vm.vipCount)", CrmPalette.accentText(colorScheme))
-                kpiCard("AVG CLV SCORE", "\(vm.avgClv)/100", CrmPalette.blue400)
-                kpiCard("HIGH RISK", "\(vm.highRiskCount)", CrmPalette.red400)
+                CrmBentoStatTile(label: "Avg CLV score", value: vm.avgClv,
+                                 format: { "\($0)/100" }, sub: "কাস্টমার ভ্যালু",
+                                 tint: CrmPalette.blue400, accent: CrmPalette.blue400)
+                CrmBentoStatTile(label: "High risk", value: vm.highRiskCount,
+                                 format: { "\($0)" }, sub: "ঝুঁকিপূর্ণ কাস্টমার",
+                                 tint: CrmPalette.red400, accent: CrmPalette.red500)
             }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 1)
         }
         .padding(.top, 4)
-    }
-
-    private func kpiCard(_ label: String, _ value: String, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            Text(value).font(.headline.weight(.bold)).foregroundStyle(tint)
-        }
-        .frame(minWidth: 84, alignment: .leading)
-        .padding(12)
-        .crmGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Segment tabs (web: All + the 6 segments, tap again to clear) ──
@@ -958,6 +953,162 @@ private struct CrmShimmer: ViewModifier {
 @available(iOS 17.0, *)
 private extension View {
     func crmShimmer() -> some View { modifier(CrmShimmer()) }
+}
+
+// MARK: - Bento components (CRM-owned copies of the Dashboard board language —
+// per-file copies are this repo's parallel-session convention, no cross-file imports)
+
+/// Central motion gate — count-ups freeze under Reduce Motion / Low Power.
+@available(iOS 17.0, *)
+private func crmMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number (0 → target on appear, old → new on refresh) — one Animatable
+/// interpolation, no timers; snaps straight to the value when motion is limited.
+@available(iOS 17.0, *)
+private struct CrmCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    let format: (Int) -> String
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        CrmCountUpText(value: shown, format: format)
+            .animation(crmMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if crmMotionOK(reduceMotion) {
+                    appeared = true
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct CrmCountUpText: View, Animatable {
+    var value: Double
+    var format: (Int) -> String
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text(format(Int(value.rounded())))
+    }
+}
+
+/// Shared tile backdrop: frosted glass + a soft diagonal accent wash.
+@available(iOS 17.0, *)
+private func crmBentoWash(_ accent: Color, scheme: ColorScheme) -> some View {
+    ZStack {
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+        LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.14 : 0.10), .clear],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+}
+
+/// Small glass stat tile — count-up value + sub line over a soft accent wash.
+@available(iOS 17.0, *)
+private struct CrmBentoStatTile: View {
+    @Environment(\.colorScheme) private var scheme
+    let label: String
+    let value: Int
+    let format: (Int) -> String
+    let sub: String
+    let tint: Color
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
+            CrmCountUp(target: value, format: format)
+                .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.55)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 13).padding(.vertical, 12)
+        .background { crmBentoWash(accent, scheme: scheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+    }
+}
+
+/// The dark hero anchor — deliberately dark in BOTH schemes (Dashboard hero recipe:
+/// deep indigo base + violet/coral washes + a sage hint). Lifetime-revenue count-up
+/// plus the Customers / VIP split — the same numbers the old strip showed.
+@available(iOS 17.0, *)
+private struct CrmBentoHeroCard: View {
+    let revenue: Int
+    let customers: Int
+    let vips: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("লাইফটাইম রেভিনিউ · CRM").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                .foregroundStyle(CrmPalette.goldLt)
+            CrmCountUp(target: revenue, format: { AlmaSwiftTheme.takaShort($0) })
+                .font(.system(size: 40, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(.white)
+                .lineLimit(1).minimumScaleFactor(0.6)
+                .padding(.top, 8)
+            Text("সব কাস্টমারের মোট কেনাকাটা")
+                .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.top, 5)
+
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "Customers", value: customers, format: { "\($0)" },
+                         tint: .white, sub: "মোট কাস্টমার")
+                Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+                    .padding(.vertical, 2).padding(.horizontal, 14)
+                heroStat(label: "VIP", value: vips, format: { "\($0)" },
+                         tint: CrmPalette.goldLt, sub: "টপ টিয়ার")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [AlmaSwiftTheme.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Always the board's dark anchor — force dark traits inside the card.
+        .environment(\.colorScheme, .dark)
+    }
+
+    private func heroStat(label: String, value: Int, format: @escaping (Int) -> String,
+                          tint: Color, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.5)
+                .foregroundStyle(.white.opacity(0.55))
+            CrmCountUp(target: value, format: format)
+                .font(.system(size: 20, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+        }
+    }
 }
 
 // MARK: - Preview (stubbed — live data needs the app session)
