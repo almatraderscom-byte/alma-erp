@@ -437,41 +437,53 @@ struct AnalyticsScreen: View {
         .padding(.top, 4)
     }
 
-    // ── KPI grid (web's 4 KpiCards + operational extras, 2-column on phone) ──
+    // ── KPI board (web's 4 KpiCards + operational extras) — bento language (owner
+    //    spec 2026-07-08): revenue = the dark hero anchor with net-profit/margin/orders
+    //    split, avg-order + delivery-rate = glass tiles. Same numbers, same nil "—"
+    //    fallbacks, same tint rules — presentation only. ──
 
     private var kpiGrid: some View {
         let k = vm.data?.kpis
         let netProfit = k?.netBusinessProfit ?? k?.totalProfit
-        return LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())],
-                         spacing: 10) {
-            kpiCard("Total Revenue", money(k?.totalRevenue), AnalyticsPalette.goldLt)
-            kpiCard("Net Profit (MTD)", money(netProfit),
-                    AnalyticsPalette.signed(netProfit ?? 0, colorScheme))
-            kpiCard("Gross Margin", percent(k?.grossMargin),
-                    AnalyticsPalette.accentText(colorScheme))
-            kpiCard("Avg Order Value", money(k?.avgOrderValue), .primary)
-            kpiCard("Total Orders", k.map { "\($0.totalOrders.formatted())" } ?? "—", .primary)
-            kpiCard("Delivery Rate", percent(k?.deliveryRate), .primary)
+        return VStack(spacing: 10) {
+            AnBentoHeroCard(revenue: k?.totalRevenue,
+                            netProfit: netProfit,
+                            marginPct: k.map { Int($0.grossMargin.rounded()) },
+                            orders: k?.totalOrders)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())],
+                      spacing: 10) {
+                AnBentoStatTile(label: "Avg Order Value", target: k?.avgOrderValue,
+                                format: { AlmaSwiftTheme.takaShort($0) },
+                                sub: "গড় অর্ডার", tint: .primary,
+                                accent: AlmaSwiftTheme.violet)
+                AnBentoStatTile(label: "Delivery Rate",
+                                target: k.map { Int($0.deliveryRate.rounded()) },
+                                format: { "\($0)%" },
+                                sub: "ডেলিভারি সফল", tint: .primary,
+                                accent: AlmaSwiftTheme.sage)
+            }
         }
     }
 
-    /// Web's second KPI row (Return Loss / Return Rate / Refused Returns).
+    /// Web's second KPI row (Return Loss / Return Rate / Refused Returns) — same
+    /// numbers/tints, now as accent tiles.
     @ViewBuilder private var returnKpiStrip: some View {
         if let k = vm.data?.kpis {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    kpiCard("Return Loss", money(k.totalReturnsLoss ?? 0),
-                            (k.totalReturnsLoss ?? 0) > 0 ? AnalyticsPalette.red500 : .primary,
-                            fixedWidth: true)
-                    kpiCard("Return Rate", percent(k.returnRate), .primary,
-                            sub: "\(Int((k.returnRatePaid ?? 0).rounded()))% paid · \(Int((k.returnRateRefused ?? 0).rounded()))% refused",
-                            fixedWidth: true)
-                    kpiCard("Refused Returns", "\((k.returnedUnpaidCount ?? 0).formatted())",
-                            (k.returnedUnpaidCount ?? 0) > 0 ? AnalyticsPalette.red500 : .primary,
-                            fixedWidth: true)
-                }
-                .padding(.horizontal, 2)
-                .padding(.vertical, 1)
+            HStack(spacing: 10) {
+                AnBentoStatTile(label: "Return Loss", target: k.totalReturnsLoss ?? 0,
+                                format: { AlmaSwiftTheme.takaShort($0) },
+                                sub: "রিটার্নে ক্ষতি",
+                                tint: (k.totalReturnsLoss ?? 0) > 0 ? AnalyticsPalette.red500 : .primary,
+                                accent: AnalyticsPalette.red500)
+                AnBentoStatTile(label: "Return Rate", target: Int(k.returnRate.rounded()),
+                                format: { "\($0)%" },
+                                sub: "\(Int((k.returnRatePaid ?? 0).rounded()))% paid · \(Int((k.returnRateRefused ?? 0).rounded()))% refused",
+                                tint: .primary, accent: AnalyticsPalette.amber500)
+                AnBentoStatTile(label: "Refused", target: k.returnedUnpaidCount ?? 0,
+                                format: { "\($0)" },
+                                sub: "ফেরত + আনপেইড",
+                                tint: (k.returnedUnpaidCount ?? 0) > 0 ? AnalyticsPalette.red500 : .primary,
+                                accent: AnalyticsPalette.red500)
             }
         }
     }
@@ -479,31 +491,6 @@ struct AnalyticsScreen: View {
     private func money(_ amount: Int?) -> String {
         guard let amount else { return "—" }
         return AlmaSwiftTheme.takaShort(amount)
-    }
-
-    private func percent(_ value: Double?) -> String {
-        guard let value else { return "—" }
-        return "\(Int(value.rounded()))%"
-    }
-
-    private func kpiCard(_ label: String, _ value: String, _ tint: Color,
-                         sub: String? = nil, fixedWidth: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(1).minimumScaleFactor(0.8)
-            Text(value)
-                .font(.headline.weight(.bold).monospacedDigit())
-                .foregroundStyle(tint)
-            if let sub {
-                Text(sub).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
-            }
-        }
-        .frame(minWidth: fixedWidth ? 120 : nil,
-               maxWidth: fixedWidth ? nil : .infinity, alignment: .leading)
-        .padding(12)
-        .analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Revenue vs Profit trend (native gradient bars; tap a month → detail sheet) ──
@@ -1073,6 +1060,192 @@ private struct AnalyticsShimmer: ViewModifier {
 @available(iOS 17.0, *)
 private extension View {
     func analyticsShimmer() -> some View { modifier(AnalyticsShimmer()) }
+}
+
+// MARK: - Bento components (Analytics-owned copies of the Dashboard board language —
+// per-file copies are this repo's parallel-session convention, no cross-file imports)
+
+/// Central motion gate — count-ups freeze under Reduce Motion / Low Power.
+@available(iOS 17.0, *)
+private func anMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number (0 → target on appear, old → new on refresh) — one Animatable
+/// interpolation, no timers; snaps straight to the value when motion is limited.
+@available(iOS 17.0, *)
+private struct AnCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    let format: (Int) -> String
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        AnCountUpText(value: shown, format: format)
+            .animation(anMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if anMotionOK(reduceMotion) {
+                    appeared = true
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AnCountUpText: View, Animatable {
+    var value: Double
+    var format: (Int) -> String
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text(format(Int(value.rounded())))
+    }
+}
+
+/// Shared tile backdrop: frosted glass + a soft diagonal accent wash.
+@available(iOS 17.0, *)
+private func anBentoWash(_ accent: Color, scheme: ColorScheme) -> some View {
+    ZStack {
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+        LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.14 : 0.10), .clear],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+}
+
+/// Small glass stat tile — count-up value + sub line over a soft accent wash.
+/// `target == nil` renders the old "—" placeholder.
+@available(iOS 17.0, *)
+private struct AnBentoStatTile: View {
+    @Environment(\.colorScheme) private var scheme
+    let label: String
+    let target: Int?
+    let format: (Int) -> String
+    let sub: String
+    let tint: Color
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
+            if let target {
+                AnCountUp(target: target, format: format)
+                    .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                    .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.55)
+            } else {
+                Text("—").font(.system(size: 17, weight: .heavy)).foregroundStyle(tint)
+            }
+            Text(sub).font(.system(size: 9)).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 13).padding(.vertical, 12)
+        .background { anBentoWash(accent, scheme: scheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+    }
+}
+
+/// The dark hero anchor — deliberately dark in BOTH schemes (Dashboard hero recipe:
+/// deep indigo base + violet/coral washes + a sage hint). Range revenue count-up plus
+/// the Net-profit / Margin / Orders split — same numbers, same "—" fallbacks, same
+/// signed tint on net profit.
+@available(iOS 17.0, *)
+private struct AnBentoHeroCard: View {
+    let revenue: Int?
+    let netProfit: Int?
+    let marginPct: Int?
+    let orders: Int?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("মোট আয় · TOTAL REVENUE").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                .foregroundStyle(AnalyticsPalette.goldLt)
+            Group {
+                if let revenue {
+                    AnCountUp(target: revenue, format: { AlmaSwiftTheme.takaShort($0) })
+                } else {
+                    Text("—")
+                }
+            }
+            .font(.system(size: 40, weight: .heavy)).monospacedDigit()
+            .foregroundStyle(.white)
+            .lineLimit(1).minimumScaleFactor(0.6)
+            .padding(.top, 8)
+            Text("এই রেঞ্জের বিক্রি")
+                .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.top, 5)
+
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "Net profit", target: netProfit,
+                         format: { AlmaSwiftTheme.takaShort($0) },
+                         tint: (netProfit ?? 0) < 0 ? AnalyticsPalette.red500
+                                                    : AnalyticsPalette.green400,
+                         sub: "MTD")
+                heroDivider
+                heroStat(label: "Margin", target: marginPct, format: { "\($0)%" },
+                         tint: .white, sub: "গ্রস মার্জিন")
+                heroDivider
+                heroStat(label: "Orders", target: orders, format: { "\($0)" },
+                         tint: .white, sub: "এই রেঞ্জে")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [AlmaSwiftTheme.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Always the board's dark anchor — force dark traits inside the card.
+        .environment(\.colorScheme, .dark)
+    }
+
+    private var heroDivider: some View {
+        Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+            .padding(.vertical, 2).padding(.horizontal, 12)
+    }
+
+    private func heroStat(label: String, target: Int?, format: @escaping (Int) -> String,
+                          tint: Color, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.5)
+                .foregroundStyle(.white.opacity(0.55))
+            Group {
+                if let target {
+                    AnCountUp(target: target, format: format)
+                } else {
+                    Text("—")
+                }
+            }
+            .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+            .foregroundStyle(tint)
+            .lineLimit(1).minimumScaleFactor(0.55)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+        }
+    }
 }
 
 // MARK: - Preview (stubbed — live data needs the app session)
