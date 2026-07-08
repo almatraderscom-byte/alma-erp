@@ -41,6 +41,20 @@ private enum ActivityPalette {
         default: return .secondary
         }
     }
+
+    /// One tint per event source — drives the timeline's tinted icon chips (owner
+    /// spec 2026-07-08: per-source colour instead of one uniform gradient).
+    static func sourceTint(_ source: String) -> Color {
+        switch source {
+        case "approval": return goldDim
+        case "payment_method": return emerald600
+        case "archive": return AlmaSwiftTheme.violet
+        case "trading_telegram": return Color(red: 0.231, green: 0.510, blue: 0.965) // #3B82F6
+        case "telegram_ops": return AlmaSwiftTheme.sage
+        case "volume_target": return amber600
+        default: return coral
+        }
+    }
 }
 
 // MARK: - Source metadata (web SOURCE_META parity, emoji → SF Symbols)
@@ -311,15 +325,24 @@ struct ActivityScreen: View {
 
     @ViewBuilder private var timeline: some View {
         ForEach(groups, id: \.day) { group in
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 0) {
                 Text(group.day)
                     .font(.system(size: 10, weight: .black))
                     .kerning(1.6)
                     .textCase(.uppercase)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 4)
-                ForEach(group.items) { entry in
+                    .padding(.bottom, 8)
+                ForEach(Array(group.items.enumerated()), id: \.element.id) { i, entry in
                     ActivityCard(entry: entry)
+                    // Hairline connector between rows — a true timeline thread,
+                    // aligned to the icon chip's centre (12pt card pad + 17pt half-chip).
+                    if i < group.items.count - 1 {
+                        Rectangle()
+                            .fill(AlmaSwiftTheme.separator(colorScheme))
+                            .frame(width: 1, height: 14)
+                            .padding(.leading, 28.5)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -457,18 +480,18 @@ private struct ActivityCard: View {
             .lineSpacing(1.5)
     }
 
-    /// Squircle icon badge — coral→violet gradient, one SF symbol per event source
-    /// (the native stand-in for the web's emoji tile).
+    /// Squircle icon chip — TINTED per event source (owner spec 2026-07-08), one SF
+    /// symbol per source (the native stand-in for the web's emoji tile).
     private var iconBadge: some View {
-        Image(systemName: ActivitySourceMeta.meta(entry.source).symbol)
+        let tint = ActivityPalette.sourceTint(entry.source)
+        return Image(systemName: ActivitySourceMeta.meta(entry.source).symbol)
             .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(tint)
             .frame(width: 34, height: 34)
-            .background(
-                LinearGradient(colors: [ActivityPalette.coral, AlmaSwiftTheme.violet],
-                               startPoint: .topLeading, endPoint: .bottomTrailing),
-                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
-            .shadow(color: ActivityPalette.coral.opacity(0.35), radius: 5, y: 2)
+            .background(tint.opacity(colorScheme == .dark ? 0.20 : 0.14),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+                .strokeBorder(tint.opacity(0.35), lineWidth: 1))
     }
 
     private var initialsAvatar: some View {
