@@ -504,11 +504,13 @@ struct BriefingScreen: View {
         .padding(16)
         .briefingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         .overlay(alignment: .topTrailing) {
-            // The web hero's gold glow blob, clipped to the card.
+            // The web hero's gold glow blob, clipped to the card. Radial-gradient
+            // falloff instead of .blur — same soft glow, zero gaussian passes
+            // (aurora perf recipe 2026-07-08 applies to every live blur).
             Circle()
-                .fill(BriefingPalette.coral.opacity(0.12))
-                .frame(width: 130, height: 130)
-                .blur(radius: 30)
+                .fill(RadialGradient(colors: [BriefingPalette.coral.opacity(0.12), .clear],
+                                     center: .center, startRadius: 13, endRadius: 81))
+                .frame(width: 176, height: 176)
                 .offset(x: 36, y: -44)
                 .allowsHitTesting(false)
         }
