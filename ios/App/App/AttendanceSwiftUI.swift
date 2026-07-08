@@ -669,37 +669,14 @@ struct AttendanceScreen: View {
         .disabled(disabled)
     }
 
-    // ── Summary trio (web: Present / Absent / Late cards, exact tints) ──
+    // ── Summary (web: Present / Absent / Late, exact tints) — bento dark hero
+    //    (owner spec 2026-07-08): same three numbers, presentation only. ──
 
     private var summaryTrio: some View {
-        HStack(spacing: 10) {
-            summaryCard("Present", vm.kpis?.todayAttendance,
-                        icon: "checkmark.circle.fill", tint: AttendancePalette.emerald600)
-            summaryCard("Absent", vm.kpis?.absentEmployees,
-                        icon: "xmark.circle.fill", tint: AttendancePalette.red500)
-            summaryCard("Late", vm.kpis?.lateEmployees,
-                        icon: "clock.fill", tint: AttendancePalette.amber600)
-        }
-    }
-
-    private func summaryCard(_ label: String, _ value: Int?, icon: String, tint: Color) -> some View {
-        VStack(spacing: 5) {
-            Image(systemName: icon)
-                .font(.subheadline)
-                .foregroundStyle(tint)
-                .frame(width: 30, height: 30)
-                .background(tint.opacity(0.12), in: Circle())
-            Text(value.map { "\($0)" } ?? "—")
-                .font(.title3.weight(.bold)).monospacedDigit()
-                .foregroundStyle(tint)
-            Text(label).font(.caption2).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-        .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
-        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
-            .strokeBorder(tint.opacity(0.25), lineWidth: 1))
-        .attendanceShimmerIf(vm.loading && vm.kpis == nil)
+        AttBentoHeroCard(present: vm.kpis?.todayAttendance,
+                         absent: vm.kpis?.absentEmployees,
+                         late: vm.kpis?.lateEmployees)
+            .attendanceShimmerIf(vm.loading && vm.kpis == nil)
     }
 
     // ── Secondary KPI strip (web KpiCard row, same labels/value colours) ──
@@ -727,14 +704,19 @@ struct AttendanceScreen: View {
         }
     }
 
+    /// Bento tile skin over the same strip — soft accent wash per KPI tint.
     private func kpiCard(_ label: String, _ value: String, tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            Text(value).font(.subheadline.weight(.bold)).monospacedDigit().foregroundStyle(tint)
+            Text(label).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary)
+            Text(value).font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint)
         }
         .frame(minWidth: 96, alignment: .leading)
-        .padding(12)
-        .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        .padding(.horizontal, 13).padding(.vertical, 12)
+        .background { attBentoWash(tint, scheme: colorScheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.45), lineWidth: 1))
     }
 
     // ── Penalty appeal analytics (web admin card, this month) ──
@@ -1843,6 +1825,144 @@ private extension View {
     /// Shimmer only while a section is still loading its first payload.
     @ViewBuilder func attendanceShimmerIf(_ active: Bool) -> some View {
         if active { attendanceShimmer() } else { self }
+    }
+}
+
+// MARK: - Bento components (Attendance-owned copies of the Dashboard board language —
+// per-file copies are this repo's parallel-session convention, no cross-file imports)
+
+/// Central motion gate — count-ups freeze under Reduce Motion / Low Power.
+@available(iOS 17.0, *)
+private func attMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number (0 → target on appear, old → new on refresh) — one Animatable
+/// interpolation, no timers; snaps straight to the value when motion is limited.
+@available(iOS 17.0, *)
+private struct AttCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        AttCountUpText(value: shown)
+            .animation(attMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if attMotionOK(reduceMotion) {
+                    appeared = true
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AttCountUpText: View, Animatable {
+    var value: Double
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text("\(Int(value.rounded()))")
+    }
+}
+
+/// Shared tile backdrop: frosted glass + a soft diagonal accent wash.
+@available(iOS 17.0, *)
+private func attBentoWash(_ accent: Color, scheme: ColorScheme) -> some View {
+    ZStack {
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+        LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.14 : 0.10), .clear],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+}
+
+/// The dark hero anchor — deliberately dark in BOTH schemes (Dashboard hero recipe:
+/// deep indigo base + violet/coral washes + a sage hint). Present-today count-up plus
+/// the Absent / Late split — the same three numbers, same tints, "—" when unloaded.
+@available(iOS 17.0, *)
+private struct AttBentoHeroCard: View {
+    let present: Int?
+    let absent: Int?
+    let late: Int?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("আজ উপস্থিত · PRESENT").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                .foregroundStyle(AttendancePalette.goldLt)
+            Group {
+                if let present {
+                    AttCountUp(target: present)
+                } else {
+                    Text("—")
+                }
+            }
+            .font(.system(size: 40, weight: .heavy)).monospacedDigit()
+            .foregroundStyle(AttendancePalette.green400)
+            .lineLimit(1).minimumScaleFactor(0.6)
+            .padding(.top, 8)
+            Text((absent ?? 0) == 0 ? "আজ কেউ অনুপস্থিত নেই" : "\(absent ?? 0) জন অনুপস্থিত")
+                .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.top, 5)
+
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "Absent", value: absent,
+                         tint: (absent ?? 0) > 0 ? AttendancePalette.red500 : .white,
+                         sub: "অনুপস্থিত")
+                Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+                    .padding(.vertical, 2).padding(.horizontal, 14)
+                heroStat(label: "Late", value: late,
+                         tint: (late ?? 0) > 0 ? AttendancePalette.amber500 : .white,
+                         sub: "দেরি")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [AlmaSwiftTheme.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Always the board's dark anchor — force dark traits inside the card.
+        .environment(\.colorScheme, .dark)
+    }
+
+    private func heroStat(label: String, value: Int?, tint: Color, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.5)
+                .foregroundStyle(.white.opacity(0.55))
+            Group {
+                if let value {
+                    AttCountUp(target: value)
+                } else {
+                    Text("—")
+                }
+            }
+            .font(.system(size: 20, weight: .heavy)).monospacedDigit()
+            .foregroundStyle(tint)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+        }
     }
 }
 
