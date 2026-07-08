@@ -88,6 +88,22 @@ GOOGLE_TTS_CREDENTIALS=
 # ── Phase 5 — OpenAI Whisper (voice-to-text) ─────────────────────────────────
 OPENAI_API_KEY=
 
+# ── Cartesia bridge — two-way calls in a natural Bangla voice ────────────────
+# Runs only when VOICE_CALL_PROVIDER=cartesia (set BOTH here and in Vercel).
+# Needs GEMINI_API_KEY + OPENAI_API_KEY above too (Gemini = brain, OpenAI = ears).
+# Get the key: https://play.cartesia.ai → API Keys.
+CARTESIA_API_KEY=
+# Pick a Bangla voice at https://play.cartesia.ai (filter language: Bengali),
+# copy its voice ID (UUID).
+CARTESIA_VOICE_ID=
+VOICE_CALL_PROVIDER=cartesia
+# VOICE_BRIDGE_PORT=3101             # VPS-local port; expose behind HTTPS (Caddy),
+#                                    # then set VOICE_BRIDGE_PUBLIC_WSS_URL in Vercel
+# CARTESIA_TTS_MODEL=sonic-3         # or sonic-3.5 / sonic-latest
+# VOICE_BRIDGE_VAD_SILENCE_MS=900    # how long the caller must pause before the agent replies
+# VOICE_BRIDGE_TURN_GRACE_MS=400     # extra merge window for split utterances
+# Smoke test after filling keys: node scripts/test-cartesia-bridge.mjs
+
 # ── Phase 5 — ntfy push notifications ───────────────────────────────────────
 # Self-hosted recommended for privacy: https://docs.ntfy.sh/install/
 # Or use free tier: https://ntfy.sh (public — use random topic names)

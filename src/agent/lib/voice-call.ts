@@ -26,9 +26,11 @@ const DEFAULT_DAILY_CAP = 10
 /** The exact one-way voice the owner loves — now on two-way calls via ConversationRelay. */
 const RELAY_TTS_VOICE = 'bn-IN-Chirp3-HD-Charon'
 
-/** Which engine runs two-way calls: ElevenLabs ConvAI (legacy) or Twilio
- * ConversationRelay + Gemini + Google Charon voice (better Bangla accent). */
-export type VoiceCallProvider = 'elevenlabs' | 'relay'
+/** Which engine runs two-way calls: ElevenLabs ConvAI (legacy), Twilio
+ * ConversationRelay + Gemini + Google Charon voice, or the Cartesia bridge
+ * (Twilio Media Streams + OpenAI STT + Gemini + Cartesia Sonic Bangla voice —
+ * owner verdict 2026-07: Google's bn TTS is "not as human", Cartesia is). */
+export type VoiceCallProvider = 'elevenlabs' | 'relay' | 'cartesia'
 
 export interface VoiceCallConfig {
   enabled: boolean
@@ -40,6 +42,8 @@ export interface VoiceCallConfig {
   maxMinutes: number
   /** relay provider only */
   relayWssUrl: string
+  /** cartesia provider only — public wss URL of worker/src/voice-relay/cartesia-bridge.mjs */
+  bridgeWssUrl: string
   twilioAccountSid: string
   twilioAuthToken: string
   twilioFromNumber: string
@@ -48,7 +52,12 @@ export interface VoiceCallConfig {
 
 /** Read + validate config from env. `enabled` is false unless everything required is present. */
 export function getVoiceCallConfig(): VoiceCallConfig {
-  const provider: VoiceCallProvider = process.env.VOICE_CALL_PROVIDER === 'relay' ? 'relay' : 'elevenlabs'
+  const provider: VoiceCallProvider =
+    process.env.VOICE_CALL_PROVIDER === 'relay'
+      ? 'relay'
+      : process.env.VOICE_CALL_PROVIDER === 'cartesia'
+        ? 'cartesia'
+        : 'elevenlabs'
   const apiKey = process.env.ELEVENLABS_API_KEY ?? ''
   const agentId = process.env.ELEVENLABS_AGENT_ID ?? ''
   const agentPhoneNumberId = process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID ?? ''
@@ -56,15 +65,19 @@ export function getVoiceCallConfig(): VoiceCallConfig {
   const dailyCap = Number(process.env.VOICE_CALL_DAILY_CAP) || DEFAULT_DAILY_CAP
   const maxMinutes = Number(process.env.VOICE_CALL_MAX_MINUTES) || 10
   const relayWssUrl = (process.env.VOICE_RELAY_PUBLIC_WSS_URL ?? '').replace(/\/$/, '')
+  const bridgeWssUrl = (process.env.VOICE_BRIDGE_PUBLIC_WSS_URL ?? '').replace(/\/$/, '')
   const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID ?? ''
   const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN ?? ''
   const twilioFromNumber = process.env.TWILIO_FROM_NUMBER ?? ''
   const internalToken = process.env.AGENT_INTERNAL_TOKEN ?? ''
+  const twilioReady = Boolean(twilioAccountSid && twilioAuthToken && twilioFromNumber && internalToken)
   const enabled =
     killSwitch &&
     (provider === 'relay'
-      ? Boolean(relayWssUrl && twilioAccountSid && twilioAuthToken && twilioFromNumber && internalToken)
-      : Boolean(apiKey && agentId && agentPhoneNumberId))
+      ? Boolean(relayWssUrl) && twilioReady
+      : provider === 'cartesia'
+        ? Boolean(bridgeWssUrl) && twilioReady
+        : Boolean(apiKey && agentId && agentPhoneNumberId))
   return {
     enabled,
     provider,
@@ -74,6 +87,7 @@ export function getVoiceCallConfig(): VoiceCallConfig {
     dailyCap,
     maxMinutes,
     relayWssUrl,
+    bridgeWssUrl,
     twilioAccountSid,
     twilioAuthToken,
     twilioFromNumber,
@@ -86,8 +100,13 @@ export function voiceCallUnavailableReason(config = getVoiceCallConfig()): strin
   if (process.env.VOICE_CALL_ENABLED !== 'true') {
     return 'ভয়েস কল বন্ধ আছে (VOICE_CALL_ENABLED off)। চালু করতে owner সেটিং লাগবে।'
   }
-  if (config.provider === 'relay') {
-    if (!config.relayWssUrl) return 'VOICE_RELAY_PUBLIC_WSS_URL সেট করা নেই — VPS relay-এর পাবলিক wss ঠিকানা বসান।'
+  if (config.provider === 'relay' || config.provider === 'cartesia') {
+    if (config.provider === 'relay' && !config.relayWssUrl) {
+      return 'VOICE_RELAY_PUBLIC_WSS_URL সেট করা নেই — VPS relay-এর পাবলিক wss ঠিকানা বসান।'
+    }
+    if (config.provider === 'cartesia' && !config.bridgeWssUrl) {
+      return 'VOICE_BRIDGE_PUBLIC_WSS_URL সেট করা নেই — VPS Cartesia bridge-এর পাবলিক wss ঠিকানা বসান।'
+    }
     if (!config.twilioAccountSid || !config.twilioAuthToken) return 'TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN সেট করা নেই।'
     if (!config.twilioFromNumber) return 'TWILIO_FROM_NUMBER সেট করা নেই।'
     if (!config.internalToken) return 'AGENT_INTERNAL_TOKEN সেট করা নেই।'
@@ -169,6 +188,9 @@ export async function placeOutboundCall(input: PlaceCallInput): Promise<PlaceCal
 
   if (config.provider === 'relay') {
     return placeRelayCall(config, record.id, toNumber, firstMessage, purpose, input.recipientName)
+  }
+  if (config.provider === 'cartesia') {
+    return placeCartesiaCall(config, record.id, toNumber, firstMessage, purpose, input.recipientName)
   }
 
   try {
@@ -318,46 +340,7 @@ async function placeRelayCall(
       `<Parameter name="recipientName" value="${escapeXmlAttr(recipientName ?? '')}"/>` +
       `</ConversationRelay></Connect></Response>`
 
-    const body = new URLSearchParams({
-      To: toNumber,
-      From: config.twilioFromNumber,
-      Twiml: twiml,
-      Timeout: '45',
-    })
-    const auth = Buffer.from(`${config.twilioAccountSid}:${config.twilioAuthToken}`).toString('base64')
-    const res = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${config.twilioAccountSid}/Calls.json`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Authorization: `Basic ${auth}`,
-        },
-        body,
-        signal: AbortSignal.timeout(30_000),
-      },
-    )
-    const data = (await res.json().catch(() => ({}))) as { sid?: string; message?: string }
-    if (!res.ok || !data.sid) {
-      const err = `Twilio ${res.status}: ${data.message ?? 'call create failed'}`
-      await db.agentVoiceCall.update({
-        where: { id: callRecordId },
-        data: { status: 'failed', summary: err },
-      })
-      return { ok: false, error: err, callRecordId }
-    }
-
-    await db.agentVoiceCall.update({
-      where: { id: callRecordId },
-      data: {
-        status: 'ringing',
-        callSid: data.sid,
-        // Diagnostic breadcrumb (token redacted): the exact ws endpoint Twilio was
-        // told to dial — readable from the DB when a 64102 needs root-causing.
-        summary: `relay ws: ${base}`,
-      },
-    })
-    return { ok: true, callRecordId, callSid: data.sid }
+    return dialWithTwiml(config, callRecordId, toNumber, twiml, `relay ws: ${base}`)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     await db.agentVoiceCall.update({
@@ -366,4 +349,100 @@ async function placeRelayCall(
     }).catch(() => {})
     return { ok: false, error: `কল দেওয়া যায়নি: ${msg}`, callRecordId }
   }
+}
+
+/**
+ * Two-way call via the Cartesia bridge: Twilio Media Streams pipes raw call audio
+ * to the VPS bridge (worker/src/voice-relay/cartesia-bridge.mjs), which runs
+ * OpenAI streaming STT (bn) → Gemini → Cartesia Sonic TTS (natural Bangla voice).
+ * Same HMAC-signed URL and relay-report flow as the ConversationRelay provider.
+ */
+async function placeCartesiaCall(
+  config: VoiceCallConfig,
+  callRecordId: string,
+  toNumber: string,
+  firstMessage: string,
+  purpose: string,
+  recipientName?: string,
+): Promise<PlaceCallResult> {
+  try {
+    // Signature scheme mirrors worker/src/voice-relay/server.mjs signRelayToken().
+    const exp = Date.now() + 15 * 60_000
+    const t = createHmac('sha256', config.internalToken)
+      .update(`relay:${callRecordId}:${exp}`)
+      .digest('hex')
+    const base = config.bridgeWssUrl.endsWith('/media') ? config.bridgeWssUrl : `${config.bridgeWssUrl}/media`
+    const wssUrl = `${base}?id=${encodeURIComponent(callRecordId)}&exp=${exp}&t=${t}`
+
+    // <Connect><Stream> = bidirectional media stream; the bridge owns STT/LLM/TTS
+    // and speaks the greeting itself (no welcomeGreeting attribute here).
+    const twiml =
+      `<?xml version="1.0" encoding="UTF-8"?>` +
+      `<Response><Connect>` +
+      `<Stream url="${escapeXmlAttr(wssUrl)}">` +
+      `<Parameter name="callRecordId" value="${escapeXmlAttr(callRecordId)}"/>` +
+      `<Parameter name="purpose" value="${escapeXmlAttr(purpose.slice(0, 400))}"/>` +
+      `<Parameter name="recipientName" value="${escapeXmlAttr(recipientName ?? '')}"/>` +
+      `<Parameter name="firstMessage" value="${escapeXmlAttr(firstMessage.slice(0, 400))}"/>` +
+      `</Stream></Connect></Response>`
+
+    return dialWithTwiml(config, callRecordId, toNumber, twiml, `bridge ws: ${base}`)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    await db.agentVoiceCall.update({
+      where: { id: callRecordId },
+      data: { status: 'failed', summary: `কল দেওয়া যায়নি: ${msg}` },
+    }).catch(() => {})
+    return { ok: false, error: `কল দেওয়া যায়নি: ${msg}`, callRecordId }
+  }
+}
+
+/** POST the TwiML to Twilio's Calls API and record ringing/failure on the row. */
+async function dialWithTwiml(
+  config: VoiceCallConfig,
+  callRecordId: string,
+  toNumber: string,
+  twiml: string,
+  wsNote: string,
+): Promise<PlaceCallResult> {
+  const body = new URLSearchParams({
+    To: toNumber,
+    From: config.twilioFromNumber,
+    Twiml: twiml,
+    Timeout: '45',
+  })
+  const auth = Buffer.from(`${config.twilioAccountSid}:${config.twilioAuthToken}`).toString('base64')
+  const res = await fetch(
+    `https://api.twilio.com/2010-04-01/Accounts/${config.twilioAccountSid}/Calls.json`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Authorization: `Basic ${auth}`,
+      },
+      body,
+      signal: AbortSignal.timeout(30_000),
+    },
+  )
+  const data = (await res.json().catch(() => ({}))) as { sid?: string; message?: string }
+  if (!res.ok || !data.sid) {
+    const err = `Twilio ${res.status}: ${data.message ?? 'call create failed'}`
+    await db.agentVoiceCall.update({
+      where: { id: callRecordId },
+      data: { status: 'failed', summary: err },
+    })
+    return { ok: false, error: err, callRecordId }
+  }
+
+  await db.agentVoiceCall.update({
+    where: { id: callRecordId },
+    data: {
+      status: 'ringing',
+      callSid: data.sid,
+      // Diagnostic breadcrumb (token redacted): the exact ws endpoint Twilio was
+      // told to dial — readable from the DB when a 64102 needs root-causing.
+      summary: wsNote,
+    },
+  })
+  return { ok: true, callRecordId, callSid: data.sid }
 }

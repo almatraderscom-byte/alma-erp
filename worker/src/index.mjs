@@ -1131,6 +1131,13 @@ if (process.env.VOICE_CALL_PROVIDER === 'relay') {
   startVoiceRelayServer()
 }
 
+// Two-way Cartesia bridge (Media Streams + OpenAI STT + Cartesia Sonic Bangla
+// voice) — only when configured.
+if (process.env.VOICE_CALL_PROVIDER === 'cartesia') {
+  const { startCartesiaBridgeServer } = await import('./voice-relay/cartesia-bridge.mjs')
+  startCartesiaBridgeServer()
+}
+
 console.log('[worker] ALMA Agent Worker started — polling every 30s for approved jobs')
 
 let shuttingDown = false
