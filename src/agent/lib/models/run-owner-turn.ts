@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma'
 import { MAX_TOOL_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET } from '@/agent/config'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
+import { getOfficePulse } from '@/agent/lib/office-pulse'
 import { buildOwnerActiveTasksContextBlock, buildStaffActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
 import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
@@ -254,7 +255,7 @@ async function* runAlternateProviderTurn(
     }
   }
 
-  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
+  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot, officePulse] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     lastUserText ? retrieveRelevantOldTurns(conversationId, lastUserText) : Promise.resolve([]),
@@ -271,6 +272,13 @@ async function* runAlternateProviderTurn(
     personalMode ? Promise.resolve('') : buildStaffActiveTasksContextBlock(businessId).catch(() => ''),
     selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId, headTier }),
     personalMode || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
+    // LIVE office pulse (owner decision 2026-07-08) — shared rolling summary of
+    // today's office/staff/agent-work state, delta-refreshed ≤10 min. Lets
+    // office questions and autonomous wakes answer in ONE round instead of
+    // paying tool round-trips that re-bill the whole context.
+    personalMode || businessId === 'ALMA_TRADING'
+      ? Promise.resolve(null)
+      : getOfficePulse().catch(() => null),
   ])
 
   const promptArgs = {
@@ -298,6 +306,7 @@ async function* runAlternateProviderTurn(
     staffActiveTasksBlock: staffActiveTasksBlock || undefined,
     activeGroups: toolSelection.groups,
     businessSnapshot,
+    officePulse,
     headTier,
     tailSummary,
   }
