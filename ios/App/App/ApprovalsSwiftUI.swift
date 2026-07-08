@@ -570,7 +570,7 @@ struct ApprovalsScreen: View {
     @ViewBuilder private var businessBody: some View {
         statusChips
         if vm.showIntegrity { integrityCard }
-        kpiStrip
+        bentoBoard
         if vm.loading && vm.approvals.isEmpty { loadingRows }
         ForEach(vm.approvals) { ap in
             ApprovalCard(
@@ -688,30 +688,30 @@ struct ApprovalsScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// KPI strip — the web's 5 KpiCards (Pending/Critical/High/Normal/Low) with the
-    /// exact web value colours, as a horizontal scroll strip on phone.
-    private var kpiStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                kpiCard("PENDING", vm.totalPending, ApprovalPalette.goldLt)
-                kpiCard("CRITICAL", vm.priorityCounts["CRITICAL"] ?? 0, ApprovalPalette.red500)
-                kpiCard("HIGH", vm.priorityCounts["HIGH"] ?? 0, ApprovalPalette.amber600)
-                kpiCard("NORMAL", vm.priorityCounts["NORMAL"] ?? 0, .primary)
-                kpiCard("LOW", vm.priorityCounts["LOW"] ?? 0, .primary)
+    /// Bento board — the Dashboard's glass-board language on Approvals (owner spec
+    /// 2026-07-08): one dark hero anchor (pending total + critical/high split) and a
+    /// 2×2 grid of priority tiles. Same counts/colours the old 5-card strip showed.
+    private var bentoBoard: some View {
+        VStack(spacing: 10) {
+            ApvBentoHeroCard(pending: vm.totalPending,
+                             critical: vm.priorityCounts["CRITICAL"] ?? 0,
+                             high: vm.priorityCounts["HIGH"] ?? 0)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())],
+                      spacing: 10) {
+                ApvBentoStatTile(label: "Critical", value: vm.priorityCounts["CRITICAL"] ?? 0,
+                                 sub: "এখনই দেখা দরকার",
+                                 tint: ApprovalPalette.red500, accent: ApprovalPalette.red500)
+                ApvBentoStatTile(label: "High", value: vm.priorityCounts["HIGH"] ?? 0,
+                                 sub: "আজকের মধ্যে",
+                                 tint: ApprovalPalette.amber600, accent: ApprovalPalette.amber500)
+                ApvBentoStatTile(label: "Normal", value: vm.priorityCounts["NORMAL"] ?? 0,
+                                 sub: "সাধারণ সারি",
+                                 tint: .primary, accent: AlmaSwiftTheme.violet)
+                ApvBentoStatTile(label: "Low", value: vm.priorityCounts["LOW"] ?? 0,
+                                 sub: "পরে হলেও চলবে",
+                                 tint: .primary, accent: AlmaSwiftTheme.sage)
             }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 1)
         }
-    }
-
-    private func kpiCard(_ label: String, _ value: Int, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            Text("\(value)").font(.headline.weight(.bold)).foregroundStyle(tint)
-        }
-        .frame(minWidth: 84, alignment: .leading)
-        .padding(12)
-        .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     /// "Pending by module" — the web's side card, after the list on phone.
