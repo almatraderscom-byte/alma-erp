@@ -10,6 +10,12 @@ name: iOS Simulator Build (no TestFlight)
 
 on:
   workflow_dispatch:
+  # Compile-check pushes on Claude iOS work branches (no Mac in the cloud
+  # sandbox, so CI is the only Swift compiler there). Scoped tight to avoid
+  # burning 10x macOS minutes on ordinary web pushes.
+  push:
+    branches: ['claude/ios-*']
+    paths: ['ios/**', '.github/workflows/ios-simulator.yml']
 
 concurrency:
   group: ios-simulator-${{ github.ref }}
