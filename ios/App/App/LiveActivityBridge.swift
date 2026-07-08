@@ -35,12 +35,29 @@ public class LiveActivityBridgePlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "end", returnType: CAPPluginReturnPromise)
     ]
 
+    /// UserDefaults key holding the last pulse payload as JSON (with a
+    /// `savedAt` timestamp). PulseRestore reads this to bring the island back
+    /// after a voice session ends while the app is backgrounded.
+    static let lastStateKey = "alma.pulse.lastState"
+
     // MARK: - update
 
     @objc public func update(_ call: CAPPluginCall) {
         let ordersToday = call.getInt("ordersToday", 0)
         let statusLine = call.getString("statusLine", "")
         let title = call.getString("title", "ALMA ERP")
+        let pendingApprovals = call.getInt("pendingApprovals", 0)
+        let openTasks = call.getInt("openTasks", 0)
+
+        // Persist the full payload FIRST (even if starting fails below) so a
+        // post-voice restore always has the freshest data the web layer sent.
+        Self.cacheLastState(
+            ordersToday: ordersToday,
+            statusLine: statusLine,
+            title: title,
+            pendingApprovals: pendingApprovals,
+            openTasks: openTasks
+        )
 
         #if canImport(ActivityKit)
         if #available(iOS 16.1, *) {
@@ -61,7 +78,9 @@ public class LiveActivityBridgePlugin: CAPPlugin, CAPBridgedPlugin {
             let state = PulseActivityAttributes.ContentState(
                 ordersToday: ordersToday,
                 statusLine: statusLine,
-                updatedAt: Date()
+                updatedAt: Date(),
+                pendingApprovals: pendingApprovals,
+                openTasks: openTasks
             )
 
             // If a Pulse activity is already running, update it; otherwise request one.
@@ -108,6 +127,10 @@ public class LiveActivityBridgePlugin: CAPPlugin, CAPBridgedPlugin {
     // MARK: - end
 
     @objc public func end(_ call: CAPPluginCall) {
+        // The web layer is explicitly stopping the pulse — drop the cached
+        // payload so a post-voice restore doesn't resurrect it.
+        UserDefaults.standard.removeObject(forKey: Self.lastStateKey)
+
         #if canImport(ActivityKit)
         if #available(iOS 16.1, *) {
             let activities = Activity<PulseActivityAttributes>.activities
@@ -130,5 +153,31 @@ public class LiveActivityBridgePlugin: CAPPlugin, CAPBridgedPlugin {
         #endif
 
         call.resolve(["ended": false, "reason": "unsupported_os"])
+    }
+
+    // MARK: - Last-state cache
+
+    /// Persists the last pulse payload (JSON, with `savedAt` and the content
+    /// `updatedAt`) so PulseRestore can re-request the activity after a voice
+    /// session ends. Best-effort: never throws, never crashes.
+    private static func cacheLastState(
+        ordersToday: Int,
+        statusLine: String,
+        title: String,
+        pendingApprovals: Int,
+        openTasks: Int
+    ) {
+        let payload: [String: Any] = [
+            "ordersToday": ordersToday,
+            "statusLine": statusLine,
+            "title": title,
+            "pendingApprovals": pendingApprovals,
+            "openTasks": openTasks,
+            "updatedAt": Date().timeIntervalSince1970,
+            "savedAt": Date().timeIntervalSince1970
+        ]
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        UserDefaults.standard.set(data, forKey: lastStateKey)
     }
 }

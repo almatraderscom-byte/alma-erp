@@ -1,6 +1,7 @@
 import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
+import { isPendingActionExpired } from '@/agent/lib/pending-action'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 
@@ -10,11 +11,14 @@ export const dynamic = 'force-dynamic'
 /**
  * Feed for the iOS "Business Pulse" Live Activity (lock screen + Dynamic Island).
  * Returns today's ALMA Lifestyle order pulse — a count plus a short Bangla status
- * line. Owner-only (same auth as /api/assistant/device-reminders).
+ * line — and two small "hub" counters: pending approvals awaiting the owner and
+ * open agent tasks ("বাকি কাজ"). Owner-only (same auth as
+ * /api/assistant/device-reminders).
  *
- * PRIVACY: the lock screen is public, so v1 returns NO money amounts — only the
- * order count and the latest order's status. Queries are deliberately cheap:
- * one count + one "latest 1" over an indexed businessId/createdAt window.
+ * PRIVACY: the lock screen is public, so v1 returns NO money amounts — only
+ * counts and the latest order's status. Queries are deliberately cheap: one
+ * count + one "latest 1" over an indexed businessId/createdAt window, plus two
+ * indexed status counts.
  */
 
 /** Canonical LifestyleOrder statuses → short Bangla for the lock screen. */
@@ -76,19 +80,38 @@ export async function GET(req: NextRequest) {
     createdAt: { gte: start, lt: end },
   }
 
-  const [ordersToday, latest] = await Promise.all([
+  const [ordersToday, latest, pendingRows, openTasks] = await Promise.all([
     prisma.lifestyleOrder.count({ where }),
     prisma.lifestyleOrder.findFirst({
       where,
       orderBy: { createdAt: 'desc' },
       select: { status: true },
     }),
+    // Approvals awaiting the owner — same source of truth as the agent's
+    // get_pending_approvals tool (src/agent/tools/erp-tools.ts): status
+    // 'pending' (indexed), minus transient cards past their TTL. Lifecycle
+    // cards (e.g. dispatch_staff_tasks) never expire — isPendingActionExpired
+    // handles that, so we filter the few pending rows in JS exactly like the
+    // tool does.
+    prisma.agentPendingAction.findMany({
+      where: { status: 'pending' },
+      select: { type: true, createdAt: true },
+    }),
+    // Open agent tasks ("বাকি কাজ") — same status filter as countOpenTasks in
+    // src/agent/lib/open-task.ts, but across all conversations (hub-wide).
+    prisma.agentOpenTask.count({
+      where: { businessId: 'ALMA_LIFESTYLE', status: { in: ['open', 'running'] } },
+    }),
   ])
+
+  const pendingApprovals = pendingRows.filter(
+    (r) => !isPendingActionExpired(r.createdAt, r.type),
+  ).length
 
   const statusLine =
     ordersToday > 0 && latest
       ? `সর্বশেষ: ${statusToBangla(latest.status)}`
       : 'আজ এখনো অর্ডার নেই'
 
-  return Response.json({ ordersToday, statusLine })
+  return Response.json({ ordersToday, statusLine, pendingApprovals, openTasks })
 }

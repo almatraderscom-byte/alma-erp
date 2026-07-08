@@ -92,14 +92,33 @@ final class VoiceLiveActivityController {
     }
 
     /// Session over (engine.end / stale timeout) — island disappears at once.
+    /// After the voice activity is gone, the Business Pulse activity is
+    /// restored from its cached last state (~1.5s later, once the island slot
+    /// is free) — start() ended it, and the web layer can't restart it while
+    /// the app is backgrounded.
     func end() {
         loop?.cancel(); loop = nil
         #if canImport(ActivityKit)
         activity = nil
         let leftovers = Activity<AlmaVoiceActivityAttributes>.activities
-        guard !leftovers.isEmpty else { return }
+        guard !leftovers.isEmpty else {
+            schedulePulseRestore()
+            return
+        }
         Task {
             for a in leftovers { await a.end(nil, dismissalPolicy: .immediate) }
+            self.schedulePulseRestore()
+        }
+        #endif
+    }
+
+    /// Bring back the Business Pulse island after ~1.5s (lets the voice
+    /// activity's dismissal settle so the compact slot is free).
+    private func schedulePulseRestore() {
+        #if canImport(ActivityKit)
+        Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            PulseRestore.restartFromCache()
         }
         #endif
     }
