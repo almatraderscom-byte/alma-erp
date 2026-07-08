@@ -369,25 +369,18 @@ struct InsightsScreen: View {
         }
     }
 
+    /// Bento dark hero (owner spec 2026-07-08) — the old 4-card strip's exact numbers:
+    /// 30-day revenue count-up + WoW trend, then খরচ / নেট প্রফিট / মার্জিন split.
     private func financeKpiStrip(_ f: InsightFinance) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                kpiCard("রেভিনিউ (৩০দিন)", InsightFormat.taka(f.revenue),
-                        InsightPalette.accentText(colorScheme),
-                        sub: trendSub(f.revenueWoW, goodUp: true))
-                kpiCard("খরচ (৩০দিন)", InsightFormat.taka(f.expensesTotal), .primary,
-                        sub: trendSub(f.expenseWoW, goodUp: false))
-                kpiCard("নেট প্রফিট", InsightFormat.taka(f.netProfit ?? 0),
-                        (f.netProfit ?? 0) >= 0 ? InsightPalette.emerald600 : InsightPalette.red500,
-                        sub: (f.costDataMissing ? "cost ডেটা অসম্পূর্ণ" : "আনুমানিক", .secondary))
-                kpiCard("মার্জিন",
-                        f.marginPct != nil ? "\(InsightFormat.num(f.marginPct ?? 0))%" : "—",
-                        (f.marginPct ?? 0) >= 0 ? .primary : InsightPalette.red500,
-                        sub: ("net margin", .secondary))
-            }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 1)
-        }
+        InsBentoHeroCard(
+            revenue: Int(f.revenue.rounded()),
+            revenueTrend: trendSub(f.revenueWoW, goodUp: true),
+            expenses: Int(f.expensesTotal.rounded()),
+            expensesTrend: trendSub(f.expenseWoW, goodUp: false),
+            netProfit: Int((f.netProfit ?? 0).rounded()),
+            netProfitSub: f.costDataMissing ? "cost ডেটা অসম্পূর্ণ" : "আনুমানিক",
+            marginText: f.marginPct != nil ? "\(InsightFormat.num(f.marginPct ?? 0))%" : "—",
+            marginNegative: (f.marginPct ?? 0) < 0)
     }
 
     /// Web KpiCard TrendSub: "↑ x% WoW" green when moving the good way, red otherwise.
@@ -502,18 +495,19 @@ struct InsightsScreen: View {
     }
 
     private func customerKpiStrip(_ cs: InsightCustomerDigest) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                kpiCard("VIP কাস্টমার", "\(cs.vipCount)",
-                        InsightPalette.accentText(colorScheme), sub: ("top tier", .secondary))
-                kpiCard("চার্ন ঝুঁকি", "\(cs.highChurnCount)",
-                        cs.highChurnCount > 0 ? InsightPalette.red500 : .primary,
-                        sub: ("হারানোর ঝুঁকি", .secondary))
-                kpiCard("নতুন (এই সপ্তাহ)", "\(cs.newThisWeekCount)",
-                        InsightPalette.emerald600, sub: ("new", .secondary))
-            }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 1)
+        HStack(spacing: 10) {
+            InsBentoStatTile(label: "VIP কাস্টমার", value: cs.vipCount,
+                             sub: "top tier",
+                             tint: InsightPalette.accentText(colorScheme),
+                             accent: InsightPalette.coral)
+            InsBentoStatTile(label: "চার্ন ঝুঁকি", value: cs.highChurnCount,
+                             sub: "হারানোর ঝুঁকি",
+                             tint: cs.highChurnCount > 0 ? InsightPalette.red500 : .primary,
+                             accent: InsightPalette.red500)
+            InsBentoStatTile(label: "নতুন (সপ্তাহ)", value: cs.newThisWeekCount,
+                             sub: "new",
+                             tint: InsightPalette.emerald600,
+                             accent: InsightPalette.green400)
         }
     }
 
@@ -557,22 +551,6 @@ struct InsightsScreen: View {
             Spacer()
         }
         .padding(.top, 6)
-    }
-
-    private func kpiCard(_ label: String, _ value: String, _ tint: Color,
-                         sub: (text: String, color: Color)? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            Text(value)
-                .font(.headline.weight(.bold).monospacedDigit())
-                .foregroundStyle(tint)
-            if let sub {
-                Text(sub.text).font(.caption2.weight(.bold)).foregroundStyle(sub.color)
-            }
-        }
-        .frame(minWidth: 104, alignment: .leading)
-        .padding(12)
-        .insightsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func emptyCard(_ title: String, _ desc: String,
@@ -1084,6 +1062,199 @@ private struct InsightsShimmer: ViewModifier {
 @available(iOS 17.0, *)
 private extension View {
     func insightsShimmer() -> some View { modifier(InsightsShimmer()) }
+}
+
+// MARK: - Bento components (Insights-owned copies of the Dashboard board language —
+// per-file copies are this repo's parallel-session convention, no cross-file imports)
+
+/// Central motion gate — count-ups freeze under Reduce Motion / Low Power.
+@available(iOS 17.0, *)
+private func insMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number (0 → target on appear, old → new on refresh) — one Animatable
+/// interpolation, no timers; snaps straight to the value when motion is limited.
+@available(iOS 17.0, *)
+private struct InsCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    let format: (Int) -> String
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        InsCountUpText(value: shown, format: format)
+            .animation(insMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if insMotionOK(reduceMotion) {
+                    appeared = true
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct InsCountUpText: View, Animatable {
+    var value: Double
+    var format: (Int) -> String
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text(format(Int(value.rounded())))
+    }
+}
+
+/// Shared tile backdrop: frosted glass + a soft diagonal accent wash.
+@available(iOS 17.0, *)
+private func insBentoWash(_ accent: Color, scheme: ColorScheme) -> some View {
+    ZStack {
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+        LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.14 : 0.10), .clear],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+}
+
+/// Small glass stat tile — count-up value + sub line over a soft accent wash.
+@available(iOS 17.0, *)
+private struct InsBentoStatTile: View {
+    @Environment(\.colorScheme) private var scheme
+    let label: String
+    let value: Int
+    let sub: String
+    let tint: Color
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
+            InsCountUp(target: value, format: { "\($0)" })
+                .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.55)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 13).padding(.vertical, 12)
+        .background { insBentoWash(accent, scheme: scheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+    }
+}
+
+/// The dark hero anchor — deliberately dark in BOTH schemes (Dashboard hero recipe:
+/// deep indigo base + violet/coral washes + a sage hint). 30-day revenue count-up
+/// with its WoW trend, plus the খরচ / নেট প্রফিট / মার্জিন split — the exact numbers,
+/// subs and colours the old 4-card strip showed (money via InsightFormat.taka).
+@available(iOS 17.0, *)
+private struct InsBentoHeroCard: View {
+    let revenue: Int
+    let revenueTrend: (text: String, color: Color)
+    let expenses: Int
+    let expensesTrend: (text: String, color: Color)
+    let netProfit: Int
+    let netProfitSub: String
+    let marginText: String
+    let marginNegative: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("রেভিনিউ (৩০দিন) · REVENUE").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                .foregroundStyle(InsightPalette.goldLt)
+            InsCountUp(target: revenue, format: { InsightFormat.taka(Double($0)) })
+                .font(.system(size: 40, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(.white)
+                .lineLimit(1).minimumScaleFactor(0.6)
+                .padding(.top, 8)
+            Text(revenueTrend.text)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(heroTrendColor(revenueTrend.color))
+                .padding(.top, 5)
+
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "খরচ (৩০দিন)",
+                         value: InsCountUp(target: expenses,
+                                           format: { InsightFormat.taka(Double($0)) }),
+                         tint: .white,
+                         sub: expensesTrend.text, subColor: heroTrendColor(expensesTrend.color))
+                heroDivider
+                heroStat(label: "নেট প্রফিট",
+                         value: InsCountUp(target: netProfit,
+                                           format: { InsightFormat.taka(Double($0)) }),
+                         tint: netProfit >= 0 ? InsightPalette.green400 : InsightPalette.red500,
+                         sub: netProfitSub, subColor: .white.opacity(0.5))
+                heroDivider
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("মার্জিন").font(.system(size: 9, weight: .bold)).tracking(0.5)
+                        .foregroundStyle(.white.opacity(0.55))
+                    Text(marginText)
+                        .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                        .foregroundStyle(marginNegative ? InsightPalette.red500 : .white)
+                        .lineLimit(1).minimumScaleFactor(0.55)
+                    Text("net margin").font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [AlmaSwiftTheme.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Always the board's dark anchor — force dark traits inside the card.
+        .environment(\.colorScheme, .dark)
+    }
+
+    /// The strip's WoW colours were tuned for light surfaces — map emerald→bright
+    /// green over the dark hero, keep red, mute the "—" secondary to soft white.
+    private func heroTrendColor(_ c: Color) -> Color {
+        if c == InsightPalette.emerald600 { return InsightPalette.green400 }
+        if c == InsightPalette.red500 { return InsightPalette.red500 }
+        return .white.opacity(0.5)
+    }
+
+    private var heroDivider: some View {
+        Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+            .padding(.vertical, 2).padding(.horizontal, 12)
+    }
+
+    private func heroStat(label: String, value: InsCountUp, tint: Color,
+                          sub: String, subColor: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.system(size: 9, weight: .bold)).tracking(0.5)
+                .foregroundStyle(.white.opacity(0.55))
+            value
+                .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint)
+                .lineLimit(1).minimumScaleFactor(0.55)
+            Text(sub).font(.system(size: 9)).foregroundStyle(subColor)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+    }
 }
 
 // MARK: - Preview (stubbed — live data needs the app session)
