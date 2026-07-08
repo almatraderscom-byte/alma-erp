@@ -75,8 +75,8 @@ describe('syncLivePulse — native-only, build-gated, plugin-detected, fail-open
     expect(globalThis.fetch).not.toHaveBeenCalled()
   })
 
-  it('happy path — fetches the pulse and calls update with fetched values', async () => {
-    fetchReturns({ ordersToday: 5, statusLine: 'সর্বশেষ: শিপড' })
+  it('happy path — fetches the pulse and calls update with fetched values (hub counters included)', async () => {
+    fetchReturns({ ordersToday: 5, statusLine: 'সর্বশেষ: শিপড', pendingApprovals: 2, openTasks: 3 })
     await syncLivePulse()
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(1)
@@ -88,6 +88,8 @@ describe('syncLivePulse — native-only, build-gated, plugin-detected, fail-open
       title: 'ALMA ERP',
       ordersToday: 5,
       statusLine: 'সর্বশেষ: শিপড',
+      pendingApprovals: 2,
+      openTasks: 3,
     })
   })
 
@@ -98,6 +100,32 @@ describe('syncLivePulse — native-only, build-gated, plugin-detected, fail-open
       title: 'ALMA ERP',
       ordersToday: 0,
       statusLine: '',
+      pendingApprovals: 0,
+      openTasks: 0,
+    })
+  })
+
+  it('defaults hub counters to 0 when the API omits them (old server payload)', async () => {
+    fetchReturns({ ordersToday: 4, statusLine: 'সর্বশেষ: কনফার্মড' })
+    await syncLivePulse()
+    expect(mockBridge.update).toHaveBeenCalledWith({
+      title: 'ALMA ERP',
+      ordersToday: 4,
+      statusLine: 'সর্বশেষ: কনফার্মড',
+      pendingApprovals: 0,
+      openTasks: 0,
+    })
+  })
+
+  it('coerces non-number hub counters to 0', async () => {
+    fetchReturns({ ordersToday: 1, statusLine: 'সর্বশেষ: পেন্ডিং', pendingApprovals: '2', openTasks: null })
+    await syncLivePulse()
+    expect(mockBridge.update).toHaveBeenCalledWith({
+      title: 'ALMA ERP',
+      ordersToday: 1,
+      statusLine: 'সর্বশেষ: পেন্ডিং',
+      pendingApprovals: 0,
+      openTasks: 0,
     })
   })
 

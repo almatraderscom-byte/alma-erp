@@ -3,10 +3,10 @@
  *
  * A local Capacitor plugin (registered natively — NO npm package) is exposed at
  * runtime as window.Capacitor.Plugins.LiveActivityBridge with:
- *   - update({ title, ordersToday, statusLine }) → Promise
- *   - end()                                       → Promise
+ *   - update({ title, ordersToday, statusLine, pendingApprovals, openTasks }) → Promise
+ *   - end()                                                                    → Promise
  *
- * `syncLivePulse()` fetches today's order pulse from /api/assistant/live-pulse
+ * `syncLivePulse()` fetches today's pulse from /api/assistant/live-pulse
  * and pushes it into the Live Activity so it shows on the lock screen + Dynamic
  * Island. Native iOS only, and fully fail-open: ANY error is swallowed so this can
  * never affect the app. The plugin is feature-detected — if the running binary
@@ -25,10 +25,22 @@ const MIN_NATIVE_BUILD = 8
 interface LivePulseData {
   ordersToday: number
   statusLine: string
+  /** Approvals awaiting the owner's decision (hub counter). */
+  pendingApprovals: number
+  /** Open agent tasks — the "বাকি কাজ" chips (hub counter). */
+  openTasks: number
 }
 
 interface LiveActivityBridgePlugin {
-  update: (data: { title: string; ordersToday: number; statusLine: string }) => Promise<unknown>
+  update: (data: {
+    title: string
+    ordersToday: number
+    statusLine: string
+    // Hub counters — old native binaries simply ignore unknown keys in the
+    // plugin call, so passing them is always safe.
+    pendingApprovals: number
+    openTasks: number
+  }) => Promise<unknown>
   end: () => Promise<unknown>
 }
 
@@ -74,8 +86,10 @@ export async function syncLivePulse(): Promise<void> {
     const data = (await res.json()) as Partial<LivePulseData>
     const ordersToday = typeof data?.ordersToday === 'number' ? data.ordersToday : 0
     const statusLine = typeof data?.statusLine === 'string' ? data.statusLine : ''
+    const pendingApprovals = typeof data?.pendingApprovals === 'number' ? data.pendingApprovals : 0
+    const openTasks = typeof data?.openTasks === 'number' ? data.openTasks : 0
 
-    await bridge.update({ title: 'ALMA ERP', ordersToday, statusLine })
+    await bridge.update({ title: 'ALMA ERP', ordersToday, statusLine, pendingApprovals, openTasks })
   } catch {
     /* the Live Activity is a nice-to-have — never let a failure surface */
   }
