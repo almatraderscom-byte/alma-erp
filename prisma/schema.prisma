@@ -2118,6 +2118,27 @@ model AgentMemory {
   @@map("agent_memory")
 }
 
+/// Answer Gate (owner decision 2026-07-08): verified reusable Q&A pairs served
+/// in front of EXPENSIVE heads only (Gemini/Opus-class). Cheap heads bypass.
+model AgentQaCache {
+  id           String                       @id @default(uuid())
+  scope        String                       @default("business")
+  question     String                       @db.Text
+  answer       String                       @db.Text
+  embedding    Unsupported("vector(1536)")?
+  sourceModel  String?                      @map("source_model")
+  hits         Int                          @default(0)
+  lastServedAt DateTime?                    @map("last_served_at")
+  verifiedAt   DateTime?                    @map("verified_at")
+  expiresAt    DateTime?                    @map("expires_at")
+  active       Boolean                      @default(true)
+  createdAt    DateTime                     @default(now())
+  updatedAt    DateTime                     @updatedAt
+
+  @@index([scope, active])
+  @@map("agent_qa_cache")
+}
+
 /// Graph-memory (Task B): directed relationship edges between business entities
 /// (customer/order/staff/product/topic). Layered over semantic memory to enable
 /// entity-centric recall via traversal. Learned knowledge only — not a mirror of

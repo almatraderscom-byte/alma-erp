@@ -650,6 +650,27 @@ async function* runAlternateProviderTurn(
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])
 
+    // Answer-Gate write path (owner decision 2026-07-08): a tool-free, card-free
+    // answer from an EXPENSIVE head may be cacheable. All hard rules + a cheap
+    // classifier confirm live in maybeCacheQaPair — fire-and-forget, never blocks.
+    if (finalText.trim() && lastUserText) {
+      void import('@/agent/lib/answer-gate')
+        .then(({ maybeCacheQaPair }) =>
+          maybeCacheQaPair({
+            question: lastUserText,
+            answer: finalText,
+            scope: personalMode ? 'personal' : 'business',
+            sourceModelId: model.id,
+            usedTools: toolRecords.length > 0,
+            // Confirm cards are always staged BY a tool call, so usedTools already
+            // covers them; ask-cards are the only card type reachable tool-free.
+            hadCards: emittedAskCards.length > 0,
+            conversationId,
+          }),
+        )
+        .catch(() => {})
+    }
+
     if (toolRecords.length > 0) {
       await db.agentToolCall.createMany({
         data: toolRecords.map((r) => ({
@@ -790,6 +811,46 @@ export async function* runOwnerTurn(
   } catch { /* fail-open: enabled-map glitch must never block the turn */ }
 
   const model = getModel(decision.modelId)
+
+  // ── Answer Gate (owner decision 2026-07-08): EXPENSIVE heads only ──────────
+  // Before paying a Gemini/Opus-class turn (~60k input), check the verified Q&A
+  // cache. Hard rules live in answer-gate.ts (deny-list, standalone-question,
+  // sim ≥ 0.95, TTL) — any doubt falls through to the normal agent. Cheap heads
+  // (DeepSeek-class) and explicit owner pins bypass entirely; a miss costs one
+  // embedding (~$0.000002).
+  if (!options.approveModelSwitch && decision.tier !== 'explicit' && lastUserText) {
+    try {
+      const { ANSWER_GATE_ENABLED, isExpensiveHead, tryAnswerGate, recordGateServe } = await import('@/agent/lib/answer-gate')
+      if (ANSWER_GATE_ENABLED && isExpensiveHead(model)) {
+        const hit = await tryAnswerGate(lastUserText, personalMode ? 'personal' : 'business')
+        if (hit) {
+          const savedDate = new Date(hit.verifiedAt ?? hit.createdAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+          const answerText = `${hit.answer}\n\n💾 _সেভ করা verified উত্তর (${savedDate}) — নতুন করে যাচাই চাইলে বলুন "fresh করে দেখো"।_`
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const db = prisma as any
+          const savedMsg = await db.agentMessage.create({
+            data: {
+              conversationId,
+              role: 'assistant',
+              content: [{ type: 'text', text: answerText }],
+              tokensIn: 0,
+              tokensOut: 0,
+              costUsd: 0,
+              usage: { input_tokens: 0, output_tokens: 0, model: 'answer-gate', provider: 'gate', similarity: hit.similarity, qaId: hit.id },
+            },
+          })
+          await touchConversationActivity(conversationId)
+          void recordGateServe(hit, conversationId)
+          yield { type: 'text_delta', delta: answerText }
+          yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, cacheCreation: 0, cacheRead: 0, costUsd: 0 }
+          return
+        }
+      }
+    } catch (err) {
+      // Gate problems must NEVER block a turn — fall through to the real head.
+      console.warn('[run-owner-turn] answer gate failed open:', err instanceof Error ? err.message : err)
+    }
+  }
 
   // ── Model-upgrade approval gate ───────────────────────────────────────────
   // The owner asked to APPROVE before a thread jumps UP to a premium model
