@@ -573,7 +573,7 @@ struct InventoryScreen: View {
         }
         .frame(minWidth: 84, alignment: .leading)
         .padding(12)
-        .inventoryGlass(colorScheme, corner: 14)
+        .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── View chips (web: Active / Archived / Low stock / Out of stock) ──
@@ -639,7 +639,7 @@ struct InventoryScreen: View {
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
-        .inventoryGlass(colorScheme, corner: 14)
+        .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     /// The web's category <Select>, as one native menu.
@@ -656,7 +656,7 @@ struct InventoryScreen: View {
                 .font(.title3)
                 .foregroundStyle(AlmaSwiftTheme.violet)
                 .frame(width: 42, height: 42)
-                .inventoryGlass(colorScheme, corner: 14)
+                .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -669,14 +669,14 @@ struct InventoryScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .inventoryGlass(colorScheme, corner: 16)
+        .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func errorCard(_ message: String) -> some View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.footnote).foregroundStyle(InventoryPalette.red500)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).inventoryGlass(colorScheme, corner: 12)
+            .padding(12).inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     /// Success line — the web's toast.success equivalent.
@@ -684,13 +684,13 @@ struct InventoryScreen: View {
         Label(message, systemImage: "checkmark.circle")
             .font(.footnote).foregroundStyle(InventoryPalette.positive(colorScheme))
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).inventoryGlass(colorScheme, corner: 12)
+            .padding(12).inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var loadingRows: some View {
         ForEach(0..<5, id: \.self) { _ in
             Color.clear.frame(height: 112)
-                .inventoryGlass(colorScheme, corner: 16)
+                .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .inventoryShimmer()
         }
     }
@@ -855,7 +855,7 @@ private struct InventoryAdjustSheet: View {
                             .multilineTextAlignment(.center)
                             .font(.title2.weight(.bold).monospacedDigit())
                             .padding(.vertical, 8)
-                            .inventoryGlass(colorScheme, corner: 12)
+                            .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                         stepButton("plus") { setQty((qty ?? item.available) + 1) }
                     }
                     if qty == nil {
@@ -879,7 +879,7 @@ private struct InventoryAdjustSheet: View {
                     }
                     TextField("কারণ লিখুন…", text: $reason)
                         .padding(.horizontal, 12).padding(.vertical, 9)
-                        .inventoryGlass(colorScheme, corner: 12)
+                        .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                 }
 
                 if let errorText {
@@ -938,7 +938,7 @@ private struct InventoryAdjustSheet: View {
                 .font(.headline)
                 .foregroundStyle(InventoryPalette.accentText(colorScheme))
                 .frame(width: 48, height: 44)
-                .inventoryGlass(colorScheme, corner: 12)
+                .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
         .buttonStyle(.plain)
     }
@@ -1082,7 +1082,7 @@ private struct InventoryEditSheet: View {
                 .keyboardType(.numberPad)
                 .font(.title3.weight(.bold).monospacedDigit())
                 .padding(.horizontal, 12).padding(.vertical, 9)
-                .inventoryGlass(colorScheme, corner: 12)
+                .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
             Text(invalid ? "০ বা তার বেশি একটি সংখ্যা দিন" : hint)
                 .font(.caption2)
                 .foregroundStyle(invalid ? InventoryPalette.red500 : .secondary)
@@ -1160,7 +1160,7 @@ private struct InventoryAddSheet: View {
                 }
                 .tint(InventoryPalette.coral)
                 .padding(12)
-                .inventoryGlass(colorScheme, corner: 12)
+                .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
 
                 if let errorText {
                     Label(errorText, systemImage: "exclamationmark.triangle")
@@ -1245,7 +1245,7 @@ private struct InventoryAddSheet: View {
             HStack(spacing: 8) {
                 TextField("যেমন: Panjabi", text: $category)
                     .padding(.horizontal, 12).padding(.vertical, 9)
-                    .inventoryGlass(colorScheme, corner: 12)
+                    .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                 Menu {
                     ForEach(vm.categories, id: \.self) { c in
                         Button(c) { category = c }
@@ -1255,7 +1255,7 @@ private struct InventoryAddSheet: View {
                         .font(.footnote)
                         .foregroundStyle(AlmaSwiftTheme.violet)
                         .frame(width: 38, height: 38)
-                        .inventoryGlass(colorScheme, corner: 12)
+                        .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                 }
             }
         }
@@ -1270,7 +1270,7 @@ private struct InventoryAddSheet: View {
                 .textInputAutocapitalization(mono ? .characters : .sentences)
                 .autocorrectionDisabled(mono)
                 .padding(.horizontal, 12).padding(.vertical, 9)
-                .inventoryGlass(colorScheme, corner: 12)
+                .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -1281,8 +1281,8 @@ private struct InventoryAddSheet: View {
                 .keyboardType(.numberPad)
                 .font(.footnote.weight(.bold).monospacedDigit())
                 .padding(.horizontal, 12).padding(.vertical, 9)
-                .inventoryGlass(colorScheme, corner: 12)
-                .overlay(RoundedRectangle(cornerRadius: 12)
+                .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+                .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                     .strokeBorder(invalid ? InventoryPalette.red500.opacity(0.6) : .clear, lineWidth: 1))
         }
     }
@@ -1344,8 +1344,8 @@ private struct InventoryItemCard: View {
             InventoryActionButtons(item: item, vm: vm)
         }
         .padding(14)
-        .inventoryGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture(perform: onTap)
     }
 
@@ -1470,7 +1470,7 @@ private struct InventoryDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .inventoryGlass(colorScheme, corner: 14)
+        .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func moneyCard(_ item: InventoryStockItem) -> some View {
@@ -1487,7 +1487,7 @@ private struct InventoryDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .inventoryGlass(colorScheme, corner: 14)
+        .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func attributesCard(_ item: InventoryStockItem) -> some View {
@@ -1503,7 +1503,7 @@ private struct InventoryDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .inventoryGlass(colorScheme, corner: 14)
+        .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     /// Native writes (Adjust / Price / Archive-Restore) + tiny web escape for the
@@ -1533,7 +1533,7 @@ private struct InventoryDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .inventoryGlass(colorScheme, corner: 14)
+        .inventoryGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func sectionLabel(_ label: String) -> some View {
@@ -1564,8 +1564,8 @@ private struct InventoryDetailSheet: View {
             .foregroundStyle(text)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 8).padding(.vertical, 6)
-            .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8)
+            .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                 .strokeBorder(tint.opacity(0.30), lineWidth: 1))
     }
 }
@@ -1610,7 +1610,7 @@ private struct InventoryAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func inventoryGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func inventoryGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

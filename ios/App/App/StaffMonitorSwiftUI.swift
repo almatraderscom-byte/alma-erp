@@ -445,7 +445,7 @@ struct StaffMonitorScreen: View {
         }
         .frame(minWidth: 84, alignment: .leading)
         .padding(12)
-        .staffMonitorGlass(colorScheme, corner: 14)
+        .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Geo-fence OFF note (web Bangla string verbatim) ──
@@ -457,7 +457,7 @@ struct StaffMonitorScreen: View {
                 .font(.caption).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
-                .staffMonitorGlass(colorScheme, corner: 12)
+                .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -492,7 +492,7 @@ struct StaffMonitorScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .staffMonitorGlass(colorScheme, corner: 16)
+            .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
     }
 
@@ -539,7 +539,7 @@ struct StaffMonitorScreen: View {
                 .tint(StaffMonitorPalette.coral)
         }
         .padding(12)
-        .staffMonitorGlass(colorScheme, corner: 12)
+        .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -548,13 +548,13 @@ struct StaffMonitorScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .staffMonitorGlass(colorScheme, corner: 16)
+        .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 110)
-                .staffMonitorGlass(colorScheme, corner: 16)
+                .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .staffMonitorShimmer()
         }
     }
@@ -627,8 +627,8 @@ private struct StaffMonitorCard: View {
             }
         }
         .padding(14)
-        .staffMonitorGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             onTap()
@@ -765,7 +765,7 @@ private struct StaffMonitorDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .staffMonitorGlass(colorScheme, corner: 14)
+        .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func statCell(_ icon: String, _ value: String, _ label: String,
@@ -802,7 +802,7 @@ private struct StaffMonitorDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .staffMonitorGlass(colorScheme, corner: 14)
+        .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var alertsCard: some View {
@@ -821,7 +821,7 @@ private struct StaffMonitorDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .staffMonitorGlass(colorScheme, corner: 14)
+        .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var messagesCard: some View {
@@ -858,7 +858,7 @@ private struct StaffMonitorDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .staffMonitorGlass(colorScheme, corner: 14)
+        .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     /// Web AckBadge parity: ✓ time · ⏳ unseen · sending…
@@ -975,7 +975,7 @@ private struct StaffMonitorAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func staffMonitorGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func staffMonitorGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

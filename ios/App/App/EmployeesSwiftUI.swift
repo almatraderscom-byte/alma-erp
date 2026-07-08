@@ -880,8 +880,8 @@ struct EmployeesScreen: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
                 .background(EmployeePalette.coral.opacity(colorScheme == .dark ? 0.24 : 0.12),
-                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                     .strokeBorder(EmployeePalette.coral.opacity(0.45), lineWidth: 1))
         }
         .buttonStyle(.plain)
@@ -924,7 +924,7 @@ struct EmployeesScreen: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
-        .employeesGlass(colorScheme, corner: 14)
+        .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Search + role filter (web search bar parity; filtering is local → instant) ──
@@ -946,7 +946,7 @@ struct EmployeesScreen: View {
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
-        .employeesGlass(colorScheme, corner: 14)
+        .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var roleChips: some View {
@@ -997,14 +997,14 @@ struct EmployeesScreen: View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.footnote).foregroundStyle(EmployeePalette.red500)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).employeesGlass(colorScheme, corner: 12)
+            .padding(12).employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func successCard(_ message: String) -> some View {
         Label(message, systemImage: "checkmark.circle")
             .font(.footnote).foregroundStyle(EmployeePalette.emerald600)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).employeesGlass(colorScheme, corner: 12)
+            .padding(12).employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -1013,13 +1013,13 @@ struct EmployeesScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .employeesGlass(colorScheme, corner: 16)
+        .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<6, id: \.self) { _ in
             Color.clear.frame(height: 72)
-                .employeesGlass(colorScheme, corner: 16)
+                .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .employeesShimmer()
         }
     }
@@ -1149,8 +1149,8 @@ private struct EmployeeRowCard: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 12).padding(.vertical, 11)
-        .employeesGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             onTap()
@@ -1304,8 +1304,8 @@ private struct EmployeeDetailSheet: View {
                 .background(
                     prominent ? EmployeePalette.coral.opacity(colorScheme == .dark ? 0.24 : 0.12)
                               : Color.white.opacity(colorScheme == .dark ? 0.08 : 0.45),
-                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                     .strokeBorder(prominent ? EmployeePalette.coral.opacity(0.45)
                                             : Color.white.opacity(colorScheme == .dark ? 0.10 : 0.4),
                                   lineWidth: 1))
@@ -1318,7 +1318,7 @@ private struct EmployeeDetailSheet: View {
             .font(.footnote)
             .foregroundStyle(error ? EmployeePalette.red500 : EmployeePalette.emerald600)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).employeesGlass(colorScheme, corner: 12)
+            .padding(12).employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Profile header (big avatar + name + role · emp_id + salary) ──
@@ -1384,7 +1384,7 @@ private struct EmployeeDetailSheet: View {
             if let notes = employee.notes, !notes.isEmpty { infoRow("note.text", notes) }
         }
         .padding(14)
-        .employeesGlass(colorScheme, corner: 14)
+        .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func infoRow(_ icon: String, _ text: String) -> some View {
@@ -1399,7 +1399,7 @@ private struct EmployeeDetailSheet: View {
     @ViewBuilder private var walletStrip: some View {
         if vm.loading && vm.wallet == nil {
             Color.clear.frame(height: 84)
-                .employeesGlass(colorScheme, corner: 14)
+                .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                 .employeesShimmer()
         } else if let summary = vm.wallet?.summary {
             VStack(spacing: 8) {
@@ -1425,12 +1425,12 @@ private struct EmployeeDetailSheet: View {
                 }
             }
             .padding(12)
-            .employeesGlass(colorScheme, corner: 14)
+            .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         } else if let err = vm.error {
             Label(err, systemImage: "exclamationmark.triangle")
                 .font(.footnote).foregroundStyle(EmployeePalette.red500)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12).employeesGlass(colorScheme, corner: 12)
+                .padding(12).employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -1476,7 +1476,7 @@ private struct EmployeeDetailSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .employeesGlass(colorScheme, corner: 14)
+            .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -1488,7 +1488,7 @@ private struct EmployeeDetailSheet: View {
         }
         .frame(minWidth: 76, alignment: .leading)
         .padding(10)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
     }
 
     private func attendanceRow(_ row: EmployeeAttendanceRecord) -> some View {
@@ -1543,7 +1543,7 @@ private struct EmployeeDetailSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .employeesGlass(colorScheme, corner: 14)
+            .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -1615,14 +1615,14 @@ private struct EmployeeDetailSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
                     .background(EmployeePalette.amber500.opacity(0.10),
-                                in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10)
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                         .strokeBorder(EmployeePalette.amber500.opacity(0.35), lineWidth: 0.8))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .employeesGlass(colorScheme, corner: 14)
+            .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -1656,7 +1656,7 @@ private struct EmployeeDetailSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .employeesGlass(colorScheme, corner: 14)
+            .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -1697,8 +1697,8 @@ private extension View {
         self
             .padding(.horizontal, 10).padding(.vertical, 9)
             .background(Color.white.opacity(scheme == .dark ? 0.07 : 0.5),
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                 .strokeBorder(Color.white.opacity(scheme == .dark ? 0.12 : 0.45), lineWidth: 1))
     }
 }
@@ -1778,7 +1778,7 @@ private struct EmployeeAddSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .employeesGlass(colorScheme, corner: 14)
+        .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func userRow(_ user: EmployeeLinkedUser) -> some View {
@@ -1876,8 +1876,8 @@ private struct EmployeeAddSheet: View {
         .background(
             isSelected ? EmployeePalette.coral.opacity(colorScheme == .dark ? 0.20 : 0.10)
                        : Color.white.opacity(colorScheme == .dark ? 0.05 : 0.35),
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(isSelected ? EmployeePalette.coral.opacity(0.5)
                                      : Color.white.opacity(colorScheme == .dark ? 0.10 : 0.4),
                           lineWidth: 1))
@@ -1926,7 +1926,7 @@ private struct EmployeeAddSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(10)
-            .employeesGlass(colorScheme, corner: 12)
+            .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -2002,7 +2002,7 @@ private struct EmployeeAddSheet: View {
             }
         }
         .padding(12)
-        .employeesGlass(colorScheme, corner: 14)
+        .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var footerButtons: some View {
@@ -2482,8 +2482,8 @@ private struct EmployeeCorrectionSheet: View {
                         .background(
                             selected ? EmployeePalette.coral.opacity(colorScheme == .dark ? 0.20 : 0.10)
                                      : Color.white.opacity(colorScheme == .dark ? 0.05 : 0.35),
-                            in: RoundedRectangle(cornerRadius: 12))
-                        .overlay(RoundedRectangle(cornerRadius: 12)
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                             .strokeBorder(selected ? EmployeePalette.coral.opacity(0.5)
                                                    : Color.white.opacity(colorScheme == .dark ? 0.10 : 0.4),
                                           lineWidth: 1))
@@ -2558,7 +2558,7 @@ private struct EmployeeCorrectionSheet: View {
                     }
                     .padding(10)
                     .background(Color.white.opacity(colorScheme == .dark ? 0.05 : 0.35),
-                                in: RoundedRectangle(cornerRadius: 12))
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                 }
             }
         }
@@ -2741,7 +2741,7 @@ private struct EmployeesAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func employeesGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func employeesGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

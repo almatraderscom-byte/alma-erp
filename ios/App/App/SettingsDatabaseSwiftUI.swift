@@ -264,8 +264,8 @@ struct SettingsDatabaseScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .settingsDatabaseGlass(colorScheme, corner: 18)
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+        .settingsDatabaseGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(tint.opacity(0.35), lineWidth: 1))
     }
 
@@ -285,8 +285,8 @@ struct SettingsDatabaseScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .settingsDatabaseGlass(colorScheme, corner: 16)
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+        .settingsDatabaseGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(SettingsDatabasePalette.goldDim.opacity(0.25), lineWidth: 1))
     }
 
@@ -307,7 +307,7 @@ struct SettingsDatabaseScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .settingsDatabaseGlass(colorScheme, corner: 16)
+        .settingsDatabaseGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func statusRow(_ label: String, ok: Bool?, detail: String? = nil, last: Bool = false) -> some View {
@@ -354,7 +354,7 @@ struct SettingsDatabaseScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .settingsDatabaseGlass(colorScheme, corner: 16)
+        .settingsDatabaseGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func statRow(_ name: String, value: String, ok: Bool) -> some View {
@@ -394,7 +394,7 @@ struct SettingsDatabaseScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .settingsDatabaseGlass(colorScheme, corner: 16)
+        .settingsDatabaseGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func infoRow(_ label: String, _ value: String, mono: Bool = false, tint: Color? = nil) -> some View {
@@ -420,7 +420,7 @@ struct SettingsDatabaseScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .settingsDatabaseGlass(colorScheme, corner: 16)
+        .settingsDatabaseGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func bullet(_ text: String) -> some View {
@@ -442,7 +442,7 @@ struct SettingsDatabaseScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).settingsDatabaseGlass(colorScheme, corner: 12)
+            .padding(12).settingsDatabaseGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -451,13 +451,13 @@ struct SettingsDatabaseScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .settingsDatabaseGlass(colorScheme, corner: 16)
+        .settingsDatabaseGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 120)
-                .settingsDatabaseGlass(colorScheme, corner: 16)
+                .settingsDatabaseGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .settingsDatabaseShimmer()
         }
     }
@@ -522,7 +522,7 @@ private struct SettingsDatabaseAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func settingsDatabaseGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func settingsDatabaseGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

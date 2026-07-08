@@ -363,7 +363,7 @@ struct AgentCostsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .agentCostsGlass(colorScheme, corner: 18)
+        .agentCostsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func smallStat(_ label: String, _ value: String, sub: String? = nil) -> some View {
@@ -379,7 +379,7 @@ struct AgentCostsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .agentCostsGlass(colorScheme, corner: 14)
+        .agentCostsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Budget-cap indicator (read-only; config lives on the web) ──
@@ -404,7 +404,7 @@ struct AgentCostsScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .agentCostsGlass(colorScheme, corner: 16)
+            .agentCostsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         )
     }
 
@@ -464,7 +464,7 @@ struct AgentCostsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .agentCostsGlass(colorScheme, corner: 16)
+        .agentCostsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func modelRow(_ m: AgentCostModelRow, index: Int, fraction: Double) -> some View {
@@ -533,7 +533,7 @@ struct AgentCostsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .agentCostsGlass(colorScheme, corner: 16)
+        .agentCostsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Day-history rows (দৈনিক খরচ — ৩০ দিন), newest first ──
@@ -578,7 +578,7 @@ struct AgentCostsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .agentCostsGlass(colorScheme, corner: 16)
+        .agentCostsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── API balances (💳 API ব্যালেন্স) — read-only table ──
@@ -601,7 +601,7 @@ struct AgentCostsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .agentCostsGlass(colorScheme, corner: 16)
+        .agentCostsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func balanceRow(_ row: AgentCostBalanceRow) -> some View {
@@ -647,7 +647,7 @@ struct AgentCostsScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .agentCostsGlass(colorScheme, corner: 16)
+        .agentCostsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func errorCard(_ message: String) -> some View {
@@ -668,13 +668,13 @@ struct AgentCostsScreen: View {
             .buttonStyle(.plain)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(12).agentCostsGlass(colorScheme, corner: 12)
+        .padding(12).agentCostsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 110)
-                .agentCostsGlass(colorScheme, corner: 16)
+                .agentCostsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .agentCostsShimmer()
         }
     }
@@ -790,7 +790,7 @@ private struct AgentCostsAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func agentCostsGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func agentCostsGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

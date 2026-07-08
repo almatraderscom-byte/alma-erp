@@ -1089,7 +1089,7 @@ struct PortalOfficeScreen: View {
             }
         }
         .padding(14)
-        .portalOfficeGlass(colorScheme, corner: 16)
+        .portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── আজকের কাজ (GET my-tasks — today's still-open tasks, serial order) ──
@@ -1144,7 +1144,7 @@ struct PortalOfficeScreen: View {
             .padding(.top, 2)
         }
         .padding(14)
-        .portalOfficeGlass(colorScheme, corner: 16)
+        .portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func taskRow(_ t: PortalOfficeTask) -> some View {
@@ -1201,7 +1201,7 @@ struct PortalOfficeScreen: View {
         }
         .buttonStyle(.plain)
         .padding(14)
-        .portalOfficeGlass(colorScheme, corner: 16)
+        .portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── নোটিফিকেশন (GET/POST notifications — web NotifBell parity) ──
@@ -1243,7 +1243,7 @@ struct PortalOfficeScreen: View {
             }
         }
         .padding(14)
-        .portalOfficeGlass(colorScheme, corner: 16)
+        .portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func noticeRow(_ n: PortalOfficeNotice) -> some View {
@@ -1289,7 +1289,7 @@ struct PortalOfficeScreen: View {
             .background(
                 LinearGradient(colors: [PortalOfficePalette.coral, AlmaSwiftTheme.violet],
                                startPoint: .topLeading, endPoint: .bottomTrailing),
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             .shadow(color: PortalOfficePalette.coral.opacity(0.35), radius: 5, y: 2)
     }
 
@@ -1326,7 +1326,7 @@ struct PortalOfficeScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).portalOfficeGlass(colorScheme, corner: 12)
+            .padding(12).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -1335,13 +1335,13 @@ struct PortalOfficeScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .portalOfficeGlass(colorScheme, corner: 16)
+        .portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<3, id: \.self) { _ in
             Color.clear.frame(height: 110)
-                .portalOfficeGlass(colorScheme, corner: 16)
+                .portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .portalOfficeShimmer()
         }
     }
@@ -1404,7 +1404,7 @@ private struct PortalTaskDetailSheet: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
-                    .portalOfficeGlass(colorScheme, corner: 14)
+                    .portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
 
                     // Compose: comment / update answer
                     VStack(alignment: .leading, spacing: 10) {
@@ -1416,7 +1416,7 @@ private struct PortalTaskDetailSheet: View {
                                 .font(.footnote)
                                 .padding(.horizontal, 12).padding(.vertical, 9)
                                 .background(Color.primary.opacity(0.05),
-                                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                             Button {
                                 let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
                                 guard !text.isEmpty else { return }
@@ -1463,7 +1463,7 @@ private struct PortalTaskDetailSheet: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
-                    .portalOfficeGlass(colorScheme, corner: 14)
+                    .portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
 
                     // Photo proof stays web (needs the camera / file upload).
                     Button {
@@ -1539,14 +1539,14 @@ private struct PortalSelfInitiatedSheet: View {
                     .font(.footnote)
                     .padding(.horizontal, 12).padding(.vertical, 11)
                     .background(Color.primary.opacity(0.05),
-                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
 
                 TextField("বিস্তারিত (ঐচ্ছিক)", text: $detail, axis: .vertical)
                     .lineLimit(2...5)
                     .font(.footnote)
                     .padding(.horizontal, 12).padding(.vertical, 11)
                     .background(Color.primary.opacity(0.05),
-                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
 
                 Button {
                     let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1719,7 +1719,7 @@ struct PortalGroupChatSheet: View {
                             Color.primary.opacity(0.06).frame(height: 150)
                         }
                         .frame(maxWidth: 210, maxHeight: 210)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                         .contentShape(Rectangle())
                         .onTapGesture { preview = PortalImagePreview(urls: m.imageURLs, index: idx) }
                     }
@@ -1731,7 +1731,7 @@ struct PortalGroupChatSheet: View {
                         .multilineTextAlignment(.leading)
                         .padding(.horizontal, 12).padding(.vertical, 8)
                         .background(bubbleBg(mine: mine, agent: isAgent),
-                                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
                 }
                 Text(PortalOfficeFormat.timeAgo(m.createdAt)).font(.caption2).foregroundStyle(.secondary)
             }
@@ -1753,7 +1753,7 @@ struct PortalGroupChatSheet: View {
                 .font(.caption2.weight(.bold)).foregroundStyle(PortalOfficePalette.violet)
             TextField("খসড়া…", text: text, axis: .vertical)
                 .font(.footnote).lineLimit(1...6)
-                .padding(10).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+                .padding(10).background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             HStack(spacing: 8) {
                 Spacer()
                 if vm.chatDecidingId == m.id {
@@ -1772,8 +1772,8 @@ struct PortalGroupChatSheet: View {
             }
         }
         .padding(12)
-        .background(PortalOfficePalette.violet.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+        .background(PortalOfficePalette.violet.opacity(0.08), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(PortalOfficePalette.violet.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
     }
 
@@ -1784,7 +1784,7 @@ struct PortalGroupChatSheet: View {
                     if let ui = UIImage(data: data) {
                         Image(uiImage: ui).resizable().scaledToFill()
                             .frame(width: 54, height: 54)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                             .overlay(alignment: .topTrailing) {
                                 Button { staged.remove(at: idx) } label: {
                                     Image(systemName: "xmark.circle.fill").foregroundStyle(.white, .black.opacity(0.5))
@@ -1849,7 +1849,7 @@ struct PortalGroupChatSheet: View {
             TextField("গ্রুপে মেসেজ লিখুন…", text: $draft, axis: .vertical)
                 .lineLimit(1...4).focused($focused).font(.footnote)
                 .padding(.horizontal, 12).padding(.vertical, 9)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
             Button {
                 let text = draft; let imgs = staged
                 UIImpactFeedbackGenerator(style: .soft).impactOccurred()
@@ -1882,7 +1882,7 @@ private func officeGradBadge(_ systemName: String) -> some View {
         .background(
             LinearGradient(colors: [PortalOfficePalette.coral, AlmaSwiftTheme.violet],
                            startPoint: .topLeading, endPoint: .bottomTrailing),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
         .shadow(color: PortalOfficePalette.coral.opacity(0.35), radius: 5, y: 2)
 }
 
@@ -1992,7 +1992,7 @@ struct PortalOwnerHubView: View {
             historyButton
         } else {
             ForEach(0..<3, id: \.self) { _ in
-                Color.clear.frame(height: 110).portalOfficeGlass(colorScheme, corner: 16).portalOfficeShimmer()
+                Color.clear.frame(height: 110).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard).portalOfficeShimmer()
             }
         }
     }
@@ -2036,8 +2036,8 @@ struct PortalOwnerHubView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(11)
             .background(PortalOfficePalette.amber500.opacity(0.12),
-                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                 .strokeBorder(PortalOfficePalette.amber500.opacity(0.3), lineWidth: 1))
     }
 
@@ -2045,7 +2045,7 @@ struct PortalOwnerHubView: View {
         Label(msg, systemImage: "exclamationmark.triangle")
             .font(.footnote).foregroundStyle(PortalOfficePalette.red500)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).portalOfficeGlass(colorScheme, corner: 12)
+            .padding(12).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── KPI tiles (SF Symbols, not emoji — native polish) ──
@@ -2066,7 +2066,7 @@ struct PortalOwnerHubView: View {
             Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(15).portalOfficeGlass(colorScheme, corner: 20)
+        .padding(15).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Performer of the week ──
@@ -2093,8 +2093,8 @@ struct PortalOwnerHubView: View {
         .padding(14)
         .background(LinearGradient(colors: [PortalOfficePalette.amber500.opacity(0.20), PortalOfficePalette.coral.opacity(0.12)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing),
-                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(PortalOfficePalette.amber500.opacity(0.4), lineWidth: 1))
     }
     private func awardStat(_ label: String, _ value: String) -> some View {
@@ -2104,7 +2104,7 @@ struct PortalOwnerHubView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
     }
 
     // ── Update tracking (calling lives here) ──
@@ -2114,7 +2114,7 @@ struct PortalOwnerHubView: View {
                        "সাড়া পাওয়া যায়নি \(PortalOfficeFormat.bn(rows.count)) জন", tint: PortalOfficePalette.amber600)
             ForEach(rows) { r in overdueRow(r) }
         }
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
+        .padding(14).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
     private func overdueRow(_ r: PortalOverdue) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -2180,7 +2180,7 @@ struct PortalOwnerHubView: View {
                 .font(.caption2).foregroundStyle(.secondary)
             ForEach(rows) { p in proposalRow(p) }
         }
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
+        .padding(14).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
     private func proposalRow(_ p: PortalProposal) -> some View {
         let reward = p.kind.lowercased().contains("reward") || p.kind.lowercased().contains("award")
@@ -2224,7 +2224,7 @@ struct PortalOwnerHubView: View {
             ForEach(hub.pendingApproval) { t in approvalRow(t) }
             ForEach(hub.selfInitiated) { t in selfRow(t) }
         }
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
+        .padding(14).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
     private func approvalRow(_ t: PortalHubTask) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -2263,7 +2263,7 @@ struct PortalOwnerHubView: View {
             }
         }
         .padding(10)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
     }
     private func selfRow(_ t: PortalHubTask) -> some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -2290,7 +2290,7 @@ struct PortalOwnerHubView: View {
             }
         }
         .padding(10)
-        .background(PortalOfficePalette.violet.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(PortalOfficePalette.violet.opacity(0.06), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
     }
     private func proofStrip(_ urls: [String], onTap: @escaping () -> Void) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -2301,8 +2301,8 @@ struct PortalOwnerHubView: View {
                             Color.primary.opacity(0.06)
                         }
                         .frame(width: 84, height: 84)
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                             .strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
                         .contentShape(Rectangle())
                         .onTapGesture { onTap() }
@@ -2323,7 +2323,7 @@ struct PortalOwnerHubView: View {
                 teamMemberRow(m, hub: hub)
             }
         }
-        .padding(14).portalOfficeGlass(colorScheme, corner: 20)
+        .padding(14).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     @ViewBuilder
@@ -2428,7 +2428,7 @@ struct PortalOwnerHubView: View {
             }
         }
         .buttonStyle(.plain)
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
+        .padding(14).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Activity feed ──
@@ -2448,7 +2448,7 @@ struct PortalOwnerHubView: View {
                 .padding(.vertical, 2)
             }
         }
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
+        .padding(14).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Leaderboard ──
@@ -2478,7 +2478,7 @@ struct PortalOwnerHubView: View {
                 .padding(.vertical, 2)
             }
         }
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
+        .padding(14).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Staff performance table ──
@@ -2507,7 +2507,7 @@ struct PortalOwnerHubView: View {
                 }
             }
         }
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
+        .padding(14).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Notifications (owner bell) ──
@@ -2546,7 +2546,7 @@ struct PortalOwnerHubView: View {
                 }
             }
         }
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
+        .padding(14).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── History ──
@@ -2566,7 +2566,7 @@ struct PortalOwnerHubView: View {
             }
         }
         .buttonStyle(.plain)
-        .padding(14).portalOfficeGlass(colorScheme, corner: 16)
+        .padding(14).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Shared bits ──
@@ -2683,8 +2683,8 @@ private struct PortalOwnerTaskSheet: View {
                                 ZStack { Color.primary.opacity(0.06); ProgressView() }
                             }
                             .frame(width: 230, height: 230)
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                                 .strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
                             .contentShape(Rectangle())
                             .onTapGesture { preview = PortalImagePreview(urls: task.imageUrls, index: idx) }
@@ -2707,7 +2707,7 @@ private struct PortalOwnerTaskSheet: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12).portalOfficeGlass(colorScheme, corner: 14)
+        .padding(12).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func threadRow(_ c: PortalOfficeThreadMsg) -> some View {
@@ -2724,7 +2724,7 @@ private struct PortalOwnerTaskSheet: View {
             TextField("কমেন্ট / নির্দেশনা…", text: $note, axis: .vertical)
                 .lineLimit(1...4).font(.footnote)
                 .padding(.horizontal, 12).padding(.vertical, 9)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12))
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             Button("পাঠান") {
                 let t = note.trimmingCharacters(in: .whitespacesAndNewlines); guard !t.isEmpty else { return }
                 Task { if await vm.ownerAct(.init(action: "comment", taskId: task.id, body: t), taskId: task.id) { note = ""; await vm.loadThread(task.id) } }
@@ -2764,8 +2764,8 @@ private struct PortalOwnerTaskSheet: View {
                 Spacer() }
                 .foregroundStyle(filled ? .white : tint)
                 .padding(.vertical, 12)
-                .background(filled ? AnyShapeStyle(tint) : AnyShapeStyle(tint.opacity(0.13)), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(tint.opacity(filled ? 0 : 0.35), lineWidth: 1))
+                .background(filled ? AnyShapeStyle(tint) : AnyShapeStyle(tint.opacity(0.13)), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous).strokeBorder(tint.opacity(filled ? 0 : 0.35), lineWidth: 1))
         }
         .buttonStyle(.plain).disabled(busy)
     }
@@ -2802,7 +2802,7 @@ private struct PortalOfficeHistorySheet: View {
                 LazyVStack(spacing: 10) {
                     if loading {
                         ForEach(0..<4, id: \.self) { _ in
-                            Color.clear.frame(height: 64).portalOfficeGlass(colorScheme, corner: 14).portalOfficeShimmer()
+                            Color.clear.frame(height: 64).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rControl).portalOfficeShimmer()
                         }
                     } else if days.isEmpty {
                         Text("এখনো কোনো ইতিহাস নেই। দিন শেষে আজকের বোর্ড এখানে জমা হবে।")
@@ -2815,7 +2815,7 @@ private struct PortalOfficeHistorySheet: View {
                                     .font(.caption2).foregroundStyle(.secondary)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(14).portalOfficeGlass(colorScheme, corner: 14)
+                            .padding(14).portalOfficeGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                         }
                     }
                 }
@@ -2935,7 +2935,7 @@ struct PortalOfficeAurora: View {
 
 @available(iOS 17.0, *)
 extension View {
-    func portalOfficeGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func portalOfficeGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

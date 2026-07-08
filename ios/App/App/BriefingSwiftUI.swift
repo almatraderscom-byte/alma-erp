@@ -353,7 +353,7 @@ struct BriefingScreen: View {
                     .multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity).padding(22)
-            .briefingGlass(colorScheme, corner: 16)
+            .briefingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         } else {
             ForEach(Array(data.decisions.enumerated()), id: \.offset) { _, d in
                 BriefingDecisionCard(decision: d)
@@ -382,7 +382,7 @@ struct BriefingScreen: View {
                         tone: cs.openAlerts > 0 ? .warn : .normal)
             }
             .padding(14)
-            .briefingGlass(colorScheme, corner: 16)
+            .briefingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
 
         // Staff yesterday.
@@ -407,7 +407,7 @@ struct BriefingScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .briefingGlass(colorScheme, corner: 16)
+            .briefingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
 
         // Returns & pricing flags.
@@ -421,7 +421,7 @@ struct BriefingScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .briefingGlass(colorScheme, corner: 16)
+            .briefingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
 
         // Ads digest.
@@ -443,7 +443,7 @@ struct BriefingScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .briefingGlass(colorScheme, corner: 16)
+            .briefingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
 
         // Todos.
@@ -469,7 +469,7 @@ struct BriefingScreen: View {
                     }
                 }
             }
-            .briefingGlass(colorScheme, corner: 16)
+            .briefingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
 
         // Agent footer.
@@ -502,7 +502,7 @@ struct BriefingScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .briefingGlass(colorScheme, corner: 18)
+        .briefingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         .overlay(alignment: .topTrailing) {
             // The web hero's gold glow blob, clipped to the card.
             Circle()
@@ -512,7 +512,7 @@ struct BriefingScreen: View {
                 .offset(x: 36, y: -44)
                 .allowsHitTesting(false)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
     }
 
     private func heroMetaLine(_ data: BriefingData) -> String {
@@ -580,7 +580,7 @@ struct BriefingScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .briefingGlass(colorScheme, corner: 14)
+        .briefingGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Section header (SF-symbol badge + count capsule + optional link) ──
@@ -660,7 +660,7 @@ struct BriefingScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .briefingGlass(colorScheme, corner: 16)
+        .briefingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func errorCard(_ message: String) -> some View {
@@ -680,25 +680,25 @@ struct BriefingScreen: View {
             .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .briefingGlass(colorScheme, corner: 16)
+        .briefingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         Group {
             Color.clear.frame(height: 110)
-                .briefingGlass(colorScheme, corner: 18)
+                .briefingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .briefingShimmer()
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
                       spacing: 10) {
                 ForEach(0..<4, id: \.self) { _ in
                     Color.clear.frame(height: 78)
-                        .briefingGlass(colorScheme, corner: 14)
+                        .briefingGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                         .briefingShimmer()
                 }
             }
             ForEach(0..<3, id: \.self) { _ in
                 Color.clear.frame(height: 96)
-                    .briefingGlass(colorScheme, corner: 16)
+                    .briefingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                     .briefingShimmer()
             }
         }
@@ -756,7 +756,7 @@ private struct BriefingDecisionCard: View {
                 .foregroundStyle(high ? BriefingPalette.red500 : BriefingPalette.accentText(colorScheme))
                 .frame(width: 34, height: 34)
                 .background((high ? BriefingPalette.red500 : BriefingPalette.coral).opacity(0.13),
-                            in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Text(area.label)
@@ -777,8 +777,8 @@ private struct BriefingDecisionCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .briefingGlass(colorScheme, corner: 16)
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+        .briefingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(high ? BriefingPalette.red500.opacity(0.35) : .clear, lineWidth: 1))
     }
 
@@ -806,8 +806,8 @@ private struct BriefingDecisionCard: View {
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 9).padding(.vertical, 6)
                         .background(Color.primary.opacity(0.04),
-                                    in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8)
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                             .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
                 }
             }
@@ -876,8 +876,8 @@ private struct BriefingReorderCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .briefingGlass(colorScheme, corner: 16)
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+        .briefingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(high ? BriefingPalette.red500.opacity(0.35) : .clear, lineWidth: 1))
     }
 }
@@ -975,7 +975,7 @@ private struct BriefingAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func briefingGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func briefingGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

@@ -268,7 +268,7 @@ struct SupplierImportScreen: View {
         }
         .frame(minWidth: 84, alignment: .leading)
         .padding(12)
-        .supplierImportGlass(colorScheme, corner: 14)
+        .supplierImportGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Search (web "Filter preview…" SearchInput) ──
@@ -292,7 +292,7 @@ struct SupplierImportScreen: View {
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
-        .supplierImportGlass(colorScheme, corner: 12)
+        .supplierImportGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Category chips (top categories by count, "All" first) ──
@@ -366,7 +366,7 @@ struct SupplierImportScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .supplierImportGlass(colorScheme, corner: 16)
+        .supplierImportGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func guideRow(_ n: String, _ text: String) -> some View {
@@ -413,7 +413,7 @@ struct SupplierImportScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).supplierImportGlass(colorScheme, corner: 12)
+            .padding(12).supplierImportGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -422,13 +422,13 @@ struct SupplierImportScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .supplierImportGlass(colorScheme, corner: 16)
+        .supplierImportGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 96)
-                .supplierImportGlass(colorScheme, corner: 16)
+                .supplierImportGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .supplierImportShimmer()
         }
     }
@@ -494,8 +494,8 @@ private struct SupplierImportBatchCard: View {
             }
         }
         .padding(14)
-        .supplierImportGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .supplierImportGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             onTap()
@@ -592,7 +592,7 @@ private struct SupplierImportBatchSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .supplierImportGlass(colorScheme, corner: 12)
+        .supplierImportGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var webLink: some View {
@@ -689,7 +689,7 @@ private struct SupplierImportAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func supplierImportGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func supplierImportGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

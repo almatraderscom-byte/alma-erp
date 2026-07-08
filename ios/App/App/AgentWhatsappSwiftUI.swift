@@ -267,7 +267,7 @@ struct AgentWhatsappScreen: View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.footnote).foregroundStyle(AgentWaPalette.red500)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).agentWhatsappGlass(colorScheme, corner: 12)
+            .padding(12).agentWhatsappGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -276,13 +276,13 @@ struct AgentWhatsappScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .agentWhatsappGlass(colorScheme, corner: 16)
+        .agentWhatsappGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<5, id: \.self) { _ in
             Color.clear.frame(height: 74)
-                .agentWhatsappGlass(colorScheme, corner: 16)
+                .agentWhatsappGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .agentWhatsappShimmer()
         }
     }
@@ -336,8 +336,8 @@ private struct AgentWaThreadRow: View {
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
-        .agentWhatsappGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .agentWhatsappGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             onTap()
@@ -614,7 +614,7 @@ private struct AgentWhatsappAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func agentWhatsappGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func agentWhatsappGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

@@ -285,7 +285,7 @@ struct SettingsSessionScreen: View {
                 }
             } else if vm.loading {
                 Color.clear.frame(height: 90)
-                    .settingsSessionGlass(colorScheme, corner: 12)
+                    .settingsSessionGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                     .settingsSessionShimmer()
             } else {
                 // Web: "Could not load /api/health"
@@ -296,7 +296,7 @@ struct SettingsSessionScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .settingsSessionGlass(colorScheme, corner: 16)
+        .settingsSessionGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func kvRow(_ label: String, _ value: String, mono: Bool = false,
@@ -340,20 +340,20 @@ struct SettingsSessionScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .settingsSessionGlass(colorScheme, corner: 16)
+        .settingsSessionGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func errorCard(_ message: String) -> some View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.footnote).foregroundStyle(SettingsSessionPalette.red500)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).settingsSessionGlass(colorScheme, corner: 12)
+            .padding(12).settingsSessionGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var loadingRows: some View {
         ForEach(0..<3, id: \.self) { _ in
             Color.clear.frame(height: 130)
-                .settingsSessionGlass(colorScheme, corner: 16)
+                .settingsSessionGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .settingsSessionShimmer()
         }
     }
@@ -425,7 +425,7 @@ private struct SettingsSessionHeroCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .settingsSessionGlass(colorScheme, corner: 16)
+        .settingsSessionGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func statusPill(_ label: String, tint: Color, text: Color? = nil) -> some View {
@@ -466,7 +466,7 @@ private struct SettingsSessionDeviceCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .settingsSessionGlass(colorScheme, corner: 16)
+        .settingsSessionGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func deviceRow(_ symbol: String, _ title: String, _ subtitle: String) -> some View {
@@ -478,7 +478,7 @@ private struct SettingsSessionDeviceCard: View {
                 .background(
                     LinearGradient(colors: [SettingsSessionPalette.coral, AlmaSwiftTheme.violet],
                                    startPoint: .topLeading, endPoint: .bottomTrailing),
-                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                 .shadow(color: SettingsSessionPalette.coral.opacity(0.35), radius: 5, y: 2)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.footnote.weight(.semibold))
@@ -515,7 +515,7 @@ private struct SettingsSessionAccountCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .settingsSessionGlass(colorScheme, corner: 16)
+        .settingsSessionGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func accountRow(_ symbol: String, _ label: String, _ value: String) -> some View {
@@ -525,7 +525,7 @@ private struct SettingsSessionAccountCard: View {
                 .foregroundStyle(SettingsSessionPalette.accentText(colorScheme))
                 .frame(width: 26, height: 26)
                 .background(SettingsSessionPalette.coral.opacity(0.12),
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             Text(label).font(.caption).foregroundStyle(.secondary)
             Spacer(minLength: 8)
             Text(value)
@@ -619,7 +619,7 @@ private struct SettingsSessionAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func settingsSessionGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func settingsSessionGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

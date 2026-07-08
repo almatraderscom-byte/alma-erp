@@ -227,7 +227,7 @@ struct MoreMenuScreen: View {
                 .padding(.leading, 14)
             // Frosted-glass card so the aurora glows through but the rows stay crisp.
             VStack(spacing: 0) { rows() }
-                .ordersGlass(colorScheme, corner: 16)
+                .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .shadow(color: .black.opacity(colorScheme == .dark ? 0.18 : 0.06), radius: 10, y: 3)
         }
     }
@@ -266,7 +266,7 @@ struct MoreMenuScreen: View {
                 .foregroundStyle(violet)
                 .frame(width: 32, height: 32)
                 .background(violet.opacity(colorScheme == .dark ? 0.18 : 0.12),
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             Text(item.title)
                 .font(.body)
                 .foregroundStyle(.primary)
@@ -301,7 +301,7 @@ struct MoreMenuScreen: View {
                 .foregroundStyle(isDark ? violet : Color.orange)
                 .frame(width: 32, height: 32)
                 .background((isDark ? violet : Color.orange).opacity(isDark ? 0.18 : 0.12),
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             Text("Dark Mode")
                 .font(.body)
                 .foregroundStyle(.primary)
@@ -332,7 +332,7 @@ struct MoreMenuScreen: View {
                 .foregroundStyle(green)
                 .frame(width: 32, height: 32)
                 .background(green.opacity(colorScheme == .dark ? 0.18 : 0.12),
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             VStack(alignment: .leading, spacing: 1) {
                 Text("অ্যাপ লক (Face ID)").font(.body).foregroundStyle(.primary)
                 Text("অ্যাপ খুললে বা কিছুক্ষণ পর ফিরে এলে Face ID / Touch ID দিয়ে আনলক")
@@ -364,7 +364,7 @@ struct MoreMenuScreen: View {
                 .foregroundStyle(Color(red: 0.878, green: 0.478, blue: 0.373))
                 .frame(width: 32, height: 32)
                 .background(Color(red: 0.878, green: 0.478, blue: 0.373).opacity(colorScheme == .dark ? 0.18 : 0.12),
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             VStack(alignment: .leading, spacing: 1) {
                 Text("Native স্ক্রিন").font(.body).foregroundStyle(.primary)
                 Text("বন্ধ করলে আগের ওয়েব স্ক্রিন ফিরবে").font(.caption).foregroundStyle(.secondary)

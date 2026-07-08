@@ -393,7 +393,7 @@ struct AgentGrowthScreen: View {
                     .foregroundStyle(AgentGrowthPalette.googleBlue)
                     .frame(width: 36, height: 36)
                     .background(AgentGrowthPalette.googleBlue.opacity(0.10),
-                                in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Google Search Console").font(.footnote.weight(.bold))
                     Text("আসল Google search ডেটা — impressions, clicks, position, top queries")
@@ -404,7 +404,7 @@ struct AgentGrowthScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .agentGrowthGlass(colorScheme, corner: 16)
+        .agentGrowthGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     @ViewBuilder private var gscBody: some View {
@@ -432,8 +432,8 @@ struct AgentGrowthScreen: View {
                     }
                     .padding(.horizontal, 12).padding(.vertical, 9)
                     .background(AgentGrowthPalette.emerald400.opacity(0.07),
-                                in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12)
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                         .strokeBorder(AgentGrowthPalette.emerald400.opacity(0.25), lineWidth: 1))
 
                     if let err = gsc.sitesError {
@@ -451,7 +451,7 @@ struct AgentGrowthScreen: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.horizontal, 8).padding(.vertical, 5)
                                     .background(Color.white.opacity(colorScheme == .dark ? 0.06 : 0.35),
-                                                in: RoundedRectangle(cornerRadius: 8))
+                                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                             }
                         }
                     } else {
@@ -547,7 +547,7 @@ struct AgentGrowthScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .agentGrowthGlass(colorScheme, corner: 16)
+        .agentGrowthGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // Web detail strings, verbatim per state.
@@ -618,8 +618,8 @@ struct AgentGrowthScreen: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10).padding(.vertical, 8)
             .background(AgentGrowthPalette.amber500.opacity(0.07),
-                        in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10)
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                 .strokeBorder(AgentGrowthPalette.amber500.opacity(0.25), lineWidth: 1))
     }
 
@@ -627,7 +627,7 @@ struct AgentGrowthScreen: View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.footnote).foregroundStyle(AgentGrowthPalette.amber600)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).agentGrowthGlass(colorScheme, corner: 12)
+            .padding(12).agentGrowthGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -636,13 +636,13 @@ struct AgentGrowthScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .agentGrowthGlass(colorScheme, corner: 16)
+        .agentGrowthGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 62)
-                .agentGrowthGlass(colorScheme, corner: 14)
+                .agentGrowthGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                 .agentGrowthShimmer()
         }
     }
@@ -698,7 +698,7 @@ private struct AgentGrowthStatusRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10).padding(.vertical, 9)
         .background(Color.white.opacity(colorScheme == .dark ? 0.05 : 0.30),
-                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
     }
 }
 
@@ -764,7 +764,7 @@ private struct AgentGrowthAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func agentGrowthGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func agentGrowthGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

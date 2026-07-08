@@ -700,7 +700,7 @@ struct PortalScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .portalGlass(colorScheme, corner: 16)
+        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func detailRow(_ label: String, _ value: String, mono: Bool = false,
@@ -727,7 +727,7 @@ struct PortalScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .portalGlass(colorScheme, corner: 16)
+        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Advance-recovery notice (web AdvanceRecoveryNotice — exact Bangla) ──
@@ -765,8 +765,8 @@ struct PortalScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(PortalPalette.amber500.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16)
+        .background(PortalPalette.amber500.opacity(0.10), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(PortalPalette.amber500.opacity(0.40), lineWidth: 1))
     }
 
@@ -830,7 +830,7 @@ struct PortalScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .portalGlass(colorScheme, corner: 16)
+        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     /// Web exception banner verbatim: APPROVED / PENDING states, else the ask-button.
@@ -870,8 +870,8 @@ struct PortalScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
-        .background(PortalPalette.amber500.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12)
+        .background(PortalPalette.amber500.opacity(0.10), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(PortalPalette.amber500.opacity(0.40), lineWidth: 1))
     }
 
@@ -883,8 +883,8 @@ struct PortalScreen: View {
         .frame(minWidth: 64, alignment: .leading)
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background(Color.white.opacity(colorScheme == .dark ? 0.05 : 0.35),
-                    in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12)
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.08 : 0.4), lineWidth: 1))
     }
 
@@ -915,8 +915,8 @@ struct PortalScreen: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
-                    .background(PortalPalette.amber500.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12)
+                    .background(PortalPalette.amber500.opacity(0.10), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                         .strokeBorder(PortalPalette.amber500.opacity(0.40), lineWidth: 1))
                 }
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
@@ -958,7 +958,7 @@ struct PortalScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .portalGlass(colorScheme, corner: 16)
+        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func walletStat(_ label: String, _ value: Int, tone: Color = .primary) -> some View {
@@ -969,8 +969,8 @@ struct PortalScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background(Color.white.opacity(colorScheme == .dark ? 0.05 : 0.35),
-                    in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12)
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.08 : 0.4), lineWidth: 1))
     }
 
@@ -1030,7 +1030,7 @@ struct PortalScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .portalGlass(colorScheme, corner: 16)
+        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Leave applications (web "ছুটির আবেদন" block — read list + escape) ──
@@ -1055,7 +1055,7 @@ struct PortalScreen: View {
                     }
                     .padding(.horizontal, 8).padding(.vertical, 5)
                     .background(Color.white.opacity(colorScheme == .dark ? 0.05 : 0.35),
-                                in: RoundedRectangle(cornerRadius: 8))
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                 }
             }
             // Native leave-apply form (the web requestLeave, as a sheet).
@@ -1081,7 +1081,7 @@ struct PortalScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .portalGlass(colorScheme, corner: 16)
+        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     /// Web leave row: dates · kind label · clock suffix for HOURS / SHIFTED_START.
@@ -1134,7 +1134,7 @@ struct PortalScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .portalGlass(colorScheme, corner: 16)
+        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Pending wallet requests (web RequestList parity) ──
@@ -1165,7 +1165,7 @@ struct PortalScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .portalGlass(colorScheme, corner: 16)
+        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Shared bits ──
@@ -1197,7 +1197,7 @@ struct PortalScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).portalGlass(colorScheme, corner: 12)
+            .padding(12).portalGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -1206,13 +1206,13 @@ struct PortalScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .portalGlass(colorScheme, corner: 16)
+        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 120)
-                .portalGlass(colorScheme, corner: 16)
+                .portalGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .portalShimmer()
         }
     }
@@ -1264,7 +1264,7 @@ private struct PortalWalletRequestSheet: View {
                         .keyboardType(.numberPad)
                         .font(.body.monospaced())
                         .padding(12)
-                        .portalGlass(colorScheme, corner: 12)
+                        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                     if type == "WITHDRAWAL" {
                         // Web cap hint / over-cap error — Bangla verbatim.
                         Text(overCap
@@ -1279,7 +1279,7 @@ private struct PortalWalletRequestSheet: View {
                     TextField("কারণ লিখুন", text: $reason, axis: .vertical)
                         .lineLimit(3...5)
                         .padding(12)
-                        .portalGlass(colorScheme, corner: 12)
+                        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                     if amountValue <= 0 || reasonTrimmed.isEmpty {
                         Text("Amount and reason required")
                             .font(.caption2).foregroundStyle(PortalPalette.amber600)
@@ -1392,7 +1392,7 @@ private struct PortalLeaveSheet: View {
                                 Spacer()
                             }
                             .padding(.horizontal, 12).padding(.vertical, 9)
-                            .portalGlass(colorScheme, corner: 12)
+                            .portalGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                         }
                         .buttonStyle(.plain)
                     }
@@ -1422,7 +1422,7 @@ private struct PortalLeaveSheet: View {
                     TextField("ছুটির কারণ লিখুন", text: $reason, axis: .vertical)
                         .lineLimit(2...4)
                         .padding(12)
-                        .portalGlass(colorScheme, corner: 12)
+                        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                     if reasonTrimmed.count < 3 {
                         Text("ছুটির কারণ লিখুন (অন্তত ৩ অক্ষর)।")
                             .font(.caption2).foregroundStyle(PortalPalette.amber600)
@@ -1514,7 +1514,7 @@ private struct PortalExceptionSheet: View {
                                 Spacer()
                             }
                             .padding(.horizontal, 12).padding(.vertical, 9)
-                            .portalGlass(colorScheme, corner: 12)
+                            .portalGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                         }
                         .buttonStyle(.plain)
                     }
@@ -1528,7 +1528,7 @@ private struct PortalExceptionSheet: View {
                     TextField("কারণ লিখুন (যেমন: মাঠে ডেলিভারিতে যাচ্ছি / জরুরি কাজ)", text: $reason, axis: .vertical)
                         .lineLimit(3...5)
                         .padding(12)
-                        .portalGlass(colorScheme, corner: 12)
+                        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                     if !valid {
                         Text("সংক্ষেপে কারণ লিখুন (অন্তত ৩ অক্ষর)।")
                             .font(.caption2).foregroundStyle(PortalPalette.amber600)
@@ -1657,7 +1657,7 @@ private struct PortalAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func portalGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func portalGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

@@ -281,7 +281,7 @@ struct TradingStaffScreen: View {
         }
         .frame(minWidth: 84, alignment: .leading)
         .padding(12)
-        .tradingStaffGlass(colorScheme, corner: 14)
+        .tradingStaffGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Linked staff (web "Linked Trading staff (N)" section) ──
@@ -295,7 +295,7 @@ struct TradingStaffScreen: View {
                 .font(.footnote).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(14)
-                .tradingStaffGlass(colorScheme, corner: 14)
+                .tradingStaffGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         } else {
             ForEach(vm.filteredStaff) { member in
                 TradingStaffCard(member: member) { selected = member }
@@ -318,7 +318,7 @@ struct TradingStaffScreen: View {
                     .font(.footnote).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(14)
-                    .tradingStaffGlass(colorScheme, corner: 14)
+                    .tradingStaffGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
             }
         } else {
             VStack(alignment: .leading, spacing: 10) {
@@ -361,7 +361,7 @@ struct TradingStaffScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .tradingStaffGlass(colorScheme, corner: 16)
+            .tradingStaffGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
     }
 
@@ -406,7 +406,7 @@ struct TradingStaffScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).tradingStaffGlass(colorScheme, corner: 12)
+            .padding(12).tradingStaffGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -415,13 +415,13 @@ struct TradingStaffScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .tradingStaffGlass(colorScheme, corner: 16)
+        .tradingStaffGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 96)
-                .tradingStaffGlass(colorScheme, corner: 16)
+                .tradingStaffGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .tradingStaffShimmer()
         }
     }
@@ -474,9 +474,9 @@ private struct TradingStaffCard: View {
             telegramRow
         }
         .padding(14)
-        .tradingStaffGlass(colorScheme, corner: 16)
+        .tradingStaffGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         .opacity(member.active ? 1 : 0.7)   // web: inactive rows at opacity-70
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             onTap()
@@ -515,8 +515,8 @@ private struct TradingStaffCard: View {
                     .foregroundStyle(TradingStaffPalette.accentText(colorScheme))
             }
             .padding(.horizontal, 10).padding(.vertical, 7)
-            .background(TradingStaffPalette.coral.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8)
+            .background(TradingStaffPalette.coral.opacity(0.05), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                 .strokeBorder(TradingStaffPalette.coral.opacity(0.25), lineWidth: 1))
         } else {
             Text("Telegram chat ID নেই — dispatch পাঠানো যাবে না")
@@ -524,8 +524,8 @@ private struct TradingStaffCard: View {
                 .foregroundStyle(TradingStaffPalette.amber600)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(TradingStaffPalette.amber500.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8)
+                .background(TradingStaffPalette.amber500.opacity(0.10), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                     .strokeBorder(TradingStaffPalette.amber500.opacity(0.30), lineWidth: 1))
         }
     }
@@ -590,7 +590,7 @@ private struct TradingStaffDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .tradingStaffGlass(colorScheme, corner: 14)
+        .tradingStaffGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func infoRow(_ label: String, _ value: String,
@@ -669,7 +669,7 @@ private struct TradingStaffAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func tradingStaffGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func tradingStaffGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

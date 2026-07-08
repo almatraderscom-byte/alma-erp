@@ -543,7 +543,7 @@ private struct CSHomeTab: View {
             HStack(spacing: 11) {
                 Button { go(.create) } label: {
                     VStack(spacing: 8) {
-                        ZStack { RoundedRectangle(cornerRadius: 13).fill(CS.cta).frame(width: 40, height: 40)
+                        ZStack { RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous).fill(CS.cta).frame(width: 40, height: 40)
                             Image(systemName: "plus").font(.system(size: 20, weight: .bold)).foregroundStyle(.white) }
                         Text("নতুন").font(.system(size: 11.5, weight: .bold)).foregroundStyle(AgentPalette(scheme).muted)
                     }
@@ -770,7 +770,7 @@ private struct CSCreateTab: View {
                 }
             }
         }
-        .csGlass(scheme, corner: 22).padding(.horizontal, 18)
+        .csGlass(scheme, corner: AlmaSwiftTheme.rCard).padding(.horizontal, 18)
     }
 
     private func advField<C: View>(_ label: String, @ViewBuilder _ content: () -> C) -> some View {
@@ -822,9 +822,9 @@ private struct CSCreateTab: View {
                             .foregroundStyle(sel ? AgentPalette.coral : AgentPalette(scheme).muted)
                     }
                     .frame(maxWidth: .infinity).padding(.vertical, 11)
-                    .background(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .background(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                         .fill(sel ? AgentPalette.coral.opacity(0.1) : Color.white.opacity(scheme == .dark ? 0.03 : 0.28)))
-                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                         .strokeBorder(sel ? AgentPalette.coral.opacity(0.4) : Color.white.opacity(0.06), lineWidth: 1))
                 }.buttonStyle(.plain)
             }
@@ -883,8 +883,8 @@ private struct CSCreateTab: View {
                         .foregroundStyle(numImages == n ? Color.white : AgentPalette(scheme).muted)
                         .frame(width: 46, height: 40)
                         .background {
-                            if numImages == n { RoundedRectangle(cornerRadius: 12, style: .continuous).fill(AgentPalette.coral) }
-                            else { RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(scheme == .dark ? 0.05 : 0.4)) }
+                            if numImages == n { RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous).fill(AgentPalette.coral) }
+                            else { RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous).fill(Color.white.opacity(scheme == .dark ? 0.05 : 0.4)) }
                         }
                 }.buttonStyle(.plain)
             }
@@ -1077,7 +1077,7 @@ private struct CSVideoTab: View {
             CSToggleRow(title: "বাংলা ক্যাপশন", sub: "Whisper থেকে অটো-বার্ন", on: $captions)
             Divider().overlay(AgentPalette(scheme).borderSubtle).padding(.horizontal, 16)
             CSToggleRow(title: "লোগো স্টিং", sub: "শুরু + শেষে ইন্ট্রো/আউট্রো", on: $stings)
-        }.csGlass(scheme, corner: 22)
+        }.csGlass(scheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func secLabel(_ s: String) -> some View {
@@ -1139,7 +1139,7 @@ private struct CSLibraryTab: View {
                 CSToggleRow(title: "লোগো বসাও", sub: "নিচের কোণে ওয়াটারমার্ক", on: $logoOn)
                 Divider().overlay(AgentPalette(scheme).borderSubtle).padding(.horizontal, 16)
                 CSToggleRow(title: "প্রাইস কোড + হুক", sub: "অফার টেক্সট ওভারলে", on: $codeOn)
-            }.csGlass(scheme, corner: 20).padding(.horizontal, 18).padding(.top, 16)
+            }.csGlass(scheme, corner: AlmaSwiftTheme.rCard).padding(.horizontal, 18).padding(.top, 16)
 
             Button { openWeb(CS_WEB_PATH, "ফিনিশিং এডিটর"); CSHaptic.tap() } label: {
                 Label("ছবি বেছে ফিনিশিং এডিটর খুলুন", systemImage: "slider.horizontal.below.rectangle")
@@ -1171,7 +1171,7 @@ private struct CSLibraryTab: View {
                 }
                 Spacer()
                 Image(systemName: "arrow.up.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(AgentPalette(scheme).muted)
-            }.padding(14).csGlass(scheme, corner: 18)
+            }.padding(14).csGlass(scheme, corner: AlmaSwiftTheme.rCard)
         }.buttonStyle(.plain)
     }
 
@@ -1237,7 +1237,7 @@ private struct CSLibraryTab: View {
                     Button { finish = idx; CSHaptic.tap() } label: {
                         VStack(alignment: .leading, spacing: 0) {
                             ZStack {
-                                RoundedRectangle(cornerRadius: 13).fill(finish == idx ? AnyShapeStyle(CS.cta) : AnyShapeStyle(Color.white.opacity(0.07)))
+                                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous).fill(finish == idx ? AnyShapeStyle(CS.cta) : AnyShapeStyle(Color.white.opacity(0.07)))
                                     .frame(width: 42, height: 42)
                                 Image(systemName: f.icon).font(.system(size: 20)).foregroundStyle(finish == idx ? .white : AgentPalette(scheme).ink)
                             }.padding(.bottom, 12)
@@ -1362,7 +1362,7 @@ private struct CSFeatureRow: View {
                 Spacer(minLength: 0)
                 Image(systemName: "chevron.right").font(.system(size: 15, weight: .semibold)).foregroundStyle(AgentPalette(scheme).muted)
             }
-            .padding(11).csGlass(scheme, corner: 22)
+            .padding(11).csGlass(scheme, corner: AlmaSwiftTheme.rCard)
         }.buttonStyle(.plain)
     }
 }

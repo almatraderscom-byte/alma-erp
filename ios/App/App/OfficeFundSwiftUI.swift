@@ -494,7 +494,7 @@ struct OfficeFundScreen: View {
                           title: "ফান্ডে টাকা যোগ করুন",
                           sub: "শুধু মালিক ফান্ডে টাকা যোগ করতে পারেন।",
                           busy: vm.topUpSaving) { showTopUp = true }
-                Divider().opacity(0.4)
+                Divider().overlay(AlmaSwiftTheme.separator(colorScheme))
             }
             actionRow(icon: "arrow.up.forward.circle.fill",
                       title: "অফিস অ্যাডভান্স নিন",
@@ -502,7 +502,7 @@ struct OfficeFundScreen: View {
                       busy: vm.advSaving) { showAdvance = true }
         }
         .padding(.horizontal, 14).padding(.vertical, 4)
-        .officeFundGlass(colorScheme, corner: 16)
+        .officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func actionRow(icon: String, title: String, sub: String,
@@ -549,7 +549,7 @@ struct OfficeFundScreen: View {
             }
             if vm.loading && vm.summary == nil {
                 Color.clear.frame(width: 160, height: 40)
-                    .officeFundGlass(colorScheme, corner: 10)
+                    .officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                     .officeFundShimmer()
             } else {
                 Text(OfficeFundFormat.taka(vm.summary?.balance ?? 0))
@@ -563,7 +563,7 @@ struct OfficeFundScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .officeFundGlass(colorScheme, corner: 18)
+        .officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── In / out KPI strip (web's other two KpiCards) ──
@@ -592,7 +592,7 @@ struct OfficeFundScreen: View {
             Spacer(minLength: 0)
         }
         .padding(12)
-        .officeFundGlass(colorScheme, corner: 14)
+        .officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── My office advances (web "আমার অ্যাডভান্সসমূহ" card — read-only rows) ──
@@ -617,7 +617,7 @@ struct OfficeFundScreen: View {
             if vm.advLoading && vm.advances.isEmpty {
                 ForEach(0..<2, id: \.self) { _ in
                     Color.clear.frame(height: 48)
-                        .officeFundGlass(colorScheme, corner: 12)
+                        .officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                         .officeFundShimmer()
                 }
             } else if vm.advances.isEmpty {
@@ -628,13 +628,13 @@ struct OfficeFundScreen: View {
             } else {
                 ForEach(vm.advances) { adv in
                     advanceRow(adv)
-                    if adv.id != vm.advances.last?.id { Divider().opacity(0.4) }
+                    if adv.id != vm.advances.last?.id { Divider().overlay(AlmaSwiftTheme.separator(colorScheme)) }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .officeFundGlass(colorScheme, corner: 16)
+        .officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func advanceRow(_ adv: OfficeFundAdvanceRow) -> some View {
@@ -706,7 +706,7 @@ struct OfficeFundScreen: View {
             if vm.loading && vm.ledger.isEmpty {
                 ForEach(0..<4, id: \.self) { _ in
                     Color.clear.frame(height: 46)
-                        .officeFundGlass(colorScheme, corner: 12)
+                        .officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                         .officeFundShimmer()
                 }
             } else if filteredLedger.isEmpty {
@@ -720,13 +720,13 @@ struct OfficeFundScreen: View {
             } else {
                 ForEach(filteredLedger) { row in
                     ledgerRow(row)
-                    if row.id != filteredLedger.last?.id { Divider().opacity(0.4) }
+                    if row.id != filteredLedger.last?.id { Divider().overlay(AlmaSwiftTheme.separator(colorScheme)) }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .officeFundGlass(colorScheme, corner: 16)
+        .officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var flowChips: some View {
@@ -804,7 +804,7 @@ struct OfficeFundScreen: View {
             .font(.footnote)
             .foregroundStyle(success ? OfficeFundPalette.positive(colorScheme) : OfficeFundPalette.red500)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).officeFundGlass(colorScheme, corner: 12)
+            .padding(12).officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var adminOnlyCard: some View {
@@ -814,7 +814,7 @@ struct OfficeFundScreen: View {
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity).padding(24)
-        .officeFundGlass(colorScheme, corner: 16)
+        .officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         .padding(.top, 40)
     }
 
@@ -824,7 +824,7 @@ struct OfficeFundScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .officeFundGlass(colorScheme, corner: 16)
+        .officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     /// Every action is native now — a small link remains for the web version.
@@ -891,7 +891,7 @@ private struct OfficeFundTxnDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .officeFundGlass(colorScheme, corner: 14)
+        .officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func infoRow(_ label: String, _ value: String) -> some View {
@@ -943,7 +943,7 @@ private struct OfficeFundField<Content: View>: View {
                 .foregroundStyle(.secondary)
             content()
                 .padding(12)
-                .officeFundGlass(colorScheme, corner: 12)
+                .officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 }
@@ -1303,7 +1303,7 @@ private struct OfficeFundAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func officeFundGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func officeFundGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

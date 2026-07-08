@@ -539,9 +539,9 @@ struct OrderCreateSheet: View {
                             .font(.caption.weight(.bold)).foregroundStyle(.primary)
                         Text("স্টক \(avail)")
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(avail > 0 ? AlmaSwiftTheme.violet : .red)
+                            .foregroundStyle(avail > 0 ? AlmaSwiftTheme.violet : AlmaSwiftTheme.ios27Red(scheme))
                             .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background((avail > 0 ? AlmaSwiftTheme.violet : Color.red).opacity(0.14),
+                            .background((avail > 0 ? AlmaSwiftTheme.violet : AlmaSwiftTheme.ios27Red(scheme)).opacity(0.14),
                                         in: Capsule())
                     }
                     FlowChips(items: SizeEngine.menSizes
@@ -595,7 +595,7 @@ struct OrderCreateSheet: View {
                 } label: {
                     Image(systemName: "trash").font(.footnote)
                 }
-                .buttonStyle(.borderless).tint(.red)
+                .buttonStyle(.borderless).tint(AlmaSwiftTheme.ios27Red(scheme))
             }
             HStack(spacing: 10) {
                 if let group { sizeSwitchMenu(item, group) }
@@ -623,7 +623,7 @@ struct OrderCreateSheet: View {
                     .frame(width: 86)
                     .padding(.vertical, 6).padding(.horizontal, 10)
                     .background(.white.opacity(scheme == .dark ? 0.08 : 0.6),
-                                in: RoundedRectangle(cornerRadius: 8))
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                 Spacer()
                 Text("৳\(it.subtotal.formatted())")
                     .font(.subheadline.weight(.bold)).foregroundStyle(AlmaSwiftTheme.coral)
@@ -632,13 +632,13 @@ struct OrderCreateSheet: View {
             if (it.stock.buyingPrice ?? 0) > 0, it.sellPrice < (it.stock.buyingPrice ?? 0) {
                 Label("বিক্রয়মূল্য কেনা দামের (৳\(it.stock.buyingPrice ?? 0)) নিচে",
                       systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption2.weight(.semibold)).foregroundStyle(.red)
+                    .font(.caption2.weight(.semibold)).foregroundStyle(AlmaSwiftTheme.ios27Red(scheme))
             }
         }
         .padding(12)
         .background(.white.opacity(scheme == .dark ? 0.05 : 0.45),
-                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(Color.white.opacity(scheme == .dark ? 0.08 : 0.55), lineWidth: 1))
     }
 
@@ -718,12 +718,12 @@ struct OrderCreateSheet: View {
                 // Label flips to "ক্ষতি" (loss) when profit is negative — never call a loss "লাভ".
                 Text(estimatedProfit >= 0 ? "আনুমানিক লাভ" : "আনুমানিক ক্ষতি")
                     .font(.subheadline.weight(estimatedProfit >= 0 ? .regular : .semibold))
-                    .foregroundStyle(estimatedProfit >= 0 ? Color.primary : Color.red)
+                    .foregroundStyle(estimatedProfit >= 0 ? Color.primary : AlmaSwiftTheme.ios27Red(scheme))
                 Spacer()
                 Text("৳\(abs(estimatedProfit).formatted())")
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(estimatedProfit >= 0
-                        ? Color(red: 0.133, green: 0.773, blue: 0.369) : .red)
+                        ? AlmaSwiftTheme.ios27Green(scheme) : AlmaSwiftTheme.ios27Red(scheme))
             }
             .padding(.vertical, 3)
         }
@@ -758,20 +758,20 @@ struct OrderCreateSheet: View {
     private var submitCard: some View {
         VStack(spacing: 10) {
             if let e = errorMsg {
-                Text(e).font(.footnote).foregroundStyle(.red)
+                Text(e).font(.footnote).foregroundStyle(AlmaSwiftTheme.ios27Red(scheme))
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             // Loss guard: explain why the button is locked so the owner can fix the price.
             if let loss = lossReason {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.footnote).foregroundStyle(.red)
-                    Text(loss).font(.footnote.weight(.semibold)).foregroundStyle(.red)
+                        .font(.footnote).foregroundStyle(AlmaSwiftTheme.ios27Red(scheme))
+                    Text(loss).font(.footnote.weight(.semibold)).foregroundStyle(AlmaSwiftTheme.ios27Red(scheme))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(10)
-                .background(Color.red.opacity(0.12),
-                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(AlmaSwiftTheme.ios27Red(scheme).opacity(0.12),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             }
             Button {
                 Task { await submit() }
@@ -787,11 +787,12 @@ struct OrderCreateSheet: View {
                 }
                 .padding(.vertical, 14)
                 .background(canSubmit ? AlmaSwiftTheme.coral : Color.gray.opacity(0.4),
-                            in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            in: Capsule())
                 .foregroundStyle(.white)
                 .shadow(color: canSubmit ? AlmaSwiftTheme.coral.opacity(0.35) : .clear,
                         radius: 10, y: 4)
             }
+            .buttonStyle(AlmaCapsuleButtonStyle())
             .disabled(!canSubmit)
             Button("ওয়েব ফর্মে খুলুন") { dismiss(); openWeb("/orders/new", "নতুন অর্ডার") }
                 .font(.footnote).foregroundStyle(.secondary)
@@ -801,7 +802,7 @@ struct OrderCreateSheet: View {
     // ── Field helpers (glassy rows, not stock Form chrome) ──
 
     private var divider: some View {
-        Divider().overlay(Color.primary.opacity(scheme == .dark ? 0.10 : 0.06))
+        Divider().overlay(AlmaSwiftTheme.separator(scheme))
     }
 
     private func glassField(_ placeholder: String, text: Binding<String>,
@@ -811,7 +812,7 @@ struct OrderCreateSheet: View {
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             .padding(.vertical, 9)
-            .foregroundStyle(invalid ? Color.red : Color.primary)
+            .foregroundStyle(invalid ? AlmaSwiftTheme.ios27Red(scheme) : Color.primary)
     }
 
     private func pickerRow(_ label: String, selection: Binding<String>, options: [String]) -> some View {
@@ -837,7 +838,7 @@ struct OrderCreateSheet: View {
                 .frame(width: 100)
                 .padding(.vertical, 5).padding(.horizontal, 8)
                 .background(.white.opacity(scheme == .dark ? 0.08 : 0.55),
-                            in: RoundedRectangle(cornerRadius: 8))
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
         }
         .padding(.vertical, 3)
     }

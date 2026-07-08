@@ -118,6 +118,88 @@ enum AlmaSwiftTheme {
         if a >= 10_000 { return "\(sign)৳\(String(format: "%.1f", Double(a) / 1_000))K" }
         return "\(sign)৳\(a.formatted())"
     }
+
+    // ── iOS 27 tokens (extracted 2026-07-08 from Apple's official iOS/iPadOS 27
+    //    Figma kit variables). Brand accents stay ALMA (coral/violet — owner rule);
+    //    these cover METRICS + semantic states + hairlines so native screens read
+    //    as true iOS 27 without losing the app's own colours. ──────────────────
+    /// Concentric corner radii (kit "Dimensions"): card 26, control 14, sheet 34.
+    static let rCard: CGFloat = 26
+    static let rControl: CGFloat = 14
+    static let rSheet: CGFloat = 34
+    /// Screen edge margin (kit: 16).
+    static let margin: CGFloat = 16
+
+    /// iOS 27 semantic accents (kit "Accents", light/dark pairs — note these CHANGED
+    /// from classic iOS: green 34C759/30D158, red FF383C/FF4245, blue 0088FF/0091FF).
+    static func ios27Green(_ s: ColorScheme) -> Color {
+        s == .dark ? Color(red: 0.188, green: 0.820, blue: 0.345) : Color(red: 0.204, green: 0.780, blue: 0.349)
+    }
+    static func ios27Red(_ s: ColorScheme) -> Color {
+        s == .dark ? Color(red: 1.0, green: 0.259, blue: 0.271) : Color(red: 1.0, green: 0.220, blue: 0.235)
+    }
+    static func ios27Blue(_ s: ColorScheme) -> Color {
+        s == .dark ? Color(red: 0.0, green: 0.569, blue: 1.0) : Color(red: 0.0, green: 0.533, blue: 1.0)
+    }
+    static func ios27Orange(_ s: ColorScheme) -> Color {
+        s == .dark ? Color(red: 1.0, green: 0.573, blue: 0.188) : Color(red: 1.0, green: 0.553, blue: 0.157)
+    }
+    /// Non-opaque hairline separator (kit: black 12% light / white 17% dark).
+    static func separator(_ s: ColorScheme) -> Color {
+        s == .dark ? Color.white.opacity(0.17) : Color.black.opacity(0.12)
+    }
+    /// Control fill (kit "Fills/Secondary": 787880 16% / 32%).
+    static func fill(_ s: ColorScheme) -> Color {
+        Color(red: 0.471, green: 0.471, blue: 0.502).opacity(s == .dark ? 0.32 : 0.16)
+    }
+}
+
+// MARK: - iOS 27 Liquid Glass modifiers
+
+/// Liquid-glass card: 26pt concentric corner, translucent surface with a light
+/// top rim + soft float shadow (CSS .lg-material twin). Sits on the flat page bg,
+/// so no backdrop material is needed — avoids the stock-material tint the owner
+/// rejected for the bars while keeping the glass read.
+struct AlmaGlassCard: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+    var radius: CGFloat = AlmaSwiftTheme.rCard
+    var padding: CGFloat? = AlmaSwiftTheme.margin
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        return content
+            .padding(.all, padding ?? 0)
+            .background(AlmaSwiftTheme.cardBg(scheme).opacity(scheme == .dark ? 0.92 : 0.96), in: shape)
+            .overlay(
+                shape.strokeBorder(
+                    LinearGradient(
+                        colors: [Color.white.opacity(scheme == .dark ? 0.14 : 0.55),
+                                 Color.white.opacity(scheme == .dark ? 0.03 : 0.08)],
+                        startPoint: .top, endPoint: .bottom),
+                    lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(scheme == .dark ? 0.5 : 0.10), radius: 14, y: 6)
+            .shadow(color: .black.opacity(scheme == .dark ? 0.3 : 0.04), radius: 2, y: 1)
+    }
+}
+
+extension View {
+    /// iOS 27 liquid-glass card (26pt continuous corner + rim light + float shadow).
+    func lgCard(radius: CGFloat = AlmaSwiftTheme.rCard, padding: CGFloat? = AlmaSwiftTheme.margin) -> some View {
+        modifier(AlmaGlassCard(radius: radius, padding: padding))
+    }
+}
+
+/// iOS 27 capsule button: full-pill radius, 0.97 press scale, 120ms ease.
+struct AlmaCapsuleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Capsule())
+            .clipShape(Capsule())
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
 }
 
 // MARK: - Tab builders (S6 wiring)

@@ -352,7 +352,7 @@ struct SettingsNotifScreen: View {
                 Image(systemName: "arrow.clockwise")
                     .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
                     .frame(width: 34, height: 34)
-                    .settingsNotifGlass(colorScheme, corner: 12)
+                    .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
             }
             .buttonStyle(.plain)
             .disabled(vm.loading)
@@ -383,7 +383,7 @@ struct SettingsNotifScreen: View {
         }
         .frame(minWidth: 84, alignment: .leading)
         .padding(12)
-        .settingsNotifGlass(colorScheme, corner: 14)
+        .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── App Lock (Face ID) — web BiometricLockToggle parity ──
@@ -401,7 +401,7 @@ struct SettingsNotifScreen: View {
                     .foregroundStyle(SettingsNotifPalette.accentText(colorScheme))
                     .frame(width: 34, height: 34)
                     .background(SettingsNotifPalette.coral.opacity(0.14),
-                                in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("অ্যাপ লক (Face ID)").font(.footnote.weight(.semibold))
                     Text("অ্যাপ খুললে বা কিছুক্ষণ পর ফিরে এলে Face ID / Touch ID দিয়ে আনলক করতে হবে।")
@@ -417,7 +417,7 @@ struct SettingsNotifScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .settingsNotifGlass(colorScheme, corner: 16)
+            .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
         .buttonStyle(.plain)
     }
@@ -435,13 +435,13 @@ struct SettingsNotifScreen: View {
             TextField("Notification title", text: $vm.title)
                 .font(.footnote)
                 .padding(.horizontal, 12).padding(.vertical, 10)
-                .settingsNotifGlass(colorScheme, corner: 12)
+                .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
 
             TextField("Message", text: $vm.message, axis: .vertical)
                 .font(.footnote)
                 .lineLimit(4...6)
                 .padding(.horizontal, 12).padding(.vertical, 10)
-                .settingsNotifGlass(colorScheme, corner: 12)
+                .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
 
             // Priority + target — the web's two Selects as native Menus.
             HStack(spacing: 8) {
@@ -480,7 +480,7 @@ struct SettingsNotifScreen: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .padding(.horizontal, 12).padding(.vertical, 10)
-                .settingsNotifGlass(colorScheme, corner: 12)
+                .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
 
             Toggle(isOn: $vm.pinned) {
                 Text("Pin this notification").font(.caption).foregroundStyle(.secondary)
@@ -508,7 +508,7 @@ struct SettingsNotifScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .settingsNotifGlass(colorScheme, corner: 16)
+        .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var roleLabel: String {
@@ -542,7 +542,7 @@ struct SettingsNotifScreen: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 12).padding(.vertical, 9)
-            .settingsNotifGlass(colorScheme, corner: 12)
+            .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
         .buttonStyle(.plain)
     }
@@ -554,7 +554,7 @@ struct SettingsNotifScreen: View {
             Text("Delivery dashboard").font(.footnote.weight(.semibold))
             if vm.loading && vm.broadcasts.isEmpty {
                 Color.clear.frame(height: 90)
-                    .settingsNotifGlass(colorScheme, corner: 12)
+                    .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                     .settingsNotifShimmer()
             } else if vm.broadcasts.isEmpty {
                 Text("No broadcasts sent yet.").font(.caption).foregroundStyle(.secondary)
@@ -566,7 +566,7 @@ struct SettingsNotifScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .settingsNotifGlass(colorScheme, corner: 16)
+        .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Shared bits ──
@@ -580,7 +580,7 @@ struct SettingsNotifScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).settingsNotifGlass(colorScheme, corner: 12)
+            .padding(12).settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -589,13 +589,13 @@ struct SettingsNotifScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .settingsNotifGlass(colorScheme, corner: 16)
+        .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<3, id: \.self) { _ in
             Color.clear.frame(height: 76)
-                .settingsNotifGlass(colorScheme, corner: 16)
+                .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .settingsNotifShimmer()
         }
     }
@@ -642,7 +642,7 @@ private struct SettingsNotifBroadcastRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12).padding(.vertical, 10)
-        .settingsNotifGlass(colorScheme, corner: 12)
+        .settingsNotifGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var metaLine: String {
@@ -723,7 +723,7 @@ private struct SettingsNotifAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func settingsNotifGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func settingsNotifGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

@@ -318,13 +318,13 @@ struct KnownPeopleScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .knownPeopleGlass(colorScheme, corner: 16)
+            .knownPeopleGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         } else if !vm.loading && !vm.authExpired && vm.error == nil {
             Text("সেটিংস লোড হয়নি")
                 .font(.footnote).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(14)
-                .knownPeopleGlass(colorScheme, corner: 16)
+                .knownPeopleGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
     }
 
@@ -356,7 +356,7 @@ struct KnownPeopleScreen: View {
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
-        .knownPeopleGlass(colorScheme, corner: 12)
+        .knownPeopleGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var roleChips: some View {
@@ -432,7 +432,7 @@ struct KnownPeopleScreen: View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.footnote).foregroundStyle(KnownPeoplePalette.red500)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).knownPeopleGlass(colorScheme, corner: 12)
+            .padding(12).knownPeopleGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -441,13 +441,13 @@ struct KnownPeopleScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .knownPeopleGlass(colorScheme, corner: 16)
+        .knownPeopleGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<5, id: \.self) { _ in
             Color.clear.frame(height: 68)
-                .knownPeopleGlass(colorScheme, corner: 16)
+                .knownPeopleGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .knownPeopleShimmer()
         }
     }
@@ -500,8 +500,8 @@ private struct KnownPersonRow: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
-        .knownPeopleGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .knownPeopleGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture(perform: onTap)
         .opacity(person.active ? 1 : 0.6)
     }
@@ -602,7 +602,7 @@ private struct KnownPersonDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .knownPeopleGlass(colorScheme, corner: 16)
+        .knownPeopleGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var infoCard: some View {
@@ -621,7 +621,7 @@ private struct KnownPersonDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .knownPeopleGlass(colorScheme, corner: 14)
+        .knownPeopleGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func infoRow(_ label: String, _ value: String) -> some View {
@@ -715,7 +715,7 @@ private struct KnownPeopleAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func knownPeopleGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func knownPeopleGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

@@ -419,7 +419,7 @@ struct CatalogImagesScreen: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
-        .catalogImagesGlass(colorScheme, corner: 14)
+        .catalogImagesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Search + filter (web controls row) ──
@@ -443,7 +443,7 @@ struct CatalogImagesScreen: View {
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
-        .catalogImagesGlass(colorScheme, corner: 12)
+        .catalogImagesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     /// Web filter buttons সব / ছবি নেই / ছবি আছে as the app's capsule chips.
@@ -492,8 +492,8 @@ struct CatalogImagesScreen: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 11)
                     .background(CatalogImagePalette.blue.opacity(0.06),
-                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                         .strokeBorder(style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
                         .foregroundStyle(CatalogImagePalette.blue.opacity(0.45)))
             }
@@ -510,14 +510,14 @@ struct CatalogImagesScreen: View {
                         .onSubmit(openNew)
                         .padding(.horizontal, 10).padding(.vertical, 9)
                         .background(Color.white.opacity(colorScheme == .dark ? 0.06 : 0.5),
-                                    in: RoundedRectangle(cornerRadius: 9))
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                     Button("ছবি যোগ", action: openNew)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 12).padding(.vertical, 9)
                         .background(newCode.trimmingCharacters(in: .whitespaces).isEmpty
                                     ? CatalogImagePalette.blue.opacity(0.4) : CatalogImagePalette.blue,
-                                    in: RoundedRectangle(cornerRadius: 9))
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                         .disabled(newCode.trimmingCharacters(in: .whitespaces).isEmpty)
                     Button("বাতিল") { withAnimation { showNew = false; newCode = "" } }
                         .font(.subheadline)
@@ -527,7 +527,7 @@ struct CatalogImagesScreen: View {
                     .font(.system(size: 10)).foregroundStyle(.secondary)
             }
             .padding(12)
-            .catalogImagesGlass(colorScheme, corner: 12)
+            .catalogImagesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -560,7 +560,7 @@ struct CatalogImagesScreen: View {
             ForEach(0..<6, id: \.self) { _ in
                 Color.clear
                     .aspectRatio(0.8, contentMode: .fit)
-                    .catalogImagesGlass(colorScheme, corner: 14)
+                    .catalogImagesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                     .catalogImagesShimmer()
             }
         }
@@ -589,7 +589,7 @@ struct CatalogImagesScreen: View {
             .buttonStyle(.plain)
         }
         .padding(12)
-        .catalogImagesGlass(colorScheme, corner: 12)
+        .catalogImagesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -598,7 +598,7 @@ struct CatalogImagesScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .catalogImagesGlass(colorScheme, corner: 16)
+        .catalogImagesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 }
 
@@ -631,8 +631,8 @@ private struct CatalogImageProductCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(8)
             }
-            .catalogImagesGlass(colorScheme, corner: 14)
-            .contentShape(RoundedRectangle(cornerRadius: 14))
+            .catalogImagesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+            .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -841,8 +841,8 @@ private struct CatalogImageDetailSheet: View {
             .font(.caption2).foregroundStyle(CatalogImagePalette.sage)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10).padding(.vertical, 8)
-            .background(CatalogImagePalette.sage.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10)
+            .background(CatalogImagePalette.sage.opacity(0.08), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                 .strokeBorder(CatalogImagePalette.sage.opacity(0.22), lineWidth: 1))
     }
 
@@ -853,8 +853,8 @@ private struct CatalogImageDetailSheet: View {
             .foregroundStyle(CatalogImagePalette.blue)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10).padding(.vertical, 8)
-            .background(CatalogImagePalette.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10)
+            .background(CatalogImagePalette.blue.opacity(0.06), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                 .strokeBorder(CatalogImagePalette.blue.opacity(0.20), lineWidth: 1))
     }
 
@@ -876,8 +876,8 @@ private struct CatalogImageDetailSheet: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 22)
             .background(CatalogImagePalette.blue.opacity(colorScheme == .dark ? 0.06 : 0.04),
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                 .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
                 .foregroundStyle(CatalogImagePalette.blue.opacity(0.4)))
         }
@@ -896,7 +896,7 @@ private struct CatalogImageDetailSheet: View {
                         .resizable().scaledToFill()
                         .frame(height: 80)
                         .frame(maxWidth: .infinity)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                         .overlay(alignment: .topTrailing) {
                             Button {
                                 staged.removeAll { $0.id == item.id }
@@ -919,7 +919,7 @@ private struct CatalogImageDetailSheet: View {
                     }
                     .font(.subheadline.weight(.semibold)).foregroundStyle(.white)
                     .frame(maxWidth: .infinity).padding(.vertical, 11)
-                    .background(CatalogImagePalette.sage, in: RoundedRectangle(cornerRadius: 11))
+                    .background(CatalogImagePalette.sage, in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                 }
                 .buttonStyle(.plain).disabled(busy)
 
@@ -928,14 +928,14 @@ private struct CatalogImageDetailSheet: View {
                         .font(.subheadline).foregroundStyle(.secondary)
                         .padding(.horizontal, 14).padding(.vertical, 11)
                         .background(Color.white.opacity(colorScheme == .dark ? 0.06 : 0.5),
-                                    in: RoundedRectangle(cornerRadius: 11))
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                 }
                 .buttonStyle(.plain).disabled(busy)
             }
         }
         .padding(12)
-        .background(CatalogImagePalette.sage.opacity(0.06), in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14)
+        .background(CatalogImagePalette.sage.opacity(0.06), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(CatalogImagePalette.sage.opacity(0.28), lineWidth: 1))
     }
 
@@ -960,7 +960,7 @@ private struct CatalogImageDetailSheet: View {
                 ForEach(0..<6, id: \.self) { _ in
                     Color.clear
                         .aspectRatio(1, contentMode: .fit)
-                        .catalogImagesGlass(colorScheme, corner: 10)
+                        .catalogImagesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                         .catalogImagesShimmer()
                 }
             }
@@ -989,7 +989,7 @@ private struct CatalogImageDetailSheet: View {
                             }
                         }
                         .overlay(alignment: .topTrailing) { deleteControl(img) }
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                 }
             }
         }
@@ -1063,7 +1063,7 @@ private struct CatalogImagesAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func catalogImagesGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func catalogImagesGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

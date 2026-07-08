@@ -331,8 +331,8 @@ struct PortalStaffAppView: View {
         .background(
             LinearGradient(colors: [PortalStaffColors.gold.opacity(0.16), PortalOfficePalette.coral.opacity(0.08)],
                            startPoint: .topLeading, endPoint: .bottomTrailing),
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(PortalStaffColors.gold.opacity(0.3), lineWidth: 1))
     }
 
@@ -350,7 +350,7 @@ struct PortalStaffAppView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .portalOfficeGlass(scheme, corner: 16)
+            .portalOfficeGlass(scheme, corner: AlmaSwiftTheme.rCard)
         }
     }
 
@@ -391,8 +391,8 @@ struct PortalStaffAppView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12).padding(.vertical, 10)
-        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(tint.opacity(0.3), lineWidth: 1))
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous).strokeBorder(tint.opacity(0.3), lineWidth: 1))
     }
 
     // ── 🍽️ Lunch (45-min allowance, live countdown) ──
@@ -424,7 +424,7 @@ struct PortalStaffAppView: View {
             }
         }
         .padding(14)
-        .portalOfficeGlass(scheme, corner: 16)
+        .portalOfficeGlass(scheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── আজকের কাজ (active cards + self-initiated + done) ──
@@ -472,7 +472,7 @@ struct PortalStaffAppView: View {
             }
         }
         .padding(14)
-        .portalOfficeGlass(scheme, corner: 16)
+        .portalOfficeGlass(scheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func taskCard(_ t: PortalStaffTask) -> some View {
@@ -506,8 +506,8 @@ struct PortalStaffAppView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(11)
-            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                 .strokeBorder(overdue ? PortalOfficePalette.red500.opacity(0.35)
                               : (t.carriedOver ? PortalOfficePalette.violet.opacity(0.3) : Color.primary.opacity(0.06)),
                               lineWidth: 1))
@@ -526,7 +526,7 @@ struct PortalStaffAppView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(11)
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(PortalOfficePalette.violet.opacity(0.4), style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
     }
 
@@ -566,7 +566,7 @@ struct PortalStaffAppView: View {
             .frame(height: 8)
         }
         .padding(14)
-        .portalOfficeGlass(scheme, corner: 16)
+        .portalOfficeGlass(scheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func perfCell(_ value: String, _ label: String, _ color: Color) -> some View {
@@ -596,7 +596,7 @@ struct PortalStaffAppView: View {
                 Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
             }
             .padding(14)
-            .portalOfficeGlass(scheme, corner: 16)
+            .portalOfficeGlass(scheme, corner: AlmaSwiftTheme.rCard)
         }.buttonStyle(.plain)
     }
 
@@ -613,7 +613,7 @@ struct PortalStaffAppView: View {
     private func badgeIcon(_ name: String) -> some View {
         Image(systemName: name).font(.system(size: 13, weight: .semibold))
             .foregroundStyle(accent).frame(width: 30, height: 30)
-            .background(PortalOfficePalette.coral.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .background(PortalOfficePalette.coral.opacity(0.14), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
     }
     private func tag(_ text: String, _ color: Color) -> some View {
         Text(text).font(.caption2.weight(.bold)).foregroundStyle(color)
@@ -635,7 +635,7 @@ struct PortalStaffAppView: View {
             .font(.caption.weight(.semibold)).foregroundStyle(tint)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(11)
-            .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
     }
 }
 
@@ -669,7 +669,7 @@ private struct UpdateAlertCard: View {
                     TextField("অবস্থা লিখুন…", text: $text)
                         .focused($focused).font(.footnote)
                         .padding(.horizontal, 12).padding(.vertical, 9)
-                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                     Button {
                         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !t.isEmpty else { return }
@@ -696,8 +696,8 @@ private struct UpdateAlertCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(13)
-        .background(PortalOfficePalette.amber600.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+        .background(PortalOfficePalette.amber600.opacity(0.10), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(PortalOfficePalette.amber600.opacity(0.35), lineWidth: 1))
     }
 }
@@ -777,8 +777,8 @@ struct PortalStaffTaskSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(tint.opacity(0.25), lineWidth: 1))
+        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous).strokeBorder(tint.opacity(0.25), lineWidth: 1))
     }
 
     private var submittedProof: some View {
@@ -790,14 +790,14 @@ struct PortalStaffTaskSheet: View {
                         AsyncImage(url: URL(string: url)) { img in
                             img.resizable().aspectRatio(contentMode: .fill)
                         } placeholder: { Color.primary.opacity(0.06) }
-                        .frame(width: 84, height: 84).clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .frame(width: 84, height: 84).clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                         .onTapGesture { preview = PortalImagePreview(urls: task.imageUrls, index: idx) }
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12).portalOfficeGlass(scheme, corner: 14)
+        .padding(12).portalOfficeGlass(scheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var thread: some View {
@@ -812,7 +812,7 @@ struct PortalStaffTaskSheet: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12).portalOfficeGlass(scheme, corner: 14)
+        .padding(12).portalOfficeGlass(scheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func bubble(_ c: PortalOfficeThreadMsg) -> some View {
@@ -861,7 +861,7 @@ struct PortalStaffTaskSheet: View {
                                 if let ui = UIImage(data: data) {
                                     Image(uiImage: ui).resizable().aspectRatio(contentMode: .fill)
                                         .frame(width: 76, height: 76)
-                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                        .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                                 }
                                 Button { shots.remove(at: idx) } label: {
                                     Image(systemName: "xmark.circle.fill").font(.system(size: 18))
@@ -870,7 +870,7 @@ struct PortalStaffTaskSheet: View {
                             }
                         }
                         if loadingPhotos {
-                            RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.06))
+                            RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous).fill(Color.primary.opacity(0.06))
                                 .frame(width: 76, height: 76).overlay(ProgressView().controlSize(.small))
                         }
                     }
@@ -880,7 +880,7 @@ struct PortalStaffTaskSheet: View {
             TextField("কমেন্ট লিখুন… (ঐচ্ছিক)", text: $draft, axis: .vertical)
                 .lineLimit(1...4).focused($focused).font(.footnote)
                 .padding(.horizontal, 12).padding(.vertical, 9)
-                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
 
             // Send proof (photos + optional comment)
             Button {
@@ -926,7 +926,7 @@ struct PortalStaffTaskSheet: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12).portalOfficeGlass(scheme, corner: 14)
+        .padding(12).portalOfficeGlass(scheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func photoButton(_ label: String, action: @escaping () -> Void) -> some View {
@@ -936,8 +936,8 @@ struct PortalStaffTaskSheet: View {
     private func photoButtonLabel(_ label: String) -> some View {
         Text(label).font(.footnote.weight(.semibold)).foregroundStyle(PortalOfficePalette.accentText(scheme))
             .frame(maxWidth: .infinity).padding(.vertical, 11)
-            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous).strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
             .opacity(shots.count >= maxShots ? 0.4 : 1)
     }
 

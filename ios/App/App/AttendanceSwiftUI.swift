@@ -641,7 +641,7 @@ struct AttendanceScreen: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 9)
-                .attendanceGlass(colorScheme, corner: 12)
+                .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
             }
             .buttonStyle(.plain)
             chevronButton("chevron.right", disabled: vm.isToday) {
@@ -663,7 +663,7 @@ struct AttendanceScreen: View {
                 .foregroundStyle(disabled ? Color.secondary.opacity(0.4)
                                           : AttendancePalette.accentText(colorScheme))
                 .frame(width: 38, height: 36)
-                .attendanceGlass(colorScheme, corner: 12)
+                .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
         .buttonStyle(.plain)
         .disabled(disabled)
@@ -696,8 +696,8 @@ struct AttendanceScreen: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
-        .attendanceGlass(colorScheme, corner: 16)
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+        .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(tint.opacity(0.25), lineWidth: 1))
         .attendanceShimmerIf(vm.loading && vm.kpis == nil)
     }
@@ -734,7 +734,7 @@ struct AttendanceScreen: View {
         }
         .frame(minWidth: 96, alignment: .leading)
         .padding(12)
-        .attendanceGlass(colorScheme, corner: 14)
+        .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Penalty appeal analytics (web admin card, this month) ──
@@ -757,7 +757,7 @@ struct AttendanceScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .attendanceGlass(colorScheme, corner: 16)
+            .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
     }
 
@@ -770,7 +770,7 @@ struct AttendanceScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 8).padding(.vertical, 7)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
     }
 
     // ── Attendance log (per-employee status-dot rows + Reset/Selfie admin actions) ──
@@ -814,7 +814,7 @@ struct AttendanceScreen: View {
                         .foregroundStyle(AttendancePalette.emerald600)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(14)
-                        .attendanceGlass(colorScheme, corner: 14)
+                        .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                 }
             } else {
                 VStack(spacing: 0) {
@@ -839,7 +839,7 @@ struct AttendanceScreen: View {
                     }
                 }
                 .padding(.horizontal, 14).padding(.vertical, 6)
-                .attendanceGlass(colorScheme, corner: 16)
+                .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
             }
         }
     }
@@ -922,7 +922,7 @@ struct AttendanceScreen: View {
                 }
             }
             .padding(.horizontal, 14).padding(.vertical, 6)
-            .attendanceGlass(colorScheme, corner: 16)
+            .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
     }
 
@@ -957,14 +957,14 @@ struct AttendanceScreen: View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.footnote).foregroundStyle(AttendancePalette.red500)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).attendanceGlass(colorScheme, corner: 12)
+            .padding(12).attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func successCard(_ message: String) -> some View {
         Label(message, systemImage: "checkmark.circle")
             .font(.footnote).foregroundStyle(AttendancePalette.emerald600)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).attendanceGlass(colorScheme, corner: 12)
+            .padding(12).attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -973,7 +973,7 @@ struct AttendanceScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .attendanceGlass(colorScheme, corner: 16)
+        .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func emptyCard(icon: String, title: String, subtitle: String) -> some View {
@@ -984,13 +984,13 @@ struct AttendanceScreen: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 40)
-        .attendanceGlass(colorScheme, corner: 16)
+        .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 84)
-                .attendanceGlass(colorScheme, corner: 16)
+                .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .attendanceShimmer()
         }
     }
@@ -1095,8 +1095,8 @@ private struct AttendanceRecordCard: View {
             actionRow
         }
         .padding(12)
-        .attendanceGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             onTap()
@@ -1182,7 +1182,7 @@ private struct AttendanceRecordCard: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 7)
         .background((bg ?? Color.primary).opacity(bg == nil ? 0.05 : 0.10),
-                    in: RoundedRectangle(cornerRadius: 10))
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
     }
 }
 
@@ -1230,7 +1230,7 @@ private struct AttendanceWaiverCard: View {
             }
         }
         .padding(12)
-        .attendanceGlass(colorScheme, corner: 16)
+        .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func waiverButton(_ label: String, icon: String, tint: Color,
@@ -1297,7 +1297,7 @@ private struct AttendanceWaiverReviewSheet: View {
                             .keyboardType(.numberPad)
                             .font(.body.monospacedDigit())
                             .padding(12)
-                            .attendanceGlass(colorScheme, corner: 12)
+                            .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                         Text(amountValid
                              ? "অনুমোদনের পর ফাইনাল পেনাল্টি: \(AttendanceFormat.money(max(0, original - amountValue)))"
                              : "১ থেকে \(AttendanceFormat.money(original))-এর মধ্যে দিন")
@@ -1312,7 +1312,7 @@ private struct AttendanceWaiverReviewSheet: View {
                     TextField("নোট (ঐচ্ছিক)", text: $note, axis: .vertical)
                         .lineLimit(2...4)
                         .padding(12)
-                        .attendanceGlass(colorScheme, corner: 12)
+                        .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                 }
 
                 Button {
@@ -1392,8 +1392,8 @@ private struct AttendanceSelfieCard: View {
             }
         }
         .padding(12)
-        .attendanceGlass(colorScheme, corner: 16)
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+        .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(log.isPending ? AttendancePalette.amber500.opacity(0.35) : .clear, lineWidth: 1))
     }
 
@@ -1447,9 +1447,9 @@ private struct AttendanceSelfiePhoto: View {
         }
         .frame(height: 150)
         .frame(maxWidth: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
         .background(Color.primary.opacity(0.05),
-                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
     }
 
     /// Web VerificationPhoto fallback: "Photo unavailable" + re-verify hint.
@@ -1532,7 +1532,7 @@ private struct AttendanceDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .attendanceGlass(colorScheme, corner: 14)
+        .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func timelineRow(icon: String, tint: Color, title: String,
@@ -1575,7 +1575,7 @@ private struct AttendanceDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .attendanceGlass(colorScheme, corner: 14)
+        .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func infoRow(_ label: String, _ value: String, color: Color = .primary) -> some View {
@@ -1598,8 +1598,8 @@ private struct AttendanceDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(AttendancePalette.amber500.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8)
+        .background(AttendancePalette.amber500.opacity(0.10), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(AttendancePalette.amber500.opacity(0.30), lineWidth: 1))
     }
 
@@ -1767,7 +1767,7 @@ private struct AttendanceAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func attendanceGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func attendanceGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

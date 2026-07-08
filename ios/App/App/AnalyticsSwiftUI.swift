@@ -503,7 +503,7 @@ struct AnalyticsScreen: View {
         .frame(minWidth: fixedWidth ? 120 : nil,
                maxWidth: fixedWidth ? nil : .infinity, alignment: .leading)
         .padding(12)
-        .analyticsGlass(colorScheme, corner: 14)
+        .analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Revenue vs Profit trend (native gradient bars; tap a month → detail sheet) ──
@@ -525,7 +525,7 @@ struct AnalyticsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .analyticsGlass(colorScheme, corner: 16)
+        .analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var legend: some View {
@@ -573,7 +573,7 @@ struct AnalyticsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .analyticsGlass(colorScheme, corner: 16)
+        .analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Orders by Channel (web card: orders + revenue + gold progress bar) ──
@@ -605,7 +605,7 @@ struct AnalyticsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .analyticsGlass(colorScheme, corner: 16)
+        .analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Payment Method Mix (web donut, re-set as brand-coloured % bars) ──
@@ -636,7 +636,7 @@ struct AnalyticsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .analyticsGlass(colorScheme, corner: 16)
+        .analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Expense Breakdown (web ExpenseBarChart, re-set as sorted bars) ──
@@ -670,7 +670,7 @@ struct AnalyticsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .analyticsGlass(colorScheme, corner: 16)
+        .analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Category Performance (web table, re-set as a ranked list with rank badges) ──
@@ -690,7 +690,7 @@ struct AnalyticsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .analyticsGlass(colorScheme, corner: 16)
+        .analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func categoryRow(rank: Int,
@@ -787,7 +787,7 @@ struct AnalyticsScreen: View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.footnote).foregroundStyle(AnalyticsPalette.red500)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).analyticsGlass(colorScheme, corner: 12)
+            .padding(12).analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -796,13 +796,13 @@ struct AnalyticsScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .analyticsGlass(colorScheme, corner: 16)
+        .analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 110)
-                .analyticsGlass(colorScheme, corner: 16)
+                .analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .analyticsShimmer()
         }
     }
@@ -911,7 +911,7 @@ private struct AnalyticsMonthDetailSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .analyticsGlass(colorScheme, corner: 14)
+            .analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
             Button {
                 dismiss()
             } label: {
@@ -1001,7 +1001,7 @@ private struct AnalyticsAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func analyticsGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func analyticsGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

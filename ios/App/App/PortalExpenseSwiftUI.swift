@@ -281,7 +281,7 @@ struct PortalExpenseScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-            .portalExpenseGlass(colorScheme, corner: 14)
+            .portalExpenseGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("অনুমোদিত (ওয়ালেটে যুক্ত)")
@@ -302,7 +302,7 @@ struct PortalExpenseScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-            .portalExpenseGlass(colorScheme, corner: 14)
+            .portalExpenseGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -319,11 +319,11 @@ struct PortalExpenseScreen: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
                 .background(PortalExpensePalette.coral.opacity(colorScheme == .dark ? 0.22 : 0.12),
-                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            in: Capsule())
+                .overlay(Capsule()
                     .strokeBorder(PortalExpensePalette.coral.opacity(0.45), lineWidth: 1))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(AlmaCapsuleButtonStyle())
     }
 
     // ── History ("আমার আবেদনসমূহ") ──
@@ -347,24 +347,24 @@ struct PortalExpenseScreen: View {
                 VStack(spacing: 0) {
                     ForEach(Array(vm.claims.enumerated()), id: \.element.id) { index, claim in
                         PortalExpenseClaimRow(claim: claim)
-                        if index < vm.claims.count - 1 { Divider().opacity(0.5) }
+                        if index < vm.claims.count - 1 { Divider().overlay(AlmaSwiftTheme.separator(colorScheme)) }
                     }
                 }
             }
-            Divider().opacity(0.5)
+            Divider().overlay(AlmaSwiftTheme.separator(colorScheme))
             Text("শুধু যোগ করা যায় — পাঠানো আবেদন সম্পাদনা বা মুছে ফেলা যায় না (নিরাপত্তার জন্য)।")
                 .font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .portalExpenseGlass(colorScheme, corner: 16)
+        .portalExpenseGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         VStack(spacing: 8) {
             ForEach(0..<3, id: \.self) { _ in
                 Color.clear.frame(height: 56)
-                    .portalExpenseGlass(colorScheme, corner: 12)
+                    .portalExpenseGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                     .portalExpenseShimmer()
             }
         }
@@ -381,7 +381,7 @@ struct PortalExpenseScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).portalExpenseGlass(colorScheme, corner: 12)
+            .padding(12).portalExpenseGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -390,7 +390,7 @@ struct PortalExpenseScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .portalExpenseGlass(colorScheme, corner: 16)
+        .portalExpenseGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var webEscape: some View {
@@ -493,7 +493,7 @@ private struct PortalExpenseSubmitSheet: View {
                     .keyboardType(.numberPad)
                     .focused($amountFocused)
                     .padding(12)
-                    .portalExpenseGlass(colorScheme, corner: 12)
+                    .portalExpenseGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
 
                 fieldLabel("খরচের ধরন")
                 categoryChips
@@ -501,13 +501,13 @@ private struct PortalExpenseSubmitSheet: View {
                 fieldLabel("কোথায় খরচ (ঐচ্ছিক)")
                 TextField("দোকান / প্রতিষ্ঠানের নাম", text: $vendor)
                     .padding(12)
-                    .portalExpenseGlass(colorScheme, corner: 12)
+                    .portalExpenseGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
 
                 fieldLabel("নোট (ঐচ্ছিক)")
                 TextField("সংক্ষিপ্ত বিবরণ", text: $note, axis: .vertical)
                     .lineLimit(2...4)
                     .padding(12)
-                    .portalExpenseGlass(colorScheme, corner: 12)
+                    .portalExpenseGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
 
                 Text("মালিক অনুমোদন করলে টাকা আপনার ওয়ালেটে যোগ হবে।")
                     .font(.caption2).foregroundStyle(.secondary)
@@ -688,7 +688,7 @@ private struct PortalExpenseAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func portalExpenseGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func portalExpenseGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

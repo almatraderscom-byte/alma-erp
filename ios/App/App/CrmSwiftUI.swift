@@ -381,7 +381,7 @@ struct CrmScreen: View {
         }
         .frame(minWidth: 84, alignment: .leading)
         .padding(12)
-        .crmGlass(colorScheme, corner: 14)
+        .crmGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Segment tabs (web: All + the 6 segments, tap again to clear) ──
@@ -451,7 +451,7 @@ struct CrmScreen: View {
                     .autocorrectionDisabled()
             }
             .padding(.horizontal, 14).padding(.vertical, 10)
-            .crmGlass(colorScheme, corner: 14)
+            .crmGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
 
             riskMenu
         }
@@ -473,7 +473,7 @@ struct CrmScreen: View {
             .foregroundStyle(vm.risk == nil ? Color.secondary
                                             : CrmPalette.risk(vm.risk, colorScheme))
             .padding(.horizontal, 12).padding(.vertical, 10)
-            .crmGlass(colorScheme, corner: 14)
+            .crmGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -486,20 +486,20 @@ struct CrmScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .crmGlass(colorScheme, corner: 16)
+        .crmGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func errorCard(_ message: String) -> some View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.footnote).foregroundStyle(CrmPalette.red500)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).crmGlass(colorScheme, corner: 12)
+            .padding(12).crmGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var loadingRows: some View {
         ForEach(0..<6, id: \.self) { _ in
             Color.clear.frame(height: 72)
-                .crmGlass(colorScheme, corner: 16)
+                .crmGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .crmShimmer()
         }
     }
@@ -555,8 +555,8 @@ private struct CrmCustomerRow: View {
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 11)
-        .crmGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .crmGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture(perform: onTap)
     }
 
@@ -682,7 +682,7 @@ private struct CrmDetailSheet: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
-        .crmGlass(colorScheme, corner: 14)
+        .crmGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Risk intelligence (web card: score bar + stat rows) ──
@@ -711,7 +711,7 @@ private struct CrmDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .crmGlass(colorScheme, corner: 14)
+        .crmGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func scoreBar(value: Int, tint: Color) -> some View {
@@ -773,7 +773,7 @@ private struct CrmDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .crmGlass(colorScheme, corner: 14)
+        .crmGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Profile (web block: phone / address / source / fav cat / last order / notes) ──
@@ -793,7 +793,7 @@ private struct CrmDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .crmGlass(colorScheme, corner: 14)
+        .crmGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Contact (call + WhatsApp, same 880 rule as the Orders screen) ──
@@ -886,7 +886,7 @@ private struct CrmAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func crmGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func crmGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

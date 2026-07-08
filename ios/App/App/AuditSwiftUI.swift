@@ -236,7 +236,7 @@ struct AuditScreen: View {
                 Image(systemName: "arrow.clockwise")
                     .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
                     .frame(width: 34, height: 34)
-                    .auditGlass(colorScheme, corner: 12)
+                    .auditGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
             }
             .buttonStyle(.plain)
             .disabled(vm.loading)
@@ -284,7 +284,7 @@ struct AuditScreen: View {
         }
         .frame(minWidth: 84, alignment: .leading)
         .padding(12)
-        .auditGlass(colorScheme, corner: 14)
+        .auditGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Shared bits ──
@@ -318,7 +318,7 @@ struct AuditScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).auditGlass(colorScheme, corner: 12)
+            .padding(12).auditGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -327,13 +327,13 @@ struct AuditScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .auditGlass(colorScheme, corner: 16)
+        .auditGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<5, id: \.self) { _ in
             Color.clear.frame(height: 92)
-                .auditGlass(colorScheme, corner: 16)
+                .auditGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .auditShimmer()
         }
     }
@@ -416,8 +416,8 @@ private struct AuditEntryCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .auditGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .auditGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             onTap()
@@ -489,7 +489,7 @@ private struct AuditDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .auditGlass(colorScheme, corner: 14)
+        .auditGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func infoRow(_ label: String, _ value: String) -> some View {
@@ -512,7 +512,7 @@ private struct AuditDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .auditGlass(colorScheme, corner: 14)
+        .auditGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     /// detail_json pretty-printed when it parses; raw string otherwise.
@@ -612,7 +612,7 @@ private struct AuditAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func auditGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func auditGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

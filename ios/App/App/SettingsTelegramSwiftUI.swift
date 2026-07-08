@@ -504,7 +504,7 @@ struct SettingsTelegramScreen: View {
         }
         .frame(maxWidth: .infinity, minHeight: 56, alignment: .topLeading)
         .padding(12)
-        .settingsTelegramGlass(colorScheme, corner: 14)
+        .settingsTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Owner routing diagnostics (web card — chat IDs monospace) ──
@@ -530,7 +530,7 @@ struct SettingsTelegramScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .settingsTelegramGlass(colorScheme, corner: 16)
+            .settingsTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
     }
 
@@ -587,7 +587,7 @@ struct SettingsTelegramScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .settingsTelegramGlass(colorScheme, corner: 16)
+            .settingsTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
     }
 
@@ -600,8 +600,8 @@ struct SettingsTelegramScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background(Color.white.opacity(colorScheme == .dark ? 0.05 : 0.35),
-                    in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10)
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.08 : 0.4), lineWidth: 1))
     }
 
@@ -623,14 +623,14 @@ struct SettingsTelegramScreen: View {
                     }
                     .padding(.horizontal, 12).padding(.vertical, 9)
                     .background(Color.white.opacity(colorScheme == .dark ? 0.04 : 0.3),
-                                in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12)
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                         .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.08 : 0.4), lineWidth: 1))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .settingsTelegramGlass(colorScheme, corner: 16)
+            .settingsTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
     }
 
@@ -660,8 +660,8 @@ struct SettingsTelegramScreen: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10).padding(.vertical, 8)
                 .background(SettingsTelegramPalette.red500.opacity(0.08),
-                            in: RoundedRectangle(cornerRadius: 10))
-                .overlay(RoundedRectangle(cornerRadius: 10)
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                     .strokeBorder(SettingsTelegramPalette.red500.opacity(0.25), lineWidth: 1))
             }
 
@@ -677,7 +677,7 @@ struct SettingsTelegramScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .settingsTelegramGlass(colorScheme, corner: 16)
+        .settingsTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func queueStatChip(_ label: String, _ count: Int) -> some View {
@@ -724,8 +724,8 @@ struct SettingsTelegramScreen: View {
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background(Color.white.opacity(colorScheme == .dark ? 0.04 : 0.3),
-                    in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12)
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.08 : 0.4), lineWidth: 1))
     }
 
@@ -761,7 +761,7 @@ struct SettingsTelegramScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).settingsTelegramGlass(colorScheme, corner: 12)
+            .padding(12).settingsTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -770,13 +770,13 @@ struct SettingsTelegramScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .settingsTelegramGlass(colorScheme, corner: 16)
+        .settingsTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 120)
-                .settingsTelegramGlass(colorScheme, corner: 16)
+                .settingsTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .settingsTelegramShimmer()
         }
     }
@@ -868,7 +868,7 @@ private struct SettingsTelegramAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func settingsTelegramGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func settingsTelegramGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

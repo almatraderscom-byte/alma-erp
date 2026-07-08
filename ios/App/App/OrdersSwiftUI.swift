@@ -459,7 +459,7 @@ struct OrdersScreen: View {
             statCard("ORDERS", "\(vm.total)", .primary)
             statCard("REVENUE", AlmaSwiftTheme.takaShort(vm.revenue), AlmaSwiftTheme.coral)
             statCard("PROFIT", AlmaSwiftTheme.takaShort(vm.profit),
-                     vm.profit >= 0 ? Color.green : Color.red)
+                     vm.profit >= 0 ? AlmaSwiftTheme.ios27Green(colorScheme) : AlmaSwiftTheme.ios27Red(colorScheme))
         }
     }
 
@@ -471,7 +471,7 @@ struct OrdersScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .ordersGlass(colorScheme, corner: 14)
+        .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Channel / payment / sort (the web header's dropdowns, as one native menu) ──
@@ -507,7 +507,7 @@ struct OrdersScreen: View {
                 .font(.title3)
                 .foregroundStyle(AlmaSwiftTheme.violet)
                 .frame(width: 42, height: 42)
-                .ordersGlass(colorScheme, corner: 14)
+                .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -592,7 +592,7 @@ struct OrdersScreen: View {
                 .autocorrectionDisabled()
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
-        .ordersGlass(colorScheme, corner: 14)
+        .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var newOrderFAB: some View {
@@ -621,13 +621,13 @@ struct OrdersScreen: View {
         }
         .frame(maxWidth: .infinity)
         .padding(20)
-        .ordersGlass(colorScheme, corner: 16)
+        .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func errorCard(_ message: String) -> some View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.footnote)
-            .foregroundStyle(.red)
+            .foregroundStyle(AlmaSwiftTheme.ios27Red(colorScheme))
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
             .ordersGlass(colorScheme, corner: 12)
@@ -637,7 +637,7 @@ struct OrdersScreen: View {
         ForEach(0..<6, id: \.self) { _ in
             Color.clear
                 .frame(height: 92)
-                .ordersGlass(colorScheme, corner: 16)
+                .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .shimmering()
         }
     }
@@ -684,8 +684,8 @@ private struct OrderCard: View {
             }
         }
         .padding(14)
-        .ordersGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
     }
 
     private var productLine: String {
@@ -767,7 +767,7 @@ private struct OrderDetailSheet: View {
             }
         }
         .padding(14)
-        .ordersGlass(colorScheme, corner: 14)
+        .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
     @Environment(\.colorScheme) private var colorScheme
 
@@ -908,10 +908,10 @@ struct OrdersGlassCard<Content: View>: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),
-                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(Color.white.opacity(scheme == .dark ? 0.12 : 0.5), lineWidth: 1))
     }
 }

@@ -886,8 +886,8 @@ private struct OwnerTodoBar: View {
         .padding(14)
         .frame(width: 300, alignment: .leading)
         .background(scheme == .dark ? Color(red: 0.11, green: 0.09, blue: 0.17) : Color(red: 0.99, green: 0.98, blue: 1.0),
-                    in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(Color.white.opacity(scheme == .dark ? 0.12 : 0.6), lineWidth: 1))
         .shadow(color: .black.opacity(0.18), radius: 14, y: 8)
     }
@@ -1086,8 +1086,8 @@ struct DashboardScreen: View {
             }
             .padding(12)
             .background(DashPalette.amber500.opacity(scheme == .dark ? 0.16 : 0.12),
-                        in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                 .strokeBorder(DashPalette.amber500.opacity(0.35), lineWidth: 1))
         }
         .buttonStyle(DashPressStyle())
@@ -1385,7 +1385,7 @@ struct DashboardScreen: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 6)
                             .background(Color.primary.opacity(scheme == .dark ? 0.05 : 0.035),
-                                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                         }
                     }
                 }
@@ -1573,8 +1573,8 @@ struct DashboardScreen: View {
             }
         }
         .padding(14)
-        .dashGlass(scheme, corner: 16)
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+        .dashGlass(scheme, corner: AlmaSwiftTheme.rCard)
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(DashPalette.amber500.opacity(0.3), lineWidth: 1))
     }
 
@@ -1622,12 +1622,12 @@ struct DashboardScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
                 .tint(DashPalette.coral)
         }
-        .frame(maxWidth: .infinity).padding(20).dashGlass(scheme, corner: 16)
+        .frame(maxWidth: .infinity).padding(20).dashGlass(scheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
-            Color.clear.frame(height: 96).dashGlass(scheme, corner: 16).dashShimmer()
+            Color.clear.frame(height: 96).dashGlass(scheme, corner: AlmaSwiftTheme.rCard).dashShimmer()
         }
     }
 
@@ -1713,15 +1713,15 @@ private struct RevenueHeroCard: View {
         .padding(15)
         .background {
             ZStack {
-                RoundedRectangle(cornerRadius: 20, style: .continuous).fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
                 LinearGradient(colors: [DashPalette.coral.opacity(scheme == .dark ? 0.16 : 0.12), .clear],
                                startPoint: .topLeading, endPoint: .bottomTrailing)
                 HStack(spacing: 0) { Rectangle().fill(DashPalette.coral).frame(width: 3); Spacer(minLength: 0) }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         }
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
     }
     private func stripTaka(_ s: String) -> String { s.hasPrefix("৳") ? String(s.dropFirst()) : s }
@@ -1772,15 +1772,15 @@ private struct CommandHeroCard: View {
         .padding(16)
         .background {
             ZStack {
-                RoundedRectangle(cornerRadius: 22, style: .continuous).fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
                 LinearGradient(colors: [DashPalette.coral.opacity(scheme == .dark ? 0.16 : 0.12), .clear],
                                startPoint: .topLeading, endPoint: .bottomTrailing)
                 HStack(spacing: 0) { Rectangle().fill(DashPalette.coral).frame(width: 3); Spacer(minLength: 0) }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         }
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous)
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
     }
 
@@ -1815,13 +1815,13 @@ private struct StatBlock: View {
     let items: [StatItem]
 
     var body: some View {
-        let hair = Color.primary.opacity(scheme == .dark ? 0.10 : 0.12)
+        let hair = AlmaSwiftTheme.separator(scheme)
         VStack(spacing: 0) {
             row(0, hair: hair)
             Rectangle().fill(hair).frame(height: 1)
             row(4, hair: hair)
         }
-        .dashGlass(scheme, corner: 18)
+        .dashGlass(scheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func row(_ start: Int, hair: Color) -> some View {
@@ -1891,15 +1891,15 @@ private struct KpiTile: View {
         .padding(13)
         .background {
             ZStack {
-                RoundedRectangle(cornerRadius: 16, style: .continuous).fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
                 LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.12 : 0.08), .clear],
                                startPoint: .topLeading, endPoint: .bottomTrailing)
                 HStack(spacing: 0) { Rectangle().fill(accent).frame(width: 3); Spacer(minLength: 0) }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         }
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
     }
 }
@@ -1920,7 +1920,7 @@ private struct MiniChip: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 11).padding(.vertical, 10)
-        .dashGlass(scheme, corner: 13)
+        .dashGlass(scheme, corner: AlmaSwiftTheme.rControl)
     }
 }
 
@@ -1984,7 +1984,7 @@ private struct ChartCard<Content: View>: View {
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14).dashGlass(scheme, corner: 18)
+        .padding(14).dashGlass(scheme, corner: AlmaSwiftTheme.rCard)
     }
 }
 
@@ -2014,7 +2014,7 @@ private struct ListCard<Content: View>: View {
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14).dashGlass(scheme, corner: 18)
+        .padding(14).dashGlass(scheme, corner: AlmaSwiftTheme.rCard)
     }
 }
 

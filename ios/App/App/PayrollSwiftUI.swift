@@ -1022,7 +1022,7 @@ struct PayrollScreen: View {
         }
         .frame(minWidth: 96, alignment: .leading)
         .padding(12)
-        .payrollGlass(colorScheme, corner: 14)
+        .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Pending wallet requests (native approve/reject — web submitReview parity) ──
@@ -1048,7 +1048,7 @@ struct PayrollScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .payrollGlass(colorScheme, corner: 16)
+            .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
             .sheet(item: $approveTarget) { req in
                 PayrollReviewSheet(request: req, employeeName: vm.employeeName(req.employeeId)) { amount, txn in
                     Task { await vm.reviewRequest(req, action: "APPROVE", approvedAmount: amount, transactionId: txn) }
@@ -1104,8 +1104,8 @@ struct PayrollScreen: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
-                    .background(PayrollPalette.coral.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
-                    .overlay(RoundedRectangle(cornerRadius: 10)
+                    .background(PayrollPalette.coral.opacity(0.05), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                         .strokeBorder(PayrollPalette.coral.opacity(0.25), lineWidth: 1))
                 }
                 if !vm.runs.isEmpty {
@@ -1132,7 +1132,7 @@ struct PayrollScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .payrollGlass(colorScheme, corner: 16)
+            .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     /// Enable/disable + run-now, each behind a Bangla confirmation.
@@ -1266,12 +1266,12 @@ struct PayrollScreen: View {
                         }
                     }
                     .padding(.vertical, 4)
-                    if row.id != vm.roll.last?.id { Divider().opacity(0.4) }
+                    if row.id != vm.roll.last?.id { Divider().overlay(AlmaSwiftTheme.separator(colorScheme)) }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .payrollGlass(colorScheme, corner: 16)
+            .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
     }
 
@@ -1316,7 +1316,7 @@ struct PayrollScreen: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .payrollGlass(colorScheme, corner: 16)
+            .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
     }
 
@@ -1382,7 +1382,7 @@ struct PayrollScreen: View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.footnote).foregroundStyle(PayrollPalette.red500)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).payrollGlass(colorScheme, corner: 12)
+            .padding(12).payrollGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     /// Success line after a mutation — the web's green toast, native form.
@@ -1390,7 +1390,7 @@ struct PayrollScreen: View {
         Label(message, systemImage: "checkmark.circle")
             .font(.footnote).foregroundStyle(PayrollPalette.pos(colorScheme))
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).payrollGlass(colorScheme, corner: 12)
+            .padding(12).payrollGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -1399,7 +1399,7 @@ struct PayrollScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .payrollGlass(colorScheme, corner: 16)
+        .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func emptyState(_ message: String) -> some View {
@@ -1414,7 +1414,7 @@ struct PayrollScreen: View {
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 110)
-                .payrollGlass(colorScheme, corner: 16)
+                .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .payrollShimmer()
         }
     }
@@ -1505,8 +1505,8 @@ private struct PayrollPendingRequestCard: View {
             .padding(.top, 2)
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(PayrollPalette.amber500.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10)
+        .background(PayrollPalette.amber500.opacity(0.07), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(PayrollPalette.amber500.opacity(0.25), lineWidth: 1))
     }
 }
@@ -1552,7 +1552,7 @@ private struct PayrollReviewSheet: View {
                         .keyboardType(.numberPad)
                         .focused($focused)
                         .padding(12)
-                        .payrollGlass(colorScheme, corner: 12)
+                        .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                 }
                 if let a = amount, a > request.requestedAmount {
                     Text("চাওয়া পরিমাণের (৳ \(request.requestedAmount.formatted())) বেশি অনুমোদন করা যাবে না")
@@ -1565,7 +1565,7 @@ private struct PayrollReviewSheet: View {
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .padding(12)
-                            .payrollGlass(colorScheme, corner: 12)
+                            .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                     }
                     Text(txnTrimmed.isEmpty ? "Transaction ID আবশ্যক" : "এই ID সহ staff-কে SMS পাঠানো হবে।")
                         .font(.caption2)
@@ -1627,18 +1627,18 @@ private struct PayrollCompensationCard: View {
                 TextField(type == "ADJUSTMENT" ? "Amount (+/-)" : "Amount", text: $amountText)
                     .keyboardType(type == "ADJUSTMENT" ? .numbersAndPunctuation : .numberPad)
                     .padding(.horizontal, 12).padding(.vertical, 9)
-                    .payrollGlass(colorScheme, corner: 12)
+                    .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                 DatePicker("", selection: $date, displayedComponents: .date)
                     .labelsHidden()
             }
             TextField("Note", text: $note)
                 .padding(.horizontal, 12).padding(.vertical, 9)
-                .payrollGlass(colorScheme, corner: 12)
+                .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
             postButton
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .payrollGlass(colorScheme, corner: 16)
+        .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var employeeMenu: some View {
@@ -1694,8 +1694,8 @@ private struct PayrollCompensationCard: View {
         }
         .foregroundStyle(PayrollPalette.accentText(colorScheme))
         .padding(.horizontal, 12).padding(.vertical, 9)
-        .background(PayrollPalette.coral.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12)
+        .background(PayrollPalette.coral.opacity(0.08), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(PayrollPalette.coral.opacity(0.28), lineWidth: 1))
     }
 
@@ -1774,17 +1774,17 @@ private struct PayrollMealAllowanceCard: View {
                             .disabled(!row.enabled)
                             .opacity(row.enabled ? 1 : 0.4)
                             .padding(.horizontal, 12).padding(.vertical, 8)
-                            .payrollGlass(colorScheme, corner: 12)
+                            .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                         mealSaveButton(row)
                     }
                 }
                 .padding(.vertical, 4)
-                if row.id != vm.mealRows.last?.id { Divider().opacity(0.35) }
+                if row.id != vm.mealRows.last?.id { Divider().overlay(AlmaSwiftTheme.separator(colorScheme)) }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .payrollGlass(colorScheme, corner: 16)
+        .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func mealSaveButton(_ row: PayrollMealRow) -> some View {
@@ -1850,12 +1850,12 @@ private struct PayrollDrivingModeCard: View {
                     }
                 }
                 .padding(.vertical, 4)
-                if row.id != vm.drivingRows.last?.id { Divider().opacity(0.35) }
+                if row.id != vm.drivingRows.last?.id { Divider().overlay(AlmaSwiftTheme.separator(colorScheme)) }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .payrollGlass(colorScheme, corner: 16)
+        .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     @ViewBuilder private func statusBadge(_ row: PayrollDrivingRow) -> some View {
@@ -1959,8 +1959,8 @@ private struct PayrollWalletCard: View {
             }
         }
         .padding(12)
-        .payrollGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture(perform: onTap)
     }
 
@@ -2033,7 +2033,7 @@ private struct PayrollEmployeeDetailSheet: View {
                 moneyRow("Meal deductions", s.totalMealDeductions, PayrollPalette.red400)
                 moneyRow("Penalties", s.totalPenalties, PayrollPalette.red400)
                 moneyRow("Outstanding advance", s.outstandingAdvance, PayrollPalette.amber600)
-                Divider().opacity(0.4)
+                Divider().overlay(AlmaSwiftTheme.separator(colorScheme))
                 moneyRow("Held balance (liability)", s.companyLiability, PayrollPalette.pos(colorScheme), bold: true)
                 moneyRow("Withdrawable now", s.availableWithdrawable, PayrollPalette.pos(colorScheme))
                 moneyRow("This month salary added", s.thisMonthSalaryAdded, .primary)
@@ -2042,7 +2042,7 @@ private struct PayrollEmployeeDetailSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .payrollGlass(colorScheme, corner: 14)
+            .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -2089,12 +2089,12 @@ private struct PayrollEmployeeDetailSheet: View {
                         }
                     }
                     .padding(.vertical, 3)
-                    if entry.id != wallet.latestEntries.last?.id { Divider().opacity(0.35) }
+                    if entry.id != wallet.latestEntries.last?.id { Divider().overlay(AlmaSwiftTheme.separator(colorScheme)) }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .payrollGlass(colorScheme, corner: 14)
+            .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -2164,7 +2164,7 @@ private struct PayrollAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func payrollGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func payrollGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

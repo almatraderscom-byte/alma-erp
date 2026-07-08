@@ -353,8 +353,8 @@ struct BusinessArchiveScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(BusinessArchivePalette.amber500.opacity(0.07),
-                    in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14)
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(BusinessArchivePalette.amber500.opacity(0.25), lineWidth: 1))
     }
 
@@ -371,8 +371,8 @@ struct BusinessArchiveScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(BusinessArchivePalette.red500.opacity(0.07),
-                    in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14)
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(BusinessArchivePalette.red500.opacity(0.25), lineWidth: 1))
     }
 
@@ -395,7 +395,7 @@ struct BusinessArchiveScreen: View {
             Color.clear.frame(height: 6)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .businessArchiveGlass(colorScheme, corner: 16)
+        .businessArchiveGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Archive history (web batch list) ──
@@ -424,7 +424,7 @@ struct BusinessArchiveScreen: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .businessArchiveGlass(colorScheme, corner: 16)
+        .businessArchiveGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Shared bits ──
@@ -458,7 +458,7 @@ struct BusinessArchiveScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).businessArchiveGlass(colorScheme, corner: 12)
+            .padding(12).businessArchiveGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -467,13 +467,13 @@ struct BusinessArchiveScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .businessArchiveGlass(colorScheme, corner: 16)
+        .businessArchiveGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<3, id: \.self) { _ in
             Color.clear.frame(height: 120)
-                .businessArchiveGlass(colorScheme, corner: 16)
+                .businessArchiveGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .businessArchiveShimmer()
         }
     }
@@ -514,8 +514,8 @@ private struct BusinessArchiveModuleRow: View {
                     .foregroundStyle(BusinessArchivePalette.accentText(colorScheme))
                     .frame(width: 34, height: 34)
                     .background(BusinessArchivePalette.coral.opacity(0.12),
-                                in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                         .strokeBorder(BusinessArchivePalette.coral.opacity(0.28), lineWidth: 1))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(module.label ?? module.key)
@@ -579,8 +579,8 @@ private struct BusinessArchiveBatchRow: View {
                     .foregroundStyle(BusinessArchivePalette.accentText(colorScheme))
                     .frame(width: 34, height: 34)
                     .background(BusinessArchivePalette.coral.opacity(0.12),
-                                in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                         .strokeBorder(BusinessArchivePalette.coral.opacity(0.28), lineWidth: 1))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(batch.name ?? "—")
@@ -632,8 +632,8 @@ private struct BusinessArchiveModuleSheet: View {
                         .foregroundStyle(BusinessArchivePalette.accentText(colorScheme))
                         .frame(width: 46, height: 46)
                         .background(BusinessArchivePalette.coral.opacity(0.12),
-                                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                             .strokeBorder(BusinessArchivePalette.coral.opacity(0.28), lineWidth: 1))
                     VStack(alignment: .leading, spacing: 2) {
                         Text(module.label ?? module.key).font(.headline)
@@ -660,7 +660,7 @@ private struct BusinessArchiveModuleSheet: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(14)
-                .businessArchiveGlass(colorScheme, corner: 14)
+                .businessArchiveGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
 
                 Text("আর্কাইভ চালাতে (dry run · confirm phrase) ওয়েব পেজ ব্যবহার করুন — এই স্ক্রিনটি শুধু দেখার জন্য।")
                     .font(.caption2).foregroundStyle(.secondary)
@@ -688,7 +688,7 @@ private struct BusinessArchiveModuleSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .businessArchiveGlass(colorScheme, corner: 14)
+        .businessArchiveGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func infoRow(_ label: String, _ value: String, color: Color = .primary) -> some View {
@@ -740,7 +740,7 @@ private struct BusinessArchiveBatchSheet: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(14)
-                .businessArchiveGlass(colorScheme, corner: 14)
+                .businessArchiveGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
 
                 if batch.status == "COMPLETED" {
                     Text("Restore batch চালাতে ওয়েব পেজ ব্যবহার করুন — এই স্ক্রিনটি শুধু দেখার জন্য।")
@@ -835,7 +835,7 @@ private struct BusinessArchiveAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func businessArchiveGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func businessArchiveGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

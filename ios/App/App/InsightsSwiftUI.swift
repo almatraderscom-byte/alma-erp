@@ -345,7 +345,7 @@ struct InsightsScreen: View {
                     }
                 }
                 .frame(width: 34, height: 34)
-                .insightsGlass(colorScheme, corner: 12)
+                .insightsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
             }
             .buttonStyle(.plain)
             .disabled(vm.refreshing || vm.loading)
@@ -428,7 +428,7 @@ struct InsightsScreen: View {
             }
             Color.clear.frame(height: 4)
         }
-        .insightsGlass(colorScheme, corner: 16)
+        .insightsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── রিঅর্ডার দরকার ──
@@ -474,7 +474,7 @@ struct InsightsScreen: View {
                 }
                 Color.clear.frame(height: 4)
             }
-            .insightsGlass(colorScheme, corner: 16)
+            .insightsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
     }
 
@@ -532,7 +532,7 @@ struct InsightsScreen: View {
             }
             Color.clear.frame(height: 4)
         }
-        .insightsGlass(colorScheme, corner: 16)
+        .insightsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Shared bits ──
@@ -572,7 +572,7 @@ struct InsightsScreen: View {
         }
         .frame(minWidth: 104, alignment: .leading)
         .padding(12)
-        .insightsGlass(colorScheme, corner: 14)
+        .insightsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func emptyCard(_ title: String, _ desc: String,
@@ -586,7 +586,7 @@ struct InsightsScreen: View {
             Spacer(minLength: 0)
         }
         .padding(14)
-        .insightsGlass(colorScheme, corner: 16)
+        .insightsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func errorCard(_ message: String) -> some View {
@@ -603,7 +603,7 @@ struct InsightsScreen: View {
         }
         .frame(maxWidth: .infinity)
         .padding(16)
-        .insightsGlass(colorScheme, corner: 16)
+        .insightsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var authCard: some View {
@@ -612,13 +612,13 @@ struct InsightsScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .insightsGlass(colorScheme, corner: 16)
+        .insightsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 110)
-                .insightsGlass(colorScheme, corner: 16)
+                .insightsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .insightsShimmer()
         }
     }
@@ -679,7 +679,7 @@ private struct InsightFlagCard: View {
             Spacer(minLength: 0)
         }
         .padding(12)
-        .insightsGlass(colorScheme, corner: 14)
+        .insightsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 }
 
@@ -771,10 +771,10 @@ private struct InsightReorderCard: View {
             }
         }
         .padding(12)
-        .insightsGlass(colorScheme, corner: 16)
+        .insightsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         .overlay {
             if isHigh {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
                     .strokeBorder(InsightPalette.red500.opacity(0.35), lineWidth: 1)
             }
         }
@@ -888,7 +888,7 @@ private struct InsightCustomerSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .insightsGlass(colorScheme, corner: 14)
+        .insightsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var infoCard: some View {
@@ -909,7 +909,7 @@ private struct InsightCustomerSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .insightsGlass(colorScheme, corner: 14)
+        .insightsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func infoRow(_ label: String, _ value: String, color: Color = .primary) -> some View {
@@ -933,7 +933,7 @@ private struct InsightCustomerSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .insightsGlass(colorScheme, corner: 14)
+            .insightsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -1012,7 +1012,7 @@ private struct InsightsAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func insightsGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func insightsGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

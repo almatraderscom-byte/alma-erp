@@ -328,7 +328,7 @@ struct SystemDiagnosticsScreen: View {
                 Image(systemName: "arrow.clockwise")
                     .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
                     .frame(width: 34, height: 34)
-                    .systemDiagnosticsGlass(colorScheme, corner: 12)
+                    .systemDiagnosticsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
             }
             .buttonStyle(.plain)
             .disabled(vm.loading)
@@ -363,7 +363,7 @@ struct SystemDiagnosticsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .systemDiagnosticsGlass(colorScheme, corner: 16)
+        .systemDiagnosticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     /// Web ConfigBadge, re-set as a native status-dot service row.
@@ -426,7 +426,7 @@ struct SystemDiagnosticsScreen: View {
                             }
                             .frame(minWidth: 78, alignment: .leading)
                             .padding(10)
-                            .systemDiagnosticsGlass(colorScheme, corner: 12)
+                            .systemDiagnosticsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                         }
                     }
                     .padding(.horizontal, 2)
@@ -457,7 +457,7 @@ struct SystemDiagnosticsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .systemDiagnosticsGlass(colorScheme, corner: 16)
+        .systemDiagnosticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func metricRow(_ label: String, _ value: String, color: Color = .primary) -> some View {
@@ -501,7 +501,7 @@ struct SystemDiagnosticsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .systemDiagnosticsGlass(colorScheme, corner: 16)
+        .systemDiagnosticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func selfieKpi(_ label: String, _ value: String, color: Color) -> some View {
@@ -516,7 +516,7 @@ struct SystemDiagnosticsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .systemDiagnosticsGlass(colorScheme, corner: 12)
+        .systemDiagnosticsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func selfieLogRow(_ row: SysDiagSelfieLog) -> some View {
@@ -576,7 +576,7 @@ struct SystemDiagnosticsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .systemDiagnosticsGlass(colorScheme, corner: 16)
+        .systemDiagnosticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func telegramLogRow(_ row: SysDiagTelegramLog) -> some View {
@@ -637,7 +637,7 @@ struct SystemDiagnosticsScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).systemDiagnosticsGlass(colorScheme, corner: 12)
+            .padding(12).systemDiagnosticsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -646,13 +646,13 @@ struct SystemDiagnosticsScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .systemDiagnosticsGlass(colorScheme, corner: 16)
+        .systemDiagnosticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 120)
-                .systemDiagnosticsGlass(colorScheme, corner: 16)
+                .systemDiagnosticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .systemDiagnosticsShimmer()
         }
     }
@@ -735,7 +735,7 @@ private struct SystemDiagnosticsAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func systemDiagnosticsGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func systemDiagnosticsGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

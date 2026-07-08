@@ -392,7 +392,7 @@ struct FinanceScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .financeGlass(colorScheme, corner: 14)
+        .financeGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Revenue & margin trend (native bars; tap a month → detail sheet) ──
@@ -422,7 +422,7 @@ struct FinanceScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .financeGlass(colorScheme, corner: 16)
+        .financeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var legend: some View {
@@ -450,7 +450,7 @@ struct FinanceScreen: View {
             Text("Cashflow (report)").font(.subheadline.weight(.bold))
             financeMoneyRow("Inflow", cf?.inflow)
             financeMoneyRow("Outflow", cf?.outflow)
-            Divider().opacity(0.4)
+            Divider().overlay(AlmaSwiftTheme.separator(colorScheme))
             HStack {
                 Text("Net")
                     .font(.footnote.weight(.semibold))
@@ -463,7 +463,7 @@ struct FinanceScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .financeGlass(colorScheme, corner: 16)
+        .financeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Payroll snapshot — web card parity ──
@@ -474,7 +474,7 @@ struct FinanceScreen: View {
             Text("Payroll snapshot").font(.subheadline.weight(.bold))
             financeMoneyRow("Period salary paid", k?.periodSalaryPaid)
             financeMoneyRow("Period advances", k?.periodAdvances)
-            Divider().opacity(0.4)
+            Divider().overlay(AlmaSwiftTheme.separator(colorScheme))
             HStack {
                 Text("Ledger expenses").font(.footnote).foregroundStyle(.secondary)
                 Spacer()
@@ -484,7 +484,7 @@ struct FinanceScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .financeGlass(colorScheme, corner: 16)
+        .financeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func financeMoneyRow(_ label: String, _ amount: Int?) -> some View {
@@ -538,7 +538,7 @@ struct FinanceScreen: View {
                     .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
             .padding(12)
-            .financeGlass(colorScheme, corner: 14)
+            .financeGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
         .buttonStyle(.plain)
     }
@@ -569,7 +569,7 @@ struct FinanceScreen: View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.footnote).foregroundStyle(FinancePalette.red500)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).financeGlass(colorScheme, corner: 12)
+            .padding(12).financeGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -578,13 +578,13 @@ struct FinanceScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .financeGlass(colorScheme, corner: 16)
+        .financeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 110)
-                .financeGlass(colorScheme, corner: 16)
+                .financeGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .financeShimmer()
         }
     }
@@ -679,7 +679,7 @@ private struct FinanceMonthDetailSheet: View {
                 detailRow("Revenue", point.revenue, .primary)
                 detailRow("Expenses", point.expenses, .primary)
                 detailRow("Profit", point.profit, FinancePalette.signed(point.profit, colorScheme))
-                Divider().opacity(0.4)
+                Divider().overlay(AlmaSwiftTheme.separator(colorScheme))
                 HStack {
                     Text("MARGIN").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
                     Spacer()
@@ -690,7 +690,7 @@ private struct FinanceMonthDetailSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
-            .financeGlass(colorScheme, corner: 14)
+            .financeGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
             Button {
                 dismiss()
             } label: {
@@ -780,7 +780,7 @@ private struct FinanceAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func financeGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func financeGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

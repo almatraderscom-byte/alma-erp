@@ -247,7 +247,7 @@ struct SettingsUsersScreen: View {
         }
         .frame(minWidth: 84, alignment: .leading)
         .padding(12)
-        .settingsUsersGlass(colorScheme, corner: 14)
+        .settingsUsersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Role filter chips (client-side — /api/users returns the full list) ──
@@ -296,14 +296,14 @@ struct SettingsUsersScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .settingsUsersGlass(colorScheme, corner: 16)
+        .settingsUsersGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func errorCard(_ message: String) -> some View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.footnote).foregroundStyle(SettingsUsersPalette.red500)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).settingsUsersGlass(colorScheme, corner: 12)
+            .padding(12).settingsUsersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var emptyState: some View {
@@ -319,7 +319,7 @@ struct SettingsUsersScreen: View {
     private var loadingRows: some View {
         ForEach(0..<5, id: \.self) { _ in
             Color.clear.frame(height: 74)
-                .settingsUsersGlass(colorScheme, corner: 16)
+                .settingsUsersGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .settingsUsersShimmer()
         }
     }
@@ -371,8 +371,8 @@ private struct SettingsUserRowCard: View {
                 .foregroundStyle(.tertiary)
         }
         .padding(12)
-        .settingsUsersGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .settingsUsersGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             onTap()
@@ -492,7 +492,7 @@ private struct SettingsUserDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .settingsUsersGlass(colorScheme, corner: 14)
+        .settingsUsersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func infoRow(_ label: String, _ value: String,
@@ -521,8 +521,8 @@ private struct SettingsUserDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12).padding(.vertical, 10)
-        .background(SettingsUsersPalette.coral.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10)
+        .background(SettingsUsersPalette.coral.opacity(0.05), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(SettingsUsersPalette.goldDim.opacity(0.25), lineWidth: 1))
     }
 
@@ -625,7 +625,7 @@ private struct SettingsUsersAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func settingsUsersGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func settingsUsersGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

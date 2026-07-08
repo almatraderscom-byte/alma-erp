@@ -239,7 +239,7 @@ struct PaymentAccountsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .paymentAccountsGlass(colorScheme, corner: 16)
+        .paymentAccountsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     /// Business scope chips — the web page reads it from BusinessContext; natively
@@ -285,7 +285,7 @@ struct PaymentAccountsScreen: View {
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
-            .paymentAccountsGlass(colorScheme, corner: 12)
+            .paymentAccountsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var webEscape: some View {
@@ -332,7 +332,7 @@ struct PaymentAccountsScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).paymentAccountsGlass(colorScheme, corner: 12)
+            .padding(12).paymentAccountsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -341,13 +341,13 @@ struct PaymentAccountsScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .paymentAccountsGlass(colorScheme, corner: 16)
+        .paymentAccountsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<3, id: \.self) { _ in
             Color.clear.frame(height: 150)
-                .paymentAccountsGlass(colorScheme, corner: 20)
+                .paymentAccountsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .paymentAccountsShimmer()
         }
     }
@@ -437,9 +437,9 @@ private struct PaymentAccountCard: View {
             LinearGradient(colors: [tint.opacity(colorScheme == .dark ? 0.22 : 0.12),
                                     tint.opacity(colorScheme == .dark ? 0.06 : 0.03)],
                            startPoint: .topLeading, endPoint: .bottomTrailing),
-            in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .paymentAccountsGlass(colorScheme, corner: 20)
-        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        .paymentAccountsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(tint.opacity(method.isPrimary == true ? 0.45 : 0.25), lineWidth: 1))
     }
 
@@ -504,7 +504,7 @@ private struct PaymentAccountsAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func paymentAccountsGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func paymentAccountsGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

@@ -505,7 +505,7 @@ struct ExpensesScreen: View {
         }
         .frame(minWidth: 96, alignment: .leading)
         .padding(12)
-        .expensesGlass(colorScheme, corner: 14)
+        .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Expense mix (web donut card, same palette) ──
@@ -517,7 +517,7 @@ struct ExpensesScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .expensesGlass(colorScheme, corner: 16)
+        .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     /// Web "Highest categories": top 12, category left, ৳ amount right (gold mono).
@@ -540,7 +540,7 @@ struct ExpensesScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .expensesGlass(colorScheme, corner: 16)
+        .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Ledger lines ──
@@ -619,7 +619,7 @@ struct ExpensesScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).expensesGlass(colorScheme, corner: 12)
+            .padding(12).expensesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -628,13 +628,13 @@ struct ExpensesScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .expensesGlass(colorScheme, corner: 16)
+        .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<5, id: \.self) { _ in
             Color.clear.frame(height: 84)
-                .expensesGlass(colorScheme, corner: 16)
+                .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .expensesShimmer()
         }
     }
@@ -772,8 +772,8 @@ private struct ExpenseRowCard: View {
                 .foregroundStyle(ExpensePalette.goldLt)
         }
         .padding(12)
-        .expensesGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             onTap()
@@ -850,7 +850,7 @@ private struct ExpenseDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .expensesGlass(colorScheme, corner: 14)
+        .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func infoRow(_ label: String, _ value: String, color: Color = .primary) -> some View {
@@ -1004,7 +1004,7 @@ private struct ExpenseAddSheet: View {
             Text(label.uppercased()).font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
             content()
                 .padding(11)
-                .expensesGlass(colorScheme, corner: 12)
+                .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         }
     }
 
@@ -1136,7 +1136,7 @@ private struct ExpensesAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func expensesGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func expensesGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

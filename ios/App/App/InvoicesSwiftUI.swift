@@ -484,7 +484,7 @@ struct InvoicesScreen: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
-        .invoicesGlass(colorScheme, corner: 14)
+        .invoicesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Search (web SearchInput parity — server-side search param) ──
@@ -514,7 +514,7 @@ struct InvoicesScreen: View {
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 9)
-        .invoicesGlass(colorScheme, corner: 12)
+        .invoicesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     /// Payment-status filter — the web's Select options as capsule chips.
@@ -620,7 +620,7 @@ struct InvoicesScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).invoicesGlass(colorScheme, corner: 12)
+            .padding(12).invoicesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -629,13 +629,13 @@ struct InvoicesScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .invoicesGlass(colorScheme, corner: 16)
+        .invoicesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 96)
-                .invoicesGlass(colorScheme, corner: 16)
+                .invoicesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .invoicesShimmer()
         }
     }
@@ -727,8 +727,8 @@ private struct InvoiceCard: View {
             }
         }
         .padding(14)
-        .invoicesGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .invoicesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             onTap()
@@ -819,8 +819,8 @@ private struct InvoicePendingCard: View {
             }
         }
         .padding(14)
-        .invoicesGlass(colorScheme, corner: 16)
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+        .invoicesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(InvoicePalette.amber500.opacity(0.35), lineWidth: 1))
     }
 }
@@ -929,7 +929,7 @@ private struct InvoiceDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .invoicesGlass(colorScheme, corner: 14)
+        .invoicesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func infoRow(_ label: String, _ value: String) -> some View {
@@ -958,7 +958,7 @@ private struct InvoiceDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .invoicesGlass(colorScheme, corner: 14)
+        .invoicesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
         .confirmationDialog(
             "\(current.invoiceNumber) — ইনভয়েসটি VOID করবেন?",
             isPresented: $confirmVoid, titleVisibility: .visible
@@ -1019,7 +1019,7 @@ private struct InvoiceDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .invoicesGlass(colorScheme, corner: 14)
+        .invoicesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     /// Native ShareLink on the same public URL the web's Share button copies,
@@ -1146,7 +1146,7 @@ private struct InvoicesAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func invoicesGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func invoicesGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

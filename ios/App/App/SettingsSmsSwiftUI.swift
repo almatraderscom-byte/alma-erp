@@ -307,7 +307,7 @@ struct SettingsSmsScreen: View {
                     .background(
                         LinearGradient(colors: [SettingsSmsPalette.coral, AlmaSwiftTheme.violet],
                                        startPoint: .topLeading, endPoint: .bottomTrailing),
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                     .shadow(color: SettingsSmsPalette.coral.opacity(0.35), radius: 5, y: 2)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("SMS BALANCE")
@@ -334,7 +334,7 @@ struct SettingsSmsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .settingsSmsGlass(colorScheme, corner: 18)
+        .settingsSmsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     /// Master switch state — read-only pill (toggling stays on the web).
@@ -374,7 +374,7 @@ struct SettingsSmsScreen: View {
         }
         .frame(minWidth: 84, alignment: .leading)
         .padding(12)
-        .settingsSmsGlass(colorScheme, corner: 14)
+        .settingsSmsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Templates (web "কোন SMS চালু থাকবে" card — read-only on iOS) ──
@@ -402,7 +402,7 @@ struct SettingsSmsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .settingsSmsGlass(colorScheme, corner: 16)
+        .settingsSmsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Logs header + status filter chips ──
@@ -462,7 +462,7 @@ struct SettingsSmsScreen: View {
         Label(message, systemImage: "exclamationmark.triangle")
             .font(.footnote).foregroundStyle(SettingsSmsPalette.red500)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).settingsSmsGlass(colorScheme, corner: 12)
+            .padding(12).settingsSmsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -471,13 +471,13 @@ struct SettingsSmsScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .settingsSmsGlass(colorScheme, corner: 16)
+        .settingsSmsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 96)
-                .settingsSmsGlass(colorScheme, corner: 16)
+                .settingsSmsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .settingsSmsShimmer()
         }
     }
@@ -529,8 +529,8 @@ private struct SettingsSmsTemplateRow: View {
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background(Color.white.opacity(colorScheme == .dark ? 0.04 : 0.30),
-                    in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12)
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.08 : 0.35), lineWidth: 1))
     }
 }
@@ -573,7 +573,7 @@ private struct SettingsSmsLogCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .settingsSmsGlass(colorScheme, corner: 16)
+        .settingsSmsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var metaLine: String {
@@ -656,7 +656,7 @@ private struct SettingsSmsAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func settingsSmsGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func settingsSmsGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

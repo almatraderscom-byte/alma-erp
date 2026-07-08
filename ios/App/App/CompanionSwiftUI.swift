@@ -115,9 +115,9 @@ private struct CompanionHeaderCard: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
                 .strokeBorder(
                     LinearGradient(
                         colors: [
@@ -163,7 +163,7 @@ struct CompanionScreen: View {
                 .padding(.top, 8)
 
             CompanionVCBox(makeCompanionVC: makeCompanionVC)
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
                 .padding(.horizontal, 6)
                 .padding(.bottom, 6)
         }

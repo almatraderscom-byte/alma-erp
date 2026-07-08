@@ -674,8 +674,8 @@ struct ApprovalsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(ApprovalPalette.amber500.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16)
+        .background(ApprovalPalette.amber500.opacity(0.08), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(ApprovalPalette.amber500.opacity(0.30), lineWidth: 1))
     }
 
@@ -711,7 +711,7 @@ struct ApprovalsScreen: View {
         }
         .frame(minWidth: 84, alignment: .leading)
         .padding(12)
-        .approvalsGlass(colorScheme, corner: 14)
+        .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     /// "Pending by module" — the web's side card, after the list on phone.
@@ -734,7 +734,7 @@ struct ApprovalsScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .approvalsGlass(colorScheme, corner: 16)
+        .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var emptyState: some View {
@@ -766,7 +766,7 @@ struct ApprovalsScreen: View {
                 Image(systemName: "arrow.clockwise")
                     .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
                     .frame(width: 34, height: 34)
-                    .approvalsGlass(colorScheme, corner: 12)
+                    .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
             }
             .buttonStyle(.plain)
             .disabled(vm.agentLoading)
@@ -827,7 +827,7 @@ struct ApprovalsScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).approvalsGlass(colorScheme, corner: 12)
+            .padding(12).approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -836,13 +836,13 @@ struct ApprovalsScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .approvalsGlass(colorScheme, corner: 16)
+        .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 120)
-                .approvalsGlass(colorScheme, corner: 16)
+                .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .approvalsShimmer()
         }
     }
@@ -932,8 +932,8 @@ private struct ApprovalCard: View {
             }
         }
         .padding(14)
-        .approvalsGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             onTap()
@@ -1045,8 +1045,8 @@ private struct LeaveInfoBox: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10).padding(.vertical, 6)
             .background(ApprovalPalette.amber500.opacity(0.07),
-                        in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8)
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                 .strokeBorder(ApprovalPalette.amber500.opacity(0.25), lineWidth: 1))
         }
     }
@@ -1083,8 +1083,8 @@ private struct PayoutSummaryBox: View {
                 .foregroundStyle(ApprovalPalette.amber600)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8).padding(.vertical, 6)
-                .background(ApprovalPalette.amber500.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8)
+                .background(ApprovalPalette.amber500.opacity(0.10), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                     .strokeBorder(ApprovalPalette.amber500.opacity(0.30), lineWidth: 1))
         } else if let p = payout {
             VStack(alignment: .leading, spacing: 2) {
@@ -1102,8 +1102,8 @@ private struct PayoutSummaryBox: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10).padding(.vertical, 8)
-            .background(ApprovalPalette.coral.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8)
+            .background(ApprovalPalette.coral.opacity(0.05), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                 .strokeBorder(ApprovalPalette.coral.opacity(0.25), lineWidth: 1))
         }
     }
@@ -1139,8 +1139,8 @@ private struct SalaryCorrectionDigest: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(ApprovalPalette.coral.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8)
+        .background(ApprovalPalette.coral.opacity(0.05), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(ApprovalPalette.goldDim.opacity(0.25), lineWidth: 1))
     }
 }
@@ -1216,8 +1216,8 @@ private struct AgentActionCard: View {
             }
         }
         .padding(14)
-        .approvalsGlass(colorScheme, corner: 18)
-        .contentShape(RoundedRectangle(cornerRadius: 18))
+        .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
     }
 
     /// Squircle icon badge — coral→violet gradient, one SF symbol per action type.
@@ -1229,7 +1229,7 @@ private struct AgentActionCard: View {
             .background(
                 LinearGradient(colors: [ApprovalPalette.coral, AlmaSwiftTheme.violet],
                                startPoint: .topLeading, endPoint: .bottomTrailing),
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             .shadow(color: ApprovalPalette.coral.opacity(0.35), radius: 5, y: 2)
     }
 
@@ -1352,7 +1352,7 @@ private struct ApprovalDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .approvalsGlass(colorScheme, corner: 14)
+        .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var infoRows: some View {
@@ -1380,7 +1380,7 @@ private struct ApprovalDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .approvalsGlass(colorScheme, corner: 14)
+        .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func infoRow(_ label: String, _ value: String, color: Color = .primary) -> some View {
@@ -1469,7 +1469,7 @@ private struct RejectNoteSheet: View {
                 .lineLimit(3...5)
                 .focused($focused)
                 .padding(12)
-                .approvalsGlass(colorScheme, corner: 12)
+                .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
             Text(trimmed.count < 5
                  ? "\(5 - trimmed.count) more character(s) required"
                  : "Reason will be stored on the approval record.")
@@ -1519,7 +1519,7 @@ private struct WithdrawTxnSheet: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .padding(12)
-                    .approvalsGlass(colorScheme, corner: 12)
+                    .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
             }
             Text(trimmed.isEmpty ? "Transaction ID আবশ্যক" : "এই ID সহ staff-কে SMS পাঠানো হবে।")
                 .font(.caption2)
@@ -1631,7 +1631,7 @@ private struct ApprovalsAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func approvalsGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func approvalsGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

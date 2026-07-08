@@ -233,8 +233,8 @@ struct SettingsBrandingScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12).padding(.vertical, 10)
         .background(SettingsBrandingPalette.coral.opacity(0.05),
-                    in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12)
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(SettingsBrandingPalette.coral.opacity(0.25), lineWidth: 1))
     }
 
@@ -256,7 +256,7 @@ struct SettingsBrandingScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).settingsBrandingGlass(colorScheme, corner: 12)
+            .padding(12).settingsBrandingGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -265,13 +265,13 @@ struct SettingsBrandingScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .settingsBrandingGlass(colorScheme, corner: 16)
+        .settingsBrandingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<3, id: \.self) { _ in
             Color.clear.frame(height: 220)
-                .settingsBrandingGlass(colorScheme, corner: 18)
+                .settingsBrandingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .settingsBrandingShimmer()
         }
     }
@@ -311,7 +311,7 @@ private struct SettingsBrandingCard: View {
             }
         }
         .padding(14)
-        .settingsBrandingGlass(colorScheme, corner: 18)
+        .settingsBrandingGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     // ── Header: brand initial badge + company name + tagline ──
@@ -327,7 +327,7 @@ private struct SettingsBrandingCard: View {
                         colors: [primaryColor ?? SettingsBrandingPalette.coral,
                                  secondaryColor ?? AlmaSwiftTheme.violet],
                         startPoint: .topLeading, endPoint: .bottomTrailing),
-                    in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                 .shadow(color: (primaryColor ?? SettingsBrandingPalette.coral).opacity(0.35),
                         radius: 5, y: 2)
             VStack(alignment: .leading, spacing: 2) {
@@ -374,9 +374,9 @@ private struct SettingsBrandingCard: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title).font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
             ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                     .fill(Color.white.opacity(colorScheme == .dark ? 0.06 : 0.55))
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
                     .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.45), lineWidth: 1)
                 if let url {
                     AsyncImage(url: url) { phase in
@@ -437,8 +437,8 @@ private struct SettingsBrandingCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 8).padding(.vertical, 6)
         .background(Color.white.opacity(colorScheme == .dark ? 0.05 : 0.40),
-                    in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10)
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.09 : 0.40), lineWidth: 1))
     }
 
@@ -497,8 +497,8 @@ private struct SettingsBrandingCard: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(SettingsBrandingPalette.coral.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10)
+        .background(SettingsBrandingPalette.coral.opacity(0.05), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(SettingsBrandingPalette.goldDim.opacity(0.25), lineWidth: 1))
     }
 
@@ -602,7 +602,7 @@ private struct SettingsBrandingAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func settingsBrandingGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func settingsBrandingGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

@@ -232,7 +232,7 @@ struct ActivityScreen: View {
                 Image(systemName: "arrow.clockwise")
                     .font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
                     .frame(width: 34, height: 34)
-                    .activityGlass(colorScheme, corner: 12)
+                    .activityGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
             }
             .buttonStyle(.plain)
             .disabled(vm.loading)
@@ -380,7 +380,7 @@ struct ActivityScreen: View {
         }
         .frame(maxWidth: .infinity)
         .padding(16)
-        .activityGlass(colorScheme, corner: 16)
+        .activityGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var authCard: some View {
@@ -389,13 +389,13 @@ struct ActivityScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .activityGlass(colorScheme, corner: 16)
+        .activityGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<6, id: \.self) { _ in
             Color.clear.frame(height: 76)
-                .activityGlass(colorScheme, corner: 16)
+                .activityGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .activityShimmer()
         }
     }
@@ -445,7 +445,7 @@ private struct ActivityCard: View {
             }
         }
         .padding(12)
-        .activityGlass(colorScheme, corner: 16)
+        .activityGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     /// Web: bold actor + muted action in one line.
@@ -467,7 +467,7 @@ private struct ActivityCard: View {
             .background(
                 LinearGradient(colors: [ActivityPalette.coral, AlmaSwiftTheme.violet],
                                startPoint: .topLeading, endPoint: .bottomTrailing),
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             .shadow(color: ActivityPalette.coral.opacity(0.35), radius: 5, y: 2)
     }
 
@@ -560,7 +560,7 @@ private struct ActivityAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func activityGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func activityGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),

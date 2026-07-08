@@ -389,7 +389,7 @@ struct TaskSpotlightScreen: View {
         }
         .frame(minWidth: 84, alignment: .leading)
         .padding(12)
-        .taskSpotlightGlass(colorScheme, corner: 14)
+        .taskSpotlightGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var emptyState: some View {
@@ -435,7 +435,7 @@ struct TaskSpotlightScreen: View {
         return Label(message, systemImage: icon)
             .font(.footnote).foregroundStyle(color)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12).taskSpotlightGlass(colorScheme, corner: 12)
+            .padding(12).taskSpotlightGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private var authCard: some View {
@@ -444,13 +444,13 @@ struct TaskSpotlightScreen: View {
             Button("লগইন খুলুন") { openWeb("/login", "Login") }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(20)
-        .taskSpotlightGlass(colorScheme, corner: 16)
+        .taskSpotlightGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private var loadingRows: some View {
         ForEach(0..<4, id: \.self) { _ in
             Color.clear.frame(height: 110)
-                .taskSpotlightGlass(colorScheme, corner: 16)
+                .taskSpotlightGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
                 .taskSpotlightShimmer()
         }
     }
@@ -515,8 +515,8 @@ private struct TaskSpotlightCard: View {
             }
         }
         .padding(14)
-        .taskSpotlightGlass(colorScheme, corner: 16)
-        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .taskSpotlightGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             onTap()
@@ -653,7 +653,7 @@ private struct TaskSpotlightDetailSheet: View {
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 140)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
                 }
                 descriptionCard
                 assigneeList
@@ -707,7 +707,7 @@ private struct TaskSpotlightDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .taskSpotlightGlass(colorScheme, corner: 14)
+        .taskSpotlightGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     /// Per-assignee rows — Reminders-style status circle + name + status + resend.
@@ -725,7 +725,7 @@ private struct TaskSpotlightDetailSheet: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .taskSpotlightGlass(colorScheme, corner: 14)
+        .taskSpotlightGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func assigneeRow(_ a: TaskSpotlightAssignment) -> some View {
@@ -907,7 +907,7 @@ private struct TaskSpotlightAurora: View {
 
 @available(iOS 17.0, *)
 private extension View {
-    func taskSpotlightGlass(_ scheme: ColorScheme, corner: CGFloat = 16) -> some View {
+    func taskSpotlightGlass(_ scheme: ColorScheme, corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
         self
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: corner, style: .continuous))
             .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35),
