@@ -19,6 +19,14 @@
 //  fund, advance actions reload advances. Carried lessons: lenient decoding,
 //  refresh cancellation is not an error, aurora/glass copies stay private.
 //
+//  2026-07-08 presentation pass: bento glass board language (Dashboard parity) —
+//  dark hero balance card, count-up numbers, accent-washed stat tiles and per-row
+//  frosted transaction cards with severity-tinted mini bars. Presentation ONLY:
+//  every metric, action, sheet, API call and Bangla string is untouched. All new
+//  motion is gated behind officeFundMotionOK (Reduce Motion / Low Power Mode);
+//  no new blur, no new repeatForever, no timers — the hero ships WITHOUT the
+//  Dashboard's shimmer sweep.
+//
 
 import SwiftUI
 
@@ -34,6 +42,8 @@ private enum OfficeFundPalette {
     static let emerald600 = Color(red: 0.020, green: 0.588, blue: 0.412)     // #059669
     static let green400 = Color(red: 0.290, green: 0.871, blue: 0.502)       // #4ADE80
     static let sky400 = Color(red: 0.220, green: 0.741, blue: 0.973)         // #38BDF8 (OUTSTANDING)
+    static let violet = AlmaSwiftTheme.violet                                // #A78BFA (bento wash)
+    static let sage = AlmaSwiftTheme.sage                                    // #81B29A (bento wash)
 
     /// The web's accent-tinted text reads gold-dim on cream, gold-lt over dark aurora.
     static func accentText(_ scheme: ColorScheme) -> Color {
@@ -535,14 +545,16 @@ struct OfficeFundScreen: View {
         .disabled(busy)
     }
 
-    // ── Balance hero (web KpiCard "ফান্ড ব্যালেন্স", promoted to an iOS hero) ──
+    // ── Balance hero (web KpiCard "ফান্ড ব্যালেন্স" → the board's DARK bento anchor:
+    //    deep indigo base + violet/coral/sage brand washes, dark in BOTH schemes,
+    //    count-up balance. No shimmer sweep — static gradient only.) ──
 
     private var balanceHero: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Image(systemName: "banknote")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(OfficeFundPalette.accentText(colorScheme))
+                    .foregroundStyle(OfficeFundPalette.goldLt)
                 Text("ফান্ড ব্যালেন্স")
                     .font(.caption.weight(.bold)).textCase(.uppercase)
                     .foregroundStyle(.secondary)
@@ -552,24 +564,49 @@ struct OfficeFundScreen: View {
                     .officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
                     .officeFundShimmer()
             } else {
-                Text(OfficeFundFormat.taka(vm.summary?.balance ?? 0))
+                // Count-up presentation of the SAME balance string (OfficeFundFormat.taka
+                // stays the one formatter — never re-derived).
+                OfficeFundCountUp(target: vm.summary?.balance ?? 0,
+                                  format: { OfficeFundFormat.taka($0) })
                     .font(.system(size: 40, weight: .bold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(OfficeFundPalette.positive(colorScheme))
-                    .contentTransition(.numericText())
+                    .foregroundStyle(OfficeFundPalette.green400)
+                    .lineLimit(1).minimumScaleFactor(0.6)
             }
             Text("অফিসের চলতি ফান্ড (পেটি ক্যাশ) · ALMA Lifestyle")
-                .font(.caption2).foregroundStyle(.secondary)
+                .font(.caption2).foregroundStyle(.white.opacity(0.6))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .background {
+            ZStack {
+                // Deep indigo base + brand washes: violet from the top, coral from the
+                // bottom, a sage hint top-right — the BentoHeroCard recipe minus the
+                // shimmer sweep (no new blur / repeatForever on this screen).
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [OfficeFundPalette.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [OfficeFundPalette.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [OfficeFundPalette.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Force dark inside the card so .primary/.secondary/materials read the dark
+        // palette regardless of the system scheme — the board's one dark anchor tile.
+        .environment(\.colorScheme, .dark)
     }
 
-    // ── In / out KPI strip (web's other two KpiCards) ──
+    // ── In / out KPI strip (web's other two KpiCards → bento stat tiles: 2-col grid,
+    //    count-up values, soft accent washes) ──
 
     private var kpiStrip: some View {
-        HStack(spacing: 10) {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                  spacing: 10) {
             kpiCard("মোট যোগ হয়েছে", vm.summary?.totalIn ?? 0,
                     icon: "arrow.down.circle.fill", tint: OfficeFundPalette.positive(colorScheme))
             kpiCard("মোট বের হয়েছে", vm.summary?.totalOut ?? 0,
@@ -584,15 +621,17 @@ struct OfficeFundScreen: View {
                 .foregroundStyle(tint)
             VStack(alignment: .leading, spacing: 2) {
                 Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                Text(AlmaSwiftTheme.takaShort(value))
+                    .lineLimit(1).minimumScaleFactor(0.75)
+                OfficeFundCountUp(target: value, format: { AlmaSwiftTheme.takaShort($0) })
                     .font(.subheadline.weight(.bold))
                     .monospacedDigit()
                     .foregroundStyle(tint)
+                    .lineLimit(1).minimumScaleFactor(0.55)
             }
             Spacer(minLength: 0)
         }
         .padding(12)
-        .officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        .officeFundBentoTile(tint, scheme: colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── My office advances (web "আমার অ্যাডভান্সসমূহ" card — read-only rows) ──
@@ -628,7 +667,6 @@ struct OfficeFundScreen: View {
             } else {
                 ForEach(vm.advances) { adv in
                     advanceRow(adv)
-                    if adv.id != vm.advances.last?.id { Divider().overlay(AlmaSwiftTheme.separator(colorScheme)) }
                 }
             }
         }
@@ -637,6 +675,9 @@ struct OfficeFundScreen: View {
         .officeFundGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
+    /// One advance as its own frosted bento mini-card — status-tinted wash; SETTLED
+    /// rows get a spent/amount mini bar (that fraction is already displayed in the
+    /// meta line: "খরচ ৳…" against the row amount).
     private func advanceRow(_ adv: OfficeFundAdvanceRow) -> some View {
         HStack(alignment: .top, spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
@@ -646,6 +687,11 @@ struct OfficeFundScreen: View {
                 Text(advanceMeta(adv))
                     .font(.caption2).foregroundStyle(.secondary)
                     .lineLimit(1)
+                if adv.status == "SETTLED", let spent = adv.spentAmount, adv.amount > 0 {
+                    OfficeFundMiniBar(fraction: CGFloat(min(max(spent, 0), adv.amount)) / CGFloat(adv.amount),
+                                      color: OfficeFundPalette.positive(colorScheme), height: 4)
+                        .padding(.top, 4)
+                }
             }
             Spacer(minLength: 4)
             VStack(alignment: .trailing, spacing: 3) {
@@ -681,7 +727,8 @@ struct OfficeFundScreen: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .officeFundBentoTile(adv.statusColor, scheme: colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     private func advanceMeta(_ adv: OfficeFundAdvanceRow) -> String {
@@ -718,9 +765,11 @@ struct OfficeFundScreen: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 18)
             } else {
+                // Mini-bar fraction is amount vs the biggest amount among the rows
+                // ALREADY displayed — pure comparison of shown values.
+                let maxAmount = filteredLedger.map { abs($0.amount) }.max() ?? 0
                 ForEach(filteredLedger) { row in
-                    ledgerRow(row)
-                    if row.id != filteredLedger.last?.id { Divider().overlay(AlmaSwiftTheme.separator(colorScheme)) }
+                    ledgerRow(row, maxAmount: maxAmount)
                 }
             }
         }
@@ -738,16 +787,18 @@ struct OfficeFundScreen: View {
         }
     }
 
-    private func ledgerRow(_ row: OfficeFundLedgerRow) -> some View {
-        Button {
+    /// One transaction as its own frosted bento mini-card — the SAME Button/tap-to-detail
+    /// as before, restyled with a credit-green / debit-red wash + gradient mini bar.
+    private func ledgerRow(_ row: OfficeFundLedgerRow, maxAmount: Int) -> some View {
+        let tint = row.isPositive ? OfficeFundPalette.positive(colorScheme) : OfficeFundPalette.red500
+        return Button {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
             selected = row
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: row.isPositive ? "arrow.down.circle.fill" : "arrow.up.circle.fill")
                     .font(.title3)
-                    .foregroundStyle(row.isPositive ? OfficeFundPalette.positive(colorScheme)
-                                                    : OfficeFundPalette.red500)
+                    .foregroundStyle(tint)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(row.labelBn)
                         .font(.caption.weight(.semibold))
@@ -755,15 +806,20 @@ struct OfficeFundScreen: View {
                     Text(ledgerMeta(row))
                         .font(.caption2).foregroundStyle(.secondary)
                         .lineLimit(1)
+                    if maxAmount > 0 {
+                        OfficeFundMiniBar(fraction: CGFloat(abs(row.amount)) / CGFloat(maxAmount),
+                                          color: tint, height: 4)
+                            .padding(.top, 3)
+                    }
                 }
                 Spacer(minLength: 4)
                 Text("\(row.isPositive ? "+" : "−")\(OfficeFundFormat.taka(row.amount))")
                     .font(.footnote.weight(.bold)).monospacedDigit()
-                    .foregroundStyle(row.isPositive ? OfficeFundPalette.positive(colorScheme)
-                                                    : OfficeFundPalette.red500)
+                    .foregroundStyle(tint)
             }
-            .padding(.vertical, 5)
+            .padding(.horizontal, 12).padding(.vertical, 10)
             .contentShape(Rectangle())
+            .officeFundBentoTile(tint, scheme: colorScheme, corner: AlmaSwiftTheme.rControl)
         }
         .buttonStyle(.plain)
     }
@@ -1260,6 +1316,120 @@ private enum OfficeFundFormat {
         if let d = fractional.date(from: iso) { return d }
         let plain = ISO8601DateFormatter()
         return plain.date(from: iso)
+    }
+}
+
+// MARK: - Bento components (OfficeFund-owned copies of the Dashboard bento language —
+// parallel-session rule: page files never import another page's helpers, so the
+// count-up / mini-bar / wash pieces are duplicated here verbatim, renamed OfficeFund*)
+
+/// Central motion gate for the bento animations — count-ups and bar sweeps ALL freeze
+/// to their final state when the owner limits motion: Reduce Motion or Low Power Mode
+/// (the same guard pattern OfficeFundAurora.updateDrift uses).
+@available(iOS 17.0, *)
+private func officeFundMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number: animates 0 → target on first appear (and old → new on refresh),
+/// through the caller's OWN formatter closure — money strings stay byte-identical to
+/// the static rendering. A single Animatable interpolation drives the digits — no
+/// timers. Snaps straight to the final value under Reduce Motion / Low Power Mode.
+@available(iOS 17.0, *)
+private struct OfficeFundCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    let format: (Int) -> String
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        OfficeFundCountUpText(value: shown, format: format)
+            .animation(officeFundMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if officeFundMotionOK(reduceMotion) {
+                    appeared = true          // the implicit spring above interpolates the digits
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+/// Animatable text body for OfficeFundCountUp — SwiftUI interpolates `value` frame-to-frame.
+@available(iOS 17.0, *)
+private struct OfficeFundCountUpText: View, Animatable {
+    var value: Double
+    var format: (Int) -> String
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text(format(Int(value.rounded())))
+    }
+}
+
+/// Soft gradient mini progress bar (row comparisons) — sweeps to its fraction on appear,
+/// frozen under Reduce Motion / Low Power Mode.
+@available(iOS 17.0, *)
+private struct OfficeFundMiniBar: View {
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let fraction: CGFloat
+    let color: Color
+    var delay: Double = 0
+    var height: CGFloat = 7
+    @State private var grow = false
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(scheme == .dark ? 0.10 : 0.06))
+                Capsule()
+                    .fill(LinearGradient(colors: [color.opacity(0.55), color],
+                                         startPoint: .leading, endPoint: .trailing))
+                    .frame(width: max(geo.size.width * min(max(fraction, 0), 1), height) * (grow ? 1 : 0.001))
+            }
+        }
+        .frame(height: height)
+        .onAppear {
+            if officeFundMotionOK(reduceMotion) {
+                withAnimation(.spring(duration: 0.6, bounce: 0.18).delay(delay)) { grow = true }
+            } else {
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { grow = true }
+            }
+        }
+    }
+}
+
+/// Shared bento tile backdrop: frosted glass + a soft diagonal accent wash.
+@available(iOS 17.0, *)
+private func officeFundBentoWash(_ accent: Color, scheme: ColorScheme,
+                                 corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
+    ZStack {
+        RoundedRectangle(cornerRadius: corner, style: .continuous).fill(.ultraThinMaterial)
+        RoundedRectangle(cornerRadius: corner, style: .continuous)
+            .fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+        LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.14 : 0.10), .clear],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+}
+
+@available(iOS 17.0, *)
+private extension View {
+    /// Bento tile chrome = wash backdrop + the hairline glass stroke (BentoStatTile recipe).
+    func officeFundBentoTile(_ accent: Color, scheme: ColorScheme,
+                             corner: CGFloat = AlmaSwiftTheme.rCard) -> some View {
+        self
+            .background { officeFundBentoWash(accent, scheme: scheme, corner: corner) }
+            .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous)
+                .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
     }
 }
 
