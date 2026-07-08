@@ -892,25 +892,130 @@ struct CreditUsageScreen: View {
 
     private var logsPane: some View {
         VStack(spacing: 12) {
-            filterChips.cuAppear(0)
-            logStatTrio.cuAppear(1)
-            Text("ALMA ERP-এর প্রতিটি খরচ — chat · voice · image · call · research — end to end। row-তে ট্যাপ করে input/output/cached/TTFT বিস্তারিত।")
-                .font(.system(size: 11)).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 3)
-            if vm.groupedEvents.isEmpty && !vm.loading {
-                Text("এখনো কোনো ইভেন্ট নেই").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity).padding(.vertical, 30)
-            }
-            ForEach(Array(vm.groupedEvents.enumerated()), id: \.element.day) { gi, group in
-                HStack(alignment: .firstTextBaseline) {
-                    Text(group.day).font(.system(size: 11.5, weight: .bold)); Spacer()
-                    Text(CUFormat.usd(group.subtotal)).font(.system(size: 12, weight: .bold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(CUPalette.accentText(scheme))
-                }.padding(.horizontal, 4).padding(.top, 4)
+            logRangeBar.cuAppear(0)
+            activityCard.cuAppear(1)
+            filterChips.cuAppear(2)
+            if let err = vm.logsError { errorCard(err) }
+            if vm.logsLoading && vm.usageEvents.isEmpty {
+                loadingRows
+            } else if vm.filteredUsageEvents.isEmpty {
+                Text("এই রেঞ্জে কোনো ইভেন্ট নেই").font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity).padding(.vertical, 30)
+            } else {
                 VStack(spacing: 0) {
-                    ForEach(group.items) { e in logRow(e) }
+                    ForEach(vm.filteredUsageEvents) { e in usageRow(e) }
                 }
-                .cuSolid(scheme, corner: 18).cuAppear(gi + 2)
+                .cuSolid(scheme, corner: 18).cuAppear(3)
             }
+            if vm.nextCursor != nil && !vm.logsLoading { loadMoreButton }
         }
+    }
+
+    // ── Range picker (OpenRouter-style) + Live ──
+
+    private var logRangeBar: some View {
+        HStack(spacing: 8) {
+            Menu {
+                Section("Past") {
+                    ForEach(CULogRange.presets) { r in rangeMenuButton(r) }
+                }
+                Section {
+                    ForEach(CULogRange.shortcuts) { r in rangeMenuButton(r) }
+                }
+                Divider()
+                Button { showLogCustomSheet = true } label: {
+                    Label("Custom range…", systemImage: "calendar")
+                }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "clock").font(.system(size: 11, weight: .semibold)).foregroundStyle(CUPalette.coral)
+                    Text(rangeChipLabel).font(.system(size: 12, weight: .bold)).lineLimit(1)
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 13).padding(.vertical, 9).cuGlass(scheme, corner: AlmaSwiftTheme.rControl)
+            }
+            .buttonStyle(CUPress())
+            Spacer(minLength: 8)
+            liveChip
+        }
+    }
+
+    private func rangeMenuButton(_ r: CULogRange) -> some View {
+        Button {
+            vm.logRange = r
+            Task { await vm.loadUsageLogs() }
+        } label: {
+            if vm.logRange == r { Label(r.label, systemImage: "checkmark") } else { Text(r.label) }
+        }
+    }
+
+    private var rangeChipLabel: String {
+        vm.logRange == .custom
+            ? "\(CUFormat.prettyDT(vm.logCustomFrom)) – \(CUFormat.prettyDT(vm.logCustomTo))"
+            : vm.logRange.label
+    }
+
+    private var liveChip: some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.2)) { vm.live.toggle() }
+            if vm.live { Task { await vm.loadUsageLogs() } }
+        } label: {
+            HStack(spacing: 6) {
+                CULiveDot(on: vm.live)
+                Text("Live").font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(vm.live ? CUPalette.emerald : .secondary)
+            }
+            .padding(.horizontal, 13).padding(.vertical, 9)
+            .cuGlass(scheme, corner: AlmaSwiftTheme.rControl)
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+                .strokeBorder(vm.live ? CUPalette.emerald.opacity(0.55) : Color.clear, lineWidth: 1))
+        }
+        .buttonStyle(CUPress())
+    }
+
+    // ── Activity mini-chart (calls per bucket over the selected range) ──
+
+    private var activityCard: some View {
+        let maxCalls = max(vm.buckets.map(\.calls).max() ?? 0, 1)
+        let spansDays = vm.windowSpansDays
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("\(vm.totalCalls ?? vm.usageEvents.count)")
+                    .font(.system(size: 20, weight: .bold, design: .rounded).monospacedDigit())
+                    .contentTransition(.numericText())
+                Text("কল · এই রেঞ্জে").font(.system(size: 10.5)).foregroundStyle(.secondary)
+                Spacer()
+                Text(CUFormat.usd(vm.totalCostUsd ?? 0))
+                    .font(.system(size: 15, weight: .bold, design: .rounded).monospacedDigit())
+                    .foregroundStyle(CUPalette.accentText(scheme))
+                    .contentTransition(.numericText())
+            }
+            .animation(.spring(duration: 0.4), value: vm.totalCalls)
+            if vm.buckets.isEmpty {
+                Text(vm.logsLoading ? "লোড হচ্ছে…" : "এই রেঞ্জে কোনো কল নেই")
+                    .font(.system(size: 10.5)).foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            } else {
+                HStack(alignment: .bottom, spacing: vm.buckets.count > 40 ? 1.5 : 2.5) {
+                    ForEach(Array(vm.buckets.enumerated()), id: \.offset) { _, b in
+                        RoundedRectangle(cornerRadius: 1.5)
+                            .fill(b.calls > 0
+                                  ? AnyShapeStyle(LinearGradient(colors: [CUPalette.coral, CUPalette.gold], startPoint: .bottom, endPoint: .top))
+                                  : AnyShapeStyle(Color.primary.opacity(0.06)))
+                            .frame(height: b.calls > 0 ? max(CGFloat(b.calls) / CGFloat(maxCalls) * 44, 3) : 2)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .frame(height: 44, alignment: .bottom)
+            }
+            HStack {
+                Text(CUFormat.windowAxis(vm.windowFrom, spansDays: spansDays))
+                Spacer()
+                Text(CUFormat.windowAxis(vm.windowTo, spansDays: spansDays))
+            }
+            .font(.system(size: 9).monospacedDigit()).foregroundStyle(.tertiary)
+        }
+        .padding(14).frame(maxWidth: .infinity, alignment: .leading).cuSolid(scheme, corner: 18)
     }
 
     private var filterChips: some View {
@@ -930,81 +1035,126 @@ struct CreditUsageScreen: View {
             }.padding(.horizontal, 1)
         }
     }
-    private var logStatTrio: some View {
-        let today = vm.groupedEvents.first
-        return HStack(spacing: 9) {
-            statPill("আজকের ইভেন্ট", "\(today?.items.count ?? 0)")
-            statPill("আজ খরচ", CUFormat.usd(today?.subtotal ?? 0))
-            statPill("ব্যর্থ", "\(vm.failedCount)")
-        }
-    }
+    // ── Log rows ──
 
-    private func logRow(_ e: CULogEvent) -> some View {
+    private func usageRow(_ e: CUUsageEvent) -> some View {
         let tint = CUPalette.provider(e.provider)
-        let isOpen = expanded.contains(e.id)
         return VStack(spacing: 0) {
-            Button {
-                withAnimation(.spring(duration: 0.3)) {
-                    if isOpen { expanded.remove(e.id) } else { expanded.insert(e.id) }
-                }
-            } label: {
+            Button { detailEvent = e } label: {
                 HStack(spacing: 11) {
                     Image(systemName: CULabel.icon(kind: e.kind, provider: e.provider))
-                        .font(.system(size: 14)).foregroundStyle(tint).frame(width: 33, height: 33)
-                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+                        .font(.system(size: 13)).foregroundStyle(tint).frame(width: 31, height: 31)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
-                            Text(e.model ?? CULabel.provider(e.provider)).font(.system(size: 12.5, weight: .bold)).lineLimit(1)
-                            Text(CULabel.roleTag(kind: e.kind)).font(.system(size: 8.5, weight: .semibold))
-                                .padding(.horizontal, 6).padding(.vertical, 1).background(Color.primary.opacity(0.08), in: Capsule()).foregroundStyle(.secondary)
+                            Text(e.shortModel).font(.system(size: 12.5, weight: .bold)).lineLimit(1)
+                            Text(e.taskLabel ?? CULabel.roleTag(kind: e.kind)).font(.system(size: 8.5, weight: .semibold))
+                                .padding(.horizontal, 6).padding(.vertical, 1)
+                                .background(Color.primary.opacity(0.08), in: Capsule()).foregroundStyle(.secondary)
+                                .lineLimit(1)
                         }
-                        HStack(spacing: 9) {
-                            Text(CUFormat.time(e.occurredAt))
-                            if let i = e.inputTokens, let o = e.outputTokens {
-                                HStack(spacing: 5) {
-                                    Text("↓\(CUFormat.tok(i))").foregroundStyle(CUPalette.sage)
-                                    Text("↑\(CUFormat.tok(o))").foregroundStyle(CUPalette.violet)
-                                    if let ca = e.cachedTokens, ca > 0 { Text("⚡\(CUFormat.tok(ca))").foregroundStyle(.tertiary) }
-                                }
-                            }
-                            if let ms = e.latencyMs { Text("⏱ \(CUFormat.ms(ms))") }
+                        HStack(spacing: 8) {
+                            Text(CUFormat.logTime(e.occurredAt, withDate: vm.windowSpansDays))
+                            if let i = e.inputTokens { Text("↓\(CUFormat.tok(i))").foregroundStyle(CUPalette.sage) }
+                            if let o = e.outputTokens { Text("↑\(CUFormat.tok(o))").foregroundStyle(CUPalette.violet) }
+                            if let ca = e.cacheReadTokens, ca > 0 { Text("⚡\(CUFormat.tok(ca))").foregroundStyle(.tertiary) }
                         }
                         .font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 4)
                     VStack(alignment: .trailing, spacing: 3) {
-                        Text(CUFormat.usd(e.costUsd)).font(.system(size: 13.5, weight: .bold, design: .rounded).monospacedDigit())
+                        Text(CUFormat.usd(e.costUsd)).font(.system(size: 13, weight: .bold, design: .rounded).monospacedDigit())
                         if let ok = e.ok {
                             Label(ok ? "সফল" : "ব্যর্থ", systemImage: "circle.fill").font(.system(size: 8.5, weight: .semibold))
                                 .foregroundStyle(ok ? CUPalette.emerald : CUPalette.red)
                         }
                     }
                 }
-                .padding(.horizontal, 14).padding(.vertical, 11).contentShape(Rectangle())
+                .padding(.horizontal, 14).padding(.vertical, 10).contentShape(Rectangle())
             }
             .buttonStyle(CUPressRow())
-            if isOpen { logDetail(e).transition(.opacity.combined(with: .move(edge: .top))) }
             Divider().opacity(0.4).padding(.leading, 14)
         }
     }
 
-    private func logDetail(_ e: CULogEvent) -> some View {
-        let cols = Array(repeating: GridItem(.flexible(), alignment: .leading), count: 3)
-        return LazyVGrid(columns: cols, alignment: .leading, spacing: 10) {
-            detailCell("Input", e.inputTokens.map { "\(CUFormat.tok($0))" } ?? "—")
-            detailCell("Output", e.outputTokens.map { "\(CUFormat.tok($0))" } ?? "—")
-            detailCell("Cached", e.cachedTokens.map { "\(CUFormat.tok($0))" } ?? "—")
-            detailCell("TTFT", e.ttftMs.map { CUFormat.ms($0) } ?? "—")
-            detailCell("Latency", e.latencyMs.map { CUFormat.ms($0) } ?? "—")
-            detailCell("Cost", CUFormat.usd(e.costUsd))
+    private var loadMoreButton: some View {
+        Button { Task { await vm.loadUsageLogs(reset: false) } } label: {
+            HStack(spacing: 8) {
+                if vm.loadingMore { ProgressView().controlSize(.small) }
+                Text(vm.loadingMore ? "লোড হচ্ছে…" : "আরো দেখুন").font(.system(size: 12.5, weight: .bold))
+            }
+            .frame(maxWidth: .infinity).padding(.vertical, 12)
         }
-        .padding(14).padding(.top, 2)
+        .buttonStyle(CUPress()).foregroundStyle(CUPalette.accentText(scheme))
+        .cuGlass(scheme, corner: 14)
+        .disabled(vm.loadingMore)
     }
-    private func detailCell(_ k: String, _ v: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(k).font(.system(size: 8.5, weight: .semibold)).textCase(.uppercase).kerning(0.4).foregroundStyle(.tertiary)
-            Text(v).font(.system(size: 12, weight: .bold).monospacedDigit())
+
+    // ── Detail sheet: EVERY stored DB field, raw truth ──
+
+    private func logDetailSheet(_ e: CUUsageEvent) -> some View {
+        NavigationStack {
+            List {
+                Section("ইভেন্ট") {
+                    detailRow("সময়", CUFormat.fullDT(e.occurredAt))
+                    detailRow("Provider", CULabel.provider(e.provider))
+                    detailRow("Kind", e.kindLabel.map { "\(e.kind) · \($0)" } ?? e.kind)
+                    if let m = e.modelId { detailRow("Model", m) }
+                    if let ml = e.model, ml != e.modelId { detailRow("Model label", ml) }
+                    detailRow("Cost (USD)", CUFormat.usdFull(e.costUsd))
+                }
+                Section("টোকেন") {
+                    detailRow("Input", e.inputTokens.map { "\($0)" } ?? "—")
+                    detailRow("Output", e.outputTokens.map { "\($0)" } ?? "—")
+                    detailRow("Cache read", e.cacheReadTokens.map { "\($0)" } ?? "—")
+                    detailRow("Cache write", e.cacheWriteTokens.map { "\($0)" } ?? "—")
+                }
+                Section("Raw — units (DB)") {
+                    if e.units.isEmpty {
+                        Text("খালি").font(.system(size: 12)).foregroundStyle(.secondary)
+                    } else {
+                        ForEach(e.units.keys.sorted(), id: \.self) { k in
+                            detailRow(k, e.units[k]?.display ?? "null")
+                        }
+                    }
+                }
+                Section("রেফারেন্স") {
+                    detailRow("Event ID", e.id)
+                    if let cid = e.conversationId { detailRow("Conversation", cid) }
+                    if let jid = e.jobId { detailRow("Message/Job", jid) }
+                }
+            }
+            .navigationTitle("লগ বিস্তারিত").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("বন্ধ") { detailEvent = nil } } }
         }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func detailRow(_ k: String, _ v: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(k).font(.system(size: 9, weight: .semibold)).textCase(.uppercase).kerning(0.4).foregroundStyle(.tertiary)
+            Text(v).font(.system(size: 12.5, weight: .semibold).monospacedDigit()).textSelection(.enabled)
+        }
+        .padding(.vertical, 1)
+    }
+
+    // ── Custom log-range sheet (date + time, OpenRouter "Custom range…") ──
+
+    private var logCustomSheet: some View {
+        NavigationStack {
+            Form {
+                DatePicker("শুরু", selection: $vm.logCustomFrom, in: ...Date(), displayedComponents: [.date, .hourAndMinute])
+                DatePicker("শেষ", selection: $vm.logCustomTo, in: ...Date(), displayedComponents: [.date, .hourAndMinute])
+            }
+            .navigationTitle("কাস্টম রেঞ্জ").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) {
+                Button("প্রয়োগ") {
+                    vm.logRange = .custom
+                    showLogCustomSheet = false
+                    Task { await vm.loadUsageLogs() }
+                } } }
+        }
+        .presentationDetents([.height(280)])
     }
 
     // ── Custom date sheet ──
@@ -1128,6 +1278,55 @@ private enum CUFormat {
         if cal.isDateInYesterday(d) { return "গতকাল" }
         let f = DateFormatter(); f.dateFormat = "d MMM"; f.locale = Locale(identifier: "bn_BD"); f.timeZone = cal.timeZone; return f.string(from: d)
     }
+
+    // ── Logs explorer formatting ──
+
+    /// Full-precision USD for the detail sheet — cost_usd is Decimal(10,6) in the DB.
+    static func usdFull(_ n: Double) -> String { "$" + String(format: "%.6f", n) }
+
+    private static let isoOut: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime]; return f
+    }()
+    static func isoString(_ d: Date) -> String { isoOut.string(from: d) }
+
+    private static func dhakaFormatter(_ format: String) -> DateFormatter {
+        let f = DateFormatter()
+        f.dateFormat = format
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "Asia/Dhaka")
+        return f
+    }
+    /// Log-row time: HH:mm:ss, with the date prefixed when the window spans > 1 day.
+    static func logTime(_ iso: String, withDate: Bool) -> String {
+        guard let d = parse(iso) else { return "" }
+        return dhakaFormatter(withDate ? "d MMM · HH:mm:ss" : "HH:mm:ss").string(from: d)
+    }
+    /// Mini-chart axis endpoint label.
+    static func windowAxis(_ d: Date, spansDays: Bool) -> String {
+        dhakaFormatter(spansDays ? "d MMM HH:mm" : "HH:mm").string(from: d)
+    }
+    /// Compact date-time for the custom-range chip.
+    static func prettyDT(_ d: Date) -> String { dhakaFormatter("d MMM HH:mm").string(from: d) }
+    /// Full timestamp for the detail sheet.
+    static func fullDT(_ iso: String) -> String {
+        guard let d = parse(iso) else { return iso }
+        return dhakaFormatter("d MMM yyyy · HH:mm:ss").string(from: d)
+    }
+}
+
+/// Live-mode indicator: solid green dot with a pulsing halo while ON.
+@available(iOS 17.0, *)
+private struct CULiveDot: View {
+    let on: Bool
+    var body: some View {
+        ZStack {
+            if on {
+                Circle().fill(CUPalette.emerald).frame(width: 7, height: 7).modifier(CUPulse())
+            }
+            Circle().fill(on ? CUPalette.emerald : Color.secondary.opacity(0.45)).frame(width: 7, height: 7)
+        }
+        .frame(width: 9, height: 9)
+    }
 }
 
 // MARK: - Aurora + materials (page-owned)
@@ -1162,14 +1361,22 @@ private struct CUAurora: View {
                                center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
                 ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
                     Circle()
-                        .fill(b.color)
-                        .frame(width: b.size, height: b.size)
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
                         .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
                                   y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
-                        .blur(radius: 70)
                 }
             }
             .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
             .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
                 .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
@@ -1179,12 +1386,23 @@ private struct CUAurora: View {
 
     /// Battery guard: drift only when the owner allows motion — Reduce Motion and
     /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
     private func updateDrift() {
         if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
             var tx = Transaction(); tx.disablesAnimations = true
             withTransaction(tx) { drift = false }
         } else if !drift {
-            withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
         }
     }
 }

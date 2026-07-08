@@ -1780,40 +1780,63 @@ private func bentoWash(_ accent: Color, scheme: ColorScheme) -> some View {
     .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
 }
 
-// MARK: - Command Deck hero + spec panel
+// MARK: - Bento hero (the one DARK anchoring widget of the board)
 
-/// The commanding revenue hero (Command Deck): big value + real trend pill + avg-order meta
-/// + a large integrated area chart with a Bangla date axis.
+/// The dark hero KPI card — deliberately dark in BOTH schemes (the board's anchor tile):
+/// revenue count-up + real MoM delta badge, net-profit and total-orders secondary numbers
+/// (own tints + badges), avg-order meta, and the integrated daily area chart with a Bangla
+/// date axis. A slow diagonal light sheen shimmers across the glass — frozen under Reduce
+/// Motion / Low Power Mode (same guard as DashAurora).
 @available(iOS 17.0, *)
-private struct CommandHeroCard: View {
-    @Environment(\.colorScheme) private var scheme
-    let value: String
-    let avgOrder: String
+private struct BentoHeroCard: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let kpis: DashKpis
+    let avgOrder: Int
+    let ordersMeta: String
     let spark: [Int]
     let dates: [String]
-    let trend: Double?
+    let revenueTrend: Double?
+    let profitTrend: Double?
+    @State private var shimmer = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("মোট আয় · REVENUE").font(.system(size: 10, weight: .bold)).tracking(0.8)
-                    .foregroundStyle(DashPalette.accentText(scheme))
+                    .foregroundStyle(DashPalette.goldLt)
                 Spacer()
-                if let trend { TrendChip(pct: trend) }
+                if let revenueTrend { TrendChip(pct: revenueTrend) }
             }
             HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text("৳").font(.title.weight(.bold)).foregroundStyle(.secondary)
-                Text(stripTaka(value)).font(.system(size: 40, weight: .heavy)).monospacedDigit()
-                    .minimumScaleFactor(0.6).lineLimit(1).contentTransition(.numericText())
+                Text("৳").font(.title.weight(.bold)).foregroundStyle(.white.opacity(0.55))
+                DashCountUp(target: kpis.totalRevenue,
+                            format: { bnD(dashGrouped(abs($0))).prependingMinus($0 < 0) })
+                    .font(.system(size: 40, weight: .heavy)).monospacedDigit()
+                    .foregroundStyle(.white)
+                    .lineLimit(1).minimumScaleFactor(0.6)
             }
             .padding(.top, 8)
-            Text("গড় অর্ডার \(avgOrder)").font(.caption2).foregroundStyle(.secondary).padding(.top, 5)
+            Text("গড় অর্ডার \(bnTk(avgOrder)) · \(ordersMeta)")
+                .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.top, 5)
+
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "নিট মুনাফা", target: kpis.netProfit, format: bnTk,
+                         tint: kpis.netProfit < 0 ? DashPalette.red500 : DashPalette.green400,
+                         badge: profitTrend, sub: "রিটার্ন লস বাদে")
+                Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+                    .padding(.vertical, 2).padding(.horizontal, 14)
+                heroStat(label: "মোট অর্ডার", target: kpis.totalOrders, format: bnN,
+                         tint: .white, badge: nil, sub: "এই রেঞ্জে")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+
             if !spark.isEmpty {
-                DashLineChart(values: spark, color: DashPalette.coral, height: 112).padding(.top, 10)
+                DashLineChart(values: spark, color: DashPalette.coral, height: 96).padding(.top, 12)
                 if let axis = axisLabels {
                     HStack(spacing: 0) {
                         ForEach(Array(axis.enumerated()), id: \.offset) { i, t in
-                            Text(t).font(.system(size: 9)).foregroundStyle(.secondary)
+                            Text(t).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
                             if i < axis.count - 1 { Spacer(minLength: 0) }
                         }
                     }
@@ -1825,16 +1848,61 @@ private struct CommandHeroCard: View {
         .padding(16)
         .background {
             ZStack {
-                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
-                LinearGradient(colors: [DashPalette.coral.opacity(scheme == .dark ? 0.16 : 0.12), .clear],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-                HStack(spacing: 0) { Rectangle().fill(DashPalette.coral).frame(width: 3); Spacer(minLength: 0) }
+                // Deep indigo base + brand washes: violet from the top, coral from the
+                // bottom, a sage hint top-right — ALMA palette, never the ref's blue/teal.
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [DashPalette.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [DashPalette.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [DashPalette.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+                // Slow diagonal light sweep — the premium glass sheen (gated in updateShimmer).
+                LinearGradient(colors: [.clear, .white.opacity(0.09), .clear],
+                               startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 140)
+                    .blur(radius: 6)
+                    .rotationEffect(.degrees(16))
+                    .scaleEffect(1.6)
+                    .offset(x: shimmer ? 340 : -340)
             }
             .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         }
         .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
-            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Force dark inside the card so .primary/materials/TrendChip read the dark palette
+        // regardless of the system scheme — this tile is always the board's dark anchor.
+        .environment(\.colorScheme, .dark)
+        .onAppear { updateShimmer() }
+        .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+            .receive(on: DispatchQueue.main)) { _ in updateShimmer() }
+    }
+
+    private func heroStat(label: String, target: Int, format: @escaping (Int) -> String,
+                          tint: Color, badge: Double?, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 5) {
+                Text(label).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                    .foregroundStyle(.white.opacity(0.55))
+                if let badge { TrendChip(pct: badge) }
+            }
+            DashCountUp(target: target, format: format)
+                .font(.system(size: 19, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.6)
+            Text(sub).font(.system(size: 8.5)).foregroundStyle(.white.opacity(0.5))
+        }
+    }
+
+    /// Battery guard (DashAurora pattern): the sheen sweeps only when the owner allows
+    /// motion — Reduce Motion and Low Power Mode both freeze it off-card.
+    private func updateShimmer() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { shimmer = false }
+        } else if !shimmer {
+            withAnimation(.easeInOut(duration: 7.5).repeatForever(autoreverses: true)) { shimmer = true }
+        }
     }
 
     /// 4 evenly-spaced Bangla date ticks (last = "আজ"); nil when there are too few dates.
@@ -1846,134 +1914,6 @@ private struct CommandHeroCard: View {
         if out.contains(where: { $0.isEmpty }) { return nil }
         out[out.count - 1] = "আজ"
         return out
-    }
-
-    private func stripTaka(_ s: String) -> String { s.hasPrefix("৳") ? String(s.dropFirst()) : s }
-}
-
-/// One cell of the KPI spec panel.
-private struct StatItem: Identifiable {
-    let id = UUID()
-    let k: String
-    let v: String
-    let tint: Color
-    var pct: Double? = nil
-    var sub: String? = nil
-}
-
-/// The 8-KPI hairline spec panel (4×2) — the Command Deck's calm, data-dense stat block.
-@available(iOS 17.0, *)
-private struct StatBlock: View {
-    @Environment(\.colorScheme) private var scheme
-    let items: [StatItem]
-
-    var body: some View {
-        let hair = AlmaSwiftTheme.separator(scheme)
-        VStack(spacing: 0) {
-            row(0, hair: hair)
-            Rectangle().fill(hair).frame(height: 1)
-            row(4, hair: hair)
-        }
-        .dashGlass(scheme, corner: AlmaSwiftTheme.rCard)
-    }
-
-    private func row(_ start: Int, hair: Color) -> some View {
-        HStack(spacing: 0) {
-            ForEach(0..<4, id: \.self) { i in
-                if i > 0 { Rectangle().fill(hair).frame(width: 1) }
-                if start + i < items.count {
-                    cell(items[start + i])
-                } else {
-                    Color.clear.frame(maxWidth: .infinity)
-                }
-            }
-        }
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func cell(_ it: StatItem) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(it.k.uppercased()).font(.system(size: 8.5, weight: .bold)).tracking(0.3)
-                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
-            Text(it.v).font(.system(size: 15, weight: .heavy)).monospacedDigit()
-                .foregroundStyle(it.tint).lineLimit(1).minimumScaleFactor(0.55)
-                .contentTransition(.numericText())
-            if let p = it.pct {
-                TrendChip(pct: p)
-            } else if let s = it.sub {
-                Text(s).font(.system(size: 8.5)).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10).padding(.vertical, 11)
-        .dashPress()
-    }
-}
-
-/// One KPI tile — optional trend pill, optional right-side ring (Delivered).
-@available(iOS 17.0, *)
-private struct KpiTile: View {
-    @Environment(\.colorScheme) private var scheme
-    let label: String
-    let value: String
-    let valueTint: Color
-    let accent: Color
-    var sub: String? = nil
-    var trend: Double? = nil
-    var ring: DashRingSpec? = nil
-
-    var body: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 5) {
-                    Text(label.uppercased()).font(.system(size: 10, weight: .bold)).tracking(0.5)
-                        .foregroundStyle(.secondary).lineLimit(1)
-                    if let trend { TrendChip(pct: trend) }
-                }
-                HStack(alignment: .firstTextBaseline, spacing: 1) {
-                    Text(value).font(.title3.weight(.bold)).monospacedDigit()
-                        .foregroundStyle(valueTint).lineLimit(1).minimumScaleFactor(0.6)
-                        .contentTransition(.numericText())
-                    if let ring { Text("/\(bnN(ring.total))").font(.caption2).foregroundStyle(.secondary) }
-                }
-                if let sub { Text(sub).font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8) }
-            }
-            if let ring { Spacer(minLength: 0); DashRing(percent: ring.percent, color: DashPalette.sage) }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(13)
-        .background {
-            ZStack {
-                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
-                LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.12 : 0.08), .clear],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-                HStack(spacing: 0) { Rectangle().fill(accent).frame(width: 3); Spacer(minLength: 0) }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
-        }
-        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
-            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
-    }
-}
-
-/// Compact 3-up chip (Return Loss / Return Rate / Pending).
-@available(iOS 17.0, *)
-private struct MiniChip: View {
-    @Environment(\.colorScheme) private var scheme
-    let label: String
-    let value: String
-    let tint: Color
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.4)
-                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
-            Text(value).font(.subheadline.weight(.heavy)).monospacedDigit()
-                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.7).contentTransition(.numericText())
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 11).padding(.vertical, 10)
-        .dashGlass(scheme, corner: AlmaSwiftTheme.rControl)
     }
 }
 
@@ -2152,23 +2092,35 @@ private struct DashLineChart: View {
     }
 }
 
-/// Monthly revenue bars + profit overlay (web MonthlyRevenueChart).
+/// Monthly revenue bars + profit overlay (web MonthlyRevenueChart) — soft gradient bars
+/// that sweep up from the baseline with a staggered spring on appear (frozen under Reduce
+/// Motion / Low Power Mode).
 @available(iOS 17.0, *)
 private struct DashMonthlyBars: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let points: [DashMonthlyPoint]
+    @State private var grow = false
     private var maxRevenue: Int { max(points.map(\.revenue).max() ?? 1, 1) }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .bottom, spacing: 12) {
-                ForEach(points) { p in bar(p) }
+                ForEach(Array(points.enumerated()), id: \.element.id) { i, p in bar(p, index: i) }
             }
             .padding(.horizontal, 2)
         }
         .animation(.spring(duration: 0.5, bounce: 0.2), value: points)
+        .onAppear {
+            if dashMotionOK(reduceMotion) {
+                grow = true            // each bar animates via its own staggered spring below
+            } else {
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { grow = true }
+            }
+        }
     }
 
-    private func bar(_ p: DashMonthlyPoint) -> some View {
+    private func bar(_ p: DashMonthlyPoint, index: Int) -> some View {
         let h = max(CGFloat(p.revenue) / CGFloat(maxRevenue) * 120, 3)
         let ph = p.revenue > 0
             ? max(CGFloat(max(p.profit, 0)) / CGFloat(maxRevenue) * 120, p.profit > 0 ? 3 : 0) : 0
@@ -2176,9 +2128,10 @@ private struct DashMonthlyBars: View {
             Text(bnTk(p.revenue))
                 .font(.system(size: 8, weight: .semibold).monospacedDigit())
                 .foregroundStyle(.secondary).fixedSize()
+                .opacity(grow ? 1 : 0)
             ZStack(alignment: .bottom) {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(LinearGradient(colors: [DashPalette.goldLt, DashPalette.coral],
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(LinearGradient(colors: [DashPalette.goldLt.opacity(0.85), DashPalette.coral],
                                          startPoint: .top, endPoint: .bottom))
                     .frame(width: 26, height: h)
                 if ph > 0 {
@@ -2187,30 +2140,36 @@ private struct DashMonthlyBars: View {
                         .frame(width: 10, height: ph)
                 }
             }
+            .scaleEffect(x: 1, y: grow ? 1 : 0.02, anchor: .bottom)
             .frame(height: 124, alignment: .bottom)
             Text(DashFormat.monthShort(p.month))
                 .font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
         }
+        .animation(.spring(duration: 0.55, bounce: 0.2).delay(Double(index) * 0.05), value: grow)
     }
 }
 
-/// Donut (web DonutChart / StatusPieChart) — segments from (label, value, colour).
+/// Donut (web DonutChart / StatusPieChart) — segments from (label, value, colour). The
+/// ring sweeps in clockwise from 12 o'clock on appear (frozen under Reduce Motion / Low
+/// Power Mode).
 @available(iOS 17.0, *)
 private struct DashDonut: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let slices: [(String, Int, Color)]
     var size: CGFloat = 150
     var lineWidth: CGFloat = 20
-    /// Centre label override — defaults to the total (web parity); Command Deck passes
+    /// Centre label override — defaults to the total (web parity); the bento cards pass
     /// e.g. "২৮"/"মোট" (status) or "৫"/"টাইপ" (category).
     var centerTop: String? = nil
     var centerBottom: String = "total"
+    @State private var sweep: CGFloat = 0
     private var total: Int { max(slices.reduce(0) { $0 + $1.1 }, 1) }
 
     var body: some View {
         ZStack {
             ForEach(Array(segments.enumerated()), id: \.offset) { _, seg in
                 Circle()
-                    .trim(from: seg.start, to: seg.end)
+                    .trim(from: seg.start * sweep, to: seg.end * sweep)
                     .stroke(seg.color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
                     .rotationEffect(.degrees(-90))
             }
@@ -2223,6 +2182,14 @@ private struct DashDonut: View {
         .frame(width: size, height: size)
         .frame(maxWidth: .infinity)
         .animation(.spring(duration: 0.6, bounce: 0.1), value: slices.map { $0.1 })
+        .onAppear {
+            if dashMotionOK(reduceMotion) {
+                withAnimation(.spring(duration: 0.8, bounce: 0)) { sweep = 1 }
+            } else {
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { sweep = 1 }
+            }
+        }
     }
 
     private var segments: [(start: CGFloat, end: CGFloat, color: Color)] {
@@ -2283,14 +2250,22 @@ private struct DashAurora: View {
                                center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
                 ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
                     Circle()
-                        .fill(b.color)
-                        .frame(width: b.size, height: b.size)
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
                         .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
                                   y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
-                        .blur(radius: 70)
                 }
             }
             .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
             .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
                 .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
@@ -2300,12 +2275,23 @@ private struct DashAurora: View {
 
     /// Battery guard: drift only when the owner allows motion — Reduce Motion and
     /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
     private func updateDrift() {
         if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
             var tx = Transaction(); tx.disablesAnimations = true
             withTransaction(tx) { drift = false }
         } else if !drift {
-            withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
         }
     }
 }
