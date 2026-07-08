@@ -249,43 +249,122 @@ struct CUBalances: Decodable {
     }
 }
 
-/// One ledger event. `latencyMs` / `ttftMs` / `cachedTokens` / `ok` decode when the
-/// backend adds them, and stay nil until then (the row hides those bits gracefully).
-struct CULogEvent: Decodable, Identifiable, Equatable {
+/// Loosely-typed JSON for the raw `units` payload — the detail sheet shows every
+/// stored DB field verbatim (owner rule: raw truth, never fabricate a field).
+enum CUJSON: Decodable, Equatable {
+    case string(String), number(Double), bool(Bool), null
+    indirect case array([CUJSON])
+    indirect case object([String: CUJSON])
+
+    init(from d: Decoder) throws {
+        let c = try d.singleValueContainer()
+        if c.decodeNil() { self = .null }
+        else if let b = try? c.decode(Bool.self) { self = .bool(b) }
+        else if let n = try? c.decode(Double.self) { self = .number(n) }
+        else if let s = try? c.decode(String.self) { self = .string(s) }
+        else if let a = try? c.decode([CUJSON].self) { self = .array(a) }
+        else if let o = try? c.decode([String: CUJSON].self) { self = .object(o) }
+        else { self = .null }
+    }
+    var display: String {
+        switch self {
+        case .string(let s): return s
+        case .number(let n):
+            return (n == n.rounded() && abs(n) < 1e15) ? String(Int64(n)) : String(n)
+        case .bool(let b): return b ? "true" : "false"
+        case .null: return "null"
+        case .array(let a): return "[" + a.map(\.display).joined(separator: ", ") + "]"
+        case .object(let o):
+            return "{" + o.keys.sorted().map { "\($0): \(o[$0]?.display ?? "null")" }.joined(separator: ", ") + "}"
+        }
+    }
+}
+
+/// One usage-log event from /api/assistant/usage-logs — normalized convenience
+/// fields + the FULL raw `units` JSON as stored in agent_cost_events.
+struct CUUsageEvent: Decodable, Identifiable, Equatable {
     let id: String
     let occurredAt: String
     let provider: String
-    let model: String?
     let kind: String
+    let kindLabel: String?
+    let modelId: String?
+    let model: String?
+    let taskLabel: String?
     let costUsd: Double
     let inputTokens: Int?
     let outputTokens: Int?
-    let cachedTokens: Int?
-    let latencyMs: Int?
-    let ttftMs: Int?
+    let cacheReadTokens: Int?
+    let cacheWriteTokens: Int?
     let ok: Bool?
+    let conversationId: String?
+    let jobId: String?
+    let units: [String: CUJSON]
 
     private enum K: String, CodingKey {
-        case id, occurredAt, provider, model, kind, costUsd, inputTokens, outputTokens
-        case cachedTokens, latencyMs, ttftMs, ok
+        case id, occurredAt, provider, kind, kindLabel, modelId, model, taskLabel, costUsd
+        case inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, ok
+        case conversationId, jobId, units
     }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: K.self)
         occurredAt = (try? c.decodeIfPresent(String.self, forKey: .occurredAt)) ?? ""
         provider = (try? c.decodeIfPresent(String.self, forKey: .provider)) ?? ""
-        model = try? c.decodeIfPresent(String.self, forKey: .model)
         kind = (try? c.decodeIfPresent(String.self, forKey: .kind)) ?? ""
+        kindLabel = try? c.decodeIfPresent(String.self, forKey: .kindLabel)
+        modelId = try? c.decodeIfPresent(String.self, forKey: .modelId)
+        model = try? c.decodeIfPresent(String.self, forKey: .model)
+        taskLabel = try? c.decodeIfPresent(String.self, forKey: .taskLabel)
         costUsd = CUFlex.double(c, .costUsd) ?? 0
         inputTokens = CUFlex.int(c, .inputTokens)
         outputTokens = CUFlex.int(c, .outputTokens)
-        cachedTokens = CUFlex.int(c, .cachedTokens)
-        latencyMs = CUFlex.int(c, .latencyMs)
-        ttftMs = CUFlex.int(c, .ttftMs)
+        cacheReadTokens = CUFlex.int(c, .cacheReadTokens)
+        cacheWriteTokens = CUFlex.int(c, .cacheWriteTokens)
         ok = try? c.decodeIfPresent(Bool.self, forKey: .ok)
+        conversationId = try? c.decodeIfPresent(String.self, forKey: .conversationId)
+        jobId = try? c.decodeIfPresent(String.self, forKey: .jobId)
+        units = (try? c.decodeIfPresent([String: CUJSON].self, forKey: .units)) ?? [:]
         id = (try? c.decodeIfPresent(String.self, forKey: .id)) ?? "\(provider)-\(occurredAt)-\(kind)"
     }
+
+    /// Short display model: drop any vendor prefix ("deepseek/deepseek-chat" → tail).
+    var shortModel: String {
+        let raw = modelId ?? model ?? ""
+        guard !raw.isEmpty else { return CULabel.provider(provider) }
+        if let slash = raw.lastIndex(of: "/"), slash != raw.indices.last { return String(raw[raw.index(after: slash)...]) }
+        return raw
+    }
 }
-private struct CULogsResponse: Decodable { let events: [CULogEvent] }
+
+struct CUUsageBucket: Decodable, Equatable {
+    let start: String
+    let calls: Int
+    let costUsd: Double
+    private enum K: String, CodingKey { case start, calls, costUsd }
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: K.self)
+        start = (try? c.decodeIfPresent(String.self, forKey: .start)) ?? ""
+        calls = CUFlex.int(c, .calls) ?? 0
+        costUsd = CUFlex.double(c, .costUsd) ?? 0
+    }
+}
+
+struct CUUsagePage: Decodable {
+    let events: [CUUsageEvent]
+    let nextCursor: String?
+    let buckets: [CUUsageBucket]?
+    let totalCalls: Int?
+    let totalCostUsd: Double?
+    private enum K: String, CodingKey { case events, nextCursor, buckets, totalCalls, totalCostUsd }
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: K.self)
+        events = (try? c.decodeIfPresent([CUUsageEvent].self, forKey: .events)) ?? []
+        nextCursor = try? c.decodeIfPresent(String.self, forKey: .nextCursor)
+        buckets = try? c.decodeIfPresent([CUUsageBucket].self, forKey: .buckets)
+        totalCalls = CUFlex.int(c, .totalCalls)
+        totalCostUsd = CUFlex.double(c, .totalCostUsd)
+    }
+}
 
 // MARK: - Range
 
@@ -295,6 +374,64 @@ enum CURange: String, CaseIterable, Identifiable {
     var unitIsHour: Bool { self == .d1 }
 }
 
+/// OpenRouter-spirit time ranges for the Logs explorer. Presets slide with "now";
+/// shortcuts anchor on the Dhaka calendar (same convention as the web cost APIs).
+enum CULogRange: String, CaseIterable, Identifiable, Equatable {
+    case m15, m30, h1, h3, d1, d2, w1, mo1
+    case today, yesterday, thisWeek, thisMonth
+    case custom
+
+    var id: String { rawValue }
+    static let presets: [CULogRange] = [.m15, .m30, .h1, .h3, .d1, .d2, .w1, .mo1]
+    static let shortcuts: [CULogRange] = [.today, .yesterday, .thisWeek, .thisMonth]
+
+    var label: String {
+        switch self {
+        case .m15: return "Past 15m"
+        case .m30: return "Past 30m"
+        case .h1: return "Past 1h"
+        case .h3: return "Past 3h"
+        case .d1: return "Past 1d"
+        case .d2: return "Past 2d"
+        case .w1: return "Past 1w"
+        case .mo1: return "Past 1mo"
+        case .today: return "Today"
+        case .yesterday: return "Yesterday"
+        case .thisWeek: return "This Week"
+        case .thisMonth: return "This Month"
+        case .custom: return "Custom"
+        }
+    }
+
+    /// Resolve to a concrete [from, to] window at call time.
+    func window(customFrom: Date, customTo: Date) -> (from: Date, to: Date) {
+        let now = Date()
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "Asia/Dhaka") ?? .current
+        switch self {
+        case .m15: return (now.addingTimeInterval(-15 * 60), now)
+        case .m30: return (now.addingTimeInterval(-30 * 60), now)
+        case .h1: return (now.addingTimeInterval(-3600), now)
+        case .h3: return (now.addingTimeInterval(-3 * 3600), now)
+        case .d1: return (now.addingTimeInterval(-86_400), now)
+        case .d2: return (now.addingTimeInterval(-2 * 86_400), now)
+        case .w1: return (now.addingTimeInterval(-7 * 86_400), now)
+        case .mo1: return (cal.date(byAdding: .month, value: -1, to: now) ?? now.addingTimeInterval(-30 * 86_400), now)
+        case .today: return (cal.startOfDay(for: now), now)
+        case .yesterday:
+            let sod = cal.startOfDay(for: now)
+            return (cal.date(byAdding: .day, value: -1, to: sod) ?? sod.addingTimeInterval(-86_400), sod)
+        case .thisWeek:
+            return (cal.dateInterval(of: .weekOfYear, for: now)?.start ?? cal.startOfDay(for: now), now)
+        case .thisMonth:
+            return (cal.dateInterval(of: .month, for: now)?.start ?? cal.startOfDay(for: now), now)
+        case .custom:
+            let lo = min(customFrom, customTo), hi = max(customFrom, customTo)
+            return (lo, hi)
+        }
+    }
+}
+
 // MARK: - View model
 
 @available(iOS 17.0, *)
@@ -302,7 +439,6 @@ enum CURange: String, CaseIterable, Identifiable {
 final class CreditUsageVM {
     var summary: CUSummary? = nil
     var balances: CUBalances? = nil
-    var events: [CULogEvent] = []
     var loading = false
     var error: String? = nil
     var authExpired = false
@@ -310,7 +446,23 @@ final class CreditUsageVM {
     var range: CURange = .d30
     var customFrom = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
     var customTo = Date()
+
+    // ── Logs explorer (OpenRouter-style) ──
+    var logRange: CULogRange = .h1   // owner default: open on Past 1 hour, never huge
+    var logCustomFrom = Calendar.current.date(byAdding: .day, value: -1, to: Date()) ?? Date()
+    var logCustomTo = Date()
+    var live = false
     var logFilter: String = "সব"
+    var usageEvents: [CUUsageEvent] = []
+    var buckets: [CUUsageBucket] = []
+    var totalCalls: Int? = nil
+    var totalCostUsd: Double? = nil
+    var nextCursor: String? = nil
+    var logsLoading = false
+    var loadingMore = false
+    var logsError: String? = nil
+    var windowFrom = Date().addingTimeInterval(-3600)
+    var windowTo = Date()
 
     func load() async {
         loading = true; error = nil; defer { loading = false }
@@ -318,7 +470,7 @@ final class CreditUsageVM {
             summary = try await AlmaAPI.shared.get("/api/assistant/costs/summary")
             authExpired = false
             if let b: CUBalances = try? await AlmaAPI.shared.get("/api/assistant/costs/balances") { balances = b }
-            await loadLogs()
+            await loadUsageLogs()
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
         } catch {
@@ -326,9 +478,45 @@ final class CreditUsageVM {
             self.error = error.localizedDescription
         }
     }
-    func loadLogs() async {
-        if let r: CULogsResponse = try? await AlmaAPI.shared.get("/api/assistant/costs/logs", query: ["limit": "120"]) {
-            events = r.events
+
+    /// First page (reset) or next page (reset: false) of the range-filtered log.
+    /// Load-more keeps the SAME window the first page resolved, so keyset
+    /// pagination stays consistent while "Past X" ranges slide with the clock.
+    func loadUsageLogs(reset: Bool = true) async {
+        if reset { logsLoading = true } else {
+            guard nextCursor != nil, !loadingMore else { return }
+            loadingMore = true
+        }
+        logsError = nil
+        defer { logsLoading = false; loadingMore = false }
+        if reset {
+            let w = logRange.window(customFrom: logCustomFrom, customTo: logCustomTo)
+            windowFrom = w.from; windowTo = w.to
+        }
+        var q: [String: String?] = [
+            "from": CUFormat.isoString(windowFrom),
+            "to": CUFormat.isoString(windowTo),
+            "limit": "100",
+        ]
+        if !reset { q["cursor"] = nextCursor }
+        do {
+            let page: CUUsagePage = try await AlmaAPI.shared.get("/api/assistant/usage-logs", query: q)
+            if reset {
+                usageEvents = page.events
+                buckets = page.buckets ?? []
+                totalCalls = page.totalCalls
+                totalCostUsd = page.totalCostUsd
+            } else {
+                let known = Set(usageEvents.map(\.id))
+                usageEvents += page.events.filter { !known.contains($0.id) }
+            }
+            nextCursor = page.nextCursor
+            authExpired = false
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+        } catch {
+            if Self.isCancellation(error) { return }
+            logsError = error.localizedDescription
         }
     }
     static func isCancellation(_ error: Error) -> Bool {
@@ -358,9 +546,9 @@ final class CreditUsageVM {
     }
     var stackOrder: [String] { rangeByProvider.map(\.0) }
 
-    var filteredEvents: [CULogEvent] {
-        guard logFilter != "সব" else { return events }
-        return events.filter { e in
+    var filteredUsageEvents: [CUUsageEvent] {
+        guard logFilter != "সব" else { return usageEvents }
+        return usageEvents.filter { e in
             switch logFilter {
             case "Gemini": return e.provider == "gemini"
             case "Anthropic": return e.provider == "anthropic"
@@ -372,17 +560,8 @@ final class CreditUsageVM {
             }
         }
     }
-    var groupedEvents: [(day: String, subtotal: Double, items: [CULogEvent])] {
-        let groups = Dictionary(grouping: filteredEvents) { CUFormat.dayKey($0.occurredAt) }
-        return groups.map { (day: $0.key, subtotal: $0.value.reduce(0) { $0 + $1.costUsd }, items: $0.value) }
-            .sorted { ($0.items.first?.occurredAt ?? "") > ($1.items.first?.occurredAt ?? "") }
-    }
-    var avgTtft: Int? {
-        let vals = events.compactMap { $0.ttftMs }
-        guard !vals.isEmpty else { return nil }
-        return vals.reduce(0, +) / vals.count
-    }
-    var failedCount: Int { events.filter { $0.ok == false }.count }
+    /// > 1 day window → log rows show the date next to HH:mm:ss.
+    var windowSpansDays: Bool { windowTo.timeIntervalSince(windowFrom) > 86_460 }
 }
 
 // MARK: - Screen
@@ -393,11 +572,13 @@ struct CreditUsageScreen: View {
     @State private var vm = CreditUsageVM()
     @State private var pane = 0
     @State private var selectedBar: Int? = nil
-    @State private var expanded: Set<String> = []
     @State private var showCustomSheet = false
+    @State private var showLogCustomSheet = false
+    @State private var detailEvent: CUUsageEvent? = nil
     let openWeb: (_ path: String, _ title: String) -> Void
 
-    private let liveTimer = Timer.publish(every: 20, on: .main, in: .common).autoconnect()
+    /// Live mode: ~10s auto-refresh of the first log page while ON (green dot pulses).
+    private let liveTimer = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
 
     var body: some View {
         ScrollView {
@@ -418,14 +599,18 @@ struct CreditUsageScreen: View {
         .refreshable { await vm.load() }
         .task { await vm.load() }
         .onReceive(liveTimer) { _ in
-            guard pane == 1, !vm.loading else { return }
-            Task { await vm.loadLogs() }
+            guard pane == 1, vm.live, !vm.logsLoading, !vm.loadingMore else { return }
+            Task { await vm.loadUsageLogs() }
         }
         .sheet(isPresented: $showCustomSheet) { customSheet }
+        .sheet(isPresented: $showLogCustomSheet) { logCustomSheet }
+        .sheet(item: $detailEvent) { e in logDetailSheet(e) }
         .sensoryFeedback(.selection, trigger: pane)
         .sensoryFeedback(.selection, trigger: vm.range)
         .sensoryFeedback(.impact(weight: .light), trigger: selectedBar)
         .sensoryFeedback(.selection, trigger: vm.logFilter)
+        .sensoryFeedback(.selection, trigger: vm.logRange)
+        .sensoryFeedback(.selection, trigger: vm.live)
     }
 
     private var paneSwitch: some View {
@@ -632,9 +817,9 @@ struct CreditUsageScreen: View {
 
     private func statTrio(_ s: CUSummary) -> some View {
         HStack(spacing: 9) {
-            statPill("মোট রিকোয়েস্ট", "\(vm.events.count)")
             statPill("আজ খরচ", CUFormat.usd(s.todayUsd))
-            statPill("গড় TTFT", vm.avgTtft.map { CUFormat.ms($0) } ?? "—")
+            statPill("এই মাস", CUFormat.usd(s.monthUsd))
+            statPill("পূর্বাভাস", CUFormat.usd(s.forecastUsd))
         }
     }
     private func statPill(_ k: String, _ v: String) -> some View {
