@@ -452,26 +452,11 @@ struct OrdersScreen: View {
         .presentationDetents([.height(320)])
     }
 
-    // ── Stats cards (ORDERS / REVENUE / PROFIT — same numbers the web header shows) ──
+    // ── Stats (ORDERS / REVENUE / PROFIT — same numbers the web header shows), now as
+    //    the bento dark hero anchor (Dashboard board language, owner spec 2026-07-08) ──
 
     private var statsRow: some View {
-        HStack(spacing: 10) {
-            statCard("ORDERS", "\(vm.total)", .primary)
-            statCard("REVENUE", AlmaSwiftTheme.takaShort(vm.revenue), AlmaSwiftTheme.coral)
-            statCard("PROFIT", AlmaSwiftTheme.takaShort(vm.profit),
-                     vm.profit >= 0 ? AlmaSwiftTheme.ios27Green(colorScheme) : AlmaSwiftTheme.ios27Red(colorScheme))
-        }
-    }
-
-    private func statCard(_ title: String, _ value: String, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            Text(value).font(.headline.weight(.bold)).foregroundStyle(tint)
-                .lineLimit(1).minimumScaleFactor(0.6)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        OrdBentoHeroCard(revenue: vm.revenue, profit: vm.profit, orders: vm.total)
     }
 
     // ── Channel / payment / sort (the web header's dropdowns, as one native menu) ──
@@ -993,6 +978,128 @@ private struct Shimmer: ViewModifier {
 @available(iOS 17.0, *)
 extension View {
     fileprivate func shimmering() -> some View { modifier(Shimmer()) }
+}
+
+// MARK: - Bento components (Orders-owned copies of the Dashboard board language —
+// per-file copies are this repo's parallel-session convention, no cross-file imports)
+
+/// Central motion gate — count-ups freeze under Reduce Motion / Low Power.
+@available(iOS 17.0, *)
+private func ordMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number (0 → target on appear, old → new on refresh) — one Animatable
+/// interpolation, no timers; snaps straight to the value when motion is limited.
+@available(iOS 17.0, *)
+private struct OrdCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    let format: (Int) -> String
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        OrdCountUpText(value: shown, format: format)
+            .animation(ordMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if ordMotionOK(reduceMotion) {
+                    appeared = true
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct OrdCountUpText: View, Animatable {
+    var value: Double
+    var format: (Int) -> String
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text(format(Int(value.rounded())))
+    }
+}
+
+/// The dark hero anchor — deliberately dark in BOTH schemes (Dashboard hero recipe:
+/// deep indigo base + violet/coral washes + a sage hint). Revenue count-up headline
+/// plus the PROFIT / ORDERS split — the exact three numbers the old stat strip showed
+/// (revenue/profit = Delivered rows in the active filter, orders = visible rows).
+@available(iOS 17.0, *)
+private struct OrdBentoHeroCard: View {
+    let revenue: Int
+    let profit: Int
+    let orders: Int
+
+    private static let goldLt = Color(red: 0.957, green: 0.635, blue: 0.549)  // #F4A28C
+    private static let green400 = Color(red: 0.290, green: 0.871, blue: 0.502) // #4ADE80
+    private static let red500 = Color(red: 0.937, green: 0.267, blue: 0.267)   // #EF4444
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("মোট আয় · REVENUE").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                .foregroundStyle(Self.goldLt)
+            OrdCountUp(target: revenue, format: { AlmaSwiftTheme.takaShort($0) })
+                .font(.system(size: 40, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(.white)
+                .lineLimit(1).minimumScaleFactor(0.6)
+                .padding(.top, 8)
+            Text("ডেলিভারড বিক্রি — এই ফিল্টারে")
+                .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.top, 5)
+
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "Profit",
+                         value: OrdCountUp(target: profit, format: { AlmaSwiftTheme.takaShort($0) }),
+                         tint: profit >= 0 ? Self.green400 : Self.red500,
+                         sub: "ডেলিভারড মুনাফা")
+                Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+                    .padding(.vertical, 2).padding(.horizontal, 14)
+                heroStat(label: "Orders",
+                         value: OrdCountUp(target: orders, format: { "\($0)" }),
+                         tint: .white, sub: "এই ফিল্টারে")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [AlmaSwiftTheme.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Always the board's dark anchor — force dark traits inside the card.
+        .environment(\.colorScheme, .dark)
+    }
+
+    private func heroStat(label: String, value: OrdCountUp, tint: Color, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.5)
+                .foregroundStyle(.white.opacity(0.55))
+            value
+                .font(.system(size: 20, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint)
+                .lineLimit(1).minimumScaleFactor(0.6)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+        }
+    }
 }
 
 // MARK: - Preview (stubbed — live data needs the app session)
