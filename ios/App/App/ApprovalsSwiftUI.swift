@@ -1705,6 +1705,159 @@ private extension View {
     func approvalsShimmer() -> some View { modifier(ApprovalsShimmer()) }
 }
 
+// MARK: - Bento components (Approvals-owned copies of the Dashboard board language —
+// per-file copies are this repo's parallel-session convention, no cross-file imports)
+
+/// Central motion gate — count-ups and washes freeze under Reduce Motion / Low Power.
+@available(iOS 17.0, *)
+private func apvMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number (0 → target on appear, old → new on refresh) — one Animatable
+/// interpolation, no timers; snaps straight to the value when motion is limited.
+@available(iOS 17.0, *)
+private struct ApvCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        ApvCountUpText(value: shown)
+            .animation(apvMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if apvMotionOK(reduceMotion) {
+                    appeared = true
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct ApvCountUpText: View, Animatable {
+    var value: Double
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text("\(Int(value.rounded()))")
+    }
+}
+
+/// Shared tile backdrop: frosted glass + a soft diagonal accent wash.
+@available(iOS 17.0, *)
+private func apvBentoWash(_ accent: Color, scheme: ColorScheme) -> some View {
+    ZStack {
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+        LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.14 : 0.10), .clear],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+}
+
+/// Small glass stat tile — count-up value + sub line over a soft accent wash.
+/// Counts keep the strip's plain digits (web parity), tints unchanged.
+@available(iOS 17.0, *)
+private struct ApvBentoStatTile: View {
+    @Environment(\.colorScheme) private var scheme
+    let label: String
+    let value: Int
+    let sub: String
+    let tint: Color
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
+            ApvCountUp(target: value)
+                .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.55)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 13).padding(.vertical, 12)
+        .background { apvBentoWash(accent, scheme: scheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+    }
+}
+
+/// The dark hero anchor — deliberately dark in BOTH schemes (Dashboard hero recipe:
+/// deep indigo base + violet/coral washes + a sage hint). Pending total count-up plus
+/// the critical/high split; no shimmer, no chart — approvals is a queue, keep it calm.
+@available(iOS 17.0, *)
+private struct ApvBentoHeroCard: View {
+    let pending: Int
+    let critical: Int
+    let high: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("অনুমোদন বাকি · PENDING").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                .foregroundStyle(ApprovalPalette.goldLt)
+            ApvCountUp(target: pending)
+                .font(.system(size: 40, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(.white)
+                .lineLimit(1).minimumScaleFactor(0.6)
+                .padding(.top, 8)
+            Text(pending == 0 ? "সব অনুমোদন শেষ — সারি খালি" : "আপনার সিদ্ধান্তের অপেক্ষায়")
+                .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.top, 5)
+
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "Critical", value: critical,
+                         tint: critical > 0 ? ApprovalPalette.red400 : .white, sub: "জরুরি")
+                Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+                    .padding(.vertical, 2).padding(.horizontal, 14)
+                heroStat(label: "High", value: high,
+                         tint: high > 0 ? ApprovalPalette.amber500 : .white, sub: "উচ্চ অগ্রাধিকার")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [AlmaSwiftTheme.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Always the board's dark anchor — force dark traits inside the card.
+        .environment(\.colorScheme, .dark)
+    }
+
+    private func heroStat(label: String, value: Int, tint: Color, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.5)
+                .foregroundStyle(.white.opacity(0.55))
+            ApvCountUp(target: value)
+                .font(.system(size: 20, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+        }
+    }
+}
+
 // MARK: - Preview (stubbed — live data needs the app session)
 
 @available(iOS 17.0, *)
