@@ -961,6 +961,8 @@ struct PortalScreen: View {
         .portalGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
+    /// Light bento pass (owner spec 2026-07-08): each wallet stat carries a soft
+    /// diagonal wash of its own tone — same numbers, same tints, presentation only.
     private func walletStat(_ label: String, _ value: Int, tone: Color = .primary) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label.uppercased()).font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
@@ -968,8 +970,15 @@ struct PortalScreen: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(Color.white.opacity(colorScheme == .dark ? 0.05 : 0.35),
-                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+                    .fill(Color.white.opacity(colorScheme == .dark ? 0.05 : 0.35))
+                LinearGradient(colors: [tone.opacity(colorScheme == .dark ? 0.12 : 0.08), .clear],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        }
         .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.08 : 0.4), lineWidth: 1))
     }
