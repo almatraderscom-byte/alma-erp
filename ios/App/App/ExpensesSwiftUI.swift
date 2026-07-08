@@ -404,8 +404,10 @@ struct ExpensesScreen: View {
                     }
                     ledgerHeader
                     categoryChips
+                    let maxRowAmount = max(1, vm.filtered.map(\.amount).max() ?? 1)
                     ForEach(vm.filtered) { row in
-                        ExpenseRowCard(row: row) {
+                        ExpenseRowCard(row: row,
+                                       fraction: CGFloat(row.amount) / CGFloat(maxRowAmount)) {
                             selected = row
                         }
                     }
@@ -479,33 +481,24 @@ struct ExpensesScreen: View {
         }
     }
 
-    // ── KPI strip (web's 4 KpiCards, exact labels) ──
+    // ── KPI strip (web's 4 KpiCards, exact labels — bento board: dark hero +
+    //    2-col glass stat tiles; same four metrics, same strings) ──
 
-    private var kpiStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                kpiCard("TOTAL EXPENSES (RANGE)",
-                        vm.loading && vm.expenses.isEmpty ? "—" : AlmaSwiftTheme.takaShort(vm.totalExpenses),
-                        ExpensePalette.goldLt)
-                kpiCard("LEDGER CASH READOUT",
-                        vm.loading && vm.expenses.isEmpty ? "—" : AlmaSwiftTheme.takaShort(vm.cashBalance),
-                        .primary)
-                kpiCard("LINE ITEMS", "\(vm.expenses.count)", .primary)
-                kpiCard("ACTIVE CATEGORIES", "\(vm.byCategory.count)", .primary)
-            }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 1)
+    @ViewBuilder private var kpiStrip: some View {
+        let placeholders = vm.loading && vm.expenses.isEmpty
+        ExpensesBentoHero(totalExpenses: vm.totalExpenses,
+                          cashBalance: vm.cashBalance,
+                          placeholders: placeholders,
+                          rangeLabel: vm.dateFilter.label)
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                  spacing: 10) {
+            ExpensesStatTile(label: "LINE ITEMS", target: vm.expenses.count,
+                             format: { "\($0)" }, sub: "Ledger rows in range",
+                             tint: .primary, accent: AlmaSwiftTheme.violet)
+            ExpensesStatTile(label: "ACTIVE CATEGORIES", target: vm.byCategory.count,
+                             format: { "\($0)" }, sub: "With spend in range",
+                             tint: .primary, accent: AlmaSwiftTheme.sage)
         }
-    }
-
-    private func kpiCard(_ label: String, _ value: String, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            Text(value).font(.headline.weight(.bold).monospacedDigit()).foregroundStyle(tint)
-        }
-        .frame(minWidth: 96, alignment: .leading)
-        .padding(12)
-        .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Expense mix (web donut card, same palette) ──
@@ -520,20 +513,28 @@ struct ExpensesScreen: View {
         .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
-    /// Web "Highest categories": top 12, category left, ৳ amount right (gold mono).
+    /// Web "Highest categories": top 12, category left, ৳ amount right (gold mono) —
+    /// bento touch: a gradient mini bar per row (share of the top category's amount).
     private var highestCategoriesCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let top = Array(vm.byCategory.prefix(12))
+        let maxAmt = max(1, top.map(\.amount).max() ?? 1)
+        return VStack(alignment: .leading, spacing: 8) {
             Text("Highest categories").font(.footnote.weight(.bold))
-            ForEach(Array(vm.byCategory.prefix(12).enumerated()), id: \.element.id) { i, cat in
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(ExpensePalette.donut[i % ExpensePalette.donut.count])
-                        .frame(width: 8, height: 8)
-                    Text(cat.name).font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Text("৳ \(cat.amount.formatted())")
-                        .font(.caption.monospaced().weight(.semibold))
-                        .foregroundStyle(ExpensePalette.accentText(colorScheme))
+            ForEach(Array(top.enumerated()), id: \.element.id) { i, cat in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(ExpensePalette.donut[i % ExpensePalette.donut.count])
+                            .frame(width: 8, height: 8)
+                        Text(cat.name).font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("৳ \(cat.amount.formatted())")
+                            .font(.caption.monospaced().weight(.semibold))
+                            .foregroundStyle(ExpensePalette.accentText(colorScheme))
+                    }
+                    ExpensesMiniBar(fraction: CGFloat(cat.amount) / CGFloat(maxAmt),
+                                    color: ExpensePalette.donut[i % ExpensePalette.donut.count],
+                                    delay: Double(i) * 0.04, height: 5)
                 }
                 .padding(.bottom, 2)
             }
@@ -729,10 +730,13 @@ private struct ExpensesDonut: View {
 @available(iOS 17.0, *)
 private struct ExpenseRowCard: View {
     let row: ExpenseLedgerRow
+    /// Share of the largest visible ledger amount — drives the bento mini bar.
+    let fraction: CGFloat
     let onTap: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
         HStack(alignment: .center, spacing: 10) {
             iconBadge
             VStack(alignment: .leading, spacing: 2) {
@@ -770,6 +774,14 @@ private struct ExpenseRowCard: View {
             Text("৳\(row.amount.formatted())")
                 .font(.footnote.weight(.bold).monospacedDigit())
                 .foregroundStyle(ExpensePalette.goldLt)
+        }
+        // Bento mini bar: this line's share of the biggest visible amount —
+        // amber-tinted while payment is still open (same severity read as the
+        // status caption above), coral otherwise.
+        let paymentOpen = (row.paymentStatus?.isEmpty == false) && row.paymentStatus != "Paid"
+        ExpensesMiniBar(fraction: fraction,
+                        color: paymentOpen ? ExpensePalette.amber500 : ExpensePalette.coral,
+                        height: 4)
         }
         .padding(12)
         .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
@@ -1084,6 +1096,219 @@ private struct ExpenseAddSheet: View {
             }
         }
         .padding(.top, 4)
+    }
+}
+
+// MARK: - Bento components (Expenses-owned copies of the Dashboard bento language —
+// parallel-session rule: page files never import another page's helpers. Dark hero,
+// count-up numbers, glass stat tiles, gradient mini bars. NOTE: the Dashboard hero's
+// shimmer sweep (blur + repeatForever) is deliberately OMITTED — static gradient only.)
+
+/// Central motion gate for the bento animations — count-ups and bar sweeps freeze to
+/// their final state when the owner limits motion: Reduce Motion or Low Power Mode
+/// (the same guard pattern ExpensesAurora.updateDrift uses).
+@available(iOS 17.0, *)
+private func expensesMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number: animates 0 → target on first appear (and old → new on refresh).
+/// A single Animatable interpolation drives the digits — no timers. Snaps straight
+/// to the final value under Reduce Motion / Low Power Mode.
+@available(iOS 17.0, *)
+private struct ExpensesCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    let format: (Int) -> String
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        ExpensesCountUpText(value: shown, format: format)
+            .animation(expensesMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if expensesMotionOK(reduceMotion) {
+                    appeared = true          // the implicit spring above interpolates the digits
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+/// Animatable text body for ExpensesCountUp — SwiftUI interpolates `value` frame-to-frame.
+@available(iOS 17.0, *)
+private struct ExpensesCountUpText: View, Animatable {
+    var value: Double
+    var format: (Int) -> String
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text(format(Int(value.rounded())))
+    }
+}
+
+/// Soft gradient mini progress bar (comparison lists) — sweeps to its fraction on appear,
+/// frozen under Reduce Motion / Low Power Mode.
+@available(iOS 17.0, *)
+private struct ExpensesMiniBar: View {
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let fraction: CGFloat
+    let color: Color
+    var delay: Double = 0
+    var height: CGFloat = 7
+    @State private var grow = false
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(scheme == .dark ? 0.10 : 0.06))
+                Capsule()
+                    .fill(LinearGradient(colors: [color.opacity(0.55), color],
+                                         startPoint: .leading, endPoint: .trailing))
+                    .frame(width: max(geo.size.width * min(max(fraction, 0), 1), height) * (grow ? 1 : 0.001))
+            }
+        }
+        .frame(height: height)
+        .onAppear {
+            if expensesMotionOK(reduceMotion) {
+                withAnimation(.spring(duration: 0.6, bounce: 0.18).delay(delay)) { grow = true }
+            } else {
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { grow = true }
+            }
+        }
+    }
+}
+
+/// Small glass stat tile — count-up value + sub line, soft accent wash. `target == nil`
+/// renders the "—" placeholder.
+@available(iOS 17.0, *)
+private struct ExpensesStatTile: View {
+    @Environment(\.colorScheme) private var scheme
+    let label: String
+    let target: Int?
+    let format: (Int) -> String
+    let sub: String
+    let tint: Color
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
+            if let target {
+                ExpensesCountUp(target: target, format: format)
+                    .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                    .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.55)
+            } else {
+                Text("—").font(.system(size: 17, weight: .heavy)).foregroundStyle(tint)
+            }
+            Text(sub).font(.system(size: 9)).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 13).padding(.vertical, 12)
+        .background { expensesBentoWash(accent, scheme: scheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+    }
+}
+
+/// Shared bento tile backdrop: frosted glass + a soft diagonal accent wash.
+@available(iOS 17.0, *)
+private func expensesBentoWash(_ accent: Color, scheme: ColorScheme) -> some View {
+    ZStack {
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+        LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.14 : 0.10), .clear],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+}
+
+/// The dark hero KPI card — deliberately dark in BOTH schemes (the board's anchor tile):
+/// total-expenses count-up headline + ledger-cash secondary number. Same two money
+/// strings as before (AlmaSwiftTheme.takaShort), same "—" first-load placeholders.
+/// Static gradient only — the Dashboard shimmer sweep is intentionally left out.
+@available(iOS 17.0, *)
+private struct ExpensesBentoHero: View {
+    let totalExpenses: Int
+    let cashBalance: Int
+    let placeholders: Bool
+    let rangeLabel: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("TOTAL EXPENSES (RANGE)").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                    .foregroundStyle(ExpensePalette.goldLt)
+                Spacer()
+                Text(rangeLabel).font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+            Group {
+                if placeholders {
+                    Text("—")
+                } else {
+                    ExpensesCountUp(target: totalExpenses,
+                                    format: { AlmaSwiftTheme.takaShort($0) })
+                }
+            }
+            .font(.system(size: 36, weight: .heavy)).monospacedDigit()
+            .foregroundStyle(.white)
+            .lineLimit(1).minimumScaleFactor(0.6)
+            .padding(.top, 8)
+
+            HStack(alignment: .top, spacing: 0) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("LEDGER CASH READOUT").font(.system(size: 9, weight: .bold)).tracking(0.4)
+                        .foregroundStyle(.white.opacity(0.55))
+                    Group {
+                        if placeholders {
+                            Text("—")
+                        } else {
+                            ExpensesCountUp(target: cashBalance,
+                                            format: { AlmaSwiftTheme.takaShort($0) })
+                        }
+                    }
+                    .font(.system(size: 19, weight: .heavy)).monospacedDigit()
+                    .foregroundStyle(cashBalance < 0 ? ExpensePalette.red500 : ExpensePalette.green400)
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                // Deep indigo base + brand washes: violet from the top, coral from the
+                // bottom, a sage hint top-right — ALMA palette only.
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [ExpensePalette.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Force dark inside the card so .primary/materials read the dark palette
+        // regardless of the system scheme — this tile is always the board's dark anchor.
+        .environment(\.colorScheme, .dark)
     }
 }
 

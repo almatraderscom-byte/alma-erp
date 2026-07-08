@@ -996,33 +996,33 @@ struct PayrollScreen: View {
         .padding(.top, 4)
     }
 
-    // ── KPI strip (web's 6 KpiCards, exact labels + value colours) ──
+    // ── KPI strip (same 6 web KpiCard totals, recomposed as the bento board:
+    //    dark hero anchor + 2-col glass stat tiles — values/labels/tints unchanged) ──
 
     private var kpiStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                kpiCard("MONTHLY SALARY BUDGET", vm.monthlySalaryBudget, .primary)
-                kpiCard("COMPANY LIABILITY", vm.totals?.companyLiability ?? 0, PayrollPalette.pos(colorScheme))
-                kpiCard("COMMISSION TOTALS", vm.totals?.totalCommissions ?? 0, PayrollPalette.pos(colorScheme))
-                kpiCard("BONUS TOTALS", vm.totals?.totalBonuses ?? 0, PayrollPalette.accentText(colorScheme))
-                kpiCard("MEAL DEDUCTIONS", vm.totals?.totalMealDeductions ?? 0, PayrollPalette.red400)
-                kpiCard("UNPAID BALANCE", vm.totals?.currentBalance ?? 0, .primary)
+        VStack(spacing: 10) {
+            // The board's one DARK anchor widget — dark in BOTH schemes. Shows the
+            // three headline totals the VM already loads; count-up is display only.
+            PayrollHeroCard(budget: vm.monthlySalaryBudget,
+                            liability: vm.totals?.companyLiability ?? 0,
+                            unpaid: vm.totals?.currentBalance ?? 0)
+            // Remaining KPI totals as frosted bento stat tiles.
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                      spacing: 10) {
+                PayrollStatTile(label: "COMMISSION TOTALS",
+                                target: vm.totals?.totalCommissions ?? 0,
+                                tint: PayrollPalette.pos(colorScheme),
+                                accent: AlmaSwiftTheme.sage)
+                PayrollStatTile(label: "BONUS TOTALS",
+                                target: vm.totals?.totalBonuses ?? 0,
+                                tint: PayrollPalette.accentText(colorScheme),
+                                accent: PayrollPalette.coral)
+                PayrollStatTile(label: "MEAL DEDUCTIONS",
+                                target: vm.totals?.totalMealDeductions ?? 0,
+                                tint: PayrollPalette.red400,
+                                accent: PayrollPalette.red500)
             }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 1)
         }
-    }
-
-    private func kpiCard(_ label: String, _ value: Int, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            Text(AlmaSwiftTheme.takaShort(value))
-                .font(.headline.weight(.bold).monospacedDigit())
-                .foregroundStyle(tint)
-        }
-        .frame(minWidth: 96, alignment: .leading)
-        .padding(12)
-        .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Pending wallet requests (native approve/reject — web submitReview parity) ──
@@ -1263,6 +1263,13 @@ struct PayrollScreen: View {
                             rollStat("Paid", row.salaryPaid, .secondary)
                             rollStat("Advance", max(0, row.advanceBalance), PayrollPalette.amber600)
                             rollStat("Due", max(0, row.currentDue), PayrollPalette.accentText(colorScheme))
+                        }
+                        // Paid-of-salary mini bar — pure visual of the two numbers already
+                        // shown above (amber while due remains, green when cleared).
+                        if row.monthlySalary > 0 {
+                            PayrollMiniBar(fraction: CGFloat(row.salaryPaid) / CGFloat(row.monthlySalary),
+                                           color: row.currentDue > 0 ? PayrollPalette.amber500
+                                                                     : PayrollPalette.emerald600)
                         }
                     }
                     .padding(.vertical, 4)
@@ -1959,9 +1966,16 @@ private struct PayrollWalletCard: View {
             }
         }
         .padding(12)
-        .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .background { payrollBentoWash(accentTint, scheme: colorScheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.45), lineWidth: 1))
         .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture(perform: onTap)
+    }
+
+    /// Soft severity wash — outstanding advance reads amber, otherwise brand violet.
+    private var accentTint: Color {
+        (wallet.summary?.outstandingAdvance ?? 0) > 0 ? PayrollPalette.amber500 : AlmaSwiftTheme.violet
     }
 
     private func walletStat(_ label: String, _ value: Int, _ tint: Color) -> some View {
@@ -2121,6 +2135,195 @@ private enum PayrollFormat {
         let parts = name.split(separator: " ").prefix(2)
         let letters = parts.compactMap { $0.first.map(String.init) }
         return letters.isEmpty ? "?" : letters.joined().uppercased()
+    }
+}
+
+// MARK: - Bento presentation (Payroll-owned copies of the Dashboard bento language —
+// per-file copies by repo convention, no cross-file imports. Hero shimmer deliberately
+// OMITTED (it needs blur + repeatForever); the hero here is a static gradient.)
+
+/// Central motion gate for the bento animations — count-ups and bar sweeps freeze to
+/// their final state under Reduce Motion or Low Power Mode (dashMotionOK pattern).
+@available(iOS 17.0, *)
+private func payrollMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number: animates 0 → target on first appear via a single Animatable
+/// interpolation — no timers. Snaps straight to the final value when motion is gated.
+/// PRESENTATION ONLY: `format` must be one of the file's existing money/number
+/// formatters — never re-derives or reformats amounts.
+@available(iOS 17.0, *)
+private struct PayrollCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    let format: (Int) -> String
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        PayrollCountUpText(value: shown, format: format)
+            .animation(payrollMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if payrollMotionOK(reduceMotion) {
+                    appeared = true          // the implicit spring above interpolates the digits
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+/// Animatable text body for PayrollCountUp — SwiftUI interpolates `value` frame-to-frame.
+@available(iOS 17.0, *)
+private struct PayrollCountUpText: View, Animatable {
+    var value: Double
+    var format: (Int) -> String
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text(format(Int(value.rounded())))
+    }
+}
+
+/// Soft gradient mini progress bar — sweeps to its fraction on appear, frozen when
+/// motion is gated. Used only where a row already displays both numbers of a fraction.
+@available(iOS 17.0, *)
+private struct PayrollMiniBar: View {
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let fraction: CGFloat
+    let color: Color
+    var height: CGFloat = 6
+    @State private var grow = false
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(scheme == .dark ? 0.10 : 0.06))
+                Capsule()
+                    .fill(LinearGradient(colors: [color.opacity(0.55), color],
+                                         startPoint: .leading, endPoint: .trailing))
+                    .frame(width: max(geo.size.width * min(max(fraction, 0), 1), height) * (grow ? 1 : 0.001))
+            }
+        }
+        .frame(height: height)
+        .onAppear {
+            if payrollMotionOK(reduceMotion) {
+                withAnimation(.spring(duration: 0.6, bounce: 0.18)) { grow = true }
+            } else {
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { grow = true }
+            }
+        }
+    }
+}
+
+/// Shared bento tile backdrop: frosted glass + a soft diagonal accent wash.
+@available(iOS 17.0, *)
+private func payrollBentoWash(_ accent: Color, scheme: ColorScheme) -> some View {
+    ZStack {
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+        LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.14 : 0.10), .clear],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+}
+
+/// Small glass stat tile — count-up value over a soft accent wash (BentoStatTile style).
+@available(iOS 17.0, *)
+private struct PayrollStatTile: View {
+    @Environment(\.colorScheme) private var scheme
+    let label: String
+    let target: Int
+    var format: (Int) -> String = AlmaSwiftTheme.takaShort   // the strip's existing formatter
+    let tint: Color
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
+            PayrollCountUp(target: target, format: format)
+                .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.55)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 13).padding(.vertical, 12)
+        .background { payrollBentoWash(accent, scheme: scheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+    }
+}
+
+/// The dark hero KPI card — deliberately dark in BOTH schemes (the board's anchor tile):
+/// salary-budget count-up plus the liability / unpaid secondary numbers the old KPI strip
+/// showed, same takaShort formatting. Static gradient only — no shimmer sweep.
+@available(iOS 17.0, *)
+private struct PayrollHeroCard: View {
+    let budget: Int
+    let liability: Int
+    let unpaid: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("বেতন বাজেট · MONTHLY SALARY BUDGET")
+                .font(.system(size: 10, weight: .bold)).tracking(0.8)
+                .foregroundStyle(PayrollPalette.goldLt)
+            PayrollCountUp(target: budget, format: AlmaSwiftTheme.takaShort)
+                .font(.system(size: 38, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(.white)
+                .lineLimit(1).minimumScaleFactor(0.6)
+                .padding(.top, 8)
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "COMPANY LIABILITY", target: liability,
+                         tint: PayrollPalette.green400)   // pos() reads green400 on dark
+                Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+                    .padding(.vertical, 2).padding(.horizontal, 14)
+                heroStat(label: "UNPAID BALANCE", target: unpaid, tint: .white)
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                // Deep indigo base + brand washes: violet from the top, coral from the
+                // bottom, a sage hint top-right — ALMA palette only.
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [PayrollPalette.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Force dark inside the card so .primary/materials read the dark palette
+        // regardless of the system scheme — this tile is always the board's dark anchor.
+        .environment(\.colorScheme, .dark)
+    }
+
+    private func heroStat(label: String, target: Int, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.white.opacity(0.55))
+            PayrollCountUp(target: target, format: AlmaSwiftTheme.takaShort)
+                .font(.system(size: 19, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.6)
+        }
     }
 }
 
