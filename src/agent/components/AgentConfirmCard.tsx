@@ -40,6 +40,23 @@ const RESOLVED_RECORD: Record<string, { icon: string; label: string; tone: strin
 
 type CardPhase = 'idle' | 'loading' | 'approved' | 'rejected' | 'editing' | 'settled' | 'opinion'
 
+// Card types where "💬 আমার মত" edits the SAME pending card in place via the head
+// (POST .../revise) instead of the legacy reject-and-restart-in-chat. Mirrors the
+// server-side REVISABLE_ACTION_TYPES (src/agent/lib/revise-pending.ts). Anything
+// not here keeps the old reject+onQuickSend path when a chat thread is available.
+const REVISABLE_TYPES = new Set<string>([
+  'dispatch_staff_tasks',
+  'delegation',
+  'send_customer_message',
+  'staff_announcement',
+  'fb_post',
+  'instagram_post',
+  'marketing_plan',
+  'content_gate1',
+  'content_gate2',
+  'ad_creative_gate',
+])
+
 // Server guard responses that are NOT real failures — the card was already
 // handled, timed out, or is gone. Show a calm note, not a red error toast.
 const TERMINAL_NOTES: Record<string, string> = {
@@ -71,7 +88,7 @@ const EDIT_FIELDS: Record<string, string> = {
 
 export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuickSend }: AgentConfirmCardProps) {
   const [phase, setPhase] = useState<CardPhase>('idle')
-  const [loadingDecision, setLoadingDecision] = useState<'approve' | 'reject' | null>(null)
+  const [loadingDecision, setLoadingDecision] = useState<'approve' | 'reject' | 'revise' | null>(null)
   const [summary, setSummary] = useState(action.summary)
   const [meta, setMeta] = useState(action)
   const [editField, setEditField] = useState<string | null>(null)
@@ -124,7 +141,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuic
     setPhase('loading')
     setLoadingDecision(decision)
     try {
-      const res = await fetch(`/api/assistant/actions/${action.id}/${decision}`, { method: 'POST' })
+      const res = await fetch(`/api/assistant/actions/${meta.id}/${decision}`, { method: 'POST' })
       if (!res.ok) {
         const err = await res.json().catch(() => ({})) as { error?: string }
         const code = err.error ?? ''
@@ -157,7 +174,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuic
 
   async function removeBatchItem(index: number) {
     try {
-      const res = await fetch(`/api/assistant/actions/${action.id}`, {
+      const res = await fetch(`/api/assistant/actions/${meta.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ removeEntryIndex: index }),
@@ -177,7 +194,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuic
   async function applyEdit() {
     if (!editField || !editValue.trim()) return
     try {
-      const res = await fetch(`/api/assistant/actions/${action.id}`, {
+      const res = await fetch(`/api/assistant/actions/${meta.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ field: editField, value: editValue.trim() }),
@@ -195,23 +212,78 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuic
     }
   }
 
-  // "আমার মত" — the third path. Reject the pending action, then hand the owner's
-  // correction to the agent as a fresh message so it redoes the task correctly.
+  // "আমার মত" — the third path. For revisable cards the head re-edits THIS pending
+  // card in place (POST .../revise) and confirms, so it stays approvable — no chat
+  // context reload, no token-heavy restart. Non-revisable cards fall back to the
+  // legacy reject-and-hand-to-chat path (only when a chat thread is available).
   async function submitOpinion() {
     const note = opinionText.trim()
     if (!note) return
+
+    if (!REVISABLE_TYPES.has(meta.actionType ?? '')) {
+      // Legacy fallback: reject + re-ask in chat (needs onQuickSend).
+      setPhase('loading')
+      setLoadingDecision('reject')
+      try {
+        await fetch(`/api/assistant/actions/${meta.id}/reject`, { method: 'POST' }).catch(() => {})
+        onResolved('rejected')
+        notifyTodosChanged()
+        onQuickSend?.(note)
+        setPhase('settled')
+        setTerminalNote('আপনার মত এজেন্টকে পাঠানো হয়েছে — সে ঠিক করে দিচ্ছে')
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err))
+        setPhase('idle')
+        setLoadingDecision(null)
+      }
+      return
+    }
+
     setPhase('loading')
-    setLoadingDecision('reject')
+    setLoadingDecision('revise')
     try {
-      // Best-effort reject so the pending action is cleared; ignore terminal guards.
-      await fetch(`/api/assistant/actions/${action.id}/reject`, { method: 'POST' }).catch(() => {})
-      onResolved('rejected')
-      notifyTodosChanged()
-      onQuickSend?.(note)
-      setPhase('settled')
-      setTerminalNote('আপনার মত এজেন্টকে পাঠানো হয়েছে — সে ঠিক করে দিচ্ছে')
+      const res = await fetch(`/api/assistant/actions/${meta.id}/revise`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ feedback: note }),
+      })
+      const data = await res.json().catch(() => ({})) as {
+        error?: string; message?: string; reply?: string
+        action?: { id?: string; summary?: string; status?: string } | null
+      }
+      if (!res.ok) {
+        const code = data.error ?? ''
+        if (TERMINAL_NOTES[code]) {
+          setTerminalNote(TERMINAL_NOTES[code])
+          setPhase('settled')
+          onResolved('rejected')
+          notifyTodosChanged()
+          return
+        }
+        throw new Error(data.message || code || `HTTP ${res.status}`)
+      }
+      const reply = data.reply?.trim() || 'ঠিক আছে — কার্ডটা আপডেট করেছি।'
+      const after = data.action ?? null
+      setOpinionText('')
+      if (after?.status === 'pending' && after.summary) {
+        // Edited in place → show the revised card, still Approve/Reject-able.
+        setSummary(after.summary)
+        const next = { ...meta, id: after.id ?? meta.id, summary: after.summary }
+        setMeta(next)
+        onUpdated?.(after.summary, next)
+        setPhase('idle')
+        notifySuccess()
+        toast.success(reply)
+      } else {
+        // Superseded / executed — settle with the head's confirmation.
+        setTerminalNote(reply)
+        setPhase('settled')
+        onResolved('rejected')
+        notifyTodosChanged()
+      }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      notifyError()
+      toast.error(`সমস্যা: ${err instanceof Error ? err.message : String(err)}`)
       setPhase('idle')
       setLoadingDecision(null)
     }
@@ -227,9 +299,11 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuic
   const loadingLabel =
     loadingDecision === 'approve'
       ? (isDelegation ? 'Worker কাজ শুরু করছে…' : 'অনুমোদন প্রক্রিয়া হচ্ছে…')
-      : loadingDecision === 'reject'
-        ? (isDelegation ? 'Sonnet নিজে উত্তর দিচ্ছে…' : 'বাতিল করা হচ্ছে…')
-        : 'প্রক্রিয়া হচ্ছে…'
+      : loadingDecision === 'revise'
+        ? 'এজেন্ট আপনার মত অনুযায়ী কার্ডটা ঠিক করছে…'
+        : loadingDecision === 'reject'
+          ? (isDelegation ? 'Sonnet নিজে উত্তর দিচ্ছে…' : 'বাতিল করা হচ্ছে…')
+          : 'প্রক্রিয়া হচ্ছে…'
 
   // iPhone fix (issue #3): the big amber delegation card kept clipping/zooming on
   // the width-locked WKWebView. Owner asked for a small Claude-style chip instead.
@@ -486,7 +560,7 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuic
                     ✏️ সংশোধন
                   </button>
                 )}
-                {onQuickSend && (
+                {(REVISABLE_TYPES.has(meta.actionType ?? '') || onQuickSend) && (
                   <button type="button" onClick={() => setPhase('opinion')}
                     className="min-w-0 flex-1 rounded-xl border tone-purple px-3 py-2.5 text-[12.5px] font-medium transition-all hover:bg-purple-500/20">
                     💬 আমার মত
