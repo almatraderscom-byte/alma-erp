@@ -3613,10 +3613,8 @@ struct AgentSideDrawer: View {
         }
         .onAppear {
             withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) { visible = true }
-            Task {
-                await vm.loadConversations()
-                await vm.loadProjects()
-            }
+            // conversations/projects are prefetched by presentDrawer BEFORE this
+            // cover mounts — loading here made the open spring stutter.
             // DEBUG self-test hook (env only set by local simctl self-tests).
             if ProcessInfo.processInfo.environment["ALMA_ASSISTANT_MEMTAB"] == "1" {
                 tab = 1
@@ -4466,6 +4464,13 @@ struct AssistantScreen: View {
 
     /// The drawer animates itself (slide-from-left) — the system cover must not.
     private static func presentDrawer(_ vm: AssistantVM) {
+        // Prefetch the lists BEFORE the cover mounts so the slide-in spring never
+        // shares its frames with request setup + JSON decode (perf audit 2026-07-08):
+        // the drawer opens on cached content and the fresh data lands mid-slide.
+        Task {
+            await vm.loadConversations()
+            await vm.loadProjects()
+        }
         var tx = Transaction(); tx.disablesAnimations = true
         withTransaction(tx) { vm.showSidebar = true }
     }
