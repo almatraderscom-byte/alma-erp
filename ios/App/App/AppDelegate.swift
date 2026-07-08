@@ -20,6 +20,27 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Phase N4: register the background-refresh task handler. Must happen before
         // this method returns, per BGTaskScheduler requirements.
         BackgroundRefresh.register()
+
+        // PHASE S1: wrap the app in a native tab bar. The storyboard already created
+        // the Capacitor bridge VC as the window root; we REUSE that same instance as
+        // tab 0 so Capacitor keeps running (push / Live Pulse / reminders / on-device
+        // plugins stay live) and only reparent it under a native tab bar. The other
+        // tabs are session-sharing content web views. Revert = delete this block.
+        if let capacitorRoot = window?.rootViewController {
+            window?.rootViewController = AlmaTabBarController(dashboard: capacitorRoot)
+            // S3 white-flash removal: the whole shell is dark-violet, but the launch
+            // storyboard + an unset window background resolve to WHITE on a light-mode
+            // device, so a cold launch could flash white before the first webview paints.
+            // Pin the window to the shell's dark colour so every gap (launch → shell, tab
+            // first-load, nav pushes) is dark, never white. We deliberately do NOT force
+            // `overrideUserInterfaceStyle = .dark` on the window: that would flip the
+            // WKWebViews' `prefers-color-scheme` to dark and could restyle the (light) ERP
+            // content. The native chrome is already explicitly dark via its appearance
+            // objects, so it needs no global override.
+            window?.backgroundColor = UIColor(red: 0.055, green: 0.047, blue: 0.078, alpha: 1) // ~#0e0c14
+            window?.makeKeyAndVisible()
+        }
+
         return true
     }
 
