@@ -245,30 +245,14 @@ struct SupplierImportScreen: View {
         }
     }
 
-    // ── KPI strip (web step-4 header: "Catalog loaded: N products · …") ──
+    // ── KPI strip (web step-4 header: "Catalog loaded: N products · …") — bento
+    //    dark hero (owner spec 2026-07-08): same four counts, presentation only. ──
 
     private var kpiStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                kpiCard("PRODUCTS", vm.total, SupplierImportPalette.goldLt)
-                kpiCard("CATEGORIES", vm.categoryCount, .primary)
-                kpiCard("NEW · ৭ দিন", vm.newInSevenDays, SupplierImportPalette.emerald600)
-                kpiCard("ACTIVE", vm.products.filter { $0.active != false }.count,
-                        SupplierImportPalette.green400)
-            }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 1)
-        }
-    }
-
-    private func kpiCard(_ label: String, _ value: Int, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            Text("\(value)").font(.headline.weight(.bold)).foregroundStyle(tint)
-        }
-        .frame(minWidth: 84, alignment: .leading)
-        .padding(12)
-        .supplierImportGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        SupBentoHeroCard(products: vm.total,
+                         categories: vm.categoryCount,
+                         newInWeek: vm.newInSevenDays,
+                         active: vm.products.filter { $0.active != false }.count)
     }
 
     // ── Search (web "Filter preview…" SearchInput) ──
@@ -761,6 +745,124 @@ private struct SupplierImportShimmer: ViewModifier {
 @available(iOS 17.0, *)
 private extension View {
     func supplierImportShimmer() -> some View { modifier(SupplierImportShimmer()) }
+}
+
+// MARK: - Bento components (SupplierImport-owned copies of the Dashboard board
+// language — per-file copies are this repo's parallel-session convention)
+
+/// Central motion gate — count-ups freeze under Reduce Motion / Low Power.
+@available(iOS 17.0, *)
+private func supMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number (0 → target on appear, old → new on refresh) — one Animatable
+/// interpolation, no timers; snaps straight to the value when motion is limited.
+@available(iOS 17.0, *)
+private struct SupCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        SupCountUpText(value: shown)
+            .animation(supMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if supMotionOK(reduceMotion) {
+                    appeared = true
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct SupCountUpText: View, Animatable {
+    var value: Double
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text("\(Int(value.rounded()))")
+    }
+}
+
+/// The dark hero anchor — deliberately dark in BOTH schemes (Dashboard hero recipe:
+/// deep indigo base + violet/coral washes + a sage hint). Catalog-size count-up plus
+/// the Categories / New-this-week / Active split — the same four counts as before.
+@available(iOS 17.0, *)
+private struct SupBentoHeroCard: View {
+    let products: Int
+    let categories: Int
+    let newInWeek: Int
+    let active: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("ক্যাটালগ · PRODUCTS").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                .foregroundStyle(SupplierImportPalette.goldLt)
+            SupCountUp(target: products)
+                .font(.system(size: 40, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(.white)
+                .lineLimit(1).minimumScaleFactor(0.6)
+                .padding(.top, 8)
+            Text("সাপ্লায়ার ক্যাটালগে লোড করা")
+                .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.top, 5)
+
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "Categories", value: categories, tint: .white, sub: "ক্যাটাগরি")
+                heroDivider
+                heroStat(label: "New · ৭ দিন", value: newInWeek,
+                         tint: SupplierImportPalette.green400, sub: "নতুন")
+                heroDivider
+                heroStat(label: "Active", value: active,
+                         tint: SupplierImportPalette.green400, sub: "চালু")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [AlmaSwiftTheme.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Always the board's dark anchor — force dark traits inside the card.
+        .environment(\.colorScheme, .dark)
+    }
+
+    private var heroDivider: some View {
+        Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+            .padding(.vertical, 2).padding(.horizontal, 12)
+    }
+
+    private func heroStat(label: String, value: Int, tint: Color, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.5)
+                .foregroundStyle(.white.opacity(0.55))
+            SupCountUp(target: value)
+                .font(.system(size: 18, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+        }
+    }
 }
 
 // MARK: - Preview (stubbed — live data needs the app session)
