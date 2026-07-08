@@ -453,26 +453,57 @@ private enum SubFormat {
 @available(iOS 17.0, *)
 private struct SubAurora: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
+
     var body: some View {
-        ZStack {
-            if scheme == .dark {
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.055, green: 0.051, blue: 0.133), location: 0.0),
-                    .init(color: Color(red: 0.114, green: 0.086, blue: 0.251), location: 0.30),
-                    .init(color: Color(red: 0.200, green: 0.114, blue: 0.278), location: 0.58),
-                    .init(color: Color(red: 0.318, green: 0.157, blue: 0.235), location: 1.0),
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [SubPalette.violet.opacity(0.24), .clear], center: .init(x: 0.5, y: -0.04), startRadius: 10, endRadius: 440)
-                RadialGradient(colors: [SubPalette.coral.opacity(0.16), .clear], center: .init(x: 0.9, y: 0.92), startRadius: 20, endRadius: 460)
-            } else {
-                Color(red: 0.933, green: 0.925, blue: 0.957)
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.906, green: 0.890, blue: 0.953), location: 0.0),
-                    .init(color: Color(red: 0.933, green: 0.925, blue: 0.957), location: 0.48),
-                    .init(color: Color(red: 0.961, green: 0.921, blue: 0.933), location: 1.0),
-                ], startPoint: .top, endPoint: .bottom)
+        let dark = scheme == .dark
+        // Agent-parity living aurora (web --aurora-blob-1…5): five blurred colour blobs
+        // drifting corner-to-corner over the page canvas. Owner directive 2026-07-08:
+        // every native page shares the Assistant tab's moving aurora.
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        .fill(b.color)
+                        .frame(width: b.size, height: b.size)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                        .blur(radius: 70)
+                }
             }
-        }.ignoresSafeArea()
+            .onAppear { updateDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Battery guard: drift only when the owner allows motion — Reduce Motion and
+    /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+        }
     }
 }
 
