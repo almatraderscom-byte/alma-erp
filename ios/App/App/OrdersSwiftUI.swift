@@ -6,9 +6,11 @@
 //  cookie bridge — no new server routes):
 //    GET  /api/orders/orders?business_id=…&status=…&search=…   → list + summary
 //    POST /api/orders/orders/status  {id, status, reason?}     → status change
-//  v1 scope (owner-approved S6 kickoff): list + status chips + search + detail +
-//  status actions + call/WhatsApp. Creating/editing an order stays on the web —
-//  the detail sheet has an "ওয়েবে খুলুন" escape hatch, so nothing is ever lost.
+//  v2 (owner request 2026-07-09): FULL web-drawer parity in the detail sheet —
+//  profit/margin stats, courier timeline + tracking copy, invoice generate/open/
+//  copy/share, edit order, delete request (Super Admin approval), returns with
+//  loss preview, role-gated exactly like src/lib/order-access.ts. The web
+//  escape hatch stays as a fallback.
 //
 
 import SwiftUI
@@ -23,8 +25,10 @@ struct AlmaOrder: Decodable, Identifiable, Equatable {
     let address: String?
     var status: String
     let product: String?
+    let category: String?
     let size: String?
     let qty: Int?
+    let unitPrice: Int?
     let sellPrice: Int?
     let shippingFee: Int?
     let discount: Int?
@@ -34,14 +38,35 @@ struct AlmaOrder: Decodable, Identifiable, Equatable {
     let trackingId: String?
     let notes: String?
     let profit: Int?
+    // Detail-drawer parity fields (all optional — legacy rows may omit any of them).
+    let businessId: String?
+    let handledBy: String?
+    let slaStatus: String?
+    let invoiceNum: String?
+    let courierCharge: Int?
+    let netProfit: Int?
+    let returnNetProfit: Int?
+    let estimatedProfit: Int?
+    let stockRestored: Bool?
+    let stockRestoredAt: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, date, customer, phone, address, status, product, size, qty
+        case id, date, customer, phone, address, status, product, category, size, qty
+        case unitPrice = "unit_price"
         case sellPrice = "sell_price"
         case shippingFee = "shipping_fee"
         case discount, payment, source, courier
         case trackingId = "tracking_id"
         case notes, profit
+        case businessId = "business_id"
+        case handledBy = "handled_by"
+        case slaStatus = "sla_status"
+        case invoiceNum = "invoice_num"
+        case courierCharge = "courier_charge"
+        case netProfit = "net_profit"
+        case returnNetProfit = "return_net_profit"
+        case estimatedProfit
+        case stockRestored, stockRestoredAt
     }
 
     /// Some legacy rows carry ints in string fields and vice-versa — decode defensively
@@ -55,8 +80,10 @@ struct AlmaOrder: Decodable, Identifiable, Equatable {
         address = try? c.decodeIfPresent(String.self, forKey: .address)
         status = (try? c.decode(String.self, forKey: .status)) ?? "Pending"
         product = try? c.decodeIfPresent(String.self, forKey: .product)
+        category = try? c.decodeIfPresent(String.self, forKey: .category)
         size = try? c.decodeIfPresent(String.self, forKey: .size)
         qty = Self.flexInt(c, .qty)
+        unitPrice = Self.flexInt(c, .unitPrice)
         sellPrice = Self.flexInt(c, .sellPrice)
         shippingFee = Self.flexInt(c, .shippingFee)
         discount = Self.flexInt(c, .discount)
@@ -66,12 +93,29 @@ struct AlmaOrder: Decodable, Identifiable, Equatable {
         trackingId = try? c.decodeIfPresent(String.self, forKey: .trackingId)
         notes = try? c.decodeIfPresent(String.self, forKey: .notes)
         profit = Self.flexInt(c, .profit)
+        businessId = try? c.decodeIfPresent(String.self, forKey: .businessId)
+        handledBy = try? c.decodeIfPresent(String.self, forKey: .handledBy)
+        slaStatus = try? c.decodeIfPresent(String.self, forKey: .slaStatus)
+        invoiceNum = try? c.decodeIfPresent(String.self, forKey: .invoiceNum)
+        courierCharge = Self.flexInt(c, .courierCharge)
+        netProfit = Self.flexInt(c, .netProfit)
+        returnNetProfit = Self.flexInt(c, .returnNetProfit)
+        estimatedProfit = Self.flexInt(c, .estimatedProfit)
+        stockRestored = Self.flexBool(c, .stockRestored)
+        stockRestoredAt = try? c.decodeIfPresent(String.self, forKey: .stockRestoredAt)
     }
 
     private static func flexInt(_ c: KeyedDecodingContainer<CodingKeys>, _ k: CodingKeys) -> Int? {
         if let i = try? c.decodeIfPresent(Int.self, forKey: k) { return i }
         if let d = try? c.decodeIfPresent(Double.self, forKey: k) { return Int(d.rounded()) }
         if let s = try? c.decodeIfPresent(String.self, forKey: k) { return Int(s) }
+        return nil
+    }
+
+    private static func flexBool(_ c: KeyedDecodingContainer<CodingKeys>, _ k: CodingKeys) -> Bool? {
+        if let b = try? c.decodeIfPresent(Bool.self, forKey: k) { return b }
+        if let s = try? c.decodeIfPresent(String.self, forKey: k) { return s == "true" || s == "TRUE" || s == "1" }
+        if let i = try? c.decodeIfPresent(Int.self, forKey: k) { return i != 0 }
         return nil
     }
 }
@@ -206,6 +250,95 @@ enum OrderStatusMeta {
         case "COD":   return Color(red: 0.961, green: 0.620, blue: 0.043)     // #F59E0B
         default:       return Color(red: 0.231, green: 0.510, blue: 0.965)    // bank/card blue
         }
+    }
+
+    /// Courier progress timeline — port of the web's COURIER_STEPS (utils.ts).
+    /// (label, done, active) per step for the given status.
+    static func courierSteps(_ status: String) -> [(String, Bool, Bool)] {
+        switch status {
+        case "Pending":   return [("Placed", true, false), ("Confirmed", false, true), ("Packed", false, false), ("Shipped", false, false), ("Delivered", false, false)]
+        case "Confirmed": return [("Placed", true, false), ("Confirmed", true, false), ("Packed", false, true), ("Shipped", false, false), ("Delivered", false, false)]
+        case "Packed":    return [("Placed", true, false), ("Confirmed", true, false), ("Packed", true, false), ("Shipped", false, true), ("Delivered", false, false)]
+        case "Shipped":   return [("Placed", true, false), ("Confirmed", true, false), ("Packed", true, false), ("Shipped", true, true), ("Delivered", false, false)]
+        case "Delivered": return [("Placed", true, false), ("Confirmed", true, false), ("Packed", true, false), ("Shipped", true, false), ("Delivered", true, false)]
+        case "Returned", "RETURNED": return [("Placed", true, false), ("Shipped", true, false), ("Returned", true, false)]
+        case "RETURNED_PAID":   return [("Placed", true, false), ("Shipped", true, false), ("Returned (paid)", true, false)]
+        case "RETURNED_UNPAID": return [("Placed", true, false), ("Shipped", true, false), ("Returned (refused)", true, false)]
+        case "CANCELLED", "Cancelled": return [("Placed", true, false), ("Cancelled", true, false)]
+        default: return [("Placed", true, false), ("Confirmed", false, true), ("Packed", false, false), ("Shipped", false, false), ("Delivered", false, false)]
+        }
+    }
+
+    /// Destructive-status confirm copy — port of the web's DESTRUCTIVE_STATUS_META.
+    static func destructiveMeta(_ s: String) -> (title: String, body: String) {
+        switch s {
+        case "RETURNED_PAID":
+            return ("Mark returned (paid delivery)?",
+                    "Customer refused the product but paid delivery. Inventory will be marked for restock.")
+        case "RETURNED_UNPAID":
+            return ("Mark returned (refused)?",
+                    "Customer refused everything. Inventory will be marked for restock.")
+        default:
+            return ("Cancel order?",
+                    "This excludes the order from revenue and prevents commission generation.")
+        }
+    }
+}
+
+// MARK: - Current user identity (role gating — same rules as the web drawer)
+
+/// GET /api/users/me → { user: { id, role } }, cached for the app run. The web drawer
+/// gates Edit / Request-delete / Invoice / status buttons by role (src/lib/order-access.ts)
+/// — the native sheet applies the SAME rules so both surfaces agree.
+@available(iOS 17.0, *)
+enum OrdIdentity {
+    struct Me: Decodable {
+        let id: String?
+        let role: String?
+    }
+    private struct MeResponse: Decodable { let user: Me? }
+
+    private(set) static var cached: Me? = nil
+    private static var inflight: Task<Me?, Never>? = nil
+
+    static func load() async -> Me? {
+        if let cached { return cached }
+        if let inflight { return await inflight.value }
+        let t = Task<Me?, Never> {
+            let me: MeResponse? = try? await AlmaAPI.shared.get("/api/users/me")
+            return me?.user
+        }
+        inflight = t
+        let v = await t.value
+        if v != nil { cached = v }
+        inflight = nil
+        return v
+    }
+
+    // ── Role rules (port of src/lib/roles.ts + order-access.ts) ──
+    static func mayAdvance(_ role: String?) -> Bool {
+        role == "SUPER_ADMIN" || role == "ADMIN"   // ordersAdvanceStatus
+    }
+    static func mayInvoice(_ role: String?) -> Bool {
+        role == "SUPER_ADMIN" || role == "ADMIN"   // ordersGenerateInvoice
+    }
+    static func mayRequestDelete(_ role: String?) -> Bool {
+        guard let role else { return false }
+        return role != "VIEWER"
+    }
+    /// Staff may edit their own order while it is still early in fulfillment.
+    static func mayEdit(_ role: String?, userId: String?, order: AlmaOrder) -> Bool {
+        guard let role else { return false }
+        if OrderStatusMeta.isTerminal(order.status) { return false }
+        if role == "SUPER_ADMIN" || role == "ADMIN" { return true }  // ordersEditField
+        if role == "VIEWER" { return false }
+        guard let userId, let handledBy = order.handledBy else { return false }
+        // handled_by convention: "Name (uuid)" — creator match on the trailing id.
+        guard let open = handledBy.lastIndex(of: "("),
+              let close = handledBy.lastIndex(of: ")"), open < close else { return false }
+        let creator = String(handledBy[handledBy.index(after: open)..<close])
+        guard creator.caseInsensitiveCompare(userId) == .orderedSame else { return false }
+        return ["Pending", "Confirmed", "Packed"].contains(order.status)
     }
 }
 
@@ -699,24 +832,75 @@ private struct OrderDetailSheet: View {
     let vm: OrdersVM
     let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.dismiss) private var dismiss
-    @State private var confirmCancel = false
+    @Environment(\.colorScheme) private var colorScheme
     @State private var busy = false
+
+    // Role gating (same rules as the web drawer — src/lib/order-access.ts).
+    @State private var role: String? = OrdIdentity.cached?.role
+    @State private var userId: String? = OrdIdentity.cached?.id
+
+    // Destructive-status confirm (CANCELLED / RETURNED_PAID / RETURNED_UNPAID) + reason.
+    @State private var confirmStatus: String? = nil
+    @State private var returnReason = ""
+
+    // Edit / delete-request sub-sheets.
+    @State private var showEdit = false
+    @State private var showDeleteRequest = false
+
+    // Invoice generation state.
+    @State private var invBusy = false
+    @State private var invoiceReady = false      // link section visible
+    @State private var invoiceToast: String? = nil
+    @State private var copied = false
 
     /// Live copy — vm.orders is refreshed after actions; fall back to the passed order.
     private var live: AlmaOrder { vm.orders.first(where: { $0.id == order.id }) ?? order }
+
+    private var isReturnTerminal: Bool {
+        ["RETURNED", "RETURNED_PAID", "RETURNED_UNPAID", "Returned"].contains(live.status)
+    }
+    private var isCancelled: Bool { ["CANCELLED", "Cancelled"].contains(live.status) }
+    private var mayAdvance: Bool { OrdIdentity.mayAdvance(role) }
+    private var mayEdit: Bool { OrdIdentity.mayEdit(role, userId: userId, order: live) }
+    private var mayRequestDelete: Bool { OrdIdentity.mayRequestDelete(role) }
+    private var mayInvoice: Bool { OrdIdentity.mayInvoice(role) }
+    private var canCancel: Bool { mayAdvance && !OrderStatusMeta.isTerminal(live.status) }
+    private var canReturn: Bool {
+        mayAdvance && !isReturnTerminal && !isCancelled
+            && ["Delivered", "Shipped"].contains(live.status)
+    }
+    private var invoiceShareURL: String { "/invoice/share/alma-\(live.id)" }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
+                statsRow
+                if isReturnTerminal { restockBanner }
                 infoGrid
-                if !OrderStatusMeta.isTerminal(live.status) { actionButtons }
+                if let sla = live.slaStatus, !sla.isEmpty { slaBanner(sla) }
+                courierSection
+                invoiceSection
+                if let t = invoiceToast { toastCard(t) }
+                actionButtons
                 contactButtons
                 webEscape
             }
             .padding(18)
         }
         .presentationBackground { OrdersAurora() }   // sheet floats on the aurora too
+        .task {
+            if role == nil, let me = await OrdIdentity.load() {
+                role = me.role; userId = me.id
+            }
+            invoiceReady = (live.invoiceNum?.isEmpty == false)
+        }
+        .sheet(isPresented: $showEdit) {
+            OrdEditSheet(order: live, vm: vm)
+        }
+        .sheet(isPresented: $showDeleteRequest) {
+            OrdDeleteRequestSheet(order: live)
+        }
     }
 
     private var header: some View {
@@ -735,6 +919,104 @@ private struct OrderDetailSheet: View {
         }
     }
 
+    // ── Total / Profit / Margin (port of the web drawer's profitDisplay) ──
+
+    private struct OrdProfitDisplay {
+        let label: String
+        let amount: Int
+        let detail: String
+        let tone: Color
+        let marginLabel: String
+        let marginValue: String
+    }
+
+    private var profitDisplay: OrdProfitDisplay {
+        let sell = live.sellPrice ?? 0
+        let shipping = live.shippingFee ?? 0
+        let roundTrip = 2 * (live.courierCharge ?? 0)
+        let green = Color(red: 0.133, green: 0.773, blue: 0.369)
+        let amber = Color(red: 0.961, green: 0.620, blue: 0.043)
+        let red = Color(red: 0.937, green: 0.267, blue: 0.267)
+        switch live.status {
+        case "Delivered":
+            let amount = live.netProfit ?? live.profit ?? 0
+            let margin = sell > 0 ? Int((Double(amount) / Double(sell) * 100).rounded()) : 0
+            return .init(label: "Profit", amount: amount, detail: "Margin \(margin)% (incl. shipping)",
+                         tone: green, marginLabel: "Margin", marginValue: "\(margin)%")
+        case "RETURNED_PAID":
+            let net = live.returnNetProfit ?? (shipping - roundTrip)
+            let loss = net < 0 ? abs(net) : 0
+            return .init(label: "Return loss", amount: -loss,
+                         detail: "Customer paid ৳\(shipping.formatted()), courier round-trip ৳\(roundTrip.formatted())",
+                         tone: amber, marginLabel: "Net", marginValue: "৳\(net.formatted())")
+        case "RETURNED_UNPAID", "RETURNED", "Returned":
+            let net = live.returnNetProfit ?? -roundTrip
+            return .init(label: "Return loss", amount: net, detail: "Refused: full courier loss",
+                         tone: red, marginLabel: "Net", marginValue: "৳\(net.formatted())")
+        case "CANCELLED", "Cancelled":
+            return .init(label: "Profit", amount: 0, detail: "No financial impact",
+                         tone: .secondary, marginLabel: "Margin", marginValue: "—")
+        default:
+            let est = live.estimatedProfit ?? live.profit ?? 0
+            let margin = sell > 0 ? "\(Int((Double(est) / Double(sell) * 100).rounded()))%" : "—"
+            return .init(label: "Est. profit", amount: est, detail: "Estimated",
+                         tone: amber, marginLabel: "Margin", marginValue: margin)
+        }
+    }
+
+    private var statsRow: some View {
+        let p = profitDisplay
+        return HStack(spacing: 8) {
+            statTile("Total", "৳\((live.sellPrice ?? 0).formatted())", .primary)
+            statTile(p.label, "৳\(p.amount.formatted())", p.tone, caption: p.detail)
+            statTile(p.marginLabel, p.marginValue, p.tone)
+        }
+    }
+
+    private func statTile(_ label: String, _ value: String, _ tone: Color, caption: String? = nil) -> some View {
+        VStack(spacing: 3) {
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+            Text(value).font(.subheadline.weight(.bold)).foregroundStyle(tone)
+                .lineLimit(1).minimumScaleFactor(0.6)
+            if let caption {
+                Text(caption).font(.system(size: 9)).foregroundStyle(.secondary)
+                    .lineLimit(2).multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 10).padding(.horizontal, 6)
+        .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+    }
+
+    private var restockBanner: some View {
+        let restored = live.stockRestored == true
+        let when = (live.stockRestoredAt?.prefix(10)).map(String.init) ?? ""
+        let text = restored
+            ? (when.isEmpty ? "✓ Inventory restored" : "✓ Inventory restored on \(when)")
+            : "⚠ Inventory not restored"
+        let tone: Color = restored
+            ? Color(red: 0.133, green: 0.773, blue: 0.369)
+            : Color(red: 0.961, green: 0.620, blue: 0.043)
+        return Text(text)
+            .font(.caption.weight(.semibold)).foregroundStyle(tone)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background(tone.opacity(0.10), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl).stroke(tone.opacity(0.25), lineWidth: 1))
+    }
+
+    private func slaBanner(_ sla: String) -> some View {
+        let amber = Color(red: 0.961, green: 0.620, blue: 0.043)
+        return HStack(spacing: 10) {
+            Image(systemName: "bolt.fill").font(.caption).foregroundStyle(amber)
+            Text(sla).font(.caption.weight(.semibold))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(amber.opacity(0.10), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl).stroke(amber.opacity(0.25), lineWidth: 1))
+    }
+
     private var infoGrid: some View {
         VStack(alignment: .leading, spacing: 8) {
             row("person", live.customer)
@@ -742,8 +1024,11 @@ private struct OrderDetailSheet: View {
             row("mappin.and.ellipse", live.address)
             row("shippingbox", [live.product, live.size.map { "Size \($0)" },
                                 live.qty.map { "×\($0)" }].compactMap { $0 }.joined(separator: " · "))
+            if let cat = live.category, !cat.isEmpty { row("tag", cat) }
+            if let q = live.qty, let u = live.unitPrice { row("multiply", "\(q) × ৳\(u.formatted())") }
             if let amt = live.sellPrice { row("banknote", "৳\(amt.formatted())  (\(live.payment ?? "—"))") }
-            if let c = live.courier, !c.isEmpty { row("truck.box", "\(c)  \(live.trackingId ?? "")") }
+            if let src = live.source, !src.isEmpty { row("antenna.radiowaves.left.and.right", src) }
+            if let hb = live.handledBy, !hb.isEmpty { row("person.badge.shield.checkmark", hb) }
             // Multi-item orders carry machine JSON in notes (ORDER_ITEMS_JSON…) — that's
             // internal bookkeeping, never show it. Only human-written notes render.
             if let n = live.notes, !n.isEmpty,
@@ -754,7 +1039,6 @@ private struct OrderDetailSheet: View {
         .padding(14)
         .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
-    @Environment(\.colorScheme) private var colorScheme
 
     private func row(_ icon: String, _ text: String?) -> some View {
         HStack(alignment: .top, spacing: 10) {
@@ -763,32 +1047,260 @@ private struct OrderDetailSheet: View {
         }
     }
 
-    private var actionButtons: some View {
-        VStack(spacing: 8) {
-            ForEach(OrderStatusMeta.nextSteps(from: live.status), id: \.self) { next in
+    // ── Courier timeline (web drawer's COURIER_STEPS list) ──
+
+    private var courierSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("COURIER — \((live.courier?.isEmpty == false ? live.courier! : "Not assigned").uppercased())")
+                .font(.caption2.weight(.bold)).foregroundStyle(.secondary).kerning(0.8)
+            if let t = live.trackingId, !t.isEmpty {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Tracking ID").font(.caption2).foregroundStyle(.secondary)
+                        Text(t).font(.caption.monospaced().weight(.semibold))
+                    }
+                    Spacer()
+                    Button {
+                        UIPasteboard.general.string = t
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    } label: { Image(systemName: "doc.on.doc") }
+                        .buttonStyle(.bordered)
+                }
+                .padding(12)
+                .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+            }
+            let steps = OrderStatusMeta.courierSteps(live.status)
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
+                    let (label, done, active) = step
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: done ? "checkmark.circle.fill" : active ? "circle.inset.filled" : "circle")
+                            .font(.footnote)
+                            .foregroundStyle(done ? Color(red: 0.133, green: 0.773, blue: 0.369)
+                                             : active ? Color(red: 0.231, green: 0.510, blue: 0.965)
+                                             : .secondary)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(label).font(.caption.weight(done || active ? .semibold : .regular))
+                                .foregroundStyle(done || active ? .primary : .secondary)
+                            if active { Text("In progress").font(.system(size: 9)).foregroundStyle(.secondary) }
+                        }
+                    }
+                }
+            }
+            .padding(14)
+            .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        }
+    }
+
+    // ── Invoice (generate + open/copy/share — web drawer parity) ──
+
+    @ViewBuilder private var invoiceSection: some View {
+        let hasInvoice = live.invoiceNum?.isEmpty == false
+        VStack(alignment: .leading, spacing: 8) {
+            if hasInvoice {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Invoice").font(.caption2).foregroundStyle(.secondary)
+                        Text(live.invoiceNum ?? "").font(.caption.monospaced().weight(.semibold))
+                    }
+                    Spacer()
+                    Text("✓ Generated").font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color(red: 0.133, green: 0.773, blue: 0.369))
+                }
+                .padding(12)
+                .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+            } else if mayInvoice {
                 Button {
-                    Task { busy = true; _ = await vm.setStatus(live, to: next); busy = false }
+                    Task { await generateInvoice() }
                 } label: {
-                    Label(OrderStatusMeta.label(next), systemImage: "arrow.right.circle.fill")
+                    Label(invBusy ? "Generating…" : "Generate Invoice", systemImage: "doc.badge.plus")
                         .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(OrderStatusMeta.tint(next))
-                .disabled(busy)
+                .buttonStyle(.bordered)
+                .disabled(invBusy || busy)
             }
-            Button(role: .destructive) { confirmCancel = true } label: {
-                Label("Cancel order", systemImage: "xmark.circle")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .disabled(busy)
-            .confirmationDialog("অর্ডারটি ক্যানসেল করবেন?", isPresented: $confirmCancel, titleVisibility: .visible) {
-                Button("হ্যাঁ, ক্যানসেল", role: .destructive) {
-                    Task { busy = true; _ = await vm.setStatus(live, to: "CANCELLED"); busy = false }
+            if invoiceReady || hasInvoice {
+                HStack(spacing: 8) {
+                    Button {
+                        UIPasteboard.general.string = AlmaAPI.baseURL.absoluteString + invoiceShareURL
+                        copied = true
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    } label: {
+                        Label(copied ? "Copied ✓" : "Copy link", systemImage: "link")
+                            .font(.footnote).frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    Button {
+                        dismiss()
+                        openWeb(invoiceShareURL, "Invoice")
+                    } label: {
+                        Label("Open PDF", systemImage: "doc.text")
+                            .font(.footnote).frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    Button {
+                        let full = AlmaAPI.baseURL.absoluteString + invoiceShareURL
+                        let text = "Invoice PDF (\(live.id)): \(full)"
+                        let enc = text.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? text
+                        if let url = URL(string: "https://wa.me/?text=\(enc)") { UIApplication.shared.open(url) }
+                    } label: {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                            .font(.footnote).frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
                 }
-                Button("না", role: .cancel) {}
             }
         }
+    }
+
+    private struct OrdInvoiceResponse: Decodable {
+        let ok: Bool?
+        let invoiceNumber: String?
+        let duplicate: Bool?
+        enum CodingKeys: String, CodingKey {
+            case ok, duplicate
+            case invoiceNumber = "invoice_number"
+        }
+    }
+
+    private func generateInvoice() async {
+        invBusy = true
+        defer { invBusy = false }
+        do {
+            struct Body: Encodable { let id: String; let allow_regenerate: Bool }
+            let r: OrdInvoiceResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/invoice", body: Body(id: live.id, allow_regenerate: false))
+            if r.ok != false {
+                invoiceReady = true
+                invoiceToast = r.duplicate == true
+                    ? "Invoice \(r.invoiceNumber ?? "") already on file — link ready"
+                    : "Invoice \(r.invoiceNumber ?? "") saved — link ready"
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                await vm.load()   // picks up invoice_num on the row
+            } else {
+                invoiceToast = "Invoice was not created"
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+            }
+        } catch {
+            invoiceToast = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+        }
+    }
+
+    private func toastCard(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+    }
+
+    // ── Actions (status advance / cancel / returns / edit / delete-request) ──
+
+    @ViewBuilder private var actionButtons: some View {
+        VStack(spacing: 8) {
+            if mayEdit || mayRequestDelete {
+                HStack(spacing: 8) {
+                    if mayEdit {
+                        Button { showEdit = true } label: {
+                            Label("Edit order", systemImage: "pencil").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(busy)
+                    }
+                    if mayRequestDelete {
+                        Button(role: .destructive) { showDeleteRequest = true } label: {
+                            Label("Request delete", systemImage: "trash").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(busy)
+                    }
+                }
+            }
+            if mayEdit && role == "STAFF" {
+                Text("You can edit your own orders while Pending, Confirmed, or Packed. Wrong totals need Super Admin delete approval.")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            if mayAdvance {
+                ForEach(OrderStatusMeta.nextSteps(from: live.status), id: \.self) { next in
+                    Button {
+                        if next == "RETURNED_UNPAID" {
+                            returnReason = ""; confirmStatus = next
+                        } else {
+                            Task { busy = true; _ = await vm.setStatus(live, to: next); busy = false }
+                        }
+                    } label: {
+                        Label(OrderStatusMeta.label(next), systemImage: "arrow.right.circle.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(OrderStatusMeta.tint(next))
+                    .disabled(busy)
+                }
+            }
+            if canCancel {
+                Button(role: .destructive) { returnReason = ""; confirmStatus = "CANCELLED" } label: {
+                    Label("Cancel order", systemImage: "xmark.circle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(busy)
+            }
+            if canReturn {
+                Button(role: .destructive) { returnReason = ""; confirmStatus = "RETURNED_PAID" } label: {
+                    Label("Returned (paid delivery)", systemImage: "arrow.uturn.left.circle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(busy)
+                Button(role: .destructive) { returnReason = ""; confirmStatus = "RETURNED_UNPAID" } label: {
+                    Label("Returned (refused)", systemImage: "arrow.uturn.left.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(busy)
+            }
+        }
+        .alert(OrderStatusMeta.destructiveMeta(confirmStatus ?? "CANCELLED").title,
+               isPresented: Binding(get: { confirmStatus != nil }, set: { if !$0 { confirmStatus = nil } })) {
+            if confirmStatus != "CANCELLED" {
+                TextField("কারণ (ঐচ্ছিক)", text: $returnReason)
+            }
+            Button("নিশ্চিত", role: .destructive) {
+                if let target = confirmStatus {
+                    let reason = returnReason.trimmingCharacters(in: .whitespacesAndNewlines)
+                    Task {
+                        busy = true
+                        _ = await vm.setStatus(live, to: target, reason: reason.isEmpty ? nil : reason)
+                        busy = false
+                    }
+                }
+                confirmStatus = nil
+            }
+            Button("না", role: .cancel) { confirmStatus = nil }
+        } message: {
+            Text(confirmMessage)
+        }
+    }
+
+    /// Confirm body + projected-loss preview (port of the web's returnLossPreview).
+    private var confirmMessage: String {
+        guard let s = confirmStatus else { return "" }
+        var text = OrderStatusMeta.destructiveMeta(s).body
+        let shipping = live.shippingFee ?? 0
+        let roundTrip = 2 * (live.courierCharge ?? 0)
+        if s == "RETURNED_UNPAID" {
+            text += "\n\nThis will record a loss of ৳\(roundTrip.formatted()) (round-trip courier)."
+        } else if s == "RETURNED_PAID" {
+            let net = shipping - roundTrip
+            if net >= 0 {
+                text += "\n\nShipping collected covers courier round-trip — minimal or no loss."
+            } else {
+                text += "\n\nThis will record a loss of ৳\(abs(net).formatted()) (customer paid ৳\(shipping.formatted()) shipping; courier round-trip ৳\(roundTrip.formatted()))."
+            }
+        }
+        return text
     }
 
     private var contactButtons: some View {
@@ -798,12 +1310,18 @@ private struct OrderDetailSheet: View {
                     Label("Call", systemImage: "phone.fill").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
-                // WhatsApp: strip the leading 0, prefix country code (spec note #5).
-                if phone.hasPrefix("0"), let wa = URL(string: "https://wa.me/880\(phone.dropFirst())") {
-                    Link(destination: wa) {
-                        Label("WhatsApp", systemImage: "message.fill").frame(maxWidth: .infinity)
+                // WhatsApp: strip the leading 0, prefix country code (spec note #5) — with
+                // the web drawer's prefilled order-update text.
+                if phone.hasPrefix("0") {
+                    let base = "https://wa.me/880\(phone.dropFirst())"
+                    let msg = "Hi \(live.customer ?? ""), your order \(live.id) update: "
+                    let enc = msg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+                    if let wa = URL(string: "\(base)?text=\(enc)") {
+                        Link(destination: wa) {
+                            Label("WhatsApp", systemImage: "message.fill").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.bordered)
                 }
             }
         }
@@ -814,13 +1332,196 @@ private struct OrderDetailSheet: View {
             dismiss()
             openWeb("/orders", "Orders") // full drawer lives on the web list
         } label: {
-            Label("সব অপশন — ওয়েবে খুলুন", systemImage: "safari")
+            Label("ওয়েবে খুলুন", systemImage: "safari")
                 .font(.footnote)
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
         .padding(.top, 2)
+    }
+}
+
+// MARK: - Edit-order sheet (POST /api/orders/orders/edit — web drawer parity)
+
+@available(iOS 17.0, *)
+private struct OrdEditSheet: View {
+    let order: AlmaOrder
+    let vm: OrdersVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+
+    @State private var customer: String
+    @State private var phone: String
+    @State private var address: String
+    @State private var product: String
+    @State private var qty: String
+    @State private var unitPrice: String
+    @State private var payment: String
+    @State private var notes: String
+    @State private var busy = false
+    @State private var error: String? = nil
+
+    init(order: AlmaOrder, vm: OrdersVM) {
+        self.order = order
+        self.vm = vm
+        _customer = State(initialValue: order.customer ?? "")
+        _phone = State(initialValue: order.phone ?? "")
+        _address = State(initialValue: order.address ?? "")
+        _product = State(initialValue: order.product ?? "")
+        _qty = State(initialValue: String(order.qty ?? 1))
+        _unitPrice = State(initialValue: String(order.unitPrice ?? 0))
+        _payment = State(initialValue: order.payment ?? "")
+        _notes = State(initialValue: order.notes ?? "")
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("Updates sync to the orders sheet. Sell price and profit recalculate automatically.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Customer") {
+                    TextField("Customer", text: $customer)
+                    TextField("Phone", text: $phone).keyboardType(.phonePad)
+                    TextField("Address", text: $address, axis: .vertical).lineLimit(2...4)
+                }
+                Section("Order") {
+                    TextField("Product", text: $product)
+                    TextField("Qty", text: $qty).keyboardType(.numberPad)
+                    TextField("Unit price", text: $unitPrice).keyboardType(.numberPad)
+                    TextField("Payment", text: $payment)
+                    TextField("Notes", text: $notes, axis: .vertical).lineLimit(2...5)
+                }
+                if let e = error {
+                    Section { Text(e).font(.caption).foregroundStyle(.red) }
+                }
+            }
+            .navigationTitle("Edit \(order.id)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("বাতিল") { dismiss() }.disabled(busy)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(busy ? "Saving…" : "Save") { Task { await save() } }.disabled(busy)
+                }
+            }
+        }
+    }
+
+    private func save() async {
+        guard let qtyNum = Int(qty.trimmingCharacters(in: .whitespaces)), qtyNum > 0 else {
+            error = "Quantity must be a positive number"; return
+        }
+        guard let priceNum = Int(unitPrice.trimmingCharacters(in: .whitespaces)), priceNum >= 0 else {
+            error = "Unit price must be a valid number"; return
+        }
+        busy = true
+        defer { busy = false }
+        struct Fields: Encodable {
+            let customer, phone, address, product, payment, notes: String
+            let qty, unit_price: Int
+        }
+        struct Body: Encodable {
+            let order_id, business_id: String
+            let fields: Fields
+        }
+        struct FailedField: Decodable { let field: String?; let error: String? }
+        struct Resp: Decodable { let ok: Bool?; let failed: [FailedField]? }
+        do {
+            let r: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/orders/orders/edit",
+                body: Body(order_id: order.id,
+                           business_id: order.businessId ?? "ALMA_LIFESTYLE",
+                           fields: Fields(customer: customer, phone: phone, address: address,
+                                          product: product, payment: payment, notes: notes,
+                                          qty: qtyNum, unit_price: priceNum)))
+            if let failed = r.failed, !failed.isEmpty {
+                error = failed.compactMap { $0.error ?? $0.field }.joined(separator: "; ")
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+            } else {
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                await vm.load()
+                dismiss()
+            }
+        } catch {
+            self.error = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+        }
+    }
+}
+
+// MARK: - Delete-request sheet (POST /api/orders/orders/delete-request)
+
+@available(iOS 17.0, *)
+private struct OrdDeleteRequestSheet: View {
+    let order: AlmaOrder
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var reason = ""
+    @State private var busy = false
+    @State private var error: String? = nil
+    @State private var done: String? = nil
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("Super Admin must approve in Approvals. The order is hidden from lists after approval (sheet row kept for audit).")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Reason") {
+                    TextField("Why should this order be removed? (min 5 characters)",
+                              text: $reason, axis: .vertical)
+                        .lineLimit(3...6)
+                }
+                if let e = error {
+                    Section { Text(e).font(.caption).foregroundStyle(.red) }
+                }
+                if let d = done {
+                    Section { Text(d).font(.caption).foregroundStyle(.green) }
+                }
+            }
+            .navigationTitle("Request delete — \(order.id)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("বাতিল") { dismiss() }.disabled(busy)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(busy ? "Submitting…" : "Submit") { Task { await submit() } }
+                        .disabled(busy || done != nil)
+                }
+            }
+        }
+    }
+
+    private func submit() async {
+        let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 5 else {
+            error = "Enter a delete reason (at least 5 characters)"; return
+        }
+        busy = true
+        defer { busy = false }
+        struct Body: Encodable { let order_id, business_id, reason: String }
+        struct Resp: Decodable { let ok: Bool?; let message: String? }
+        do {
+            let r: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/orders/orders/delete-request",
+                body: Body(order_id: order.id,
+                           business_id: order.businessId ?? "ALMA_LIFESTYLE",
+                           reason: trimmed))
+            error = nil
+            done = r.message ?? "Delete request sent for Super Admin approval"
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            dismiss()
+        } catch {
+            self.error = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+        }
     }
 }
 
