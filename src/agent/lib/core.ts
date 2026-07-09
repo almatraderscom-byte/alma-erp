@@ -436,12 +436,15 @@ async function loadPinnedMemories(
     const rows: Array<{ id: string; content: string; scope: string; metadata: unknown }> =
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (prisma as any).agentMemory.findMany({
-        where: personalMode
-          ? { pinned: true, scope: 'personal' }
-          // Business mode: include pinned PERSONAL owner-identity facts too (wife's
-          // name, hafez, standing preferences) — pinning means "always know this",
-          // so these must cross over into business chat, not just personal mode.
-          : { pinned: true },
+        where: {
+          ...(personalMode
+            ? { pinned: true, scope: 'personal' }
+            // Business mode: include pinned PERSONAL owner-identity facts too (wife's
+            // name, hafez, standing preferences) — pinning means "always know this",
+            // so these must cross over into business chat, not just personal mode.
+            : { pinned: true }),
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
         orderBy: { createdAt: 'desc' },
         take: 60,
         select: { id: true, content: true, scope: true, metadata: true },

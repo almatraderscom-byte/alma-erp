@@ -250,6 +250,48 @@ const DELEGATION_FORCE_DENYLIST = new Set<string>([
   'get_fb_recent_posts',
 ])
 
+// ── Dynamic per-turn toolset (owner decision 2026-07-08) ─────────────────────
+// The fixed 188-tool prefix (~32k tokens EVERY turn) existed to keep the
+// Anthropic prompt-cache prefix byte-stable. Today's heads (Gemini / DeepSeek /
+// Qwen) recorded ZERO cache hits in 7 days (agent_cost_events), so the stable
+// prefix buys nothing and re-bills ~32k input per message. When ON, each turn
+// carries only the groups the message actually needs (keyword → semantic →
+// widen-when-unsure, the app's original selector), cutting the tool payload to
+// ~8-25k. Rollout mirrors TOOL_SEARCH_ENABLED: ON in Vercel preview for owner
+// testing, prod stays unchanged until AGENT_DYNAMIC_TOOLSET=true is set.
+export const DYNAMIC_TOOLSET_ENABLED = (() => {
+  const flag = process.env.AGENT_DYNAMIC_TOOLSET
+  if (flag === 'true') return true // force ON anywhere
+  if (flag === 'false') return false // instant kill switch
+  return process.env.VERCEL_ENV === 'preview'
+})()
+
+/**
+ * Shared owner-head post-processing: slim-router delegation shape (content/
+ * growth stay delegated to workers), the marketing-read denylist, and the
+ * owner-facing approval-card growth tools the head must always keep.
+ */
+function finalizeOwnerHeadTools(
+  groups: ToolGroupName[],
+): { tools: Anthropic.Messages.Tool[]; groups: ToolGroupName[] } {
+  // Delegated domains never ride the head schema payload (slim-router rule) —
+  // the head reaches them via delegate_to_specialist + the kept approval tools.
+  const headGroups = SLIM_ROUTER_ENABLED
+    ? groups.filter((g) => g !== 'content' && g !== 'growth')
+    : groups
+  let assembled = assembleSelectedTools(headGroups)
+  if (DELEGATION_APPROVAL_TEST) {
+    assembled = assembled.filter((t) => !DELEGATION_FORCE_DENYLIST.has(t.name))
+  }
+  for (const keep of HEAD_KEPT_GROWTH_TOOLS) {
+    if (!assembled.some((t) => t.name === keep)) {
+      const tool = (TOOL_GROUPS.growth ?? []).find((t) => t.name === keep)
+      if (tool) assembled = [...assembled, tool]
+    }
+  }
+  return { tools: applyToolCacheControl(toolsToDefinitions(assembled)), groups: headGroups }
+}
+
 /**
  * Async tool selection. For owner business chat (ALMA Lifestyle) we return a
  * STABLE comprehensive set so the prompt-cache prefix is identical every turn
@@ -279,6 +321,25 @@ export async function selectToolsAndGroupsForTurnAsync(
         (t) => t.name !== 'delegate_to_specialist',
       )
       return { tools: applyToolCacheControl(toolsToDefinitions(mkAssembled)), groups: mkGroups }
+    }
+
+    // Dynamic per-turn toolset (owner decision 2026-07-08): pick only the groups
+    // this message needs. Keyword-confident → that set; unsure → semantic; still
+    // unsure → widen to the safe defaults. base is always included by the
+    // selector, so memory/ask/salah/reminders/delegate_to_specialist never drop —
+    // anything not on the head remains reachable via delegation.
+    if (DYNAMIC_TOOLSET_ENABLED) {
+      const sel = selectToolGroupsSync(text, { personalMode: false, businessId: opts.businessId })
+      let dynGroups = sel.groups
+      if (!sel.confident) {
+        try {
+          const semGroups = await semanticGroups(text)
+          dynGroups = [...new Set<ToolGroupName>([...dynGroups, ...semGroups, ...WIDE_FALLBACK])]
+        } catch {
+          dynGroups = [...new Set<ToolGroupName>([...dynGroups, ...WIDE_FALLBACK])]
+        }
+      }
+      return finalizeOwnerHeadTools(dynGroups)
     }
 
     const groups = SLIM_ROUTER_ENABLED ? ROUTER_HEAD_GROUPS : OWNER_STABLE_GROUPS

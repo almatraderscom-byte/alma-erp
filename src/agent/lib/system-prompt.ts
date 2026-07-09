@@ -711,6 +711,14 @@ export type BuildSystemPromptArgs = {
   /** Compact business-state snapshot from today's daily ERP tour (if any). */
   businessSnapshot?: { text: string; date: string; isToday: boolean } | null
   /**
+   * LIVE office pulse (owner decision 2026-07-08): today's sales-so-far, who is
+   * checked in right now, staff-task board, pending proposals, and the agent's
+   * own open background work. Rolling summary shared across owner turns and
+   * autonomous wakes (delta-refreshed ≤10 min) so office/staff questions are
+   * answered in ONE round instead of live tool round-trips.
+   */
+  officePulse?: { text: string; generatedAt: string } | null
+  /**
    * Head tier for this turn. 'marketing' = the Qwen marketing head, which owns
    * marketing/FB/website work and must do it ITSELF (no delegate note). Other
    * tiers (or undefined) get the standard slim-router delegate guidance.
@@ -773,6 +781,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     businessContext,
     activeGroups,
     businessSnapshot,
+    officePulse,
     headTier,
     tailSummary,
   } = args
@@ -934,6 +943,22 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
           `\n## 📊 ব্যবসা snapshot (${freshness})\n${businessSnapshot.text}\n` +
             `routine business প্রশ্ন (sales/pending/stock/reorder/CS) এই snapshot থেকেই উত্তর দিন — live tool ডাকবেন না। ` +
             `শুধু তখন live ERP tool (get_sales_summary/get_inventory_status ইত্যাদি) ডাকুন যখন: owner স্পষ্ট "live/এখনকার/আপডেট/সর্বশেষ" চান, snapshot পুরোনো/missing, অথবা snapshot-এ নেই এমন নির্দিষ্ট ডিটেইল লাগে। snapshot থেকে উত্তর দিলে এক লাইনে "(আজকের briefing অনুযায়ী)" বলুন।`,
+        )
+      }
+    }
+
+    // LIVE office pulse — office/staff/agent-work turns answer from this block in
+    // ONE round; each avoided tool round saves a full context re-bill on the
+    // cache-less heads. Injected for staff/erp/finance/base-flavoured turns.
+    if (officePulse?.text) {
+      const pulseGroups: ToolGroupName[] = ['staff', 'erp', 'finance', 'cs']
+      const isPulseTurn = !activeGroups || activeGroups.some((g) => pulseGroups.includes(g))
+      if (isPulseTurn) {
+        const ageMin = Math.max(0, Math.round((Date.now() - new Date(officePulse.generatedAt).getTime()) / 60_000))
+        volatileParts.push(
+          `\n## 🏢 অফিস এখন — LIVE pulse (${ageMin} মিনিট আগের)\n${officePulse.text}\n` +
+            `অফিস/স্টাফ/হাজিরা/টাস্ক/এজেন্টের চলমান কাজের প্রশ্নে এই pulse থেকেই উত্তর দিন — live tool ডাকবেন না। ` +
+            `শুধু তখন tool ডাকুন যখন owner স্পষ্ট "এই মুহূর্তের/লাইভ" চান বা pulse-এ নেই এমন গভীর ডিটেইল লাগে।`,
         )
       }
     }
