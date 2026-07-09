@@ -5,7 +5,8 @@
 //  pill top-left (bar button, wired in SwiftUIShell) that opens the business
 //  switcher sheet, a horizontal row of three premium "hero" cards where the Watch
 //  app shows My Faces (live clock/date/timezone · dynamic alerts · weekly+monthly
-//  progress), and every nav group below COLLAPSIBLE with a spring chevron.
+//  progress), and every nav group below PUSHES its own Settings-style page
+//  (owner spec 2026-07-09 — replaced the earlier inline collapse/expand).
 //
 //  Deliberately DECOUPLED from AlmaTheme (SpikeNativeShell.swift) so this file
 //  typechecks standalone and stays host-agnostic:
@@ -224,20 +225,6 @@ final class MoreVM {
     }
 }
 
-// MARK: - Collapsible-group persistence
-
-/// Which nav groups are expanded, persisted so the owner's arrangement survives
-/// relaunch. First run = everything collapsed (the Watch-app "clean" look).
-private enum MoreExpandState {
-    private static let key = "alma-more-expanded-groups"
-    static func load() -> Set<String> {
-        Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
-    }
-    static func save(_ groups: Set<String>) {
-        UserDefaults.standard.set(Array(groups).sorted(), forKey: key)
-    }
-}
-
 // MARK: - Accent (web colour variant) bridge
 
 /// The web app's 5 accent presets (src/lib/theme.ts — single source of truth for the
@@ -327,9 +314,13 @@ struct MoreMenuScreen: View {
     /// profile bar button (top-right). Optional for previews.
     var onProfileImageUrl: (String?) -> Void = { _ in }
 
+    /// Pushes a NATIVE SwiftUI page (title + view) onto the host nav — the group
+    /// rows push their item list as a separate page (owner spec 2026-07-09:
+    /// Settings-style navigation, no inline expand). nil (previews) = no-op.
+    var pushNative: ((_ title: String, _ view: AnyView) -> Void)? = nil
+
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = MoreVM()
-    @State private var expandedGroups: Set<String> = MoreExpandState.load()
     @State private var showBusinessSheet = false
     @State private var showProfileSheet = false
 
@@ -435,7 +426,7 @@ struct MoreMenuScreen: View {
                 // Appearance/Security switches live in the PROFILE sheet now (owner
                 // spec 2026-07-08): More is pure navigation, profile is personal.
                 ForEach(Self.groups, id: \.header) { group in
-                    collapsibleGroup(group)
+                    groupRow(group)
                 }
             }
             .padding(.horizontal, 16)
@@ -499,69 +490,41 @@ struct MoreMenuScreen: View {
         return allowed.isEmpty ? Self.businesses : allowed
     }
 
-    // ── Collapsible nav group (Watch-app style card whose header row toggles it) ──
+    // ── Nav group row (Settings-style: tap PUSHES the group's own page — owner
+    //    spec 2026-07-09; the old inline expand felt unprofessional) ──
 
     @ViewBuilder
-    private func collapsibleGroup(_ group: MenuGroup) -> some View {
-        let expanded = expandedGroups.contains(group.header)
-        VStack(spacing: 0) {
-            Button {
-                UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
-                    if expanded { expandedGroups.remove(group.header) }
-                    else { expandedGroups.insert(group.header) }
-                    MoreExpandState.save(expandedGroups)
-                }
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: group.icon)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(violet)
-                        .frame(width: 32, height: 32)
-                        .background(violet.opacity(colorScheme == .dark ? 0.18 : 0.12),
-                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
-                    Text(group.header)
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.primary)
-                    Spacer(minLength: 8)
-                    Text("\(group.items.count)")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 7).padding(.vertical, 3)
-                        .background(Color.primary.opacity(0.06), in: Capsule())
-                    Image(systemName: "chevron.down")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(expanded ? 0 : -90))
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .contentShape(Rectangle())
+    private func groupRow(_ group: MenuGroup) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            pushNative?(group.header, AnyView(
+                MoreGroupScreen(group: group, open: { item in open(item) })))
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: group.icon)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(violet)
+                    .frame(width: 32, height: 32)
+                    .background(violet.opacity(colorScheme == .dark ? 0.18 : 0.12),
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                Text(group.header)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 8)
+                Text("\(group.items.count)")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.tertiary)
             }
-            .buttonStyle(MoreRowButtonStyle())
-
-            if expanded {
-                ForEach(Array(group.items.enumerated()), id: \.element.title) { _, item in
-                    Divider().padding(.leading, 58)
-                    Button {
-                        open(item)
-                    } label: {
-                        HStack(spacing: 12) {
-                            itemLabel(item)
-                            Spacer(minLength: 8)
-                            Image(systemName: "chevron.right")
-                                .font(.footnote.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 11)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(MoreRowButtonStyle())
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(MoreRowButtonStyle())
         // Frosted-glass card so the aurora glows through but the rows stay crisp.
         .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
@@ -577,23 +540,63 @@ struct MoreMenuScreen: View {
         else { openPath(item.path, item.title) }
     }
 
-    // ── Row labels ──
+}
 
-    /// Module row: SF Symbol in a violet-tinted rounded square (premium-iOS icon chip).
-    private func itemLabel(_ item: MenuItem) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: item.icon)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(violet)
-                .frame(width: 32, height: 32)
-                .background(violet.opacity(colorScheme == .dark ? 0.18 : 0.12),
-                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
-            Text(item.title)
-                .font(.body)
-                .foregroundStyle(.primary)
+// MARK: - Group page (Settings-style pushed list — one page per nav group)
+
+/// The page a group row pushes: the group's items as a frosted-glass list on the
+/// aurora, same premium row style the old inline expand used. Pure navigation —
+/// item taps run the SAME open() routing (native sentinels + smart web push).
+@available(iOS 17.0, *)
+private struct MoreGroupScreen: View {
+    let group: MoreMenuScreen.MenuGroup
+    let open: (MoreMenuScreen.MenuItem) -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var violet: Color { Color(red: 0.655, green: 0.545, blue: 0.980) } // #a78bfa
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                VStack(spacing: 0) {
+                    ForEach(Array(group.items.enumerated()), id: \.element.title) { index, item in
+                        if index > 0 { Divider().padding(.leading, 58) }
+                        Button {
+                            open(item)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: item.icon)
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(violet)
+                                    .frame(width: 32, height: 32)
+                                    .background(violet.opacity(colorScheme == .dark ? 0.18 : 0.12),
+                                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                                Text(item.title)
+                                    .font(.body)
+                                    .foregroundStyle(.primary)
+                                Spacer(minLength: 8)
+                                Image(systemName: "chevron.right")
+                                    .font(.footnote.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 13)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(MoreRowButtonStyle())
+                    }
+                }
+                .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+                .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+                .shadow(color: .black.opacity(colorScheme == .dark ? 0.18 : 0.06), radius: 10, y: 3)
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 28)
         }
+        .background(OrdersAurora())
+        .claudeTopFade()
     }
-
 }
 
 // MARK: - Hero cards ("My Faces" slot — clock · alerts · progress)

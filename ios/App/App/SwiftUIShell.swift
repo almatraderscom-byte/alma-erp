@@ -343,6 +343,14 @@ extension AlmaTabBarController {
                 // The button holds no reference back to the host — no cycle.
                 onProfileImageUrl: { url in
                     Self.loadAvatar(into: avatarButton, from: url)
+                },
+                // Group rows push their item list as a native Settings-style page
+                // (owner spec 2026-07-09) — same nav, tab bar stays visible.
+                pushNative: { title, view in
+                    let host = AlmaHostingController(rootView: view)
+                    host.title = title
+                    host.hidesBottomBarWhenPushed = false
+                    navRef.value?.pushViewController(host, animated: true)
                 })
             let host = AlmaHostingController(rootView: screen)
             host.title = "More"
