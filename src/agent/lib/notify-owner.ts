@@ -79,6 +79,7 @@ export async function notifyOwner(opts: {
         title: opts.title,
         message: opts.message,
         category: opts.category,
+        actionUrl: opts.actionUrl ?? null,
       })
       if (held) return { channels: ['held_for_morning'], statuses: { dnd: 'held' } }
     } catch {
@@ -177,6 +178,8 @@ export async function notifyOwnerIfAway(opts: {
   title: string
   message: string
   category?: 'salah' | 'urgent' | 'task' | 'report'
+  /** Where a tap on the native push lands the owner (defaults to /agent downstream). */
+  actionUrl?: string | null
 }): Promise<{ skipped: boolean }> {
   try {
     if (await isOwnerAppActive()) return { skipped: true }

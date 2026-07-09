@@ -38,6 +38,7 @@ export interface HeldNotification {
   title: string
   message: string
   category?: string
+  actionUrl?: string | null
   heldAt: string
 }
 
@@ -120,6 +121,7 @@ export async function maybeHoldForQuietHours(opts: {
   title: string
   message: string
   category?: string
+  actionUrl?: string | null
 }): Promise<boolean> {
   try {
     const config = await getQuietHoursConfig()
@@ -131,6 +133,7 @@ export async function maybeHoldForQuietHours(opts: {
       title: opts.title,
       message: opts.message,
       category: opts.category,
+      actionUrl: opts.actionUrl ?? null,
       heldAt: new Date().toISOString(),
     })
     // Keep only the most recent MAX_HELD (drop oldest if it overflows).
@@ -177,15 +180,19 @@ export async function flushQuietHoursQueue(): Promise<{ flushed: number }> {
     .join('\n')
 
   const message =
-    `🌙 শুভ সকাল Sir। রাতে ${queue.length}টি আপডেট জমা রেখেছিলাম যেন আপনার ঘুম নষ্ট না হয় — ` +
+    `🌙 শুভ সকাল Boss। রাতে ${queue.length}টি আপডেট জমা রেখেছিলাম যেন আপনার ঘুম নষ্ট না হয় — ` +
     `এক জায়গায় দিলাম:\n${lines}\n\n` +
     `জরুরি কিছু থাকলে রাতেই সরাসরি জানাতাম; এগুলো অপেক্ষা করার মতো ছিল।`
 
+  // The digest merges many held items; if exactly one page dominates use it,
+  // otherwise land the tap on the agent chat where the digest text lives.
+  const heldUrls = [...new Set(queue.map((h) => h.actionUrl).filter(Boolean))]
   await notifyOwner({
     tier: 1,
     title: '🌙 রাতের জমা আপডেট',
     message,
     category: 'report',
+    actionUrl: heldUrls.length === 1 ? heldUrls[0] : '/agent',
     // Internal: this IS the morning delivery — don't re-hold it.
     _bypassQuietHours: true,
   }).catch(() => {})
