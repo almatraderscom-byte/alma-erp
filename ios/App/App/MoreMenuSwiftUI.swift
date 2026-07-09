@@ -642,11 +642,19 @@ private struct HeroCardChrome<Content: View>: View {
     @ViewBuilder let content: Content
     @Environment(\.colorScheme) private var scheme
 
+    /// Card width sized off the SCREEN so two cards + a visible sliver of the third
+    /// always fit (owner spec 2026-07-09: the third card must peek, never fully hide).
+    /// 16pt gutter + card + 12 gap + card + 12 gap + ~26pt peek = screen width.
+    private static var cardWidth: CGFloat {
+        let screen = UIScreen.main.bounds.width
+        return max(150, (screen - 16 - 12 - 12 - 26) / 2)
+    }
+
     var body: some View {
         let stops = scheme == .dark ? dark : light
         content
             .padding(14)
-            .frame(width: 210, height: 168, alignment: .topLeading)
+            .frame(width: Self.cardWidth, height: 168, alignment: .topLeading)
             .background(
                 LinearGradient(colors: [stops.0, stops.1],
                                startPoint: .topLeading, endPoint: .bottomTrailing))

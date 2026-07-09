@@ -688,30 +688,13 @@ struct ApprovalsScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Bento board — the Dashboard's glass-board language on Approvals (owner spec
-    /// 2026-07-08): one dark hero anchor (pending total + critical/high split) and a
-    /// 2×2 grid of priority tiles. Same counts/colours the old 5-card strip showed.
+    /// Bento board — the Dashboard's glass-board language on Approvals. Owner cut
+    /// 2026-07-09: the 2×2 priority-tile grid duplicated the hero's counts, so the
+    /// hero card is the whole board now (pending total + critical/high split).
     private var bentoBoard: some View {
-        VStack(spacing: 10) {
-            ApvBentoHeroCard(pending: vm.totalPending,
-                             critical: vm.priorityCounts["CRITICAL"] ?? 0,
-                             high: vm.priorityCounts["HIGH"] ?? 0)
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())],
-                      spacing: 10) {
-                ApvBentoStatTile(label: "Critical", value: vm.priorityCounts["CRITICAL"] ?? 0,
-                                 sub: "এখনই দেখা দরকার",
-                                 tint: ApprovalPalette.red500, accent: ApprovalPalette.red500)
-                ApvBentoStatTile(label: "High", value: vm.priorityCounts["HIGH"] ?? 0,
-                                 sub: "আজকের মধ্যে",
-                                 tint: ApprovalPalette.amber600, accent: ApprovalPalette.amber500)
-                ApvBentoStatTile(label: "Normal", value: vm.priorityCounts["NORMAL"] ?? 0,
-                                 sub: "সাধারণ সারি",
-                                 tint: .primary, accent: AlmaSwiftTheme.violet)
-                ApvBentoStatTile(label: "Low", value: vm.priorityCounts["LOW"] ?? 0,
-                                 sub: "পরে হলেও চলবে",
-                                 tint: .primary, accent: AlmaSwiftTheme.sage)
-            }
-        }
+        ApvBentoHeroCard(pending: vm.totalPending,
+                         critical: vm.priorityCounts["CRITICAL"] ?? 0,
+                         high: vm.priorityCounts["HIGH"] ?? 0)
     }
 
     /// "Pending by module" — the web's side card, after the list on phone.
@@ -1748,48 +1731,6 @@ private struct ApvCountUpText: View, Animatable {
     }
     var body: some View {
         Text("\(Int(value.rounded()))")
-    }
-}
-
-/// Shared tile backdrop: frosted glass + a soft diagonal accent wash.
-@available(iOS 17.0, *)
-private func apvBentoWash(_ accent: Color, scheme: ColorScheme) -> some View {
-    ZStack {
-        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
-        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
-            .fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
-        LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.14 : 0.10), .clear],
-                       startPoint: .topLeading, endPoint: .bottomTrailing)
-    }
-    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
-}
-
-/// Small glass stat tile — count-up value + sub line over a soft accent wash.
-/// Counts keep the strip's plain digits (web parity), tints unchanged.
-@available(iOS 17.0, *)
-private struct ApvBentoStatTile: View {
-    @Environment(\.colorScheme) private var scheme
-    let label: String
-    let value: Int
-    let sub: String
-    let tint: Color
-    let accent: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.4)
-                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
-            ApvCountUp(target: value)
-                .font(.system(size: 17, weight: .heavy)).monospacedDigit()
-                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.55)
-            Text(sub).font(.system(size: 9)).foregroundStyle(.secondary)
-                .lineLimit(1).minimumScaleFactor(0.7)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 13).padding(.vertical, 12)
-        .background { apvBentoWash(accent, scheme: scheme) }
-        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
-            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
     }
 }
 

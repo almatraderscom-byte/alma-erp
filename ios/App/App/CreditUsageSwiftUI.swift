@@ -514,6 +514,10 @@ final class CreditUsageVM {
             authExpired = false
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
+        } catch AlmaAPIError.http(let status, _) where status == 404 {
+            // The usage-logs route isn't on the production deploy yet (it ships with
+            // the web-side merge). Show a calm Bangla notice, never the raw HTML body.
+            logsError = "লগ ফিড এখনো সার্ভারে লাইভ হয়নি — ওয়েব আপডেট ডিপ্লয় হলে এখানে দেখা যাবে।"
         } catch {
             if Self.isCancellation(error) { return }
             logsError = error.localizedDescription
