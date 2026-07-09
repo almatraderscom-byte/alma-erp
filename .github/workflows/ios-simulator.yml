@@ -1,0 +1,57 @@
+# iOS Simulator build check — compile-verifies the native app WITHOUT signing.
+# Never touches TestFlight / App Store Connect, so it cannot consume any
+# TestFlight build quota. Safe to run as often as needed.
+#
+# Trigger: manual only ("Run workflow" button on GitHub → Actions tab).
+# Kept manual because macOS runners bill at 10x minutes; add a push trigger
+# later if the minutes budget allows.
+
+name: iOS Simulator Build (no TestFlight)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ios-simulator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-simulator:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select newest Xcode on the runner
+        run: |
+          XCODE=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install JS dependencies (Capacitor plugins)
+        # --ignore-scripts skips "prisma generate" etc. — not needed for the iOS shell
+        run: npm ci --ignore-scripts
+
+      - name: Sync Capacitor iOS project
+        run: npx cap sync ios
+
+      - name: Install CocoaPods
+        working-directory: ios/App
+        run: pod install
+
+      - name: Build for iOS Simulator (unsigned)
+        working-directory: ios/App
+        run: |
+          xcodebuild build \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO
