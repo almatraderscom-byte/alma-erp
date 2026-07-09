@@ -31,7 +31,7 @@ const INT_TOKEN  = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
  * worker asks the app to send via an owner-only internal endpoint. Fail-open:
  * any error is swallowed so Telegram / ntfy / Twilio are never blocked.
  */
-async function sendNativePush(tier, title, message, category) {
+async function sendNativePush(tier, title, message, category, actionUrl) {
   try {
     const url = APP_URL()
     const token = INT_TOKEN()
@@ -42,7 +42,9 @@ async function sendNativePush(tier, title, message, category) {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ tier, title, message, category }),
+      // actionUrl = where a tap lands the owner in the app (e.g. '/agent');
+      // when omitted the app-side sender falls back to '/agent'.
+      body: JSON.stringify({ tier, title, message, category, actionUrl: actionUrl ?? null }),
     })
     if (!res.ok) return { ok: false, reason: `http_${res.status}` }
     const data = await res.json().catch(() => ({}))
@@ -84,6 +86,7 @@ async function logNotification(tier, category, channels, statuses, title, messag
  *   skipTelegram?: boolean,
  *   salahDate?: string,
  *   salahWaqt?: string,
+ *   actionUrl?: string,
  * }} opts
  */
 /**
@@ -101,6 +104,7 @@ export async function notify({
   voiceMessage,
   salahDate,
   salahWaqt,
+  actionUrl,
 }) {
   const channels = []
   const statuses = {}
@@ -140,7 +144,7 @@ export async function notify({
   // ── Native app push (OneSignal → APNs) — owner's iOS/Android app notifies like a
   //    real app. First-class channel; fail-open so it never blocks the others. ──
   channels.push('native_push')
-  const nativeResult = await sendNativePush(tier, title, message, category)
+  const nativeResult = await sendNativePush(tier, title, message, category, actionUrl)
   statuses.native_push = nativeResult.ok ? 'sent' : `error: ${nativeResult.reason}`
 
   const sendGeneral = ntfyMode === 'both' || ntfyMode === 'general'

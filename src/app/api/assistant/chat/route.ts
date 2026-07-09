@@ -629,8 +629,9 @@ export async function POST(req: NextRequest) {
             void notifyOwnerIfAway({
               tier: 2,
               title: 'অনুমোদন দরকার — ALMA Agent',
-              message: (summary && summary.slice(0, 200)) || 'একটি অনুমোদন আপনার অপেক্ষায় আছে স্যার।',
+              message: (summary && summary.slice(0, 200)) || 'একটি অনুমোদন আপনার অপেক্ষায় আছে Boss।',
               category: 'urgent',
+              actionUrl: '/agent',
             }).catch(() => {})
           }
           if (event.type === 'done') {
@@ -691,7 +692,7 @@ export async function POST(req: NextRequest) {
         // Telegram so the answer isn't missed. Both conditions required (>30s AND
         // disconnected) so quick foreground turns never spam.
         if (doneTurnMs > 30_000 && !clientConnected) {
-          void sendOwnerText('✅ আপনার আগের প্রশ্নের উত্তরটা তৈরি হয়ে গেছে স্যার — অ্যাপ খুললেই দেখতে পাবেন।').catch(() => {})
+          void sendOwnerText('✅ আপনার আগের প্রশ্নের উত্তরটা তৈরি হয়ে গেছে Boss — অ্যাপ খুললেই দেখতে পাবেন।').catch(() => {})
         }
         // App-style ntfy push when a reply lands while the owner is away (app
         // backgrounded/closed → stream dropped). notifyOwnerIfAway double-checks
@@ -700,7 +701,8 @@ export async function POST(req: NextRequest) {
           void notifyOwnerIfAway({
             tier: 2,
             title: 'ALMA Agent — উত্তর তৈরি',
-            message: replyPreview.trim() || 'আপনার প্রশ্নের উত্তর তৈরি হয়েছে স্যার।',
+            message: replyPreview.trim() || 'আপনার প্রশ্নের উত্তর তৈরি হয়েছে Boss।',
+            actionUrl: '/agent',
           }).catch(() => {})
         }
         controller.close()
