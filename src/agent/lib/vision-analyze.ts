@@ -22,6 +22,12 @@ interface GeminiVisionOpts {
   maxTokens?: number
   /** Override the vision model, e.g. 'gemini-2.5-pro' for a high-accuracy confirm pass. */
   model?: string
+  /**
+   * Extra interleaved text/image parts appended AFTER the main prompt+image —
+   * used by CS product matching to show catalog candidate photos alongside the
+   * customer photo in one request.
+   */
+  extraParts?: Array<{ text: string } | { imageBase64: string; mimeType: string }>
 }
 
 interface GeminiResponse {
@@ -51,6 +57,11 @@ export async function geminiVisionJson<T>(opts: GeminiVisionOpts): Promise<T> {
         parts: [
           { text: opts.prompt },
           { inline_data: { mime_type: opts.mimeType, data: opts.imageBase64 } },
+          ...(opts.extraParts ?? []).map((p) =>
+            'text' in p
+              ? { text: p.text }
+              : { inline_data: { mime_type: p.mimeType, data: p.imageBase64 } },
+          ),
         ],
       }],
       generationConfig: {

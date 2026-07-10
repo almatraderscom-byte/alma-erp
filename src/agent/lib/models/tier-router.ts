@@ -49,6 +49,9 @@ export function assertCriticalTierUsesClaude(modelId: string, tier: TaskTier): v
   }
 }
 
+/** Gemini stand-in for the critical tier while Claude has no credits. */
+const CRITICAL_TIER_GEMINI_STANDIN = 'gemini-3.1-pro'
+
 export async function resolveSubagentModel(role: SpecialistRole): Promise<{
   tier: TaskTier
   model: ModelEntry
@@ -66,6 +69,17 @@ export async function resolveSubagentModel(role: SpecialistRole): Promise<{
     const pref = SPECIALIST_ROLES[role]?.preferredModelId
     if (pref && isKnownModelId(pref)) modelId = pref
   }
+  if (tier === 'critical') {
+    // Owner decision 2026-07 (sanctioned in CLAUDE.md): while Anthropic credits are
+    // out (ANTHROPIC_HEAD_DOWN / Monitor toggle), Gemini 3.1 Pro stands in for the
+    // finance/critical sub-agent instead of hard-failing every delegation. The
+    // Claude guard below stays active for the day the credits return.
+    const { isAnthropicAllowed } = await import('@/agent/lib/models/model-enabled')
+    const claudeUp = isAnthropicModel(modelId) && (await isAnthropicAllowed(modelId).catch(() => false))
+    if (!claudeUp) {
+      return { tier, model: getModel(CRITICAL_TIER_GEMINI_STANDIN) }
+    }
+  }
   assertCriticalTierUsesClaude(modelId, tier)
   return { tier, model: getModel(modelId) }
 }
@@ -73,6 +87,12 @@ export async function resolveSubagentModel(role: SpecialistRole): Promise<{
 /** Fallback when OpenRouter errors — cheap tiers use native Gemini before Claude. */
 export function fallbackModelForTier(tier: TaskTier, failedModelId: string): ModelEntry | null {
   const failed = getModel(failedModelId)
+  // An Anthropic failure (credits out, overload) falls back to native Gemini —
+  // previously it returned null and the whole delegation failed hard.
+  if (failed.provider === 'anthropic') {
+    const gemini = getModel(CRITICAL_TIER_GEMINI_STANDIN)
+    return gemini.id !== failedModelId ? gemini : null
+  }
   if (failed.provider !== 'openrouter') return null
 
   if (tier === 'light' || tier === 'heavy') {

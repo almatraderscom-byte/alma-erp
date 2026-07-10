@@ -1,5 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk'
-import { AGENT_MODEL } from '@/agent/config'
+import { agentSmartText } from '@/agent/lib/llm-text'
 
 const MORALE_SYSTEM = `One short (2-3 sentence) Bangla morale message for ALMA fashion staff.
 Warm, respectful, Islamic-minded (ihsan, halal work dignity — not preachy). "আমরা/ALMA টিম" tone.
@@ -9,9 +8,6 @@ export async function composeStaffMoraleMessage(
   staffName: string,
   recentContext?: string,
 ): Promise<string | null> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) return null
-
   const contextLine = recentContext?.trim()
     ? `Recent work context: ${recentContext.trim()}`
     : 'Recent work context: (not provided)'
@@ -21,18 +17,14 @@ export async function composeStaffMoraleMessage(
     'Write exactly ONE morale message in Bangla (2-3 sentences max).'
 
   try {
-    const client = new Anthropic({ apiKey })
-    const res = await client.messages.create({
-      model: AGENT_MODEL,
-      max_tokens: 200,
+    // Anthropic when it has credits, otherwise Gemini — a direct Claude call here
+    // 400'd while ANTHROPIC_HEAD_DOWN is on and silently killed morale messages.
+    const text = await agentSmartText({
       system: MORALE_SYSTEM,
-      messages: [{ role: 'user', content: userPrompt }],
+      prompt: userPrompt,
+      maxTokens: 200,
+      costLabel: 'morale_message',
     })
-    const text = res.content
-      .filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('')
-      .trim()
     return text || null
   } catch (err) {
     console.error('[morale-message] LLM failed:', err)

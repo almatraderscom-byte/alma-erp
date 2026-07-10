@@ -302,6 +302,12 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
       tier = fb.provider === 'anthropic' ? 'critical' : tier
       try {
         const result = await runWithModel(model, tier, params, def)
+        // Same customer-facing Bangla gate as the primary path — the fallback
+        // reply reaches the customer through the exact same pipe.
+        let fbSummary = result.summary || '(fallback সারাংশ)'
+        if (isOpenRouterProvider(model.provider) && needsCustomerFacingBanglaGate(params.role, tier)) {
+          fbSummary = gateCheapModelBanglaOutput(fbSummary, { customerFacing: true })
+        }
         const costUsd = calcModelTurnCostUsd(model, {
           inputTokens: result.inputTokens,
           outputTokens: result.outputTokens,
@@ -337,7 +343,7 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
           modelId: model.id,
           modelLabel: model.label,
           tier,
-          summary: result.summary || '(fallback সারাংশ)',
+          summary: fbSummary,
           toolsUsed: result.toolsUsed,
           costUsd,
           fallbackUsed: true,
