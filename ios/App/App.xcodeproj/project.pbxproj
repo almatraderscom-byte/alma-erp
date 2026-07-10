@@ -10,10 +10,12 @@
 		041FF4131B30CAE31E193A59 /* cs_model_0.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 9CFCBCE38163951749E58971 /* cs_model_0.jpg */; };
 		10CB0551CC5106AAA32C2075 /* cs_sample_1.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 194974F3E43FEDFCD4DDEE64 /* cs_sample_1.jpg */; };
 		180BC4DD2DA147F19E6B776B /* cs_sample_5.jpg in Resources */ = {isa = PBXBuildFile; fileRef = B56B85204311DAC0D3D94587 /* cs_sample_5.jpg */; };
+		1DE948FD379BF7400CBE9EB4 /* DigitalProjectsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10A01C06D84AE708B261A5FB /* DigitalProjectsSwiftUI.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		2FAF5E64551F225193138479 /* cs_sample_10.jpg in Resources */ = {isa = PBXBuildFile; fileRef = BB8E1934D336212602B16193 /* cs_sample_10.jpg */; };
 		3CE1DA67222475D2718E6874 /* cs_sample_3.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 23986319C5089C7C5D449772 /* cs_sample_3.jpg */; };
 		3E4CEC86281C607956125F08 /* cs_model_3.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 63F4E408E62DB10E7AC4D813 /* cs_model_3.jpg */; };
+		454091BDF584DDD3349570F4 /* DigitalHomeSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE2EBFBCB383B82ECC59BB1F /* DigitalHomeSwiftUI.swift */; };
 		45EA8268841158BD59DA9B1F /* cs_sample_2.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 1FE7DB3A3B9DB7EE7C71FF82 /* cs_sample_2.jpg */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
@@ -21,31 +23,39 @@
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
+		56EBF52AB2CCBE8B449217D1 /* TradingHomeSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 035EE01B7B4664A529CD98B7 /* TradingHomeSwiftUI.swift */; };
+		6C6A27C2A5F92B5F2617B361 /* TradingHrSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE6A3A82A18D773065686026 /* TradingHrSwiftUI.swift */; };
 		747EDB92288CE0950C119E72 /* cs_model_2.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 2B1E7BFF1464C45512B79DB6 /* cs_model_2.jpg */; };
 		75EE0277D14177856309933A /* CreativeStudioSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D7D31FF1297D19D3B7C7F2 /* CreativeStudioSwiftUI.swift */; };
 		8AE5A46CDEF2B132197C6BDD /* cs_sample_4.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 5ED95135C15036B1B8C1FD27 /* cs_sample_4.jpg */; };
+		8D860AAF950338A1E4500FF4 /* TradingTelegramSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 105A54DE7A5B5901CDD437F6 /* TradingTelegramSwiftUI.swift */; };
 		A084ECDBA7D38E1E42DFC39D /* Pods_App.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */; };
 		A1AA11A200000000000INTNT /* AlmaAppIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1AA11A100000000000INTNT /* AlmaAppIntents.swift */; };
 		A2BB7700000000000000B001 /* BackgroundRefresh.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2BB7700000000000000A001 /* BackgroundRefresh.swift */; };
-		A4237B4ED88F800E5B5737D2 /* cs_sample_11.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 137D30126CAA6F1E0C061519 /* cs_sample_11.jpg */; };
-		B1AA2200000000000000B001 /* AlmaWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1AA2200000000000000A003 /* AlmaWidgetBundle.swift */; };
-		B1AA2200000000000000B002 /* AlmaWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1AA2200000000000000A004 /* AlmaWidget.swift */; };
-		B1AA2200000000000000B003 /* AlmaWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B1AA2200000000000000A002 /* AlmaWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		B2CC8800000000000000B001 /* AlmaCompanion.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2CC8800000000000000A001 /* AlmaCompanion.swift */; };
-		C1AA3300000000000000B001 /* PulseActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A001 /* PulseActivityAttributes.swift */; };
-		C1AA3300000000000000B002 /* LiveActivityBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A002 /* LiveActivityBridge.swift */; };
-		C1AA3300000000000000B006 /* PulseRestore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A006 /* PulseRestore.swift */; };
-		C1AA3300000000000000B003 /* AlmaBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A003 /* AlmaBridgeViewController.swift */; };
-		C1AA3300000000000000B004 /* PulseLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A004 /* PulseLiveActivity.swift */; };
-		C1AA3300000000000000B005 /* PulseActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A001 /* PulseActivityAttributes.swift */; };
 		A3CC8800000000000000B001 /* AlmaVoiceActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3CC8800000000000000A001 /* AlmaVoiceActivityAttributes.swift */; };
 		A3CC8800000000000000B002 /* VoiceLiveActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3CC8800000000000000A002 /* VoiceLiveActivityController.swift */; };
 		A3CC8800000000000000B003 /* AlmaVoiceLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3CC8800000000000000A003 /* AlmaVoiceLiveActivity.swift */; };
 		A3CC8800000000000000B004 /* AlmaVoiceActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3CC8800000000000000A001 /* AlmaVoiceActivityAttributes.swift */; };
 		A3CC8800000000000000B005 /* AlmaStarburstSpinner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A023 /* AlmaStarburstSpinner.swift */; };
+		A4237B4ED88F800E5B5737D2 /* cs_sample_11.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 137D30126CAA6F1E0C061519 /* cs_sample_11.jpg */; };
+		A5C36F71F82ACE4FBBC13662 /* TradingAccountsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F367DE330E6E725D15C1AF4 /* TradingAccountsSwiftUI.swift */; };
+		AC2AC4C9A34A493F17E9405F /* TradingAnalyticsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CE5866B4C8C32791D73AF40 /* TradingAnalyticsSwiftUI.swift */; };
+		B10C00596905806603ADCDC1 /* DigitalInvoicesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 471B8BE931F61C7162672A60 /* DigitalInvoicesSwiftUI.swift */; };
+		B1AA2200000000000000B001 /* AlmaWidgetBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1AA2200000000000000A003 /* AlmaWidgetBundle.swift */; };
+		B1AA2200000000000000B002 /* AlmaWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1AA2200000000000000A004 /* AlmaWidget.swift */; };
+		B1AA2200000000000000B003 /* AlmaWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B1AA2200000000000000A002 /* AlmaWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B2CC8800000000000000B001 /* AlmaCompanion.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2CC8800000000000000A001 /* AlmaCompanion.swift */; };
+		B3B499D022B574C0B2A96CB7 /* TargetControlSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7294E45AFB934CB152906193 /* TargetControlSwiftUI.swift */; };
+		C1AA3300000000000000B001 /* PulseActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A001 /* PulseActivityAttributes.swift */; };
+		C1AA3300000000000000B002 /* LiveActivityBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A002 /* LiveActivityBridge.swift */; };
+		C1AA3300000000000000B003 /* AlmaBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A003 /* AlmaBridgeViewController.swift */; };
+		C1AA3300000000000000B004 /* PulseLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A004 /* PulseLiveActivity.swift */; };
+		C1AA3300000000000000B005 /* PulseActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A001 /* PulseActivityAttributes.swift */; };
+		C1AA3300000000000000B006 /* PulseRestore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A006 /* PulseRestore.swift */; };
 		C6A88A8FC60371085CFB3D09 /* cs_sample_0.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 59423C6C3ED49CE9F31ED592 /* cs_sample_0.jpg */; };
 		CD24687123B1E85C414A573D /* cs_sample_6.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 0CE6BFDD03747701FD223CA6 /* cs_sample_6.jpg */; };
 		D1AA4400000000000000B001 /* NativeIntelligenceBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */; };
+		DD1E6C29144CBD386AB459B8 /* DigitalClientsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97A60B31F639A640D07DCF08 /* DigitalClientsSwiftUI.swift */; };
 		E1AA5500000000000000B001 /* NativeSpeechBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1AA5500000000000000A001 /* NativeSpeechBridge.swift */; };
 		E989B990E9C1E99742CD7724 /* cs_sample_7.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 8A25C75E224B4CF47FA32650 /* cs_sample_7.jpg */; };
 		EF0CA1B4340D6D66FF679402 /* cs_sample_8.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 3E78CDE7CC98B69EE283C2EF /* cs_sample_8.jpg */; };
@@ -58,53 +68,12 @@
 		F2AA7700000000000000B011 /* SwiftUIShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A011 /* SwiftUIShell.swift */; };
 		F2AA7700000000000000B012 /* MoreMenuSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A012 /* MoreMenuSwiftUI.swift */; };
 		F2AA7700000000000000B013 /* OrdersSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A013 /* OrdersSwiftUI.swift */; };
-		F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A021 /* AssistantSwiftUI.swift */; };
-		F2AA7700000000000000B023 /* AlmaStarburstSpinner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A023 /* AlmaStarburstSpinner.swift */; };
-		F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */; };
-		F2AA7700000000000000B064 /* StaffMonitorSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */; };
-		F2AA7700000000000000B063 /* AgentGrowthSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A063 /* AgentGrowthSwiftUI.swift */; };
-		F2AA7700000000000000B062 /* KnownPeopleSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A062 /* KnownPeopleSwiftUI.swift */; };
-		F2AA7700000000000000B061 /* TradingStaffSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */; };
-		F2AA7700000000000000B060 /* CatalogImagesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A060 /* CatalogImagesSwiftUI.swift */; };
-		F2AA7700000000000000B0FE /* KeyboardDismiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A0FE /* KeyboardDismiss.swift */; };
-		F2AA7700000000000000B05F /* AgentWhatsappSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */; };
-		F2AA7700000000000000B05E /* AgentCostsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */; };
-		F2AA7700000000000000B101 /* CreditUsageSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A101 /* CreditUsageSwiftUI.swift */; };
-		F2AA7700000000000000B102 /* SubscriptionsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A102 /* SubscriptionsSwiftUI.swift */; };
-		F2AA7700000000000000B05D /* SettingsTelegramSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */; };
-		F2AA7700000000000000B05C /* SettingsSessionSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05C /* SettingsSessionSwiftUI.swift */; };
-		F2AA7700000000000000B05B /* SettingsBrandingSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05B /* SettingsBrandingSwiftUI.swift */; };
-		F2AA7700000000000000B05A /* SettingsSmsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A05A /* SettingsSmsSwiftUI.swift */; };
-		F2AA7700000000000000B059 /* SettingsDatabaseSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A059 /* SettingsDatabaseSwiftUI.swift */; };
-		F2AA7700000000000000B058 /* PortalSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A058 /* PortalSwiftUI.swift */; };
-		F2AA7700000000000000B057 /* PortalOfficeSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A057 /* PortalOfficeSwiftUI.swift */; };
-		F2AA7700000000000000B056 /* SupplierImportSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A056 /* SupplierImportSwiftUI.swift */; };
-		F2AA7700000000000000B055 /* SettingsUsersSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A055 /* SettingsUsersSwiftUI.swift */; };
-		F2AA7700000000000000B054 /* SettingsNotificationsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A054 /* SettingsNotificationsSwiftUI.swift */; };
-		F2AA7700000000000000B053 /* PortalExpenseSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A053 /* PortalExpenseSwiftUI.swift */; };
-		F2AA7700000000000000B052 /* PaymentAccountsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A052 /* PaymentAccountsSwiftUI.swift */; };
-		F2AA7700000000000000B051 /* SystemDiagnosticsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A051 /* SystemDiagnosticsSwiftUI.swift */; };
-		F2AA7700000000000000B050 /* InsightsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A050 /* InsightsSwiftUI.swift */; };
-		F2AA7700000000000000B04F /* BusinessArchiveSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A04F /* BusinessArchiveSwiftUI.swift */; };
-		F2AA7700000000000000B04E /* TaskSpotlightSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A04E /* TaskSpotlightSwiftUI.swift */; };
-		F2AA7700000000000000B04D /* BriefingSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A04D /* BriefingSwiftUI.swift */; };
-		F2AA7700000000000000B04C /* AnalyticsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A04C /* AnalyticsSwiftUI.swift */; };
-		F2AA7700000000000000B04B /* AuditSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A04B /* AuditSwiftUI.swift */; };
-		F2AA7700000000000000B04A /* CrmSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A04A /* CrmSwiftUI.swift */; };
-		F2AA7700000000000000B049 /* AttendanceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A049 /* AttendanceSwiftUI.swift */; };
-		F2AA7700000000000000B048 /* EmployeesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A048 /* EmployeesSwiftUI.swift */; };
-		F2AA7700000000000000B047 /* InventorySwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A047 /* InventorySwiftUI.swift */; };
-		F2AA7700000000000000B046 /* ActivitySwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A046 /* ActivitySwiftUI.swift */; };
-		F2AA7700000000000000B045 /* OfficeFundSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A045 /* OfficeFundSwiftUI.swift */; };
-		F2AA7700000000000000B044 /* PayrollSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A044 /* PayrollSwiftUI.swift */; };
-		F2AA7700000000000000B043 /* ExpensesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A043 /* ExpensesSwiftUI.swift */; };
-		F2AA7700000000000000B042 /* InvoicesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A042 /* InvoicesSwiftUI.swift */; };
-		F2AA7700000000000000B041 /* FinanceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A041 /* FinanceSwiftUI.swift */; };
-		F2AA7700000000000000B040 /* AlmaNativeRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A040 /* AlmaNativeRouter.swift */; };		F2AA7700000000000000B014 /* ApprovalsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */; };
+		F2AA7700000000000000B014 /* ApprovalsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */; };
 		F2AA7700000000000000B015 /* CompanionSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A015 /* CompanionSwiftUI.swift */; };
 		F2AA7700000000000000B016 /* OrderCreateSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A016 /* OrderCreateSwiftUI.swift */; };
 		F2AA7700000000000000B021 /* AssistantSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A021 /* AssistantSwiftUI.swift */; };
 		F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */; };
+		F2AA7700000000000000B023 /* AlmaStarburstSpinner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A023 /* AlmaStarburstSpinner.swift */; };
 		F2AA7700000000000000B040 /* AlmaNativeRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A040 /* AlmaNativeRouter.swift */; };
 		F2AA7700000000000000B041 /* FinanceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A041 /* FinanceSwiftUI.swift */; };
 		F2AA7700000000000000B042 /* InvoicesSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A042 /* InvoicesSwiftUI.swift */; };
@@ -144,6 +113,8 @@
 		F2AA7700000000000000B064 /* StaffMonitorSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */; };
 		F2AA7700000000000000B080 /* DashboardSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A080 /* DashboardSwiftUI.swift */; };
 		F2AA7700000000000000B0FE /* KeyboardDismiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A0FE /* KeyboardDismiss.swift */; };
+		F2AA7700000000000000B101 /* CreditUsageSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A101 /* CreditUsageSwiftUI.swift */; };
+		F2AA7700000000000000B102 /* SubscriptionsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A102 /* SubscriptionsSwiftUI.swift */; };
 		F2AA7701000000000000B0FE /* FloatingChatHead.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7701000000000000A0FE /* FloatingChatHead.swift */; };
 		F2AA7702000000000000B0FE /* AgoraIntercom.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7702000000000000A0FE /* AgoraIntercom.swift */; };
 		F2AA7703000000000000B0FE /* IntercomUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7703000000000000A0FE /* IntercomUI.swift */; };
@@ -160,92 +131,7 @@
 			remoteInfo = AlmaWidgetExtension;
 		};
 /* End PBXContainerItemProxy section */
-/* Begin PBXFileReference section */
-		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
-		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
-		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		504EC3071FED79650016851F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
-		A1AA11A100000000000INTNT /* AlmaAppIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaAppIntents.swift; sourceTree = "<group>"; };
-		504EC30C1FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
-		504EC30E1FED79650016851F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
-		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
-		AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_App.framework; sourceTree = BUILT_PRODUCTS_DIR; };
-		AF51FD2D460BCFE21FA515B2 /* Pods-App.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App.release.xcconfig"; path = "Pods/Target Support Files/Pods-App/Pods-App.release.xcconfig"; sourceTree = "<group>"; };
-		FC68EB0AF532CFC21C3344DD /* Pods-App.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App.debug.xcconfig"; path = "Pods/Target Support Files/Pods-App/Pods-App.debug.xcconfig"; sourceTree = "<group>"; };
-		B1AA2200000000000000A002 /* AlmaWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AlmaWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		B1AA2200000000000000A003 /* AlmaWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaWidgetBundle.swift; sourceTree = "<group>"; };
-		B1AA2200000000000000A004 /* AlmaWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaWidget.swift; sourceTree = "<group>"; };
-		B1AA2200000000000000A005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		C1AA3300000000000000A001 /* PulseActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseActivityAttributes.swift; sourceTree = "<group>"; };
-		C1AA3300000000000000A002 /* LiveActivityBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityBridge.swift; sourceTree = "<group>"; };
-		C1AA3300000000000000A006 /* PulseRestore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseRestore.swift; sourceTree = "<group>"; };
-		C1AA3300000000000000A003 /* AlmaBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaBridgeViewController.swift; sourceTree = "<group>"; };
-		C1AA3300000000000000A004 /* PulseLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseLiveActivity.swift; sourceTree = "<group>"; };
-		A3CC8800000000000000A001 /* AlmaVoiceActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaVoiceActivityAttributes.swift; sourceTree = "<group>"; };
-		A3CC8800000000000000A002 /* VoiceLiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceLiveActivityController.swift; sourceTree = "<group>"; };
-		A3CC8800000000000000A003 /* AlmaVoiceLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaVoiceLiveActivity.swift; sourceTree = "<group>"; };
-		D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeIntelligenceBridge.swift; sourceTree = "<group>"; };
-		E1AA5500000000000000A001 /* NativeSpeechBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpeechBridge.swift; sourceTree = "<group>"; };
-		B2CC8800000000000000A001 /* AlmaCompanion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaCompanion.swift; sourceTree = "<group>"; };
-		F1AA6600000000000000A001 /* AlmaEntities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaEntities.swift; sourceTree = "<group>"; };
-		F1AA6600000000000000A002 /* EntityCacheBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EntityCacheBridge.swift; sourceTree = "<group>"; };
-		F1AA6600000000000000A003 /* AlmaWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = AlmaWidget.entitlements; sourceTree = "<group>"; };
-		A2BB7700000000000000A001 /* BackgroundRefresh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefresh.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A001 /* SpikeNativeShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpikeNativeShell.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A002 /* ClaudeTopFade.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeTopFade.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A010 /* AlmaAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaAPI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A011 /* SwiftUIShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftUIShell.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A012 /* MoreMenuSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MoreMenuSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A013 /* OrdersSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrdersSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A021 /* AssistantSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A023 /* AlmaStarburstSpinner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaStarburstSpinner.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantVoiceSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaffMonitorSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A063 /* AgentGrowthSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentGrowthSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A062 /* KnownPeopleSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnownPeopleSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A061 /* TradingStaffSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TradingStaffSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A060 /* CatalogImagesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogImagesSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A0FE /* KeyboardDismiss.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardDismiss.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentWhatsappSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCostsSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A101 /* CreditUsageSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreditUsageSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A102 /* SubscriptionsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionsSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsTelegramSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A05C /* SettingsSessionSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSessionSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A05B /* SettingsBrandingSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsBrandingSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A05A /* SettingsSmsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsSmsSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A059 /* SettingsDatabaseSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsDatabaseSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A058 /* PortalSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A057 /* PortalOfficeSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalOfficeSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A056 /* SupplierImportSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupplierImportSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A055 /* SettingsUsersSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsUsersSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A054 /* SettingsNotificationsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsNotificationsSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A053 /* PortalExpenseSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalExpenseSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A052 /* PaymentAccountsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaymentAccountsSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A051 /* SystemDiagnosticsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemDiagnosticsSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A050 /* InsightsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A04F /* BusinessArchiveSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BusinessArchiveSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A04E /* TaskSpotlightSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskSpotlightSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A04D /* BriefingSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A04C /* AnalyticsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnalyticsSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A04B /* AuditSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuditSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A04A /* CrmSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CrmSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A049 /* AttendanceSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttendanceSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A048 /* EmployeesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmployeesSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A047 /* InventorySwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InventorySwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A046 /* ActivitySwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivitySwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A045 /* OfficeFundSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OfficeFundSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A044 /* PayrollSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PayrollSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A043 /* ExpensesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpensesSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A042 /* InvoicesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InvoicesSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A041 /* FinanceSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinanceSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A040 /* AlmaNativeRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaNativeRouter.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A014 /* ApprovalsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A015 /* CompanionSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompanionSwiftUI.swift; sourceTree = "<group>"; };
-		F2AA7700000000000000A016 /* OrderCreateSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrderCreateSwiftUI.swift; sourceTree = "<group>"; };
-/* End PBXFileReference section */
+
 /* Begin PBXCopyFilesBuildPhase section */
 		B1AA2200000000000000C004 /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
@@ -261,7 +147,10 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		035EE01B7B4664A529CD98B7 /* TradingHomeSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TradingHomeSwiftUI.swift; sourceTree = "<group>"; };
 		0CE6BFDD03747701FD223CA6 /* cs_sample_6.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_6.jpg; sourceTree = "<group>"; };
+		105A54DE7A5B5901CDD437F6 /* TradingTelegramSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TradingTelegramSwiftUI.swift; sourceTree = "<group>"; };
+		10A01C06D84AE708B261A5FB /* DigitalProjectsSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DigitalProjectsSwiftUI.swift; sourceTree = "<group>"; };
 		137D30126CAA6F1E0C061519 /* cs_sample_11.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_11.jpg; sourceTree = "<group>"; };
 		194974F3E43FEDFCD4DDEE64 /* cs_sample_1.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_1.jpg; sourceTree = "<group>"; };
 		1FE7DB3A3B9DB7EE7C71FF82 /* cs_sample_2.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_2.jpg; sourceTree = "<group>"; };
@@ -269,6 +158,8 @@
 		2B1E7BFF1464C45512B79DB6 /* cs_model_2.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_model_2.jpg; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		3E78CDE7CC98B69EE283C2EF /* cs_sample_8.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_8.jpg; sourceTree = "<group>"; };
+		3F367DE330E6E725D15C1AF4 /* TradingAccountsSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TradingAccountsSwiftUI.swift; sourceTree = "<group>"; };
+		471B8BE931F61C7162672A60 /* DigitalInvoicesSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DigitalInvoicesSwiftUI.swift; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		504EC3071FED79650016851F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -278,13 +169,19 @@
 		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
 		59423C6C3ED49CE9F31ED592 /* cs_sample_0.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_0.jpg; sourceTree = "<group>"; };
+		5CE5866B4C8C32791D73AF40 /* TradingAnalyticsSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TradingAnalyticsSwiftUI.swift; sourceTree = "<group>"; };
 		5ED95135C15036B1B8C1FD27 /* cs_sample_4.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_4.jpg; sourceTree = "<group>"; };
 		5FD2695A4271A525AE295F31 /* cs_sample_9.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_9.jpg; sourceTree = "<group>"; };
 		63F4E408E62DB10E7AC4D813 /* cs_model_3.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_model_3.jpg; sourceTree = "<group>"; };
+		7294E45AFB934CB152906193 /* TargetControlSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TargetControlSwiftUI.swift; sourceTree = "<group>"; };
 		8A25C75E224B4CF47FA32650 /* cs_sample_7.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_7.jpg; sourceTree = "<group>"; };
+		97A60B31F639A640D07DCF08 /* DigitalClientsSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DigitalClientsSwiftUI.swift; sourceTree = "<group>"; };
 		9CFCBCE38163951749E58971 /* cs_model_0.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_model_0.jpg; sourceTree = "<group>"; };
 		A1AA11A100000000000INTNT /* AlmaAppIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaAppIntents.swift; sourceTree = "<group>"; };
 		A2BB7700000000000000A001 /* BackgroundRefresh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefresh.swift; sourceTree = "<group>"; };
+		A3CC8800000000000000A001 /* AlmaVoiceActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaVoiceActivityAttributes.swift; sourceTree = "<group>"; };
+		A3CC8800000000000000A002 /* VoiceLiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceLiveActivityController.swift; sourceTree = "<group>"; };
+		A3CC8800000000000000A003 /* AlmaVoiceLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaVoiceLiveActivity.swift; sourceTree = "<group>"; };
 		AF277DCFFFF123FFC6DF26C7 /* Pods_App.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_App.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		AF51FD2D460BCFE21FA515B2 /* Pods-App.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App.release.xcconfig"; path = "Pods/Target Support Files/Pods-App/Pods-App.release.xcconfig"; sourceTree = "<group>"; };
 		B1AA2200000000000000A002 /* AlmaWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AlmaWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -295,14 +192,12 @@
 		B2CC8800000000000000A001 /* AlmaCompanion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaCompanion.swift; sourceTree = "<group>"; };
 		B56B85204311DAC0D3D94587 /* cs_sample_5.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_5.jpg; sourceTree = "<group>"; };
 		BB8E1934D336212602B16193 /* cs_sample_10.jpg */ = {isa = PBXFileReference; includeInIndex = 1; path = cs_sample_10.jpg; sourceTree = "<group>"; };
+		BE6A3A82A18D773065686026 /* TradingHrSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TradingHrSwiftUI.swift; sourceTree = "<group>"; };
 		C1AA3300000000000000A001 /* PulseActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseActivityAttributes.swift; sourceTree = "<group>"; };
 		C1AA3300000000000000A002 /* LiveActivityBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityBridge.swift; sourceTree = "<group>"; };
-		C1AA3300000000000000A006 /* PulseRestore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseRestore.swift; sourceTree = "<group>"; };
 		C1AA3300000000000000A003 /* AlmaBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaBridgeViewController.swift; sourceTree = "<group>"; };
 		C1AA3300000000000000A004 /* PulseLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseLiveActivity.swift; sourceTree = "<group>"; };
-		A3CC8800000000000000A001 /* AlmaVoiceActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaVoiceActivityAttributes.swift; sourceTree = "<group>"; };
-		A3CC8800000000000000A002 /* VoiceLiveActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceLiveActivityController.swift; sourceTree = "<group>"; };
-		A3CC8800000000000000A003 /* AlmaVoiceLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaVoiceLiveActivity.swift; sourceTree = "<group>"; };
+		C1AA3300000000000000A006 /* PulseRestore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseRestore.swift; sourceTree = "<group>"; };
 		D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeIntelligenceBridge.swift; sourceTree = "<group>"; };
 		E1AA5500000000000000A001 /* NativeSpeechBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpeechBridge.swift; sourceTree = "<group>"; };
 		E4D7D31FF1297D19D3B7C7F2 /* CreativeStudioSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CreativeStudioSwiftUI.swift; sourceTree = "<group>"; };
@@ -320,6 +215,7 @@
 		F2AA7700000000000000A016 /* OrderCreateSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrderCreateSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A021 /* AssistantSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantVoiceSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A023 /* AlmaStarburstSpinner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaStarburstSpinner.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A040 /* AlmaNativeRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaNativeRouter.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A041 /* FinanceSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FinanceSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A042 /* InvoicesSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InvoicesSwiftUI.swift; sourceTree = "<group>"; };
@@ -359,11 +255,14 @@
 		F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StaffMonitorSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A080 /* DashboardSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A0FE /* KeyboardDismiss.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardDismiss.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A101 /* CreditUsageSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreditUsageSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A102 /* SubscriptionsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionsSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7701000000000000A0FE /* FloatingChatHead.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingChatHead.swift; sourceTree = "<group>"; };
 		F2AA7702000000000000A0FE /* AgoraIntercom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgoraIntercom.swift; sourceTree = "<group>"; };
 		F2AA7703000000000000A0FE /* IntercomUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntercomUI.swift; sourceTree = "<group>"; };
 		F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalStaffOfficeSwiftUI.swift; sourceTree = "<group>"; };
 		FC68EB0AF532CFC21C3344DD /* Pods-App.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App.debug.xcconfig"; path = "Pods/Target Support Files/Pods-App/Pods-App.debug.xcconfig"; sourceTree = "<group>"; };
+		FE2EBFBCB383B82ECC59BB1F /* DigitalHomeSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DigitalHomeSwiftUI.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -496,6 +395,16 @@
 				50B271D01FEDC1A000F3C39B /* public */,
 				E4D7D31FF1297D19D3B7C7F2 /* CreativeStudioSwiftUI.swift */,
 				B9A1DBCC4D68569F90B17594 /* CreativeStudioSamples */,
+				035EE01B7B4664A529CD98B7 /* TradingHomeSwiftUI.swift */,
+				3F367DE330E6E725D15C1AF4 /* TradingAccountsSwiftUI.swift */,
+				5CE5866B4C8C32791D73AF40 /* TradingAnalyticsSwiftUI.swift */,
+				BE6A3A82A18D773065686026 /* TradingHrSwiftUI.swift */,
+				7294E45AFB934CB152906193 /* TargetControlSwiftUI.swift */,
+				105A54DE7A5B5901CDD437F6 /* TradingTelegramSwiftUI.swift */,
+				FE2EBFBCB383B82ECC59BB1F /* DigitalHomeSwiftUI.swift */,
+				97A60B31F639A640D07DCF08 /* DigitalClientsSwiftUI.swift */,
+				471B8BE931F61C7162672A60 /* DigitalInvoicesSwiftUI.swift */,
+				10A01C06D84AE708B261A5FB /* DigitalProjectsSwiftUI.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -778,6 +687,16 @@
 				F2AA7700000000000000B015 /* CompanionSwiftUI.swift in Sources */,
 				F2AA7700000000000000B016 /* OrderCreateSwiftUI.swift in Sources */,
 				75EE0277D14177856309933A /* CreativeStudioSwiftUI.swift in Sources */,
+				56EBF52AB2CCBE8B449217D1 /* TradingHomeSwiftUI.swift in Sources */,
+				A5C36F71F82ACE4FBBC13662 /* TradingAccountsSwiftUI.swift in Sources */,
+				AC2AC4C9A34A493F17E9405F /* TradingAnalyticsSwiftUI.swift in Sources */,
+				6C6A27C2A5F92B5F2617B361 /* TradingHrSwiftUI.swift in Sources */,
+				B3B499D022B574C0B2A96CB7 /* TargetControlSwiftUI.swift in Sources */,
+				8D860AAF950338A1E4500FF4 /* TradingTelegramSwiftUI.swift in Sources */,
+				454091BDF584DDD3349570F4 /* DigitalHomeSwiftUI.swift in Sources */,
+				DD1E6C29144CBD386AB459B8 /* DigitalClientsSwiftUI.swift in Sources */,
+				B10C00596905806603ADCDC1 /* DigitalInvoicesSwiftUI.swift in Sources */,
+				1DE948FD379BF7400CBE9EB4 /* DigitalProjectsSwiftUI.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

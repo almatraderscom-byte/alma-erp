@@ -80,6 +80,20 @@ enum AlmaNativeRouter {
         case "/agent/known-people": return host(KnownPeopleScreen(openWeb: openWebForced), "Known people")
         case "/agent/growth": return host(AgentGrowthScreen(openWeb: openWebForced), "Growth")
         case "/agent/staff-monitor": return host(StaffMonitorScreen(openWeb: openWebForced), "Staff monitor")
+        // Trading business (S7 batch — Trading + Digital go native, 2026-07-10)
+        case "/trading": return host(TradingHomeScreen(openWeb: openWebForced), "Trading")
+        case "/trading/accounts": return host(TradingAccountsScreen(openWeb: openWebForced), "Trading accounts")
+        case "/trading/analytics": return host(TradingAnalyticsScreen(openWeb: openWebForced), "Trading analytics")
+        case "/trading/hr": return host(TradingHrScreen(openWeb: openWebForced), "Trading HR")
+        case "/trading/target-control": return host(TargetControlScreen(openWeb: openWebForced), "Target control")
+        case "/trading/telegram": return host(TradingTelegramScreen(openWeb: openWebForced), "Telegram Quick Entry")
+        // Digital (CDIT) business
+        case "/digital": return host(DigitalHomeScreen(openWeb: openWebForced), "CDIT")
+        case "/digital/clients": return host(DigitalClientsScreen(openWeb: openWebForced), "CDIT clients")
+        case "/digital/invoices": return host(DigitalInvoicesScreen(openWeb: openWebForced), "CDIT invoices")
+        case "/digital/projects": return host(DigitalProjectsScreen(openWeb: openWebForced), "CDIT projects")
+        // /digital/finance is a server redirect to /finance — serve the native Finance screen directly.
+        case "/digital/finance": return host(FinanceScreen(openWeb: openWebForced), "Finance")
         default:
             return nil
         }
