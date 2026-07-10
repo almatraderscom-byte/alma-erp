@@ -10,9 +10,9 @@ import { cn } from '@/lib/utils'
  * Floating Liquid Glass sheet — the app's premium command/detail surface,
  * modeled on Claude Code's command execution panel.
  *
- * - Glassmorphism: frosted `backdrop-filter: blur(20px)` panel with high
- *   translucency and a theme-aware hairline border (`.alma-glass-sheet` in
- *   globals.css, with an opaque fallback where backdrop-filter is missing).
+ * - Glassmorphism: iOS 27 Liquid Glass material (`.lg-material-strong` in
+ *   src/styles/ios27.css — frosted blur + saturate, inner light edge, and a
+ *   readable near-opaque fallback where backdrop-filter is missing).
  * - Motion: spring physics (stiffness 300 / damping 30, slight mass + delay)
  *   — a weighted, deliberate rise from the bottom of the viewport to its
  *   resting spot (bottom sheet on phones, floating centered card on sm:+),
@@ -70,7 +70,7 @@ export function GlassSheet({
         {open && (
           <motion.div
             className={cn(
-              'alma-glass-shell alma-glass-sheet w-full max-w-lg rounded-t-[26px] sm:rounded-[24px]',
+              'alma-glass-shell lg-material-strong w-full max-w-lg rounded-t-[var(--ios-radius-sheet)] sm:rounded-[var(--ios-radius-card)]',
               className,
             )}
             initial={reduceMotion ? { opacity: 0 } : { y: 560, opacity: 0.55, scale: 0.985 }}
@@ -93,8 +93,8 @@ export function GlassSheet({
 /** The iOS grab-handle row for the top of a GlassSheet. */
 export function GlassSheetGrip() {
   return (
-    <div className="flex shrink-0 justify-center pb-1 pt-2.5">
-      <span className="alma-sheet-grip" aria-hidden />
+    <div className="flex shrink-0 justify-center pt-1">
+      <span className="ios-grabber" aria-hidden />
     </div>
   )
 }

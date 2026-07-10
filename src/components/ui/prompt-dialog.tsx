@@ -114,10 +114,10 @@ export function PromptDialogHost() {
       aria-label={pending?.title || 'Input'}
     >
       {pending && (
-        <div ref={sheetRef} className="mobile-modal-shell mobile-sheet mx-auto w-full max-w-sm rounded-t-3xl border border-border-subtle bg-card p-5 sm:rounded-3xl">
+        <div ref={sheetRef} className="mobile-modal-shell mobile-sheet lg-material-strong mx-auto w-full max-w-sm rounded-t-[var(--ios-radius-sheet)] p-5 sm:rounded-[var(--ios-radius-card)]">
           {/* Grab zone — drag down to dismiss on phones (centered dialog on ≥sm). */}
-          <div {...handleProps} className="-mx-5 -mt-5 mb-1 flex justify-center px-5 pb-1 pt-3 sm:hidden">
-            <span className="h-1 w-10 rounded-full bg-border-strong" />
+          <div {...handleProps} className="-mx-5 -mt-5 mb-1 flex justify-center px-5 pb-1 pt-1 sm:hidden">
+            <span className="ios-grabber" />
           </div>
           {pending.title && <h2 className="mb-1.5 text-base font-bold text-cream">{pending.title}</h2>}
           {pending.message && <p className="mb-3 whitespace-pre-line text-[13px] leading-relaxed text-muted-hi">{pending.message}</p>}
@@ -136,14 +136,14 @@ export function PromptDialogHost() {
                 submit()
               }
             }}
-            className="w-full rounded-xl border border-border bg-bg-2 px-3 py-2.5 text-sm text-cream placeholder:text-muted focus:border-gold-dim/50 focus:outline-none"
+            className="w-full rounded-xl border border-[var(--ios-separator)] bg-[var(--ios-fill-secondary)] px-3 py-2.5 text-sm text-cream placeholder:text-muted focus:border-gold-dim/50 focus:outline-none"
           />
           {err && <p className="mt-1.5 text-[12px] font-semibold text-danger">{err}</p>}
           <div className="mt-5 flex gap-2">
             <button
               type="button"
               onClick={cancel}
-              className="flex-1 rounded-xl border border-border-subtle py-2.5 text-sm font-semibold text-muted-hi transition-all hover:bg-bg-2 active:scale-[0.98]"
+              className="flex-1 rounded-xl border border-[var(--ios-separator)] bg-[var(--ios-fill-quaternary)] py-2.5 text-sm font-semibold text-muted-hi transition-all hover:bg-[var(--ios-fill-secondary)] active:scale-[0.98]"
             >
               {pending.cancelLabel || 'Cancel'}
             </button>
