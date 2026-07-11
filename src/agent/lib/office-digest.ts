@@ -8,22 +8,17 @@
  * office section can show the same summary. Read-only: it never mutates a task or
  * touches money — it only reports.
  */
-import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
-import { AGENT_MODEL } from '@/agent/config'
 import { pushOwnerPing } from '@/agent/lib/office-notify'
 import { listPendingProposals } from '@/agent/lib/office-proposals'
 import { computeStaffPerformance } from '@/agent/lib/office-performance'
-import { logCost } from '@/agent/lib/cost-events'
-import { getModel } from '@/agent/lib/models/registry'
-import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
+import { agentSmartText } from '@/agent/lib/llm-text'
 
 /**
- * The owner's end-of-day report is owner-facing Bangla prose, so it stays on
- * Claude (best Bangla, and it runs only once a day → negligible cost). The head
- * talks to Claude directly (the worker adapters don't cover Anthropic), so we use
- * the Anthropic SDK here exactly like `morale-message.ts`. On any failure we fall
- * back to the structured template text, so the cron never breaks.
+ * The owner's end-of-day report is owner-facing Bangla prose — Claude when it has
+ * credits, otherwise Gemini via `agentSmartText` (the old direct Anthropic call
+ * 400'd under ANTHROPIC_HEAD_DOWN and the daily report silently vanished). On any
+ * failure we fall back to the structured template text, so the cron never breaks.
  */
 const DIGEST_MAX_TOKENS = 700
 
@@ -281,60 +276,29 @@ function digestFacts(d: OwnerDigest): string {
 }
 
 /**
- * Turn the structured digest into a warm, human "Boss, …" Bangla narrative via
- * Claude. Best-effort: returns null (caller falls back to the template) on any
- * failure or timeout, so the cron is never blocked by the model.
+ * Turn the structured digest into a warm, human "Boss, …" Bangla narrative.
+ * Anthropic when it has credits, otherwise Gemini (agentSmartText). Best-effort:
+ * returns null (caller falls back to the template) on any failure or timeout,
+ * so the cron is never blocked by the model.
  */
 export async function generateDigestNarrative(digest: OwnerDigest): Promise<string | null> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) return null
-
   const userPrompt =
     `আজকের অফিসের তথ্য (এর বাইরে কিছু লিখবে না):\n${digestFacts(digest)}\n\n` +
     `এই তথ্য থেকে Boss-এর জন্য দিন-শেষের মানবিক বাংলা রিপোর্টটি লেখো:`
 
-  let text = ''
-  let inTok = 0
-  let outTok = 0
   try {
-    const client = new Anthropic({ apiKey })
-    const res = await client.messages.create({
-      model: AGENT_MODEL,
-      max_tokens: DIGEST_MAX_TOKENS,
+    const text = await agentSmartText({
       system: NARRATIVE_SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userPrompt }],
+      prompt: userPrompt,
+      maxTokens: DIGEST_MAX_TOKENS,
+      costLabel: 'office_daily_report',
+      conversationId: null,
     })
-    text = res.content
-      .filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('')
-      .trim()
-    inTok = res.usage?.input_tokens ?? 0
-    outTok = res.usage?.output_tokens ?? 0
+    return text || null
   } catch (err) {
     console.error('[office-digest] narrative LLM failed:', err)
     return null
   }
-
-  if (!text) return null
-
-  // Best-effort cost logging (Claude, once a day) — never block the report on it.
-  if (inTok > 0 || outTok > 0) {
-    try {
-      const model = getModel(AGENT_MODEL)
-      const costUsd = calcModelTurnCostUsd(model, { inputTokens: inTok, outputTokens: outTok })
-      await logCost({
-        provider: 'anthropic',
-        kind: 'chat',
-        units: { inputTokens: inTok, outputTokens: outTok, model: model.apiModel, role: 'office_daily_report' },
-        costUsd,
-        dedupKey: `office_digest:${digest.date}`,
-      })
-    } catch {
-      /* cost logging is best-effort */
-    }
-  }
-  return text
 }
 
 /**

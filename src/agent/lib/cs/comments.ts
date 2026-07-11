@@ -1,6 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk'
-import { AGENT_MODEL } from '@/agent/config'
 import { prisma } from '@/lib/prisma'
+import { agentSmartText } from '@/agent/lib/llm-text'
 import { csReplyPermitted } from '@/agent/lib/cs/modes'
 import { findOrCreateCsConversation, appendCsMessage } from '@/agent/lib/cs/conversations'
 import {
@@ -13,7 +12,6 @@ import { getPostProductCodes, suggestPostProductsFromImage } from '@/agent/lib/c
 import { normalizeProductCode } from '@/agent/lib/catalog/inventory-lookup'
 import { roundMoney } from '@/lib/money'
 import { recordCsEvent } from '@/agent/lib/cs/analytics'
-import { logCost } from '@/agent/lib/cost-events'
 import { searchVisualIndexFromImage } from '@/agent/lib/cs/product-index'
 import { resolveProductCode } from '@/agent/lib/catalog/inventory-lookup'
 import { notifyOwner } from '@/agent/lib/notify-owner'
@@ -36,24 +34,15 @@ export async function isPublicCommentReplyEnabled(): Promise<boolean> {
 }
 
 export async function classifyBuyingIntent(message: string): Promise<boolean> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
-  const res = await client.messages.create({
-    model: AGENT_MODEL,
-    max_tokens: 64,
-    messages: [{
-      role: 'user',
-      content: `Facebook comment on a clothing shop post. Does this show buying intent (price, size, order, inbox, details)? Reply ONLY yes or no.\n\nComment: ${message.slice(0, 500)}`,
-    }],
+  // Anthropic when it has credits, otherwise Gemini — the direct Claude call
+  // 400'd under ANTHROPIC_HEAD_DOWN and every FB comment reply died with it.
+  const text = await agentSmartText({
+    system: 'You classify Facebook comments for a clothing shop. Reply ONLY yes or no.',
+    prompt: `Facebook comment on a clothing shop post. Does this show buying intent (price, size, order, inbox, details)? Reply ONLY yes or no.\n\nComment: ${message.slice(0, 500)}`,
+    maxTokens: 64,
+    costLabel: 'cs_comment_classify',
   })
-  const text = res.content.filter((b) => b.type === 'text').map((b) => (b.type === 'text' ? b.text : '')).join('').toLowerCase()
-  void logCost({
-    provider: 'anthropic',
-    kind: 'cs_comment_classify',
-    units: { tokens_in: res.usage.input_tokens, tokens_out: res.usage.output_tokens, model: AGENT_MODEL },
-    costUsd: 0,
-    dedupKey: `cs_comment_classify:${Date.now()}`,
-  })
-  return text.includes('yes')
+  return text.toLowerCase().includes('yes')
 }
 
 async function buildCommentPrivateReply(input: {

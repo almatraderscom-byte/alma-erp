@@ -15,6 +15,63 @@ function resolveImportance(content: string, explicit?: number | null): number {
   return HIGH_IMPORTANCE.test(content) ? 4 : 2
 }
 
+// ── Ephemeral hard rules (owner rule 2026-07-08) ──────────────────────────────
+// Day-scoped facts ("আজ অফিস ছুটি", "৮ জুলাই ছুটি দিয়েছেন", daily salah logs)
+// kept piling up as PERMANENT memories, polluting retrieval and paying context
+// cost forever. The model is asked to classify duration when saving, but the
+// server enforces a floor: an obviously day-scoped fact gets an expiry EVEN IF
+// the model forgot to set one. Pinned facts are exempt (pinned = owner-standing).
+
+/** Day-scoped signals: today/that-date events that stop mattering afterwards. */
+const EPHEMERAL_DAY_RE = new RegExp(
+  [
+    // "আজ/আজকে … ছুটি/বন্ধ/অফ" — today-only office state
+    '(aj|ajk|ajke|আজ|আজকে)[^\\n]{0,40}(ছুটি|বন্ধ|off|holiday|chuti)',
+    '(ছুটি|বন্ধ|holiday|chuti)[^\\n]{0,40}(aj|ajk|ajke|আজ|আজকে)',
+    // dated one-day events: "8 July 2026 … ছুটি / বন্ধ / সফরে"
+    '\\d{1,2}\\s*(জানুয়ারি|ফেব্রুয়ারি|মার্চ|এপ্রিল|মে|জুন|জুলাই|আগস্ট|সেপ্টেম্বর|অক্টোবর|নভেম্বর|ডিসেম্বর|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?\\s*\\d{2,4}[^\\n]{0,60}(ছুটি|বন্ধ|সফর|off|holiday|leave)',
+    // daily salah logs: "2026-07-05 তারিখে মাগরিব নামাজ … পড়েছেন"
+    'তারিখে[^\\n]{0,30}(নামাজ|সালাত|salah)[^\\n]{0,30}(পড়েছেন|পড়া হয়নি|মিস)',
+    '(নামাজ|সালাত)[^\\n]{0,30}(পড়েছেন|আদায়)[^\\n]{0,20}\\d{4}-\\d{2}-\\d{2}',
+    // nightly muhasaba reflections are per-day journal entries, not standing facts
+    'সালাহ মুহাসাবা',
+  ].join('|'),
+  'i',
+)
+
+/** End of the CURRENT Dhaka day plus a small grace window (so "আজ" survives the day). */
+function endOfDhakaDayPlus(days: number): Date {
+  const now = new Date()
+  // Dhaka = UTC+6, no DST. End of Dhaka day = 17:59:59 UTC of the same Dhaka date.
+  const dhakaNow = new Date(now.getTime() + 6 * 3600_000)
+  const endOfDayUtcMs = Date.UTC(
+    dhakaNow.getUTCFullYear(), dhakaNow.getUTCMonth(), dhakaNow.getUTCDate(), 23, 59, 59,
+  ) - 6 * 3600_000
+  return new Date(endOfDayUtcMs + days * 24 * 3600_000)
+}
+
+/** Exposed for the weekly revision: does this content read as a day-scoped fact? */
+export function isEphemeralDayFact(content: string): boolean {
+  return EPHEMERAL_DAY_RE.test(content)
+}
+
+/**
+ * Server-side expiry floor. An explicit expiry DATE always wins. But a caller
+ * claiming "permanent" (explicit null) does NOT override the day-scope regex —
+ * HARD RULE: an unpinned, obviously day-scoped fact gets end-of-day+2 no matter
+ * what the model said (grace so "কালকে কি বলেছিলাম?" still finds it, then it
+ * ages out). Pinned facts are owner-standing and stay exempt.
+ */
+export function resolveMemoryExpiry(
+  content: string,
+  opts: { pinned: boolean; explicit?: Date | null },
+): Date | null {
+  if (opts.explicit instanceof Date) return opts.explicit
+  if (opts.pinned) return null
+  if (EPHEMERAL_DAY_RE.test(content)) return endOfDhakaDayPlus(2)
+  return null
+}
+
 /**
  * Builds the scope/business WHERE fragment for owner-facing memory retrieval.
  *
@@ -68,6 +125,8 @@ export async function createOrUpdateAgentMemory(opts: {
   pinned?: boolean
   metadata?: Record<string, unknown> | null
   importance?: number | null
+  /** Explicit expiry (temporary fact). undefined → server hard-rule decides; null → permanent. */
+  expiresAt?: Date | null
 }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
@@ -77,6 +136,7 @@ export async function createOrUpdateAgentMemory(opts: {
   const pinned = opts.pinned === true
   const metadata = opts.metadata ?? undefined
   const importance = resolveImportance(content, opts.importance)
+  const expiresAt = resolveMemoryExpiry(content, { pinned, explicit: opts.expiresAt })
 
   let row: {
     id: string
@@ -95,7 +155,7 @@ export async function createOrUpdateAgentMemory(opts: {
     if (existing) {
       row = await db.agentMemory.update({
         where: { id: existing.id },
-        data: { content, pinned, importance, ...(metadata !== undefined ? { metadata } : {}) },
+        data: { content, pinned, importance, expiresAt, ...(metadata !== undefined ? { metadata } : {}) },
         select: { id: true, scope: true, key: true, content: true, pinned: true, createdAt: true },
       })
       const embedStatus = await attachMemoryEmbedding(row.id, content)
@@ -103,8 +163,26 @@ export async function createOrUpdateAgentMemory(opts: {
     }
   }
 
+  // Duplicate hard rule (owner rule 2026-07-08): the head kept re-saving the SAME
+  // observation day after day ("cost price নেই…" ×4 in 4 days) — each a new row,
+  // each polluting retrieval. A keyless save whose content matches an existing
+  // unpinned row in the same scope UPDATES that row (refreshes recency/expiry)
+  // instead of inserting another copy.
+  const dupe = await db.agentMemory.findFirst({
+    where: { scope, pinned: false, content },
+    select: { id: true },
+  })
+  if (dupe) {
+    row = await db.agentMemory.update({
+      where: { id: dupe.id },
+      data: { importance, expiresAt, ...(metadata !== undefined ? { metadata } : {}) },
+      select: { id: true, scope: true, key: true, content: true, pinned: true, createdAt: true },
+    })
+    return { ...row, embedStatus: { embedded: true } as { embedded: boolean; error?: string } }
+  }
+
   row = await db.agentMemory.create({
-    data: { scope, key, content, pinned, importance, ...(metadata !== undefined ? { metadata } : {}) },
+    data: { scope, key, content, pinned, importance, expiresAt, ...(metadata !== undefined ? { metadata } : {}) },
     select: { id: true, scope: true, key: true, content: true, pinned: true, createdAt: true },
   })
   const embedStatus = await attachMemoryEmbedding(row.id, content)
@@ -136,6 +214,7 @@ export async function retrieveRelevantMemories(
       const fbRows: Array<{ id: string; content: string; scope: string }> = await (prisma as any).$queryRawUnsafe(
         `SELECT id, content, scope FROM agent_memory
          WHERE pinned = false AND content ILIKE $1 ${accessClause}
+           AND (expires_at IS NULL OR expires_at > NOW())
          ORDER BY "createdAt" DESC LIMIT 6`,
         `%${userMessage.slice(0, 100)}%`,
       )
@@ -159,6 +238,7 @@ export async function retrieveRelevantMemories(
                 1 - (embedding <=> $1::vector) AS score
          FROM agent_memory
          WHERE embedding IS NOT NULL AND pinned = false ${accessClause}
+           AND (expires_at IS NULL OR expires_at > NOW())
          ORDER BY embedding <=> $1::vector
          LIMIT ${VECTOR_FETCH_LIMIT}`,
         vec,

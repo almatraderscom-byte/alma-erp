@@ -28,10 +28,15 @@ export function KeyboardAwareFooter({
     <div
       className={cn(
         'sticky bottom-0 z-30',
-        bordered && 'border-t border-border-subtle bg-card/95 backdrop-blur',
+        // iOS 27: strong Liquid Glass bar material (src/styles/ios27.css) instead of
+        // an opaque surface; hairline uses the iOS separator token.
+        bordered && 'lg-material-strong border-t border-[color:var(--ios-separator)]',
         className,
       )}
       style={{
+        // .lg-material-strong declares `position: relative` and ios27.css loads after
+        // the Tailwind layer — pin sticky inline so the footer never loses it.
+        position: 'sticky',
         // Keyboard height when open, else the home-indicator safe area.
         paddingBottom: 'max(var(--kb-inset, 0px), env(safe-area-inset-bottom, 0px))',
       }}

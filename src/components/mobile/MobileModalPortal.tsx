@@ -49,6 +49,9 @@ export function MobileModalPortal({
           type="button"
           aria-label="Close dialog"
           className={cn('mobile-modal-backdrop', backdropClassName)}
+          /* iOS 27 scrim — token flips with data-theme; inline so it wins over
+             legacy bg-black/45 and custom backdrop classes (visual only). */
+          style={{ background: 'var(--ios-overlay)' }}
           onClick={onBackdropClick}
         />
       ) : null}

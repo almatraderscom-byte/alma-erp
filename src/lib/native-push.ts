@@ -97,8 +97,13 @@ export async function listenForNativeNotificationClicks(): Promise<void> {
       ) => void
     }
     notifications?.addEventListener?.('click', event => {
-      const data = (event?.notification?.additionalData ?? {}) as { actionUrl?: string }
-      const target = data.actionUrl || event?.notification?.launchURL
+      const data = (event?.notification?.additionalData ?? {}) as { actionUrl?: string; source?: string }
+      // Agent pushes sent before the server-side '/agent' default existed (or by a
+      // not-yet-redeployed worker) carry no actionUrl — still land them on the
+      // agent chat instead of silently dropping the tap on the dashboard.
+      const target = data.actionUrl
+        || event?.notification?.launchURL
+        || (data.source === 'agent' ? '/agent' : null)
       if (!target) return
       try {
         // Resolve against the current origin so a relative path still works,

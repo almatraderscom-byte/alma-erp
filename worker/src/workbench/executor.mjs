@@ -129,6 +129,21 @@ export async function runWorkbenchTask(payload) {
       break
     }
     const res = await runOne(bin, args, workDir, Math.min(CMD_TIMEOUT_MS, Number(cmd.timeoutMs) || CMD_TIMEOUT_MS))
+    // Fetch honesty: curl/wget exiting 0 while the body is a hosting error page
+    // (or empty) is NOT a successful fetch. Without this, "DEPLOYMENT_NOT_FOUND"
+    // counted as success and the head told the owner the task was done
+    // (gulshanspaone SEO-report incident, 2026-07-11).
+    if (res.ok && (bin === 'curl' || bin === 'wget') && args.some((a) => /^https?:\/\//i.test(a))) {
+      const body = String(res.stdout ?? '')
+      const errorPage =
+        body.trim().length === 0 ||
+        /DEPLOYMENT_NOT_FOUND|NOT_FOUND[\s\S]{0,40}vercel|<title>\s*(404|403|500|Error)|Access Denied|error code: 1\d{3}/i.test(body.slice(0, 2000))
+      if (errorPage) {
+        steps.push({ i, bin, args: args.join(' ').slice(0, 300), ...res, ok: false, error: 'fetch_returned_error_page_or_empty_body' })
+        ok = false
+        break
+      }
+    }
     steps.push({ i, bin, args: args.join(' ').slice(0, 300), ...res })
     if (!res.ok) { ok = false; break }
     if ((await dirSizeBytes(workDir)) > MAX_WORKSPACE_BYTES) {

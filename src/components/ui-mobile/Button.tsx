@@ -43,7 +43,8 @@ export const Button = forwardRef<HTMLButtonElement, MobileButtonProps>(function 
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       className={cn(
-        'inline-flex select-none items-center justify-center gap-2 rounded-xl font-semibold',
+        // iOS 27: buttons are capsules (min-h stays ≥44px via SIZES)
+        'inline-flex select-none items-center justify-center gap-2 rounded-full font-semibold',
         'transition-[transform,background-color,opacity] duration-150 active:scale-[0.98]',
         'disabled:pointer-events-none disabled:opacity-40',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/40',

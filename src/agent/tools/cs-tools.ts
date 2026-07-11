@@ -48,6 +48,36 @@ async function loadImageBytes(imageRef: string): Promise<{ b64: string; mime: st
   return { b64: buffer.toString('base64'), mime: 'image/jpeg' }
 }
 
+const VISION_PICK_PROMPT =
+  'Customer sent this product image. Pick the best matching catalog candidate code, or NONE. Reply JSON: {"code":"SKU or NONE","confidence":"high|medium|low"}'
+
+async function fetchCandidateParts(
+  candidates: Array<{ productCode: string; imageUrl: string | null; score: number }>,
+): Promise<Array<{ text: string } | { imageBase64: string; mimeType: string }>> {
+  const parts: Array<{ text: string } | { imageBase64: string; mimeType: string }> = []
+  for (const c of candidates.slice(0, 3)) {
+    if (!c.imageUrl) continue
+    try {
+      const res = await fetch(c.imageUrl, { signal: AbortSignal.timeout(10_000) })
+      if (!res.ok) continue
+      const mime = res.headers.get('content-type') ?? 'image/jpeg'
+      const b64 = Buffer.from(await res.arrayBuffer()).toString('base64')
+      parts.push({ text: `Candidate ${c.productCode} (score ${c.score.toFixed(2)}):` })
+      parts.push({ imageBase64: b64, mimeType: mime })
+    } catch (err) {
+      console.warn('[cs-tools] candidate image fetch failed:', c.productCode, err instanceof Error ? err.message : err)
+    }
+  }
+  return parts
+}
+
+function parseVisionPick(text: string): { code: string | null; confidence: 'high' | 'medium' | 'low' } {
+  const json = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? '{}') as { code?: string; confidence?: string }
+  const code = json.code && json.code !== 'NONE' ? normalizeProductCode(json.code) : null
+  const conf = json.confidence === 'high' || json.confidence === 'medium' ? json.confidence : 'low'
+  return { code, confidence: conf }
+}
+
 async function visionPickProduct(
   customerB64: string,
   customerMime: string,
@@ -58,46 +88,46 @@ async function visionPickProduct(
     return { code: candidates[0].productCode, confidence: 'high' }
   }
 
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
-  const candidateBlocks: Anthropic.Messages.ContentBlockParam[] = []
-  for (const c of candidates.slice(0, 3)) {
-    if (!c.imageUrl) continue
-    try {
-      const res = await fetch(c.imageUrl, { signal: AbortSignal.timeout(10_000) })
-      if (!res.ok) continue
-      const mime = res.headers.get('content-type') ?? 'image/jpeg'
-      const b64 = Buffer.from(await res.arrayBuffer()).toString('base64')
-      candidateBlocks.push({
-        type: 'text',
-        text: `Candidate ${c.productCode} (score ${c.score.toFixed(2)}):`,
-      })
-      candidateBlocks.push({
-        type: 'image',
-        source: { type: 'base64', media_type: mime as 'image/jpeg', data: b64 },
-      })
-    } catch (err) {
-      console.warn('[cs-tools] candidate image fetch failed:', c.productCode, err instanceof Error ? err.message : err)
-    }
+  // Claude when it has credits, otherwise Gemini vision — the unconditional
+  // Anthropic call 400'd under ANTHROPIC_HEAD_DOWN and image matching died.
+  const { isAnthropicAllowed } = await import('@/agent/lib/models/model-enabled')
+  const anthropicAllowed = await isAnthropicAllowed(AGENT_MODEL).catch(() => false)
+
+  if (anthropicAllowed && process.env.ANTHROPIC_API_KEY) {
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    const candidateParts = await fetchCandidateParts(candidates)
+    const candidateBlocks: Anthropic.Messages.ContentBlockParam[] = candidateParts.map((p) =>
+      'text' in p
+        ? { type: 'text', text: p.text }
+        : { type: 'image', source: { type: 'base64', media_type: p.mimeType as 'image/jpeg', data: p.imageBase64 } },
+    )
+    const res = await client.messages.create({
+      model: AGENT_MODEL,
+      max_tokens: 256,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: VISION_PICK_PROMPT },
+          { type: 'image', source: { type: 'base64', media_type: customerMime as 'image/jpeg', data: customerB64 } },
+          ...candidateBlocks,
+        ],
+      }],
+    })
+    const textBlock = res.content.find((b) => b.type === 'text')
+    return parseVisionPick(textBlock && textBlock.type === 'text' ? textBlock.text : '{}')
   }
 
-  const res = await client.messages.create({
-    model: AGENT_MODEL,
-    max_tokens: 256,
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'text', text: 'Customer sent this product image. Pick the best matching catalog candidate code, or NONE. Reply JSON: {"code":"SKU or NONE","confidence":"high|medium|low"}' },
-        { type: 'image', source: { type: 'base64', media_type: customerMime as 'image/jpeg', data: customerB64 } },
-        ...candidateBlocks,
-      ],
-    }],
+  const { geminiVisionJson } = await import('@/agent/lib/vision-analyze')
+  const pick = await geminiVisionJson<{ code?: string; confidence?: string }>({
+    prompt: VISION_PICK_PROMPT,
+    imageBase64: customerB64,
+    mimeType: customerMime,
+    costKind: 'cs_vision_pick',
+    maxTokens: 256,
+    extraParts: await fetchCandidateParts(candidates),
   })
-
-  const textBlock = res.content.find((b) => b.type === 'text')
-  const text = textBlock && textBlock.type === 'text' ? textBlock.text : '{}'
-  const json = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? '{}') as { code?: string; confidence?: string }
-  const code = json.code && json.code !== 'NONE' ? normalizeProductCode(json.code) : null
-  const conf = json.confidence === 'high' || json.confidence === 'medium' ? json.confidence : 'low'
+  const code = pick.code && pick.code !== 'NONE' ? normalizeProductCode(pick.code) : null
+  const conf = pick.confidence === 'high' || pick.confidence === 'medium' ? pick.confidence : 'low'
   return { code, confidence: conf }
 }
 
