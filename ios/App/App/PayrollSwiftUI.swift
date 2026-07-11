@@ -704,7 +704,7 @@ final class PayrollVM {
     /// PATCH /api/payroll/wallet/requests/{id}
     /// { action, approvedAmount (APPROVE only), note: '', transactionId }.
     func reviewRequest(_ request: PayrollPendingRequest, action: String,
-                       approvedAmount: Int?, transactionId: String) async {
+                       approvedAmount: Int?, transactionId: String, paidVia: String? = nil) async {
         guard !busyRequestIds.contains(request.id) else { return }
         busyRequestIds.insert(request.id)
         notice = nil
@@ -718,6 +718,9 @@ final class PayrollVM {
             ]
             if action == "APPROVE", let amount = approvedAmount {
                 body["approvedAmount"] = AnyEncodable(amount)
+            }
+            if let paidVia, !paidVia.isEmpty {
+                body["paid_via"] = AnyEncodable(paidVia)
             }
             let _: PayrollOkResponse = try await AlmaAPI.shared.send(
                 "PATCH", "/api/payroll/wallet/requests/\(request.id)", body: body)
@@ -1060,8 +1063,8 @@ struct PayrollScreen: View {
             .padding(14)
             .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
             .sheet(item: $approveTarget) { req in
-                PayrollReviewSheet(request: req, employeeName: vm.employeeName(req.employeeId)) { amount, txn in
-                    Task { await vm.reviewRequest(req, action: "APPROVE", approvedAmount: amount, transactionId: txn) }
+                PayrollReviewSheet(request: req, employeeName: vm.employeeName(req.employeeId)) { amount, txn, paidVia in
+                    Task { await vm.reviewRequest(req, action: "APPROVE", approvedAmount: amount, transactionId: txn, paidVia: paidVia) }
                 }
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
@@ -1647,15 +1650,20 @@ private struct PayrollPendingRequestCard: View {
 private struct PayrollReviewSheet: View {
     let request: PayrollPendingRequest
     let employeeName: String
-    let onConfirm: (_ approvedAmount: Int, _ transactionId: String) -> Void
+    let onConfirm: (_ approvedAmount: Int, _ transactionId: String, _ paidVia: String) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @State private var amountText: String
     @State private var txn = ""
+    @State private var paidVia = ""
     @FocusState private var focused: Bool
 
+    private static let paidViaOptions: [(String, String)] = [
+        ("CASH", "ক্যাশ"), ("BKASH", "বিকাশ"), ("NAGAD", "নগদ"), ("BANK", "ব্যাংক"),
+    ]
+
     init(request: PayrollPendingRequest, employeeName: String,
-         onConfirm: @escaping (_ approvedAmount: Int, _ transactionId: String) -> Void) {
+         onConfirm: @escaping (_ approvedAmount: Int, _ transactionId: String, _ paidVia: String) -> Void) {
         self.request = request
         self.employeeName = employeeName
         self.onConfirm = onConfirm
@@ -1663,10 +1671,12 @@ private struct PayrollReviewSheet: View {
     }
 
     private var amount: Int? { Int(amountText.trimmingCharacters(in: .whitespaces)) }
-    private var needsTxn: Bool { request.type == "WITHDRAWAL" }
+    // Cash handovers have no transaction reference; every other channel keeps one.
+    private var needsTxn: Bool { request.type == "WITHDRAWAL" && paidVia != "CASH" }
     private var txnTrimmed: String { txn.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var valid: Bool {
         guard let a = amount, a > 0, a <= request.requestedAmount else { return false }
+        guard !paidVia.isEmpty else { return false }
         return !needsTxn || !txnTrimmed.isEmpty
     }
 
@@ -1688,6 +1698,27 @@ private struct PayrollReviewSheet: View {
                     Text("চাওয়া পরিমাণের (৳ \(request.requestedAmount.formatted())) বেশি অনুমোদন করা যাবে না")
                         .font(.caption2).foregroundStyle(PayrollPalette.amber600)
                 }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("কীভাবে টাকা দিলেন").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        ForEach(Self.paidViaOptions, id: \.0) { value, label in
+                            Button {
+                                paidVia = value
+                            } label: {
+                                Text(label)
+                                    .font(.caption.weight(.bold))
+                                    .padding(.horizontal, 13).padding(.vertical, 7)
+                                    .background(paidVia == value ? PayrollPalette.coral : Color.clear, in: Capsule())
+                                    .foregroundStyle(paidVia == value ? .white : .secondary)
+                                    .overlay(Capsule().strokeBorder(paidVia == value ? PayrollPalette.coral : Color.secondary.opacity(0.35), lineWidth: 1))
+                            }
+                        }
+                    }
+                    if paidVia.isEmpty {
+                        Text("ক্যাশ/বিকাশ/নগদ/ব্যাংক — একটা বাছাই আবশ্যক; লেনদেনের খাতায় লেখা থাকবে।")
+                            .font(.caption2).foregroundStyle(PayrollPalette.amber600)
+                    }
+                }
                 if needsTxn {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("TRANSACTION ID").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
@@ -1704,7 +1735,7 @@ private struct PayrollReviewSheet: View {
                 Button {
                     guard let a = amount else { return }
                     dismiss()
-                    onConfirm(a, txnTrimmed)
+                    onConfirm(a, txnTrimmed, paidVia)
                 } label: {
                     Text("অনুমোদন করুন — ৳ \((amount ?? 0).formatted())")
                         .font(.subheadline.weight(.semibold))
