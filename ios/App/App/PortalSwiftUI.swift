@@ -2474,7 +2474,7 @@ import CoreLocation
 @available(iOS 17.0, *)
 final class PortalGpsOnce: NSObject, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
-    private var continuation: CheckedContinuation<(CLLocation?, String), Never>? = nil
+    private var continuation: CheckedContinuation<(location: CLLocation?, reason: String), Never>? = nil
 
     func acquire() async -> (location: CLLocation?, reason: String) {
         manager.delegate = self
