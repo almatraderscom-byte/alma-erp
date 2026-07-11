@@ -1,6 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
-import { AGENT_MODEL } from '@/agent/config'
+import { agentSmartText } from '@/agent/lib/llm-text'
 
 export type PersonalCheckinKind = 'midday' | 'evening'
 
@@ -40,17 +39,15 @@ async function loadFamilyContactsSummary(): Promise<string> {
   return rows.map((c: { relation: string; name: string }) => `${c.relation} (${c.name})`).join(', ')
 }
 
+// Owner rule 2026-07-07: address is "Boss" ONLY — "Sir"/"স্যার" is banned (TTS accent).
 const FALLBACK: Record<PersonalCheckinKind, string> = {
   midday:
-    'স্যার, দিনটা কেমন যাচ্ছে? সব ঠিক আছে তো? কিছু দরকার হলে বা মন খারাপ থাকলে বলবেন — আমি আছি। 🤲',
+    'Boss, দিনটা কেমন যাচ্ছে? সব ঠিক আছে তো? কিছু দরকার হলে বা মন খারাপ থাকলে বলবেন — আমি আছি। 🤲',
   evening:
-    'আসসালামু আলাইকুম স্যার। দিনটা কেমন গেল? পরিবারের সবার সাথে কথা হয়েছে আজ? কোনো কিছু মন খারাপ করছে কি না — বলতে পারেন, আমি আছি।',
+    'আসসালামু আলাইকুম Boss। দিনটা কেমন গেল? পরিবারের সবার সাথে কথা হয়েছে আজ? কোনো কিছু মন খারাপ করছে কি না — বলতে পারেন, আমি আছি।',
 }
 
 export async function composePersonalCheckin(kind: PersonalCheckinKind = 'evening'): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) return FALLBACK[kind]
-
   const [worries, familySummary] = await Promise.all([
     loadOpenPersonalWorries(),
     kind === 'evening' ? loadFamilyContactsSummary() : Promise.resolve(''),
@@ -62,14 +59,14 @@ export async function composePersonalCheckin(kind: PersonalCheckinKind = 'evenin
 
   const userPrompt = kind === 'midday'
     ? (
-      `Compose ONE brief midday personal check-in in Bangla for the owner (address as স্যার).\n` +
+      `Compose ONE brief midday personal check-in in Bangla for the owner (address as "Boss" — never "স্যার"/"Sir").\n` +
       `Kind: midday (short খোঁজখবর during work hours)\n` +
       `Open worries from memory:\n${worryLines}\n` +
       `Rules: MAX 1-2 short lines only; warm, light, Islamic-gentle; if an open worry exists, reference it lightly ("সকালে যে বিষয়টা বলেছিলেন, ঠিক আছে তো?"); otherwise simple caring check. ` +
       `Do NOT write a long emotional session. Vary wording from day to day. No fake Quran/hadith.`
     )
     : (
-      `Compose ONE short evening personal check-in message in Bangla for the owner (address as স্যার).\n` +
+      `Compose ONE short evening personal check-in message in Bangla for the owner (address as "Boss" — never "স্যার"/"Sir").\n` +
       `Kind: evening (deeper reflection)\n` +
       `Open worries from memory:\n${worryLines}\n` +
       `Saved family contacts: ${familySummary}\n` +
@@ -78,18 +75,14 @@ export async function composePersonalCheckin(kind: PersonalCheckinKind = 'evenin
     )
 
   try {
-    const client = new Anthropic({ apiKey })
-    const res = await client.messages.create({
-      model: AGENT_MODEL,
-      max_tokens: kind === 'midday' ? 150 : 200,
-      system: 'Brief Bangla personal check-in only. Warm, Islamic-gentle. No fake Quran/hadith. Max 4 sentences evening / 2 lines midday.',
-      messages: [{ role: 'user', content: userPrompt }],
+    // Anthropic when it has credits, otherwise Gemini — the direct Claude call
+    // 400'd while ANTHROPIC_HEAD_DOWN is on, so check-ins always fell to FALLBACK.
+    const text = await agentSmartText({
+      system: 'Brief Bangla personal check-in only. Warm, Islamic-gentle. Address the owner as "Boss" only — never "স্যার"/"Sir". No fake Quran/hadith. Max 4 sentences evening / 2 lines midday.',
+      prompt: userPrompt,
+      maxTokens: kind === 'midday' ? 150 : 200,
+      costLabel: 'personal_checkin',
     })
-    const text = res.content
-      .filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('')
-      .trim()
     return text || FALLBACK[kind]
   } catch (err) {
     console.error('[personal-checkin] LLM failed:', err)

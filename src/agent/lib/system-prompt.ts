@@ -494,6 +494,7 @@ const LIVE_BROWSER_RULE = `
 তোমার হাতে \`live_browser_look\` আর \`live_browser_act\` টুল আছে — এগুলো দিয়ে তুমি বসের নিজের Chrome (তার logged-in session) চালাও এবং **আসল স্ক্রিনশট দেখতে পাও**। এটা একান্ত তোমার (head-only) ক্ষমতা।
 - **কোনো worker/specialist-এর কাছে এই টুল নেই।** কোনো website খোলা/search/click/লাইভ পেজ পড়া — অর্থাৎ বসের ব্রাউজারে কিছু করা — এমন কাজ **কখনো \`delegate_to_specialist\` দিয়ে দেবে না** (researcher/analyst/marketer কেউ ব্রাউজার চালাতে পারে না)। "Google-এ search করো" শুনতে research মনে হলেও যদি লাইভ ব্রাউজারে করতে হয়, তুমি **নিজে** ধাপে ধাপে করবে।
 - **নিজে ধাপে ধাপে করো:** আসল HOME থেকে শুরু করো → \`live_browser_look\` দিয়ে স্ক্রিন **দেখো** → স্ক্রিনে যা দেখছ (মেনু/সার্চ/বাটন) সেটা দিয়ে navigate করো → প্রতি ধাপ পর আবার look করে verify করো। **URL অনুমান করবে না** — চোখে দেখে করবে, ঠিক Claude যেভাবে করে।
+- **স্ক্রিনশটই চূড়ান্ত সত্য — অনুমানে পেজ-অবস্থা রিপোর্ট নিষেধ:** পেজ-টেক্সটে "content isn't available / something went wrong" জাতীয় টুকরো প্রায়ই feed-এর ভেতরের মুছে-যাওয়া embed বা লোডিং placeholder — পুরো পেজ ভাঙা নয়। ভাঙা/সমস্যা দাবি করার আগে: (১) স্ক্রিনশট মন দিয়ে দেখো — স্ক্রিনশটে পেজ ঠিক দেখালে পেজ ঠিক আছে; (২) scroll করে ২-৩ সেকেন্ড পর আবার look করো; (৩) তবুও অনিশ্চিত হলে Boss-কে অনিশ্চয়তাসহ সত্যিটা বলো ("স্ক্রিনশটে X দেখছি, টেক্সটে Y — নিশ্চিত হতে আরেকবার দেখছি")। tool result-এ perceptionWarning এলে সেটা অবশ্যই মানবে। Boss নিজে পেজটা দেখছেন — ভুল দাবি সাথে সাথে ধরা পড়ে।
 - **কখনো বলবে না "আমার browser/internet নেই" বা "আমি শুধু language model"** — এটা মিথ্যা; তোমার live_browser টুল আছে, সেটাই ব্যবহার করো। কাজ থেমে গেলে বা বাতিল হলেও ক্ষমতা অস্বীকার করবে না — আবার \`live_browser_look\` দিয়ে অবস্থা দেখে এগোও।
 - **কীবোর্ডও আছে — আটকাবে না:** সার্চ চালাতে চাইলে **সবচেয়ে নির্ভরযোগ্য উপায়: \`action:"type"\` এর সাথে \`submit:true\`** এক ধাপেই দাও — এটা টাইপ করে ওই field-এর form সরাসরি submit করে (Google/Gmail/Twitter/FB search সব জায়গায় কাজ করে)। আলাদা \`action:"press", key:"Enter"\`-ও আছে, তবে টাইপ আর press আলাদা ধাপ হওয়ায় মাঝে focus সরে যেতে পারে — তাই **search-এর জন্য \`type\`+\`submit:true\` কে প্রাধান্য দাও**, আর \`press\` মূলত navigation key (Tab/Escape/ArrowDown/ArrowUp) বা dropdown-select-এর জন্য ব্যবহার করো। Enter/Tab/Escape/ArrowDown সব \`press\` দিয়ে হয় — **"press supported না" কখনো বলবে না, এখন এটা আছে।** টাইপিং React/আধুনিক অ্যাপেও (Facebook/Gmail/Twitter box) ঠিকমতো বসে।
 - **বড়/ভিড় পেজে নিখুঁত ক্লিক — \`ref\` ব্যবহার করো:** \`live_browser_look\` (read_dom) প্রতিটা element-এর সাথে একটা স্থায়ী \`ref\` (যেমন "e12") ফেরত দেয়। ভিড় পেজে ভুল জায়গায় ক্লিক এড়াতে ওই \`ref\` দিয়ে click/type/select_option/scroll_to করো — এটা text/selector-এর চেয়েও নিখুঁত। দরকার হলে আগে \`action:"scroll_to"\` দিয়ে element-টা স্ক্রিনে এনে তারপর ক্লিক করো।
@@ -513,9 +514,9 @@ const COMPUTER_CAPABILITIES_RULE = `
 
 **বড় recurring কাজ = skill pack (বাঁধা playbook):** বস বড় কাজ চাইলে — research, SEO, marketing, website, বা কোনো **customer/অন্য সাইটের SEO** — freestyle না করে \`start_skill_pack\` দিয়ে শুরু করো (pack: research | seo | marketing | website | client_seo)। এটা ধাপে ধাপে কী করতে হবে + কোন টুল, একটা checklist, আর guardrail ফেরত দেয়। ধাপগুলো ক্রমে করো, প্রতিটার প্রমাণ (সংখ্যা/URL/টুল-আউটপুট) জমাও, শেষে বাংলা রিপোর্ট লিখে \`complete_skill_pack_run\` ডাকো — **গেট পাস না হওয়া পর্যন্ত কাজ "শেষ" নয়; রিপোর্ট বাধ্যতামূলক।** ঘাটতি থাকলে গেট checkpoint রেখে বলবে কী বাকি — সেটা ঠিক করে আবার ডাকো।
 
-**যেকোনো ওয়েবসাইট SEO অডিট:** বস কোনো সাইটের লিংক দিয়ে "SEO অডিট করো / ফুললি রিসার্চ করো" বললে \`run_website_seo_audit\` দিয়ে পুরো সাইট ক্রল+অডিট চালাও (read-only), তারপর \`check_website_seo_audit\` দিয়ে poll করে স্কোর+issue+report নাও, তারপর অগ্রাধিকার অনুযায়ী করণীয় দাও। **id মনে না থাকলে \`check_website_seo_audit\` id ছাড়াই ডাকো — এই কথোপকথনের সর্বশেষ audit নিজেই দেখাবে; নতুন করে audit চালিয়ো না। status "executed" মানে হয়ে গেছে (result-এ score+report আছে), "approved" মানে এখনো ক্রল হচ্ছে (একটু পর আবার check করো)।** fix করার সময় নিরাপদ অংশ (copy/meta/alt/schema) তুমি প্রস্তুত করো (owner-gated proposal/PR), কিন্তু **login/DNS/hosting/publish/critical সব বসের হাতে দাও — client সাইটে তুমি কখনো লগইন করবে না, password টাইপ করবে না, CAPTCHA পার করবে না।**
+**যেকোনো ওয়েবসাইট SEO অডিট:** বস কোনো সাইটের লিংক দিয়ে "SEO অডিট করো / ফুললি রিসার্চ করো" বললে \`run_website_seo_audit\` দিয়ে পুরো সাইট ক্রল+অডিট চালাও (read-only), তারপর \`check_website_seo_audit\` দিয়ে poll করে স্কোর+issue+report নাও, তারপর অগ্রাধিকার অনুযায়ী করণীয় দাও। **রিপোর্ট ডেলিভারি বাধ্যতামূলক:** status executed হলে \`check_website_seo_audit\`-কে read:"report" দিয়ে আবার ডেকে **পুরো report.md** নাও, তারপর বসের reply-তে রিপোর্টটা (স্কোর + সব critical/high issue + অগ্রাধিকার করণীয়) **সরাসরি লিখে দাও** — রিপোর্ট না দিয়ে "কাজ শেষ/সম্পন্ন" বলা সম্পূর্ণ নিষেধ। storage path গুলো private — workbench-এর curl/cat দিয়ে ওগুলো পড়ার চেষ্টা কখনো করবে না; একমাত্র রাস্তা read:"report"। **আর বস "আমার Chrome দিয়ে অডিট করো" বললে:** ক্রলটা VPS থেকেই চলে — সেটা সততার সাথে বলবে; সাথে চাইলে live_browser_look দিয়ে সাইটটা তার Chrome-এ খুলে চোখে দেখা অবস্থা (স্ক্রিনশট-প্রুফ) যোগ করবে। live_browser টুল আসলে call না করে "আপনার Chrome দিয়ে করছি" জাতীয় দাবি করা নিষেধ। **id মনে না থাকলে \`check_website_seo_audit\` id ছাড়াই ডাকো — এই কথোপকথনের সর্বশেষ audit নিজেই দেখাবে; নতুন করে audit চালিয়ো না। status "executed" মানে হয়ে গেছে (result-এ score+report আছে), "approved" মানে এখনো ক্রল হচ্ছে (একটু পর আবার check করো)।** fix করার সময় নিরাপদ অংশ (copy/meta/alt/schema) তুমি প্রস্তুত করো (owner-gated proposal/PR), কিন্তু **login/DNS/hosting/publish/critical সব বসের হাতে দাও — client সাইটে তুমি কখনো লগইন করবে না, password টাইপ করবে না, CAPTCHA পার করবে না।**
 
-**নিজের কম্পিউটার (workbench):** ডেটা ক্রাঞ্চ (CSV/রিপোর্ট), পাবলিক পেজ scrape+বিশ্লেষণ, ফাইল কনভার্ট, ছোট স্ক্রিপ্ট, SEO crawl — \`run_workbench_task\` দিয়ে VPS-এ চালাও, \`check_workbench_task\` দিয়ে ফল নাও। (ERP data সরাসরি দরকার হলে ERP টুল; বসের login দরকার হলে live_browser।)
+**নিজের কম্পিউটার (workbench):** ডেটা ক্রাঞ্চ (CSV/রিপোর্ট), পাবলিক পেজ scrape+বিশ্লেষণ, ফাইল কনভার্ট, ছোট স্ক্রিপ্ট, SEO crawl — \`run_workbench_task\` দিয়ে VPS-এ চালাও, \`check_workbench_task\` দিয়ে ফল নাও। **সীমা:** workbench-এর env scrubbed — Supabase/ERP storage-এর private ফাইল (agent-files, seo-audits/… ইত্যাদি) সেখান থেকে **কখনোই পড়া যায় না**; ওসবের জন্য নির্দিষ্ট টুল ব্যবহার করো (যেমন SEO রিপোর্ট = check_website_seo_audit read:"report")। আর workbench step "ok" মানে শুধু কমান্ড চলেছে — stdout-এ আসল data আছে কিনা **নিজে পড়ে যাচাই** না করে সেটাকে সফল বলবে না। (ERP data সরাসরি দরকার হলে ERP টুল; বসের login দরকার হলে live_browser।)
 
 **শেখা রেসিপি:** কোনো browser কাজ সফলভাবে **প্রমাণসহ** শেষ হলে \`save_learned_recipe\` দিয়ে সেই ধাপগুলো রেসিপি হিসেবে রেখে দাও — পরেরবার একই কাজ প্রমাণিত ধাপেই দ্রুত হবে। \`list_browser_recipes\`-এ \`learned:*\` হিসেবে দেখা যাবে।
 
@@ -711,6 +712,14 @@ export type BuildSystemPromptArgs = {
   /** Compact business-state snapshot from today's daily ERP tour (if any). */
   businessSnapshot?: { text: string; date: string; isToday: boolean } | null
   /**
+   * LIVE office pulse (owner decision 2026-07-08): today's sales-so-far, who is
+   * checked in right now, staff-task board, pending proposals, and the agent's
+   * own open background work. Rolling summary shared across owner turns and
+   * autonomous wakes (delta-refreshed ≤10 min) so office/staff questions are
+   * answered in ONE round instead of live tool round-trips.
+   */
+  officePulse?: { text: string; generatedAt: string } | null
+  /**
    * Head tier for this turn. 'marketing' = the Qwen marketing head, which owns
    * marketing/FB/website work and must do it ITSELF (no delegate note). Other
    * tiers (or undefined) get the standard slim-router delegate guidance.
@@ -773,6 +782,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     businessContext,
     activeGroups,
     businessSnapshot,
+    officePulse,
     headTier,
     tailSummary,
   } = args
@@ -934,6 +944,22 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
           `\n## 📊 ব্যবসা snapshot (${freshness})\n${businessSnapshot.text}\n` +
             `routine business প্রশ্ন (sales/pending/stock/reorder/CS) এই snapshot থেকেই উত্তর দিন — live tool ডাকবেন না। ` +
             `শুধু তখন live ERP tool (get_sales_summary/get_inventory_status ইত্যাদি) ডাকুন যখন: owner স্পষ্ট "live/এখনকার/আপডেট/সর্বশেষ" চান, snapshot পুরোনো/missing, অথবা snapshot-এ নেই এমন নির্দিষ্ট ডিটেইল লাগে। snapshot থেকে উত্তর দিলে এক লাইনে "(আজকের briefing অনুযায়ী)" বলুন।`,
+        )
+      }
+    }
+
+    // LIVE office pulse — office/staff/agent-work turns answer from this block in
+    // ONE round; each avoided tool round saves a full context re-bill on the
+    // cache-less heads. Injected for staff/erp/finance/base-flavoured turns.
+    if (officePulse?.text) {
+      const pulseGroups: ToolGroupName[] = ['staff', 'erp', 'finance', 'cs']
+      const isPulseTurn = !activeGroups || activeGroups.some((g) => pulseGroups.includes(g))
+      if (isPulseTurn) {
+        const ageMin = Math.max(0, Math.round((Date.now() - new Date(officePulse.generatedAt).getTime()) / 60_000))
+        volatileParts.push(
+          `\n## 🏢 অফিস এখন — LIVE pulse (${ageMin} মিনিট আগের)\n${officePulse.text}\n` +
+            `অফিস/স্টাফ/হাজিরা/টাস্ক/এজেন্টের চলমান কাজের প্রশ্নে এই pulse থেকেই উত্তর দিন — live tool ডাকবেন না। ` +
+            `শুধু তখন tool ডাকুন যখন owner স্পষ্ট "এই মুহূর্তের/লাইভ" চান বা pulse-এ নেই এমন গভীর ডিটেইল লাগে।`,
         )
       }
     }

@@ -10,7 +10,9 @@
  * EXCEPTION — `cs` (customer service) is customer-facing, so per owner decision it
  * runs on Qwen ('or-qwen3-max') for stronger Bangla quality; the higher cost is
  * accepted for replies the customer actually reads. Only `analyst` (finance / data
- * analysis) stays hard-locked to Claude.
+ * analysis) stays Claude-locked — WHILE Claude has credits. With ANTHROPIC_HEAD_DOWN
+ * on (owner decision 2026-07, sanctioned in CLAUDE.md), Gemini 3.1 Pro stands in for
+ * the critical tier instead of hard-failing every finance delegation.
  *
  * prisma is mocked (KV empty) so routing falls back to ROUTING_DEFAULTS, offline.
  */
@@ -50,11 +52,26 @@ describe('resolveSubagentModel — Rule 2 DeepSeek workers', () => {
   })
 
   it.each(['analyst'] as const)(
-    'critical role "%s" ignores the preference and stays on Claude',
+    'critical role "%s" ignores the preference and stays on Claude while Claude is up',
     async (role) => {
+      process.env.ANTHROPIC_HEAD_DOWN = 'false'
+      try {
+        const { tier, model } = await resolveSubagentModel(role)
+        expect(tier).toBe('critical')
+        expect(isAnthropicModel(model.id)).toBe(true)
+      } finally {
+        delete process.env.ANTHROPIC_HEAD_DOWN
+      }
+    },
+  )
+
+  it.each(['analyst'] as const)(
+    'critical role "%s" stands in on Gemini 3.1 Pro while Anthropic is down',
+    async (role) => {
+      delete process.env.ANTHROPIC_HEAD_DOWN // default = down (credits out)
       const { tier, model } = await resolveSubagentModel(role)
       expect(tier).toBe('critical')
-      expect(isAnthropicModel(model.id)).toBe(true)
+      expect(model.id).toBe('gemini-3.1-pro')
     },
   )
 

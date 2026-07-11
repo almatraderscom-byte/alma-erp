@@ -24,7 +24,8 @@ export function Card({
   return (
     <Tag
       className={cn(
-        'min-w-0 rounded-2xl border bg-card shadow-card',
+        // iOS 27: inset-grouped card radius (26px, var set in src/styles/ios27.css)
+        'min-w-0 rounded-[var(--ios-radius-card)] border bg-card shadow-card',
         accent ? 'border-gold/30' : 'border-border-subtle',
         pads[padding],
         className,

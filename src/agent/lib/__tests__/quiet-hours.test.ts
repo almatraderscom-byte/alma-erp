@@ -143,12 +143,40 @@ describe('flushQuietHoursQueue — morning digest', () => {
     expect(res.flushed).toBe(2)
     expect(mockNotify.notifyOwner).toHaveBeenCalledTimes(1)
     expect(mockNotify.notifyOwner).toHaveBeenCalledWith(
-      expect.objectContaining({ tier: 1, category: 'report', _bypassQuietHours: true }),
+      expect.objectContaining({ tier: 1, category: 'report', _bypassQuietHours: true, actionUrl: '/agent' }),
     )
     // Queue cleared (upsert with empty array).
     expect(mockPrisma.agentKvSetting.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ update: { value: JSON.stringify([]) } }),
     )
+  })
+
+  it('digest tap targets the single held actionUrl when all held items share one', async () => {
+    const queue = [
+      { tier: 1, title: 'A', message: 'aa', category: 'report', actionUrl: '/orders', heldAt: '2026-06-29T18:30:00Z' },
+      { tier: 1, title: 'B', message: 'bb', category: 'report', actionUrl: '/orders', heldAt: '2026-06-29T20:00:00Z' },
+    ]
+    mockPrisma.agentKvSetting.findUnique.mockResolvedValue({ value: JSON.stringify(queue) })
+    await flushQuietHoursQueue()
+    expect(mockNotify.notifyOwner).toHaveBeenCalledWith(
+      expect.objectContaining({ actionUrl: '/orders' }),
+    )
+  })
+})
+
+describe('maybeHoldForQuietHours — actionUrl survives the hold', () => {
+  it('enqueues the held push WITH its actionUrl', async () => {
+    vi.clearAllMocks()
+    mockPrisma.agentKvSetting.upsert.mockResolvedValue({})
+    mockPrisma.agentKvSetting.findUnique.mockResolvedValue(null)
+    vi.useFakeTimers()
+    vi.setSystemTime(dhakaAt(2))
+    const held = await maybeHoldForQuietHours({ tier: 1, title: 'x', message: 'y', category: 'report', actionUrl: '/agent/live-watch' })
+    vi.useRealTimers()
+    expect(held).toBe(true)
+    const call = mockPrisma.agentKvSetting.upsert.mock.calls[0][0] as { update: { value: string } }
+    const stored = JSON.parse(call.update.value) as Array<{ actionUrl?: string | null }>
+    expect(stored[0].actionUrl).toBe('/agent/live-watch')
   })
 })
 

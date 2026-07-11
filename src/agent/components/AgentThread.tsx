@@ -53,6 +53,7 @@ function fmtTok(n: number): string {
 /** One entry in the unified activity timeline — a reasoning segment or a tool call. */
 export type TimelineEntry =
   | { t: 'think'; text: string }
+  | { t: 'text'; text: string }
   | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; live?: boolean; id?: string }
 
 export interface ChatMessage {
@@ -614,6 +615,61 @@ type ToolRow = { name: string; ok: boolean; input?: unknown; result?: string; li
 type Phase = { headline: string; detail: string; tools: ToolRow[]; live: boolean }
 
 /**
+ * Chronological turn flow — reply text and step-groups interleaved in TRUE
+ * execution order (owner ask 2026-07-11: the "shuru korchi" message first, the
+ * steps it triggered BELOW it — native-app parity). Used whenever the timeline
+ * carries text segments; older messages keep the classic steps-then-text card.
+ */
+function ChronoFlow({ msg }: { msg: ChatMessage }) {
+  type Seg = { kind: 'steps'; entries: TimelineEntry[] } | { kind: 'text'; text: string }
+  const segments = useMemo(() => {
+    const segs: Seg[] = []
+    for (const e of msg.timeline ?? []) {
+      if (e.t === 'text') {
+        segs.push({ kind: 'text', text: e.text })
+      } else {
+        const last = segs[segs.length - 1]
+        if (last && last.kind === 'steps') last.entries.push(e)
+        else segs.push({ kind: 'steps', entries: [e] })
+      }
+    }
+    return segs
+  }, [msg.timeline])
+
+  if (segments.length === 0) return null
+  const lastIdx = segments.length - 1
+  return (
+    <div className="flex flex-col">
+      {segments.map((seg, i) =>
+        seg.kind === 'text' ? (
+          <div
+            key={i}
+            className="mb-3 text-[15px] leading-[1.7] text-cream select-text break-words [overflow-wrap:anywhere]"
+          >
+            <AgentMarkdown content={seg.text} />
+            {msg.streaming && i === lastIdx && (
+              <motion.span
+                className="ml-0.5 inline-block h-[1.1em] w-[2px] translate-y-[2px] rounded-full bg-[#E07A5F]/60"
+                animate={{ opacity: [1, 0, 1] }}
+                transition={{ duration: 0.8, repeat: Infinity, ease: 'steps(2)' }}
+                aria-hidden
+              />
+            )}
+          </div>
+        ) : (
+          <ActivityTimeline
+            key={i}
+            timeline={seg.entries}
+            thinkingMs={i === 0 ? msg.thinkingMs : undefined}
+            live={Boolean(msg.streaming) && i === lastIdx}
+          />
+        ),
+      )}
+    </div>
+  )
+}
+
+/**
  * Claude-Code-style activity stream (3-level, theme-aware).
  *
  * Top: a slim pinned summary (thinking time + ~token estimate + phase count).
@@ -649,7 +705,7 @@ function ActivityTimeline({
   // Effective timeline: the persisted/live ordered stream, or — for older messages
   // that predate the timeline — a fallback assembled from thinking + tool activity.
   const entries: TimelineEntry[] = useMemo(() => {
-    if (timeline && timeline.length > 0) return timeline
+    if (timeline && timeline.length > 0) return timeline.filter((e) => e.t !== 'text')
     const fb: TimelineEntry[] = []
     if (thinking && thinking.trim()) fb.push({ t: 'think', text: thinking })
     for (const t of toolActivity ?? []) {
@@ -678,7 +734,7 @@ function ActivityTimeline({
           cur.headline = headline
           if (live && lastEntry) cur.live = true
         }
-      } else {
+      } else if (e.t === 'tool') {
         if (!cur) cur = { headline: '', detail: '', tools: [], live: false }
         const tool: ToolRow = { name: e.name, ok: e.ok, input: e.input, result: e.result, live: Boolean(e.live) }
         cur.tools.push(tool)
@@ -1184,15 +1240,25 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
               ) : (
                 /* Assistant message — full-width, dark text on light bg */
                 <div className="min-w-0">
-                  {(msg.timeline?.length || msg.thinking || (msg.toolActivity && msg.toolActivity.length > 0)) && (
-                    <ActivityTimeline
-                      timeline={msg.timeline}
-                      thinking={msg.thinking}
-                      thinkingMs={msg.thinkingMs}
-                      toolActivity={msg.toolActivity}
-                      live={Boolean(msg.streaming) && !msg.text}
-                    />
-                  )}
+                  {(() => {
+                    // Chronological mode: the timeline carries the reply text too, so
+                    // render ONE interleaved flow (text → steps → text) and skip the
+                    // separate steps-card + body blocks below.
+                    const chrono = (msg.timeline ?? []).some((e) => e.t === 'text')
+                    if (chrono) return <ChronoFlow msg={msg} />
+                    if (msg.timeline?.length || msg.thinking || (msg.toolActivity && msg.toolActivity.length > 0)) {
+                      return (
+                        <ActivityTimeline
+                          timeline={msg.timeline}
+                          thinking={msg.thinking}
+                          thinkingMs={msg.thinkingMs}
+                          toolActivity={msg.toolActivity}
+                          live={Boolean(msg.streaming) && !msg.text}
+                        />
+                      )
+                    }
+                    return null
+                  })()}
 
                   {msg.delegations && msg.delegations.length > 0 && (
                     <div className="mb-3 flex flex-col gap-2">
@@ -1212,7 +1278,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     />
                   )}
 
-                  {(!msg.streaming || msg.text) && (
+                  {(!msg.streaming || msg.text) && !(msg.timeline ?? []).some((e) => e.t === 'text') && (
                     <div className="text-[15px] leading-[1.7] text-cream select-text break-words [overflow-wrap:anywhere]">
                       {msg.streaming && msg.text ? (
                         <div className="relative alma-stream-reveal">
