@@ -232,6 +232,105 @@ final class KnownPeopleVM {
         if deviceId == workRoomDeviceId { label += " (Work Room — বর্তমান)" }
         return label
     }
+
+    // ── Native writes (owner 2026-07-11) — web KnownPeopleManager parity. ──
+
+    var toast: String? = nil
+    var busy = false
+
+    private struct SettingsBody: Encodable {
+        let deviceId: String, enabled: Bool, startHm: String, endHm: String, cooldownMin: Int
+    }
+    private struct AddBody: Encodable { let name: String, role: String, photos: [String] }
+    private struct ActiveBody: Encodable { let active: Bool }
+    private struct WriteResponse: Decodable { let ok: Bool?, error: String? }
+
+    /// Web saveSettings — patch merges over current settings.
+    func saveSettings(deviceId: String? = nil, enabled: Bool? = nil,
+                      startHm: String? = nil, endHm: String? = nil,
+                      cooldownMin: Int? = nil) async -> Bool {
+        guard let s = settings else { return false }
+        busy = true
+        defer { busy = false }
+        do {
+            let res: WriteResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/known-people/settings",
+                body: SettingsBody(deviceId: deviceId ?? s.deviceId,
+                                   enabled: enabled ?? s.enabled,
+                                   startHm: startHm ?? s.startHm,
+                                   endHm: endHm ?? s.endHm,
+                                   cooldownMin: cooldownMin ?? s.cooldownMin ?? 30))
+            if let err = res.error { toast = err; return false }
+            toast = "✅ সেটিংস সেভ হয়েছে"
+            await load()
+            return true
+        } catch {
+            toast = "সেভ হয়নি — নেটওয়ার্ক সমস্যা"
+            return false
+        }
+    }
+
+    /// Web addPerson — ≤3 small base64 photos (data-URL prefix like fileToSmallBase64).
+    func addPerson(name: String, role: String, photos: [Data]) async -> Bool {
+        busy = true
+        defer { busy = false }
+        do {
+            let encoded = photos.prefix(3).map { "data:image/jpeg;base64,\($0.base64EncodedString())" }
+            let res: WriteResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/known-people",
+                body: AddBody(name: name, role: role, photos: encoded))
+            if let err = res.error { toast = "⚠️ \(err)"; return false }
+            toast = "✅ \(name) যোগ হয়েছে"
+            await load()
+            return true
+        } catch {
+            toast = "⚠️ যোগ করা যায়নি — আবার চেষ্টা করুন"
+            return false
+        }
+    }
+
+    func toggleActive(_ p: KnownPersonItem) async {
+        busy = true
+        defer { busy = false }
+        struct Resp: Decodable { let ok: Bool? }
+        let _: Resp? = try? await AlmaAPI.shared.send(
+            "PATCH", "/api/assistant/known-people/\(p.id)", body: ActiveBody(active: !p.active))
+        await load()
+    }
+
+    func removePerson(_ p: KnownPersonItem) async {
+        busy = true
+        defer { busy = false }
+        struct Resp: Decodable { let ok: Bool? }
+        let _: Resp? = try? await AlmaAPI.shared.send(
+            "DELETE", "/api/assistant/known-people/\(p.id)")
+        toast = "\(p.name) মুছে ফেলা হয়েছে"
+        await load()
+    }
+
+    /// Web runTest — 🧪 live camera check, result rendered as a toast digest.
+    func runTest() async {
+        struct TestResp: Decodable {
+            let ran: Bool?, error: String?
+            let matched: Bool?, name: String?
+        }
+        busy = true
+        defer { busy = false }
+        struct Empty: Encodable {}
+        do {
+            let res: TestResp = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/known-people/test", body: Empty())
+            if let err = res.error {
+                toast = "🧪 টেস্ট ব্যর্থ: \(err)"
+            } else if res.matched == true {
+                toast = "🧪 চিনেছে: \(res.name ?? "কেউ একজন")"
+            } else {
+                toast = res.ran == true ? "🧪 টেস্ট চলল — কাউকে চেনেনি" : "🧪 টেস্ট চালানো যায়নি"
+            }
+        } catch {
+            toast = "🧪 টেস্ট ব্যর্থ — নেটওয়ার্ক সমস্যা"
+        }
+    }
 }
 
 // MARK: - Screen
@@ -241,6 +340,8 @@ struct KnownPeopleScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = KnownPeopleVM()
     @State private var selected: KnownPersonItem? = nil
+    @State private var showAdd = false
+    @State private var removing: KnownPersonItem? = nil
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -272,6 +373,33 @@ struct KnownPeopleScreen: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showAdd) { KnownPeopleAddSheet(vm: vm) }
+        .confirmationDialog(
+            "\(removing?.name ?? "")-কে মুছে ফেলবেন?",
+            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, মুছুন", role: .destructive) {
+                if let p = removing { Task { await vm.removePerson(p) } }
+                removing = nil
+            }
+            Button("বাতিল", role: .cancel) { removing = nil }
+        }
+        .overlay(alignment: .bottom) {
+            if let t = vm.toast {
+                Text(t)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task {
+                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+                        withAnimation { vm.toast = nil }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: vm.toast != nil)
     }
 
     // ── Header (web AgentSubHeader parity) ──
@@ -296,25 +424,68 @@ struct KnownPeopleScreen: View {
                 HStack {
                     Text("🚪 এন্ট্রান্স ক্যামেরা").font(.subheadline.weight(.bold))
                     Spacer()
-                    // Web toggle button text verbatim — shown as a status capsule here.
-                    Text(s.enabled ? "ON ✅" : "OFF ⛔")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(s.enabled ? KnownPeoplePalette.emerald600 : KnownPeoplePalette.red500)
-                        .padding(.horizontal, 10).padding(.vertical, 4)
-                        .background((s.enabled ? KnownPeoplePalette.emerald600 : KnownPeoplePalette.red500).opacity(0.12),
-                                    in: Capsule())
-                        .overlay(Capsule().strokeBorder(
-                            (s.enabled ? KnownPeoplePalette.emerald600 : KnownPeoplePalette.red500).opacity(0.35),
-                            lineWidth: 1))
+                    // Native watch toggle (owner 2026-07-11) — web saveSettings parity.
+                    Toggle("", isOn: Binding(
+                        get: { s.enabled },
+                        set: { on in Task { _ = await vm.saveSettings(enabled: on) } }))
+                        .labelsHidden()
+                        .tint(KnownPeoplePalette.emerald600)
                 }
-                settingsRow("ক্যামেরা", vm.cameraLabel(s.deviceId))
+                // Camera picker (web dropdown parity).
+                Menu {
+                    ForEach(vm.cameras, id: \.deviceId) { cam in
+                        Button(vm.cameraLabel(cam.deviceId)) {
+                            Task { _ = await vm.saveSettings(deviceId: cam.deviceId) }
+                        }
+                    }
+                } label: {
+                    settingsRow("ক্যামেরা", vm.cameraLabel(s.deviceId))
+                }
+                .buttonStyle(.plain)
                 HStack(alignment: .top, spacing: 14) {
                     settingsRow("শুরু", s.startHm)
                     settingsRow("শেষ", s.endHm)
-                    settingsRow("কুলডাউন (মিনিট)", s.cooldownMin.map { "\($0)" } ?? "—")
+                    // Cooldown stepper (web number input parity).
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("কুলডাউন (মিনিট)").font(.caption2).foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            Text(s.cooldownMin.map { "\($0)" } ?? "—")
+                                .font(.footnote.weight(.semibold)).monospacedDigit()
+                            Stepper("", value: Binding(
+                                get: { s.cooldownMin ?? 30 },
+                                set: { v in Task { _ = await vm.saveSettings(cooldownMin: max(1, v)) } }),
+                                in: 1...240)
+                                .labelsHidden()
+                                .scaleEffect(0.75, anchor: .leading)
+                        }
+                    }
                 }
-                Text("ওয়াচ চালু/বন্ধ, ক্যামেরা বদল আর 🧪 টেস্ট — ওয়েবে")
-                    .font(.caption2).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        Task { await vm.runTest() }
+                    } label: {
+                        HStack(spacing: 4) {
+                            if vm.busy { ProgressView().controlSize(.mini) }
+                            Text("🧪 লাইভ টেস্ট").font(.caption.weight(.bold))
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.busy)
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        showAdd = true
+                    } label: {
+                        Text("+ নতুন মুখ").font(.caption.weight(.bold))
+                            .foregroundStyle(KnownPeoplePalette.accentText(colorScheme))
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .background(KnownPeoplePalette.coral.opacity(0.12), in: Capsule())
+                            .overlay(Capsule().strokeBorder(KnownPeoplePalette.coral.opacity(0.3), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
@@ -407,6 +578,19 @@ struct KnownPeopleScreen: View {
             KnownPersonRow(person: person, thumbURL: vm.thumbs[person.id]) {
                 UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                 selected = person
+            }
+            .contextMenu {
+                Button {
+                    Task { await vm.toggleActive(person) }
+                } label: {
+                    Label(person.active ? "Inactive করুন" : "Active করুন",
+                          systemImage: person.active ? "pause.circle" : "play.circle")
+                }
+                Button(role: .destructive) {
+                    removing = person
+                } label: {
+                    Label("মুছে ফেলুন", systemImage: "trash")
+                }
             }
         }
         if !vm.loading && vm.people.isEmpty && vm.error == nil && !vm.authExpired {
@@ -794,4 +978,120 @@ private extension View {
 @available(iOS 17.0, *)
 #Preview("Known people — Light") {
     KnownPeopleScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - Add person (owner 2026-07-11 — web addPerson parity: name + role + ≤3 photos
+// as small base64 data-URLs, POST /api/assistant/known-people).
+
+import PhotosUI
+
+@available(iOS 17.0, *)
+private struct KnownPeopleAddSheet: View {
+    let vm: KnownPeopleVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+
+    @State private var name = ""
+    @State private var role = "staff"
+    @State private var pickedItems: [PhotosPickerItem] = []
+    @State private var photos: [Data] = []
+    @State private var submitting = false
+    @State private var errorText: String? = nil
+
+    // Web ROLES verbatim.
+    private static let roles: [(String, String)] = [
+        ("মালিক", "owner"), ("স্টাফ", "staff"), ("পরিবার", "family"), ("অন্যান্য", "other"),
+    ]
+
+    private var canSubmit: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty && !photos.isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("নতুন মুখ যোগ করুন").font(.subheadline.weight(.bold)).padding(.top, 20)
+            TextField("নাম *", text: $name)
+                .font(.subheadline)
+                .padding(.horizontal, 12).padding(.vertical, 11)
+                .background(Color.primary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            Picker("Role", selection: $role) {
+                ForEach(Self.roles, id: \.1) { r in Text(r.0).tag(r.1) }
+            }
+            .pickerStyle(.segmented)
+            PhotosPicker(selection: $pickedItems, maxSelectionCount: 3, matching: .images) {
+                HStack(spacing: 8) {
+                    Image(systemName: photos.isEmpty ? "photo.badge.plus" : "checkmark.circle.fill")
+                    Text(photos.isEmpty ? "১-৩টা পরিষ্কার মুখের ছবি বাছুন *"
+                                        : "\(photos.count)টা ছবি বাছাই হয়েছে")
+                        .font(.caption.weight(.semibold))
+                }
+                .foregroundStyle(photos.isEmpty ? .secondary : KnownPeoplePalette.emerald600)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12).padding(.vertical, 12)
+                .background(Color.primary.opacity(0.05),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            }
+            .onChange(of: pickedItems) { _, items in
+                Task {
+                    var loaded: [Data] = []
+                    for item in items.prefix(3) {
+                        if let data = try? await item.loadTransferable(type: Data.self),
+                           let ui = UIImage(data: data) {
+                            // Web fileToSmallBase64 shrinks before upload — mirror it.
+                            let side: CGFloat = 640
+                            let scale = min(1, side / max(ui.size.width, ui.size.height))
+                            let target = CGSize(width: ui.size.width * scale,
+                                                height: ui.size.height * scale)
+                            let renderer = UIGraphicsImageRenderer(size: target)
+                            let small = renderer.image { _ in
+                                ui.draw(in: CGRect(origin: .zero, size: target))
+                            }
+                            if let jpeg = small.jpegData(compressionQuality: 0.7) {
+                                loaded.append(jpeg)
+                            }
+                        }
+                    }
+                    photos = loaded
+                }
+            }
+            if let errorText {
+                Text(errorText).font(.caption2.weight(.semibold))
+                    .foregroundStyle(KnownPeoplePalette.red500)
+            }
+            Button {
+                submit()
+            } label: {
+                HStack(spacing: 8) {
+                    if submitting { ProgressView().tint(.white) }
+                    Text(submitting ? "সেভ হচ্ছে…" : "যোগ করুন").font(.subheadline.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 13)
+                .background(canSubmit && !submitting
+                            ? KnownPeoplePalette.coral : KnownPeoplePalette.coral.opacity(0.4),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSubmit || submitting)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 18)
+        .presentationDetents([.height(400)])
+        .presentationDragIndicator(.visible)
+        .background(AlmaSwiftTheme.rootBg(scheme))
+    }
+
+    private func submit() {
+        guard canSubmit, !submitting else { return }
+        submitting = true; errorText = nil
+        Task {
+            defer { submitting = false }
+            let ok = await vm.addPerson(
+                name: name.trimmingCharacters(in: .whitespaces), role: role, photos: photos)
+            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+            if ok { dismiss() } else { errorText = vm.toast }
+        }
+    }
 }
