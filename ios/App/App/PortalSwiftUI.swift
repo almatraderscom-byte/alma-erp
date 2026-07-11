@@ -780,6 +780,7 @@ struct PortalScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = PortalVM()
     @State private var walletSheet = false
+    @State private var statementOpen = false
     @State private var leaveSheet = false
     @State private var exceptionSheet = false
     @State private var appealSheet = false
@@ -812,6 +813,23 @@ struct PortalScreen: View {
                     greetingCard(profile)
                     if vm.isSystemOwner {
                         ownerCard
+                        // The owner is an employee here too (web parity 2026-07-11):
+                        // linked employee id → own full statement.
+                        if vm.employeeId != nil {
+                            Button {
+                                statementOpen = true
+                            } label: {
+                                HStack {
+                                    Text("আমার বেতন-খাতা — সম্পূর্ণ হিসাব")
+                                        .font(.caption.weight(.bold))
+                                    Spacer()
+                                    Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+                                }
+                                .foregroundStyle(PortalPalette.coral)
+                                .padding(14)
+                                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+                            }
+                        }
                     } else {
                         if let s = vm.walletSummary, s.outstandingAdvance > 0, !vm.advanceNoticeAckedToday {
                             advanceNotice(s.outstandingAdvance)
@@ -842,6 +860,11 @@ struct PortalScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task { await vm.load() }
+        .fullScreenCover(isPresented: $statementOpen) {
+            if let emp = vm.employeeId {
+                WalletStatementScreen(employeeId: emp, businessId: PortalVM.businessId)
+            }
+        }
         .sheet(isPresented: $walletSheet) {
             PortalWalletRequestSheet(
                 availableWithdrawable: vm.walletSummary?.availableWithdrawable ?? 0
@@ -1706,9 +1729,21 @@ struct PortalScreen: View {
 
     private var walletHistoryCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("WALLET TRANSACTION HISTORY")
-                .font(.caption2.weight(.heavy))
-                .foregroundStyle(PortalPalette.accentText(colorScheme))
+            HStack {
+                Text("WALLET TRANSACTION HISTORY")
+                    .font(.caption2.weight(.heavy))
+                    .foregroundStyle(PortalPalette.accentText(colorScheme))
+                Spacer()
+                if vm.employeeId != nil {
+                    Button {
+                        statementOpen = true
+                    } label: {
+                        Text("সম্পূর্ণ হিসাব →")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(PortalPalette.coral)
+                    }
+                }
+            }
             if vm.employeeId == nil {
                 Text("Link your HR employee ID (Users settings) to activate the payroll wallet.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -2345,7 +2380,9 @@ private enum PortalFormat {
 // from the Orders/Assistant spec verbatim)
 
 @available(iOS 17.0, *)
-private struct PortalAurora: View {
+/// Shared living-aurora canvas (internal: WalletStatementSwiftUI reuses it —
+/// owner directive 2026-07-08, every native page shares the moving aurora).
+struct PortalAurora: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var drift = false

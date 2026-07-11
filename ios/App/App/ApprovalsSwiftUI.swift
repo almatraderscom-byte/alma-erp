@@ -257,6 +257,15 @@ struct AlmaAgentAction: Decodable, Identifiable, Equatable {
         default: return (type ?? "—").replacingOccurrences(of: "_", with: " ")
         }
     }
+
+    /// Card types where "আমার মত" hands the owner's opinion to the head, which
+    /// re-edits THIS card in place (POST .../revise). Mirrors the server-side
+    /// REVISABLE_ACTION_TYPES (src/agent/lib/revise-pending.ts).
+    static let revisableTypes: Set<String> = [
+        "dispatch_staff_tasks", "delegation", "send_customer_message", "staff_announcement",
+        "fb_post", "instagram_post", "marketing_plan", "content_gate1", "content_gate2", "ad_creative_gate",
+    ]
+    var isRevisable: Bool { type.map { Self.revisableTypes.contains($0) } ?? false }
 }
 
 struct AgentActionsResponse: Decodable {
@@ -267,6 +276,13 @@ struct AgentActionsResponse: Decodable {
         let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
         actions = (try? c.decode([AlmaAgentAction].self, forKey: .actions)) ?? []
     }
+}
+
+/// Response of POST /api/assistant/actions/[id]/revise — the head's one-line Bangla
+/// confirmation of what it changed, plus the re-read (still-pending) card.
+struct AgentReviseResponse: Decodable {
+    let reply: String?
+    let action: AlmaAgentAction?
 }
 
 // MARK: - Integrity (web Integrity Monitor parity)
@@ -473,6 +489,33 @@ final class ApprovalsVM {
         NotificationCenter.default.post(name: .almaApprovalsChanged, object: nil)
         await loadAgent()
     }
+
+    /// The third option: the owner typed his opinion on a pending card. Hand it to
+    /// the head, which re-edits THIS card in place and replies with a one-line
+    /// confirmation — the card stays pending for a final Approve. No chat restart.
+    func agentRevise(_ action: AlmaAgentAction, feedback: String) async {
+        let note = feedback.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard note.count >= 2 else { return }
+        agentBusyId = action.id
+        agentNotice = nil
+        defer { agentBusyId = nil }
+        do {
+            let resp: AgentReviseResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/actions/\(action.id)/revise", body: ["feedback": note])
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            agentNotice = resp.reply?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? resp.reply! : "✓ মত অনুযায়ী কার্ডটা আপডেট করা হয়েছে।"
+        } catch AlmaAPIError.http(let status, _) {
+            if status == 410 { agentNotice = "অনুমোদনের সময় শেষ — কার্ডটি মেয়াদোত্তীর্ণ।" }
+            else if status == 409 { agentNotice = "এই অ্যাকশনটি ইতিমধ্যে সম্পন্ন হয়েছে।" }
+            else if status == 400 { agentNotice = "এই কার্ডে মতামত দিয়ে রিভাইজ করা যায় না — Approve বা Reject করুন।" }
+            else { agentNotice = "রিভাইজ ব্যর্থ হয়েছে — আবার চেষ্টা করুন।" }
+        } catch {
+            agentNotice = "নেটওয়ার্ক সমস্যা — আবার চেষ্টা করুন।"
+        }
+        NotificationCenter.default.post(name: .almaApprovalsChanged, object: nil)
+        await loadAgent()
+    }
 }
 
 // MARK: - Screen
@@ -485,6 +528,7 @@ struct ApprovalsScreen: View {
     @State private var selected: AlmaApproval? = nil
     @State private var rejecting: AlmaApproval? = nil
     @State private var withdrawing: AlmaApproval? = nil  // WALLET_WITHDRAWAL → txn id first
+    @State private var revising: AlmaAgentAction? = nil  // agent card → "আমার মত" opinion
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -526,6 +570,12 @@ struct ApprovalsScreen: View {
                 Task { await vm.act(ap, action: "APPROVE", transactionId: txn) }
             }
             .presentationDetents([.height(320)])
+        }
+        .sheet(item: $revising) { ac in
+            ReviseNoteSheet(action: ac) { feedback in
+                Task { await vm.agentRevise(ac, feedback: feedback) }
+            }
+            .presentationDetents([.height(340)])
         }
     }
 
@@ -763,7 +813,8 @@ struct ApprovalsScreen: View {
                 action: action,
                 busy: vm.agentBusyId == action.id,
                 onApprove: { Task { await vm.agentAct(action, kind: "approve") } },
-                onReject: { Task { await vm.agentAct(action, kind: "reject") } })
+                onReject: { Task { await vm.agentAct(action, kind: "reject") } },
+                onOpinion: { revising = action })
         }
         if !vm.agentLoading && vm.agentActions.isEmpty && vm.agentError == nil {
             VStack(spacing: 6) {
@@ -1159,6 +1210,7 @@ private struct AgentActionCard: View {
     let busy: Bool
     let onApprove: () -> Void
     let onReject: () -> Void
+    let onOpinion: () -> Void
     @Environment(\.colorScheme) private var colorScheme
     @State private var expanded = false
 
@@ -1206,16 +1258,26 @@ private struct AgentActionCard: View {
             summaryBlock
 
             if isPending {
-                HStack(spacing: 8) {
-                    if busy {
-                        ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 7)
-                    } else if action.expired == true {
-                        // Expired: only "সরান" (clear) — hits reject, server marks expired.
+                if busy {
+                    ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 7)
+                } else if action.expired == true {
+                    // Expired: only "সরান" (clear) — hits reject, server marks expired.
+                    HStack(spacing: 8) {
                         chipButton("সরান", icon: "trash", tint: .secondary, action: onReject)
-                    } else {
-                        chipButton("Approve", icon: "checkmark", tint: ApprovalPalette.coral,
-                                   text: ApprovalPalette.accentText(colorScheme), action: onApprove)
-                        chipButton("Reject", icon: "xmark", tint: ApprovalPalette.red500, action: onReject)
+                    }
+                } else {
+                    VStack(spacing: 8) {
+                        HStack(spacing: 8) {
+                            chipButton("Approve", icon: "checkmark", tint: ApprovalPalette.coral,
+                                       text: ApprovalPalette.accentText(colorScheme), action: onApprove)
+                            chipButton("Reject", icon: "xmark", tint: ApprovalPalette.red500, action: onReject)
+                        }
+                        // The third option: type an opinion → the head re-edits this card
+                        // in place and confirms. Only where an in-place revise is safe.
+                        if action.isRevisable {
+                            chipButton("আমার মত দিন", icon: "bubble.left.and.text.bubble.right",
+                                       tint: AlmaSwiftTheme.violet, action: onOpinion)
+                        }
                     }
                 }
             }
@@ -1555,6 +1617,53 @@ private struct WithdrawTxnSheet: View {
             .buttonStyle(.borderedProminent)
             .tint(ApprovalPalette.coral)
             .disabled(trimmed.isEmpty)
+            Spacer(minLength: 0)
+        }
+        .padding(18)
+        .presentationBackground { ApprovalsAurora() }
+        .onAppear { focused = true }
+    }
+}
+
+// MARK: - Revise sheet ("আমার মত" — opinion feeds the head, card revised in place)
+
+@available(iOS 17.0, *)
+private struct ReviseNoteSheet: View {
+    let action: AlmaAgentAction
+    let onConfirm: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var note = ""
+    @FocusState private var focused: Bool
+
+    private var trimmed: String { note.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("আপনার মত দিন").font(.headline)
+            Text("\(action.typeLabel) · এজেন্ট আপনার মত অনুযায়ী কার্ডটা ঠিক করে দেবে, তারপর আপনি Approve করবেন।")
+                .font(.caption).foregroundStyle(.secondary)
+            TextField("যেমন: দুইজনকে না, শুধু রাকিবকে দিন…", text: $note, axis: .vertical)
+                .lineLimit(3...6)
+                .focused($focused)
+                .padding(12)
+                .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+            Text(trimmed.count < 2
+                 ? "আপনার মতামত লিখুন…"
+                 : "এজেন্ট এই কার্ডটাই আপনার কথামতো রিভাইজ করবে।")
+                .font(.caption2)
+                .foregroundStyle(trimmed.count < 2 ? ApprovalPalette.amber600 : Color.secondary)
+            Button {
+                dismiss()
+                onConfirm(trimmed)
+            } label: {
+                Label("এজেন্টকে পাঠান", systemImage: "paperplane.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 4)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AlmaSwiftTheme.violet)
+            .disabled(trimmed.count < 2)
             Spacer(minLength: 0)
         }
         .padding(18)
