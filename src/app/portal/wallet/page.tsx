@@ -243,7 +243,10 @@ export default function WalletStatementPage() {
     void loadCustom(customFrom, customTo)
   }
 
-  const activeEntries = rangeMode === 'custom' ? (customState?.data.entries ?? []) : (fullData?.entries ?? [])
+  const activeEntries = useMemo(
+    () => (rangeMode === 'custom' ? (customState?.data.entries ?? []) : (fullData?.entries ?? [])),
+    [rangeMode, customState, fullData],
+  )
   const activeFineSummary: FineWindowSummary | null = rangeMode === 'custom'
     ? customState?.data.fineSummaries.customRange ?? null
     : fullData?.fineSummaries[rangeMode] ?? null
@@ -381,7 +384,7 @@ export default function WalletStatementPage() {
           {(loading && !fullData) || (rangeMode === 'custom' && customLoading && !customState) ? (
             <Skeleton className="h-24 w-full" />
           ) : !activeFineSummary ? (
-            <p className="text-[11px] text-muted">তারিখ বেছে নিয়ে "প্রয়োগ করুন" চাপুন।</p>
+            <p className="text-[11px] text-muted">তারিখ বেছে নিয়ে &ldquo;প্রয়োগ করুন&rdquo; চাপুন।</p>
           ) : (
             <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
               <FineStat label="মোট জরিমানা" primary={`${bnNumber(activeFineSummary.fineCount)}টি`} secondary={moneyBn(activeFineSummary.fineTotal)} tone="text-red-400" />

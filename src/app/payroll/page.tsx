@@ -15,7 +15,7 @@ import { BusinessSwitcherCompact } from '@/components/layout/BusinessSwitcher'
 import { cn } from '@/lib/utils'
 const _stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
 const _fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] } } }
-import type { PayrollWallet, WalletRequestDto, WalletSummaryResponse } from '@/types/payroll-wallet'
+import type { PayrollWallet, WalletSummaryResponse } from '@/types/payroll-wallet'
 import { downloadBlob, payrollWalletsToCsv, payrollWalletsToWorkbook } from '@/lib/export-payroll-wallet'
 import toast from 'react-hot-toast'
 import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
