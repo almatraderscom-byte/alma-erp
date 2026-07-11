@@ -93,13 +93,14 @@ private struct WSEntry: Decodable, Identifiable {
     let source: String?
     let note: String?
     let date: String?
+    let createdAt: String?
     let labelBn: String?
     let signedAmount: Double
     let runningBalance: Double
     let appeal: WSAppealInfo?
 
     private enum K: String, CodingKey {
-        case id, type, source, note, date, labelBn, signedAmount, runningBalance, appeal
+        case id, type, source, note, date, createdAt, labelBn, signedAmount, runningBalance, appeal
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -108,11 +109,15 @@ private struct WSEntry: Decodable, Identifiable {
         source = try? c.decodeIfPresent(String.self, forKey: .source)
         note = try? c.decodeIfPresent(String.self, forKey: .note)
         date = try? c.decodeIfPresent(String.self, forKey: .date)
+        createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
         labelBn = try? c.decodeIfPresent(String.self, forKey: .labelBn)
         signedAmount = (try? c.decodeIfPresent(Double.self, forKey: .signedAmount)) ?? 0
         runningBalance = (try? c.decodeIfPresent(Double.self, forKey: .runningBalance)) ?? 0
         appeal = try? c.decodeIfPresent(WSAppealInfo.self, forKey: .appeal)
     }
+
+    /// Booking date — when it actually happened (salary rows are DATED by period).
+    var bookingDate: String? { createdAt ?? date }
 
     var isFineRefund: Bool {
         type == "ADJUSTMENT" && ["attendance_late_penalty_reversal",
@@ -277,7 +282,7 @@ struct WalletStatementScreen: View {
         var order: [String] = []
         var map: [String: [WSEntry]] = [:]
         for e in limited {
-            let ym = String((e.date ?? "").prefix(7))
+            let ym = String((e.bookingDate ?? "").prefix(7))
             if map[ym] == nil { order.append(ym); map[ym] = [] }
             map[ym]?.append(e)
         }
@@ -498,7 +503,7 @@ struct WalletStatementScreen: View {
                         Text(note).font(.system(size: 11)).foregroundStyle(.secondary)
                             .lineLimit(2)
                     }
-                    Text(WSFormat.dateBn(e.date))
+                    Text(WSFormat.dateBn(e.bookingDate))
                         .font(.system(size: 10)).foregroundStyle(.tertiary)
                 }
                 Spacer(minLength: 8)

@@ -97,6 +97,9 @@ struct PayrollWalletTotalsModel: Decodable, Equatable {
     let availableWithdrawable: Int
     let thisMonthSalaryAdded: Int
     let entryCount: Int
+    /// Salary credited for the current cycle (prior calendar month's periodYm).
+    let currentCycleSalaryAdded: Int
+    let cyclePeriodYm: String?
     /// periodYms with no salary accrual (owner rule: show WHO is due, WHICH month).
     let salaryDueMonths: [String]
 
@@ -105,6 +108,7 @@ struct PayrollWalletTotalsModel: Decodable, Equatable {
         case totalOvertime, totalReimbursements, totalMealDeductions, totalPenalties
         case outstandingAdvance, currentBalance, companyLiability, availableWithdrawable
         case thisMonthSalaryAdded, entryCount, salaryDueMonths
+        case currentCycleSalaryAdded, cyclePeriodYm
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -124,6 +128,8 @@ struct PayrollWalletTotalsModel: Decodable, Equatable {
         thisMonthSalaryAdded = payrollFlexInt(c, .thisMonthSalaryAdded) ?? 0
         entryCount = payrollFlexInt(c, .entryCount) ?? 0
         salaryDueMonths = (try? c.decodeIfPresent([String].self, forKey: .salaryDueMonths)) ?? []
+        currentCycleSalaryAdded = payrollFlexInt(c, .currentCycleSalaryAdded) ?? 0
+        cyclePeriodYm = try? c.decodeIfPresent(String.self, forKey: .cyclePeriodYm)
     }
 }
 
@@ -2207,7 +2213,11 @@ private struct PayrollEmployeeDetailSheet: View {
                 Divider().overlay(AlmaSwiftTheme.separator(colorScheme))
                 moneyRow("Held balance (liability)", s.companyLiability, PayrollPalette.pos(colorScheme), bold: true)
                 moneyRow("Withdrawable now", s.availableWithdrawable, PayrollPalette.pos(colorScheme))
-                moneyRow("This month salary added", s.thisMonthSalaryAdded, .primary)
+                moneyRow(
+                    "এই চক্রের বেতন" + (s.cyclePeriodYm.map { " (\(PayrollFormat.periodBn($0)))" } ?? ""),
+                    s.currentCycleSalaryAdded,
+                    s.currentCycleSalaryAdded > 0 ? PayrollPalette.pos(colorScheme) : .primary
+                )
                 Text("\(s.entryCount) ledger \(s.entryCount == 1 ? "entry" : "entries")")
                     .font(.caption2).foregroundStyle(.secondary)
             }
