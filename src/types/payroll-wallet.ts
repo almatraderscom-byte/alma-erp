@@ -27,6 +27,7 @@ export type WalletSummary = {
   /** Salary credited for the current cycle (prior calendar month's periodYm). */
   currentCycleSalaryAdded: number
   cyclePeriodYm: string
+  salaryDueMonths: string[]
   entryCount: number
 }
 

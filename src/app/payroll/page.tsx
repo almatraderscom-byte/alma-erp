@@ -492,11 +492,12 @@ export default function PayrollPage() {
   const calendarYm = useMemo(() => currentCalendarYm(), [])
 
   const totalEmployees = compWallets.length
-  const paidEmployees = compWallets.filter(w => (w.summary?.currentCycleSalaryAdded ?? 0) > 0).length
-  const unpaidEmployees = totalEmployees - paidEmployees
+  const paidEmployees = compWallets.filter(w => (w.summary?.currentCycleSalaryAdded ?? 0) > 0 && !(w.summary?.salaryDueMonths ?? []).length).length
+  const dueWallets = compWallets.filter(w => (w.summary?.salaryDueMonths ?? []).length > 0)
+  const unpaidEmployees = dueWallets.length
+  const totalDueAmount = dueWallets.reduce((sum, w) => sum + (w.summary?.salaryDueMonths?.length ?? 0) * (w.monthlySalary ?? 0), 0)
   const givenThisCycle = compWallets.reduce((sum, w) => sum + (w.summary?.currentCycleSalaryAdded ?? 0), 0)
   const monthlyBudget = k?.total_monthly_salary ?? 0
-  const remainingThisCycle = Math.max(0, roundMoney(monthlyBudget - givenThisCycle))
   const pendingCount = walletData?.pendingRequests.length ?? 0
 
   const penaltyEntriesThisMonth = useMemo(() => {
@@ -594,7 +595,7 @@ export default function PayrollPage() {
         <div className="mt-5 grid grid-cols-2 overflow-hidden rounded-2xl border border-white/[0.06] divide-x divide-y sm:grid-cols-5 sm:divide-y-0 divide-white/[0.06]">
           <HeroKpiTile label="মাসিক বাজেট" value={monthlyBudget} loading={loading} />
           <HeroKpiTile label="দেওয়া হয়েছে" value={givenThisCycle} tone="pos" loading={walletLoading} />
-          <HeroKpiTile label="বাকি" value={remainingThisCycle} tone={remainingThisCycle > 0 ? 'amber' : 'pos'} loading={walletLoading} />
+          <HeroKpiTile label="বাকি (সব মাস)" value={totalDueAmount} tone={totalDueAmount > 0 ? 'amber' : 'pos'} loading={walletLoading} />
           <HeroKpiTile label="জরিমানা (এ মাস)" value={penaltiesThisMonthTotal} tone="neg" loading={walletLoading} />
           <HeroKpiTile label="অনুরোধ" value={pendingCount} isCount loading={walletLoading} />
         </div>
@@ -629,9 +630,13 @@ export default function PayrollPage() {
           <div className="space-y-4">
             {unpaidEmployees > 0 && (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border tone-amber px-4 py-3 text-[11px]">
-                <span>
-                  {toBnDigits(unpaidEmployees)} জন কর্মচারীর এই চক্রের বেতন এখনও বাকি
-                  {preview ? ` · প্রিভিউ ৳ ${preview.totalPreviewSalary.toLocaleString('en-BD')} (${toBnDigits(preview.employees.length)} জন)` : ''}
+                <span className="min-w-0">
+                  {toBnDigits(unpaidEmployees)} জনের বেতন বাকি — মোট ৳ {totalDueAmount.toLocaleString('en-BD')}:{' '}
+                  <b className="font-semibold">
+                    {dueWallets
+                      .map(w => `${w.name} (${(w.summary?.salaryDueMonths ?? []).map(m => periodYmBn(m) ?? m).join(', ')})`)
+                      .join(' · ')}
+                  </b>
                 </span>
                 <Button size="xs" variant="gold" onClick={() => void runAccrual()}>বেতন চালান</Button>
               </div>
@@ -646,7 +651,10 @@ export default function PayrollPage() {
                 <div className="divide-y divide-white/[0.05]">
                   {compWallets.map(w => {
                     const paidAmt = w.summary?.currentCycleSalaryAdded ?? 0
-                    const paid = paidAmt > 0
+                    const due = w.summary?.salaryDueMonths ?? []
+                    const paid = paidAmt > 0 && due.length === 0
+                    const dueLabel = due.map(m => periodYmBn(m) ?? m).join(', ')
+                    const dueAmount = due.length * (w.monthlySalary ?? 0)
                     return (
                       <div key={`${w.businessId}:${w.employeeId}`} className="flex items-center gap-3 px-4 py-3">
                         <Avatar name={w.name} size="sm" />
@@ -654,14 +662,14 @@ export default function PayrollPage() {
                           <p className="truncate text-[13px] font-semibold text-cream">{w.name}</p>
                           <p className="mt-0.5 truncate font-mono text-[10px] text-muted">{w.employeeId}</p>
                         </div>
-                        <div className="flex shrink-0 items-center gap-1.5">
-                          <span className={cn('h-1.5 w-1.5 rounded-full', paid ? 'bg-emerald-400' : 'bg-amber-500')} />
-                          <span className={cn('text-[10px] font-semibold', paid ? 'txt-pos' : 'text-amber-500')}>
-                            {paid ? 'পেয়েছে' : 'বাকি'}
+                        <div className="flex min-w-0 shrink items-center gap-1.5">
+                          <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', paid ? 'bg-emerald-400' : 'bg-amber-500')} />
+                          <span className={cn('truncate text-[10px] font-semibold', paid ? 'txt-pos' : 'text-amber-500')}>
+                            {paid ? 'পেয়েছে' : `বাকি — ${dueLabel}`}
                           </span>
                         </div>
                         <span className="w-24 shrink-0 text-right font-mono text-[12px] font-bold tabular-nums text-cream">
-                          ৳ {(paid ? paidAmt : (w.monthlySalary ?? 0)).toLocaleString('en-BD')}
+                          ৳ {(paid ? paidAmt : dueAmount).toLocaleString('en-BD')}
                         </span>
                       </div>
                     )

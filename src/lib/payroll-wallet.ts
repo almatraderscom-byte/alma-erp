@@ -45,6 +45,8 @@ export type WalletSummary = {
   /** Salary credited for the CURRENT cycle (prior calendar month's periodYm). */
   currentCycleSalaryAdded: number
   cyclePeriodYm: string
+  /** periodYms with NO salary accrual, first salary month → current cycle. */
+  salaryDueMonths: string[]
   entryCount: number
 }
 
@@ -110,6 +112,32 @@ export function shiftPeriodYm(periodYm: string, months: number): string {
 /** Salary run on the 10th credits the previous calendar month (June 10 → May salary). */
 export function payrollAccrualPeriodYm(runDate = new Date()): string {
   return shiftPeriodYm(periodFromDate(runDate), -1)
+}
+
+/**
+ * Months this employee's salary is DUE (owner rule 2026-07-11: super admin must
+ * see exactly WHO is unpaid and for WHICH month — e.g. "Mustahid · জুন").
+ *
+ * Expected coverage: from the employee's first salary month (their earliest
+ * SALARY_ACCRUAL periodYm — before that we can't know they were employed) up to
+ * the current cycle (prior calendar month). Every expected month with no
+ * SALARY_ACCRUAL is due. No salary history at all → the current cycle is due.
+ */
+export function salaryDueMonths(entries: WalletEntryLike[], now = new Date()): string[] {
+  const cycle = payrollAccrualPeriodYm(now)
+  const paid = new Set(
+    entries.filter(e => e.type === 'SALARY_ACCRUAL' && e.periodYm).map(e => e.periodYm as string),
+  )
+  if (!paid.size) return [cycle]
+  const first = [...paid].sort()[0]
+  const due: string[] = []
+  let ym = first
+  // walk first..cycle inclusive; hard cap guards a bad periodYm from looping forever
+  for (let i = 0; i < 240 && ym <= cycle; i++) {
+    if (!paid.has(ym)) due.push(ym)
+    ym = shiftPeriodYm(ym, 1)
+  }
+  return due
 }
 
 export function signedAmount(type: EmployeeLedgerEntryType, amount: unknown): number {
@@ -217,6 +245,7 @@ export function computeWalletSummary(
     thisMonthSalaryAdded,
     currentCycleSalaryAdded,
     cyclePeriodYm: cyclePeriod,
+    salaryDueMonths: salaryDueMonths(entries, now),
     entryCount: entries.length,
   }
 }
