@@ -75,6 +75,9 @@ export type AgentEvent =
   | { type: 'subagent_start'; id: string; role: string; roleLabel: string; task: string }
   | { type: 'subagent_end'; id: string; role: string; success: boolean; summary?: string; toolsUsed?: string[]; error?: string }
   | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; entryCount?: number; isFinance?: boolean; isBatch?: boolean }
+  // A tool filed a document as a conversation artifact — the UI drops a file
+  // card into the reply flow and opens the artifacts panel on it.
+  | { type: 'artifact_saved'; id: string; title: string; artifactType: string }
   | { type: 'ask_card'; askCardId: string; question: string; options: string[] }
   | {
       type: 'verification_retry'
@@ -952,6 +955,7 @@ export async function* runAgentTurn(
     | { t: 'think'; text: string }
     | { t: 'text'; text: string }
     | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string }
+    | { t: 'file'; id: string; name: string; kind?: string }
   const timeline: TimelineEntry[] = []
   const compactTimelineInput = (input: unknown): unknown => {
     try {
@@ -1291,6 +1295,17 @@ export async function* runAgentTurn(
           input: compactTimelineInput(tb.input),
           result: toolResultPreview(result),
         })
+
+        // A tool filed a document as a conversation artifact (save_artifact, SEO
+        // report…) → surface it as a FILE CARD in the reply flow, Claude-style.
+        const cardRaw = result.success ? (result.data as Record<string, unknown> | undefined)?.artifactCard : undefined
+        if (cardRaw && typeof cardRaw === 'object') {
+          const card = cardRaw as { id?: unknown; title?: unknown; type?: unknown }
+          if (typeof card.id === 'string' && typeof card.title === 'string') {
+            timeline.push({ t: 'file', id: card.id, name: card.title, kind: typeof card.type === 'string' ? card.type : 'markdown' })
+            yield { type: 'artifact_saved', id: card.id, title: card.title, artifactType: typeof card.type === 'string' ? card.type : 'markdown' }
+          }
+        }
 
         if (isDelegate) {
           const d = (result.data ?? {}) as Record<string, unknown>

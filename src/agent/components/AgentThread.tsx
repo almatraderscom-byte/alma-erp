@@ -55,6 +55,7 @@ export type TimelineEntry =
   | { t: 'think'; text: string }
   | { t: 'text'; text: string }
   | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; live?: boolean; id?: string }
+  | { t: 'file'; id: string; name: string; kind?: string }
 
 export interface ChatMessage {
   id: string
@@ -114,7 +115,8 @@ interface AgentThreadProps {
   messages: ChatMessage[]
   onArtifactSave: (artifact: Omit<Artifact, 'id' | 'createdAt'>) => void
   conversationId: string | null
-  onArtifactOpen: () => void
+  /** Open the artifacts panel; pass an artifact id to focus that file. */
+  onArtifactOpen: (id?: string) => void
   onActionApproved?: () => void
   onQuickSend?: (text: string) => void
   /** Owner answered a model-upgrade approval card → rerun the paused turn. */
@@ -620,13 +622,38 @@ type Phase = { headline: string; detail: string; tools: ToolRow[]; live: boolean
  * steps it triggered BELOW it — native-app parity). Used whenever the timeline
  * carries text segments; older messages keep the classic steps-then-text card.
  */
-function ChronoFlow({ msg }: { msg: ChatMessage }) {
-  type Seg = { kind: 'steps'; entries: TimelineEntry[] } | { kind: 'text'; text: string }
+/** Claude-style FILE CARD — a tool filed a document as an artifact; tap to open it. */
+function ArtifactFileCard({ entry, onOpen }: { entry: Extract<TimelineEntry, { t: 'file' }>; onOpen: (id: string) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(entry.id)}
+      className="mb-3 flex w-full max-w-md items-center gap-3 rounded-2xl border border-white/[0.08] bg-card/80 px-4 py-3 text-left backdrop-blur-md transition-all hover:border-gold-dim/40 hover:bg-gold/5 hover:shadow-[0_0_14px_rgba(201,168,76,0.12)]"
+    >
+      <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl border border-gold-dim/30 bg-gold/10 text-base">📄</span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-bold text-cream">{entry.name}</span>
+        <span className="block text-[11px] text-muted">
+          {(entry.kind ?? 'markdown') === 'markdown' ? 'ডকুমেন্ট' : entry.kind} · খুলতে চাপুন
+        </span>
+      </span>
+      <span className="flex-shrink-0 text-[11px] font-semibold text-gold-lt">খুলুন ›</span>
+    </button>
+  )
+}
+
+function ChronoFlow({ msg, onOpenFile }: { msg: ChatMessage; onOpenFile: (id: string) => void }) {
+  type Seg =
+    | { kind: 'steps'; entries: TimelineEntry[] }
+    | { kind: 'text'; text: string }
+    | { kind: 'file'; entry: Extract<TimelineEntry, { t: 'file' }> }
   const segments = useMemo(() => {
     const segs: Seg[] = []
     for (const e of msg.timeline ?? []) {
       if (e.t === 'text') {
         segs.push({ kind: 'text', text: e.text })
+      } else if (e.t === 'file') {
+        segs.push({ kind: 'file', entry: e })
       } else {
         const last = segs[segs.length - 1]
         if (last && last.kind === 'steps') last.entries.push(e)
@@ -656,6 +683,8 @@ function ChronoFlow({ msg }: { msg: ChatMessage }) {
               />
             )}
           </div>
+        ) : seg.kind === 'file' ? (
+          <ArtifactFileCard key={i} entry={seg.entry} onOpen={onOpenFile} />
         ) : (
           <ActivityTimeline
             key={i}
@@ -705,7 +734,7 @@ function ActivityTimeline({
   // Effective timeline: the persisted/live ordered stream, or — for older messages
   // that predate the timeline — a fallback assembled from thinking + tool activity.
   const entries: TimelineEntry[] = useMemo(() => {
-    if (timeline && timeline.length > 0) return timeline.filter((e) => e.t !== 'text')
+    if (timeline && timeline.length > 0) return timeline.filter((e) => e.t !== 'text' && e.t !== 'file')
     const fb: TimelineEntry[] = []
     if (thinking && thinking.trim()) fb.push({ t: 'think', text: thinking })
     for (const t of toolActivity ?? []) {
@@ -1245,7 +1274,7 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     // render ONE interleaved flow (text → steps → text) and skip the
                     // separate steps-card + body blocks below.
                     const chrono = (msg.timeline ?? []).some((e) => e.t === 'text')
-                    if (chrono) return <ChronoFlow msg={msg} />
+                    if (chrono) return <ChronoFlow msg={msg} onOpenFile={(id) => onArtifactOpen(id)} />
                     if (msg.timeline?.length || msg.thinking || (msg.toolActivity && msg.toolActivity.length > 0)) {
                       return (
                         <ActivityTimeline
@@ -1259,6 +1288,12 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                     }
                     return null
                   })()}
+
+                  {/* File cards for non-chrono messages (chrono renders them in-flow). */}
+                  {!(msg.timeline ?? []).some((e) => e.t === 'text') &&
+                    (msg.timeline ?? []).filter((e): e is Extract<TimelineEntry, { t: 'file' }> => e.t === 'file').map((e) => (
+                      <ArtifactFileCard key={e.id} entry={e} onOpen={(id) => onArtifactOpen(id)} />
+                    ))}
 
                   {msg.delegations && msg.delegations.length > 0 && (
                     <div className="mb-3 flex flex-col gap-2">
