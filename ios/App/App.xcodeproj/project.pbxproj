@@ -115,6 +115,7 @@
 		F2AA7700000000000000B080 /* DashboardSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A080 /* DashboardSwiftUI.swift */; };
 		F2AA7700000000000000B0FE /* KeyboardDismiss.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A0FE /* KeyboardDismiss.swift */; };
 		F2AA7700000000000000B101 /* CreditUsageSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A101 /* CreditUsageSwiftUI.swift */; };
+		F2AA7700000000000000B1AA /* WalletStatementSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A1AA /* WalletStatementSwiftUI.swift */; };
 		F2AA7700000000000000B102 /* SubscriptionsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A102 /* SubscriptionsSwiftUI.swift */; };
 		F2AA7701000000000000B0FE /* FloatingChatHead.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7701000000000000A0FE /* FloatingChatHead.swift */; };
 		F2AA7702000000000000B0FE /* AgoraIntercom.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7702000000000000A0FE /* AgoraIntercom.swift */; };
@@ -258,6 +259,7 @@
 		F2AA7700000000000000A080 /* DashboardSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A0FE /* KeyboardDismiss.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardDismiss.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A101 /* CreditUsageSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreditUsageSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7700000000000000A1AA /* WalletStatementSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletStatementSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A102 /* SubscriptionsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionsSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7701000000000000A0FE /* FloatingChatHead.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingChatHead.swift; sourceTree = "<group>"; };
 		F2AA7702000000000000A0FE /* AgoraIntercom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgoraIntercom.swift; sourceTree = "<group>"; };
@@ -354,6 +356,7 @@
 				F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */,
 				F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */,
 				F2AA7700000000000000A101 /* CreditUsageSwiftUI.swift */,
+				F2AA7700000000000000A1AA /* WalletStatementSwiftUI.swift */,
 				F2AA7700000000000000A102 /* SubscriptionsSwiftUI.swift */,
 				F2AA7700000000000000A05D /* SettingsTelegramSwiftUI.swift */,
 				F2AA7700000000000000A05C /* SettingsSessionSwiftUI.swift */,
@@ -654,6 +657,7 @@
 				F2AA7700000000000000B05F /* AgentWhatsappSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05E /* AgentCostsSwiftUI.swift in Sources */,
 				F2AA7700000000000000B101 /* CreditUsageSwiftUI.swift in Sources */,
+				F2AA7700000000000000B1AA /* WalletStatementSwiftUI.swift in Sources */,
 				F2AA7700000000000000B102 /* SubscriptionsSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05D /* SettingsTelegramSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05C /* SettingsSessionSwiftUI.swift in Sources */,
