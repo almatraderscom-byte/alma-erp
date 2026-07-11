@@ -11,7 +11,7 @@
  *  - Every section is independently fault-tolerant: a failing aggregation
  *    contributes nothing instead of 500-ing the whole feed (`safe()` below).
  *  - Money is whole taka only (roundMoney); Prisma Decimals never leak out.
- *  - All copy is Bangla and staff-facing — never addresses anyone as "Sir".
+ *  - All copy is Bangla and staff-facing — never addresses anyone as "Boss".
  *
  * Date conventions in this codebase (verified against the writers):
  *  - AttendanceRecord.attendanceDate and AgentStaffTask.proposedFor store the

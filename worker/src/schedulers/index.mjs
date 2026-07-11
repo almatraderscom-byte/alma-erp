@@ -125,7 +125,7 @@ export const SCHEDULER_REGISTRY = [
   { name: 'daily-cashflow',         cronUtc: '30 2 * * *',     description: 'Daily cash-flow summary to owner (08:30 Dhaka)' },
   { name: 'payment-reminders',      cronUtc: '0 6 * * *',      description: 'Overdue payment reminders (12:00 Dhaka)' },
   { name: 'staff-performance',      cronUtc: '0 16 * * 0',     description: 'Weekly staff performance scoring (Sun 22:00 Dhaka)' },
-  { name: 'owner-task-intake',       cronUtc: '30 14 * * *',     description: 'Evening Sir-task intake (20:30 Dhaka)' },
+  { name: 'owner-task-intake',       cronUtc: '30 14 * * *',     description: 'Evening Boss-task intake (20:30 Dhaka)' },
   { name: 'personal-checkin',       cronUtc: '0 15 * * *',     description: 'Evening personal/family check-in (21:00 Dhaka)' },
   { name: 'personal-midday',        cronUtc: '0 8 * * *',      description: 'Brief daytime personal check-in (14:00 Dhaka)' },
   { name: 'cost-reconcile',         cronUtc: '15 2 * * *',   description: 'Nightly cost reconciliation (08:15 Dhaka)' },

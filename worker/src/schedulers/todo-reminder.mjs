@@ -200,7 +200,7 @@ export async function runMorningTodoReminder(context) {
   }
 
   const lines = [
-    '🌅 *সুপ্রভাত Sir!* আজকের Agent কাজের তালিকা:',
+    '🌅 *সুপ্রভাত Boss!* আজকের Agent কাজের তালিকা:',
     '',
     ...todos.map(formatTodoLine),
     '',

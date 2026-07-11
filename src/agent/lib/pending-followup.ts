@@ -209,13 +209,13 @@ function composeMessage(items: PendingItem[], now: number, morning: boolean): st
   const lines = items.map((i) => `• ${i.label} — ${ageHours(i.createdAt, now)} ঘণ্টা ধরে অপেক্ষায়`).join('\n')
   if (morning) {
     return (
-      `🌅 শুভ সকাল Sir। গতকাল থেকে ${items.length}টি বিষয় এখনো আপনার confirm-এর অপেক্ষায় — ` +
+      `🌅 শুভ সকাল Boss। গতকাল থেকে ${items.length}টি বিষয় এখনো আপনার confirm-এর অপেক্ষায় — ` +
       `আজ অন্য কাজ শুরু করার আগে এগুলো একটু দেখে নিই:\n${lines}\n\n` +
       `"approve/হ্যাঁ" বললে এগিয়ে নিই, বা বদলাতে চাইলে বলে দিন — সেভাবেই করি।`
     )
   }
   return (
-    `⏳ Sir, এখনো আপনার সিদ্ধান্তের অপেক্ষায় ${items.length}টি বিষয় (approve করলে এগিয়ে নিতে পারি):\n${lines}\n\n` +
+    `⏳ Boss, এখনো আপনার সিদ্ধান্তের অপেক্ষায় ${items.length}টি বিষয় (approve করলে এগিয়ে নিতে পারি):\n${lines}\n\n` +
     `ঠিক থাকলে "approve/হ্যাঁ" বলুন, বদলাতে চাইলে বলে দিন। ব্যস্ত থাকলে "পরে / ৩০ মিনিট পর" বললে তখন আবার মনে করাবো।`
   )
 }
@@ -353,6 +353,6 @@ export async function processFollowupPaceReply(
   const until = new Date(Date.now() + ms)
   await setSnoozeUntil(today, until)
   return {
-    autoReply: `ঠিক আছে Sir, ${humanizeMs(ms)} পরে আবার মনে করিয়ে দিচ্ছি — আপনি নিশ্চিন্তে কাজ সেরে নিন। 🤝`,
+    autoReply: `ঠিক আছে Boss, ${humanizeMs(ms)} পরে আবার মনে করিয়ে দিচ্ছি — আপনি নিশ্চিন্তে কাজ সেরে নিন। 🤝`,
   }
 }

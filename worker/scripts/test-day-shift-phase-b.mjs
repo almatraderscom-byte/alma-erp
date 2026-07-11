@@ -74,7 +74,7 @@ async function main() {
     console.error('FAIL: todo not completed')
     process.exit(1)
   }
-  if (!after?.description?.includes('Sir,')) {
+  if (!after?.description?.includes('Boss,')) {
     console.error('FAIL: missing feedback description')
     process.exit(1)
   }

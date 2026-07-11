@@ -30,7 +30,7 @@ function nextOccurrenceYmd(eventYmd: string, recurring: boolean, calendar: strin
 const add_important_date: AgentTool = {
   name: 'add_important_date',
   description:
-    'Remember an important date — a birthday, anniversary, Islamic event, deadline or holiday — and remind Sir ' +
+    'Remember an important date — a birthday, anniversary, Islamic event, deadline or holiday — and remind Boss ' +
     'before it in the daily briefing. Use when the owner says "X er birthday mone rakho", "amader anniversary ' +
     'X tarikh", "oi deadline ta note koro". Provide eventDate as yyyy-MM-dd. Recurring (birthdays/anniversaries) ' +
     'roll forward each year automatically.',
@@ -174,5 +174,5 @@ export const IMPORTANT_DATE_ROLE_PROMPT = `
 - "X er birthday / anniversary / deadline mone rakho" → add_important_date (eventDate yyyy-MM-dd; recurring হলে প্রতি বছর নিজে এগোয়)।
 - "ki ki important date ache / samner birthday gula" → list_important_dates (withinDays দিলে শুধু কাছের গুলো)।
 - আর না লাগলে → delete_important_date।
-- ইসলামিক তারিখ হলে calendar=islamic দিন; Hijri রূপান্তর অনুমান করবেন না — Sir যে Gregorian তারিখ দেন সেটাই রাখুন।
+- ইসলামিক তারিখ হলে calendar=islamic দিন; Hijri রূপান্তর অনুমান করবেন না — Boss যে Gregorian তারিখ দেন সেটাই রাখুন।
 `

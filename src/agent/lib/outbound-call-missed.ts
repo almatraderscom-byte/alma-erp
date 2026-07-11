@@ -49,7 +49,7 @@ export async function handleOutboundCallAnswered(input: MissedInput) {
   const payload = original.payload as { phone?: string }
   const phone = String(payload.phone ?? input.toNumber ?? '')
   const text =
-    `📞 স্যার, ${phone} কল *ধরেছে* — কথা বলা হয়েছে (${durationSec} সেকেন্ড)।`
+    `📞 বস, ${phone} কল *ধরেছে* — কথা বলা হয়েছে (${durationSec} সেকেন্ড)।`
 
   await db.agentPendingAction.update({
     where: { id: original.id },
@@ -106,7 +106,7 @@ export async function handleOutboundCallMissed(input: MissedInput) {
 
   const label = statusLabel(input.callStatus, durationSec)
   const summary =
-    `📞 স্যার, ${phone} নম্বরে কল গেছে — ${label}।\n\n` +
+    `📞 বস, ${phone} নম্বরে কল গেছে — ${label}।\n\n` +
     `আবার একই মেসেজ দিয়ে কল দিব?\n\n` +
     `🗣️ "${message.slice(0, 300)}"`
 

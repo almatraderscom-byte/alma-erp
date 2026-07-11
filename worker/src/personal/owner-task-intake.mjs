@@ -1,5 +1,5 @@
 /**
- * Owner Sir-task intake — 20:30 Asia/Dhaka (Phase D).
+ * Owner Boss-task intake — 20:30 Asia/Dhaka (Phase D).
  */
 const APP_URL = () => process.env.APP_URL?.replace(/\/$/, '') ?? ''
 const INT = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -28,7 +28,7 @@ export async function runOwnerTaskIntake({ bot }) {
       return { dutyStatus: 'skipped', dutyDetail: 'intake already resolved today' }
     }
     console.log(`[owner-task-intake] sent streak=${data.streak ?? 0}`)
-    return { dutyStatus: 'done', dutyDetail: `Sir-task intake sent (streak ${data.streak ?? 0})` }
+    return { dutyStatus: 'done', dutyDetail: `Boss-task intake sent (streak ${data.streak ?? 0})` }
   } catch (e) {
     console.error('[owner-task-intake] failed:', e.message)
     return { dutyStatus: 'failed', dutyDetail: e.message }

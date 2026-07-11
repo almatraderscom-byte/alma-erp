@@ -135,7 +135,7 @@ export async function POST(req: NextRequest) {
       if (isFinal) {
         const { readKv, NOTIFY_KEY } = await import('@/lib/creative-studio/taste')
         if ((await readKv(NOTIFY_KEY)) === '1') {
-          const tg = await sendOwnerText(`✅ Sir, "${action.summary}" রেডি — Studio Gallery-তে দেখুন।`)
+          const tg = await sendOwnerText(`✅ Boss, "${action.summary}" রেডি — Studio Gallery-তে দেখুন।`)
           if (!tg.ok) console.warn('[job-result] studio done-ping failed:', tg.error)
         }
       }
@@ -218,7 +218,7 @@ export async function POST(req: NextRequest) {
       }
     }
   } else if (action.type === 'outbound_call' && status === 'failed') {
-    messageText = `❌ স্যার, কল দেওয়া যায়নি।\nকারণ: ${error ?? String(data?.error ?? 'Unknown error')}`
+    messageText = `❌ বস, কল দেওয়া যায়নি।\nকারণ: ${error ?? String(data?.error ?? 'Unknown error')}`
     pushTelegram = true
   } else if (status === 'failed') {
     messageText = `❌ কাজটি সম্পাদন ব্যর্থ হয়েছে।\nকারণ: ${error ?? 'Unknown error'}`
@@ -243,7 +243,7 @@ export async function POST(req: NextRequest) {
         currentStep: `worker executing ${action.type}`,
         artifacts: partial,
         error: errMsg,
-        nextActions: ['কারণ দেখে ঠিক করে কাজটা আবার চালাও (নতুন approved action বানিয়ে), অথবা Sir-কে বিকল্প দাও'],
+        nextActions: ['কারণ দেখে ঠিক করে কাজটা আবার চালাও (নতুন approved action বানিয়ে), অথবা Boss-কে বিকল্প দাও'],
         resumeHint: `pendingAction ${pendingActionId} (type ${action.type}) failed with: ${errMsg}. Payload payload-এ আগের সব input আছে — same payload দিয়ে retry করা যায়।`,
         conversationId: convId,
       })
@@ -289,9 +289,9 @@ export async function POST(req: NextRequest) {
       await enqueueAgentContinuation({
         conversationId: convId,
         message:
-          '[সিস্টেম নোট — অনুমোদিত ছবি তৈরি হয়েছে] Sir-এর approve-করা ছবিটি এইমাত্র তৈরি হয়ে কনভারসেশনে যোগ হয়েছে। ' +
+          '[সিস্টেম নোট — অনুমোদিত ছবি তৈরি হয়েছে] Boss-এর approve-করা ছবিটি এইমাত্র তৈরি হয়ে কনভারসেশনে যোগ হয়েছে। ' +
           'এখন থেমে যেও না — তোমার চলমান কাজের পরের ধাপে নিজে থেকে এগোও (যেমন এই ছবিটা দিয়ে যে পোস্ট/কনটেন্ট বানানোর কথা ছিল সেটা তৈরি করো), ' +
-          'অথবা সব শেষ হলে সংক্ষেপে Sir-কে জানাও। ছবিটা আর নতুন করে generate কোরো না।',
+          'অথবা সব শেষ হলে সংক্ষেপে Boss-কে জানাও। ছবিটা আর নতুন করে generate কোরো না।',
       })
     } catch (err) {
       console.warn('[job-result] agent continuation enqueue failed (result unaffected):', err instanceof Error ? err.message : err)

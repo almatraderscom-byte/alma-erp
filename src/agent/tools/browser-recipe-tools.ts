@@ -25,7 +25,7 @@ import {
 } from '@/agent/lib/browser/learned-recipes'
 
 const BROWSER_OFF_MESSAGE =
-  'ব্রাউজার দিয়ে কাজ করার ক্ষমতা এখন বন্ধ আছে, Sir। চালু করতে বলুন — ' +
+  'ব্রাউজার দিয়ে কাজ করার ক্ষমতা এখন বন্ধ আছে, Boss। চালু করতে বলুন — ' +
   '"ব্রাউজার এজেন্ট চালু করো" (settings: browser_agent_enabled = true)।'
 
 const list_browser_recipes: AgentTool = {
@@ -92,7 +92,7 @@ const run_browser_recipe: AgentTool = {
         return {
           success: false,
           error: cap.error,
-          data: { message: 'আজকের ব্রাউজার-টাস্কের সীমা পূর্ণ হয়ে গেছে, Sir — কাল আবার চেষ্টা করুন বা সীমা বাড়াতে বলুন।' },
+          data: { message: 'আজকের ব্রাউজার-টাস্কের সীমা পূর্ণ হয়ে গেছে, Boss — কাল আবার চেষ্টা করুন বা সীমা বাড়াতে বলুন।' },
         }
       }
 
@@ -123,7 +123,7 @@ const run_browser_recipe: AgentTool = {
           ...created,
           recipeId,
           message:
-            `"${recipeId}" রেসিপিটা তৈরি করলাম, Sir — আপনার অনুমতির পরই ব্রাউজারে চালাব।` +
+            `"${recipeId}" রেসিপিটা তৈরি করলাম, Boss — আপনার অনুমতির পরই ব্রাউজারে চালাব।` +
             (created.critical ? ' ⚠️ এতে টাকা/অপরিবর্তনীয় কিছু থাকতে পারে, দেখে অনুমতি দিন।' : ''),
         },
       }
@@ -174,7 +174,7 @@ const save_learned_recipe: AgentTool = {
         success: true,
         data: {
           id: res.id,
-          message: `রেসিপিটা শিখে রাখলাম, Sir — পরেরবার একই কাজ প্রমাণিত ধাপেই চলবে (id: ${res.id})।`,
+          message: `রেসিপিটা শিখে রাখলাম, Boss — পরেরবার একই কাজ প্রমাণিত ধাপেই চলবে (id: ${res.id})।`,
         },
       }
     } catch (err) {

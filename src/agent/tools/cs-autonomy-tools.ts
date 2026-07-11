@@ -75,7 +75,7 @@ const cs_autonomy_status: AgentTool = {
       lines.push(`• আজ নিজে উত্তর দিয়েছি: ${bn(todayCsReplies)}টি`)
       lines.push('')
       if (autoSendNow) {
-        lines.push('এখন: কনফিডেন্স যথেষ্ট হলে আমি নিজেই কাস্টমারকে উত্তর দিচ্ছি, Sir।')
+        lines.push('এখন: কনফিডেন্স যথেষ্ট হলে আমি নিজেই কাস্টমারকে উত্তর দিচ্ছি, Boss।')
       } else if (csAutoOn && autonomyGoverns && csReplyMode !== 'auto') {
         lines.push(`এখন: উত্তর তৈরি করি, কিন্তু ${MODE_LABEL_BN[csReplyMode] ?? csReplyMode} — পাঠানোর আগে আপনাকে দেখাই।`)
       } else if (csMode === 'shadow') {

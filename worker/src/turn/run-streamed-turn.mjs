@@ -127,7 +127,7 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot }) 
       const chatId = process.env.TELEGRAM_OWNER_CHAT_ID
       if (chatId) {
         await telegramBot.telegram
-          .sendMessage(chatId, '✅ আপনার দীর্ঘ কাজটি শেষ হয়েছে স্যার — অ্যাপ খুললেই উত্তরটা দেখতে পাবেন।')
+          .sendMessage(chatId, '✅ আপনার দীর্ঘ কাজটি শেষ হয়েছে বস — অ্যাপ খুললেই উত্তরটা দেখতে পাবেন।')
           .catch((e) => console.warn('[worker] streamed-turn notify failed:', e.message))
       }
     }

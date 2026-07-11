@@ -43,9 +43,9 @@ export type OfficeTaskBlock = {
   status: 'running' | 'completed' | 'pending_approval'
 }
 
-const DUTY_START = /🏢 Sir, এখন করছি:\s*(.+)/i
-const DUTY_DONE = /✅ Sir,.+শেষ/i
-const DUTY_APPROVAL = /approval\s*লাগবে|⏳ Sir, এটা হয়নি/i
+const DUTY_START = /🏢 Boss, এখন করছি:\s*(.+)/i
+const DUTY_DONE = /✅ Boss,.+শেষ/i
+const DUTY_APPROVAL = /approval\s*লাগবে|⏳ Boss, এটা হয়নি/i
 
 export function buildOfficeTaskBlocks(messages: OfficeShiftMessage[]): {
   preamble: OfficeShiftMessage[]

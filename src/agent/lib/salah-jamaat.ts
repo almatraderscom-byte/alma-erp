@@ -2,7 +2,7 @@
  * Salah jamaat/alone capture.
  *
  * After the owner confirms he prayed a waqt, the conscience-nudge (core.ts) asks
- * softly: "জামাতে পড়লেন নাকি একা, Sir?". The owner's next short reply ("eka poreci",
+ * softly: "জামাতে পড়লেন নাকি একা, Boss?". The owner's next short reply ("eka poreci",
  * "jamaate poreci") is a CONVERSATIONAL answer — never a work task. This module sets
  * a one-shot pending marker when the question is asked, captures the answer, saves it
  * to memory, and returns a contextBlock that EXPLICITLY forbids the head from turning
@@ -109,7 +109,7 @@ export async function processJamaatReply(
     await createOrUpdateAgentMemory({
       scope: 'business',
       key: `salah_jamaat:${pending.date}:${pending.waqt}`,
-      content: `${pending.date} তারিখে ${waqtBn} নামাজ Sir ${verdict} পড়েছেন।`,
+      content: `${pending.date} তারিখে ${waqtBn} নামাজ Boss ${verdict} পড়েছেন।`,
       metadata: { type: 'salah_jamaat', date: pending.date, waqt: pending.waqt, jamaat: answer === 'jamaat', businessId: BUSINESS_ID },
       importance: 1,
     })
@@ -119,17 +119,17 @@ export async function processJamaatReply(
 
   const guidance =
     answer === 'jamaat'
-      ? `Sir prayed ${waqtBn} in JAMAAT. Reply with genuine warmth: a short Alhamdulillah / appreciation that he caught the jamaat, and a tiny du'a. 1-2 lines.`
-      : `Sir prayed ${waqtBn} ALONE (not jamaat). Reply with gentle, NO-BLAME encouragement: acknowledge it warmly, softly hope he can catch the next waqt in jamaat, never scold. 1-2 lines.`
+      ? `Boss prayed ${waqtBn} in JAMAAT. Reply with genuine warmth: a short Alhamdulillah / appreciation that he caught the jamaat, and a tiny du'a. 1-2 lines.`
+      : `Boss prayed ${waqtBn} ALONE (not jamaat). Reply with gentle, NO-BLAME encouragement: acknowledge it warmly, softly hope he can catch the next waqt in jamaat, never scold. 1-2 lines.`
 
   return {
     contextBlock:
       `[SALAH JAMAAT — ANSWER]\n` +
-      `Sir just answered your gentle jamaat/alone question about ${waqtBn} (${pending.date}). ` +
+      `Boss just answered your gentle jamaat/alone question about ${waqtBn} (${pending.date}). ` +
       `This is a CONVERSATIONAL answer, NOT a work task. It is ALREADY saved to memory — do NOT call save_memory for it. ` +
       `CRITICAL: do NOT create, schedule, or carry over any todo / reminder / task from this answer — ` +
       `do NOT call manage_work_todos, set_reminder, add_owner_todo, or any task/reminder tool. ` +
-      `Just reply conversationally in warm Bangla as Sir. ${guidance}`,
+      `Just reply conversationally in warm Bangla as Boss. ${guidance}`,
   }
 }
 
@@ -159,7 +159,7 @@ export async function recordJamaatChoiceDirect(
     await createOrUpdateAgentMemory({
       scope: 'business',
       key: `salah_jamaat:${dateYmd}:${waqt ?? 'unknown'}`,
-      content: `${dateYmd} তারিখে ${waqtBn} নামাজ Sir ${verdict} পড়েছেন।`,
+      content: `${dateYmd} তারিখে ${waqtBn} নামাজ Boss ${verdict} পড়েছেন।`,
       metadata: { type: 'salah_jamaat', date: dateYmd, waqt: waqt ?? 'unknown', jamaat: answer === 'jamaat', businessId: BUSINESS_ID },
       importance: 1,
     })
@@ -170,8 +170,8 @@ export async function recordJamaatChoiceDirect(
 
   const reply =
     answer === 'jamaat'
-      ? `আলহামদুলিল্লাহ, Sir! ${waqtBn} জামাতে পড়েছেন — আল্লাহ কবুল করুন। 🤲`
-      : `ঠিক আছে, Sir। আল্লাহ ${waqtBn} কবুল করুন। পরের ওয়াক্তটা ইনশাআল্লাহ জামাতে পড়ার চেষ্টা করবেন — কোনো চাপ নেই। 🤲`
+      ? `আলহামদুলিল্লাহ, Boss! ${waqtBn} জামাতে পড়েছেন — আল্লাহ কবুল করুন। 🤲`
+      : `ঠিক আছে, Boss। আল্লাহ ${waqtBn} কবুল করুন। পরের ওয়াক্তটা ইনশাআল্লাহ জামাতে পড়ার চেষ্টা করবেন — কোনো চাপ নেই। 🤲`
 
   return { reply, waqt }
 }

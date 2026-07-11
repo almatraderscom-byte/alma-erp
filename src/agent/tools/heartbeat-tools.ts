@@ -11,7 +11,7 @@
  *     (bypasses the enabled / office-hours / change gates; still respects autonomy
  *     policy, so it never moves money on its own).
  *
- * Bangla owner-facing, "Sir/Boss" tone. Read paths fail safe.
+ * Bangla owner-facing, "Boss/Boss" tone. Read paths fail safe.
  */
 import type { AgentTool } from './registry'
 import {
@@ -100,7 +100,7 @@ const heartbeat_control: AgentTool = {
           success: true,
           data: {
             enabled: action === 'enable',
-            message: `${action === 'enable' ? '✅ হার্টবিট চালু করলাম, Sir।' : '⏸️ হার্টবিট বন্ধ করলাম, Sir।'}\n\n${msg}`,
+            message: `${action === 'enable' ? '✅ হার্টবিট চালু করলাম, Boss।' : '⏸️ হার্টবিট বন্ধ করলাম, Boss।'}\n\n${msg}`,
           },
         }
       }

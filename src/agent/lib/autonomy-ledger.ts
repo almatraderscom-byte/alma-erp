@@ -168,7 +168,7 @@ export async function buildAutonomyDigest(sinceIso?: string): Promise<{ count: n
       if (e.undo) lines.push(`   ↩️ ফেরাতে চাইলে: "${e.undo.label}"`)
     })
   lines.push('')
-  lines.push('কোনোটা ভুল হলে বলুন — সাথে সাথে ফিরিয়ে দেব, Sir।')
+  lines.push('কোনোটা ভুল হলে বলুন — সাথে সাথে ফিরিয়ে দেব, Boss।')
   return { count: recent.length, message: lines.join('\n') }
 }
 

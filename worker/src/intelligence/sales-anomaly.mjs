@@ -78,7 +78,7 @@ export async function runSalesAnomaly(context) {
   } else if (ratio >= 1.8) {
     line =
       `🔥 *আজ বিক্রি দারুণ চলছে!*\nএখন পর্যন্ত (${hour}টা) *${todayOrders}* অর্ডার ` +
-      `(${fmtTk(todayRevenue)}) — গড়ের চেয়ে অনেক বেশি।\nস্টক ও কুরিয়ার প্রস্তুত রাখুন, Sir।`
+      `(${fmtTk(todayRevenue)}) — গড়ের চেয়ে অনেক বেশি।\nস্টক ও কুরিয়ার প্রস্তুত রাখুন, Boss।`
   }
 
   if (!line) return { dutyStatus: 'done', dutyDetail: `pace normal (ratio ${ratio.toFixed(2)})` }

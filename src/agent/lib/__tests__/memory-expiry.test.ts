@@ -8,14 +8,14 @@ describe('memory expiry hard rules (owner rule 2026-07-08)', () => {
     expect(isEphemeralDayFact('আজ অফিস বন্ধ থাকবে')).toBe(true)
     expect(isEphemeralDayFact('ajke office chuti')).toBe(true)
     // Daily salah logs — one row per waqt per day was piling up as permanent.
-    expect(isEphemeralDayFact('2026-07-05 তারিখে মাগরিব নামাজ Sir একা পড়েছেন।')).toBe(true)
+    expect(isEphemeralDayFact('2026-07-05 তারিখে মাগরিব নামাজ Boss একা পড়েছেন।')).toBe(true)
     expect(isEphemeralDayFact('রাতের সালাহ মুহাসাবা (2026-07-06) — নিজের প্রতিফলন')).toBe(true)
   })
 
   it('keeps standing facts permanent', () => {
     expect(isEphemeralDayFact('নামাজের রিমাইন্ডার কখনোই বন্ধ হবে না, এটা সারা জীবনের স্থায়ী নিয়ম।')).toBe(false)
     expect(isEphemeralDayFact('বসের নিজ নাম্বার (01779640373) বা Alma Traders নামে অর্ডারগুলো টেস্ট অর্ডার')).toBe(false)
-    expect(isEphemeralDayFact('স্যারের পছন্দ: ask_user tool ব্যবহার করে প্রশ্ন কার্ড পাঠানো')).toBe(false)
+    expect(isEphemeralDayFact('বসের পছন্দ: ask_user tool ব্যবহার করে প্রশ্ন কার্ড পাঠানো')).toBe(false)
   })
 
   it('applies the expiry floor even when the caller claims permanent', () => {

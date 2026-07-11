@@ -51,7 +51,7 @@ const DEFAULT_WAKE_WORDS = 'আলমা শোনো,আলমা,alma'
  */
 const DEFAULT_STT_PROMPT =
   'অফিসের সিসিটিভি ক্যামেরার মাইক থেকে দূরের বাংলা কথা। ' +
-  'প্রায়ই বলা হয়: "আলমা শোনো", "স্যার", "একজন কাস্টমার এসেছে", "একটু আসবেন", ' +
+  'প্রায়ই বলা হয়: "আলমা শোনো", "বস", "একজন কাস্টমার এসেছে", "একটু আসবেন", ' +
   '"ডেলিভারি এসেছে", "প্যাকেট রেডি"। ' +
   'Bangladeshi Bangla only — not Hindi, not Devanagari.'
 const DEFAULT_COOLDOWN_SEC = 15
@@ -250,7 +250,7 @@ export async function POST(req: NextRequest) {
   }
 
   const label = roomLabel(input.room)
-  const msg = `🎤 ${label} ক্যামেরায় স্টাফ ডাকলো:\n\n«${utterance}»\n\nউত্তর দিলে বলুন — "${input.room ?? 'work'} ক্যামেরায় বলো: …" — আমি স্পিকারে বলে দেবো, Sir।`
+  const msg = `🎤 ${label} ক্যামেরায় স্টাফ ডাকলো:\n\n«${utterance}»\n\nউত্তর দিলে বলুন — "${input.room ?? 'work'} ক্যামেরায় বলো: …" — আমি স্পিকারে বলে দেবো, Boss।`
 
   const res = await sendOwnerText(msg)
   if (res.ok) await kvSet(COOLDOWN_KEY, new Date(now).toISOString())

@@ -204,7 +204,7 @@ async function handleOwnerText(ctx, text) {
         ? repliedTo.caption
         : ''
 
-  await ctx.reply('⏳ ভাবছি স্যার...')
+  await ctx.reply('⏳ ভাবছি বস...')
   const { enqueueAgentTurn } = await import('./agent-turn.mjs')
   const voiceIntent = parseOwnerVoiceIntent(text)
   await enqueueAgentTurn({
@@ -648,7 +648,7 @@ export function createTelegramBot() {
       if (now - lastPauseNoticeAt > 60_000) {
         lastPauseNoticeAt = now
         await ctx
-          .reply('⏸️ Agent এখন pause করা আছে স্যার। Monitor পেজ থেকে আবার চালু করলে কাজ শুরু করব।')
+          .reply('⏸️ Agent এখন pause করা আছে বস। Monitor পেজ থেকে আবার চালু করলে কাজ শুরু করব।')
           .catch(() => {})
       }
     }
@@ -738,7 +738,7 @@ export function createTelegramBot() {
   bot.start(async (ctx) => {
     const chatId = ctx.chat?.id
     if (isOwner(chatId)) {
-      await ctx.reply('আস্সালামু আলাইকুম Sir! যেকোনো বার্তা পাঠান — আমি সাহায্য করব।')
+      await ctx.reply('আস্সালামু আলাইকুম Boss! যেকোনো বার্তা পাঠান — আমি সাহায্য করব।')
       return
     }
     const supabase = createSupabase()

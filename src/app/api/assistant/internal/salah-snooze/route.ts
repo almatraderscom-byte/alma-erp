@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
       resumeAt: res.resumeAt,
       resumeAtLabel: res.resumeAtLabel,
       reply:
-        `ঠিক আছে Sir — ${res.grantedMin} মিনিট নামাজের কল ও রিমাইন্ডার বন্ধ রাখলাম ` +
+        `ঠিক আছে Boss — ${res.grantedMin} মিনিট নামাজের কল ও রিমাইন্ডার বন্ধ রাখলাম ` +
         `(${res.resumeAtLabel}-এ আবার মনে করিয়ে দেব)। ${name}-এর সময় শেষের আগে পড়ে নেবেন। 🤲`,
     })
   }
@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
       locked: false,
       thirtyUsed: true,
       reply:
-        `Sir, ৩০ মিনিট এই ওয়াক্তে একবারই নেওয়া যায় — সেটা এই ${name}-এ শেষ হয়ে গেছে। ` +
+        `Boss, ৩০ মিনিট এই ওয়াক্তে একবারই নেওয়া যায় — সেটা এই ${name}-এ শেষ হয়ে গেছে। ` +
         `এখন থেকে ১৫ মিনিট করে নিতে পারবেন।`,
     })
   }

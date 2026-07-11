@@ -238,7 +238,7 @@ export async function deliverAgentTurn(jobData) {
     if (result.newConversationId) {
       if (personalMode) ownerState.personalConversationId = result.newConversationId
       else ownerState.conversationId = result.newConversationId
-      await bot.telegram.sendMessage(chatId, '💬 কথোপকথন কম্প্যাক্ট — নতুন চ্যাট শুরু। বলুন স্যার।')
+      await bot.telegram.sendMessage(chatId, '💬 কথোপকথন কম্প্যাক্ট — নতুন চ্যাট শুরু। বলুন বস।')
     }
 
     if (result.conversationId || result.newConversationId) {

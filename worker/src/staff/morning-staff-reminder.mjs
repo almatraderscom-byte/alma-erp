@@ -59,7 +59,7 @@ export async function runMorningStaffReminder({ supabase, bot }) {
         tier: 3,
         title: 'সকাল ৯টা — টাস্ক approve হয়নি',
         message: `আজকের ${proposedCount}টি কাজ এখনো approve হয়নি। স্টাফরা কাজ পাচ্ছে না। এখনই approve করুন।`,
-        voiceMessage: `সালাম স্যার। আজকের স্টাফ টাস্ক এখনো approve করা হয়নি। ${proposedCount}টি কাজ অপেক্ষা করছে। দয়া করে এখনই approve করুন, নাহলে স্টাফরা কাজ পাবে না।`,
+        voiceMessage: `সালাম বস। আজকের স্টাফ টাস্ক এখনো approve করা হয়নি। ${proposedCount}টি কাজ অপেক্ষা করছে। দয়া করে এখনই approve করুন, নাহলে স্টাফরা কাজ পাবে না।`,
         category: 'urgent',
       })
       if (ownerChatId && bot) {

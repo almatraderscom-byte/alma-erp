@@ -324,7 +324,7 @@ const request_salah_delay: AgentTool = {
           resumeAt: res.resumeAt,
           resumeAtLabel: res.resumeAtLabel,
           message:
-            `ঠিক আছে স্যার — ${res.grantedMin} মিনিটের জন্য নামাজের কল বন্ধ রাখলাম (${res.resumeAtLabel} পর আবার মনে করিয়ে দেব)। ` +
+            `ঠিক আছে বস — ${res.grantedMin} মিনিটের জন্য নামাজের কল বন্ধ রাখলাম (${res.resumeAtLabel} পর আবার মনে করিয়ে দেব)। ` +
             `সর্বোচ্চ ${MAX_DELAY_MIN} মিনিট; নামাজের সময় + ৩০ মিনিটের পর আর delay হবে না।`,
         },
       }

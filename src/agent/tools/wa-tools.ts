@@ -44,7 +44,7 @@ const send_whatsapp: AgentTool = {
   name: 'send_whatsapp',
   description:
     'Sends a WhatsApp TEXT via the business WhatsApp number (Twilio). ' +
-    'Use when Sir asks to send/test a WhatsApp message. ' +
+    'Use when Boss asks to send/test a WhatsApp message. ' +
     'to = either a phone in international format (e.g. +8801712345678) OR a staff/employee NAME ' +
     '(e.g. "Mohammad Eyafi") — the agent resolves the name to their number from the ERP profile. ' +
     'Owner-directed sends only — never unsolicited customer marketing. ' +
@@ -66,7 +66,7 @@ const send_whatsapp: AgentTool = {
       return {
         success: false,
         error:
-          'WhatsApp এখনো setup হয়নি — Twilio WhatsApp creds সেট করা নেই (TWILIO_WHATSAPP_FROM)। Sir-কে বলুন Twilio setup শেষ করে credentials দিতে।',
+          'WhatsApp এখনো setup হয়নি — Twilio WhatsApp creds সেট করা নেই (TWILIO_WHATSAPP_FROM)। Boss-কে বলুন Twilio setup শেষ করে credentials দিতে।',
       }
     }
     if (process.env.WHATSAPP_SEND_ENABLED !== 'true') {
@@ -129,7 +129,7 @@ const get_wa_inbox: AgentTool = {
   name: 'get_wa_inbox',
   description:
     'Reads recent WhatsApp inbox threads (read-only) — messages staff/customers sent to the business ' +
-    'WhatsApp number. Use when Sir asks "WhatsApp-এ কী মেসেজ এসেছে / কে মেসেজ দিয়েছে / inbox দেখাও". ' +
+    'WhatsApp number. Use when Boss asks "WhatsApp-এ কী মেসেজ এসেছে / কে মেসেজ দিয়েছে / inbox দেখাও". ' +
     'limit: 1–25 threads (default 15).',
   input_schema: {
     type: 'object' as const,
@@ -180,7 +180,7 @@ const get_wa_inbox: AgentTool = {
 /**
  * Place a ONE-WAY WhatsApp voice call (Twilio): the agent speaks the reminder and
  * hangs up — it does NOT listen. Like outbound_phone_call but on WhatsApp. Use when
- * Sir says "WhatsApp-এ কল করে মনে করিয়ে দাও / call করে বলো"。 Recipient = phone OR a
+ * Boss says "WhatsApp-এ কল করে মনে করিয়ে দাও / call করে বলো"。 Recipient = phone OR a
  * staff/employee NAME (resolved from the ERP profile, same as send_whatsapp).
  *
  * Dormant + DOUBLE-gated: Twilio creds AND WHATSAPP_CALL_ENABLED=true. Beyond that,
@@ -192,7 +192,7 @@ const whatsapp_call: AgentTool = {
   name: 'whatsapp_call',
   description:
     'Places a ONE-WAY WhatsApp voice call (Twilio) that SPEAKS a short reminder/message then hangs up — ' +
-    'the agent does not listen or take input. Use when Sir asks to CALL someone on WhatsApp to remind them ' +
+    'the agent does not listen or take input. Use when Boss asks to CALL someone on WhatsApp to remind them ' +
     '(e.g. "Eyafi-কে WhatsApp-এ কল করে বলো বস কল করতে"). ' +
     'to = phone in international format (+8801…) OR a staff/employee NAME (resolved from the ERP profile). ' +
     'message = what to say (kept short). Owner-directed reminders only. ' +
@@ -214,7 +214,7 @@ const whatsapp_call: AgentTool = {
       return {
         success: false,
         error:
-          'WhatsApp এখনো setup হয়নি — Twilio WhatsApp creds সেট করা নেই (TWILIO_WHATSAPP_FROM)। Sir-কে বলুন Twilio setup শেষ করে credentials দিতে।',
+          'WhatsApp এখনো setup হয়নি — Twilio WhatsApp creds সেট করা নেই (TWILIO_WHATSAPP_FROM)। Boss-কে বলুন Twilio setup শেষ করে credentials দিতে।',
       }
     }
     if (process.env.WHATSAPP_CALL_ENABLED !== 'true') {

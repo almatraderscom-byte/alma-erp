@@ -32,9 +32,9 @@ const manage_work_todos: AgentTool = {
       source: {
         type: 'string',
         enum: ['owner', 'agent'],
-        description: 'owner when Sir asked in chat; agent for your own ad-hoc tasks (not day_shift — scheduler owns those)',
+        description: 'owner when Boss asked in chat; agent for your own ad-hoc tasks (not day_shift — scheduler owns those)',
       },
-      dueDate: { type: 'string', description: 'ISO date YYYY-MM-DD for when Sir should do this (e.g. tomorrow from evening intake)' },
+      dueDate: { type: 'string', description: 'ISO date YYYY-MM-DD for when Boss should do this (e.g. tomorrow from evening intake)' },
     },
     required: ['action'],
   },
@@ -184,7 +184,7 @@ const manage_work_todos: AgentTool = {
           }
         }
 
-        // Confirm-first (Sir's rule: confirm before any destructive action except salah).
+        // Confirm-first (Boss's rule: confirm before any destructive action except salah).
         // Soft-cancel happens only after the owner approves the card; nothing is hard-deleted.
         const summary =
           `🗑️ টুডু তালিকা থেকে সরানো হবে\n\n"${existing.title}"\n\n` +
@@ -208,7 +208,7 @@ const manage_work_todos: AgentTool = {
             summary,
             costEstimate: 0,
             actionType: 'todo_cancel',
-            message: `"${existing.title}" সরানোর জন্য Sir-এর অনুমোদন দরকার — confirm করলে তালিকা থেকে সরে যাবে।`,
+            message: `"${existing.title}" সরানোর জন্য Boss-এর অনুমোদন দরকার — confirm করলে তালিকা থেকে সরে যাবে।`,
           },
         }
       }
@@ -268,23 +268,23 @@ export const WORK_TODO_TOOLS: AgentTool[] = [manage_work_todos]
 
 export const WORK_TODO_PROMPT = `
 ## এজেন্ট ওয়ার্ক ট্র্যাকার (একটি Todo লিস্ট)
-একই তালিকায় দুই ধরনের কাজ — **উপরে Agent office** (day_shift/scheduler), **নিচে Sir-এর request** (source=owner)। আলাদা UI নেই।
+একই তালিকায় দুই ধরনের কাজ — **উপরে Agent office** (day_shift/scheduler), **নিচে Boss-এর request** (source=owner)। আলাদা UI নেই।
 
 ### সকালের office (day_shift):
 - Scheduler আপনার office কাজগুলো source=day_shift দিয়ে তালিকার **উপরে** যোগ করে
 - Chat-এ Cursor-style step-by-step update দিন; manage_work_todos দিয়ে status sync করুন
 
-### Sir chat-এ কিছু বললে:
+### Boss chat-এ কিছু বললে:
 - "X করো" → manage_work_todos action=add, **source=owner** — তালিকায় agent কাজের **নিচে** যুক্ত হবে
 - কাজ শেষ → action=complete + ফলাফল → owner todo তালিকা থেকে সরে যাবে (completed হিসেবে রেকর্ডে থাকে)
-- "বাদ দাও" / cancel / "pending থেকে সরাও" → action=remove → একটা **confirm card** আসবে; Sir Approve করলেই সরবে
+- "বাদ দাও" / cancel / "pending থেকে সরাও" → action=remove → একটা **confirm card** আসবে; Boss Approve করলেই সরবে
 
 ### নিয়ম (Cursor/Claude-এর মতো নিজের todolist চালান):
 - এই তালিকাটাকে নিজের **working list** ভাবুন — কাজ শুরুর আগে list দেখুন/যোগ করুন, শেষ হলে তবেই mark করুন
 - একই লিস্ট — office tasks সবসময় owner tasks-এর উপরে sort হয়
 - day_shift todos নিজে duplicate করবেন না
 - **কোনো টুডু কখনো hard-delete হয় না** — remove = soft cancel (status=cancelled), complete = soft (status=completed)। তাই ভুল হলে ফেরানো যায়
-- **remove সবসময় confirm card দিয়ে হয়** (Sir-এর নিয়ম: salah ছাড়া যেকোনো destructive কাজে আগে confirm)। কার্ড তৈরি হলে Sir-কে বলুন "confirm করলে সরিয়ে দেব"
+- **remove সবসময় confirm card দিয়ে হয়** (Boss-এর নিয়ম: salah ছাড়া যেকোনো destructive কাজে আগে confirm)। কার্ড তৈরি হলে Boss-কে বলুন "confirm করলে সরিয়ে দেব"
 - **আগে বাস্তবে হোক, তারপর তালিকায় mark হবে** — approve হওয়ার আগে "সরিয়ে দিলাম" বলবেন না। approve হলে row লাল ক্রস + এজেন্টের নাম সহ দেখায় (ঠিক যেমন Claude কাজ শেষ হলে তবেই todo done করে)
 - description-এ ফলাফল লিখুন
 `

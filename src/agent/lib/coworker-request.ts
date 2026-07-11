@@ -98,7 +98,7 @@ export async function processCoworkerRequestReply(
       where: { id: { in: ids } },
       data: { status: 'rejected', resolvedAt: new Date() },
     })
-    return { autoReply: `ঠিক আছে Sir, Claude co-worker-এর ${ids.length}টি অনুরোধ বাদ দিলাম।` }
+    return { autoReply: `ঠিক আছে Boss, Claude co-worker-এর ${ids.length}টি অনুরোধ বাদ দিলাম।` }
   }
 
   // Approve: mark out of pending (stops the chase) and hand the head an execute instruction.
@@ -117,7 +117,7 @@ export async function processCoworkerRequestReply(
   return {
     contextBlock:
       `[CO-WORKER REQUEST APPROVED — EXECUTE NOW]\n` +
-      `Sir approved ${ids.length} request(s) from the external Claude co-worker:\n${lines}\n` +
+      `Boss approved ${ids.length} request(s) from the external Claude co-worker:\n${lines}\n` +
       `Carry these out NOW using your normal business tools (orders / inventory / marketing / staff / finance / content as relevant). ` +
       `Verify each step before claiming done. They are already marked approved — do NOT create a new approval card. ` +
       `Reply in Bangla, concise, confirming exactly what you did.`,

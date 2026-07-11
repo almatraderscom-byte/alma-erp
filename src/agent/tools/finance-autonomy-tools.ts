@@ -55,7 +55,7 @@ const cashflow_forecast: AgentTool = {
 
       if (f.shortfall) {
         lines.push(`⚠️ সম্ভাব্য ঘাটতি: ${bn(f.shortfallDay ?? 0)} দিনের মাথায় নগদ সবচেয়ে নিচে নামবে (প্রায় ৳${taka(f.lowestBalanceTaka)})।`)
-        lines.push(`প্রায় ৳${taka(f.shortfallGapTaka)} কম পড়তে পারে, Sir — আগেভাগে ব্যবস্থা নেওয়া ভালো।`)
+        lines.push(`প্রায় ৳${taka(f.shortfallGapTaka)} কম পড়তে পারে, Boss — আগেভাগে ব্যবস্থা নেওয়া ভালো।`)
       } else {
         lines.push(`✅ আগামী ${bn(f.horizonDays)} দিন নগদ-প্রবাহ ঠিক আছে বলে মনে হচ্ছে (সবচেয়ে নিচে ≈ ৳${taka(f.lowestBalanceTaka)})।`)
       }

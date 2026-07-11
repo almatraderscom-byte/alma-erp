@@ -182,17 +182,17 @@ export async function processOfficeToggleReply(
     if (CONFIRM_OFF_PATTERN.test(trimmed) && !CANCEL_OFF_PATTERN.test(trimmed)) {
       await setOfficeOff(today)
       await setPending(today, 'awaiting_reason')
-      await narrate(today, '🛑 Sir নিশ্চিত করলেন — আজকের সব অফিস duty থামিয়ে দিলাম।')
+      await narrate(today, '🛑 Boss নিশ্চিত করলেন — আজকের সব অফিস duty থামিয়ে দিলাম।')
       return {
         autoReply:
-          'ঠিক আছে Sir, আজকের সব অফিস ডিউটি বন্ধ রাখলাম। একটু জানতে পারি — আজ কেন অফিস বন্ধ? (শুধু আমার রেকর্ডের জন্য)',
+          'ঠিক আছে Boss, আজকের সব অফিস ডিউটি বন্ধ রাখলাম। একটু জানতে পারি — আজ কেন অফিস বন্ধ? (শুধু আমার রেকর্ডের জন্য)',
       }
     }
     // Anything that is not a clear "yes" → keep the office open (fail-safe).
     await clearPending(today)
     await narrate(today, '✅ অফিস চালু রইলো — duty স্বাভাবিকভাবে চলবে।')
     return {
-      autoReply: 'ঠিক আছে Sir, তাহলে অফিস চালু রাখলাম — আজকের কাজ স্বাভাবিকভাবে চলবে ইনশাআল্লাহ।',
+      autoReply: 'ঠিক আছে Boss, তাহলে অফিস চালু রাখলাম — আজকের কাজ স্বাভাবিকভাবে চলবে ইনশাআল্লাহ।',
     }
   }
 
@@ -204,14 +204,14 @@ export async function processOfficeToggleReply(
       // Owner's word is final — but honor a last-moment decision to keep it open.
       if (detectOfficeOnDeclaration(trimmed) || KEEP_OPEN_PATTERN.test(trimmed)) {
         await clearOfficeOff(today)
-        await narrate(today, '✅ Sir অফিস চালু রাখলেন — duty আবার শুরু করছি।')
-        return { autoReply: 'জি Sir, তাহলে অফিস চালু রাখছি — ইনশাআল্লাহ শুরু করছি।' }
+        await narrate(today, '✅ Boss অফিস চালু রাখলেন — duty আবার শুরু করছি।')
+        return { autoReply: 'জি Boss, তাহলে অফিস চালু রাখছি — ইনশাআল্লাহ শুরু করছি।' }
       }
       await recordOffReason(today, reason)
       await clearPending(today)
       return {
         autoReply:
-          'ঠিক আছে Sir, আপনার সিদ্ধান্তই চূড়ান্ত — আজ অফিস বন্ধ রাখলাম। বিশ্রাম নিন, কাল ইনশাআল্লাহ আবার শুরু করবো। 🤲',
+          'ঠিক আছে Boss, আপনার সিদ্ধান্তই চূড়ান্ত — আজ অফিস বন্ধ রাখলাম। বিশ্রাম নিন, কাল ইনশাআল্লাহ আবার শুরু করবো। 🤲',
       }
     }
 
@@ -220,21 +220,21 @@ export async function processOfficeToggleReply(
     // recorded as the reason and the office stayed shut all day).
     if (detectOfficeOnDeclaration(trimmed) || KEEP_OPEN_PATTERN.test(trimmed)) {
       await clearOfficeOff(today)
-      await narrate(today, '✅ Sir অফিস চালু রাখলেন — duty আবার শুরু করছি।')
-      return { autoReply: 'আলহামদুলিল্লাহ Sir, অফিস চালু রাখলাম — আজকের duty শুরু করছি ইনশাআল্লাহ।' }
+      await narrate(today, '✅ Boss অফিস চালু রাখলেন — duty আবার শুরু করছি।')
+      return { autoReply: 'আলহামদুলিল্লাহ Boss, অফিস চালু রাখলাম — আজকের duty শুরু করছি ইনশাআল্লাহ।' }
     }
     await recordOffReason(today, reason)
     if (WHIM_PATTERN.test(reason)) {
       await setPending(today, 'suggested')
       return {
         autoReply:
-          'বুঝলাম Sir। তবে চাইলে হালকা কিছু কাজ দিয়ে হলেও অফিসটা একটু ছোঁয়া যেত — তবে সিদ্ধান্ত পুরোপুরি আপনার। ' +
+          'বুঝলাম Boss। তবে চাইলে হালকা কিছু কাজ দিয়ে হলেও অফিসটা একটু ছোঁয়া যেত — তবে সিদ্ধান্ত পুরোপুরি আপনার। ' +
           'বলুন, আজ বন্ধই রাখবো নাকি চালু করবো?',
       }
     }
     await clearPending(today)
     return {
-      autoReply: 'ঠিক আছে Sir, কারণটা বুঝলাম — আজ অফিস বন্ধ রাখলাম। বিশ্রাম নিন, কাল আবার শুরু করবো ইনশাআল্লাহ। 🤲',
+      autoReply: 'ঠিক আছে Boss, কারণটা বুঝলাম — আজ অফিস বন্ধ রাখলাম। বিশ্রাম নিন, কাল আবার শুরু করবো ইনশাআল্লাহ। 🤲',
     }
   }
 
@@ -242,8 +242,8 @@ export async function processOfficeToggleReply(
   if (await isOfficeOffToday(today)) {
     if (detectOfficeOnDeclaration(trimmed)) {
       await clearOfficeOff(today)
-      await narrate(today, '✅ Sir অফিস আবার চালু করলেন — duty শুরু করছি।')
-      return { autoReply: 'আলহামদুলিল্লাহ Sir, অফিস আবার চালু করলাম — আজকের duty শুরু করছি ইনশাআল্লাহ।' }
+      await narrate(today, '✅ Boss অফিস আবার চালু করলেন — duty শুরু করছি।')
+      return { autoReply: 'আলহামদুলিল্লাহ Boss, অফিস আবার চালু করলাম — আজকের duty শুরু করছি ইনশাআল্লাহ।' }
     }
     return null
   }
@@ -254,7 +254,7 @@ export async function processOfficeToggleReply(
     await setPending(today, 'awaiting_confirm')
     return {
       autoReply:
-        'Sir, একটু নিশ্চিত করি — আজ কি পুরো অফিস বন্ধ রাখবো? তাহলে আজকের সব স্টাফ duty থেমে যাবে। ' +
+        'Boss, একটু নিশ্চিত করি — আজ কি পুরো অফিস বন্ধ রাখবো? তাহলে আজকের সব স্টাফ duty থেমে যাবে। ' +
         '"হ্যাঁ" বললে বন্ধ করছি, নাহলে স্বাভাবিকভাবে কাজ চলবে।',
     }
   }
