@@ -400,7 +400,21 @@ final class CreativeStudioVM {
     var loading = false
     var authExpired = false
     var generating = false
-    var toast: String?
+    /// Transient toast — auto-clears after 3.5s (a stuck pill covered the header
+    /// in the build-66 self-test; every setter goes through this observer).
+    var toast: String? {
+        didSet {
+            guard toast != nil else { return }
+            toastClearTask?.cancel()
+            let shown = toast
+            toastClearTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 3_500_000_000)
+                guard let self, !Task.isCancelled, self.toast == shown else { return }
+                self.toast = nil
+            }
+        }
+    }
+    @ObservationIgnored private var toastClearTask: Task<Void, Never>?
 
     var galleryFilter = "all"   // all | image | video | executed | pending
 
