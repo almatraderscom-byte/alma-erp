@@ -479,6 +479,21 @@ final class CreditUsageVM {
         }
     }
 
+    /// Native budget config (owner 2026-07-11) — web saveBudget: PUT
+    /// /api/assistant/costs/budget {dailyUsd, monthlyUsd} (null clears).
+    func saveBudget(daily: Double?, monthly: Double?) async {
+        struct Body: Encodable { let dailyUsd: Double?, monthlyUsd: Double? }
+        struct Resp: Decodable { let ok: Bool? }
+        do {
+            let _: Resp = try await AlmaAPI.shared.send(
+                "PUT", "/api/assistant/costs/budget",
+                body: Body(dailyUsd: daily, monthlyUsd: monthly))
+            await load()
+        } catch {
+            self.error = "বাজেট সংরক্ষণ ব্যর্থ"
+        }
+    }
+
     /// Web's manual "refresh balances" — POST forces the provider fetch, returns the
     /// fresh cache (the 20s auto-poll only reads the cache). S8 audit fix.
     var balancesRefreshing = false
@@ -590,6 +605,9 @@ struct CreditUsageScreen: View {
     @State private var showCustomSheet = false
     @State private var showLogCustomSheet = false
     @State private var detailEvent: CUUsageEvent? = nil
+    @State private var editingBudget = false
+    @State private var budgetDailyDraft = ""
+    @State private var budgetMonthlyDraft = ""
     let openWeb: (_ path: String, _ title: String) -> Void
 
     /// Live mode: ~10s auto-refresh of the first log page while ON (green dot pulses).
@@ -888,14 +906,44 @@ struct CreditUsageScreen: View {
     private func budgetCard(_ s: CUSummary) -> AnyView? {
         let hasDaily = s.dailyBudgetPct != nil && s.budgets.dailyUsd != nil
         let hasMonthly = s.monthlyBudgetPct != nil && s.budgets.monthlyUsd != nil
-        guard hasDaily || hasMonthly else { return nil }
         return AnyView(
             VStack(alignment: .leading, spacing: 10) {
-                Text("রিমেইনিং বাজেট").font(.system(size: 10, weight: .bold)).textCase(.uppercase).kerning(0.5).foregroundStyle(.secondary)
+                HStack {
+                    Text("রিমেইনিং বাজেট").font(.system(size: 10, weight: .bold)).textCase(.uppercase).kerning(0.5).foregroundStyle(.secondary)
+                    Spacer()
+                    // Native budget config (owner 2026-07-11) — web saveBudget PUT parity.
+                    Button {
+                        budgetDailyDraft = s.budgets.dailyUsd.map { String(format: "%.2f", $0) } ?? ""
+                        budgetMonthlyDraft = s.budgets.monthlyUsd.map { String(format: "%.2f", $0) } ?? ""
+                        editingBudget = true
+                    } label: {
+                        Image(systemName: "slider.horizontal.3").font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
                 if hasMonthly, let pct = s.monthlyBudgetPct, let cap = s.budgets.monthlyUsd { budgetRow(spent: s.monthUsd, cap: cap, pct: pct, label: "এই মাস") }
                 if hasDaily, let pct = s.dailyBudgetPct, let cap = s.budgets.dailyUsd { budgetRow(spent: s.todayUsd, cap: cap, pct: pct, label: "আজ") }
+                if !hasDaily && !hasMonthly {
+                    Text("বাজেট সেট করা নেই — উপরের বোতামে সেট করুন")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading).padding(16).cuSolid(scheme, corner: 18))
+            .frame(maxWidth: .infinity, alignment: .leading).padding(16).cuSolid(scheme, corner: 18)
+            .alert("Budget (USD)", isPresented: $editingBudget) {
+                TextField("Daily USD (খালি = নেই)", text: $budgetDailyDraft)
+                    .keyboardType(.decimalPad)
+                TextField("Monthly USD (খালি = নেই)", text: $budgetMonthlyDraft)
+                    .keyboardType(.decimalPad)
+                Button("Save") {
+                    Task {
+                        await vm.saveBudget(
+                            daily: Double(budgetDailyDraft),
+                            monthly: Double(budgetMonthlyDraft))
+                    }
+                }
+                Button("বাতিল", role: .cancel) {}
+            })
     }
     private func budgetRow(spent: Double, cap: Double, pct: Double, label: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
