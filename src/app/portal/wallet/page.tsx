@@ -42,6 +42,12 @@ type FineAppealInfo = {
 type WalletStatementEntry = WalletEntryDto & {
   labelBn: string
   appeal: FineAppealInfo | null
+  createdAt?: string
+}
+
+/** Booking date — when the transaction actually happened (salary accruals carry the period's date). */
+function bookingDate(e: WalletStatementEntry): string {
+  return (e.createdAt ?? e.date) as string
 }
 
 type FineWindowSummary = {
@@ -115,7 +121,7 @@ function countRejectedInWindow(entries: WalletStatementEntry[], from: Date | nul
   let n = 0
   for (const e of entries) {
     if (e.type !== 'PENALTY' || e.appeal?.status !== 'REJECTED') continue
-    const t = new Date(e.date as string).getTime()
+    const t = new Date(bookingDate(e)).getTime()
     if (from && t < from.getTime()) continue
     if (to && t > to.getTime()) continue
     n += 1
@@ -128,7 +134,7 @@ function thisMonthCreditTotal(entries: WalletStatementEntry[]): number {
   let total = 0
   for (const e of entries) {
     if (e.signedAmount <= 0) continue
-    const ym = dhakaYearMonth(e.date as string)
+    const ym = dhakaYearMonth(bookingDate(e))
     if (ym.y === now.y && ym.m === now.m) total += e.signedAmount
   }
   return total
@@ -140,7 +146,7 @@ type MonthGroup = { key: string; labelBn: string; rows: WalletStatementEntry[] }
 function groupDescByMonth(entriesDesc: WalletStatementEntry[]): MonthGroup[] {
   const map = new Map<string, MonthGroup>()
   for (const e of entriesDesc) {
-    const { y, m } = dhakaYearMonth(e.date as string)
+    const { y, m } = dhakaYearMonth(bookingDate(e))
     const key = `${y}-${String(m).padStart(2, '0')}`
     let group = map.get(key)
     if (!group) {
@@ -550,7 +556,7 @@ function AppealChip({ entry, onOpenAppeal }: { entry: WalletStatementEntry; onOp
 
 function StatementRow({ entry, onOpenAppeal }: { entry: WalletStatementEntry; onOpenAppeal: (t: PenaltyAppealTarget) => void }) {
   const isRefund = entry.type === 'ADJUSTMENT' && Boolean(entry.source) && REFUND_SOURCES.has(String(entry.source))
-  const dateLabel = dateBn(entry.date as string)
+  const dateLabel = dateBn(bookingDate(entry))
   const noteText = entry.note ? String(entry.note).trim() : ''
   const secondLine = noteText ? `${noteText} · ${dateLabel}` : dateLabel
 

@@ -31,7 +31,9 @@ export async function GET(req: NextRequest) {
     }),
     prisma.employeeLedgerEntry.findMany({
       where,
-      orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+      // Booking order: salary accruals carry the PERIOD's date (e.g. June 1) even
+      // when posted in July — "latest" must mean when it actually happened.
+      orderBy: { createdAt: 'desc' },
       take: ctx.isAdmin ? 1200 : 200,
       select: { id: true, employeeId: true, businessId: true, date: true, periodYm: true, type: true, amount: true, note: true, source: true, createdAt: true },
     }),

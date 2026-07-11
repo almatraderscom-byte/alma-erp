@@ -41,7 +41,9 @@ export async function GET(
       businessId: scopedBusinessId,
       isArchived: false,
     },
-    orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
+    // Booking order (createdAt): a June-salary posted in July shows on the July
+    // date it happened; the row label still names the month (মাসিক বেতন — জুন).
+    orderBy: { createdAt: 'asc' },
   })
   const requests = await prisma.walletRequest.findMany({
     where: {
@@ -86,7 +88,9 @@ export async function GET(
   }))
   const windowed = from || to
     ? allTransactions.filter(tx => {
-        const t = new Date(tx.date as string | Date).getTime()
+        // Filter on the booking date so the custom range matches what the
+        // statement displays (a June salary posted in July belongs to July).
+        const t = new Date((tx.createdAt ?? tx.date) as string | Date).getTime()
         if (from && t < from.getTime()) return false
         if (to && t > to.getTime()) return false
         return true
