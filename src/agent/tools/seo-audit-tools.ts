@@ -15,6 +15,7 @@
 import { prisma } from '@/lib/prisma'
 import { agentStorageDownload, agentStorageUpload } from '@/agent/lib/storage'
 import { buildClientReportMarkdown, buildCompareMarkdown, buildIssuesCsv, type AuditJson } from '@/agent/lib/seo-report'
+import { saveConversationArtifact } from './artifact-tools'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -177,6 +178,14 @@ const check_website_seo_audit: AgentTool = {
       }
       const keywordsNote = ((action.payload as Record<string, unknown> | null)?.keywordsNote ?? null) as string | null
       const cap = (text: string, n: number) => (text.length > n ? `${text.slice(0, n)}\n…[truncated ${text.length - n} chars]` : text)
+      // The report is a deliverable — file it as a chat artifact so the owner
+      // gets a clickable FILE card (Claude-app style), not just links/pasted text.
+      let artifactCard: { id: string; title: string; type: string; version: number } | null = null
+      const fileReport = async (title: string, content: string) => {
+        try {
+          artifactCard = await saveConversationArtifact({ conversationId, title, content, type: 'markdown' })
+        } catch { /* no conversation context (e.g. internal call) — links/text still deliver */ }
+      }
 
       if (read && action.status !== 'executed') {
         return { success: false, error: `Audit এখনো ${action.status} — status "executed" হওয়ার পর read:"${read}" দিয়ে ডাকো।` }
@@ -190,8 +199,10 @@ const check_website_seo_audit: AgentTool = {
           const csvPath = reportPath.replace(/report\.md$/, 'issues.csv')
           // Regenerate the client-grade report + evidence CSV from the raw findings
           // (upsert: replaces the worker's bare version and any stale copy).
-          await agentStorageUpload(reportPath, Buffer.from(buildClientReportMarkdown(loaded.audit, { keywordsNote }), 'utf8'), 'text/markdown', { upsert: true })
+          const reportMd = buildClientReportMarkdown(loaded.audit, { keywordsNote })
+          await agentStorageUpload(reportPath, Buffer.from(reportMd, 'utf8'), 'text/markdown', { upsert: true })
           await agentStorageUpload(csvPath, Buffer.from(buildIssuesCsv(loaded.audit), 'utf8'), 'text/csv', { upsert: true })
+          await fileReport(`SEO অডিট রিপোর্ট — ${new URL(loaded.audit.url).hostname.replace(/^www\./, '')}`, reportMd)
           links = {
             reportUrl: ownerFileUrl(reportPath),
             auditJsonUrl: ownerFileUrl(loaded.path),
@@ -233,6 +244,7 @@ const check_website_seo_audit: AgentTool = {
           const md = buildCompareMarkdown(beforeAudit, loaded.audit)
           const comparePath = loaded.path.replace(/audit\.json$/, 'before-after.md')
           await agentStorageUpload(comparePath, Buffer.from(md, 'utf8'), 'text/markdown', { upsert: true })
+          await fileReport(`SEO আগে-পরে রিপোর্ট — ${host}`, md)
           compare = {
             compareMarkdown: cap(md, 30_000),
             compareUrl: ownerFileUrl(comparePath),
@@ -245,7 +257,9 @@ const check_website_seo_audit: AgentTool = {
         try {
           const loaded = await loadAuditJson(action)
           if (loaded) {
-            artifactText = cap(buildClientReportMarkdown(loaded.audit, { keywordsNote }), 60_000)
+            const reportMd = buildClientReportMarkdown(loaded.audit, { keywordsNote })
+            artifactText = cap(reportMd, 60_000)
+            await fileReport(`SEO অডিট রিপোর্ট — ${new URL(loaded.audit.url).hostname.replace(/^www\./, '')}`, reportMd)
           } else {
             // Very old audits without audit.json: fall back to the stored report.md.
             const stored = artifactsOf(action).find((a) => a.endsWith('report.md'))
@@ -276,6 +290,7 @@ const check_website_seo_audit: AgentTool = {
           ...(artifactText != null ? { [read === 'report' ? 'reportMarkdown' : 'auditJson']: artifactText } : {}),
           ...(links ? { downloadLinks: links } : {}),
           ...(compare ? compare : {}),
+          ...(artifactCard ? { artifactCard, artifactNote: 'রিপোর্টটা চ্যাটে FILE হয়ে গেছে (file card) — reply-তে সারাংশ দাও, পুরো রিপোর্ট পেস্ট করার দরকার নেই।' } : {}),
         },
       }
     } catch (err) {

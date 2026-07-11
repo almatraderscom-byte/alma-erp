@@ -21,6 +21,8 @@ interface AgentArtifactsPanelProps {
   open: boolean
   onClose: () => void
   isMobile: boolean
+  /** Externally-requested artifact to show (file card tap / just-filed document). */
+  focusId?: string | null
 }
 
 /** Live-renderable artifacts: explicit html/svg type, or html-looking content. */
@@ -51,8 +53,12 @@ function fileExt(type: string | null): string {
   return 'md'
 }
 
-export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile }: AgentArtifactsPanelProps) {
+export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile, focusId }: AgentArtifactsPanelProps) {
   const [activeId, setActiveId] = useState<string | null>(null)
+  // A file-card tap (or a just-filed document) steers the panel to that artifact.
+  useEffect(() => {
+    if (focusId) setActiveId(focusId)
+  }, [focusId])
   const active = artifacts.find((a) => a.id === activeId) ?? artifacts[artifacts.length - 1] ?? null
   const previewable = isPreviewable(active)
   const [mode, setMode] = useState<'preview' | 'code'>('preview')

@@ -12,6 +12,7 @@
  * conversationId is injected from the server context, so the head never supplies it.
  */
 import { createOpenTask, resolveOpenTask, listOpenTasks } from '@/agent/lib/open-task'
+import { writeCheckpoint } from '@/agent/lib/checkpoint'
 import type { AgentTool } from './registry'
 
 const track_open_task: AgentTool = {
@@ -119,4 +120,74 @@ const resolve_open_task: AgentTool = {
   },
 }
 
-export const OPEN_TASK_TOOLS: AgentTool[] = [track_open_task, resolve_open_task]
+const save_task_checkpoint: AgentTool = {
+  name: 'save_task_checkpoint',
+  description:
+    'Freeze a live multi-step task (usually a web/browser task in the owner\'s Chrome) at the EXACT ' +
+    'point it got stuck, so it can resume from there — not from scratch. USE THE MOMENT you hit ' +
+    'something only the owner can do (login, CAPTCHA, 2FA/OTP, a payment/send click, a choice, an ' +
+    'access grant) or the task failed partway: the owner gets a ⏸️/⛔ chip in chat + a phone push, and ' +
+    'when he answers/fixes it, the resume brief hands the next turn everything needed to CONTINUE ' +
+    'from currentStep (his Chrome keeps the tab state, so pick up right where you stopped — verify ' +
+    'with live_browser_look first).\n' +
+    'Write everything SELF-CONTAINED and in Bangla where marked: doneSteps (what is already done — ' +
+    'never redo these), currentStep (exactly where you are: page/URL + what is on screen), ' +
+    'nextActions (the precise remaining steps), resumeHint (one paragraph a fresh context can act ' +
+    'on alone), and — when waiting on the owner — `question` (the ONE thing you need from him, e.g. ' +
+    '"Ads Manager-এ login করে দিন, আমি campaign form পূরণ করে রেখেছি")। ' +
+    'When the blocker is resolved and the task finishes, clear the chip with resolve_open_task.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      goal: { type: 'string', description: 'Short Bangla name of the overall task, e.g. "queenspabd.com-এ ads campaign সেটআপ".' },
+      summaryBn: { type: 'string', description: '২-৩ বাক্যে বাংলায়: কতদূর হয়েছে + কোথায় আটকেছে (owner chip-এ দেখবেন).' },
+      doneSteps: { type: 'array', items: { type: 'string' }, description: 'Steps ALREADY completed — resume must not redo these.' },
+      currentStep: { type: 'string', description: 'Exactly where the task is frozen: URL/page + on-screen state.' },
+      nextActions: { type: 'array', items: { type: 'string' }, description: 'The precise remaining steps, in order.' },
+      resumeHint: { type: 'string', description: 'Self-contained resume brief — a fresh context continues from this alone.' },
+      question: { type: 'string', description: 'If waiting on the owner: the ONE thing you need from him (Bangla). Omit for a plain failure checkpoint.' },
+      error: { type: 'string', description: 'If the task FAILED: the honest cause.' },
+      conversationId: { type: 'string' },
+    },
+    required: ['goal', 'summaryBn', 'currentStep', 'resumeHint'],
+  },
+  handler: async (input) => {
+    try {
+      const goal = String(input.goal ?? '').trim()
+      const conversationId = input.conversationId ? String(input.conversationId) : null
+      if (!goal) return { success: false, error: 'goal is required' }
+      const question = typeof input.question === 'string' && input.question.trim() ? input.question.trim() : undefined
+      // Stable per-task ref: a retry that stalls again UPDATES the same chip.
+      const slug = goal.toLowerCase().replace(/[^a-z0-9ঀ-৿]+/g, '-').slice(0, 60)
+      const id = await writeCheckpoint({
+        taskRef: `chat-${conversationId ?? 'na'}-${slug}`,
+        taskType: 'browser',
+        state: question ? 'waiting_for_owner' : 'failed',
+        goal,
+        summaryBn: String(input.summaryBn ?? '').trim(),
+        doneSteps: Array.isArray(input.doneSteps) ? (input.doneSteps as unknown[]).map(String) : [],
+        currentStep: String(input.currentStep ?? '').trim(),
+        artifacts: [],
+        nextActions: Array.isArray(input.nextActions) ? (input.nextActions as unknown[]).map(String) : [],
+        resumeHint: String(input.resumeHint ?? '').trim(),
+        question,
+        error: typeof input.error === 'string' && input.error.trim() ? input.error.trim() : undefined,
+        conversationId,
+      })
+      if (!id) return { success: false, error: 'checkpoint লেখা যায়নি' }
+      return {
+        success: true,
+        data: {
+          checkpointId: id,
+          note: question
+            ? '⏸️ Checkpoint saved — reply-তে বসকে ঠিক কী করতে হবে সেটা এক লাইনে বলো; সে করলে ঠিক এখান থেকেই resume হবে।'
+            : '⛔ Checkpoint saved — reply-তে সৎভাবে বলো কোথায় কেন আটকেছে এবং কী করলে এগোনো যাবে।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+export const OPEN_TASK_TOOLS: AgentTool[] = [track_open_task, resolve_open_task, save_task_checkpoint]

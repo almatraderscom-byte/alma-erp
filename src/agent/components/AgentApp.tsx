@@ -263,6 +263,16 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   // Which model is answering the live turn → drives the loading animation identity.
   const [streamVariant, setStreamVariant] = useState<'claude' | 'qwen' | 'deepseek' | 'default'>('claude')
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
+  // File-card focus: which artifact the panel should show (set when a tool files
+  // a document mid-turn, or when the owner taps a file card in the thread).
+  const [artifactFocusId, setArtifactFocusId] = useState<string | null>(null)
+  const refreshArtifacts = useCallback(async (convId?: string | null) => {
+    if (!convId) return
+    try {
+      const res = await fetch(`/api/assistant/conversations/${convId}/artifacts`)
+      if (res.ok) setArtifacts(await res.json())
+    } catch { /* panel refresh is best-effort */ }
+  }, [])
   const [convLoading, setConvLoading] = useState(false)
   const [convLoadError, setConvLoadError] = useState<string | null>(null)
   const [personalProjectId, setPersonalProjectId] = useState<string | null>(null)
@@ -956,6 +966,16 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                 }
               : m
           ))
+        } else if (evt.type === 'artifact_saved') {
+          // A document was filed as an artifact — drop a FILE CARD into the reply
+          // flow, refresh the artifacts list, and open the panel on it (Claude-style).
+          const fileEntry = { t: 'file' as const, id: evt.id as string, name: evt.title as string, kind: evt.artifactType as string | undefined }
+          setMessages((prev) => prev.map((m) =>
+            m.id === assistantMsgId ? { ...m, timeline: [...(m.timeline ?? []), fileEntry] } : m
+          ))
+          void refreshArtifacts(finalConvId)
+          setArtifactFocusId(evt.id as string)
+          setArtifactsOpen(true)
         } else if (evt.type === 'subagent_start') {
           setStreamMode('searching')
           setStreamStatus(`🤝 ${evt.roleLabel as string} কাজ করছে…`)
@@ -1661,7 +1681,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             messages={messages}
             onArtifactSave={saveArtifact}
             conversationId={activeConvId}
-            onArtifactOpen={() => setArtifactsOpen(true)}
+            onArtifactOpen={(id) => { if (id) setArtifactFocusId(id); setArtifactsOpen(true) }}
             onActionApproved={() => { if (activeConvId) startResultPolling(activeConvId) }}
             onQuickSend={(text) => { if (!streaming) void handleSend(text, []) }}
             onModelSwitchResolve={(opts) => { if (!streaming) void handleSend('', [], opts) }}
@@ -1681,6 +1701,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             open={artifactsOpen}
             onClose={() => setArtifactsOpen(false)}
             isMobile={isMobile}
+            focusId={artifactFocusId}
           />
         </div>
 
