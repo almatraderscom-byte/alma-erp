@@ -511,8 +511,8 @@ struct WalletStatementScreen: View {
                     Text("\(e.signedAmount >= 0 ? "+" : "−")\(WSFormat.moneyBn(abs(e.signedAmount)))")
                         .font(.system(size: 13, weight: .bold)).monospacedDigit()
                         .foregroundStyle(e.signedAmount >= 0 ? WSPalette.green400 : WSPalette.red500)
-                    Text(WSFormat.moneyBn(e.runningBalance))
-                        .font(.system(size: 10)).monospacedDigit()
+                    Text("ব্যালেন্স \(WSFormat.moneyBn(e.runningBalance))")
+                        .font(.system(size: 10, weight: .semibold)).monospacedDigit()
                         .foregroundStyle(WSPalette.goldLt)
                 }
             }
