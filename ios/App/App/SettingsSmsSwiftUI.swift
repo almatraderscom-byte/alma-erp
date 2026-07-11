@@ -231,6 +231,71 @@ final class SettingsSmsVM {
         if case AlmaAPIError.transport(let t) = error, (t as? URLError)?.code == .cancelled { return true }
         return (error as? URLError)?.code == .cancelled
     }
+
+    // ── Native writes (owner 2026-07-11) — web patchSetting/test/retry/report. ──
+
+    var toast: String? = nil
+    var pendingTypes: Set<String> = []     // draft enabled_types before "Save types"
+    var typesDirty = false
+
+    private struct PatchBody: Encodable {
+        let business_id: String
+        var enabled: Bool? = nil
+        var enabled_types: [String]? = nil
+    }
+    private struct IdBody: Encodable { let id: String }
+    private struct TestBody: Encodable { let business_id: String, phone: String }
+    private struct WriteResponse: Decodable { let ok: Bool?, error: String? }
+
+    func setEnabled(_ enabled: Bool) async -> Bool {
+        await write(success: enabled ? "SMS enabled for this business" : "SMS disabled") {
+            try await AlmaAPI.shared.send("PATCH", "/api/sms/logs",
+                body: PatchBody(business_id: businessId, enabled: enabled))
+        }
+    }
+    func saveTypes() async -> Bool {
+        let ok = await write(success: "SMS types saved") {
+            try await AlmaAPI.shared.send("PATCH", "/api/sms/logs",
+                body: PatchBody(business_id: businessId, enabled_types: Array(pendingTypes)))
+        }
+        if ok { typesDirty = false }
+        return ok
+    }
+    func sendTest(phone: String) async -> Bool {
+        await write(success: "Test SMS queued") {
+            try await AlmaAPI.shared.send("POST", "/api/sms/test",
+                body: TestBody(business_id: businessId, phone: phone))
+        }
+    }
+    func retry(_ id: String) async -> Bool {
+        await write(success: "Retry queued") {
+            try await AlmaAPI.shared.send("POST", "/api/sms/retry", body: IdBody(id: id))
+        }
+    }
+    func report(_ id: String) async -> Bool {
+        await write(success: "Report refreshed") {
+            try await AlmaAPI.shared.send("POST", "/api/sms/report", body: IdBody(id: id))
+        }
+    }
+    private func write(success: String, _ op: () async throws -> WriteResponse) async -> Bool {
+        do {
+            let res = try await op()
+            if let err = res.error {
+                toast = err
+                return false
+            }
+            toast = success
+            await load()
+            return true
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return false
+        } catch {
+            if Self.isCancellation(error) { return false }
+            toast = "Network সমস্যা — আবার চেষ্টা করুন"
+            return false
+        }
+    }
 }
 
 // MARK: - Screen
@@ -239,6 +304,8 @@ final class SettingsSmsVM {
 struct SettingsSmsScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = SettingsSmsVM()
+    @State private var confirmingMaster = false
+    @State private var testPhone = ""
     let openWeb: (_ path: String, _ title: String) -> Void
 
     /// BUSINESS_LIST names, same order as the web select.
@@ -261,7 +328,7 @@ struct SettingsSmsScreen: View {
                 logsHeader
                 if vm.loading && vm.logs.isEmpty { loadingRows }
                 ForEach(vm.logs) { row in
-                    SettingsSmsLogCard(row: row)
+                    SettingsSmsLogCard(row: row, vm: vm)
                 }
                 if !vm.loading && vm.logs.isEmpty && vm.error == nil && !vm.authExpired {
                     emptyState
@@ -276,6 +343,21 @@ struct SettingsSmsScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task { await vm.load() }
+        .overlay(alignment: .bottom) {
+            if let t = vm.toast {
+                Text(t)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task {
+                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+                        withAnimation { vm.toast = nil }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: vm.toast != nil)
     }
 
     // ── Business chips (the web's business select) ──
@@ -337,10 +419,17 @@ struct SettingsSmsScreen: View {
         .settingsSmsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
-    /// Master switch state — read-only pill (toggling stays on the web).
+    /// Master switch — native toggle (owner 2026-07-11), web saveEnabled parity.
     private var masterSwitchPill: some View {
         let on = vm.setting?.enabled == true
-        return Text(on ? "SMS চালু" : "SMS বন্ধ")
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            confirmingMaster = true
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: on ? "power.circle.fill" : "power.circle")
+                Text(on ? "SMS চালু" : "SMS বন্ধ")
+            }
             .font(.caption2.weight(.bold))
             .foregroundStyle(on ? SettingsSmsPalette.emerald600 : SettingsSmsPalette.red500)
             .padding(.horizontal, 9).padding(.vertical, 4)
@@ -349,6 +438,17 @@ struct SettingsSmsScreen: View {
             .overlay(Capsule().strokeBorder(
                 (on ? SettingsSmsPalette.emerald600 : SettingsSmsPalette.red500).opacity(0.35),
                 lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .confirmationDialog(
+            on ? "এই business-এর SMS বন্ধ করবেন?" : "এই business-এর SMS চালু করবেন?",
+            isPresented: $confirmingMaster, titleVisibility: .visible
+        ) {
+            Button(on ? "হ্যাঁ, বন্ধ করুন" : "হ্যাঁ, চালু করুন") {
+                Task { _ = await vm.setEnabled(!on) }
+            }
+            Button("বাতিল", role: .cancel) {}
+        }
     }
 
     // ── KPI strip (web's 5 KpiCards: Total/Delivered/Failed/Queued/Success) ──
@@ -386,7 +486,7 @@ struct SettingsSmsScreen: View {
         .settingsSmsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
-    // ── Templates (web "কোন SMS চালু থাকবে" card — read-only on iOS) ──
+    // ── Templates (web "কোন SMS চালু থাকবে" — native toggles, owner 2026-07-11) ──
 
     private var templatesCard: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -394,20 +494,66 @@ struct SettingsSmsScreen: View {
                 Text("কোন SMS চালু থাকবে")
                     .font(.subheadline.weight(.bold))
                 Spacer()
-                Text("Read-only")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                if vm.typesDirty {
+                    Button {
+                        Task { _ = await vm.saveTypes() }
+                    } label: {
+                        Text("Save types").font(.caption2.weight(.bold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.mini)
+                    .tint(SettingsSmsPalette.emerald600)
+                }
             }
             if vm.catalog.isEmpty {
                 Text(vm.loading ? "Loading…" : "—")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 ForEach(vm.catalog) { item in
-                    SettingsSmsTemplateRow(
-                        item: item,
-                        enabled: vm.setting?.enabledTypes.contains(item.type) == true)
+                    Toggle(isOn: Binding(
+                        get: {
+                            vm.typesDirty
+                                ? vm.pendingTypes.contains(item.type)
+                                : vm.setting?.enabledTypes.contains(item.type) == true
+                        },
+                        set: { on in
+                            if !vm.typesDirty {
+                                vm.pendingTypes = Set(vm.setting?.enabledTypes ?? [])
+                                vm.typesDirty = true
+                            }
+                            if on { vm.pendingTypes.insert(item.type) }
+                            else { vm.pendingTypes.remove(item.type) }
+                        })) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.labelBn ?? item.label ?? item.type)
+                                .font(.footnote.weight(.semibold))
+                            if let d = item.description, !d.isEmpty {
+                                Text(d).font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .tint(SettingsSmsPalette.emerald600)
+                    .font(.footnote)
                 }
             }
+            // Native test-SMS (web sendTestSms parity).
+            HStack(spacing: 8) {
+                TextField("Test phone (01XXXXXXXXX)", text: $testPhone)
+                    .keyboardType(.phonePad)
+                    .font(.caption)
+                    .padding(.horizontal, 10).padding(.vertical, 8)
+                    .background(Color.primary.opacity(0.06),
+                                in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                Button {
+                    let p = testPhone.trimmingCharacters(in: .whitespaces)
+                    guard !p.isEmpty else { vm.toast = "Test phone number দিন"; return }
+                    Task { _ = await vm.sendTest(phone: p) }
+                } label: {
+                    Text("Test SMS").font(.caption2.weight(.bold))
+                }
+                .buttonStyle(.bordered)
+            }
+            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
@@ -549,7 +695,9 @@ private struct SettingsSmsTemplateRow: View {
 @available(iOS 17.0, *)
 private struct SettingsSmsLogCard: View {
     let row: SettingsSmsLogRow
+    var vm: SettingsSmsVM? = nil
     @Environment(\.colorScheme) private var colorScheme
+    @State private var acting = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -579,10 +727,51 @@ private struct SettingsSmsLogCard: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
+            actionsRow
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .settingsSmsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+    }
+
+    /// Native per-row Retry (FAILED, errorCode≠CANCELLED) + Report (requestId) —
+    /// web page.tsx:334-337 parity (owner 2026-07-11).
+    @ViewBuilder private var actionsRow: some View {
+        if let vm {
+            let canRetry = row.status.uppercased() == "FAILED" && row.errorCode != "CANCELLED"
+            let canReport = !(row.requestId ?? "").isEmpty
+            if canRetry || canReport {
+                HStack(spacing: 8) {
+                    if canRetry {
+                        actionChip("Retry", SettingsSmsPalette.amber600) {
+                            Task { acting = true; _ = await vm.retry(row.id); acting = false }
+                        }
+                    }
+                    if canReport {
+                        actionChip("Report", SettingsSmsPalette.emerald600) {
+                            Task { acting = true; _ = await vm.report(row.id); acting = false }
+                        }
+                    }
+                    if acting { ProgressView().controlSize(.mini) }
+                }
+            }
+        }
+    }
+
+    private func actionChip(_ label: String, _ tint: Color,
+                            action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            Text(label).font(.system(size: 10, weight: .bold))
+                .foregroundStyle(tint)
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(tint.opacity(0.12), in: Capsule())
+                .overlay(Capsule().strokeBorder(tint.opacity(0.3), lineWidth: 0.8))
+        }
+        .buttonStyle(.plain)
+        .disabled(acting)
     }
 
     private var metaLine: String {

@@ -934,6 +934,7 @@ struct PayrollScreen: View {
     @State private var rejectTarget: PayrollPendingRequest? = nil
     @State private var automationTarget: Bool? = nil
     @State private var showAccrualConfirm = false
+    @State private var exportShare: PayrollExportFile? = nil
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -1426,23 +1427,136 @@ struct PayrollScreen: View {
         }
     }
 
-    /// Small secondary link — actions are native now; only the PDF/CSV/Excel
-    /// exports remain browser-side downloads.
+    /// Native exports (owner 2026-07-11): payroll-wallet PDF + CSV built on-device
+    /// ON TAP and shared via the iOS sheet; Excel stays web (CSV opens in Excel).
     private var webEscape: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                exportButton("PDF", icon: "doc.richtext") { payrollPdfFile() }
+                exportButton("CSV", icon: "tablecells") { payrollCsvFile() }
+            }
             Button {
                 openWeb("/payroll", "Payroll")
             } label: {
-                Label("ওয়েব ভার্সন", systemImage: "safari").font(.caption)
+                Label("ওয়েব ভার্সন (Excel export)", systemImage: "safari").font(.caption)
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            Text("এক্সপোর্ট (PDF · CSV · Excel) ওয়েবে পাওয়া যাবে")
-                .font(.caption2).foregroundStyle(.secondary.opacity(0.7))
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
+        .sheet(item: $exportShare) { wrap in
+            PayrollShareSheet(url: wrap.url)
+                .presentationDetents([.medium])
+        }
     }
+
+    private func exportButton(_ label: String, icon: String,
+                              make: @escaping () -> URL?) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            if let url = make() { exportShare = PayrollExportFile(url: url) }
+        } label: {
+            Label(label, systemImage: icon)
+                .font(.caption.weight(.bold))
+                .frame(maxWidth: .infinity).padding(.vertical, 9)
+        }
+        .buttonStyle(.bordered)
+        .disabled(vm.wallets.isEmpty)
+    }
+
+    /// payrollWalletsToCsv() column parity (email is not in the native payload → blank).
+    private func payrollCsvFile() -> URL? {
+        func esc(_ s: String) -> String {
+            s.contains(where: { ",\"\n".contains($0) }) ? "\"\(s.replacingOccurrences(of: "\"", with: "\"\""))\"" : s
+        }
+        let header = ["Business", "Employee ID", "Name", "Email", "Monthly Salary",
+                      "Salary Earned", "Commission", "Bonuses", "Overtime", "Reimbursements",
+                      "Meal Deductions", "Penalties", "Lifetime Earned", "Lifetime Withdrawn",
+                      "Current Balance", "Company Liability"]
+        let lines = vm.wallets.map { w -> String in
+            let s = w.summary
+            return [w.businessId, w.employeeId, w.name, "",
+                    String(w.monthlySalary ?? 0),
+                    String(s?.totalAccrued ?? 0), String(s?.totalCommissions ?? 0),
+                    String(s?.totalBonuses ?? 0), String(s?.totalOvertime ?? 0),
+                    String(s?.totalReimbursements ?? 0), String(s?.totalMealDeductions ?? 0),
+                    String(s?.totalPenalties ?? 0), String(s?.lifetimeEarned ?? 0),
+                    String(s?.lifetimeWithdrawn ?? 0), String(s?.currentBalance ?? 0),
+                    String(s?.companyLiability ?? 0)].map(esc).joined(separator: ",")
+        }
+        let csv = "\u{FEFF}" + header.joined(separator: ",") + "\n" + lines.joined(separator: "\n")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("payroll-wallet-\(vm.businessId).csv")
+        try? csv.data(using: .utf8)?.write(to: url)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Native wallet-ledger PDF — same data story as the web PDF (per-employee rows
+    /// with earned/withdrawn/balance/liability, business total footer).
+    private func payrollPdfFile() -> URL? {
+        let rows = vm.wallets
+        let pageRect = CGRect(x: 0, y: 0, width: 595, height: 842)   // A4 @72dpi
+        let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
+        let margin: CGFloat = 36
+        let colX: [CGFloat] = [36, 170, 260, 340, 420, 500]   // name/salary/earned/withdrawn/balance/liability
+        let data = renderer.pdfData { ctx in
+            var y: CGFloat = 0
+            func newPage() {
+                ctx.beginPage()
+                y = margin
+                "Payroll wallet ledger".draw(at: CGPoint(x: margin, y: y),
+                    withAttributes: [.font: UIFont.boldSystemFont(ofSize: 16)])
+                y += 22
+                vm.businessId.draw(at: CGPoint(x: margin, y: y),
+                    withAttributes: [.font: UIFont.systemFont(ofSize: 9), .foregroundColor: UIColor.darkGray])
+                y += 20
+                let headers = ["Employee", "Salary", "Earned", "Withdrawn", "Balance", "Liability"]
+                for (i, h) in headers.enumerated() {
+                    h.draw(at: CGPoint(x: colX[i], y: y),
+                           withAttributes: [.font: UIFont.boldSystemFont(ofSize: 8)])
+                }
+                y += 14
+            }
+            newPage()
+            let cell: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 8)]
+            for w in rows {
+                if y > pageRect.height - margin - 30 { newPage() }
+                String(w.name.prefix(26)).draw(at: CGPoint(x: colX[0], y: y), withAttributes: cell)
+                "৳\((w.monthlySalary ?? 0).formatted())".draw(at: CGPoint(x: colX[1], y: y), withAttributes: cell)
+                "৳\((w.summary?.lifetimeEarned ?? 0).formatted())".draw(at: CGPoint(x: colX[2], y: y), withAttributes: cell)
+                "৳\((w.summary?.lifetimeWithdrawn ?? 0).formatted())".draw(at: CGPoint(x: colX[3], y: y), withAttributes: cell)
+                "৳\((w.summary?.currentBalance ?? 0).formatted())".draw(at: CGPoint(x: colX[4], y: y), withAttributes: cell)
+                "৳\((w.summary?.companyLiability ?? 0).formatted())".draw(at: CGPoint(x: colX[5], y: y), withAttributes: cell)
+                y += 12
+            }
+            y += 8
+            let liability = rows.reduce(0) { $0 + ($1.summary?.companyLiability ?? 0) }
+            "Total company liability: ৳\(liability.formatted())".draw(
+                at: CGPoint(x: colX[3], y: y),
+                withAttributes: [.font: UIFont.boldSystemFont(ofSize: 10)])
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("payroll-wallet-\(vm.businessId).pdf")
+        try? data.write(to: url)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+}
+
+/// Identifiable wrapper so a freshly generated export can drive a .sheet(item:).
+private struct PayrollExportFile: Identifiable {
+    let url: URL
+    var id: String { url.absoluteString }
+}
+
+/// UIActivityViewController bridge — share the generated ledger file.
+@available(iOS 17.0, *)
+private struct PayrollShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
 }
 
 // MARK: - Pending request card (web request row + native Approve/Reject buttons)

@@ -183,6 +183,44 @@ final class TradingStaffVM {
         if case AlmaAPIError.transport(let t) = error, (t as? URLError)?.code == .cancelled { return true }
         return (error as? URLError)?.code == .cancelled
     }
+
+    // ── Native writes (owner 2026-07-11) — web upsert() parity, one POST for all. ──
+
+    var toast: String? = nil
+    var saving = false
+
+    struct UpsertBody: Encodable {
+        var id: String? = nil
+        var userId: String? = nil
+        var name: String? = nil
+        var role: String? = nil
+        var telegramChatId: String? = nil
+        var active: Bool? = nil
+    }
+    private struct UpsertResponse: Decodable { let ok: Bool?, error: String? }
+
+    func upsert(_ body: UpsertBody) async -> Bool {
+        saving = true
+        defer { saving = false }
+        do {
+            let res: UpsertResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/internal/trading-staff/upsert", body: body)
+            if let err = res.error {
+                toast = "সেভ ব্যর্থ: \(err)"
+                return false
+            }
+            toast = "সেভ হয়েছে"
+            await load()
+            return true
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return false
+        } catch {
+            if Self.isCancellation(error) { return false }
+            toast = "সেভ ব্যর্থ: \(error.localizedDescription)"
+            return false
+        }
+    }
 }
 
 // MARK: - Screen
@@ -192,6 +230,11 @@ struct TradingStaffScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = TradingStaffVM()
     @State private var selected: TradingStaffMember? = nil
+    @State private var linking: TradingStaffUser? = nil
+    @State private var editingChatId: TradingStaffMember? = nil
+    @State private var chatIdDraft = ""
+    @State private var editingRole: TradingStaffMember? = nil
+    @State private var roleDraft = ""
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -219,6 +262,60 @@ struct TradingStaffScreen: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .confirmationDialog(
+            "\(linking?.name ?? "")-কে Trading staff হিসেবে link করবেন?",
+            isPresented: Binding(get: { linking != nil }, set: { if !$0 { linking = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, link করুন") {
+                if let u = linking {
+                    Task {
+                        _ = await vm.upsert(.init(userId: u.id, name: u.name,
+                                                  role: "p2p_trader", active: true))
+                    }
+                }
+                linking = nil
+            }
+            Button("বাতিল", role: .cancel) { linking = nil }
+        }
+        .alert("Telegram Chat ID", isPresented: Binding(
+            get: { editingChatId != nil }, set: { if !$0 { editingChatId = nil } })) {
+            TextField("123456789", text: $chatIdDraft)
+            Button("Save") {
+                if let m = editingChatId {
+                    let v = chatIdDraft.trimmingCharacters(in: .whitespaces)
+                    Task { _ = await vm.upsert(.init(id: m.id, telegramChatId: v.isEmpty ? nil : v)) }
+                }
+                editingChatId = nil
+            }
+            Button("বাতিল", role: .cancel) { editingChatId = nil }
+        }
+        .alert("Role", isPresented: Binding(
+            get: { editingRole != nil }, set: { if !$0 { editingRole = nil } })) {
+            TextField("p2p_trader", text: $roleDraft)
+            Button("Save") {
+                if let m = editingRole, !roleDraft.isEmpty {
+                    Task { _ = await vm.upsert(.init(id: m.id, role: roleDraft)) }
+                }
+                editingRole = nil
+            }
+            Button("বাতিল", role: .cancel) { editingRole = nil }
+        }
+        .overlay(alignment: .bottom) {
+            if let t = vm.toast {
+                Text(t)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task {
+                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+                        withAnimation { vm.toast = nil }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: vm.toast != nil)
     }
 
     // ── Header (web AgentSubHeader parity: "ALMA Trading · Staff" + subtitle) ──
@@ -299,6 +396,26 @@ struct TradingStaffScreen: View {
         } else {
             ForEach(vm.filteredStaff) { member in
                 TradingStaffCard(member: member) { selected = member }
+                    .contextMenu {
+                        Button {
+                            Task { _ = await vm.upsert(.init(id: member.id, active: !member.active)) }
+                        } label: {
+                            Label(member.active ? "Deactivate" : "Activate",
+                                  systemImage: member.active ? "pause.circle" : "play.circle")
+                        }
+                        Button {
+                            editingChatId = member
+                            chatIdDraft = member.telegramChatId ?? ""
+                        } label: {
+                            Label("Telegram Chat ID", systemImage: "paperplane")
+                        }
+                        Button {
+                            editingRole = member
+                            roleDraft = member.role ?? "p2p_trader"
+                        } label: {
+                            Label("Role বদলান", systemImage: "person.text.rectangle")
+                        }
+                    }
             }
             if vm.filteredStaff.isEmpty && !vm.staff.isEmpty {
                 Text("এই ফিল্টারে কেউ নেই")
@@ -337,27 +454,22 @@ struct TradingStaffScreen: View {
                                 .lineLimit(1)
                         }
                         Spacer()
-                        Text("unlinked")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(TradingStaffPalette.amber600)
-                            .padding(.horizontal, 7).padding(.vertical, 2)
-                            .background(TradingStaffPalette.amber500.opacity(0.10), in: Capsule())
-                            .overlay(Capsule().strokeBorder(TradingStaffPalette.amber500.opacity(0.30), lineWidth: 1))
+                        // Native link (owner 2026-07-11): web upsert {userId, role, active}.
+                        Button {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            linking = u
+                        } label: {
+                            Text("Link")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(TradingStaffPalette.accentText(colorScheme))
+                                .padding(.horizontal, 12).padding(.vertical, 5)
+                                .background(TradingStaffPalette.coral.opacity(0.13), in: Capsule())
+                                .overlay(Capsule().strokeBorder(TradingStaffPalette.coral.opacity(0.35), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(vm.saving)
                     }
                 }
-                Button {
-                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                    openWeb("/agent/trading-staff", "Trading staff")
-                } label: {
-                    Label("Link staff — ওয়েবে খুলুন", systemImage: "link")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(TradingStaffPalette.accentText(colorScheme))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 9)
-                        .background(TradingStaffPalette.coral.opacity(0.13), in: Capsule())
-                        .overlay(Capsule().strokeBorder(TradingStaffPalette.coral.opacity(0.35), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)

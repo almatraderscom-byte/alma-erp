@@ -390,6 +390,86 @@ final class SettingsTelegramVM {
     var queueStats7d: [String: Int] {
         Dictionary(uniqueKeysWithValues: (dashboard?.queue?.stats7d ?? []).map { ($0.status, $0.count) })
     }
+
+    // ── Native writes (owner 2026-07-11) — web processQueueNow/sendTest/retry/save. ──
+
+    var toast: String? = nil
+    var busy = false
+
+    private struct EmptyBody: Encodable {}
+    private struct RetryBody: Encodable {
+        var id: String? = nil
+        var retry_all: Bool? = nil
+        var business_id: String? = nil
+    }
+    private struct TestBody: Encodable { let business_id: String }
+    private struct SavePatch: Encodable {
+        let business_id: String
+        var enabled: Bool? = nil
+        var alert_toggles: [String: Bool]? = nil
+    }
+
+    func processQueueNow() async {
+        struct Resp: Decodable {
+            struct Inner: Decodable { let processed: Int? }
+            let reclaimed: Int?, processed: Inner?
+        }
+        busy = true; defer { busy = false }
+        do {
+            let res: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/settings/telegram-ops/health",
+                query: ["business_id": businessId], body: EmptyBody())
+            toast = "Reclaimed \(res.reclaimed ?? 0) stuck · processed \(res.processed?.processed ?? 0)"
+            await load()
+        } catch { toast = error.localizedDescription }
+    }
+
+    func sendTest() async {
+        struct Resp: Decodable {
+            struct Routing: Decodable { let source: String?, chatIds: [String]? }
+            let routing: Routing?
+        }
+        busy = true; defer { busy = false }
+        do {
+            let res: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/settings/telegram-ops/test", body: TestBody(business_id: businessId))
+            toast = "Test sent to \(res.routing?.chatIds?.count ?? 0) owner chat(s)"
+            await load()
+        } catch { toast = error.localizedDescription }
+    }
+
+    func retryAllFailed() async {
+        struct Resp: Decodable { let requeued: Int? }
+        busy = true; defer { busy = false }
+        do {
+            let res: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/settings/telegram-ops/retry",
+                body: RetryBody(retry_all: true, business_id: businessId))
+            toast = "Requeued \(res.requeued ?? 0) failed job(s)"
+            await load()
+        } catch { toast = error.localizedDescription }
+    }
+
+    func retryQueue(_ id: String) async {
+        struct Resp: Decodable { let ok: Bool? }
+        do {
+            let _: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/settings/telegram-ops/retry", body: RetryBody(id: id))
+            toast = "Retry queued"
+            await load()
+        } catch { toast = error.localizedDescription }
+    }
+
+    func setEnabled(_ enabled: Bool) async {
+        struct Resp: Decodable { let ok: Bool? }
+        do {
+            let _: Resp = try await AlmaAPI.shared.send(
+                "PATCH", "/api/settings/telegram-ops",
+                body: SavePatch(business_id: businessId, enabled: enabled))
+            toast = "Saved"
+            await load()
+        } catch { toast = error.localizedDescription }
+    }
 }
 
 // MARK: - Screen
@@ -410,6 +490,7 @@ struct SettingsTelegramScreen: View {
                     loadingRows
                 } else {
                     healthGrid
+                    actionsCard
                     routingCard
                     configCard
                     alertTogglesCard
@@ -425,6 +506,56 @@ struct SettingsTelegramScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task { await vm.load() }
+        .overlay(alignment: .bottom) {
+            if let t = vm.toast {
+                Text(t)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task {
+                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+                        withAnimation { vm.toast = nil }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: vm.toast != nil)
+    }
+
+    /// Native ops actions (owner 2026-07-11): master toggle + process-now + test +
+    /// retry-all — web parity.
+    private var actionsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle("Telegram notifications", isOn: Binding(
+                get: { vm.setting?.enabled == true },
+                set: { on in Task { await vm.setEnabled(on) } }))
+                .font(.footnote.weight(.semibold))
+                .tint(SettingsTelegramPalette.emerald600)
+            HStack(spacing: 8) {
+                opChip("Process now", "play.circle") { Task { await vm.processQueueNow() } }
+                opChip("Send test", "paperplane") { Task { await vm.sendTest() } }
+                opChip("Retry failed", "arrow.clockwise") { Task { await vm.retryAllFailed() } }
+                if vm.busy { ProgressView().controlSize(.mini) }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .settingsTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+    }
+
+    private func opChip(_ label: String, _ icon: String, action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            Label(label, systemImage: icon)
+                .font(.system(size: 10, weight: .bold))
+                .padding(.horizontal, 9).padding(.vertical, 7)
+                .background(Color.primary.opacity(0.06), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(vm.busy)
     }
 
     // ── Business picker (web Select over BUSINESS_LIST) ──
@@ -720,6 +851,19 @@ struct SettingsTelegramScreen: View {
             }
             if let err = row.errorMessage, !err.isEmpty {
                 Text(err).font(.caption2).foregroundStyle(SettingsTelegramPalette.red500).lineLimit(2)
+            }
+            // Native per-row retry (owner 2026-07-11) — web shows it on FAILED/QUEUED/SENDING.
+            if ["FAILED", "QUEUED", "SENDING"].contains((row.status ?? "").uppercased()) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    Task { await vm.retryQueue(row.id) }
+                } label: {
+                    Text("Retry").font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(SettingsTelegramPalette.amber600)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(SettingsTelegramPalette.amber600.opacity(0.12), in: Capsule())
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)

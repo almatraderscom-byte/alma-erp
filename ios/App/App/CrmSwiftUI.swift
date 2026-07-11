@@ -404,6 +404,9 @@ struct CrmScreen: View {
     @State private var vm = CrmVM()
     @State private var selected: CrmCustomer? = nil
     @State private var searchDebounce: Task<Void, Never>? = nil
+    @State private var syncing = false
+    @State private var confirmingSync = false
+    @State private var syncNote: String? = nil
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -434,6 +437,17 @@ struct CrmScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task { await vm.load() }
+        .overlay(alignment: .bottom) {
+            if let t = syncNote {
+                Text(t)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: syncNote != nil)
         .sheet(item: $selected) { c in
             CrmDetailSheet(customer: c, vm: vm, openWeb: openWeb)
                 .presentationDetents([.medium, .large])
@@ -594,16 +608,66 @@ struct CrmScreen: View {
     }
 
     private var webEscape: some View {
-        Button {
-            openWeb("/crm", "CRM")
-        } label: {
-            Label("সব অপশন — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
+        VStack(spacing: 10) {
+            // Native "Sync from orders" (owner 2026-07-11) — web syncFromOrders parity,
+            // POST /api/customers/backfill (server enforces the SUPER_ADMIN gate).
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                confirmingSync = true
+            } label: {
+                HStack(spacing: 6) {
+                    if syncing { ProgressView().controlSize(.mini) }
+                    Label(syncing ? "Syncing…" : "Sync from orders",
+                          systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption.weight(.bold))
+                }
+                .frame(maxWidth: .infinity).padding(.vertical, 9)
+            }
+            .buttonStyle(.bordered)
+            .disabled(syncing)
+            .confirmationDialog(
+                "Orders থেকে customer profiles sync করবেন?",
+                isPresented: $confirmingSync, titleVisibility: .visible
+            ) {
+                Button("হ্যাঁ, sync করুন") { runSync() }
+                Button("বাতিল", role: .cancel) {}
+            }
+            Button {
+                openWeb("/crm", "CRM")
+            } label: {
+                Label("ওয়েব ভার্সন", systemImage: "safari")
+                    .font(.footnote)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
         .padding(.vertical, 6)
+    }
+
+    private func runSync() {
+        guard !syncing else { return }
+        syncing = true
+        Task {
+            defer { syncing = false }
+            struct Body: Encodable { let business_id = "ALMA_LIFESTYLE" }
+            struct Resp: Decodable { let processed: Int?, created: Int?, error: String? }
+            do {
+                let res: Resp = try await AlmaAPI.shared.send(
+                    "POST", "/api/customers/backfill", body: Body())
+                if let err = res.error {
+                    syncNote = err
+                } else {
+                    syncNote = "Synced: \(res.processed ?? 0) processed, \(res.created ?? 0) new"
+                    await vm.load()
+                }
+            } catch {
+                syncNote = "Sync failed — আবার চেষ্টা করুন"
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            try? await Task.sleep(nanoseconds: 2_600_000_000)
+            syncNote = nil
+        }
     }
 }
 

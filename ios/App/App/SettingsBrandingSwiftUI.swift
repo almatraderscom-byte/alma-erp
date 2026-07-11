@@ -14,6 +14,7 @@
 //
 
 import SwiftUI
+import PhotosUI
 
 // MARK: - Web palette (exact hexes from globals.css / tailwind tokens)
 
@@ -180,6 +181,51 @@ final class SettingsBrandingVM {
         if case AlmaAPIError.transport(let t) = error, (t as? URLError)?.code == .cancelled { return true }
         return (error as? URLError)?.code == .cancelled
     }
+
+    // ── Native asset upload (owner 2026-07-11) — web api.branding.uploadAsset:
+    //    POST /api/branding { action:'upload', asset_type, data(base64), mime_type,
+    //    filename, business_id }. ──
+
+    var toast: String? = nil
+    var uploading = false
+
+    private struct UploadBody: Encodable {
+        let action = "upload"
+        let asset_type: String        // logo | favicon
+        let data: String              // base64
+        let mime_type: String
+        let filename: String
+        let business_id: String
+    }
+    private struct UploadResponse: Decodable { let ok: Bool?, error: String? }
+
+    func uploadAsset(businessId: String, assetType: String, data: Data) async -> Bool {
+        uploading = true
+        defer { uploading = false }
+        do {
+            let res: UploadResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/branding",
+                body: UploadBody(asset_type: assetType,
+                                 data: data.base64EncodedString(),
+                                 mime_type: "image/png",
+                                 filename: "\(assetType).png",
+                                 business_id: businessId))
+            guard res.ok ?? false else {
+                toast = res.error ?? "আপলোড হয়নি"
+                return false
+            }
+            toast = assetType == "logo" ? "Logo আপলোড হয়েছে" : "Favicon আপলোড হয়েছে"
+            await load()
+            return true
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return false
+        } catch {
+            if Self.isCancellation(error) { return false }
+            toast = error.localizedDescription
+            return false
+        }
+    }
 }
 
 // MARK: - Screen
@@ -201,7 +247,7 @@ struct SettingsBrandingScreen: View {
                 assetGuideCard
                 if vm.loading && vm.brandings.isEmpty { loadingRows }
                 ForEach(vm.brandings) { branding in
-                    SettingsBrandingCard(branding: branding)
+                    SettingsBrandingCard(branding: branding, vm: vm)
                 }
                 if !vm.loading && vm.brandings.isEmpty && vm.error == nil && !vm.authExpired {
                     emptyState
@@ -216,6 +262,21 @@ struct SettingsBrandingScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task { await vm.load() }
+        .overlay(alignment: .bottom) {
+            if let t = vm.toast {
+                Text(t)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task {
+                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+                        withAnimation { vm.toast = nil }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: vm.toast != nil)
     }
 
     /// The web's gold recommendations box ("Brand assets") — plus the iOS-only
@@ -296,11 +357,15 @@ struct SettingsBrandingScreen: View {
 @available(iOS 17.0, *)
 private struct SettingsBrandingCard: View {
     let branding: SettingsBrandingInfo
+    var vm: SettingsBrandingVM? = nil
     @Environment(\.colorScheme) private var colorScheme
+    @State private var pickedLogo: PhotosPickerItem? = nil
+    @State private var pickedFavicon: PhotosPickerItem? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
+            uploadRow
             logoRow
             colorSwatches
             companyDetails
@@ -315,6 +380,39 @@ private struct SettingsBrandingCard: View {
     }
 
     // ── Header: brand initial badge + company name + tagline ──
+
+    /// Native logo/favicon upload (owner 2026-07-11) — web uploadAsset parity.
+    @ViewBuilder private var uploadRow: some View {
+        if let vm {
+            HStack(spacing: 8) {
+                PhotosPicker(selection: $pickedLogo, matching: .images) {
+                    Label("Logo আপলোড", systemImage: "photo.badge.plus")
+                        .font(.system(size: 10, weight: .bold))
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
+                }
+                PhotosPicker(selection: $pickedFavicon, matching: .images) {
+                    Label("Favicon", systemImage: "app.badge")
+                        .font(.system(size: 10, weight: .bold))
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
+                }
+                if vm.uploading { ProgressView().controlSize(.mini) }
+            }
+            .onChange(of: pickedLogo) { _, item in upload(item, type: "logo") }
+            .onChange(of: pickedFavicon) { _, item in upload(item, type: "favicon") }
+        }
+    }
+
+    private func upload(_ item: PhotosPickerItem?, type: String) {
+        guard let item, let vm else { return }
+        Task {
+            if let data = try? await item.loadTransferable(type: Data.self) {
+                _ = await vm.uploadAsset(businessId: branding.businessId,
+                                         assetType: type, data: data)
+            }
+        }
+    }
 
     private var header: some View {
         HStack(spacing: 10) {
