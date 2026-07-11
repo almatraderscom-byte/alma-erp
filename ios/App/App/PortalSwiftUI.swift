@@ -790,6 +790,9 @@ struct PortalScreen: View {
     @State private var confirmDrivingEnd = false
     @State private var cancelWaiverId: String? = nil
     @State private var confirmCancelWaiver = false
+    @State private var showCheckIn = false
+    @State private var confirmCheckOut = false
+    @State private var attendanceError: String? = nil
     let openWeb: (_ path: String, _ title: String) -> Void
 
     /// Web gate for OfficeAdvanceDeskCard: ADMIN / SUPER_ADMIN only.
@@ -1040,12 +1043,52 @@ struct PortalScreen: View {
                 }
             }
 
-            // Check-in / check-out involve the selfie camera + GPS geofence — that
-            // whole flow lives in the web view (web escape by design).
-            portalLinkButton(
-                today == nil ? "📸 চেক-ইন করুন — ওয়েবে (সেলফি + GPS)"
-                             : (today?.checkOutAt == nil ? "চেক-আউট / অনুমতি — ওয়েবে খুলুন"
-                                                         : "বিস্তারিত — ওয়েবে খুলুন")) {
+            // Native check-in / check-out (owner 2026-07-11): front-camera selfie +
+            // one-shot GPS, exact web payload. Small web fallback link stays below.
+            if today == nil {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showCheckIn = true
+                } label: {
+                    Label("📸 চেক-ইন করুন (সেলফি + GPS)", systemImage: "camera.viewfinder")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(PortalPalette.emerald600,
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .sheet(isPresented: $showCheckIn) { PortalCheckInSheet(vm: vm) }
+            } else if today?.checkOutAt == nil {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    confirmCheckOut = true
+                } label: {
+                    Label("চেক-আউট করুন", systemImage: "figure.walk")
+                        .font(.caption.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(.bordered)
+                .confirmationDialog("আজকের কাজ শেষ করে চেক-আউট করবেন?",
+                                    isPresented: $confirmCheckOut, titleVisibility: .visible) {
+                    Button("হ্যাঁ, চেক-আউট") {
+                        Task {
+                            attendanceError = await vm.checkOut()
+                            if attendanceError == nil {
+                                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                            }
+                        }
+                    }
+                    Button("বাতিল", role: .cancel) {}
+                }
+            }
+            if let attendanceError {
+                Text(attendanceError).font(.caption2.weight(.semibold))
+                    .foregroundStyle(PortalPalette.red500)
+            }
+            portalLinkButton("ওয়েব ভার্সন") {
                 openWeb("/portal", "My Desk")
             }
 
@@ -2416,4 +2459,310 @@ private extension View {
 @available(iOS 17.0, *)
 #Preview("Portal — Light") {
     PortalScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - Native check-in / check-out (owner 2026-07-11 — the LAST web-only flow on
+// My Desk goes native: front-camera selfie + one-shot GPS + the exact web payload.
+// FaceVerificationCheckIn.tsx parity: POST /api/attendance/check-in with
+// { business_id, request_id, metadata, face_verification }; check-out posts
+// { business_id, metadata }. Server enforces the geofence + dedupe.)
+
+import AVFoundation
+import CoreLocation
+
+/// One-shot CLLocation fetch — the web acquireAttendanceLocation() twin.
+@available(iOS 17.0, *)
+final class PortalGpsOnce: NSObject, CLLocationManagerDelegate {
+    private let manager = CLLocationManager()
+    private var continuation: CheckedContinuation<(CLLocation?, String), Never>? = nil
+
+    func acquire() async -> (location: CLLocation?, reason: String) {
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        let status = manager.authorizationStatus
+        if status == .denied || status == .restricted {
+            return (nil, "denied")
+        }
+        return await withCheckedContinuation { cont in
+            continuation = cont
+            if status == .notDetermined {
+                manager.requestWhenInUseAuthorization()
+            } else {
+                manager.requestLocation()
+            }
+            // Watchdog: never hang the check-in on a silent GPS stack.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+                self?.finish(nil, "timeout")
+            }
+        }
+    }
+
+    private func finish(_ loc: CLLocation?, _ reason: String) {
+        continuation?.resume(returning: (loc, reason))
+        continuation = nil
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        switch manager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways: manager.requestLocation()
+        case .denied, .restricted: finish(nil, "denied")
+        default: break
+        }
+    }
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        finish(locations.first, locations.first == nil ? "unavailable" : "ok")
+    }
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        finish(nil, "error")
+    }
+}
+
+@available(iOS 17.0, *)
+extension PortalVM {
+    struct AttendanceLocation: Encodable {
+        let latitude: Double, longitude: Double, accuracy: Double
+    }
+    struct AttendanceMetadata: Encodable {
+        let browserFingerprint: String
+        let sessionId: String
+        let timezone: String
+        let language: String
+        let platform: String
+        let screen: String
+        let location: AttendanceLocation?
+        let locationReason: String
+    }
+    private struct CheckInBody: Encodable {
+        let business_id: String
+        let request_id: String
+        let metadata: AttendanceMetadata
+        let face_verification: Face
+        struct Face: Encodable { let image_data_url: String, thumb_data_url: String }
+    }
+    private struct CheckOutBody: Encodable {
+        let business_id: String
+        let metadata: AttendanceMetadata?
+    }
+    private struct AttendanceWriteResponse: Decodable { let ok: Bool?, error: String? }
+
+    /// Stable per-device session id — the web stores the twin in localStorage.
+    static var attendanceSessionId: String {
+        let key = "alma-attendance-session-id"
+        if let existing = UserDefaults.standard.string(forKey: key) { return existing }
+        let id = UUID().uuidString
+        UserDefaults.standard.set(id, forKey: key)
+        return id
+    }
+
+    static func metadata(location: CLLocation?, reason: String) -> AttendanceMetadata {
+        let device = UIDevice.current
+        let screenPx = UIScreen.main.nativeBounds
+        let fingerprint = [
+            "alma-ios-native", device.model, device.systemName, device.systemVersion,
+            Locale.current.identifier,
+        ].joined(separator: "|")
+        return AttendanceMetadata(
+            browserFingerprint: fingerprint,
+            sessionId: attendanceSessionId,
+            timezone: TimeZone.current.identifier,
+            language: Locale.preferredLanguages.first ?? "bn",
+            platform: "iOS \(device.systemVersion)",
+            screen: "\(Int(screenPx.width))x\(Int(screenPx.height))",
+            location: location.map {
+                AttendanceLocation(latitude: $0.coordinate.latitude,
+                                   longitude: $0.coordinate.longitude,
+                                   accuracy: $0.horizontalAccuracy)
+            },
+            locationReason: reason)
+    }
+
+    /// Native check-in — selfie required, GPS required (web blocks without it too).
+    func checkIn(selfie: UIImage) async -> String? {
+        let gps = await PortalGpsOnce().acquire()
+        guard let loc = gps.location else {
+            return "লোকেশন পাওয়া যায়নি (\(gps.reason)) — GPS চালু করে আবার চেষ্টা করুন"
+        }
+        // Web captureProfileFromFile shrinks the frame; mirror ~900px + small thumb.
+        func dataUrl(_ image: UIImage, maxSide: CGFloat, quality: CGFloat) -> String? {
+            let scale = min(1, maxSide / max(image.size.width, image.size.height))
+            let target = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+            let shrunk = UIGraphicsImageRenderer(size: target).image { _ in
+                image.draw(in: CGRect(origin: .zero, size: target))
+            }
+            guard let jpeg = shrunk.jpegData(compressionQuality: quality) else { return nil }
+            return "data:image/jpeg;base64,\(jpeg.base64EncodedString())"
+        }
+        guard let imageUrl = dataUrl(selfie, maxSide: 900, quality: 0.75),
+              let thumbUrl = dataUrl(selfie, maxSide: 200, quality: 0.6) else {
+            return "ছবিটা প্রসেস করা যায়নি — আবার তুলুন"
+        }
+        do {
+            let res: AttendanceWriteResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/attendance/check-in",
+                body: CheckInBody(
+                    business_id: Self.businessId,
+                    request_id: UUID().uuidString,
+                    metadata: Self.metadata(location: loc, reason: "ok"),
+                    face_verification: .init(image_data_url: imageUrl, thumb_data_url: thumbUrl)))
+            if let err = res.error { return err }
+            await load()
+            return nil
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return "সেশন শেষ — আবার লগইন করুন"
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Native check-out — GPS best-effort (web falls back to nil metadata).
+    func checkOut() async -> String? {
+        let gps = await PortalGpsOnce().acquire()
+        do {
+            let res: AttendanceWriteResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/attendance/check-out",
+                body: CheckOutBody(
+                    business_id: Self.businessId,
+                    metadata: Self.metadata(location: gps.location,
+                                            reason: gps.location == nil ? gps.reason : "ok")))
+            if let err = res.error { return err }
+            await load()
+            return nil
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return "সেশন শেষ — আবার লগইন করুন"
+        } catch {
+            return error.localizedDescription
+        }
+    }
+}
+
+/// Front-camera selfie capture (UIImagePickerController — PhotosPicker can't shoot).
+@available(iOS 17.0, *)
+struct PortalSelfieCamera: UIViewControllerRepresentable {
+    static var available: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
+    let onCapture: (UIImage?) -> Void
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let vc = UIImagePickerController()
+        vc.sourceType = .camera
+        if UIImagePickerController.isCameraDeviceAvailable(.front) {
+            vc.cameraDevice = .front
+        }
+        vc.delegate = context.coordinator
+        return vc
+    }
+    func updateUIViewController(_ vc: UIImagePickerController, context: Context) {}
+    func makeCoordinator() -> Coordinator { Coordinator(onCapture: onCapture) }
+
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let onCapture: (UIImage?) -> Void
+        init(onCapture: @escaping (UIImage?) -> Void) { self.onCapture = onCapture }
+        func imagePickerController(_ picker: UIImagePickerController,
+                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            onCapture(info[.originalImage] as? UIImage)
+            picker.dismiss(animated: true)
+        }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            onCapture(nil)
+            picker.dismiss(animated: true)
+        }
+    }
+}
+
+/// The native check-in sheet: capture preview → GPS note → submit with per-step state.
+@available(iOS 17.0, *)
+struct PortalCheckInSheet: View {
+    let vm: PortalVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @State private var showCamera = false
+    @State private var selfie: UIImage? = nil
+    @State private var submitting = false
+    @State private var errorText: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("📸 চেক-ইন").font(.subheadline.weight(.bold)).padding(.top, 20)
+            Text("সামনের ক্যামেরায় সেলফি + GPS — অফিস geofence সার্ভারে যাচাই হয়।")
+                .font(.caption2).foregroundStyle(.secondary)
+
+            Button {
+                showCamera = true
+            } label: {
+                Group {
+                    if let selfie {
+                        Image(uiImage: selfie)
+                            .resizable().scaledToFill()
+                            .frame(height: 240)
+                            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "camera.viewfinder").font(.title)
+                            Text(PortalSelfieCamera.available
+                                 ? "সেলফি তুলুন" : "এই ডিভাইসে ক্যামেরা নেই")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 60)
+                        .background(Color.primary.opacity(0.05),
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(!PortalSelfieCamera.available)
+
+            if let errorText {
+                Text(errorText).font(.caption2.weight(.semibold))
+                    .foregroundStyle(PortalPalette.red500)
+            }
+
+            Button {
+                submit()
+            } label: {
+                HStack(spacing: 8) {
+                    if submitting { ProgressView().tint(.white) }
+                    Text(submitting ? "চেক-ইন হচ্ছে…" : "চেক-ইন করুন")
+                        .font(.subheadline.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(selfie != nil && !submitting
+                            ? PortalPalette.emerald600 : PortalPalette.emerald600.opacity(0.4),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(selfie == nil || submitting)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 18)
+        .presentationDetents([.height(460)])
+        .presentationDragIndicator(.visible)
+        .background(AlmaSwiftTheme.rootBg(scheme))
+        .fullScreenCover(isPresented: $showCamera) {
+            PortalSelfieCamera { image in
+                if let image { selfie = image }
+                showCamera = false
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    private func submit() {
+        guard let selfie, !submitting else { return }
+        submitting = true; errorText = nil
+        Task {
+            defer { submitting = false }
+            if let err = await vm.checkIn(selfie: selfie) {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                errorText = err
+            } else {
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                dismiss()
+            }
+        }
+    }
 }
