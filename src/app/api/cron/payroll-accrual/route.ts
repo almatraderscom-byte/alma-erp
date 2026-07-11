@@ -36,10 +36,14 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    // Owner rule 2026-07-11: held businesses (e.g. Trading while it's off) are
+    // skipped by the auto-run; unholding via automation settings resumes them.
+    const held = new Set(setting.heldBusinessIds ?? [])
+    const active = BUSINESS_LIST.filter(b => !held.has(b.id))
     const results = await Promise.all(
-      BUSINESS_LIST.map(b => runPayrollAccrual({ businessId: b.id, periodYm, trigger: 'cron' })),
+      active.map(b => runPayrollAccrual({ businessId: b.id, periodYm, trigger: 'cron' })),
     )
-    return NextResponse.json({ ok: results.every(r => r.ok), periodYm, results })
+    return NextResponse.json({ ok: results.every(r => r.ok), periodYm, results, heldBusinessIds: [...held] })
   } catch (e) {
     logEvent('error', 'payroll_cron_failed', errorMeta(e))
     return NextResponse.json({ error: (e as Error).message }, { status: 500 })

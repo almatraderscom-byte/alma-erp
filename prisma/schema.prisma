@@ -721,6 +721,8 @@ model PayrollAutomationSetting {
   id                    String   @id @default("global")
   enabled               Boolean  @default(true)
   dayOfMonth            Int      @default(10)
+  /// Businesses temporarily excluded from payroll runs (owner: Trading is off).
+  heldBusinessIds       String[] @default([])
   timezone              String   @default("Asia/Dhaka")
   retryAfterMinutes     Int      @default(60)
   notifyAdminsOnFailure Boolean  @default(true)

@@ -26,7 +26,12 @@ export async function PATCH(req: NextRequest) {
     timezone: string
     retryAfterMinutes: number
     notifyAdminsOnFailure: boolean
+    heldBusinessIds: string[]
   }>
+  const VALID_BUSINESS = new Set(['ALMA_LIFESTYLE', 'CREATIVE_DIGITAL_IT', 'ALMA_TRADING'])
+  const held = body.heldBusinessIds === undefined
+    ? undefined
+    : [...new Set(body.heldBusinessIds.map(String).filter(b => VALID_BUSINESS.has(b)))]
   const day = body.dayOfMonth === undefined ? undefined : Math.min(28, Math.max(1, Number(body.dayOfMonth)))
   const setting = await prisma.payrollAutomationSetting.upsert({
     where: { id: 'global' },
@@ -36,6 +41,7 @@ export async function PATCH(req: NextRequest) {
       ...(body.timezone !== undefined ? { timezone: body.timezone || 'Asia/Dhaka' } : {}),
       ...(body.retryAfterMinutes !== undefined ? { retryAfterMinutes: Math.max(5, Number(body.retryAfterMinutes)) } : {}),
       ...(body.notifyAdminsOnFailure !== undefined ? { notifyAdminsOnFailure: body.notifyAdminsOnFailure } : {}),
+      ...(held !== undefined ? { heldBusinessIds: held } : {}),
       updatedById: ctx.userId,
     },
     create: {
@@ -45,6 +51,7 @@ export async function PATCH(req: NextRequest) {
       timezone: body.timezone || 'Asia/Dhaka',
       retryAfterMinutes: body.retryAfterMinutes ?? 60,
       notifyAdminsOnFailure: body.notifyAdminsOnFailure ?? true,
+      heldBusinessIds: held ?? [],
       updatedById: ctx.userId,
     },
   })

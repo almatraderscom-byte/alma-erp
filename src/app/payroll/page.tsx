@@ -106,7 +106,7 @@ export default function PayrollPage() {
   const [orphanLedgerCount, setOrphanLedgerCount] = useState(0)
   const [walletLoading, setWalletLoading] = useState(false)
   const [walletError, setWalletError] = useState<string | null>(null)
-  const [automation, setAutomation] = useState<{ enabled: boolean; dayOfMonth: number; timezone: string } | null>(null)
+  const [automation, setAutomation] = useState<{ enabled: boolean; dayOfMonth: number; timezone: string; heldBusinessIds?: string[] } | null>(null)
   const [preview, setPreview] = useState<{ totalPreviewSalary: number; alreadyAccruedCount: number; employees: Array<{ employeeId: string; name: string; salary: number; alreadyAccrued: boolean }> } | null>(null)
   const [history, setHistory] = useState<Array<{ id: string; periodYm: string; status: string; trigger: string; createdCount: number; skippedCount: number; createdAt: string; error?: string | null }>>([])
   const [review, setReview] = useState<{ id: string; action: 'APPROVE' | 'REJECT'; type: string; requestedAmount: number; approvedAmount: string; transactionId: string; paidVia: string } | null>(null)
@@ -176,7 +176,7 @@ export default function PayrollPage() {
       safeFetchJsonWithToast<Record<string, unknown>>(`/api/payroll/wallet/accruals/history?business_id=${business.id}`, { cache: 'no-store', toastOnError: false }),
     ])
     if (settingRes.ok) {
-      const s = unwrapApiData<{ setting: { enabled: boolean; dayOfMonth: number; timezone: string } }>(settingRes.data as Record<string, unknown>)
+      const s = unwrapApiData<{ setting: { enabled: boolean; dayOfMonth: number; timezone: string; heldBusinessIds?: string[] } }>(settingRes.data as Record<string, unknown>)
       setAutomation(s.setting)
     }
     if (previewRes.ok) setPreview(unwrapApiData(previewRes.data as Record<string, unknown>) as NonNullable<typeof preview>)
@@ -415,6 +415,19 @@ export default function PayrollPage() {
     toast.success('Monthly salary accrual checked')
     void loadWallets(true)
     void loadAutomation()
+  }
+
+  async function toggleBusinessHold(businessId: string) {
+    const current = automation?.heldBusinessIds ?? []
+    const next = current.includes(businessId) ? current.filter(b => b !== businessId) : [...current, businessId]
+    const result = await safeFetchJsonWithToast<{ setting: NonNullable<typeof automation> }>('/api/payroll/wallet/automation', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ heldBusinessIds: next }),
+    })
+    if (!result.ok) return
+    setAutomation(result.data.setting)
+    toast.success(next.includes(businessId) ? 'বিজনেস হোল্ডে — অটো/ম্যানুয়াল কোনো বেতন-রান চলবে না' : 'হোল্ড তোলা হয়েছে — বেতন-রান আবার চলবে')
   }
 
   async function toggleAutomation(enabled: boolean) {
@@ -1043,6 +1056,25 @@ export default function PayrollPage() {
                       {automation?.enabled ? 'বন্ধ করুন' : 'চালু করুন'}
                     </Button>
                     <Button size="xs" variant="gold" onClick={() => void runAccrual()}>এখনই চালান</Button>
+                  </div>
+                </div>
+                <div className="mt-4 border-t border-white/[0.06] pt-3">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-muted">বিজনেস-ধরে হোল্ড</p>
+                  <p className="mt-1 text-[10px] text-muted">হোল্ডে থাকা বিজনেসে অটো বা ম্যানুয়াল — কোনো বেতন-রানই চলবে না।</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {([['ALMA_LIFESTYLE', 'Alma Lifestyle'], ['ALMA_TRADING', 'Alma Trading'], ['CREATIVE_DIGITAL_IT', 'CDIT']] as const).map(([id, label]) => {
+                      const heldNow = (automation?.heldBusinessIds ?? []).includes(id)
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => void toggleBusinessHold(id)}
+                          className={`rounded-full border px-3.5 py-1.5 text-[11px] font-bold transition ${heldNow ? 'border-red-400/60 bg-red-400/15 text-red-400' : 'border-white/[0.1] bg-card/85 text-muted hover:border-gold/40'}`}
+                        >
+                          {label}{heldNow ? ' · হোল্ডে' : ''}
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
               </Card>
