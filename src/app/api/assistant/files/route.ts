@@ -20,5 +20,15 @@ export async function GET(req: NextRequest) {
   }
 
   const url = await agentStorageSignedUrl(path, 3600)
+
+  // redirect=1 → serve the file directly (302 to a fresh signed URL, as a
+  // download). This lets the agent hand the owner SHORT stable links instead of
+  // 300-char signed JWTs — the head once corrupted a JWT while copying it into
+  // a reply, producing a dead link; a short link has nothing to mistype.
+  if (req.nextUrl.searchParams.get('redirect')) {
+    const name = path.split('/').pop() ?? 'file'
+    const sep = url.includes('?') ? '&' : '?'
+    return Response.redirect(`${url}${sep}download=${encodeURIComponent(name)}`, 302)
+  }
   return Response.json({ url })
 }
