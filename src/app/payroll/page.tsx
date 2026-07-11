@@ -390,6 +390,17 @@ export default function PayrollPage() {
     }
   }
 
+  async function recoverAdvance(employeeId: string) {
+    const result = await safeFetchJsonWithToast<{ recovered: number; remaining: number }>('/api/payroll/wallet/advance-recovery', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ employee_id: employeeId, business_id: business.id }),
+    })
+    if (!result.ok) return
+    toast.success(`৳ ${result.data.recovered.toLocaleString('en-BD')} অগ্রিম কাটা হয়েছে${result.data.remaining > 0 ? ` · বাকি ৳ ${result.data.remaining.toLocaleString('en-BD')}` : ' · সম্পূর্ণ পরিশোধ'}`)
+    void loadWallets(true)
+  }
+
   async function runAccrual() {
     const result = await safeFetchJsonWithToast('/api/payroll/wallet/accruals/run', {
       method: 'POST',
@@ -656,12 +667,32 @@ export default function PayrollPage() {
                     const paid = paidAmt > 0 && due.length === 0
                     const dueLabel = due.map(m => periodYmBn(m) ?? m).join(', ')
                     const dueAmount = due.length * (w.monthlySalary ?? 0)
+                    const advanceDue = w.summary?.outstandingAdvance ?? 0
+                    const walletBalance = w.summary?.currentBalance ?? 0
                     return (
                       <div key={`${w.businessId}:${w.employeeId}`} className="flex items-center gap-3 px-4 py-3">
                         <Avatar name={w.name} size="sm" />
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-[13px] font-semibold text-cream">{w.name}</p>
                           <p className="mt-0.5 truncate font-mono text-[10px] text-muted">{w.employeeId}</p>
+                          {advanceDue > 0 && (
+                            <span className="mt-1 inline-flex items-center gap-2 text-[10px] font-semibold text-red-400">
+                              অগ্রিম বকেয়া ৳ {advanceDue.toLocaleString('en-BD')}
+                              {walletBalance > 0 && (
+                                <button
+                                  type="button"
+                                  className="rounded-full border border-red-400/50 px-2 py-0.5 text-[10px] font-bold text-red-400 hover:bg-red-400 hover:text-white"
+                                  onClick={() => {
+                                    if (window.confirm(`${w.name} — ওয়ালেট ব্যালেন্স থেকে অগ্রিম বকেয়া (সর্বোচ্চ ৳ ${Math.min(advanceDue, walletBalance).toLocaleString('en-BD')}) কেটে নেবেন?`)) {
+                                      void recoverAdvance(w.employeeId)
+                                    }
+                                  }}
+                                >
+                                  এখনই কাটুন
+                                </button>
+                              )}
+                            </span>
+                          )}
                         </div>
                         <div className="flex min-w-0 shrink items-center gap-1.5">
                           <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', paid ? 'bg-emerald-400' : 'bg-amber-500')} />
