@@ -153,7 +153,7 @@ enum AgentJSONValue: Decodable {
     }
 }
 
-/// One entry of the persisted Claude-style activity timeline (`t: 'think' | 'tool'`).
+/// One entry of the persisted Claude-style activity timeline (`t: 'think' | 'tool' | 'file'`).
 struct AgentTimelineEntryWire: Decodable {
     let t: String?
     let text: String?
@@ -163,6 +163,7 @@ struct AgentTimelineEntryWire: Decodable {
     let live: Bool?
     let input: AgentJSONValue?
     let result: String?
+    let kind: String?   // t=="file": document kind (markdown/html/…)
 }
 
 struct AgentMessageWire: Decodable {
@@ -318,6 +319,8 @@ struct AgentSSEEvent: Decodable {
     let options: [String]?
     let message: String?
     let error: String?
+    let title: String?          // artifact_saved
+    let artifactType: String?   // artifact_saved
 }
 
 // MARK: - UI models
@@ -360,6 +363,8 @@ struct AgentChatMessage: Identifiable, Equatable {
     enum TimelineEntry: Equatable {
         case think(String)
         case tool(id: String, name: String, ok: Bool?, live: Bool, inputPretty: String?, resultFull: String?)
+        /// A tool filed a document as a conversation artifact (id = artifact id).
+        case file(id: String, name: String)
     }
 
     /// One compact 44pt activity row inside the streaming turn (Claude parity).
@@ -379,10 +384,12 @@ struct AgentChatMessage: Identifiable, Equatable {
     enum TurnBlock: Identifiable, Equatable {
         case prose(id: String, text: String)
         case activity(ActivityBlock)
+        case file(id: String, artifactId: String, name: String)
         var id: String {
             switch self {
             case .prose(let id, _): return id
             case .activity(let a): return a.id
+            case .file(let id, _, _): return id
             }
         }
     }
@@ -471,6 +478,9 @@ struct AgentChatMessage: Identifiable, Equatable {
             if e.t == "tool" {
                 return .tool(id: e.id ?? "tl-\(wire.id)", name: e.name ?? "টুল", ok: e.ok, live: false,
                              inputPretty: e.input?.pretty(), resultFull: e.result)
+            }
+            if e.t == "file", let aid = e.id {
+                return .file(id: aid, name: e.name ?? "ডকুমেন্ট")
             }
             return nil
         }
@@ -631,6 +641,9 @@ struct AgentChatMessage: Identifiable, Equatable {
                 cur?.tools.append(Tool(id: id, name: name, ok: ok, preview: result.map { String($0.prefix(160)) },
                                        live: toolLive, inputPretty: input, resultFull: result))
                 if toolLive { cur?.live = true }
+            case .file:
+                // File cards render as their own row in the message body, not as a phase step.
+                continue
             }
         }
         if let c = cur { phases.append(c) }
@@ -1456,6 +1469,15 @@ final class AssistantVM {
                     messages[i].blocks, toolId: tid, ok: ev.success ?? true)
                 AgentChatMessage.refreshPhases(on: &messages[i], live: messages[i].text.isEmpty)
             }
+        case "artifact_saved":
+            // A tool filed a document (SEO report, research…) — drop a FILE CARD
+            // into the reply flow, Claude-style (web AgentApp parity).
+            ensureStreamingTail()
+            if let i = messages.lastIndex(where: { $0.isStreaming }), let aid = ev.id {
+                let name = ev.title ?? "ডকুমেন্ট"
+                messages[i].timeline.append(.file(id: aid, name: name))
+                messages[i].blocks.append(.file(id: "fb-\(messages[i].id)-\(aid)", artifactId: aid, name: name))
+            }
         case "confirm_card":
             ensureStreamingTail()
             if let i = messages.lastIndex(where: { $0.isStreaming }), let pid = ev.pendingActionId {
@@ -2035,7 +2057,7 @@ struct AgentMessageRow: View {
                     if !message.blocks.isEmpty {
                         // Claude composition — chronological prose ↔ compact rows;
                         // rows persist after settle (tap → sheets), prose never moves.
-                        AgentTurnBlocksView(message: message, pal: pal, onToolTap: onToolTap) { kind in
+                        AgentTurnBlocksView(message: message, pal: pal, vm: vm, onToolTap: onToolTap) { kind in
                             onActivitySheet(.init(message: message, kind: kind))
                         }
                     } else {
@@ -2080,6 +2102,16 @@ struct AgentMessageRow: View {
                                         .foregroundStyle(AgentPalette.coral.opacity(0.85))
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    // File cards for persisted turns (streaming turns render them
+                    // in-flow via TurnBlocks — skip here to avoid doubling).
+                    if message.blocks.isEmpty {
+                        ForEach(Array(message.timeline.enumerated()), id: \.offset) { _, e in
+                            if case .file(let aid, let name) = e {
+                                AgentArtifactFileCard(artifactId: aid, name: name, vm: vm, pal: pal)
                             }
                         }
                     }
@@ -2610,6 +2642,10 @@ struct AgentThoughtProcessSheet: View {
                                  input: input ?? tool?.inputPretty,
                                  output: result ?? tool?.resultFull ?? tool?.preview,
                                  isThought: false, failed: ok == false))
+            case .file(_, let name):
+                flushThink()
+                out.append(.init(icon: "doc.text", title: name, body: nil, input: nil, output: nil,
+                                 isThought: false, failed: false))
             }
         }
         flushThink()
@@ -3188,6 +3224,7 @@ struct AgentCompactActivityRow: View {
 struct AgentTurnBlocksView: View {
     let message: AgentChatMessage
     let pal: AgentPalette
+    let vm: AssistantVM
     let onToolTap: (AgentChatMessage.Tool) -> Void
     let onActivitySheet: (AgentActivitySheetRequest.Kind) -> Void
 
@@ -3206,6 +3243,8 @@ struct AgentTurnBlocksView: View {
                 switch block {
                 case .prose(let id, let text):
                     proseBlock(text, isTail: id == lastBlockId && message.isStreaming)
+                case .file(_, let artifactId, let name):
+                    AgentArtifactFileCard(artifactId: artifactId, name: name, vm: vm, pal: pal)
                 case .activity(let a):
                     if hidden.contains(a.id) {
                         if a.id == activityIds[hiddenCount - 1] {
@@ -5381,5 +5420,145 @@ extension AlmaTabBarController {
                 ("Costs", agentURL("/agent/costs")),
             ])
         return Self.darkNav(root: assistant, tabTitle: "Assistant", icon: "sparkles", largeTitles: false)
+    }
+}
+
+// MARK: - Artifact file card + viewer (web AgentArtifactsPanel parity)
+
+/// Claude-style FILE CARD — a tool filed a document (SEO report, research…);
+/// tap to open the native viewer with rendered markdown + share/copy.
+@available(iOS 17.0, *)
+struct AgentArtifactFileCard: View {
+    let artifactId: String
+    let name: String
+    let vm: AssistantVM
+    let pal: AgentPalette
+    @State private var showViewer = false
+
+    var body: some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            showViewer = true
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(AgentPalette.coral.opacity(0.14))
+                        .frame(width: 38, height: 38)
+                    Image(systemName: "doc.text")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(AgentPalette.coral)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .font(.system(size: 13.5, weight: .bold))
+                        .foregroundStyle(pal.ink)
+                        .lineLimit(1)
+                    Text("ডকুমেন্ট · খুলতে চাপুন")
+                        .font(.system(size: 11))
+                        .foregroundStyle(pal.muted)
+                }
+                Spacer(minLength: 8)
+                Text("খুলুন ›")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AgentPalette.coral)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 11)
+            .background(pal.card.opacity(pal.dark ? 0.75 : 0.9),
+                        in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(pal.borderSubtle, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, 2)
+        .sheet(isPresented: $showViewer) {
+            AgentArtifactViewerSheet(artifactId: artifactId, fallbackTitle: name, vm: vm)
+        }
+    }
+}
+
+/// Native artifact viewer — fetches the conversation's artifacts, renders the
+/// document (markdown), and offers the iOS share sheet (as a real .md file the
+/// owner can send a client) + copy.
+@available(iOS 17.0, *)
+struct AgentArtifactViewerSheet: View {
+    let artifactId: String
+    let fallbackTitle: String
+    let vm: AssistantVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @State private var artifact: AgentArtifactWire?
+    @State private var loadError: String?
+    @State private var shareURL: URL?
+    @State private var copied = false
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        NavigationStack {
+            Group {
+                if let a = artifact, let content = a.content {
+                    ScrollView {
+                        AgentMarkdownText(text: content, pal: pal)
+                            .padding(16)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                } else if let err = loadError {
+                    ContentUnavailableView("ফাইল খোলা গেল না", systemImage: "doc.questionmark",
+                                           description: Text(err))
+                } else {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .background(pal.bg0)
+            .navigationTitle(artifact?.title ?? fallbackTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("বন্ধ") { dismiss() }
+                }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button {
+                        UIPasteboard.general.string = artifact?.content ?? ""
+                        copied = true
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    } label: {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    }
+                    .disabled(artifact?.content == nil)
+                    if let url = shareURL {
+                        ShareLink(item: url) { Image(systemName: "square.and.arrow.up") }
+                    }
+                }
+            }
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        guard let cid = vm.conversationId else {
+            loadError = "কথোপকথন পাওয়া যায়নি"
+            return
+        }
+        do {
+            let rows: [AgentArtifactWire] = try await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/artifacts")
+            guard let a = rows.first(where: { $0.id == artifactId }) ?? rows.last else {
+                loadError = "ফাইলটা আর নেই"
+                return
+            }
+            artifact = a
+            // Write a real .md file so the share sheet hands the client a document.
+            if let content = a.content {
+                let safe = (a.title ?? fallbackTitle)
+                    .replacingOccurrences(of: "/", with: "-")
+                    .prefix(80)
+                let url = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("\(safe).md")
+                try? content.data(using: .utf8)?.write(to: url)
+                shareURL = url
+            }
+        } catch {
+            loadError = "লোড ব্যর্থ — নেটওয়ার্ক দেখে আবার চেষ্টা করুন"
+        }
     }
 }
