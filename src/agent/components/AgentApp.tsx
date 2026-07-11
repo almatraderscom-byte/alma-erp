@@ -177,6 +177,19 @@ function appendThinkToTimeline(tl: TimelineEntry[] | undefined, chunk: string): 
   return next
 }
 
+/** Visible reply text also joins the timeline so the thread can render the TRUE
+ * chronological flow (text → steps → text), matching the native app. */
+function appendTextToTimeline(tl: TimelineEntry[] | undefined, chunk: string): TimelineEntry[] {
+  const next = tl ? tl.slice() : []
+  const last = next[next.length - 1]
+  if (last && last.t === 'text') {
+    next[next.length - 1] = { t: 'text', text: last.text + chunk }
+  } else {
+    next.push({ t: 'text', text: chunk })
+  }
+  return next
+}
+
 function pushOrUpdateTool(
   tl: TimelineEntry[] | undefined,
   id: string,
@@ -820,7 +833,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         buf.pending = ''
         buf.flushScheduled = false
         setMessages((prev) => prev.map((m) =>
-          m.id === buf.msgId ? { ...m, text: m.text + chunk } : m,
+          m.id === buf.msgId
+            ? { ...m, text: m.text + chunk, timeline: appendTextToTimeline(m.timeline, chunk) }
+            : m,
         ))
       }
 

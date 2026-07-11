@@ -56,6 +56,53 @@ private func pulseTimeString(_ date: Date) -> String {
     return formatter.string(from: date)
 }
 
+/// Bangla (Bengali) digits for the owner-facing numbers — ২৪ not 24.
+private func banglaDigits(_ n: Int) -> String {
+    let map: [Character: Character] = [
+        "0": "০", "1": "১", "2": "২", "3": "৩", "4": "৪",
+        "5": "৫", "6": "৬", "7": "৭", "8": "৮", "9": "৯"
+    ]
+    return String(String(n).map { map[$0] ?? $0 })
+}
+
+// MARK: - Hub summary row (approvals + tasks)
+
+/// Compact second row: `অনুমোদন বাকি ২ · কাজ বাকি ১` — only the nonzero parts,
+/// with a small gold dot before each part. Renders nothing when both are zero.
+@available(iOS 16.1, *)
+private struct PulseHubSummaryRow: View {
+    let pendingApprovals: Int
+    let openTasks: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if pendingApprovals > 0 {
+                part("অনুমোদন বাকি \(banglaDigits(pendingApprovals))")
+            }
+            if pendingApprovals > 0 && openTasks > 0 {
+                Text("·")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(PulsePalette.textSecondary)
+            }
+            if openTasks > 0 {
+                part("কাজ বাকি \(banglaDigits(openTasks))")
+            }
+        }
+    }
+
+    private func part(_ text: String) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(PulsePalette.gold)
+                .frame(width: 4, height: 4)
+            Text(text)
+                .font(.system(size: 11, weight: .regular))
+                .foregroundColor(PulsePalette.textSecondary)
+                .lineLimit(1)
+        }
+    }
+}
+
 // MARK: - Lock screen banner
 
 @available(iOS 16.1, *)
@@ -77,12 +124,18 @@ private struct PulseLockScreenView: View {
                     .foregroundColor(PulsePalette.textSecondary)
                     .lineLimit(2)
                     .minimumScaleFactor(0.85)
+                if (context.state.pendingApprovals ?? 0) > 0 || (context.state.openTasks ?? 0) > 0 {
+                    PulseHubSummaryRow(
+                        pendingApprovals: context.state.pendingApprovals ?? 0,
+                        openTasks: context.state.openTasks ?? 0
+                    )
+                }
             }
 
             Spacer(minLength: 8)
 
             VStack(alignment: .trailing, spacing: 2) {
-                Text("\(context.state.ordersToday)")
+                Text(banglaDigits(context.state.ordersToday))
                     .font(.system(size: 30, weight: .heavy, design: .rounded))
                     .foregroundColor(PulsePalette.textPrimary)
                 Text(pulseTimeString(context.state.updatedAt))
@@ -134,7 +187,7 @@ struct PulseLiveActivity: Widget {
                 }
                 DynamicIslandExpandedRegion(.center) {
                     VStack(spacing: 2) {
-                        Text("\(context.state.ordersToday)")
+                        Text(banglaDigits(context.state.ordersToday))
                             .font(.system(size: 26, weight: .heavy, design: .rounded))
                             .foregroundColor(PulsePalette.textPrimary)
                         Text(context.state.statusLine)
@@ -145,14 +198,32 @@ struct PulseLiveActivity: Widget {
                     }
                     .frame(maxWidth: .infinity)
                 }
+                DynamicIslandExpandedRegion(.bottom) {
+                    if (context.state.pendingApprovals ?? 0) > 0 || (context.state.openTasks ?? 0) > 0 {
+                        PulseHubSummaryRow(
+                            pendingApprovals: context.state.pendingApprovals ?? 0,
+                            openTasks: context.state.openTasks ?? 0
+                        )
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 2)
+                    }
+                }
             } compactLeading: {
                 Text("A")
                     .font(.system(size: 14, weight: .heavy, design: .rounded))
                     .foregroundColor(PulsePalette.gold)
             } compactTrailing: {
-                Text("\(context.state.ordersToday)")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundColor(PulsePalette.textPrimary)
+                // Tiny gold dot = approvals waiting (attention hint).
+                HStack(spacing: 3) {
+                    Text(banglaDigits(context.state.ordersToday))
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundColor(PulsePalette.textPrimary)
+                    if (context.state.pendingApprovals ?? 0) > 0 {
+                        Circle()
+                            .fill(PulsePalette.gold)
+                            .frame(width: 5, height: 5)
+                    }
+                }
             } minimal: {
                 Text("A")
                     .font(.system(size: 14, weight: .heavy, design: .rounded))

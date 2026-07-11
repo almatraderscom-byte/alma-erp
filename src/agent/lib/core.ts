@@ -950,6 +950,7 @@ export async function* runAgentTurn(
   // Stored in usage.timeline; NEVER replayed to the model, so it costs zero tokens.
   type TimelineEntry =
     | { t: 'think'; text: string }
+    | { t: 'text'; text: string }
     | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string }
   const timeline: TimelineEntry[] = []
   const compactTimelineInput = (input: unknown): unknown => {
@@ -1068,6 +1069,18 @@ export async function* runAgentTurn(
 
       // Record this round's reasoning as a timeline segment BEFORE its tool calls.
       if (iterThinking.trim()) timeline.push({ t: 'think', text: iterThinking.trim().slice(0, 4000) })
+      // And the round's VISIBLE text (Claude emits thinking → text → tool_use), so
+      // the persisted timeline preserves the true text↔step order — the thread
+      // renders steps BELOW the message that preceded them (owner ask 2026-07-11),
+      // matching the native app, instead of piling every step above the reply.
+      {
+        const roundText = currentBlocks
+          .filter((b): b is Extract<CollectedBlock, { type: 'text' }> => b.type === 'text')
+          .map((b) => b.text)
+          .join('')
+          .trim()
+        if (roundText) timeline.push({ t: 'text', text: roundText.slice(0, 6000) })
+      }
 
       const toolUseBlocks = currentBlocks.filter(
         (b): b is Extract<CollectedBlock, { type: 'tool_use' }> => b.type === 'tool_use',

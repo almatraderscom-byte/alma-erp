@@ -1,4 +1,41 @@
 PODS:
+  - AgoraInfra_iOS (1.3.5)
+  - AgoraRtcEngine_iOS (4.6.2):
+    - AgoraRtcEngine_iOS/AIAEC (= 4.6.2)
+    - AgoraRtcEngine_iOS/AIAECLL (= 4.6.2)
+    - AgoraRtcEngine_iOS/AINS (= 4.6.2)
+    - AgoraRtcEngine_iOS/AINSLL (= 4.6.2)
+    - AgoraRtcEngine_iOS/AudioBeauty (= 4.6.2)
+    - AgoraRtcEngine_iOS/ClearVision (= 4.6.2)
+    - AgoraRtcEngine_iOS/ContentInspect (= 4.6.2)
+    - AgoraRtcEngine_iOS/FaceCapture (= 4.6.2)
+    - AgoraRtcEngine_iOS/FaceDetection (= 4.6.2)
+    - AgoraRtcEngine_iOS/LipSync (= 4.6.2)
+    - AgoraRtcEngine_iOS/ReplayKit (= 4.6.2)
+    - AgoraRtcEngine_iOS/RtcBasic (= 4.6.2)
+    - AgoraRtcEngine_iOS/SpatialAudio (= 4.6.2)
+    - AgoraRtcEngine_iOS/VideoAv1CodecEnc (= 4.6.2)
+    - AgoraRtcEngine_iOS/VideoCodecEnc (= 4.6.2)
+    - AgoraRtcEngine_iOS/VirtualBackground (= 4.6.2)
+    - AgoraRtcEngine_iOS/VQA (= 4.6.2)
+  - AgoraRtcEngine_iOS/AIAEC (4.6.2)
+  - AgoraRtcEngine_iOS/AIAECLL (4.6.2)
+  - AgoraRtcEngine_iOS/AINS (4.6.2)
+  - AgoraRtcEngine_iOS/AINSLL (4.6.2)
+  - AgoraRtcEngine_iOS/AudioBeauty (4.6.2)
+  - AgoraRtcEngine_iOS/ClearVision (4.6.2)
+  - AgoraRtcEngine_iOS/ContentInspect (4.6.2)
+  - AgoraRtcEngine_iOS/FaceCapture (4.6.2)
+  - AgoraRtcEngine_iOS/FaceDetection (4.6.2)
+  - AgoraRtcEngine_iOS/LipSync (4.6.2)
+  - AgoraRtcEngine_iOS/ReplayKit (4.6.2)
+  - AgoraRtcEngine_iOS/RtcBasic (4.6.2):
+    - AgoraInfra_iOS (= 1.3.5)
+  - AgoraRtcEngine_iOS/SpatialAudio (4.6.2)
+  - AgoraRtcEngine_iOS/VideoAv1CodecEnc (4.6.2)
+  - AgoraRtcEngine_iOS/VideoCodecEnc (4.6.2)
+  - AgoraRtcEngine_iOS/VirtualBackground (4.6.2)
+  - AgoraRtcEngine_iOS/VQA (4.6.2)
   - AparajitaCapacitorBiometricAuth (9.0.0):
     - Capacitor
   - Capacitor (7.6.6):
@@ -76,6 +113,7 @@ PODS:
     - OneSignalXCFramework/OneSignalOutcomes
 
 DEPENDENCIES:
+  - AgoraRtcEngine_iOS (~> 4.5)
   - "AparajitaCapacitorBiometricAuth (from `../../node_modules/@aparajita/capacitor-biometric-auth`)"
   - "Capacitor (from `../../node_modules/@capacitor/ios`)"
   - "CapacitorApp (from `../../node_modules/@capacitor/app`)"
@@ -91,6 +129,8 @@ DEPENDENCIES:
 
 SPEC REPOS:
   trunk:
+    - AgoraInfra_iOS
+    - AgoraRtcEngine_iOS
     - IONGeolocationLib
     - OneSignalXCFramework
 
@@ -121,6 +161,8 @@ EXTERNAL SOURCES:
     :path: "../../node_modules/@onesignal/capacitor-plugin"
 
 SPEC CHECKSUMS:
+  AgoraInfra_iOS: 0bf927aad4fc425b24ca5d094b333361960f5cb0
+  AgoraRtcEngine_iOS: 11f37dd846d6194a5268b084b99102e5b6aff0de
   AparajitaCapacitorBiometricAuth: 927af2690bc39fbebac98e58ce4e4d2d6178f335
   Capacitor: 05a1e43920a77b2607b6d7502734f70d182b01a8
   CapacitorApp: 6b89831465d6bc99bc89779b1b7f5327e33011ce
@@ -136,6 +178,6 @@ SPEC CHECKSUMS:
   OnesignalCapacitorPlugin: 4fa3fe705beed7295290b24025e12b7f5bc1ba7e
   OneSignalXCFramework: 2f46ff87ccefd9afe8e3b5f9fe357072191205ff
 
-PODFILE CHECKSUM: 2411b60673d1dc618d5190c11d7d81a87a5dad45
+PODFILE CHECKSUM: dba14997a9bf59268b57ff675dbea043b5bbf0bf
 
 COCOAPODS: 1.12.1

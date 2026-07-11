@@ -13,6 +13,7 @@
  * critical parts himself.
  */
 import { prisma } from '@/lib/prisma'
+import { agentStorageDownload } from '@/agent/lib/storage'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -82,8 +83,13 @@ const check_website_seo_audit: AgentTool = {
   description:
     'Check a website SEO audit started with run_website_seo_audit: status (approved=crawling, ' +
     'executed=done, failed), the 0-100 score, issue counts by severity, pages crawled, and the storage ' +
-    'paths of the report (report.md) + full findings (audit.json). Read the report before summarizing to ' +
-    'the owner. Never claim the audit is done before status=executed.',
+    'paths of the report (report.md) + full findings (audit.json).\n' +
+    'To READ the FULL report, call this tool again with read:"report" — it returns the whole Bangla ' +
+    'report.md text (this is the ONLY way; the storage paths are private — a workbench curl/cat can ' +
+    'NEVER fetch them, do not try). After status=executed you MUST paste the report (or a faithful ' +
+    'full summary: score, every critical/high issue, prioritized fixes) INTO YOUR REPLY to the owner — ' +
+    'never say "done" without delivering the report content. Never claim the audit is done before ' +
+    'status=executed.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -92,6 +98,13 @@ const check_website_seo_audit: AgentTool = {
         description:
           'The id from run_website_seo_audit. If you no longer have it (e.g. a new turn), omit it — ' +
           'the tool returns the LATEST audit for this conversation automatically.',
+      },
+      read: {
+        type: 'string',
+        enum: ['report', 'json'],
+        description:
+          'Optional: also return the FULL artifact content — "report" = the Bangla report.md text, ' +
+          '"json" = the raw audit.json findings. Use "report" once status=executed, before replying.',
       },
     },
     required: [],
@@ -124,6 +137,34 @@ const check_website_seo_audit: AgentTool = {
       if (!action || action.type !== 'seo_audit') {
         return { success: false, error: 'কোনো SEO audit পাওয়া যায়নি — আগে run_website_seo_audit চালাও।' }
       }
+
+      // read:"report"|"json" → fetch the full artifact from private storage so the
+      // head can deliver the WHOLE report (the 1500-char preview in result is not
+      // enough, and nothing else — workbench included — can reach the bucket).
+      let artifactText: string | null = null
+      const read = input.read === 'report' || input.read === 'json' ? input.read : null
+      if (read) {
+        if (action.status !== 'executed') {
+          return {
+            success: false,
+            error: `Audit এখনো ${action.status} — status "executed" হওয়ার পর read:"${read}" দিয়ে ডাকো।`,
+          }
+        }
+        const artifacts = ((action.result as Record<string, unknown> | null)?.artifacts ?? []) as string[]
+        const wanted = artifacts.find((a) => (read === 'report' ? a.endsWith('report.md') : a.endsWith('audit.json')))
+        if (!wanted) return { success: false, error: 'Artifact path পাওয়া যায়নি result-এ।' }
+        try {
+          const buf = await agentStorageDownload(wanted)
+          // report.md is small (tens of KB); audit.json can be bigger — cap both
+          // hard so a huge crawl can't blow the context.
+          const cap = read === 'report' ? 60_000 : 40_000
+          const text = buf.toString('utf8')
+          artifactText = text.length > cap ? `${text.slice(0, cap)}\n…[truncated ${text.length - cap} chars]` : text
+        } catch (err) {
+          return { success: false, error: `Artifact পড়া গেল না: ${String(err)}` }
+        }
+      }
+
       return {
         success: true,
         data: {
@@ -131,6 +172,7 @@ const check_website_seo_audit: AgentTool = {
           status: action.status, // approved = still crawling, executed = done, failed = error
           summary: action.summary,
           result: action.result ?? null,
+          ...(artifactText != null ? { [read === 'report' ? 'reportMarkdown' : 'auditJson']: artifactText } : {}),
         },
       }
     } catch (err) {

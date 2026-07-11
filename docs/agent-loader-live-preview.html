@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>ALMA — Claude Official Starburst Loader</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --cream: #EDE3DA;
+      --fill: #d97757;
+      --ink: #1a1a2e;
+      --muted: #6b7280;
+      --card: #ffffff;
+      --border: rgba(0,0,0,.07);
+      --chat-bg: #f7f4ef;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --ink: #f3f4f6;
+        --muted: #9ca3af;
+        --card: #1c1c22;
+        --border: rgba(255,255,255,.08);
+        --chat-bg: #141418;
+      }
+      body { background: #0f0f12; }
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+      background: #FAF9F6;
+      color: var(--ink);
+      min-height: 100dvh;
+      padding: 20px 16px 48px;
+    }
+    .wrap { max-width: 520px; margin: 0 auto; }
+    h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+    .sub { font-size: 13px; color: var(--muted); line-height: 1.55; margin-bottom: 22px; }
+    .hero { text-align: center; margin-bottom: 18px; }
+    .cream-box {
+      display: inline-block;
+      background: var(--cream);
+      border-radius: 18px;
+      padding: 32px;
+      margin-bottom: 10px;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,.04);
+    }
+    .status {
+      font-size: 15px; font-weight: 500; color: var(--muted);
+      position: relative; display: inline-block;
+    }
+    .status.shimmer {
+      background: linear-gradient(90deg, var(--muted) 0%, var(--fill) 45%, var(--muted) 90%);
+      background-size: 220% 100%;
+      -webkit-background-clip: text; background-clip: text;
+      color: transparent;
+      animation: shimmer 2.2s linear infinite;
+    }
+    @keyframes shimmer { to { background-position: 220% 0; } }
+    .phase { font-size: 11px; color: var(--fill); margin-top: 6px; font-weight: 600; letter-spacing: .02em; }
+
+    /* Claude chat strip */
+    .chat-row {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--chat-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+    }
+    .verb {
+      font-size: 15px; font-weight: 500; color: var(--fill);
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+    .tool-pill {
+      margin-left: auto;
+      font-size: 11px; color: var(--muted);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 3px 9px;
+      font-family: ui-monospace, Menlo, monospace;
+    }
+    .brand {
+      font-size: 12px; font-weight: 500; color: var(--muted);
+      margin-bottom: 18px; display: flex; align-items: center; gap: 8px;
+    }
+    .btns { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 14px; }
+    button.mode {
+      border: 1px solid var(--border); border-radius: 999px;
+      padding: 7px 13px; font-size: 12px; font-weight: 600;
+      cursor: pointer; background: var(--card); color: var(--ink);
+    }
+    button.mode.on { background: var(--fill); color: #fff; border-color: transparent; }
+    label.toggle {
+      display: flex; align-items: center; gap: 9px;
+      font-size: 13px; color: var(--muted); margin-bottom: 16px; cursor: pointer;
+    }
+    .spec {
+      font-size: 11px; color: var(--muted); line-height: 1.6;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 12px 14px;
+    }
+    .spec b { color: var(--ink); font-weight: 600; }
+    svg.loader { display: block; overflow: visible; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Claude official starburst — live</h1>
+    <p class="sub">Anthropic organic SVG (#d97757) + fast fist↔open breathe (mut→খোলা) + hand line-boil. Thinking = Researching same motion. Writing unchanged.</p>
+
+    <div class="hero" id="unlock">
+      <div class="cream-box">
+        <svg id="heroSvg" class="loader" width="200" height="200" viewBox="0 0 100 100" aria-hidden></svg>
+      </div>
+      <div class="status shimmer" id="status">Thinking… · 0s</div>
+      <div class="phase" id="phase">Mut↔খোলা breathe + hand-boil</div>
+    </div>
+
+    <div class="chat-row">
+      <svg id="inlineSvg" class="loader" width="28" height="28" viewBox="0 0 100 100" aria-hidden></svg>
+      <span class="verb" id="verb">Thinking</span>
+      <span class="tool-pill" id="toolPill" hidden>get_all_staff</span>
+    </div>
+
+    <div class="brand">
+      <svg id="miniSvg" class="loader" width="16" height="16" viewBox="0 0 100 100" aria-hidden></svg>
+      <span>ALMA · Gemini</span>
+    </div>
+
+    <div class="btns">
+      <button class="mode on" data-mode="thinking">Thinking</button>
+      <button class="mode" data-mode="researching">Researching</button>
+      <button class="mode" data-mode="tool_search">Tool search</button>
+      <button class="mode" data-mode="writing">Writing</button>
+    </div>
+
+    <label class="toggle"><input type="checkbox" id="auto" checked /> Auto-cycle every 10s</label>
+
+    <div class="spec" id="spec"></div>
+  </div>
+
+<script>
+(() => {
+  /** Official Anthropic starburst — github.com/openkaiden/kaiden commit b7a67a5 */
+  const BURST = 'm19.6 66.5 19.7-11 .3-1-.3-.5h-1l-3.3-.2-11.2-.3L14 53l-9.5-.5-2.4-.5L0 49l.2-1.5 2-1.3 2.9.2 6.3.5 9.5.6 6.9.4L38 49.1h1.6l.2-.7-.5-.4-.4-.4L29 41l-10.6-7-5.6-4.1-3-2-1.5-2-.6-4.2 2.7-3 3.7.3.9.2 3.7 2.9 8 6.1L37 36l1.5 1.2.6-.4.1-.3-.7-1.1L33 25l-6-10.4-2.7-4.3-.7-2.6c-.3-1-.4-2-.4-3l3-4.2L28 0l4.2.6L33.8 2l2.6 6 4.1 9.3L47 29.9l2 3.8 1 3.4.3 1h.7v-.5l.5-7.2 1-8.7 1-11.2.3-3.2 1.6-3.8 3-2L61 2.6l2 2.9-.3 1.8-1.1 7.7L59 27.1l-1.5 8.2h.9l1-1.1 4.1-5.4 6.9-8.6 3-3.5L77 13l2.3-1.8h4.3l3.1 4.7-1.4 4.9-4.4 5.6-3.7 4.7-5.3 7.1-3.2 5.7.3.4h.7l12-2.6 6.4-1.1 7.6-1.3 3.5 1.6.4 1.6-1.4 3.4-8.2 2-9.6 2-14.3 3.3-.2.1.2.3 6.4.6 2.8.2h6.8l12.6 1 3.3 2 1.9 2.7-.3 2-5.1 2.6-6.8-1.6-16-3.8-5.4-1.3h-.8v.4l4.6 4.5 8.3 7.5L89 80.1l.5 2.4-1.3 2-1.4-.2-9.2-7-3.6-3-8-6.8h-.5v.7l1.8 2.7 9.8 14.7.5 4.5-.7 1.4-2.6 1-2.7-.6-5.8-8-6-9-4.7-8.2-.5.4-2.9 30.2-1.3 1.5-3 1.2-2.5-2-1.4-3 1.4-6.2 1.6-8 1.3-6.4 1.2-7.9.7-2.6v-.2H49L43 72l-9 12.3-7.2 7.6-1.7.7-3-1.5.3-2.8L24 86l10-12.8 6-7.9 4-4.6-.1-.5h-.3L17.2 77.4l-4.7.6-2-2 .2-3 1-1 8-5.5Z'
+  const FILL = '#d97757'
+  const CREAM = '#EDE3DA'
+  const BOIL = [-0.028, 0.022, -0.014, 0.032, -0.024, 0.026, -0.018, 0.02]
+
+  /** Thinking + Researching share Anthropic "fist→open hand" pulse */
+  const THINK_LIKE = {
+    rot: 0.004,
+    breathe: 0.30,           // scale 0.70 (mut) ↔ 1.30 (খোলা হাত)
+    breatheSpd: 0.092,       // ~1.14s cycle — slightly slower sweet spot
+    boil: 12.5,
+    boilInterval: 78,        // ms between line-boil frames
+    dotMix: 0,
+    rampSec: 0,
+    hapStart: 20,
+    hapGap: 1500, hapTick: 5, hapFreq: 310,
+  }
+
+  const MODES = {
+    thinking: {
+      ...THINK_LIKE,
+      label: 'Thinking',
+      status: s => `Thinking… · ${s}s`,
+      phase: () => 'Mut↔খোলা fast breathe + hand-boil',
+      tool: null,
+      spec: '<b>Thinking</b> — হাত মুঠি↔খোলার মতো দ্রুত ছোট-বড় + hand-drawn line-boil (Anthropic style)।',
+    },
+    researching: {
+      ...THINK_LIKE,
+      label: 'Researching',
+      status: s => `Researching… · ${s}s`,
+      phase: () => 'Same as Thinking — mut↔খোলা + boil',
+      tool: null,
+      spec: '<b>Researching</b> — Thinking-এর মতোই একই animation।',
+    },
+    tool_search: {
+      label: 'Using alma-erp',
+      status: () => 'Using alma-erp…',
+      phase: () => 'Dot ring + spin (tool call)',
+      tool: 'get_all_staff',
+      rot: 0.062,
+      breatheBase: 0.04, breatheFull: 0.06,
+      breatheSpdBase: 0.05, breatheSpdFull: 0.055,
+      boilBase: 2, boilFull: 3.5,
+      dotMix: 1,
+      rampSec: 0,
+      hapStart: 16,
+      hapGap: 1100, hapTick: 7, hapFreq: 400,
+      spec: '<b>Tool search</b> — screen recording: "Using alma-erp…" + dot ring ঘোরে।',
+    },
+    writing: {
+      label: 'Writing',
+      status: () => 'Writing…',
+      phase: () => 'Fast pulse — text streaming',
+      tool: null,
+      rot: 0.015,
+      breatheBase: 0.10, breatheFull: 0.20,
+      breatheSpdBase: 0.075, breatheSpdFull: 0.095,
+      boilBase: 3, boilFull: 5,
+      dotMix: 0,
+      rampSec: 0,
+      hapStart: 14,
+      hapGap: 750, hapTick: 4, hapFreq: 450,
+      spec: '<b>Writing</b> — দ্রুত breathe pulse; haptic একটু ঘন (stream feel)।',
+    },
+  }
+
+  let mode = 'thinking', secs = 0, autoCycle = true
+  let boilFrame = 0, lastBoil = 0
+  const cur = { rot: 0, phase: 0, dotMix: 0 }
+  const filterId = 'boil-' + Math.random().toString(36).slice(2, 8)
+  let audioCtx = null, hapTimer = null, secTimer = null, autoTimer = null
+
+  const heroSvg = document.getElementById('heroSvg')
+  const inlineSvg = document.getElementById('inlineSvg')
+  const miniSvg = document.getElementById('miniSvg')
+  const statusEl = document.getElementById('status')
+  const phaseEl = document.getElementById('phase')
+  const verbEl = document.getElementById('verb')
+  const toolPill = document.getElementById('toolPill')
+  const specEl = document.getElementById('spec')
+
+  function lerp(a, b, t) { return a + (b - a) * t }
+  function clamp01(x) { return Math.max(0, Math.min(1, x)) }
+
+  function ramp() {
+    const m = MODES[mode]
+    if (m.rampSec <= 0) return 1
+    if (secs < m.rampSec) return 0
+    return clamp01((secs - m.rampSec) / 1.2)
+  }
+
+  function params() {
+    const m = MODES[mode]
+    const isThink = mode === 'thinking' || mode === 'researching'
+    return {
+      rot: m.rot,
+      breathe: isThink ? m.breathe : lerp(m.breatheBase ?? m.breathe, m.breatheFull ?? m.breathe, 1),
+      breatheSpd: isThink ? m.breatheSpd : lerp(m.breatheSpdBase ?? m.breatheSpd, m.breatheSpdFull ?? m.breatheSpd, 1),
+      boil: isThink ? m.boil : lerp(m.boilBase ?? m.boil, m.boilFull ?? m.boil, 1),
+      boilInterval: m.boilInterval ?? 85,
+      dotMix: lerp(cur.dotMix, m.dotMix, 0.1),
+    }
+  }
+
+  function ensureFilter(svg, scale) {
+    let defs = svg.querySelector('defs')
+    if (!defs) { defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs'); svg.prepend(defs) }
+    let f = defs.querySelector('#' + filterId)
+    if (!f) {
+      f = document.createElementNS('http://www.w3.org/2000/svg', 'filter')
+      f.id = filterId
+      f.setAttribute('x', '-22%'); f.setAttribute('y', '-22%')
+      f.setAttribute('width', '144%'); f.setAttribute('height', '144%')
+      f.innerHTML = `<feTurbulence type="fractalNoise" baseFrequency="0.018" numOctaves="2" seed="2" result="n"/>
+        <feDisplacementMap in="SourceGraphic" in2="n" scale="${scale}" xChannelSelector="R" yChannelSelector="G"/>`
+      defs.appendChild(f)
+    }
+    const turb = f.querySelector('feTurbulence')
+    const disp = f.querySelector('feDisplacementMap')
+    const off = BOIL[boilFrame]
+    turb.setAttribute('baseFrequency', String(Math.max(0.006, 0.018 + off)))
+    turb.setAttribute('seed', String((boilFrame * 11 + 3) % 97))
+    disp.setAttribute('scale', String(scale + Math.sin(performance.now() * 0.013) * 2.8))
+  }
+
+  function drawDots(g, mix, rot) {
+    if (mix < 0.03) return
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2 - Math.PI / 2 + rot
+      const cx = 50 + 35 * Math.cos(a), cy = 50 + 35 * Math.sin(a)
+      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+      dot.setAttribute('cx', cx); dot.setAttribute('cy', cy)
+      dot.setAttribute('r', '3.1'); dot.setAttribute('fill', FILL)
+      dot.setAttribute('opacity', String(mix))
+      g.appendChild(dot)
+    }
+  }
+
+  function render(svg, cream) {
+    const p = params()
+    // Fist (mut) at sin=-1 → 0.70, open hand at sin=+1 → 1.30
+    const scale = 1 + Math.sin(cur.phase) * p.breathe
+    const boilOn = p.boil > 1
+
+    svg.innerHTML = ''
+    if (cream) svg.style.background = CREAM
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+    svg.appendChild(defs)
+    if (boilOn) ensureFilter(svg, p.boil)
+
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+    const deg = (cur.rot * 180 / Math.PI) % 360
+    g.setAttribute('transform', `translate(50 50) rotate(${deg}) scale(${scale}) translate(-50 -50)`)
+    if (boilOn) g.setAttribute('filter', `url(#${filterId})`)
+
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+    path.setAttribute('d', BURST)
+    path.setAttribute('fill', FILL)
+    path.setAttribute('opacity', String(1 - p.dotMix * 0.92))
+    g.appendChild(path)
+    drawDots(g, p.dotMix, cur.rot)
+    svg.appendChild(g)
+  }
+
+  function tick(now) {
+    const p = params()
+    cur.rot += p.rot
+    cur.phase += p.breatheSpd
+    cur.dotMix = p.dotMix
+    if (now - lastBoil >= p.boilInterval) { lastBoil = now; boilFrame = (boilFrame + 1) % BOIL.length }
+
+    render(heroSvg, true)
+    render(inlineSvg, false)
+    render(miniSvg, false)
+
+    const m = MODES[mode]
+    statusEl.textContent = m.status(secs)
+    phaseEl.textContent = m.phase(secs)
+    requestAnimationFrame(tick)
+  }
+
+  function unlockAudio() {
+    if (!audioCtx) try { audioCtx = new (window.AudioContext || window.webkitAudioContext)() } catch {}
+    audioCtx?.resume()
+  }
+
+  function playTick(freq, vol = 0.025) {
+    if (!audioCtx || audioCtx.state !== 'running') return
+    const t = audioCtx.currentTime
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain()
+    o.type = 'sine'; o.frequency.value = freq
+    g.gain.setValueAtTime(0, t)
+    g.gain.linearRampToValueAtTime(vol, t + 0.003)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04)
+    o.connect(g).connect(audioCtx.destination)
+    o.start(t); o.stop(t + 0.05)
+  }
+
+  function haptic(ms) { navigator.vibrate?.(ms) }
+
+  /** Claude-style: firm once on mode change, then sparse soft ticks */
+  function startHaptics() {
+    clearInterval(hapTimer)
+    const m = MODES[mode]
+    haptic(m.hapStart)
+    playTick(m.hapFreq, 0.038)
+
+    hapTimer = setInterval(() => {
+      haptic(m.hapTick)
+      playTick(m.hapFreq, mode === 'writing' ? 0.018 : 0.022)
+    }, m.hapGap)
+  }
+
+  function setMode(m) {
+    mode = m; secs = 0
+    const cfg = MODES[m]
+    verbEl.textContent = cfg.label + (m === 'thinking' || m === 'researching' ? '…' : '')
+    toolPill.hidden = !cfg.tool
+    if (cfg.tool) toolPill.textContent = cfg.tool
+    specEl.innerHTML = cfg.spec
+
+    document.querySelectorAll('button.mode').forEach(b =>
+      b.classList.toggle('on', b.dataset.mode === m))
+
+    startHaptics()
+    clearInterval(secTimer)
+    if (m === 'thinking' || m === 'researching') {
+      secTimer = setInterval(() => { secs++ }, 1000)
+    } else {
+      secs = 0
+    }
+    resetAuto()
+  }
+
+  function resetAuto() {
+    clearInterval(autoTimer)
+    if (!autoCycle) return
+    const order = ['thinking', 'researching', 'tool_search', 'writing']
+    autoTimer = setInterval(() => {
+      setMode(order[(order.indexOf(mode) + 1) % order.length])
+    }, 10000)
+  }
+
+  document.querySelectorAll('button.mode').forEach(b => {
+    b.addEventListener('click', () => { unlockAudio(); setMode(b.dataset.mode) })
+  })
+  document.getElementById('auto').addEventListener('change', e => {
+    autoCycle = e.target.checked; resetAuto()
+  })
+  document.getElementById('unlock').addEventListener('pointerdown', unlockAudio)
+
+  setMode('thinking')
+  requestAnimationFrame(tick)
+})()
+</script>
+</body>
+</html>

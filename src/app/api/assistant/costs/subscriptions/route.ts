@@ -50,6 +50,8 @@ export async function POST(req: NextRequest) {
       nextRenewalAt: new Date(nextRenewalAt),
       category: body.category ? String(body.category) : null,
       notes: body.notes ? String(body.notes) : null,
+      plan: body.plan ? String(body.plan) : null,
+      paymentMethod: body.paymentMethod ? String(body.paymentMethod) : null,
       active: true,
     },
   })

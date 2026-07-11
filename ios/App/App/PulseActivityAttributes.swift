@@ -24,6 +24,10 @@ struct PulseActivityAttributes: ActivityAttributes {
         var ordersToday: Int
         var statusLine: String
         var updatedAt: Date
+        // v2 hub fields — OPTIONAL so payloads cached/sent by older builds
+        // (without these keys) still decode. nil ≡ "not provided".
+        var pendingApprovals: Int?
+        var openTasks: Int?
     }
 
     var title: String

@@ -14,6 +14,54 @@ export function businessStorageSlug(business: string): string {
   return business.toLowerCase().replace(/_/g, '-')
 }
 
+/**
+ * A stored Supabase signed URL embeds a JWT with an `exp` claim. It's only usable
+ * while it has comfortable life left — Supabase answers 400 InvalidJWT the moment
+ * it expires, which shows up as broken thumbnails everywhere the URL is reused.
+ * Uploads sign for 7 days, so any URL cached in the DB longer than that is dead;
+ * this treats a URL as fresh only when it has > 6h remaining, so links never die
+ * mid-view. null / unparseable → not fresh, so the caller re-signs.
+ */
+function signedUrlFresh(url: string | null | undefined): boolean {
+  if (!url) return false
+  try {
+    const token = new URL(url).searchParams.get('token')
+    const payload = token?.split('.')[1]
+    if (!payload) return false
+    const claims = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { exp?: number }
+    if (typeof claims.exp !== 'number') return false
+    return claims.exp * 1000 - Date.now() > 6 * 3600 * 1000
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Return a signed URL guaranteed to be currently valid. Reuses the stored one
+ * while it still has life left (the fast path); otherwise re-signs and writes the
+ * fresh URL back so later reads stay fast. Never throws — falls back to whatever
+ * was stored if signing itself fails.
+ */
+async function ensureFreshSignedUrl(
+  row: { id?: string; url: string | null; storagePath: string },
+  expiresIn: number,
+): Promise<string | null> {
+  if (signedUrlFresh(row.url)) return row.url
+  try {
+    const url = await agentStorageSignedUrl(row.storagePath, expiresIn)
+    if (row.id) {
+      try {
+        await db.productImage.update({ where: { id: row.id }, data: { url } })
+      } catch {
+        // cache write-back is best-effort — a fresh URL is still returned below
+      }
+    }
+    return url
+  } catch {
+    return row.url ?? null
+  }
+}
+
 export async function countImagesForCode(productCode: string, business = DEFAULT_CATALOG_BUSINESS) {
   const code = normalizeProductCode(productCode)
   return db.productImage.count({ where: { productCode: code, business } })
@@ -156,19 +204,18 @@ export async function listProductImages(
     orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
     take: limit,
   })
-  const out: ProductImageEntry[] = []
-  for (const row of rows as Array<{ id: string; url: string | null; storagePath: string; isPrimary: boolean }>) {
-    let url = row.url
-    if (!url) {
-      try {
-        url = await agentStorageSignedUrl(row.storagePath, 86400)
-      } catch {
-        url = null
-      }
-    }
-    out.push({ id: row.id, url, storagePath: row.storagePath, isPrimary: Boolean(row.isPrimary) })
-  }
-  return out
+  // Re-sign in parallel: a gallery of expired URLs would otherwise be N serial
+  // Supabase round-trips (and, unfixed, N broken thumbnails).
+  return Promise.all(
+    (rows as Array<{ id: string; url: string | null; storagePath: string; isPrimary: boolean }>).map(
+      async (row) => ({
+        id: row.id,
+        url: await ensureFreshSignedUrl(row, 86400),
+        storagePath: row.storagePath,
+        isPrimary: Boolean(row.isPrimary),
+      }),
+    ),
+  )
 }
 
 /**
@@ -212,12 +259,10 @@ export async function getPrimaryImageUrl(productCode: string, business = DEFAULT
     orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
   })
   if (!row) return null
-  if (row.url) return row.url
-  try {
-    return await agentStorageSignedUrl(row.storagePath, 3600)
-  } catch {
-    return null
-  }
+  return ensureFreshSignedUrl(
+    { id: row.id, url: row.url, storagePath: row.storagePath },
+    86400 * 7,
+  )
 }
 
 export async function deleteImagesForCode(productCode: string, business = DEFAULT_CATALOG_BUSINESS) {
@@ -276,40 +321,46 @@ export async function listCatalogForImages(business = DEFAULT_CATALOG_BUSINESS):
     }
   }
 
-  const out: CatalogImageGroup[] = []
-  for (const g of groups.values()) {
-    const isCollection = g.members.length > 1
-    const imageCount = g.members.reduce((max, m) => Math.max(max, countByCode.get(m) ?? 0), 0)
-    const withImage = g.members.find((m) => (countByCode.get(m) ?? 0) > 0)
-    out.push({
-      code: g.code,
-      name: g.name,
-      category: g.category,
-      kind: isCollection ? 'collection' : 'sku',
-      members: g.members,
-      imageCount,
-      hasImages: imageCount > 0,
-      primaryImageUrl: withImage ? await getPrimaryImageUrl(withImage, business).catch(() => null) : null,
-    })
-  }
+  // Resolve every primary thumbnail concurrently — each may need a fresh signature
+  // (see ensureFreshSignedUrl), so a serial loop over ~60 groups would be ~60
+  // Supabase round-trips and could blow the function timeout.
+  const out: CatalogImageGroup[] = await Promise.all(
+    Array.from(groups.values()).map(async (g) => {
+      const isCollection = g.members.length > 1
+      const imageCount = g.members.reduce((max, m) => Math.max(max, countByCode.get(m) ?? 0), 0)
+      const withImage = g.members.find((m) => (countByCode.get(m) ?? 0) > 0)
+      return {
+        code: g.code,
+        name: g.name,
+        category: g.category,
+        kind: isCollection ? 'collection' : 'sku',
+        members: g.members,
+        imageCount,
+        hasImages: imageCount > 0,
+        primaryImageUrl: withImage ? await getPrimaryImageUrl(withImage, business).catch(() => null) : null,
+      } as CatalogImageGroup
+    }),
+  )
   // Surface CUSTOM products: codes with uploaded images that aren't in ERP
   // inventory (added ahead of inventory sync via the "নতুন প্রোডাক্ট" button).
   const coveredCodes = new Set<string>()
   for (const g of out) for (const m of g.members) coveredCodes.add(m)
-  for (const [code, count] of countByCode) {
-    if (count > 0 && !coveredCodes.has(code)) {
-      out.push({
-        code,
-        name: code,
-        category: 'কাস্টম',
-        kind: 'sku',
-        members: [code],
-        imageCount: count,
-        hasImages: true,
-        primaryImageUrl: await getPrimaryImageUrl(code, business).catch(() => null),
-      })
-    }
-  }
+  const customCodes = Array.from(countByCode.entries()).filter(
+    ([code, count]) => count > 0 && !coveredCodes.has(code),
+  )
+  const customGroups = await Promise.all(
+    customCodes.map(async ([code, count]) => ({
+      code,
+      name: code,
+      category: 'কাস্টম',
+      kind: 'sku' as const,
+      members: [code],
+      imageCount: count,
+      hasImages: true,
+      primaryImageUrl: await getPrimaryImageUrl(code, business).catch(() => null),
+    })),
+  )
+  out.push(...customGroups)
 
   out.sort((a, b) => Number(a.hasImages) - Number(b.hasImages) || a.code.localeCompare(b.code))
 
