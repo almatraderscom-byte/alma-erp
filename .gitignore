@@ -24,3 +24,8 @@ android/build/
 android/app/google-services.json
 android/capacitor-cordova-android-plugins/build/
 .vercel
+
+# built by scripts/build-companion-dist.mjs on every deploy
+/public/companion/
+/public/companion-version.json
+/public/companion-updater.sh

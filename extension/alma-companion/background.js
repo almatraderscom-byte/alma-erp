@@ -904,7 +904,7 @@ async function executeCommand(cmd) {
           'site_lockdown: ' +
           locked +
           ' — এই সাইটটা read-only (lockdown) তালিকায়; এখানে ক্লিক/টাইপ কোড-লেভেলে বন্ধ। ' +
-          'Sir চাইলে trust tier বদলে খুলে দিতে পারেন।',
+          'Boss চাইলে trust tier বদলে খুলে দিতে পারেন।',
       }
     }
   }
@@ -1099,9 +1099,60 @@ async function setBadge(state) {
   }
 }
 
+// ── Self-update (multi-Mac) ─────────────────────────────────────────────────
+// Production republishes the extension on every main merge
+// (<site>/companion-version.json + /companion/…); a tiny per-machine updater
+// (companion-updater.sh via launchd) syncs those files into this unpacked
+// folder. Here: (a) the moment the DISK copy is newer than the running one,
+// reload ourselves — the update applies with zero clicks; (b) if production
+// has a newer version the updater hasn't fetched yet, tell the owner once.
+function versionNewer(a, b) {
+  const pa = String(a).split('.').map(Number)
+  const pb = String(b).split('.').map(Number)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0)
+    if (d !== 0) return d > 0
+  }
+  return false
+}
+
+async function checkForUpdate() {
+  const running = chrome.runtime.getManifest().version
+  try {
+    // Unpacked extensions serve files from disk — a bumped manifest on disk
+    // means the updater already delivered a new build. Apply it now.
+    const disk = await fetch(chrome.runtime.getURL('manifest.json'), { cache: 'no-store' }).then((r) => r.json())
+    if (disk?.version && disk.version !== running) {
+      chrome.runtime.reload()
+      return
+    }
+  } catch { /* disk read failed — fall through to the remote check */ }
+  try {
+    const { baseUrl } = await getConfig()
+    const res = await fetch(`${baseUrl || DEFAULT_BASE}/companion-version.json`, { cache: 'no-store' })
+    if (!res.ok) return
+    const remote = (await res.json())?.version
+    if (!remote || !versionNewer(remote, running)) return
+    const { updNotifiedFor } = await chrome.storage.local.get('updNotifiedFor')
+    if (updNotifiedFor === remote) return
+    await chrome.storage.local.set({ updNotifiedFor: remote })
+    chrome.notifications?.create('alma-companion-update', {
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: 'ALMA Companion আপডেট আছে',
+      message: `নতুন ভার্সন v${remote} তৈরি (এখন v${running})। updater চালু থাকলে ৩০ মিনিটের মধ্যে নিজে থেকেই বসে যাবে।`,
+    })
+  } catch { /* offline — try again next alarm */ }
+}
+
 // Re-arm the loop periodically (MV3 workers sleep when idle).
 chrome.alarms.create('alma-poll', { periodInMinutes: 1 })
+chrome.alarms.create('alma-update-check', { periodInMinutes: 10 })
 chrome.alarms.onAlarm.addListener(async (a) => {
+  if (a.name === 'alma-update-check') {
+    checkForUpdate()
+    return
+  }
   if (a.name !== 'alma-poll') return
   const { token, paused } = await getConfig()
   await setBadge(token && !paused ? 'on' : 'off')
