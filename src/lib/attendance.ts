@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma'
 import { createCompensationLedgerEntry } from '@/lib/payroll-compensation'
 import { moneyDecimal } from '@/lib/payroll-wallet'
 import { notifyRole, notifyUser } from '@/lib/notifications'
+import { dateBn, toBnDigits } from '@/lib/wallet-labels'
 
 export const OFFICE_START_MINUTES = 9 * 60 // 540 = 9:00 AM
 export const OFFICE_END_MINUTES = 21 * 60 // 1260 = 9:00 PM
@@ -152,6 +153,21 @@ export function attendanceSourceRef(businessId: string, employeeId: string, atte
 
 export function attendanceReversalSourceRef(waiverId: string) {
   return `attendance-late-reversal:${waiverId}`
+}
+
+/** Bangla ledger note for a late check-in fine: date + how late (the "why"). */
+export function latePenaltyNoteBn(attendanceDate: Date, lateMinutes: number) {
+  const day = dateBn(attendanceDate)
+  return lateMinutes > 0
+    ? `দেরিতে চেক-ইনের জরিমানা — ${day} · ${toBnDigits(lateMinutes)} মিনিট দেরি`
+    : `দেরিতে চেক-ইনের জরিমানা — ${day}`
+}
+
+/** Bangla ledger note for an approved-appeal refund, naming the original fine. */
+export function penaltyRefundNoteBn(fineDate: Date | null | undefined) {
+  return fineDate
+    ? `জরিমানা ফেরত — আপিল মঞ্জুর · ${dateBn(fineDate)}-এর জরিমানার সমন্বয়`
+    : 'জরিমানা ফেরত — আপিল মঞ্জুর'
 }
 
 export function hashAttendanceIp(req: NextRequest) {
@@ -319,7 +335,7 @@ export async function assessAttendanceTrust(input: {
   } as const
 }
 
-export async function postAttendancePenalty(record: Pick<AttendanceRecord, 'id' | 'businessId' | 'employeeId' | 'attendanceDate' | 'penaltyAmount' | 'penaltyLedgerEntryId'>, actorUserId?: string | null) {
+export async function postAttendancePenalty(record: Pick<AttendanceRecord, 'id' | 'businessId' | 'employeeId' | 'attendanceDate' | 'penaltyAmount' | 'penaltyLedgerEntryId'> & { lateMinutes?: number | null }, actorUserId?: string | null) {
   const amount = Number(record.penaltyAmount || 0)
   if (!Number.isFinite(amount) || amount <= 0 || record.penaltyLedgerEntryId) return null
 
@@ -334,7 +350,7 @@ export async function postAttendancePenalty(record: Pick<AttendanceRecord, 'id' 
       approvedById: actorUserId || null,
       source: LATE_PENALTY_SOURCE,
       sourceRef: attendanceSourceRef(record.businessId, record.employeeId, record.attendanceDate),
-      note: `Late attendance penalty · ${record.attendanceDate.toISOString().slice(0, 10)}`,
+      note: latePenaltyNoteBn(record.attendanceDate, Number(record.lateMinutes || 0)),
     })
     await prisma.attendanceRecord.update({
       where: { id: record.id },
@@ -363,9 +379,16 @@ export async function postAttendancePenalty(record: Pick<AttendanceRecord, 'id' 
   }
 }
 
-export async function reverseAttendancePenalty(waiver: Pick<AttendanceWaiverRequest, 'id' | 'businessId' | 'employeeId' | 'approvedReductionAmount' | 'reversalLedgerEntryId'>, actorUserId?: string | null) {
+export async function reverseAttendancePenalty(waiver: Pick<AttendanceWaiverRequest, 'id' | 'businessId' | 'employeeId' | 'approvedReductionAmount' | 'reversalLedgerEntryId'> & { penaltyLedgerEntryId?: string | null }, actorUserId?: string | null) {
   const amount = Number(waiver.approvedReductionAmount || 0)
   if (!Number.isFinite(amount) || amount <= 0 || waiver.reversalLedgerEntryId) return null
+
+  const fineEntry = waiver.penaltyLedgerEntryId
+    ? await prisma.employeeLedgerEntry.findUnique({
+        where: { id: waiver.penaltyLedgerEntryId },
+        select: { id: true, date: true },
+      })
+    : null
 
   try {
     const entry = await createCompensationLedgerEntry({
@@ -378,7 +401,8 @@ export async function reverseAttendancePenalty(waiver: Pick<AttendanceWaiverRequ
       approvedById: actorUserId || null,
       source: LATE_PENALTY_REVERSAL_SOURCE,
       sourceRef: attendanceReversalSourceRef(waiver.id),
-      note: `Late attendance waiver reversal · ${waiver.id}`,
+      note: penaltyRefundNoteBn(fineEntry?.date),
+      relatedEntryId: fineEntry?.id || waiver.penaltyLedgerEntryId || null,
     })
     await prisma.attendanceWaiverRequest.update({
       where: { id: waiver.id },
@@ -419,9 +443,9 @@ export async function notifyAttendancePenalty(
       businessId: record.businessId,
       type: 'PAYROLL_ALERT',
       priority: 'HIGH',
-      title: 'Late attendance penalty applied',
-      message: `Late by ${record.lateMinutes} minutes. Penalty: ৳ ${Number(record.penaltyAmount).toLocaleString('en-BD')}.`,
-      actionUrl: '/portal',
+      title: 'দেরিতে চেক-ইনের জরিমানা',
+      message: `${toBnDigits(Number(record.lateMinutes || 0))} মিনিট দেরিতে চেক-ইন — জরিমানা ৳ ${Number(record.penaltyAmount).toLocaleString('en-BD')}। ভুল মনে হলে ${toBnDigits(30)} দিনের মধ্যে ওয়ালেট থেকে আপিল করা যাবে।`,
+      actionUrl: '/portal/wallet',
     }),
   ]
   if (!options?.skipOwnerNotify) {

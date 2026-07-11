@@ -1,23 +1,26 @@
 'use client'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { FinancePageChrome } from '@/components/finance/FinancePageChrome'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { useHRDashboard } from '@/hooks/useHr'
 import Link from 'next/link'
-import { Card, KpiCard, Skeleton, Empty, Button, KPI_AUTO_GRID } from '@/components/ui'
+import { Avatar, Card, Empty, Progress, Skeleton, Button } from '@/components/ui'
 import { PageEnter } from '@/components/layout/AgentAccess'
 import { useActor } from '@/contexts/ActorContext'
 import { can } from '@/lib/roles'
 import { roundMoney } from '@/lib/money'
 import { useBusiness } from '@/contexts/BusinessContext'
+import { BusinessSwitcherCompact } from '@/components/layout/BusinessSwitcher'
+import { cn } from '@/lib/utils'
 const _stagger = { hidden: {}, show: { transition: { staggerChildren: 0.03 } } }
 const _fadeUp = { hidden: { opacity: 0, y: 6 }, show: { opacity: 1, y: 0, transition: { duration: 0.25, ease: [0.22, 1, 0.36, 1] } } }
-import type { PayrollWallet, WalletRequestDto, WalletSummaryResponse } from '@/types/payroll-wallet'
+import type { PayrollWallet, WalletSummaryResponse } from '@/types/payroll-wallet'
 import { downloadBlob, payrollWalletsToCsv, payrollWalletsToWorkbook } from '@/lib/export-payroll-wallet'
 import toast from 'react-hot-toast'
 import { safeFetchJsonWithToast } from '@/lib/safe-fetch'
 import { unwrapApiData } from '@/lib/safe-api-response'
+import { WALLET_TYPE_LABEL_BN, dateBn, periodYmBn, toBnDigits } from '@/lib/wallet-labels'
 
 type MealProfileUser = {
   id: string
@@ -59,16 +62,37 @@ type DrivingProfileRowState = {
 }
 
 const PAYROLL_COMPENSATION_TYPES = [
-  { value: 'SALARY_ACCRUAL', label: '💰 Salary credit (manual)', kind: 'credit' as const },
-  { value: 'COMMISSION', label: 'Commission earned', kind: 'credit' as const },
-  { value: 'EID_BONUS', label: 'Eid bonus', kind: 'credit' as const },
-  { value: 'PERFORMANCE_BONUS', label: 'Performance bonus', kind: 'credit' as const },
-  { value: 'OVERTIME', label: 'Overtime payment', kind: 'credit' as const },
-  { value: 'REIMBURSEMENT', label: 'Reimbursement', kind: 'credit' as const },
-  { value: 'MEAL_DEDUCTION', label: 'Meal deduction (debit)', kind: 'debit' as const },
-  { value: 'PENALTY', label: 'Penalty (debit)', kind: 'debit' as const },
-  { value: 'ADJUSTMENT', label: 'Manual adjustment', kind: 'adjust' as const },
+  { value: 'SALARY_ACCRUAL', kind: 'credit' as const },
+  { value: 'COMMISSION', kind: 'credit' as const },
+  { value: 'EID_BONUS', kind: 'credit' as const },
+  { value: 'PERFORMANCE_BONUS', kind: 'credit' as const },
+  { value: 'OVERTIME', kind: 'credit' as const },
+  { value: 'REIMBURSEMENT', kind: 'credit' as const },
+  { value: 'MEAL_DEDUCTION', kind: 'debit' as const },
+  { value: 'PENALTY', kind: 'debit' as const },
+  { value: 'ADJUSTMENT', kind: 'adjust' as const },
 ] as const
+
+const LEDGER_FILTER_TYPES = ['ALL', 'SALARY_ACCRUAL', 'COMMISSION', 'PENALTY', 'ADVANCE', 'WITHDRAWAL'] as const
+
+type TabKey = 'month' | 'history' | 'requests' | 'tools'
+
+/** Salary cycle: on day N of the current month, the *previous* month's salary is credited. */
+function currentCyclePeriodYm(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Dhaka', year: 'numeric', month: 'numeric' }).formatToParts(new Date())
+  const y = Number(parts.find(p => p.type === 'year')?.value)
+  const m = Number(parts.find(p => p.type === 'month')?.value)
+  const prevM = m === 1 ? 12 : m - 1
+  const prevY = m === 1 ? y - 1 : y
+  return `${prevY}-${String(prevM).padStart(2, '0')}`
+}
+
+function currentCalendarYm(): string {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Dhaka', year: 'numeric', month: 'numeric' }).formatToParts(new Date())
+  const y = Number(parts.find(p => p.type === 'year')?.value)
+  const m = Number(parts.find(p => p.type === 'month')?.value)
+  return `${y}-${String(m).padStart(2, '0')}`
+}
 
 export default function PayrollPage() {
   const { role } = useActor()
@@ -95,6 +119,8 @@ export default function PayrollPage() {
   const [mealLoading, setMealLoading] = useState(false)
   const [drivingRows, setDrivingRows] = useState<DrivingProfileRowState[]>([])
   const [drivingLoading, setDrivingLoading] = useState(false)
+  const [activeTab, setActiveTab] = useState<TabKey>('month')
+  const [pendingScrollToLedger, setPendingScrollToLedger] = useState(false)
   const walletRequestId = useRef(0)
 
   const showApprovals = can(role, 'advanceApprove')
@@ -460,17 +486,82 @@ export default function PayrollPage() {
     return employeeOk && typeOk
   })
 
+  // ── Hero / KPI derived state ─────────────────────────────────────────────
+  const cyclePeriodYm = useMemo(() => currentCyclePeriodYm(), [])
+  const cycleLabel = periodYmBn(cyclePeriodYm)
+  const calendarYm = useMemo(() => currentCalendarYm(), [])
+
+  const totalEmployees = compWallets.length
+  const paidEmployees = compWallets.filter(w => (w.summary?.currentCycleSalaryAdded ?? 0) > 0).length
+  const unpaidEmployees = totalEmployees - paidEmployees
+  const givenThisCycle = compWallets.reduce((sum, w) => sum + (w.summary?.currentCycleSalaryAdded ?? 0), 0)
+  const monthlyBudget = k?.total_monthly_salary ?? 0
+  const remainingThisCycle = Math.max(0, roundMoney(monthlyBudget - givenThisCycle))
+  const pendingCount = walletData?.pendingRequests.length ?? 0
+
+  const penaltyEntriesThisMonth = useMemo(() => {
+    const wallets = walletData?.wallets ?? []
+    const list: Array<{ key: string; name: string; employeeId: string; amount: number; date: string; note?: string | null }> = []
+    for (const w of wallets) {
+      for (const e of w.latestEntries) {
+        if (e.type === 'PENALTY' && typeof e.date === 'string' && e.date.slice(0, 7) === calendarYm) {
+          list.push({
+            key: `${w.employeeId}:${e.id ?? e.date}`,
+            name: w.name,
+            employeeId: w.employeeId,
+            amount: Math.abs(e.signedAmount),
+            date: e.date,
+            note: e.note,
+          })
+        }
+      }
+    }
+    return list.sort((a, b) => b.date.localeCompare(a.date))
+  }, [walletData, calendarYm])
+  const penaltiesThisMonthTotal = penaltyEntriesThisMonth.reduce((s, e) => s + e.amount, 0)
+
+  const historyGroups = useMemo(() => {
+    const map = new Map<string, typeof history>()
+    for (const run of history) {
+      const key = run.periodYm || '—'
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(run)
+    }
+    return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]))
+  }, [history])
+
+  function reviewLedgerTable() {
+    setLedgerTypeFilter('ALL')
+    setEmployeeFilter('')
+    setActiveTab('month')
+    setPendingScrollToLedger(true)
+  }
+
+  useEffect(() => {
+    if (activeTab === 'month' && pendingScrollToLedger) {
+      const t = setTimeout(() => {
+        document.getElementById('payroll-wallet-table')?.scrollIntoView({ behavior: 'smooth' })
+        setPendingScrollToLedger(false)
+      }, 50)
+      return () => clearTimeout(t)
+    }
+  }, [activeTab, pendingScrollToLedger])
+
+  const TABS: Array<{ key: TabKey; label: string; badge?: number }> = [
+    { key: 'month', label: 'এই মাস' },
+    { key: 'history', label: 'হিস্টরি' },
+    { key: 'requests', label: 'সমন্বয় ও আপিল', badge: pendingCount || undefined },
+    { key: 'tools', label: 'টুলস' },
+  ]
+
   return (
     <FinancePageChrome
-      title="Payroll"
-      subtitle="Salary burden · advances · settlement health"
+      title="বেতন"
+      subtitle="মাসিক বেতন · কমিশন · বোনাস"
       actions={
-        <div className="flex gap-2 flex-wrap justify-end">
-          <Button size="xs" variant="gold" onClick={() => void runAccrual()}>Run accrual</Button>
-          <Button size="xs" variant="secondary" disabled={!walletData?.wallets.length} onClick={() => void exportPdf()}>PDF</Button>
-          <Button size="xs" variant="secondary" disabled={!walletData?.wallets.length} onClick={() => exportCsv()}>CSV</Button>
-          <Button size="xs" variant="secondary" disabled={!walletData?.wallets.length} onClick={() => void exportXlsx()}>Excel</Button>
-          <Link href="/employees"><Button size="xs" variant="secondary">Employees</Button></Link>
+        <div className="flex items-center gap-2">
+          <Link href="/employees"><Button size="xs" variant="secondary">কর্মচারী</Button></Link>
+          <BusinessSwitcherCompact />
         </div>
       }
     >
@@ -478,488 +569,687 @@ export default function PayrollPage() {
       {walletError && showApprovals && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border tone-red px-4 py-3 text-sm">
           <span>{walletError}</span>
-          <Button variant="ghost" size="xs" onClick={() => void loadWallets(true)}>Retry</Button>
+          <Button variant="ghost" size="xs" onClick={() => void loadWallets(true)}>আবার চেষ্টা করুন</Button>
         </div>
       )}
 
-      <div className={KPI_AUTO_GRID}>
-        <KpiCard label="Monthly salary budget" value={k?.total_monthly_salary ?? 0} valueKind="currency" loading={loading} />
-        <KpiCard label="Company liability" value={walletData?.totals.companyLiability ?? 0} valueKind="currency" color="text-green-400" loading={walletLoading} />
-        <KpiCard label="Commission totals" value={walletData?.totals.totalCommissions ?? 0} valueKind="currency" color="text-green-400" loading={walletLoading} />
-        <KpiCard label="Bonus totals" value={walletData?.totals.totalBonuses ?? 0} valueKind="currency" color="text-gold-lt" loading={walletLoading} />
-        <KpiCard label="Meal deductions" value={walletData?.totals.totalMealDeductions ?? 0} valueKind="currency" color="text-red-400" loading={walletLoading} />
-        <KpiCard label="Unpaid balance" value={walletData?.totals.currentBalance ?? 0} valueKind="currency" loading={walletLoading} />
+      {/* HERO: current cycle card */}
+      <Card className="p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-lg font-bold text-cream">{cycleLabel ? `${cycleLabel} চক্র` : 'চলতি চক্র'}</p>
+            <p className="mt-1 text-[11px] text-muted">
+              নিয়ম: আগের মাসের বেতন, প্রতি {toBnDigits(automation?.dayOfMonth ?? 10)} তারিখে
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-[9px] font-bold uppercase tracking-wider text-muted">পেয়েছে</p>
+            <p className="font-mono text-sm font-bold tabular-nums text-cream">
+              {toBnDigits(paidEmployees)}/{toBnDigits(totalEmployees)} জন
+            </p>
+          </div>
+        </div>
+        <Progress value={paidEmployees} max={Math.max(totalEmployees, 1)} className="mt-4" />
+
+        <div className="mt-5 grid grid-cols-2 overflow-hidden rounded-2xl border border-white/[0.06] divide-x divide-y sm:grid-cols-5 sm:divide-y-0 divide-white/[0.06]">
+          <HeroKpiTile label="মাসিক বাজেট" value={monthlyBudget} loading={loading} />
+          <HeroKpiTile label="দেওয়া হয়েছে" value={givenThisCycle} tone="pos" loading={walletLoading} />
+          <HeroKpiTile label="বাকি" value={remainingThisCycle} tone={remainingThisCycle > 0 ? 'amber' : 'pos'} loading={walletLoading} />
+          <HeroKpiTile label="জরিমানা (এ মাস)" value={penaltiesThisMonthTotal} tone="neg" loading={walletLoading} />
+          <HeroKpiTile label="অনুরোধ" value={pendingCount} isCount loading={walletLoading} />
+        </div>
+      </Card>
+
+      {/* TABS */}
+      <div className="flex gap-1 overflow-x-auto border-b border-white/[0.06] scrollbar-hide">
+        {TABS.map(t => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setActiveTab(t.key)}
+            className={cn(
+              'relative flex shrink-0 items-center gap-1.5 px-4 py-2.5 text-[12px] font-bold transition-colors',
+              activeTab === t.key ? 'text-gold' : 'text-muted hover:text-cream',
+            )}
+          >
+            {t.label}
+            {!!t.badge && (
+              <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-gold/15 px-1 text-[9px] font-black text-gold">
+                {toBnDigits(t.badge)}
+              </span>
+            )}
+            {activeTab === t.key && <span className="absolute inset-x-3 -bottom-px h-[2px] rounded-full bg-gold" />}
+          </button>
+        ))}
       </div>
 
-      {showApprovals && (
-        <Card className="p-5">
-          <div className="flex justify-between gap-3 items-start flex-wrap mb-4">
-            <div>
-              <p className="text-sm font-bold text-cream">Compensation tools</p>
-              <p className="text-[11px] text-muted mt-1">Post salary credit, bonuses, commission, overtime, reimbursements, deductions, penalties, or adjustments into the unified wallet ledger.</p>
+      {/* ── এই মাস ─────────────────────────────────────────────────────── */}
+      {activeTab === 'month' && (
+        showApprovals ? (
+          <div className="space-y-4">
+            {unpaidEmployees > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border tone-amber px-4 py-3 text-[11px]">
+                <span>
+                  {toBnDigits(unpaidEmployees)} জন কর্মচারীর এই চক্রের বেতন এখনও বাকি
+                  {preview ? ` · প্রিভিউ ৳ ${preview.totalPreviewSalary.toLocaleString('en-BD')} (${toBnDigits(preview.employees.length)} জন)` : ''}
+                </span>
+                <Button size="xs" variant="gold" onClick={() => void runAccrual()}>বেতন চালান</Button>
+              </div>
+            )}
+
+            <Card className="overflow-hidden p-0">
+              {walletLoading ? (
+                <div className="p-5"><Skeleton className="h-40 w-full" /></div>
+              ) : !compWallets.length ? (
+                <div className="p-5"><Empty icon="◈" title="এই ব্যবসায় কোনো কর্মচারী যুক্ত নেই" desc="স্টাফদের HR employee ID ও ব্যবসা-অ্যাক্সেস দিন।" /></div>
+              ) : (
+                <div className="divide-y divide-white/[0.05]">
+                  {compWallets.map(w => {
+                    const paidAmt = w.summary?.currentCycleSalaryAdded ?? 0
+                    const paid = paidAmt > 0
+                    return (
+                      <div key={`${w.businessId}:${w.employeeId}`} className="flex items-center gap-3 px-4 py-3">
+                        <Avatar name={w.name} size="sm" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[13px] font-semibold text-cream">{w.name}</p>
+                          <p className="mt-0.5 truncate font-mono text-[10px] text-muted">{w.employeeId}</p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <span className={cn('h-1.5 w-1.5 rounded-full', paid ? 'bg-emerald-400' : 'bg-amber-500')} />
+                          <span className={cn('text-[10px] font-semibold', paid ? 'txt-pos' : 'text-amber-500')}>
+                            {paid ? 'পেয়েছে' : 'বাকি'}
+                          </span>
+                        </div>
+                        <span className="w-24 shrink-0 text-right font-mono text-[12px] font-bold tabular-nums text-cream">
+                          ৳ {(paid ? paidAmt : (w.monthlySalary ?? 0)).toLocaleString('en-BD')}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </Card>
+
+            {/* Detailed wallet ledger — preserved from the previous design */}
+            <div id="payroll-wallet-table">
+              <Card className="p-5">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-sm font-bold text-cream">বিস্তারিত ওয়ালেট লেজার</p>
+                  <div className="relative min-w-[10rem] flex-1">
+                    <svg className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <input
+                      value={employeeFilter}
+                      onChange={e => setEmployeeFilter(e.target.value)}
+                      placeholder="কর্মচারী খুঁজুন"
+                      className="w-full min-h-[44px] rounded-xl border border-white/[0.06] bg-card/85 pl-9 pr-3 py-2 text-[11px] text-cream focus:outline-none focus:ring-2 focus:ring-gold/20 md:min-h-0"
+                    />
+                  </div>
+                </div>
+                <div className="mb-4 flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
+                  {LEDGER_FILTER_TYPES.map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setLedgerTypeFilter(t)}
+                      className={cn(
+                        'shrink-0 min-h-[44px] rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5',
+                        ledgerTypeFilter === t
+                          ? 'border-gold/30 bg-gold/10 text-gold'
+                          : 'border-white/[0.06] text-muted hover:bg-white/[0.04] hover:text-cream',
+                      )}
+                    >
+                      {t === 'ALL' ? 'সব' : (WALLET_TYPE_LABEL_BN[t] ?? t.replace(/_/g, ' '))}
+                    </button>
+                  ))}
+                </div>
+                {walletLoading ? <Skeleton className="h-40" /> : !(walletData?.wallets ?? []).length ? (
+                  <Empty
+                    icon="◈"
+                    title="এখনো কোনো লেজার নেই"
+                    desc="বেতন চালান অথবা অনুরোধ অনুমোদন করলে লেজার এন্ট্রি তৈরি হবে।"
+                    action={showApprovals ? <Button variant="gold" size="sm" onClick={() => void runAccrual()}>বেতন চালান</Button> : undefined}
+                  />
+                ) : (
+                  <>
+                  <div className="hidden min-w-0 max-w-full max-h-[480px] overflow-x-auto md:block">
+                    <table className="w-full min-w-[1080px] text-left text-[11px]">
+                      <thead className="sticky top-0 z-[1] border-b border-white/[0.06] bg-card/88 text-xs uppercase tracking-wider text-muted backdrop-blur-sm">
+                        <tr>
+                          <th className="py-3 pr-3 font-medium">কর্মচারী</th>
+                          <th className="py-3 pr-3 text-right font-medium">মোট আয়</th>
+                          <th className="py-3 pr-3 text-right font-medium">কমিশন</th>
+                          <th className="py-3 pr-3 text-right font-medium">বোনাস</th>
+                          <th className="py-3 pr-3 text-right font-medium">কর্তন</th>
+                          <th className="py-3 pr-3 text-right font-medium">উত্তোলিত</th>
+                          <th className="py-3 pr-3 text-right font-medium">জমা ব্যালেন্স</th>
+                          <th className="py-3 pr-3 text-right font-medium">ভ্যারিয়েবল %</th>
+                          <th className="py-3 font-medium" />
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/[0.04]">
+                        {filteredWallets.map((w: PayrollWallet) => (
+                          <tr key={`${w.businessId}:${w.employeeId}`} className="transition-colors hover:bg-white/[0.04]/80">
+                            <td className="py-3 pr-3"><span className="font-medium text-cream">{w.name}</span><span className="block font-mono text-[10px] text-muted">{w.employeeId}</span></td>
+                            <td className="py-3 pr-3 text-right font-mono text-cream">৳ {w.summary.lifetimeEarned.toLocaleString('en-BD')}</td>
+                            <td className="py-3 pr-3 text-right font-mono txt-pos">৳ {w.summary.totalCommissions.toLocaleString('en-BD')}</td>
+                            <td className="py-3 pr-3 text-right font-mono text-gold">৳ {w.summary.totalBonuses.toLocaleString('en-BD')}</td>
+                            <td className="py-3 pr-3 text-right font-mono txt-neg">৳ {(w.summary.totalMealDeductions + w.summary.totalPenalties).toLocaleString('en-BD')}</td>
+                            <td className="py-3 pr-3 text-right font-mono text-muted">৳ {w.summary.lifetimeWithdrawn.toLocaleString('en-BD')}</td>
+                            <td className="py-3 pr-3 text-right font-mono font-medium txt-pos">৳ {w.summary.companyLiability.toLocaleString('en-BD')}</td>
+                            <td className="py-3 pr-3 text-right font-mono text-muted">{w.summary.totalAccrued ? `${Math.round(((w.summary.totalCommissions + w.summary.totalBonuses) / w.summary.totalAccrued) * 100)}%` : '—'}</td>
+                            <td className="py-3"><Link href={`/employees/${encodeURIComponent(w.employeeId)}`} className="font-medium text-gold hover:text-gold">লেজার</Link></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile Expandable Cards */}
+                  <motion.div className="space-y-3 md:hidden" variants={_stagger} initial="hidden" animate="show">
+                    {filteredWallets.slice(0, 80).map((w: PayrollWallet) => (
+                      <motion.div key={`${w.businessId}:${w.employeeId}`} variants={_fadeUp}>
+                        <Card interactive className="p-4 text-[11px]">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="truncate font-semibold text-cream">{w.name}</p>
+                              <p className="font-mono text-[10px] text-muted">{w.employeeId}</p>
+                            </div>
+                            <Link href={`/employees/${encodeURIComponent(w.employeeId)}`} className="shrink-0 text-xs font-medium text-gold">
+                              লেজার →
+                            </Link>
+                          </div>
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            <div className="rounded-xl border border-white/[0.06] bg-white/[0.04]/50 px-3 py-2">
+                              <p className="text-[10px] text-muted">মোট আয়</p>
+                              <p className="font-mono font-bold text-cream">৳ {w.summary.lifetimeEarned.toLocaleString('en-BD')}</p>
+                            </div>
+                            <div className="rounded-xl border border-white/[0.06] bg-emerald-500/10 px-3 py-2">
+                              <p className="text-[10px] text-muted">জমা ব্যালেন্স</p>
+                              <p className="font-mono font-bold txt-pos">৳ {w.summary.companyLiability.toLocaleString('en-BD')}</p>
+                            </div>
+                            <div className="rounded-xl border border-white/[0.06] bg-white/[0.04]/50 px-3 py-2">
+                              <p className="text-[10px] text-muted">কমিশন</p>
+                              <p className="font-mono txt-pos">৳ {w.summary.totalCommissions.toLocaleString('en-BD')}</p>
+                            </div>
+                            <div className="rounded-xl border border-white/[0.06] bg-red-500/10 px-3 py-2">
+                              <p className="text-[10px] text-muted">কর্তন</p>
+                              <p className="font-mono txt-neg">৳ {(w.summary.totalMealDeductions + w.summary.totalPenalties).toLocaleString('en-BD')}</p>
+                            </div>
+                          </div>
+                        </Card>
+                      </motion.div>
+                    ))}
+                  </motion.div>
+                  </>
+                )}
+              </Card>
             </div>
           </div>
-          <form onSubmit={submitCompensation} className="grid md:grid-cols-[1.2fr_1fr_1fr_1fr_1.5fr_auto] gap-2 text-[11px]">
-            <select value={compForm.employeeId} onChange={e => setCompForm(f => ({ ...f, employeeId: e.target.value }))} className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-gold/20">
-              <option value="">Select employee</option>
-              {compWallets.map(w => <option key={`${w.businessId}:${w.employeeId}`} value={w.employeeId}>{w.name} · {w.employeeId}</option>)}
-            </select>
-            <select value={compForm.type} onChange={e => setCompForm(f => ({ ...f, type: e.target.value }))} className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-gold/20">
-              {PAYROLL_COMPENSATION_TYPES.map(t => (
-                <option key={t.value} value={t.value}>
-                  {t.label}{t.kind === 'credit' ? ' · credit' : t.kind === 'debit' ? ' · debit' : ''}
-                </option>
-              ))}
-            </select>
-            <input value={compForm.amount} onChange={e => setCompForm(f => ({ ...f, amount: e.target.value }))} type="number" min={compForm.type === 'ADJUSTMENT' ? undefined : 1} step="1" placeholder={compForm.type === 'ADJUSTMENT' ? 'Amount (+/-)' : 'Amount'} className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream font-mono focus:outline-none focus:ring-2 focus:ring-gold/20" />
-            <input value={compForm.date} onChange={e => setCompForm(f => ({ ...f, date: e.target.value }))} type="date" className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-gold/20" />
-            <input value={compForm.note} onChange={e => setCompForm(f => ({ ...f, note: e.target.value }))} placeholder="Note" className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-gold/20" />
-            <Button size="xs" variant="gold" type="submit" loading={compBusy}>Post</Button>
-          </form>
-          {orphanLedgerCount > 0 && (
-            <p className="mt-3 text-[11px] tone-amber rounded-xl border px-3 py-2">
-              {orphanLedgerCount} orphan ledger {orphanLedgerCount === 1 ? 'entry' : 'entries'} (not on roster / no linked user).{' '}
-              <button
-                type="button"
-                className="text-gold underline font-medium"
-                onClick={() => {
-                  setLedgerTypeFilter('ALL')
-                  setEmployeeFilter('')
-                  document.getElementById('payroll-wallet-table')?.scrollIntoView({ behavior: 'smooth' })
-                }}
-              >
-                Review in wallet table
-              </button>
-            </p>
-          )}
-        </Card>
+        ) : (
+          <Card className="p-5"><Empty icon="◈" title="এই সেকশন দেখার অনুমতি নেই" /></Card>
+        )
       )}
 
-      {showApprovals && (
-        <Card className="p-5">
-          <div className="flex justify-between gap-3 items-start flex-wrap">
-            <div>
-              <p className="text-sm font-bold text-cream">Monthly payroll automation</p>
-              <p className="text-[11px] text-muted mt-1">
-                Runs on day {automation?.dayOfMonth ?? 10} · credits previous month salary (e.g. June 10 → May) · {automation?.timezone ?? 'Asia/Dhaka'}
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <Button size="xs" variant={automation?.enabled ? 'secondary' : 'gold'} onClick={() => void toggleAutomation(!automation?.enabled)}>
-                {automation?.enabled ? 'Disable' : 'Enable'}
-              </Button>
-              <Button size="xs" variant="gold" onClick={() => void runAccrual()}>Run now</Button>
-            </div>
-          </div>
-          <div className="grid md:grid-cols-3 gap-3 mt-4">
-            <div className="rounded-2xl border border-white/[0.06] bg-white/[0.04]/50 p-4">
-              <p className="text-[9px] uppercase tracking-wider text-muted font-bold">Monthly preview</p>
-              <p className="font-mono txt-pos text-lg font-bold mt-1">৳ {Number(preview?.totalPreviewSalary ?? 0).toLocaleString('en-BD')}</p>
-              <p className="text-[10px] text-muted">{preview?.employees.length ?? 0} linked employees · {preview?.alreadyAccruedCount ?? 0} already accrued</p>
-            </div>
-            <div className="md:col-span-2 rounded-2xl border border-white/[0.06] bg-white/[0.04]/50 p-4">
-              <p className="text-[9px] uppercase tracking-wider text-muted font-bold mb-2">Accrual history</p>
-              {!history.length ? <p className="text-[11px] text-muted">No accrual runs yet.</p> : (
-                <div className="grid gap-1 text-[11px] max-h-28 overflow-y-auto">
-                  {history.slice(0, 6).map(run => (
-                    <div key={run.id} className="flex justify-between gap-2 border-b border-white/[0.04] pb-1">
-                      <span className="font-mono text-muted">{run.periodYm}</span>
-                      <span className={run.status === 'SUCCESS' ? 'txt-pos font-medium' : run.status === 'RUNNING' ? 'text-amber-500 font-medium' : 'txt-neg font-medium'}>{run.status}</span>
-                      <span className="text-muted">{run.trigger}</span>
-                      <span className="font-mono text-gold">+{run.createdCount} / skip {run.skippedCount}</span>
+      {/* ── হিস্টরি ─────────────────────────────────────────────────────── */}
+      {activeTab === 'history' && (
+        <div className="space-y-4">
+          <Card className="p-5">
+            <p className="mb-4 text-sm font-bold text-cream">বেতন চালান হিস্টরি</p>
+            {!historyGroups.length ? (
+              <Empty icon="◇" title="এখনো কোনো accrual রান নেই" />
+            ) : (
+              <div className="space-y-2">
+                {historyGroups.map(([periodYm, runs]) => {
+                  const totalCreated = runs.reduce((s, r) => s + r.createdCount, 0)
+                  const totalSkipped = runs.reduce((s, r) => s + r.skippedCount, 0)
+                  return (
+                    <details key={periodYm} className="group overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.04]/40">
+                      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+                        <span className="text-[12px] font-bold text-cream">{periodYmBn(periodYm) ?? periodYm}</span>
+                        <span className="flex items-center gap-3 text-[11px] text-muted">
+                          <span>{toBnDigits(totalCreated)} জমা{totalSkipped ? ` · ${toBnDigits(totalSkipped)} স্কিপ` : ''}</span>
+                          <svg className="h-3.5 w-3.5 transition-transform group-open:rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </span>
+                      </summary>
+                      <div className="divide-y divide-white/[0.04] border-t border-white/[0.05] px-4">
+                        {runs.map(run => (
+                          <div key={run.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-[11px]">
+                            <span className="text-muted">{dateBn(run.createdAt)} · {run.trigger === 'AUTO' ? 'স্বয়ংক্রিয়' : 'ম্যানুয়াল'}</span>
+                            <span className={run.status === 'SUCCESS' ? 'txt-pos font-semibold' : run.status === 'RUNNING' ? 'font-semibold text-amber-500' : 'txt-neg font-semibold'}>
+                              {run.status === 'SUCCESS' ? 'সফল' : run.status === 'RUNNING' ? 'চলছে' : 'ব্যর্থ'}
+                            </span>
+                            <span className="font-mono text-gold">+{toBnDigits(run.createdCount)} / স্কিপ {toBnDigits(run.skippedCount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )
+                })}
+              </div>
+            )}
+          </Card>
+
+          <Card className="p-5">
+            <p className="mb-4 text-sm font-bold text-cream">পুরাতন হিসাব (লিগ্যাসি)</p>
+            {loading ? <Skeleton className="h-40" /> : roll.length === 0 ? (
+              <Empty icon="⌁" title="সক্রিয় পেরোল নেই" desc="কর্মচারী যোগ করে অ্যাডভান্স বা বেতন লগ করুন।" />
+            ) : (
+              <div className="min-w-0 max-w-full max-h-[480px] overflow-x-auto">
+                <table className="w-full min-w-[980px] text-left text-[11px]">
+                  <thead className="sticky top-0 z-[1] border-b border-white/[0.06] bg-card/88 text-xs uppercase tracking-wider text-muted backdrop-blur-sm">
+                    <tr>
+                      <th className="py-3 pr-3 font-medium">কর্মচারী</th>
+                      <th className="py-3 pr-3 text-right font-medium">বেতন</th>
+                      <th className="py-3 pr-3 text-right font-medium">প্রদত্ত</th>
+                      <th className="py-3 pr-3 text-right font-medium">অ্যাডভান্স</th>
+                      <th className="py-3 pr-3 text-right font-medium">বাকি</th>
+                      <th className="py-3 font-medium" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/[0.04]">
+                    {roll.map(r => (
+                      <tr key={r.emp_id} className="transition-colors hover:bg-white/[0.04]/50">
+                        <td className="py-3 pr-3 font-medium text-cream">{r.name}</td>
+                        <td className="py-3 pr-3 text-right font-mono text-cream">৳ {r.monthly_salary.toLocaleString('en-BD')}</td>
+                        <td className="py-3 pr-3 text-right font-mono text-muted">৳ {r.salary_paid.toLocaleString('en-BD')}</td>
+                        <td className="py-3 pr-3 text-right font-mono text-muted">৳ {Math.max(0, r.advance_balance).toLocaleString('en-BD')}</td>
+                        <td className="py-3 pr-3 text-right font-mono font-medium text-gold">৳ {Math.max(0, r.current_due).toLocaleString('en-BD')}</td>
+                        <td className="py-3"><Link href={`/employees/${r.emp_id}`} className="font-medium text-gold hover:text-gold">বিস্তারিত</Link></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+
+          <Card className="overflow-hidden p-5">
+            <p className="mb-3 text-sm font-bold text-cream">সাম্প্রতিক টাইমলাইন</p>
+            {loading ? <Skeleton className="h-28" /> : !(data?.payroll_timeline ?? []).length ? (
+              <p className="text-xs text-muted">কর্মচারী ডিটেইল স্ক্রিন থেকে অ্যাডভান্স বা পেআউট রেকর্ড করুন।</p>
+            ) : (
+              <div className="max-h-64 divide-y divide-white/[0.04] overflow-y-auto text-[11px]">
+                {(data!.payroll_timeline ?? []).map(tx => (
+                  <div key={tx.tx_id} className="flex items-center justify-between gap-2 py-2.5">
+                    <span className="font-mono text-[10px] text-muted">{tx.date.slice(0, 10)}</span>
+                    <span className="flex-1 font-medium text-cream">{tx.emp_name} · {tx.tx_type.replace('_', ' ')}</span>
+                    <span className="font-mono font-bold text-gold">৳ {tx.amount.toLocaleString('en-BD')}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
+
+      {/* ── সমন্বয় ও আপিল ──────────────────────────────────────────────── */}
+      {activeTab === 'requests' && (
+        showApprovals ? (
+          <div className="space-y-4">
+            <Card className="border-amber-100 p-5">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm font-bold text-cream">উত্তোলন অনুরোধ</p>
+                <Button size="xs" variant="secondary" type="button" onClick={() => void loadWallets()}>রিফ্রেশ</Button>
+              </div>
+              {walletLoading ? (
+                <Skeleton className="h-24 w-full" />
+              ) : !(walletData?.pendingRequests ?? []).length ? (
+                <Empty icon="◆" title="কোনো পেন্ডিং অনুরোধ নেই" desc="অ্যাডভান্স ও উত্তোলনের অনুরোধ এখানে দেখা যাবে।" />
+              ) : (
+                <div className="space-y-2 overflow-x-auto">
+                  {walletData!.pendingRequests.map(req => (
+                    <div key={req.id} className="flex flex-col gap-3 rounded-2xl border border-white/[0.06] p-4 text-[11px] transition-colors hover:bg-white/[0.04]/50 sm:flex-row sm:items-center">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-cream">{WALLET_TYPE_LABEL_BN[req.type] ?? req.type.replace(/_/g, ' ')} · {req.employeeId}</p>
+                        <p className="mt-1 text-muted">{req.reason.slice(0, 160)}{req.reason.length > 160 ? '…' : ''}</p>
+                        <p className="mt-1 text-[10px] text-muted">{req.businessId.replace(/_/g, ' ')} · {req.createdAt.slice(0, 10)}</p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className="font-mono text-sm font-bold text-gold">৳ {Number(req.requestedAmount).toLocaleString('en-BD')}</span>
+                        <Button size="xs" variant="secondary" type="button" onClick={() => setReview({ id: req.id, action: 'REJECT', type: req.type, requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount), transactionId: '' })}>প্রত্যাখ্যান</Button>
+                        <Button size="xs" variant="gold" type="button" onClick={() => setReview({ id: req.id, action: 'APPROVE', type: req.type, requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount), transactionId: '' })}>অনুমোদন</Button>
+                      </div>
                     </div>
                   ))}
                 </div>
               )}
-            </div>
+            </Card>
+
+            <Card className="p-5">
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-bold text-cream">ম্যানুয়াল এন্ট্রি</p>
+                  <p className="mt-1 text-[11px] text-muted">বেতন ক্রেডিট, বোনাস, কমিশন, ওভারটাইম, রিইমবার্সমেন্ট, কর্তন, জরিমানা বা সমন্বয় লেজারে পোস্ট করুন।</p>
+                </div>
+              </div>
+              <form onSubmit={submitCompensation} className="grid gap-2 text-[11px] md:grid-cols-[1.2fr_1fr_1fr_1fr_1.5fr_auto]">
+                <select value={compForm.employeeId} onChange={e => setCompForm(f => ({ ...f, employeeId: e.target.value }))} className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-gold/20">
+                  <option value="">কর্মচারী বাছুন</option>
+                  {compWallets.map(w => <option key={`${w.businessId}:${w.employeeId}`} value={w.employeeId}>{w.name} · {w.employeeId}</option>)}
+                </select>
+                <select value={compForm.type} onChange={e => setCompForm(f => ({ ...f, type: e.target.value }))} className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-gold/20">
+                  {PAYROLL_COMPENSATION_TYPES.map(t => (
+                    <option key={t.value} value={t.value}>
+                      {WALLET_TYPE_LABEL_BN[t.value] ?? t.value}{t.kind === 'credit' ? ' · জমা' : t.kind === 'debit' ? ' · কর্তন' : ''}
+                    </option>
+                  ))}
+                </select>
+                <input value={compForm.amount} onChange={e => setCompForm(f => ({ ...f, amount: e.target.value }))} type="number" min={compForm.type === 'ADJUSTMENT' ? undefined : 1} step="1" placeholder={compForm.type === 'ADJUSTMENT' ? 'পরিমাণ (+/-)' : 'পরিমাণ'} className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 font-mono text-cream focus:outline-none focus:ring-2 focus:ring-gold/20" />
+                <input value={compForm.date} onChange={e => setCompForm(f => ({ ...f, date: e.target.value }))} type="date" className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-gold/20" />
+                <input value={compForm.note} onChange={e => setCompForm(f => ({ ...f, note: e.target.value }))} placeholder="নোট" className="rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2.5 text-cream focus:outline-none focus:ring-2 focus:ring-gold/20" />
+                <Button size="xs" variant="gold" type="submit" loading={compBusy}>পোস্ট</Button>
+              </form>
+              {orphanLedgerCount > 0 && (
+                <p className="mt-3 rounded-xl border px-3 py-2 text-[11px] tone-amber">
+                  {toBnDigits(orphanLedgerCount)}টি লেজার এন্ট্রি রোস্টার/ইউজারের সাথে যুক্ত নেই।{' '}
+                  <button type="button" className="font-medium text-gold underline" onClick={reviewLedgerTable}>
+                    লেজারে দেখুন
+                  </button>
+                </p>
+              )}
+            </Card>
+
+            <Card className="p-5">
+              <p className="mb-3 text-sm font-bold text-cream">এই মাসের জরিমানা</p>
+              {!penaltyEntriesThisMonth.length ? (
+                <Empty icon="◇" title="এই মাসে কোনো জরিমানা নেই" />
+              ) : (
+                <div className="divide-y divide-white/[0.04] text-[11px]">
+                  {penaltyEntriesThisMonth.map(entry => (
+                    <div key={entry.key} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
+                      <div className="min-w-0">
+                        <p className="font-medium text-cream">{entry.name} <span className="font-mono text-[10px] text-muted">{entry.employeeId}</span></p>
+                        <p className="text-[10px] text-muted">{dateBn(entry.date)}{entry.note ? ` · ${entry.note}` : ''}</p>
+                      </div>
+                      <span className="font-mono font-bold txt-neg">৳ {entry.amount.toLocaleString('en-BD')}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
           </div>
-        </Card>
+        ) : (
+          <Card className="p-5"><Empty icon="◈" title="এই সেকশন দেখার অনুমতি নেই" /></Card>
+        )
       )}
 
-      {showApprovals && (
-        <Card className="p-5 border-amber-100">
-          <div className="flex justify-between items-center gap-3 mb-3 flex-wrap">
-            <p className="text-sm font-bold text-cream">Pending wallet requests</p>
-            <Button size="xs" variant="secondary" type="button" onClick={() => void loadWallets()}>Refresh</Button>
-          </div>
-          {walletLoading ? (
-            <Skeleton className="h-24 w-full" />
-          ) : !(walletData?.pendingRequests ?? []).length ? (
-            <Empty icon="◆" title="No pending wallet requests" desc="Advance and withdrawal requests will appear here." />
-          ) : (
-            <div className="overflow-x-auto space-y-2">
-              {walletData!.pendingRequests.map(req => (
-                <div key={req.id} className="flex flex-col sm:flex-row sm:items-center gap-3 border border-white/[0.06] rounded-2xl p-4 text-[11px] hover:bg-white/[0.04]/50 transition-colors">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-cream font-semibold">{req.type.replace(/_/g, ' ')} · {req.employeeId}</p>
-                    <p className="text-muted mt-1">{req.reason.slice(0, 160)}{req.reason.length > 160 ? '…' : ''}</p>
-                    <p className="text-[10px] text-muted mt-1">{req.businessId.replace(/_/g, ' ')} · {req.createdAt.slice(0, 10)}</p>
+      {/* ── টুলস ────────────────────────────────────────────────────────── */}
+      {activeTab === 'tools' && (
+        showApprovals ? (
+          <div className="space-y-4">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <Card className="p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-bold text-cream">অটো-বেতন</p>
+                    <p className="mt-1 text-[11px] text-muted">
+                      প্রতি মাসের {toBnDigits(automation?.dayOfMonth ?? 10)} তারিখে চলে · আগের মাসের বেতন ক্রেডিট করে · {automation?.timezone ?? 'Asia/Dhaka'}
+                    </p>
+                    <p className="mt-2 text-[11px] text-muted">
+                      প্রিভিউ: <span className="font-mono font-bold text-gold">৳ {Number(preview?.totalPreviewSalary ?? 0).toLocaleString('en-BD')}</span>
+                      {' '}({toBnDigits(preview?.employees.length ?? 0)} জন যুক্ত · {toBnDigits(preview?.alreadyAccruedCount ?? 0)} জন হয়ে গেছে)
+                    </p>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="font-mono text-gold text-sm font-bold">৳ {Number(req.requestedAmount).toLocaleString('en-BD')}</span>
-                    <Button size="xs" variant="secondary" type="button" onClick={() => setReview({ id: req.id, action: 'REJECT', type: req.type, requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount), transactionId: '' })}>Reject</Button>
-                    <Button size="xs" variant="gold" type="button" onClick={() => setReview({ id: req.id, action: 'APPROVE', type: req.type, requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount), transactionId: '' })}>Approve</Button>
+                  <div className="flex gap-2">
+                    <Button size="xs" variant={automation?.enabled ? 'secondary' : 'gold'} onClick={() => void toggleAutomation(!automation?.enabled)}>
+                      {automation?.enabled ? 'বন্ধ করুন' : 'চালু করুন'}
+                    </Button>
+                    <Button size="xs" variant="gold" onClick={() => void runAccrual()}>এখনই চালান</Button>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      )}
+              </Card>
 
-      <div id="payroll-wallet-table">
-      <Card className="p-5">
-        <div className="flex justify-between gap-3 items-center flex-wrap mb-4">
-          <p className="text-sm font-bold text-cream">Employee profitability and liabilities</p>
-          <div className="flex flex-1 flex-wrap gap-2">
-            <div className="relative flex-1 min-w-[10rem]">
-              <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <input value={employeeFilter} onChange={e => setEmployeeFilter(e.target.value)} placeholder="Filter employee" className="w-full min-h-[44px] rounded-xl border border-white/[0.06] bg-card/85 pl-9 pr-3 py-2 text-[11px] text-cream focus:outline-none focus:ring-2 focus:ring-gold/20 md:min-h-0" />
-            </div>
-          </div>
-        </div>
-        <div className="mb-4 flex gap-2 overflow-x-auto scrollbar-hide pb-1">
-          {(['ALL', 'SALARY_ACCRUAL', 'COMMISSION', 'PENALTY', 'ADVANCE', 'WITHDRAWAL'] as const).map(t => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setLedgerTypeFilter(t)}
-              className={`shrink-0 min-h-[44px] rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${
-                ledgerTypeFilter === t
-                  ? 'border-gold/30 bg-gold/10 text-gold'
-                  : 'border-white/[0.06] text-muted hover:text-cream hover:bg-white/[0.04]'
-              }`}
-            >
-              {t.replace(/_/g, ' ')}
-            </button>
-          ))}
-        </div>
-        {walletLoading ? <Skeleton className="h-40" /> : !(walletData?.wallets ?? []).length ? (
-          <Empty
-            icon="◈"
-            title="No wallet ledger yet"
-            desc="Run accrual or approve requests to create wallet entries."
-            action={showApprovals ? <Button variant="gold" size="sm" onClick={() => void runAccrual()}>Run accrual</Button> : undefined}
-          />
-        ) : (
-          <>
-          <div className="hidden overflow-x-auto min-w-0 max-w-full max-h-[480px] md:block">
-            <table className="w-full min-w-[1080px] text-left text-[11px]">
-              <thead className="sticky top-0 z-[1] bg-card/88 backdrop-blur-sm border-b border-white/[0.06] text-xs text-muted uppercase tracking-wider">
-                <tr>
-                  <th className="py-3 pr-3 font-medium">Employee</th>
-                  <th className="py-3 pr-3 text-right font-medium">Earned</th>
-                  <th className="py-3 pr-3 text-right font-medium">Commission</th>
-                  <th className="py-3 pr-3 text-right font-medium">Bonus</th>
-                  <th className="py-3 pr-3 text-right font-medium">Deductions</th>
-                  <th className="py-3 pr-3 text-right font-medium">Withdrawn</th>
-                  <th className="py-3 pr-3 text-right font-medium">Held balance</th>
-                  <th className="py-3 pr-3 text-right font-medium">Profitability</th>
-                  <th className="py-3 font-medium" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/[0.04]">
-                {filteredWallets.map((w: PayrollWallet) => (
-                  <tr key={`${w.businessId}:${w.employeeId}`} className="transition-colors hover:bg-white/[0.04]/80">
-                    <td className="py-3 pr-3"><span className="text-cream font-medium">{w.name}</span><span className="block text-muted font-mono text-[10px]">{w.employeeId}</span></td>
-                    <td className="py-3 pr-3 font-mono text-right text-cream">৳ {w.summary.lifetimeEarned.toLocaleString('en-BD')}</td>
-                    <td className="py-3 pr-3 font-mono text-right txt-pos">৳ {w.summary.totalCommissions.toLocaleString('en-BD')}</td>
-                    <td className="py-3 pr-3 font-mono text-right text-gold">৳ {w.summary.totalBonuses.toLocaleString('en-BD')}</td>
-                    <td className="py-3 pr-3 font-mono text-right txt-neg">৳ {(w.summary.totalMealDeductions + w.summary.totalPenalties).toLocaleString('en-BD')}</td>
-                    <td className="py-3 pr-3 font-mono text-right text-muted">৳ {w.summary.lifetimeWithdrawn.toLocaleString('en-BD')}</td>
-                    <td className="py-3 pr-3 font-mono text-right txt-pos font-medium">৳ {w.summary.companyLiability.toLocaleString('en-BD')}</td>
-                    <td className="py-3 pr-3 font-mono text-right text-muted">{w.summary.totalAccrued ? `${Math.round(((w.summary.totalCommissions + w.summary.totalBonuses) / w.summary.totalAccrued) * 100)}% variable` : '—'}</td>
-                    <td className="py-3"><Link href={`/employees/${encodeURIComponent(w.employeeId)}`} className="text-gold hover:text-gold font-medium">Ledger</Link></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Mobile Expandable Cards */}
-          <motion.div
-            className="space-y-3 md:hidden"
-            variants={_stagger} initial="hidden" animate="show"
-          >
-            {filteredWallets.slice(0, 80).map((w: PayrollWallet) => (
-              <motion.div key={`${w.businessId}:${w.employeeId}`} variants={_fadeUp}>
-                <Card interactive className="p-4 text-[11px]">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate font-semibold text-cream">{w.name}</p>
-                      <p className="font-mono text-muted text-[10px]">{w.employeeId}</p>
-                    </div>
-                    <Link href={`/employees/${encodeURIComponent(w.employeeId)}`} className="shrink-0 text-gold font-medium text-xs">
-                      Ledger →
-                    </Link>
-                  </div>
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <div className="rounded-xl border border-white/[0.06] bg-white/[0.04]/50 px-3 py-2">
-                      <p className="text-[10px] text-muted">Earned</p>
-                      <p className="font-mono font-bold text-cream">৳ {w.summary.lifetimeEarned.toLocaleString('en-BD')}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/[0.06] bg-emerald-500/10 px-3 py-2">
-                      <p className="text-[10px] text-muted">Held balance</p>
-                      <p className="font-mono font-bold txt-pos">৳ {w.summary.companyLiability.toLocaleString('en-BD')}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/[0.06] bg-white/[0.04]/50 px-3 py-2">
-                      <p className="text-[10px] text-muted">Commission</p>
-                      <p className="font-mono txt-pos">৳ {w.summary.totalCommissions.toLocaleString('en-BD')}</p>
-                    </div>
-                    <div className="rounded-xl border border-white/[0.06] bg-red-500/10 px-3 py-2">
-                      <p className="text-[10px] text-muted">Deductions</p>
-                      <p className="font-mono txt-neg">৳ {(w.summary.totalMealDeductions + w.summary.totalPenalties).toLocaleString('en-BD')}</p>
-                    </div>
-                  </div>
-                </Card>
-              </motion.div>
-            ))}
-          </motion.div>
-          </>
-        )}
-      </Card>
-
-      {showApprovals && (
-        <Card className="p-5">
-          <p className="text-sm font-bold text-cream">Meal Allowance Settings</p>
-          <p className="mt-1 text-[11px] text-muted max-w-2xl">
-            Enable meal allowance for specific employees. On days when no food is cooked, enabled employees can request their allowance.
-          </p>
-          {mealLoading ? (
-            <Skeleton className="h-40 mt-4" />
-          ) : !mealRows.length ? (
-            <div className="mt-4">
-              <Empty icon="◷" title="No employees linked to this business yet." desc="Link staff with HR employee IDs and business access first." />
-            </div>
-          ) : (
-            <>
-            <div className="hidden overflow-x-auto min-w-0 max-w-full table-scroll max-h-[420px] mt-4 md:block">
-              <table className="w-full min-w-[720px] text-left text-[11px]">
-                <thead className="sticky top-0 z-[1] bg-card/88 backdrop-blur-sm border-b border-white/[0.06] text-xs text-muted uppercase tracking-wider">
-                  <tr>
-                    <th className="py-3 pr-3 font-medium">Employee</th>
-                    <th className="py-3 pr-3 font-medium">Phone</th>
-                    <th className="py-3 pr-3 text-center font-medium">Enable</th>
-                    <th className="py-3 pr-3 text-right font-medium">Amount (BDT)</th>
-                    <th className="py-3 font-medium" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/[0.04]">
-                  {mealRows.map(row => (
-                    <tr key={row.userId} className="hover:bg-white/[0.04]/50 transition-colors">
-                      <td className="py-3 pr-3">
-                        <span className="text-cream font-medium">{row.name}</span>
-                        <span className="block text-muted font-mono text-[10px]">{row.employeeId || '—'}</span>
-                      </td>
-                      <td className="py-3 pr-3 text-muted">{row.phone || '—'}</td>
-                      <td className="py-3 pr-3 text-center">
-                        <input
-                          type="checkbox"
-                          checked={row.enabled}
-                          onChange={e =>
-                            setMealRows(prev =>
-                              prev.map(r => (r.userId === row.userId ? { ...r, enabled: e.target.checked } : r)),
-                            )
-                          }
-                          className="h-4 w-4 rounded border-white/[0.1] accent-gold"
-                        />
-                      </td>
-                      <td className="py-3 pr-3">
-                        <input
-                          type="number"
-                          min={0}
-                          step={1}
-                          disabled={!row.enabled}
-                          value={row.amountBdt}
-                          onChange={e =>
-                            setMealRows(prev =>
-                              prev.map(r => (r.userId === row.userId ? { ...r, amountBdt: e.target.value } : r)),
-                            )
-                          }
-                          className="w-full max-w-[120px] ml-auto rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-right font-mono text-cream disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-gold/20"
-                        />
-                      </td>
-                      <td className="py-3 text-right">
-                        <Button
-                          size="xs"
-                          variant="secondary"
-                          disabled={row.saving || (row.enabled && (!row.amountBdt || Number(row.amountBdt) <= 0))}
-                          onClick={() => void saveMealProfile(row)}
-                        >
-                          {row.saving ? 'Saving…' : 'Save'}
-                        </Button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <Card className="p-5">
+                <p className="text-sm font-bold text-cream">এক্সপোর্ট</p>
+                <p className="mt-1 text-[11px] text-muted">বর্তমান ওয়ালেট লেজার ডাউনলোড করুন।</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button size="sm" variant="secondary" disabled={!walletData?.wallets.length} onClick={() => void exportPdf()}>PDF ডাউনলোড</Button>
+                  <Button size="sm" variant="secondary" disabled={!walletData?.wallets.length} onClick={() => exportCsv()}>CSV ডাউনলোড</Button>
+                  <Button size="sm" variant="secondary" disabled={!walletData?.wallets.length} onClick={() => void exportXlsx()}>Excel ডাউনলোড</Button>
+                </div>
+              </Card>
             </div>
 
-            {/* Mobile cards */}
-            <motion.div
-              className="space-y-3 mt-4 md:hidden"
-              variants={_stagger} initial="hidden" animate="show"
-            >
-              {mealRows.map(row => (
-                <motion.div key={row.userId} variants={_fadeUp}>
-                  <Card className="p-4 text-[11px]">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate font-semibold text-cream">{row.name}</p>
-                        <p className="font-mono text-muted text-[10px]">{row.employeeId || '—'}</p>
-                        <p className="text-muted text-[10px] mt-0.5">{row.phone || '—'}</p>
-                      </div>
-                      <label className="flex shrink-0 items-center gap-1.5 text-[10px] text-muted">
-                        Enable
-                        <input
-                          type="checkbox"
-                          checked={row.enabled}
-                          onChange={e =>
-                            setMealRows(prev =>
-                              prev.map(r => (r.userId === row.userId ? { ...r, enabled: e.target.checked } : r)),
-                            )
-                          }
-                          className="h-4 w-4 rounded border-white/[0.1] accent-gold"
-                        />
-                      </label>
-                    </div>
-                    <div className="mt-3 flex items-end justify-between gap-3">
-                      <label className="flex-1">
-                        <span className="block text-[10px] text-muted mb-1">Amount (BDT)</span>
-                        <input
-                          type="number"
-                          min={0}
-                          step={1}
-                          disabled={!row.enabled}
-                          value={row.amountBdt}
-                          onChange={e =>
-                            setMealRows(prev =>
-                              prev.map(r => (r.userId === row.userId ? { ...r, amountBdt: e.target.value } : r)),
-                            )
-                          }
-                          className="w-full min-h-[44px] rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 font-mono text-cream disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-gold/20"
-                        />
-                      </label>
-                      <Button
-                        size="xs"
-                        variant="secondary"
-                        disabled={row.saving || (row.enabled && (!row.amountBdt || Number(row.amountBdt) <= 0))}
-                        onClick={() => void saveMealProfile(row)}
-                      >
-                        {row.saving ? 'Saving…' : 'Save'}
-                      </Button>
-                    </div>
-                  </Card>
-                </motion.div>
-              ))}
-            </motion.div>
-            </>
-          )}
-        </Card>
-      )}
-
-      {showApprovals && (
-        <Card className="p-5">
-          <p className="text-sm font-bold text-cream">Driving Mode Settings</p>
-          <p className="mt-1 text-[11px] text-muted max-w-2xl">
-            Enable driving mode for staff who go on the road. Enabled staff can request driving mode from My Desk; once you approve, the agent pauses their office follow-ups until they return.
-          </p>
-          {drivingLoading ? (
-            <Skeleton className="h-40 mt-4" />
-          ) : !drivingRows.length ? (
-            <div className="mt-4">
-              <Empty icon="◷" title="No employees linked to this business yet." desc="Link staff with HR employee IDs and business access first." />
-            </div>
-          ) : (
-            <div className="overflow-x-auto min-w-0 max-w-full max-h-[420px] mt-4">
-              <table className="w-full min-w-[560px] text-left text-[11px]">
-                <thead className="sticky top-0 z-[1] bg-card/88 backdrop-blur-sm border-b border-white/[0.06] text-xs text-muted uppercase tracking-wider">
-                  <tr>
-                    <th className="py-3 pr-3 font-medium">Employee</th>
-                    <th className="py-3 pr-3 font-medium">Phone</th>
-                    <th className="py-3 pr-3 text-center font-medium">Enable</th>
-                    <th className="py-3 pr-3 text-center font-medium">Status</th>
-                    <th className="py-3 font-medium" />
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/[0.04]">
-                  {drivingRows.map(row => (
-                    <tr key={row.userId} className="hover:bg-white/[0.04]/50 transition-colors">
-                      <td className="py-3 pr-3">
-                        <span className="text-cream font-medium">{row.name}</span>
-                        <span className="block text-muted font-mono text-[10px]">{row.employeeId || '—'}</span>
-                      </td>
-                      <td className="py-3 pr-3 text-muted">{row.phone || '—'}</td>
-                      <td className="py-3 pr-3 text-center">
-                        <input
-                          type="checkbox"
-                          checked={row.enabled}
-                          onChange={e =>
-                            setDrivingRows(prev =>
-                              prev.map(r => (r.userId === row.userId ? { ...r, enabled: e.target.checked } : r)),
-                            )
-                          }
-                          className="h-4 w-4 rounded border-white/[0.1] accent-gold"
-                        />
-                      </td>
-                      <td className="py-3 pr-3 text-center">
-                        {row.drivingStatus === 'ACTIVE' ? (
-                          <span className="inline-flex items-center rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400">Driving</span>
-                        ) : row.drivingStatus === 'PENDING' ? (
-                          <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-400">Pending</span>
-                        ) : (
-                          <span className="text-muted">—</span>
-                        )}
-                      </td>
-                      <td className="py-3 text-right">
-                        <div className="inline-flex items-center gap-2">
-                          {row.enabled && row.drivingStatus !== 'PENDING' && (
+            <Card className="p-5">
+              <p className="text-sm font-bold text-cream">মিল-ভাতা</p>
+              <p className="mt-1 max-w-2xl text-[11px] text-muted">
+                নির্দিষ্ট কর্মচারীর জন্য মিল-ভাতা চালু করুন। যেদিন রান্না হয় না, সেদিন চালু থাকা কর্মচারীরা ভাতা অনুরোধ করতে পারবেন।
+              </p>
+              {mealLoading ? (
+                <Skeleton className="mt-4 h-40" />
+              ) : !mealRows.length ? (
+                <div className="mt-4">
+                  <Empty icon="◷" title="এই ব্যবসায় কোনো কর্মচারী যুক্ত নেই" desc="স্টাফদের HR employee ID ও ব্যবসা-অ্যাক্সেস দিন।" />
+                </div>
+              ) : (
+                <>
+                <div className="table-scroll mt-4 hidden min-w-0 max-w-full max-h-[420px] overflow-x-auto md:block">
+                  <table className="w-full min-w-[720px] text-left text-[11px]">
+                    <thead className="sticky top-0 z-[1] border-b border-white/[0.06] bg-card/88 text-xs uppercase tracking-wider text-muted backdrop-blur-sm">
+                      <tr>
+                        <th className="py-3 pr-3 font-medium">কর্মচারী</th>
+                        <th className="py-3 pr-3 font-medium">ফোন</th>
+                        <th className="py-3 pr-3 text-center font-medium">চালু</th>
+                        <th className="py-3 pr-3 text-right font-medium">পরিমাণ (৳)</th>
+                        <th className="py-3 font-medium" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/[0.04]">
+                      {mealRows.map(row => (
+                        <tr key={row.userId} className="transition-colors hover:bg-white/[0.04]/50">
+                          <td className="py-3 pr-3">
+                            <span className="font-medium text-cream">{row.name}</span>
+                            <span className="block font-mono text-[10px] text-muted">{row.employeeId || '—'}</span>
+                          </td>
+                          <td className="py-3 pr-3 text-muted">{row.phone || '—'}</td>
+                          <td className="py-3 pr-3 text-center">
+                            <input
+                              type="checkbox"
+                              checked={row.enabled}
+                              onChange={e =>
+                                setMealRows(prev =>
+                                  prev.map(r => (r.userId === row.userId ? { ...r, enabled: e.target.checked } : r)),
+                                )
+                              }
+                              className="h-4 w-4 rounded border-white/[0.1] accent-gold"
+                            />
+                          </td>
+                          <td className="py-3 pr-3">
+                            <input
+                              type="number"
+                              min={0}
+                              step={1}
+                              disabled={!row.enabled}
+                              value={row.amountBdt}
+                              onChange={e =>
+                                setMealRows(prev =>
+                                  prev.map(r => (r.userId === row.userId ? { ...r, amountBdt: e.target.value } : r)),
+                                )
+                              }
+                              className="ml-auto w-full max-w-[120px] rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 text-right font-mono text-cream focus:outline-none focus:ring-2 focus:ring-gold/20 disabled:opacity-40"
+                            />
+                          </td>
+                          <td className="py-3 text-right">
                             <Button
                               size="xs"
-                              variant={row.drivingStatus === 'ACTIVE' ? 'danger' : 'gold'}
-                              disabled={row.toggling}
-                              onClick={() => void toggleDrivingNow(row)}
+                              variant="secondary"
+                              disabled={row.saving || (row.enabled && (!row.amountBdt || Number(row.amountBdt) <= 0))}
+                              onClick={() => void saveMealProfile(row)}
                             >
-                              {row.toggling ? '…' : row.drivingStatus === 'ACTIVE' ? 'End' : 'Drive now'}
+                              {row.saving ? 'সংরক্ষণ হচ্ছে…' : 'সংরক্ষণ'}
                             </Button>
-                          )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Mobile cards */}
+                <motion.div className="mt-4 space-y-3 md:hidden" variants={_stagger} initial="hidden" animate="show">
+                  {mealRows.map(row => (
+                    <motion.div key={row.userId} variants={_fadeUp}>
+                      <Card className="p-4 text-[11px]">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="truncate font-semibold text-cream">{row.name}</p>
+                            <p className="font-mono text-[10px] text-muted">{row.employeeId || '—'}</p>
+                            <p className="mt-0.5 text-[10px] text-muted">{row.phone || '—'}</p>
+                          </div>
+                          <label className="flex shrink-0 items-center gap-1.5 text-[10px] text-muted">
+                            চালু
+                            <input
+                              type="checkbox"
+                              checked={row.enabled}
+                              onChange={e =>
+                                setMealRows(prev =>
+                                  prev.map(r => (r.userId === row.userId ? { ...r, enabled: e.target.checked } : r)),
+                                )
+                              }
+                              className="h-4 w-4 rounded border-white/[0.1] accent-gold"
+                            />
+                          </label>
+                        </div>
+                        <div className="mt-3 flex items-end justify-between gap-3">
+                          <label className="flex-1">
+                            <span className="mb-1 block text-[10px] text-muted">পরিমাণ (৳)</span>
+                            <input
+                              type="number"
+                              min={0}
+                              step={1}
+                              disabled={!row.enabled}
+                              value={row.amountBdt}
+                              onChange={e =>
+                                setMealRows(prev =>
+                                  prev.map(r => (r.userId === row.userId ? { ...r, amountBdt: e.target.value } : r)),
+                                )
+                              }
+                              className="min-h-[44px] w-full rounded-xl border border-white/[0.06] bg-card/85 px-3 py-2 font-mono text-cream focus:outline-none focus:ring-2 focus:ring-gold/20 disabled:opacity-40"
+                            />
+                          </label>
                           <Button
                             size="xs"
                             variant="secondary"
-                            disabled={row.saving}
-                            onClick={() => void saveDrivingProfile(row)}
+                            disabled={row.saving || (row.enabled && (!row.amountBdt || Number(row.amountBdt) <= 0))}
+                            onClick={() => void saveMealProfile(row)}
                           >
-                            {row.saving ? 'Saving…' : 'Save'}
+                            {row.saving ? 'সংরক্ষণ হচ্ছে…' : 'সংরক্ষণ'}
                           </Button>
                         </div>
-                      </td>
-                    </tr>
+                      </Card>
+                    </motion.div>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
+                </motion.div>
+                </>
+              )}
+            </Card>
+
+            <Card className="p-5">
+              <p className="text-sm font-bold text-cream">ড্রাইভিং মোড</p>
+              <p className="mt-1 max-w-2xl text-[11px] text-muted">
+                রাস্তায় বের হওয়া স্টাফদের জন্য ড্রাইভিং মোড চালু করুন। চালু থাকা স্টাফরা My Desk থেকে অনুরোধ করতে পারবে; অনুমোদনের পর এজেন্ট তাদের অফিস ফলো-আপ বন্ধ রাখবে যতক্ষণ না তারা ফিরে আসে।
+              </p>
+              {drivingLoading ? (
+                <Skeleton className="mt-4 h-40" />
+              ) : !drivingRows.length ? (
+                <div className="mt-4">
+                  <Empty icon="◷" title="এই ব্যবসায় কোনো কর্মচারী যুক্ত নেই" desc="স্টাফদের HR employee ID ও ব্যবসা-অ্যাক্সেস দিন।" />
+                </div>
+              ) : (
+                <div className="mt-4 min-w-0 max-w-full max-h-[420px] overflow-x-auto">
+                  <table className="w-full min-w-[560px] text-left text-[11px]">
+                    <thead className="sticky top-0 z-[1] border-b border-white/[0.06] bg-card/88 text-xs uppercase tracking-wider text-muted backdrop-blur-sm">
+                      <tr>
+                        <th className="py-3 pr-3 font-medium">কর্মচারী</th>
+                        <th className="py-3 pr-3 font-medium">ফোন</th>
+                        <th className="py-3 pr-3 text-center font-medium">চালু</th>
+                        <th className="py-3 pr-3 text-center font-medium">স্ট্যাটাস</th>
+                        <th className="py-3 font-medium" />
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/[0.04]">
+                      {drivingRows.map(row => (
+                        <tr key={row.userId} className="transition-colors hover:bg-white/[0.04]/50">
+                          <td className="py-3 pr-3">
+                            <span className="font-medium text-cream">{row.name}</span>
+                            <span className="block font-mono text-[10px] text-muted">{row.employeeId || '—'}</span>
+                          </td>
+                          <td className="py-3 pr-3 text-muted">{row.phone || '—'}</td>
+                          <td className="py-3 pr-3 text-center">
+                            <input
+                              type="checkbox"
+                              checked={row.enabled}
+                              onChange={e =>
+                                setDrivingRows(prev =>
+                                  prev.map(r => (r.userId === row.userId ? { ...r, enabled: e.target.checked } : r)),
+                                )
+                              }
+                              className="h-4 w-4 rounded border-white/[0.1] accent-gold"
+                            />
+                          </td>
+                          <td className="py-3 pr-3 text-center">
+                            {row.drivingStatus === 'ACTIVE' ? (
+                              <span className="inline-flex items-center rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-400">চলছে</span>
+                            ) : row.drivingStatus === 'PENDING' ? (
+                              <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold text-amber-400">অপেক্ষমাণ</span>
+                            ) : (
+                              <span className="text-muted">—</span>
+                            )}
+                          </td>
+                          <td className="py-3 text-right">
+                            <div className="inline-flex items-center gap-2">
+                              {row.enabled && row.drivingStatus !== 'PENDING' && (
+                                <Button
+                                  size="xs"
+                                  variant={row.drivingStatus === 'ACTIVE' ? 'danger' : 'gold'}
+                                  disabled={row.toggling}
+                                  onClick={() => void toggleDrivingNow(row)}
+                                >
+                                  {row.toggling ? '…' : row.drivingStatus === 'ACTIVE' ? 'শেষ করুন' : 'শুরু করুন'}
+                                </Button>
+                              )}
+                              <Button
+                                size="xs"
+                                variant="secondary"
+                                disabled={row.saving}
+                                onClick={() => void saveDrivingProfile(row)}
+                              >
+                                {row.saving ? 'সংরক্ষণ হচ্ছে…' : 'সংরক্ষণ'}
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          </div>
+        ) : (
+          <Card className="p-5"><Empty icon="◈" title="এই সেকশন দেখার অনুমতি নেই" /></Card>
+        )
       )}
-      </div>
 
       {review && (
         <MobileModalPortal open zIndex={80} onBackdropClick={() => setReview(null)}>
-          <Card className="mobile-modal-shell w-full max-w-md sm:rounded-2xl border-gold/20">
+          <Card className="mobile-modal-shell w-full max-w-md border-gold/20 sm:rounded-2xl">
             <div className="mobile-modal-header p-5 pb-3">
               <p className="text-sm font-bold text-cream">
-                {review.action === 'APPROVE' ? 'Approve wallet request' : 'Reject wallet request'}
+                {review.action === 'APPROVE' ? 'উত্তোলন অনুরোধ অনুমোদন' : 'উত্তোলন অনুরোধ প্রত্যাখ্যান'}
               </p>
               <p className="mt-1 text-xs text-muted">
-                Requested amount: <span className="font-mono text-gold font-bold">৳ {review.requestedAmount.toLocaleString('en-BD')}</span>
+                অনুরোধকৃত পরিমাণ: <span className="font-mono font-bold text-gold">৳ {review.requestedAmount.toLocaleString('en-BD')}</span>
               </p>
             </div>
             <div className="mobile-modal-body px-5">
               {review.action === 'APPROVE' && (
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-muted">
-                  Approved amount
+                  অনুমোদিত পরিমাণ
                   <input
                     autoFocus
                     inputMode="decimal"
@@ -973,7 +1263,7 @@ export default function PayrollPage() {
               )}
               {review.action === 'APPROVE' && review.type === 'WITHDRAWAL' && (
                 <label className="mt-3 block text-[11px] font-bold uppercase tracking-wider text-muted">
-                  Transaction ID
+                  ট্রানজেকশন আইডি
                   <input
                     inputMode="text"
                     type="text"
@@ -988,67 +1278,36 @@ export default function PayrollPage() {
             </div>
             <div className="mobile-modal-footer px-5 pt-3">
               <div className="flex justify-end gap-2">
-                <Button size="xs" variant="secondary" type="button" onClick={() => setReview(null)}>Cancel</Button>
+                <Button size="xs" variant="secondary" type="button" onClick={() => setReview(null)}>বাতিল</Button>
                 <Button size="xs" variant={review.action === 'APPROVE' ? 'gold' : 'danger'} type="button" disabled={reviewBusy} onClick={() => void submitReview()}>
-                  {reviewBusy ? 'Processing…' : review.action === 'APPROVE' ? 'Confirm approval' : 'Confirm rejection'}
+                  {reviewBusy ? 'প্রসেসিং…' : review.action === 'APPROVE' ? 'অনুমোদন নিশ্চিত করুন' : 'প্রত্যাখ্যান নিশ্চিত করুন'}
                 </Button>
               </div>
             </div>
           </Card>
         </MobileModalPortal>
       )}
-
-      <Card className="p-5">
-        <p className="text-sm font-bold text-cream mb-4">Legacy GAS rolling balances</p>
-        {loading ? <Skeleton className="h-40" /> : roll.length === 0 ? (
-          <Empty icon="⌁" title="No active payroll" desc="Add employees then log advances or salary payouts" />
-        ) : (
-          <div className="overflow-x-auto min-w-0 max-w-full max-h-[480px]">
-            <table className="w-full min-w-[980px] text-left text-[11px]">
-              <thead className="sticky top-0 z-[1] bg-card/88 backdrop-blur-sm border-b border-white/[0.06] text-xs text-muted uppercase tracking-wider">
-                <tr>
-                  <th className="py-3 pr-3 font-medium">Employee</th>
-                  <th className="py-3 pr-3 text-right font-medium">Salary</th>
-                  <th className="py-3 pr-3 text-right font-medium">Paid</th>
-                  <th className="py-3 pr-3 text-right font-medium">Advance</th>
-                  <th className="py-3 pr-3 text-right font-medium">Due</th>
-                  <th className="py-3 font-medium" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/[0.04]">
-                {roll.map(r => (
-                  <tr key={r.emp_id} className="hover:bg-white/[0.04]/50 transition-colors">
-                    <td className="py-3 pr-3 text-cream font-medium">{r.name}</td>
-                    <td className="py-3 pr-3 font-mono text-right text-cream">৳ {r.monthly_salary.toLocaleString('en-BD')}</td>
-                    <td className="py-3 pr-3 font-mono text-right text-muted">৳ {r.salary_paid.toLocaleString('en-BD')}</td>
-                    <td className="py-3 pr-3 font-mono text-right text-muted">৳ {Math.max(0, r.advance_balance).toLocaleString('en-BD')}</td>
-                    <td className="py-3 pr-3 font-mono text-right text-gold font-medium">৳ {Math.max(0, r.current_due).toLocaleString('en-BD')}</td>
-                    <td className="py-3"><Link href={`/employees/${r.emp_id}`} className="text-gold hover:text-gold font-medium">Detail</Link></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      <Card className="p-5 overflow-hidden">
-        <p className="text-sm font-bold text-cream mb-3">Timeline (recent)</p>
-        {loading ? <Skeleton className="h-28" /> : !(data?.payroll_timeline ?? []).length ? (
-          <p className="text-xs text-muted">Record advances or payouts from employee detail screens.</p>
-        ) : (
-          <div className="divide-y divide-white/[0.04] max-h-64 overflow-y-auto text-[11px]">
-            {(data!.payroll_timeline ?? []).map(tx => (
-              <div key={tx.tx_id} className="py-2.5 flex justify-between gap-2 items-center">
-                <span className="text-muted font-mono text-[10px]">{tx.date.slice(0, 10)}</span>
-                <span className="flex-1 text-cream font-medium">{tx.emp_name} · {tx.tx_type.replace('_',' ')}</span>
-                <span className="font-mono text-gold font-bold">৳ {tx.amount.toLocaleString('en-BD')}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
       </PageEnter>
     </FinancePageChrome>
+  )
+}
+
+function HeroKpiTile({ label, value, tone, isCount, loading }: {
+  label: string
+  value: number
+  tone?: 'pos' | 'neg' | 'amber'
+  isCount?: boolean
+  loading?: boolean
+}) {
+  const toneClass = tone === 'pos' ? 'txt-pos' : tone === 'neg' ? 'txt-neg' : tone === 'amber' ? 'text-amber-500' : 'text-cream'
+  return (
+    <div className="min-w-0 bg-card/60 p-3.5">
+      <p className="truncate text-[9px] font-bold uppercase tracking-wider text-muted">{label}</p>
+      {loading ? <Skeleton className="mt-2 h-5 w-16" /> : (
+        <p className={cn('mt-1 truncate font-mono text-sm font-bold tabular-nums', toneClass)}>
+          {isCount ? toBnDigits(value) : `৳ ${value.toLocaleString('en-BD')}`}
+        </p>
+      )}
+    </div>
   )
 }

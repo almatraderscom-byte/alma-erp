@@ -274,6 +274,9 @@ model EmployeeLedgerEntry {
   source          String?
   sourceRef       String?
   walletRequestId String?
+  /// For refund/settlement entries (e.g. an ADJUSTMENT that returns a PENALTY):
+  /// id of the original ledger entry being settled — direct fine ↔ refund join.
+  relatedEntryId  String?
   isArchived      Boolean                 @default(false)
   archivedAt      DateTime?
   archivedById    String?
@@ -291,6 +294,7 @@ model EmployeeLedgerEntry {
   @@index([businessId, createdAt])
   @@index([businessId, employeeId, createdAt])
   @@index([userId])
+  @@index([relatedEntryId])
 }
 
 enum EmployeePaymentMethodType {
@@ -607,6 +611,9 @@ model AttendanceWaiverRequest {
   reviewer                 User?                       @relation("AttendanceWaiverReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
   reviewedAt               DateTime?
   reversalLedgerEntryId    String?
+  /// Id of the original PENALTY ledger entry this appeal contests — lets the
+  /// wallet show appeal status directly on the fine transaction.
+  penaltyLedgerEntryId     String?
   isArchived               Boolean                     @default(false)
   archivedAt               DateTime?
   archivedById             String?
@@ -621,6 +628,7 @@ model AttendanceWaiverRequest {
   @@index([businessId, userId, createdAt])
   @@index([reviewedById])
   @@index([reversalLedgerEntryId])
+  @@index([penaltyLedgerEntryId])
 }
 
 /// Attendance exception / permission (Step 3, ALMA_LIFESTYLE only). A staff

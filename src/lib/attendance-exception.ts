@@ -102,10 +102,10 @@ export async function refundFinesForApprovedException(ex: AttendanceException): 
   if (!record) return
 
   const dateStr = dateLabel(ex.attendanceDate)
-  const targets: Array<{ kind: FineKind; amount: number; posted: boolean }> = [
-    { kind: 'late', amount: Number(record.penaltyAmount || 0), posted: !!record.penaltyLedgerEntryId },
-    { kind: 'early', amount: Number(record.earlyLeavePenaltyAmount || 0), posted: !!record.earlyLeavePenaltyLedgerEntryId },
-    { kind: 'nocheckout', amount: Number(record.noCheckoutFineAmount || 0), posted: !!record.noCheckoutFineLedgerEntryId },
+  const targets: Array<{ kind: FineKind; amount: number; posted: boolean; ledgerEntryId: string | null }> = [
+    { kind: 'late', amount: Number(record.penaltyAmount || 0), posted: !!record.penaltyLedgerEntryId, ledgerEntryId: record.penaltyLedgerEntryId },
+    { kind: 'early', amount: Number(record.earlyLeavePenaltyAmount || 0), posted: !!record.earlyLeavePenaltyLedgerEntryId, ledgerEntryId: record.earlyLeavePenaltyLedgerEntryId },
+    { kind: 'nocheckout', amount: Number(record.noCheckoutFineAmount || 0), posted: !!record.noCheckoutFineLedgerEntryId, ledgerEntryId: record.noCheckoutFineLedgerEntryId },
   ]
 
   // Guard against DOUBLE-REFUND. A fine can be reversed by two independent owner
@@ -138,6 +138,7 @@ export async function refundFinesForApprovedException(ex: AttendanceException): 
           source: EXCEPTION_REFUND_SOURCE,
           sourceRef: `attendance-exc-refund:${ex.id}:${t.kind}`,
           note: `${FINE_REFUND_LABEL[t.kind]} · ${dateStr}`,
+          relatedEntryId: t.ledgerEntryId,
         },
         { skipNotify: true },
       )
