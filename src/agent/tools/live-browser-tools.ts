@@ -286,6 +286,15 @@ const live_browser_look: AgentTool = {
       const want = (input.want as string) || 'both'
       const out: Record<string, unknown> = { device: dev.name, steps }
 
+      // Perception honesty (owner incident 2026-07-11: the head read a transient
+      // FB skeleton, saw "This content isn't available right now" and reported a
+      // broken page while the REAL page was fine on screen). Heavy SPAs paint a
+      // placeholder first — tab status "complete" fires long before content.
+      // Settle loop: when the first text read looks like a loading/unavailable
+      // placeholder (or is near-empty), wait and re-read before answering.
+      const TRANSIENT_RE = /(isn'?t available right now|content isn'?t available|something went wrong|page (?:is )?loading|লোড হচ্ছে|just a moment|checking your browser)/i
+      const looksUnsettled = (text: string) => text.trim().length < 300 || TRANSIENT_RE.test(text.slice(0, 4000))
+
       // P1 security (§5): page reads come back as tagged DATA + injection tripwire.
       // A tripwire hit also AUTO-FLAGS the page's domain to lockdown (§5.4) so the
       // ban is durable and enforced in live_browser_act + the extension — not just
@@ -293,7 +302,15 @@ const live_browser_look: AgentTool = {
       const { sandwichWrap, scanForInjection, injectionWarningBn } = await import('@/agent/lib/live-browser/guard')
       let pageUrl: string | undefined
       if (want === 'text' || want === 'both') {
-        const r = await runCommand(dev.deviceId, 'read_text')
+        let r = await runCommand(dev.deviceId, 'read_text')
+        // up to 2 settle retries (≈2s apart) while the page still reads as a placeholder
+        for (let retry = 0; retry < 2; retry++) {
+          const t = r.ok ? String((r.data as { text?: string } | undefined)?.text ?? '') : ''
+          if (r.ok && !looksUnsettled(t)) break
+          await runCommand(dev.deviceId, 'wait', { ms: 2000 })
+          const again = await runCommand(dev.deviceId, 'read_text')
+          if (again.ok) { r = again; steps.push(`settle-retry:${retry + 1}`) }
+        }
         if (r.ok) {
           const pageData = r.data as { url?: string; text?: string } | undefined
           if (pageData?.url) pageUrl = pageData.url
@@ -307,6 +324,11 @@ const live_browser_look: AgentTool = {
             }
           }
           out.page = { ...pageData, text: sandwichWrap(pageData?.url ?? 'page', rawText) }
+          if (TRANSIENT_RE.test(rawText.slice(0, 4000))) {
+            out.perceptionWarning =
+              'সতর্কতা: পেজ-টেক্সটে "not available / went wrong" জাতীয় টুকরো আছে — এটা প্রায়ই feed-এর ভেতরের একটা মুছে-যাওয়া embed বা লোডিং placeholder, পুরো পেজ ভাঙা নয়। ' +
+              'স্ক্রিনশটটাই চূড়ান্ত সত্য: স্ক্রিনশটে পেজ ঠিক দেখালে পেজ ঠিক আছে। ভাঙা দাবি করার আগে scroll করে আবার look করো; অনিশ্চিত হলে Boss-কে অনিশ্চয়তাসহ বলো — অনুমান নয়।'
+          }
         } else out.textError = r.error ?? r.status
       }
       if (want === 'dom' || want === 'both') {

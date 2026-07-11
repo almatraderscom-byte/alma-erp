@@ -13,7 +13,7 @@
  * critical parts himself.
  */
 import { prisma } from '@/lib/prisma'
-import { agentStorageDownload } from '@/agent/lib/storage'
+import { agentStorageDownload, agentStorageSignedUrl, agentStorageUpload } from '@/agent/lib/storage'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -86,10 +86,12 @@ const check_website_seo_audit: AgentTool = {
     'paths of the report (report.md) + full findings (audit.json).\n' +
     'To READ the FULL report, call this tool again with read:"report" — it returns the whole Bangla ' +
     'report.md text (this is the ONLY way; the storage paths are private — a workbench curl/cat can ' +
-    'NEVER fetch them, do not try). After status=executed you MUST paste the report (or a faithful ' +
-    'full summary: score, every critical/high issue, prioritized fixes) INTO YOUR REPLY to the owner — ' +
-    'never say "done" without delivering the report content. Never claim the audit is done before ' +
-    'status=executed.',
+    'NEVER fetch them, do not try). Call with read:"links" to get 24h DOWNLOAD LINKS the owner can ' +
+    'open: the report (.md), the raw findings (.json) and an Excel-openable issues CSV — include these ' +
+    'as markdown links in your reply. After status=executed you MUST put the report content (score, ' +
+    'every critical/high issue, prioritized fixes) AND the download links INTO THE SAME REPLY — ' +
+    'saying "রিপোর্ট উপরে দিয়েছি" or "done" WITHOUT the content in that reply is forbidden. Never ' +
+    'claim the audit is done before status=executed.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -101,10 +103,11 @@ const check_website_seo_audit: AgentTool = {
       },
       read: {
         type: 'string',
-        enum: ['report', 'json'],
+        enum: ['report', 'json', 'links'],
         description:
-          'Optional: also return the FULL artifact content — "report" = the Bangla report.md text, ' +
-          '"json" = the raw audit.json findings. Use "report" once status=executed, before replying.',
+          'Optional: "report" = return the FULL Bangla report.md text; "json" = the raw audit.json ' +
+          'findings; "links" = 24h signed DOWNLOAD links (report.md + audit.json + issues.csv for ' +
+          'Excel) to hand the owner. Use "report" then "links" once status=executed, before replying.',
       },
     },
     required: [],
@@ -142,8 +145,44 @@ const check_website_seo_audit: AgentTool = {
       // head can deliver the WHOLE report (the 1500-char preview in result is not
       // enough, and nothing else — workbench included — can reach the bucket).
       let artifactText: string | null = null
-      const read = input.read === 'report' || input.read === 'json' ? input.read : null
-      if (read) {
+      let links: Record<string, string> | null = null
+      const read = input.read === 'report' || input.read === 'json' || input.read === 'links' ? input.read : null
+      if (read === 'links') {
+        if (action.status !== 'executed') {
+          return { success: false, error: `Audit এখনো ${action.status} — executed হলে লিংক পাবে।` }
+        }
+        const artifacts = ((action.result as Record<string, unknown> | null)?.artifacts ?? []) as string[]
+        const reportPath = artifacts.find((a) => a.endsWith('report.md'))
+        const jsonPath = artifacts.find((a) => a.endsWith('audit.json'))
+        if (!reportPath || !jsonPath) return { success: false, error: 'Artifact paths পাওয়া যায়নি result-এ।' }
+        try {
+          // Excel-openable CSV (built once, then reused): every issue as a row.
+          const csvPath = reportPath.replace(/report\.md$/, 'issues.csv')
+          try {
+            await agentStorageDownload(csvPath)
+          } catch {
+            const raw = JSON.parse((await agentStorageDownload(jsonPath)).toString('utf8')) as {
+              siteChecks?: { issues?: Array<{ severity: string; code: string; detail: string }> }
+              pages?: Array<{ url: string; issues?: Array<{ severity: string; code: string; detail: string }> }>
+            }
+            const esc = (v: string) => `"${String(v ?? '').replace(/"/g, '""')}"`
+            const rows = [['scope', 'severity', 'code', 'detail'].join(',')]
+            for (const i of raw.siteChecks?.issues ?? []) rows.push([esc('site'), esc(i.severity), esc(i.code), esc(i.detail)].join(','))
+            for (const pg of raw.pages ?? []) for (const i of pg.issues ?? []) rows.push([esc(pg.url), esc(i.severity), esc(i.code), esc(i.detail)].join(','))
+            // UTF-8 BOM so Excel renders the Bangla detail column correctly.
+            await agentStorageUpload(csvPath, Buffer.from('\ufeff' + rows.join('\n'), 'utf8'), 'text/csv', { upsert: true })
+          }
+          const DAY = 86_400
+          links = {
+            reportUrl: await agentStorageSignedUrl(reportPath, DAY),
+            auditJsonUrl: await agentStorageSignedUrl(jsonPath, DAY),
+            issuesCsvUrl: await agentStorageSignedUrl(csvPath, DAY),
+            note: 'লিংকগুলো ২৪ ঘণ্টা কাজ করবে — reply-তে markdown link হিসেবে দাও: [পুরো রিপোর্ট (md)](…), [সব issue Excel/CSV](…), [raw findings (json)](…)',
+          }
+        } catch (err) {
+          return { success: false, error: `লিংক বানানো গেল না: ${String(err)}` }
+        }
+      } else if (read) {
         if (action.status !== 'executed') {
           return {
             success: false,
@@ -173,6 +212,7 @@ const check_website_seo_audit: AgentTool = {
           summary: action.summary,
           result: action.result ?? null,
           ...(artifactText != null ? { [read === 'report' ? 'reportMarkdown' : 'auditJson']: artifactText } : {}),
+          ...(links ? { downloadLinks: links } : {}),
         },
       }
     } catch (err) {
