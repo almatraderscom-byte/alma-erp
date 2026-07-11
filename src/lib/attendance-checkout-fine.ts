@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { attendanceDateFor } from '@/lib/attendance'
+import { dateBn } from '@/lib/wallet-labels'
 import { createCompensationLedgerEntry } from '@/lib/payroll-compensation'
 import {
   createApprovalRequest,
@@ -267,7 +268,7 @@ export async function processNoCheckoutFine(input: {
         approvedById: actorUserId,
         source: NO_CHECKOUT_FINE_SOURCE,
         sourceRef,
-        note: `No-checkout fine · ${dateLabel}`,
+        note: `চেক-আউট না করার জরিমানা — ${dateBn(record.attendanceDate)}`,
       },
       { skipNotify: true },
     )

@@ -29,6 +29,8 @@ type CompensationInput = {
   approvedById?: string | null
   source?: string
   sourceRef?: string
+  /** For refunds/settlements: id of the original ledger entry being settled. */
+  relatedEntryId?: string | null
 }
 
 export function isCompensationEntryType(type: EmployeeLedgerEntryType) {
@@ -83,6 +85,7 @@ export async function createCompensationLedgerEntry(
       approvedById: input.approvedById || input.createdById || null,
       source: input.source || 'manual_entry',
       sourceRef: input.sourceRef || `manual:${crypto.randomUUID()}`,
+      relatedEntryId: input.relatedEntryId || null,
     },
   })
 
