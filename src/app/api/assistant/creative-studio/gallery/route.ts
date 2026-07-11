@@ -118,6 +118,9 @@ export async function GET(req: NextRequest) {
       archivedToDrive,
       // CS4: model-creator output → lightbox shows "মডেল হিসেবে সেভ"
       modelCreator: (payload.modelCreator as string | undefined) ?? null,
+      // Last finishing inputs (hook/code/theme/layout…) — lets the editor reopen
+      // pre-filled so the owner adjusts instead of re-typing (native build 67).
+      finishParams: (result.finishParams as Record<string, unknown> | undefined) ?? null,
       // V2 reel cover picker options (video_edit only)
       coverOptions: (Array.isArray(result.coverCandidates) ? (result.coverCandidates as string[]) : [])
         .filter((c) => signed[c])

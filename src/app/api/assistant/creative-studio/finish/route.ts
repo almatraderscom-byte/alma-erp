@@ -110,9 +110,25 @@ export async function POST(req: NextRequest) {
       const row = await db.agentPendingAction.findUnique({ where: { id: pendingActionId } })
       if (row) {
         const result = (row.result ?? {}) as Record<string, unknown>
+        // Also persist the INPUTS so the editor (web + native) can reopen this
+        // finish pre-filled and let the owner adjust instead of re-typing.
+        const finishParams = {
+          hook,
+          productCode: typeof body.productCode === 'string' ? body.productCode.slice(0, 24) : null,
+          eyebrow: typeof body.eyebrow === 'string' ? body.eyebrow.slice(0, 32) : null,
+          offer: typeof body.offer === 'string' ? body.offer.slice(0, 48) : null,
+          mode,
+          theme,
+          footer: body.footer === true,
+          fit: mode === 'lifestyle' && body.fit === 'contain' ? 'contain' : 'cover',
+          layout:
+            mode === 'lifestyle' && body.layout && typeof body.layout === 'object' && !Array.isArray(body.layout)
+              ? body.layout
+              : null,
+        }
         await db.agentPendingAction.update({
           where: { id: pendingActionId },
-          data: { result: { ...result, brandedPath: framedPath } },
+          data: { result: { ...result, brandedPath: framedPath, finishParams } },
         })
       }
     } catch (err) {
