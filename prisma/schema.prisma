@@ -2108,11 +2108,35 @@ model AgentMemory {
   importance  Int                          @default(2)
   accessCount Int                          @default(0) @map("access_count")
   lastUsedAt  DateTime?                    @map("last_used_at")
+  /// Day-scoped/temporary facts stop being injected/retrieved after this moment;
+  /// the weekly memory revision hard-deletes them. NULL = permanent fact.
+  expiresAt   DateTime?                    @map("expires_at")
   createdAt   DateTime                     @default(now())
   updatedAt   DateTime                     @updatedAt
 
   @@index([scope])
   @@map("agent_memory")
+}
+
+/// Answer Gate (owner decision 2026-07-08): verified reusable Q&A pairs served
+/// in front of EXPENSIVE heads only (Gemini/Opus-class). Cheap heads bypass.
+model AgentQaCache {
+  id           String                       @id @default(uuid())
+  scope        String                       @default("business")
+  question     String                       @db.Text
+  answer       String                       @db.Text
+  embedding    Unsupported("vector(1536)")?
+  sourceModel  String?                      @map("source_model")
+  hits         Int                          @default(0)
+  lastServedAt DateTime?                    @map("last_served_at")
+  verifiedAt   DateTime?                    @map("verified_at")
+  expiresAt    DateTime?                    @map("expires_at")
+  active       Boolean                      @default(true)
+  createdAt    DateTime                     @default(now())
+  updatedAt    DateTime                     @updatedAt
+
+  @@index([scope, active])
+  @@map("agent_qa_cache")
 }
 
 /// Graph-memory (Task B): directed relationship edges between business entities
@@ -3603,12 +3627,16 @@ model AgentOpenTask {
   conversationId  String?   @map("conversation_id")
   title           String
   /// chat_followup = owner's request left unfinished · approval_pending = a
-  /// confirm card still awaiting the owner's decision.
+  /// confirm card still awaiting the owner's decision · checkpoint_failed /
+  /// checkpoint_waiting = P0 terminal-state checkpoints (failure / needs-owner).
   kind            String    @default("chat_followup")
   /// open | running | done | cancelled
   status          String    @default("open")
   /// Self-contained Bangla brief the agent reads to pick the work back up.
   resumeNote      String    @db.Text @map("resume_note")
+  /// P0 structured checkpoint (goal, doneSteps, currentStep, artifacts, error,
+  /// resumeHint …) — resume never needs full chat history.
+  checkpoint      Json?     @map("checkpoint")
   /// Links to the AgentPendingAction when kind = approval_pending.
   pendingActionId String?   @map("pending_action_id")
   /// When the next "still pending?" nudge is due (30/60 min escalation).
@@ -3949,4 +3977,50 @@ model AgentKeywordRank {
   @@index([keyword, checkedAt])
   @@index([businessId, checkedAt])
   @@map("agent_keyword_rank")
+}
+
+/// Office Live Intercom — a walkie-talkie voice broadcast from the owner to
+/// staff phones inside the office group chat. Staff receipts track the
+/// delivered → played → confirmed lifecycle per person.
+model OfficeIntercomBroadcast {
+  id            String                  @id @default(uuid())
+  businessId    String                  @default("ALMA_LIFESTYLE") @map("business_id")
+  /// Owner User.id who sent it (owner-only in v1).
+  senderUserId  String?                 @map("sender_user_id")
+  /// 'voice' (PTT audio) | 'urgent' (full-volume text alert, no audio).
+  kind          String                  @default("voice")
+  /// Storage object path in the agent-files bucket (null for 'urgent').
+  audioPath     String?                 @map("audio_path")
+  /// Long-lived signed URL staff phones stream from.
+  audioUrl      String?                 @map("audio_url") @db.Text
+  /// Negotiated recorder mimeType (audio/mp4 on iOS, audio/webm on desktop Chrome).
+  mediaType     String?                 @map("media_type")
+  durationSec   Int                     @default(0) @map("duration_sec")
+  /// Agent auto-transcript (Bangla STT), filled asynchronously after send.
+  transcript    String?                 @db.Text
+  /// AgentStaff.id when the broadcast targets one person; null = everyone.
+  targetStaffId String?                 @map("target_staff_id")
+  createdAt     DateTime                @default(now()) @map("created_at")
+  receipts      OfficeIntercomReceipt[]
+
+  @@index([businessId, createdAt(sort: Desc)])
+  @@map("office_intercom_broadcasts")
+}
+
+/// Per-staff receipt for one intercom broadcast.
+model OfficeIntercomReceipt {
+  id          String                  @id @default(uuid())
+  broadcastId String                  @map("broadcast_id")
+  staffId     String                  @map("staff_id")
+  /// Staff device fetched the broadcast (set server-side on their first feed poll).
+  deliveredAt DateTime?               @map("delivered_at")
+  /// Audio actually started playing on the staff phone.
+  playedAt    DateTime?               @map("played_at")
+  /// Staff tapped "শুনেছি — কনফার্ম".
+  confirmedAt DateTime?               @map("confirmed_at")
+  broadcast   OfficeIntercomBroadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+
+  @@unique([broadcastId, staffId])
+  @@index([staffId, confirmedAt])
+  @@map("office_intercom_receipts")
 }

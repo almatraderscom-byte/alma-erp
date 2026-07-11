@@ -16,6 +16,8 @@ import type { GarmentType } from '@/lib/tryon/art-director'
 export type ChatTryOnVariant =
   | 'single'
   | 'father_son'
+  | 'father_daughter'
+  | 'couple'
   | 'mother_son'
   | 'mother_daughter'
   | 'full_family'
@@ -31,9 +33,20 @@ export const CHAT_TRYON_VARIANTS: ChatTryOnVariant[] = [
 const VARIANT_LABELS: Record<ChatTryOnVariant, string> = {
   single: 'সিঙ্গেল মডেল',
   father_son: 'বাবা + ছেলে',
+  father_daughter: 'বাবা + মেয়ে',
+  couple: 'কাপল (স্বামী-স্ত্রী)',
   mother_son: 'মা + ছেলে',
   mother_daughter: 'মা + মেয়ে',
   full_family: 'পুরো ফ্যামিলি',
+}
+
+// Owner's rule: no two runs may look the same — when the caller doesn't pin a
+// style/pose, pick one at random ('detail' crop excluded as a default look).
+const RANDOM_STYLES: TryOnStyle[] = ['studio', 'outdoor_bd', 'festival', 'lifestyle']
+const RANDOM_POSES: TryOnPose[] = ['front', 'three_quarter', 'walking', 'sitting']
+
+function randomOf<T>(arr: readonly T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)]
 }
 
 function primaryRoleForVariant(variant: ChatTryOnVariant): ModelRole {
@@ -66,6 +79,26 @@ async function buildVariantNotes(
       'Child proportions natural for age 5–10; garment on child sized correctly from the set.',
       fabricNote ?? '',
       daughter?.notes ? `Preserve daughter identity from brand library (${daughter.name}).` : '',
+    ].filter(Boolean).join(' ')
+  }
+
+  if (variant === 'father_daughter') {
+    const daughter = await getModelByRole('daughter')
+    if (daughter) noteParts.push(modelNoteFor('daughter', daughter))
+    familyExtra = [
+      familyExtra,
+      'Two people — father and daughter (age 5–10) — wearing the SAME matching collection in ONE cohesive scene.',
+      daughter?.notes ? `Preserve daughter identity from brand library (${daughter.name}).` : '',
+    ].filter(Boolean).join(' ')
+  }
+
+  if (variant === 'couple') {
+    const mother = await getModelByRole('mother')
+    if (mother) noteParts.push(modelNoteFor('mother', mother))
+    familyExtra = [
+      familyExtra,
+      'Two ADULTS — husband and wife — wearing the SAME matching couple collection in ONE cohesive scene, natural couple pose, modest styling.',
+      mother?.notes ? `Preserve wife identity from brand library (${mother.name}).` : '',
     ].filter(Boolean).join(' ')
   }
 
@@ -129,6 +162,8 @@ export async function queueTryOnBatch(opts: {
   const variants = (opts.variants?.length ? opts.variants : ['single']) as ChatTryOnVariant[]
   const attrs = await getOrClassifyGarment(productImagePath)
   const fabricNote = attrs.fabricGuess ? `Garment fabric: ${attrs.fabricGuess}.` : undefined
+  const style = opts.style ?? randomOf(RANDOM_STYLES)
+  const pose = opts.pose ?? randomOf(RANDOM_POSES)
 
   const overrideModel = opts.modelId ? await resolveModel(opts.modelId) : null
   const items: TryOnQueueItem[] = []
@@ -161,8 +196,8 @@ export async function queueTryOnBatch(opts: {
         : 'family_matching_set'
 
     const prompt = buildTryOnPrompt({
-      style: opts.style,
-      pose: opts.pose,
+      style,
+      pose,
       modelNotes,
       garmentType,
       attrs,
@@ -174,7 +209,7 @@ export async function queueTryOnBatch(opts: {
       `🧍 On-model try-on — ${label}\n` +
       `মডেল: ${primary.name}${primary.role ? ` (${primary.role})` : ''}\n` +
       `গার্মেন্ট: ${garmentType}\n` +
-      `স্টাইল: ${opts.style ?? 'studio'} | পোজ: ${opts.pose ?? 'front'}`
+      `স্টাইল: ${style} | পোজ: ${pose}`
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const action = await (prisma as any).agentPendingAction.create({

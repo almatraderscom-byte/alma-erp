@@ -1,0 +1,307 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   iOS 27 DESIGN TOKENS — extracted from Apple's official "iOS and iPadOS 27
+   UI Kit" Figma (Apple Design Resources, Beta) on 2026-07-08.
+   Every color below was read from the kit's Figma variables (Light/Dark modes),
+   typography from the Dynamic Type + Text Leading + Kit collections, and the
+   Liquid Glass parameters from the kit's "Liquid Glass" variable group.
+
+   Theme switching rides the app's existing `data-theme` attribute.
+   Additive layer — nothing here overrides existing ALMA tokens.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Accents (Light) ─────────────────────────────────────────────────── */
+  --ios-red:    #FF383C;
+  --ios-orange: #FF8D28;
+  --ios-yellow: #FFCC00;
+  --ios-green:  #34C759;
+  --ios-mint:   #00C8B3;
+  --ios-teal:   #00C3D0;
+  --ios-cyan:   #00C0E8;
+  --ios-blue:   #0088FF;
+  --ios-indigo: #6155F5;
+  --ios-purple: #CB30E0;
+  --ios-pink:   #FF2D55;
+  --ios-brown:  #AC7F5E;
+
+  /* ── Backgrounds ─────────────────────────────────────────────────────── */
+  --ios-bg-primary:   #FFFFFF;
+  --ios-bg-secondary: #F2F2F7;
+  --ios-bg-tertiary:  #FFFFFF;
+  /* Grouped (inset lists / settings-style screens) */
+  --ios-grouped-primary:   #F2F2F7;
+  --ios-grouped-secondary: #FFFFFF;
+  --ios-grouped-tertiary:  #F2F2F7;
+
+  /* ── Labels ──────────────────────────────────────────────────────────── */
+  --ios-label:            #000000;
+  --ios-label-secondary:  rgba(60, 60, 67, 0.60);
+  --ios-label-tertiary:   rgba(60, 60, 67, 0.30);
+  --ios-label-quaternary: rgba(60, 60, 67, 0.18);
+
+  /* ── Fills (control backgrounds) ─────────────────────────────────────── */
+  --ios-fill-primary:    rgba(120, 120, 120, 0.20);
+  --ios-fill-secondary:  rgba(120, 120, 128, 0.16);
+  --ios-fill-tertiary:   rgba(118, 118, 128, 0.12);
+  --ios-fill-quaternary: rgba(116, 116, 128, 0.08);
+
+  /* ── Grays ───────────────────────────────────────────────────────────── */
+  --ios-gray:  #8E8E93;
+  --ios-gray2: #AEAEB2;
+  --ios-gray3: #C7C7CC;
+  --ios-gray4: #D1D1D6;
+  --ios-gray5: #E5E5EA;
+  --ios-gray6: #F2F2F7;
+
+  /* ── Separators ──────────────────────────────────────────────────────── */
+  --ios-separator:        rgba(0, 0, 0, 0.12);
+  --ios-separator-opaque: #C6C6C8;
+
+  /* ── Overlays / misc ─────────────────────────────────────────────────── */
+  --ios-overlay:            rgba(0, 0, 0, 0.20);
+  --ios-destructive-bg:     rgba(255, 56, 60, 0.14);
+  --ios-tab-selection:      var(--ios-blue);
+  --ios-segmented-selected: #FFFFFF;
+  --ios-toggle-off:         #B3B3B3;
+  --ios-link:               var(--ios-blue);
+
+  /* ── Dimensions (from the kit's Dimensions collection, iPhone column) ── */
+  --ios-margin: 16px;            /* standard screen edge margin */
+  --ios-radius-sheet: 34px;      /* sheet top corner radius */
+  --ios-radius-popover: 38px;    /* popover / floating menu radius */
+  --ios-radius-card: 26px;       /* inset-grouped card (concentric) */
+  --ios-radius-control: 14px;    /* small controls */
+  --ios-radius-capsule: 9999px;  /* buttons, pills, tab bar */
+  --ios-grabber-w: 58px;
+  --ios-grabber-h: 4px;
+
+  /* ── Liquid Glass (kit "Liquid Glass" variables → CSS approximation) ──
+     Kit: Opacity 25, Frost Regular 6 / Medium+Large 16, Scroll Edge Blur 10.
+     Refraction/dispersion have no CSS analog; the visual match comes from
+     low-opacity surface + frost blur + saturate + edge highlight. */
+  --lg-frost-regular: 6px;
+  --lg-frost-strong: 16px;
+  --lg-scroll-edge-blur: 10px;
+  --lg-saturate: 1.8;
+  --lg-surface: rgba(255, 255, 255, 0.25);
+  --lg-surface-strong: rgba(250, 250, 250, 0.62);
+  --lg-highlight: rgba(255, 255, 255, 0.55);   /* top inner light edge */
+  --lg-edge: rgba(255, 255, 255, 0.28);        /* outer rim */
+  --lg-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 1px 2px rgba(0, 0, 0, 0.06);
+
+  /* SF Pro on Apple devices; graceful fallback elsewhere. Bengali stays on
+     the app's Bengali faces so mixed copy renders correctly. */
+  --ios-font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    var(--font-inter), var(--font-bengali), var(--font-hind),
+    'Noto Sans Bengali', 'Hind Siliguri', system-ui, sans-serif;
+}
+
+:root[data-theme='dark'] {
+  /* ── Accents (Dark) ──────────────────────────────────────────────────── */
+  --ios-red:    #FF4245;
+  --ios-orange: #FF9230;
+  --ios-yellow: #FFD600;
+  --ios-green:  #30D158;
+  --ios-mint:   #00DAC3;
+  --ios-teal:   #00D2E0;
+  --ios-cyan:   #3CD3FE;
+  --ios-blue:   #0091FF;
+  --ios-indigo: #8D7CFF;
+  --ios-purple: #DB34F2;
+  --ios-pink:   #FF375F;
+  --ios-brown:  #B78A66;
+
+  --ios-bg-primary:   #000000;
+  --ios-bg-secondary: #1C1C1E;
+  --ios-bg-tertiary:  #2C2C2E;
+  --ios-grouped-primary:   #000000;
+  --ios-grouped-secondary: #1C1C1E;
+  --ios-grouped-tertiary:  #2C2C2E;
+
+  --ios-label:            #FFFFFF;
+  --ios-label-secondary:  rgba(235, 235, 245, 0.70);
+  --ios-label-tertiary:   rgba(235, 235, 245, 0.30);
+  --ios-label-quaternary: rgba(235, 235, 245, 0.16);
+
+  --ios-fill-primary:    rgba(120, 120, 128, 0.36);
+  --ios-fill-secondary:  rgba(120, 120, 128, 0.32);
+  --ios-fill-tertiary:   rgba(118, 118, 128, 0.24);
+  --ios-fill-quaternary: rgba(118, 118, 128, 0.18);
+
+  --ios-gray2: #636366;
+  --ios-gray3: #48484A;
+  --ios-gray4: #3A3A3C;
+  --ios-gray5: #2C2C2E;
+  --ios-gray6: #1C1C1E;
+
+  --ios-separator:        rgba(255, 255, 255, 0.17);
+  --ios-separator-opaque: #38383A;
+
+  --ios-overlay:            rgba(0, 0, 0, 0.48);
+  --ios-destructive-bg:     rgba(255, 66, 69, 0.14);
+  --ios-tab-selection:      #FFFFFF;
+  --ios-segmented-selected: rgba(255, 255, 255, 0.27);
+  --ios-toggle-off:         #A8A8A6;
+  --ios-link:               #98CCFF;
+
+  --lg-surface: rgba(40, 40, 44, 0.25);
+  --lg-surface-strong: rgba(28, 28, 30, 0.62);
+  --lg-highlight: rgba(255, 255, 255, 0.18);
+  --lg-edge: rgba(255, 255, 255, 0.12);
+  --lg-shadow: 0 8px 32px rgba(0, 0, 0, 0.50), 0 1px 2px rgba(0, 0, 0, 0.30);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   TYPOGRAPHY — Dynamic Type "Large (Default)" scale, exact px sizes,
+   leading and letter-spacing (tracking) from the kit.
+   ══════════════════════════════════════════════════════════════════════════ */
+.ios-large-title { font-family: var(--ios-font); font-size: 34px; line-height: 41px; letter-spacing: 0.4px;  font-weight: 700; }
+.ios-title1      { font-family: var(--ios-font); font-size: 28px; line-height: 34px; letter-spacing: 0.38px; font-weight: 700; }
+.ios-title2      { font-family: var(--ios-font); font-size: 22px; line-height: 28px; letter-spacing: -0.26px; font-weight: 700; }
+.ios-title3      { font-family: var(--ios-font); font-size: 20px; line-height: 25px; letter-spacing: -0.45px; font-weight: 600; }
+.ios-headline    { font-family: var(--ios-font); font-size: 17px; line-height: 22px; letter-spacing: -0.43px; font-weight: 600; }
+.ios-body        { font-family: var(--ios-font); font-size: 17px; line-height: 22px; letter-spacing: -0.43px; font-weight: 400; }
+.ios-callout     { font-family: var(--ios-font); font-size: 16px; line-height: 21px; letter-spacing: -0.31px; font-weight: 400; }
+.ios-subheadline { font-family: var(--ios-font); font-size: 15px; line-height: 20px; letter-spacing: -0.23px; font-weight: 400; }
+.ios-footnote    { font-family: var(--ios-font); font-size: 13px; line-height: 18px; letter-spacing: -0.08px; font-weight: 400; }
+.ios-caption1    { font-family: var(--ios-font); font-size: 12px; line-height: 16px; letter-spacing: 0;       font-weight: 400; }
+.ios-caption2    { font-family: var(--ios-font); font-size: 11px; line-height: 13px; letter-spacing: 0.06px;  font-weight: 400; }
+
+/* Grouped-list section title (Dimensions → Menus/Section Titles: 13px) */
+.ios-section-title {
+  font-family: var(--ios-font);
+  font-size: 13px;
+  line-height: 18px;
+  letter-spacing: -0.08px;
+  font-weight: 400;
+  text-transform: uppercase;
+  color: var(--ios-label-secondary);
+  padding: 4px var(--ios-margin) 10px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   LIQUID GLASS MATERIALS
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Regular liquid glass — floating bars, pills, buttons resting on content. */
+.lg-material {
+  position: relative;
+  background: var(--lg-surface);
+  -webkit-backdrop-filter: blur(var(--lg-frost-regular)) saturate(var(--lg-saturate));
+  backdrop-filter: blur(var(--lg-frost-regular)) saturate(var(--lg-saturate));
+  box-shadow:
+    inset 0 1px 0 0 var(--lg-highlight),
+    inset 0 0 0 1px var(--lg-edge),
+    var(--lg-shadow);
+}
+
+/* Strong frost — sheets, menus, popovers, tab bars (Frost Medium/Large 16). */
+.lg-material-strong {
+  position: relative;
+  background: var(--lg-surface-strong);
+  -webkit-backdrop-filter: blur(var(--lg-frost-strong)) saturate(var(--lg-saturate));
+  backdrop-filter: blur(var(--lg-frost-strong)) saturate(var(--lg-saturate));
+  box-shadow:
+    inset 0 1px 0 0 var(--lg-highlight),
+    inset 0 0 0 1px var(--lg-edge),
+    var(--lg-shadow);
+}
+
+/* No backdrop-filter → fall back to a near-opaque surface so text stays readable. */
+@supports not (backdrop-filter: blur(1px)) {
+  .lg-material,
+  .lg-material-strong {
+    background: var(--ios-bg-secondary);
+  }
+}
+
+/* Sticky nav bar chrome (PageHeader) — iOS 27 bar material: frosted surface,
+   no hard border; a hairline separator drawn as a shadow so content scrolling
+   underneath reads as passing "behind glass". */
+.lg-navbar {
+  background: var(--lg-surface-strong);
+  -webkit-backdrop-filter: blur(var(--lg-frost-strong)) saturate(var(--lg-saturate));
+  backdrop-filter: blur(var(--lg-frost-strong)) saturate(var(--lg-saturate));
+  box-shadow: 0 1px 0 0 var(--ios-separator);
+}
+@supports not (backdrop-filter: blur(1px)) {
+  .lg-navbar { background: var(--ios-bg-secondary); }
+}
+
+/* Scroll edge effect — top-of-screen progressive blur under nav/status area
+   (Kit → Scroll Edge Effect: Blur Radius 10). Put on a fixed overlay strip. */
+.lg-scroll-edge {
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(var(--lg-scroll-edge-blur));
+  backdrop-filter: blur(var(--lg-scroll-edge-blur));
+  -webkit-mask-image: linear-gradient(to bottom, black 40%, transparent 100%);
+  mask-image: linear-gradient(to bottom, black 40%, transparent 100%);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   CORE PIECES — capsule button, inset grouped list, sheet grabber
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* iOS 27 buttons are capsules. Sizes: regular 44pt, small 34pt. */
+.ios-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: var(--ios-radius-capsule);
+  font-family: var(--ios-font);
+  font-size: 17px;
+  letter-spacing: -0.43px;
+  font-weight: 600;
+  min-height: 44px;
+  padding: 0 20px;
+  transition: transform 120ms ease, opacity 120ms ease, background-color 120ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.ios-btn:active { transform: scale(0.97); opacity: 0.85; }
+.ios-btn-sm { min-height: 34px; padding: 0 14px; font-size: 15px; letter-spacing: -0.23px; }
+.ios-btn-filled { background: var(--ios-blue); color: #fff; }
+.ios-btn-tinted { background: color-mix(in srgb, var(--ios-blue) 15%, transparent); color: var(--ios-blue); }
+.ios-btn-gray   { background: var(--ios-fill-secondary); color: var(--ios-label); }
+.ios-btn-plain  { background: transparent; color: var(--ios-blue); }
+.ios-btn-destructive { background: var(--ios-destructive-bg); color: var(--ios-red); }
+.ios-btn-glass  { color: var(--ios-label); border-radius: var(--ios-radius-capsule); }
+
+/* Inset grouped list (Settings-style). Cell metrics from Menus/Menu Items:
+   16px side padding, 11pt vertical, 26px concentric card radius. */
+.ios-list {
+  border-radius: var(--ios-radius-card);
+  background: var(--ios-grouped-secondary);
+  overflow: hidden;
+}
+.ios-list-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 10px var(--ios-margin);
+  font-family: var(--ios-font);
+  font-size: 17px;
+  letter-spacing: -0.43px;
+  color: var(--ios-label);
+}
+.ios-list-row + .ios-list-row { position: relative; }
+.ios-list-row + .ios-list-row::before {
+  content: '';
+  position: absolute;
+  left: var(--ios-margin);
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--ios-separator);
+}
+.ios-list-row:active { background: var(--ios-fill-tertiary); }
+
+/* Sheet grabber (Dimensions: 58 × 4, pill) */
+.ios-grabber {
+  width: var(--ios-grabber-w);
+  height: var(--ios-grabber-h);
+  border-radius: 999px;
+  background: var(--ios-fill-primary);
+  margin: 6px auto;
+}

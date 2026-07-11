@@ -7,6 +7,7 @@ import AgentStaffMonitor from '@/agent/components/AgentStaffMonitor'
 import AgentControlCenter from '@/agent/components/monitor/AgentControlCenter'
 import ModelTogglePanel from '@/agent/components/monitor/ModelTogglePanel'
 import HeartbeatPanel from '@/agent/components/monitor/HeartbeatPanel'
+import LiveBrowserWatchPanel from '@/agent/components/monitor/LiveBrowserWatchPanel'
 import { AgentSubHeader } from '@/agent/components/AgentSubHeader'
 import { StaffMonitorScrollWrapper } from './StaffMonitorScrollWrapper'
 
@@ -27,6 +28,7 @@ export default async function StaffMonitorPage() {
       <AgentControlCenter />
       <ModelTogglePanel />
       <HeartbeatPanel />
+      <LiveBrowserWatchPanel />
       <AgentStaffMonitor />
     </StaffMonitorScrollWrapper>
   )

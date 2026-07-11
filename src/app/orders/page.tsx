@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
-import { Suspense, useCallback, useDeferredValue, useLayoutEffect, useMemo, useState, type UIEvent } from 'react'
+import { Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useState, type UIEvent } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useUpdateStatus } from '@/hooks/useERP'
@@ -416,13 +416,24 @@ function OrderDrawer({ order, onClose, onStatusChange }: { order: Order; onClose
           className="sticky top-0 bg-surface/95 backdrop-blur border-b border-border px-5 pb-4 z-10"
           style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}
         >
-          <div className="flex items-start justify-between gap-3">
-            <div>
+          <div className="flex items-start gap-3">
+            {/* Glassy Claude-style BACK — the order drawer opens as a web overlay (not a
+                native push), so the native header shows no back chevron. Placed top-LEFT
+                (a frosted back chevron, matching the native sub-pages' back button) so it
+                is consistent AND clear of the page's top-right floating chips (টুডু / the
+                Ask-ALMA FAB) that render above the drawer's stacking context. */}
+            <button
+              onClick={onClose}
+              aria-label="ফিরে যান"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-border bg-card/80 text-cream shadow-sm backdrop-blur-md transition-all hover:bg-card active:scale-95 mt-0.5"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <div className="min-w-0 flex-1">
               <p className="font-mono text-[11px] text-gold font-bold mb-1">{order.id}</p>
               <p className="text-sm font-bold text-cream leading-tight">{order.product}</p>
               <div className="mt-2"><StatusBadge status={order.status} /></div>
             </div>
-            <button onClick={onClose} className="w-8 h-8 rounded-xl border border-border flex items-center justify-center text-muted hover:text-cream hover:bg-white/[0.04] transition-colors shrink-0 mt-1">×</button>
           </div>
         </div>
 
@@ -786,6 +797,24 @@ function OrdersPageContent() {
     setRowWindow(prev => (prev.start === start && prev.end === end ? prev : { start, end }))
   }, [])
 
+  // Native long-press context menu (iOS shell): run the picked action on that order.
+  // The `alma-ctx-pick` event only fires from the native action sheet, so web/desktop
+  // are unaffected. Actions are non-destructive (view / copy / WhatsApp).
+  useEffect(() => {
+    const onPick = (e: Event) => {
+      const el = (e.target as HTMLElement | null)?.closest?.('[data-order-id]') as HTMLElement | null
+      if (!el) return
+      const o = orders.find(x => x.id === el.getAttribute('data-order-id'))
+      if (!o) return
+      const key = (e as CustomEvent<{ key: string }>).detail?.key
+      if (key === 'view') setSelected(o)
+      else if (key === 'copy') void navigator.clipboard?.writeText(o.id).then(() => toast.success('কপি হয়েছে'))
+      else if (key === 'whatsapp' && o.phone) window.open(`https://wa.me/880${o.phone.slice(1)}`, '_blank')
+    }
+    document.addEventListener('alma-ctx-pick', onPick as EventListener)
+    return () => document.removeEventListener('alma-ctx-pick', onPick as EventListener)
+  }, [orders])
+
   const summary = useMemo(() => summarizeOrders(filtered), [filtered])
   const statusCounts = useMemo(
     () => statusCountsForPills(dateFiltered, STATUSES),
@@ -827,7 +856,7 @@ function OrdersPageContent() {
         }
       />
 
-      <PageEnter className="min-w-0 max-w-full space-y-4 px-3 py-4 pb-24 sm:px-6 md:pb-6">
+      <PageEnter className="min-w-0 max-w-full space-y-3 px-3 py-4 pb-24 sm:px-6 md:space-y-4 md:pb-6">
 
         {error && (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm tone-red">
@@ -844,15 +873,18 @@ function OrdersPageContent() {
           <KpiCard label="Profit" value={summary.total_profit} valueKind="currency" color="txt-pos" loading={tableLoading} animate />
         </div>
 
-        {/* Status pills — wrap so every filter shows at once (no horizontal scroll) */}
-        <div className="flex flex-wrap gap-2 pb-1">
+        {/* Status pills — single scrollable row on mobile (native-iOS feel); wrap on md+ so every filter shows at once */}
+        <div
+          className="flex flex-nowrap items-center gap-2 overflow-x-auto scrollbar-hide -mx-3 px-3 py-0.5 sm:-mx-6 sm:px-6 md:mx-0 md:flex-wrap md:overflow-visible md:px-0 md:py-0 md:pb-1"
+          style={{ WebkitOverflowScrolling: 'touch' }}
+        >
           <button onClick={() => setStatus('')}
-            className={`shrink-0 min-h-[44px] rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${!status ? 'bg-gold/10 border-gold-dim/50 text-gold-lt' : 'border-border text-muted hover:text-muted'}`}>
+            className={`shrink-0 whitespace-nowrap min-h-[44px] rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${!status ? 'bg-gold/10 border-gold-dim/50 text-gold-lt' : 'border-border text-muted hover:text-muted'}`}>
             All <span className="ml-1 opacity-70">{dateFiltered.length}</span>
           </button>
           <button
             onClick={() => setStatus(status === ALL_RETURNS_FILTER ? '' : ALL_RETURNS_FILTER)}
-            className={`shrink-0 flex min-h-[44px] items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${
+            className={`shrink-0 whitespace-nowrap flex min-h-[44px] items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${
               status === ALL_RETURNS_FILTER
                 ? 'tone-amber'
                 : 'border-border text-muted hover:text-muted'
@@ -866,7 +898,7 @@ function OrdersPageContent() {
             const active = status === s
             return (
               <button key={s} onClick={() => setStatus(status === s ? '' : s)}
-                className={`shrink-0 flex min-h-[44px] items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${active ? `${c.text} ${c.bg} ${c.border}` : 'border-border text-muted hover:text-muted'}`}>
+                className={`shrink-0 whitespace-nowrap flex min-h-[44px] items-center gap-1.5 rounded-full border px-3.5 py-2 text-xs font-bold transition-colors md:min-h-0 md:px-3 md:py-1.5 ${active ? `${c.text} ${c.bg} ${c.border}` : 'border-border text-muted hover:text-muted'}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />
                 {orderStatusLabel(s)} <span className="opacity-70">{statusCounts[s] ?? 0}</span>
               </button>
@@ -963,7 +995,18 @@ function OrdersPageContent() {
           {tableLoading
             ? Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)
             : mobileOrders.map(o => (
-                <button key={o.id} onClick={() => setSelected(o.id === selected?.id ? null : o)} className="w-full min-h-[44px] text-left active:scale-[0.99]">
+                <button
+                  key={o.id}
+                  onClick={() => setSelected(o.id === selected?.id ? null : o)}
+                  className="w-full min-h-[44px] text-left active:scale-[0.99]"
+                  data-order-id={o.id}
+                  data-ctx-title={`${o.id} · ${o.customer}`}
+                  data-ctx-menu={JSON.stringify([
+                    { key: 'view', label: 'অর্ডার দেখুন' },
+                    { key: 'copy', label: 'অর্ডার নম্বর কপি' },
+                    ...(o.phone ? [{ key: 'whatsapp', label: 'WhatsApp করুন' }] : []),
+                  ])}
+                >
                   <Card interactive className={`p-4 border-l-2 ${
                     o.id === selected?.id ? 'border-gold-dim/50' : ''
                   } ${

@@ -24,6 +24,36 @@ export function setTelegramForNotify(bot, ownerChatId) {
 const APP_URL    = () => (process.env.APP_URL ?? '').replace(/\/$/, '')
 const INT_TOKEN  = () => process.env.AGENT_INTERNAL_TOKEN ?? ''
 
+/**
+ * Native app push (OneSignal → APNs/FCM) to the owner's installed app.
+ *
+ * OneSignal credentials live in Vercel, so instead of duplicating them here the
+ * worker asks the app to send via an owner-only internal endpoint. Fail-open:
+ * any error is swallowed so Telegram / ntfy / Twilio are never blocked.
+ */
+async function sendNativePush(tier, title, message, category, actionUrl) {
+  try {
+    const url = APP_URL()
+    const token = INT_TOKEN()
+    if (!url || !token) return { ok: false, reason: 'unconfigured' }
+    const res = await fetch(`${url}/api/assistant/internal/native-push`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      // actionUrl = where a tap lands the owner in the app (e.g. '/agent');
+      // when omitted the app-side sender falls back to '/agent'.
+      body: JSON.stringify({ tier, title, message, category, actionUrl: actionUrl ?? null }),
+    })
+    if (!res.ok) return { ok: false, reason: `http_${res.status}` }
+    const data = await res.json().catch(() => ({}))
+    return { ok: Boolean(data?.ok), reason: data?.reason }
+  } catch (err) {
+    return { ok: false, reason: err.message }
+  }
+}
+
 async function logNotification(tier, category, channels, statuses, title, message) {
   try {
     await fetch(`${APP_URL()}/api/assistant/internal/notification-log`, {
@@ -56,6 +86,7 @@ async function logNotification(tier, category, channels, statuses, title, messag
  *   skipTelegram?: boolean,
  *   salahDate?: string,
  *   salahWaqt?: string,
+ *   actionUrl?: string,
  * }} opts
  */
 /**
@@ -73,6 +104,7 @@ export async function notify({
   voiceMessage,
   salahDate,
   salahWaqt,
+  actionUrl,
 }) {
   const channels = []
   const statuses = {}
@@ -108,6 +140,12 @@ export async function notify({
       statuses.telegram_voice = `error: ${err.message}`
     }
   }
+
+  // ── Native app push (OneSignal → APNs) — owner's iOS/Android app notifies like a
+  //    real app. First-class channel; fail-open so it never blocks the others. ──
+  channels.push('native_push')
+  const nativeResult = await sendNativePush(tier, title, message, category, actionUrl)
+  statuses.native_push = nativeResult.ok ? 'sent' : `error: ${nativeResult.reason}`
 
   const sendGeneral = ntfyMode === 'both' || ntfyMode === 'general'
   const sendCritical = ntfyMode === 'both' || ntfyMode === 'critical'

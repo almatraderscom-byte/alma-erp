@@ -1,66 +1,23 @@
 'use client'
 import React from 'react'
-import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/renderer'
+import { Document, Page, Text, View } from '@react-pdf/renderer'
 import { A4_SIZE, A4_PADDING_PT } from '@/lib/pdf/a4'
 import { getPdfFontFamily } from '@/lib/pdf/fonts'
 import { pdfMoney } from '@/lib/pdf/format'
 import type { SalarySlipBreakdown } from '@/lib/salary-slip'
 import type { HREmployee } from '@/types/hr'
 import type { InvoicePdfBranding } from '@/lib/pdf/types'
-
-const BG = '#FFFFFF'
-const TEXT = '#1a1a2e'
-const MUTED = '#6b7280'
-const GOLD = '#E07A5F'
-const LINE = 'rgba(224,122,95,0.22)'
-const ROW_BG = 'rgba(0,0,0,0.03)'
-const PAID_COLOR = 'rgba(22, 163, 74, 0.15)'
-const UNPAID_COLOR = 'rgba(220, 38, 38, 0.15)'
-
-const styles = StyleSheet.create({
-  page: {
-    position: 'relative',
-    paddingTop: A4_PADDING_PT.top,
-    paddingBottom: A4_PADDING_PT.bottom,
-    paddingHorizontal: A4_PADDING_PT.horizontal,
-    fontFamily: getPdfFontFamily(),
-    fontSize: 9,
-    color: TEXT,
-    backgroundColor: BG,
-  },
-  watermarkWrap: {
-    position: 'absolute',
-    top: '38%',
-    left: 24,
-    right: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  watermarkText: {
-    fontSize: 96,
-    fontWeight: 700,
-    letterSpacing: 6,
-    transform: 'rotate(-30deg)',
-  },
-  content: {
-    position: 'relative',
-  },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 14, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: LINE },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', maxWidth: '55%' },
-  headerBrand: { flexShrink: 1 },
-  headerLogo: { width: 60, height: 60, marginRight: 12, objectFit: 'contain' as const },
-  h1: { fontSize: 17, fontWeight: 700, color: GOLD, marginTop: 4 },
-  h2: { fontSize: 11, marginTop: 12, marginBottom: 6, fontWeight: 700, color: GOLD },
-  muted: { color: MUTED, marginTop: 2 },
-  table: { borderWidth: 1, borderColor: LINE, borderRadius: 2 },
-  row: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: LINE, backgroundColor: ROW_BG },
-  cellL: { flex: 1.35, padding: 6 },
-  cellR: { flex: 0.75, padding: 6, textAlign: 'right' as const },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5, paddingHorizontal: 6 },
-  detailDivider: { borderTopWidth: 1, borderTopColor: LINE, marginTop: 4, paddingTop: 6 },
-  signRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 28 },
-  signBox: { width: '38%', borderTopWidth: 1, borderTopColor: LINE, paddingTop: 8 },
-})
+import {
+  auraPalette,
+  AuraBackdrop,
+  AuraDocHeader,
+  AuraSectionTitle,
+  AuraWatermark,
+  AuraSignRow,
+  AuraFooter,
+  auraTableStyles,
+  type AuraPalette,
+} from './aura'
 
 export type SalarySlipModel = {
   companyName: string
@@ -72,20 +29,18 @@ export type SalarySlipModel = {
   generatedAt: string
 }
 
-function fmtMoney(n: number) {
-  return pdfMoney(n)
-}
+export type SalarySlipPdfBranding = Pick<InvoicePdfBranding, 'logoDataUrl'>
 
-function DetailLine({ label, amount, emphasize }: { label: string; amount: number; emphasize?: boolean }) {
+function InfoCell({ p, label, value }: { p: AuraPalette; label: string; value: string }) {
   return (
-    <View style={styles.detailRow}>
-      <Text style={{ color: emphasize ? GOLD : TEXT, fontWeight: emphasize ? 700 : 400 }}>{label}</Text>
-      <Text style={{ color: emphasize ? GOLD : TEXT, fontWeight: emphasize ? 700 : 400 }}>{fmtMoney(amount)}</Text>
+    <View style={{ flex: 1 }}>
+      <Text style={{ fontSize: 6.5, fontWeight: 600, color: p.muted, letterSpacing: 1, textTransform: 'uppercase' }}>
+        {label}
+      </Text>
+      <Text style={{ fontSize: 9.5, fontWeight: 600, color: p.ink, marginTop: 2.5 }}>{value}</Text>
     </View>
   )
 }
-
-export type SalarySlipPdfBranding = Pick<InvoicePdfBranding, 'logoDataUrl'>
 
 export function SalarySlipDocument({
   model,
@@ -95,78 +50,113 @@ export function SalarySlipDocument({
   branding?: SalarySlipPdfBranding
 }) {
   const { employee: e, breakdown } = model
+  const p = auraPalette('light')
+  const t = auraTableStyles(p)
   const logoDataUrl = branding?.logoDataUrl
   const penaltyDisplay = breakdown.penalty > 0 ? -breakdown.penalty : 0
   const isPaid = breakdown.isPaid
-  const watermarkColor = isPaid ? PAID_COLOR : UNPAID_COLOR
 
   return (
     <Document title={`Salary slip — ${e.name}`}>
-      <Page size={A4_SIZE} style={styles.page}>
-        <View style={styles.watermarkWrap}>
-          <Text style={[styles.watermarkText, { color: watermarkColor }]}>
-            {isPaid ? 'PAID' : 'UNPAID'}
+      <Page
+        size={A4_SIZE}
+        style={{
+          position: 'relative',
+          paddingTop: A4_PADDING_PT.top,
+          paddingBottom: A4_PADDING_PT.bottom,
+          paddingHorizontal: A4_PADDING_PT.horizontal,
+          fontFamily: getPdfFontFamily(),
+          fontSize: 8.5,
+          color: p.ink,
+          backgroundColor: p.bg,
+        }}
+      >
+        <AuraBackdrop p={p} />
+        <AuraWatermark p={p} label={isPaid ? 'PAID' : 'UNPAID'} tone={isPaid ? 'success' : 'danger'} />
+
+        <AuraDocHeader
+          p={p}
+          logoDataUrl={logoDataUrl}
+          companyName={model.companyName}
+          tagline={model.tagline}
+          docTitle="SALARY SLIP"
+          meta={[`Period: ${model.periodLabel}`, `Issued: ${model.generatedAt}`]}
+          badge={{ tone: isPaid ? 'success' : 'danger', label: isPaid ? 'Paid' : 'Unpaid' }}
+        />
+
+        <AuraSectionTitle p={p}>Employee</AuraSectionTitle>
+        <View
+          wrap={false}
+          style={{
+            backgroundColor: p.panel,
+            borderWidth: 1,
+            borderColor: p.line,
+            borderRadius: 10,
+            padding: 11,
+          }}
+        >
+          <View style={{ flexDirection: 'row' }}>
+            <InfoCell p={p} label="Name" value={e.name} />
+            <InfoCell p={p} label="Employee ID" value={e.emp_id} />
+          </View>
+          <View style={{ flexDirection: 'row', marginTop: 9 }}>
+            <InfoCell p={p} label="Role" value={e.role || '—'} />
+            <InfoCell p={p} label="Contact" value={e.phone || '—'} />
+          </View>
+        </View>
+
+        <AuraSectionTitle p={p}>Salary details</AuraSectionTitle>
+        <View wrap={false} style={t.container}>
+          <View style={t.headRow}>
+            <Text style={[t.th, { flex: 1.4 }]}>Description</Text>
+            <Text style={[t.th, { flex: 0.6, textAlign: 'right' }]}>Amount</Text>
+          </View>
+          <View style={t.row}>
+            <Text style={{ flex: 1.4, fontSize: 8.5, color: p.ink }}>Basic Salary</Text>
+            <Text style={{ flex: 0.6, fontSize: 8.5, color: p.ink, textAlign: 'right' }}>
+              {pdfMoney(breakdown.basicSalary)}
+            </Text>
+          </View>
+          <View style={[t.row, t.rowAlt, t.lastRow]}>
+            <Text style={{ flex: 1.4, fontSize: 8.5, color: p.ink }}>Late Attendance Penalty</Text>
+            <Text style={{ flex: 0.6, fontSize: 8.5, color: penaltyDisplay < 0 ? p.danger : p.ink, textAlign: 'right' }}>
+              {pdfMoney(penaltyDisplay)}
+            </Text>
+          </View>
+        </View>
+
+        <View
+          wrap={false}
+          style={{
+            marginTop: 14,
+            backgroundColor: p.accentWash,
+            borderWidth: 1,
+            borderColor: p.accentBorder,
+            borderRadius: 12,
+            padding: 14,
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <View>
+            <Text style={{ fontSize: 7, fontWeight: 700, color: p.accentDim, letterSpacing: 1.5, textTransform: 'uppercase' }}>
+              NET PAY
+            </Text>
+            <Text style={{ fontSize: 6.5, color: p.muted, marginTop: 2.5 }}>{model.periodLabel}</Text>
+          </View>
+          <Text style={{ fontSize: 20, fontWeight: 700, color: p.accent }}>
+            {pdfMoney(breakdown.netPay)}
           </Text>
         </View>
 
-        <View style={styles.content}>
-          <View style={styles.headerRow}>
-            <View style={styles.headerLeft}>
-              {logoDataUrl ? <Image src={logoDataUrl} style={styles.headerLogo} /> : null}
-              <View style={styles.headerBrand}>
-                <Text style={styles.h1}>{model.companyName}</Text>
-                {model.tagline ? <Text style={styles.muted}>{model.tagline}</Text> : null}
-              </View>
-            </View>
-            <View style={{ alignItems: 'flex-end' }}>
-              <Text style={{ fontWeight: 700, fontSize: 12, letterSpacing: 1, color: TEXT }}>SALARY SLIP</Text>
-              <Text style={styles.muted}>Period: {model.periodLabel}</Text>
-              <Text style={styles.muted}>Issued: {model.generatedAt}</Text>
-            </View>
-          </View>
+        <Text style={{ marginTop: 10, fontSize: 7, color: p.muted, lineHeight: 1.4 }}>
+          Alma ERP salary statement for {model.periodLabel}.
+        </Text>
 
-          <Text style={styles.h2}>Employee</Text>
-          <View style={styles.table}>
-            <View style={styles.row}>
-              <Text style={styles.cellL}>Name</Text>
-              <Text style={styles.cellR}>{e.name}</Text>
-            </View>
-            <View style={styles.row}>
-              <Text style={styles.cellL}>Employee ID</Text>
-              <Text style={styles.cellR}>{e.emp_id}</Text>
-            </View>
-            <View style={styles.row}>
-              <Text style={styles.cellL}>Role</Text>
-              <Text style={styles.cellR}>{e.role || '—'}</Text>
-            </View>
-            <View style={[styles.row, { borderBottomWidth: 0 }]}>
-              <Text style={styles.cellL}>Contact</Text>
-              <Text style={styles.cellR}>{e.phone || '—'}</Text>
-            </View>
-          </View>
+        <AuraSignRow p={p} labels={['Employee', 'Management']} />
 
-          <Text style={styles.h2}>Salary details</Text>
-          <View style={[styles.table, { paddingVertical: 4 }]}>
-            <DetailLine label="Basic Salary" amount={breakdown.basicSalary} />
-            <DetailLine label="Late Attendance Penalty" amount={penaltyDisplay} />
-            <View style={styles.detailDivider}>
-              <DetailLine label="NET PAY" amount={breakdown.netPay} emphasize />
-            </View>
-          </View>
-
-          <Text style={{ marginTop: 10, fontSize: 8, color: MUTED, lineHeight: 1.4 }}>
-            Alma ERP salary statement for {model.periodLabel}.
-          </Text>
-
-          <View style={styles.signRow}>
-            <View style={styles.signBox}>
-              <Text style={{ fontSize: 8, color: MUTED }}>Employee</Text>
-            </View>
-            <View style={styles.signBox}>
-              <Text style={{ fontSize: 8, color: MUTED }}>Management</Text>
-            </View>
-          </View>
-        </View>
+        <AuraFooter p={p} lines={[`${model.companyName} — generated by ALMA ERP`]} />
       </Page>
     </Document>
   )

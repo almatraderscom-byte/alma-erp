@@ -113,6 +113,24 @@ html.agent-route .ambient-bg-root {
   height: calc(100dvh - 3.5rem - env(safe-area-inset-bottom, 0px) - var(--kb-inset, 0px));
 }
 
+/* Native shell: the WEB bottom nav (the 3.5rem reserve above) is hidden there, and
+ * full-bleed builds run the WebView UNDER the native glass tab bar instead — swap
+ * the web-nav reserve for the tab-bar overlap the shell injects (--alma-bottom-inset;
+ * older app builds don't inject the var and fall back to the safe-area inset).
+ * Without this the composer floats a dead 3.5rem+ gap above the native tab bar.
+ * Placed BEFORE the cs-fullscreen rule (equal specificity) so Studio fullscreen
+ * keeps its existing 100dvh behavior in the shell. */
+html.alma-native .agent-main-height {
+  height: calc(100dvh - var(--alma-bottom-inset, env(safe-area-inset-bottom, 0px)) - var(--kb-inset, 0px));
+}
+
+/* Full-bleed shell: env(safe-area-inset-bottom) inside the WebView now equals the
+ * whole tab-bar overlap, so the composer's own pb-[max(12px,env(...))] would stack
+ * a second tab-bar height on top of the reserve above — pin it to the 12px floor. */
+html.alma-native .agent-composer-wrap {
+  padding-bottom: 12px !important;
+}
+
 /* Creative Studio hides the agent bottom nav and renders its own chrome, so it
  * gets the full viewport (no 3.5rem nav reserve, no bottom safe-area reserve —
  * Studio's own header/nav handle the insets). Class toggled by CreativeStudio. */
@@ -130,6 +148,17 @@ html.cs-fullscreen .agent-main-height {
  * (Desktop preview has no keyboard, so dvh never shrinks there — which is why the
  * double-count was invisible in preview but broke on the iPhone.) */
 body.kb-open .agent-main-height {
+  height: calc(100vh - var(--kb-inset, 0px)); /* fallback for engines without lvh */
+  height: calc(100lvh - var(--kb-inset, 0px));
+}
+
+/* Native shell, keyboard open: the keyboard covers the native tab bar, so the
+ * tab-bar reserve swapped in above no longer applies — keep the same lvh-based
+ * formula as the web kb-open rule (subtract the keyboard exactly once). Stated
+ * explicitly so the alma-native height override above can never pin the tab-bar
+ * inset under the keyboard. MUST stay before the cap-native-resize rule below
+ * (equal specificity), so that rule still wins by source order where it applies. */
+html.alma-native body.kb-open .agent-main-height {
   height: calc(100vh - var(--kb-inset, 0px)); /* fallback for engines without lvh */
   height: calc(100lvh - var(--kb-inset, 0px));
 }

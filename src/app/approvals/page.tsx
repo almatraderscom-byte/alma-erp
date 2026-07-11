@@ -203,12 +203,18 @@ function ApprovalsPageInner() {
   const actionsGloballyDisabled = hasProcessing
 
   return (
-    <main className="min-h-[100dvh] bg-transparent space-y-5 pb-24 md:pb-6">
+    <main className="min-h-[100dvh] bg-transparent space-y-3 pb-24 md:space-y-5 md:pb-6">
       <PageHeader
         title="Approvals"
         subtitle="Persistent authorization requests. Reading notifications never clears this queue."
         actions={
-          <>
+          /* Native-iOS feel on phones: one edge-to-edge scrollable row of the SAME
+             buttons (no wrapped rows eating the first screen). md:contents = desktop
+             renders exactly as before, as if this wrapper didn't exist. */
+          <div
+            className="-mx-4 flex w-full min-w-0 flex-nowrap items-center gap-2 overflow-x-auto px-4 py-0.5 scrollbar-hide md:contents"
+            style={{ WebkitOverflowScrolling: 'touch' }}
+          >
             <Button
               variant={view === 'business' ? 'gold' : 'ghost'}
               onClick={() => setView('business')}
@@ -244,7 +250,7 @@ function ApprovalsPageInner() {
                 ))}
               </>
             )}
-          </>
+          </div>
         }
       />
 
@@ -257,7 +263,7 @@ function ApprovalsPageInner() {
       )}
 
       {view === 'business' && (
-      <motion.div variants={stagger} initial="hidden" animate="show" className="min-w-0 max-w-full space-y-5 px-3 sm:px-6">
+      <motion.div variants={stagger} initial="hidden" animate="show" className="min-w-0 max-w-full space-y-3 px-3 sm:px-6 md:space-y-5">
       <ApprovalProcessingBanner
         count={processingOps.length}
         message={
@@ -316,18 +322,25 @@ function ApprovalsPageInner() {
       )}
 
       <motion.div variants={fadeUp}>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-        <KpiCard label="Pending" value={data?.totalPending ?? 0} loading={loading} color="text-gold-lt" />
-        <KpiCard label="Critical" value={priorityCounts.CRITICAL ?? 0} loading={loading} color="text-red-500" />
-        <KpiCard label="High" value={priorityCounts.HIGH ?? 0} loading={loading} color="text-amber-600" />
-        <KpiCard label="Normal" value={priorityCounts.NORMAL ?? 0} loading={loading} />
-        <KpiCard label="Low" value={priorityCounts.LOW ?? 0} loading={loading} />
+      {/* KPI strip — single edge-to-edge scrollable row on phones (native-iOS feel,
+          same KpiCards); md+ keeps the exact 5-column grid as before. */}
+      <div
+        className="-mx-3 flex gap-3 overflow-x-auto px-3 py-0.5 scrollbar-hide sm:-mx-6 sm:px-6 md:mx-0 md:grid md:grid-cols-5 md:overflow-visible md:px-0 md:py-0"
+        style={{ WebkitOverflowScrolling: 'touch' }}
+      >
+        <div className="w-[9.5rem] shrink-0 md:w-auto"><KpiCard label="Pending" value={data?.totalPending ?? 0} loading={loading} color="text-gold-lt" /></div>
+        <div className="w-[9.5rem] shrink-0 md:w-auto"><KpiCard label="Critical" value={priorityCounts.CRITICAL ?? 0} loading={loading} color="text-red-500" /></div>
+        <div className="w-[9.5rem] shrink-0 md:w-auto"><KpiCard label="High" value={priorityCounts.HIGH ?? 0} loading={loading} color="text-amber-600" /></div>
+        <div className="w-[9.5rem] shrink-0 md:w-auto"><KpiCard label="Normal" value={priorityCounts.NORMAL ?? 0} loading={loading} /></div>
+        <div className="w-[9.5rem] shrink-0 md:w-auto"><KpiCard label="Low" value={priorityCounts.LOW ?? 0} loading={loading} /></div>
       </div>
       </motion.div>
 
       <motion.div variants={fadeUp}>
+      {/* Phones: the actionable approvals list comes FIRST (native-app priority);
+          the module summary follows. lg+ keeps the original side-by-side order. */}
       <div className="grid gap-4 lg:grid-cols-[0.8fr_1.5fr]">
-        <Card className="p-4">
+        <Card className="order-2 p-4 lg:order-none">
           <p className="text-sm font-black text-cream">Pending by module</p>
           <div className="mt-4 space-y-2">
             {loading && !data ? <Skeleton className="h-32" /> : !byModule.length ? <Empty icon="◆" title="No pending modules" /> : byModule.map(row => (
@@ -339,10 +352,10 @@ function ApprovalsPageInner() {
           </div>
         </Card>
 
-        <Card className="min-w-0">
+        <Card className="order-1 min-w-0 lg:order-none">
           {loading && !data ? <Skeleton className="h-96" /> : !approvals.length ? <Empty icon="◆" title="No approval requests" /> : (
             <div className="table-scroll min-w-0 max-w-full">
-            <div className="min-w-[720px] divide-y divide-border">
+            <div className="md:min-w-[720px] divide-y divide-border">
               {approvals.map(row => {
                 const ui = getRowUi(row.id)
                 const rowBusy = isRowProcessing(row.id)
@@ -409,7 +422,7 @@ function ApprovalsPageInner() {
                     <Button size="xs" variant="ghost" disabled={rowBusy} onClick={() => setSelected(row)}>View Details</Button>
                     {row.status === 'PENDING' && row.executable && (
                       <Button size="xs" variant="gold" disabled={actionDisabled} onClick={() => handleApproveClick(row)}>
-                        {ui.state === 'processing' ? <><Spinner /> Processing</> : 'Approve'}
+                        {ui.state === 'processing' ? 'Processing' : 'Approve'}
                       </Button>
                     )}
                     {row.status === 'PENDING' && (

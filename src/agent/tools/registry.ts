@@ -33,6 +33,7 @@ import { ADVISOR_TOOLS } from './advisor-tools'
 import { FAMILY_TOOLS, place_agent_call } from './personal-tools'
 import { OWNER_TODO_TOOLS } from './owner-todo-tools'
 import { TRYON_TOOLS } from './tryon-tools'
+import { STUDIO_TOOLS } from './studio-tools'
 import { DIAGNOSTIC_TOOLS } from './diagnostic-tools'
 import { CONTENT_ENGINE_TOOLS } from './content-engine-tools'
 import { COWORKER_TOOLS } from './coworker-tools'
@@ -63,6 +64,9 @@ import { BROWSER_TOOLS } from './browser-tools'
 import { BROWSER_RECIPE_TOOLS } from './browser-recipe-tools'
 import { NATIVE_PUSH_TOOLS } from './native-push-tools'
 import { LIVE_BROWSER_TOOLS } from './live-browser-tools'
+import { WORKBENCH_TOOLS } from './workbench-tools'
+import { SKILL_PACK_TOOLS } from './skill-pack-tools'
+import { SEO_AUDIT_TOOLS } from './seo-audit-tools'
 
 export interface ToolResult {
   success: boolean
@@ -139,7 +143,8 @@ type MemoryScope = typeof MEMORY_SCOPES[number]
 const save_memory: AgentTool = {
   name: 'save_memory',
   description:
-    'Saves a durable fact to long-term memory with semantic embedding. Use when the owner states a preference, business fact, person, or recurring pattern. Trigger phrase: "মনে রাখো…". Use scope=business + key (e.g. contact_phone, contact_website) + pinned=true for standing contact info. Never save secrets or API keys. Business scope (Lifestyle vs Trading) is auto-tagged from server context.',
+    'Saves a durable fact to long-term memory with semantic embedding. Use when the owner states a preference, business fact, person, or recurring pattern. Trigger phrase: "মনে রাখো…". Use scope=business + key (e.g. contact_phone, contact_website) + pinned=true for standing contact info. Never save secrets or API keys. Business scope (Lifestyle vs Trading) is auto-tagged from server context. ' +
+    'HARD RULE — duration: classify EVERY fact before saving. A fact that only matters today or for one dated event ("আজ অফিস ছুটি", "৮ জুলাই সফরে", today\'s salah status) MUST be duration "today" (or "7d" if it matters this week). Only lifelong preferences, standing rules, contacts and stable business facts are "permanent". When unsure, pick the SHORTER duration — permanent junk pollutes context and costs the owner money forever.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -147,6 +152,11 @@ const save_memory: AgentTool = {
       key: { type: 'string', description: 'Optional short identifier for the fact' },
       content: { type: 'string', description: 'The fact to remember (clear, self-contained text)' },
       pinned: { type: 'boolean', description: 'If true, this fact is injected into every conversation system prompt (use for critical standing facts, cap 30)' },
+      duration: {
+        type: 'string',
+        enum: ['permanent', 'today', '7d', '30d'],
+        description: 'How long the fact stays alive. "today" = day-scoped (expires end of today, Dhaka); "7d"/"30d" = short-lived; "permanent" = standing fact only.',
+      },
       metadata: {
         type: 'object',
         description: 'Optional metadata e.g. { type: "owner_decision", context: "task_proposal", date: "YYYY-MM-DD" }',
@@ -172,8 +182,23 @@ const save_memory: AgentTool = {
     if (!content.trim()) return { success: false, error: 'content is empty' }
     if (!MEMORY_SCOPES.includes(scope)) return { success: false, error: `invalid scope: ${scope}` }
 
+    // duration → expiry. undefined = let the server-side ephemeral hard rule
+    // decide (day-scoped content still gets an expiry even without duration).
+    const duration = typeof input.duration === 'string' ? input.duration : undefined
+    let expiresAt: Date | null | undefined = undefined
+    if (duration === 'permanent') expiresAt = null
+    else if (duration === 'today') expiresAt = null // resolved below via day rule
+    else if (duration === '7d') expiresAt = new Date(Date.now() + 7 * 24 * 3600_000)
+    else if (duration === '30d') expiresAt = new Date(Date.now() + 30 * 24 * 3600_000)
+    if (duration === 'today') {
+      // End of the current Dhaka day (UTC+6, no DST) + a 1-day grace window.
+      const dhakaNow = new Date(Date.now() + 6 * 3600_000)
+      const endUtc = Date.UTC(dhakaNow.getUTCFullYear(), dhakaNow.getUTCMonth(), dhakaNow.getUTCDate(), 23, 59, 59) - 6 * 3600_000
+      expiresAt = new Date(endUtc + 24 * 3600_000)
+    }
+
     try {
-      const mem = await createOrUpdateAgentMemory({ scope, key, content, pinned, metadata })
+      const mem = await createOrUpdateAgentMemory({ scope, key, content, pinned, metadata, expiresAt })
       return {
         success: true,
         data: {
@@ -420,6 +445,9 @@ export const CORE_AGENT_TOOLS: AgentTool[] = [
   ...BROWSER_RECIPE_TOOLS,
   ...NATIVE_PUSH_TOOLS,
   ...LIVE_BROWSER_TOOLS,
+  ...WORKBENCH_TOOLS,
+  ...SKILL_PACK_TOOLS,
+  ...SEO_AUDIT_TOOLS,
 ]
 
 /** Lifestyle-only tools beyond CORE + base groups (not in TOOL_GROUPS.base). */
@@ -508,6 +536,7 @@ export const TOOLS: AgentTool[] = [
   ...VISION_TOOLS,
   ...SIMULATE_TOOLS,
   ...TRYON_TOOLS,
+  ...STUDIO_TOOLS,
   ...DIAGNOSTIC_TOOLS,
   ...CONTENT_ENGINE_TOOLS,
   ...COWORKER_TOOLS,

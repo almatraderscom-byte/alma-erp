@@ -157,14 +157,14 @@ function MobileTab({
   href?: string
 }) {
   const cls = cn(
-    'relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2.5 transition-all duration-200 active:scale-[0.96]',
-    active ? 'text-gold' : 'text-muted',
+    'relative flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-full px-1 py-2 transition-colors duration-200 active:scale-[0.96] motion-reduce:transition-none',
+    active ? 'text-[color:var(--ios-tab-selection)]' : 'text-[color:var(--ios-label-secondary)]',
   )
   const content = (
     <>
-      {active && <motion.span layoutId="mobile-nav-glow" className="absolute inset-1 rounded-2xl border border-gold/40 bg-gradient-to-b from-gold/20 to-gold/5 shadow-[0_0_22px_rgb(var(--c-accent)/0.3),inset_0_0_12px_rgb(var(--c-accent)/0.1)]" />}
-      <span className={cn('relative text-[19px] leading-none transition-all', active && 'drop-shadow-[0_0_7px_rgb(var(--c-accent)/0.55)]')}>{icon}</span>
-      <span className="relative truncate text-[9px] font-black tracking-[0.08em]">{label}</span>
+      {active && <span aria-hidden className="absolute inset-x-0.5 inset-y-1 rounded-full bg-[color-mix(in_srgb,var(--ios-tab-selection)_18%,transparent)] transition-colors duration-200" />}
+      <span className="relative text-[18px] leading-none">{icon}</span>
+      <span className="relative max-w-full truncate text-[11px] font-medium leading-[13px] tracking-[0.06px]">{label}</span>
       {!!badge && (
         <span className="absolute right-2 top-1 min-w-4 rounded-full bg-red-500 px-1 text-center text-[9px] font-black leading-4 text-white shadow-lg shadow-red-200/40">
           {badge > 99 ? '99+' : badge}
@@ -217,15 +217,15 @@ function RotTab({ item, active }: { item: Dest; active: boolean }) {
       prefetch
       href={item.href}
       className={cn(
-        'relative flex h-full w-full flex-col items-center justify-center gap-1 rounded-2xl px-1 py-2.5 transition-colors active:scale-[0.96]',
-        active ? 'text-gold' : 'text-muted',
+        'relative flex h-full w-full flex-col items-center justify-center gap-0.5 rounded-full px-1 py-2 transition-colors duration-200 active:scale-[0.96] motion-reduce:transition-none',
+        active ? 'text-[color:var(--ios-tab-selection)]' : 'text-[color:var(--ios-label-secondary)]',
       )}
     >
       {active && (
-        <span className="absolute inset-1 rounded-2xl border border-gold/40 bg-gradient-to-b from-gold/20 to-gold/5 shadow-[0_0_22px_rgb(var(--c-accent)/0.3),inset_0_0_12px_rgb(var(--c-accent)/0.1)]" />
+        <span aria-hidden className="absolute inset-x-0.5 inset-y-1 rounded-full bg-[color-mix(in_srgb,var(--ios-tab-selection)_18%,transparent)] transition-colors duration-200" />
       )}
-      <span className={cn('relative text-[19px] leading-none', active && 'drop-shadow-[0_0_7px_rgb(var(--c-accent)/0.55)]')}>{item.icon}</span>
-      <span className="relative w-full truncate text-center text-[9px] font-black tracking-[0.06em]">{item.label}</span>
+      <span className="relative text-[18px] leading-none">{item.icon}</span>
+      <span className="relative w-full truncate text-center text-[11px] font-medium leading-[13px] tracking-[0.06px]">{item.label}</span>
       {!!item.badge && (
         <span className="absolute right-1.5 top-1 min-w-4 rounded-full bg-red-500 px-1 text-center text-[9px] font-black leading-4 text-white shadow-lg shadow-red-200/40">
           {item.badge > 99 ? '99+' : item.badge}
@@ -339,7 +339,7 @@ function RotatingDockNav({ items, activeHref, trailing }: { items: Dest[]; activ
         {rotates && (
           <motion.span
             aria-hidden
-            className="pointer-events-none absolute inset-0 rounded-[26px]"
+            className="pointer-events-none absolute inset-0 rounded-full"
             style={{
               padding: '1.4px',
               background:
@@ -354,7 +354,7 @@ function RotatingDockNav({ items, activeHref, trailing }: { items: Dest[]; activ
             transition={{ duration: 7, ease: 'linear', repeat: Infinity }}
           />
         )}
-      <div className="relative overflow-hidden rounded-[26px] border border-border-subtle bg-card/80 p-1.5 shadow-lg shadow-black/8 backdrop-blur-2xl">
+      <div className="lg-material-strong relative overflow-hidden rounded-full p-1.5">
         {rotates && (
           <div className="pointer-events-none absolute inset-x-4 top-[3px] z-[6] h-[3px] rounded-full bg-white/[0.05]">
             <motion.div
@@ -397,7 +397,7 @@ function RotatingDockNav({ items, activeHref, trailing }: { items: Dest[]; activ
               ))}
             </AnimatePresence>
           </div>
-          <div className="flex shrink-0 items-stretch gap-1 border-l border-border-subtle pl-1">{trailing}</div>
+          <div className="flex shrink-0 items-stretch gap-1 border-l border-[color:var(--ios-separator)] pl-1">{trailing}</div>
         </div>
       </div>
       </div>
@@ -542,7 +542,7 @@ export function MobileNav() {
 
   return (
     <>
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 safe-bottom px-3 pb-2 mobile-app-chrome">
+      <nav className="md:hidden fixed left-[var(--ios-margin,16px)] right-[var(--ios-margin,16px)] bottom-[calc(env(safe-area-inset-bottom,0px)+12px)] z-50 mobile-app-chrome">
         <RotatingDockNav
           items={rotationItems}
           activeHref={path}

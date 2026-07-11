@@ -19,6 +19,15 @@ import {
   type FamilyPresetId,
 } from '@/lib/creative-studio/constants'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
+import {
+  VIDEO_RECIPES,
+  VIDEO_ASPECTS,
+  MUSIC_VIBES,
+  AUDIO_MODES,
+  VOICEOVER_MAX_CHARS,
+  reelCostBdt,
+  type VideoAudioMode,
+} from '@/lib/creative-studio/video-recipes'
 import LifestyleEditor from '@/agent/components/creative-studio/LifestyleEditor'
 import {
   DEFAULT_OFFER,
@@ -30,6 +39,8 @@ import {
   fetchStudioConfig,
   fetchGallery,
   fetchModels,
+  setDefaultModel,
+  deleteModel,
   runAutoStudioJob,
   runStudioJob,
   saveModel,
@@ -40,11 +51,36 @@ import {
   fetchDriveStatus,
   disconnectDrive,
   connectDriveUrl,
+  fetchStudioVideos,
+  uploadStudioVideo,
+  deleteStudioVideo,
+  runVideoRecipe,
+  fetchVideoJob,
+  fetchMusicTracks,
+  uploadMusicTrack,
+  deleteMusicTrack,
+  setReelCover,
+  finishVideo,
+  sendItemFeedback,
+  retryStudioJob,
+  fetchStudioSettings,
+  saveStudioSettings,
+  deleteGarmentCache,
+  generateBrandModel,
+  type StudioSettings,
+  fetchAudioLabStatus,
+  queueAudioJob,
+  uploadAudioFile,
+  type AudioLabStatus,
+  type StudioMusicTrack,
+  type VideoFinishTemplates,
   type GalleryItem,
   type StudioConfig,
   type BrandStatus,
   type FinishMode,
   type DriveStatus,
+  type StudioVideoUpload,
+  type VideoJobStatus,
 } from '@/agent/components/creative-studio/studio-api'
 
 /** Native-safe download — a plain <a download> just opens a browser URL inside the
@@ -56,12 +92,492 @@ async function handleDownload(url: string | undefined | null, filename?: string)
   else if (result === 'opened') toast('ছবি নতুন ট্যাবে খোলা হলো, স্যার')
 }
 
-type MainView = 'studio' | 'gallery' | 'models' | 'finishing' | 'video'
-type StudioModel = { id: string; name: string; role: string | null; isDefault: boolean }
+type MainView = 'studio' | 'gallery' | 'video' | 'audio' | 'library'
+type StudioModel = {
+  id: string
+  name: string
+  role: string | null
+  isDefault: boolean
+  imagePath?: string
+  imageUrl?: string | null
+}
 
-// Embedded browser video editor (OpenCut). Owner-tunable via env so we can later
-// point it at a self-hosted/rebranded instance without a code change.
-const OPENCUT_URL = process.env.NEXT_PUBLIC_OPENCUT_URL || 'https://opencut.app/projects'
+/** Bangla label for a model role (falls back to the raw role for anything odd). */
+function roleLabelBn(role: string | null): string {
+  switch (role) {
+    case 'single': return 'একক / নিজে'
+    case 'father': return 'বাবা'
+    case 'mother': return 'মা'
+    case 'son': return 'ছেলে'
+    case 'daughter': return 'মেয়ে'
+    default: return role ?? ''
+  }
+}
+
+/**
+ * Reusable chooser sheet — the ONE place the owner decides which model a shot
+ * uses. Lists the saved library models as a grid; optionally offers "upload new"
+ * (Advanced) or a clear action. Auto reuses it without the upload option (it can
+ * only run on a saved model). Used by ModelSlot (Advanced) and the Auto panel so
+ * model selection is identical everywhere.
+ */
+function ModelChooserSheet({
+  title = 'মডেল বেছে নিন',
+  models,
+  selectedId,
+  onClose,
+  onPickSaved,
+  onUpload,
+  onClear,
+  hasChoice,
+  uploadHint,
+}: {
+  title?: string
+  models: StudioModel[]
+  selectedId: string
+  onClose: () => void
+  onPickSaved: (id: string) => void
+  onUpload?: (f: File) => void
+  onClear?: () => void
+  hasChoice?: boolean
+  uploadHint?: string
+}) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-4"
+    >
+      <motion.div
+        initial={{ y: 40, opacity: 0.6 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: 40, opacity: 0 }}
+        transition={{ type: 'spring', stiffness: 320, damping: 32 }}
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded-t-3xl border border-border-subtle bg-card p-4 shadow-2xl sm:rounded-3xl"
+        style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+      >
+        {onUpload && (
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) { onUpload(f); onClose() }
+              e.target.value = ''
+            }}
+          />
+        )}
+
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-[15px] font-bold text-cream">{title}</h3>
+          <button type="button" onClick={onClose} className="grid h-7 w-7 place-items-center rounded-full bg-white/8 text-muted">✕</button>
+        </div>
+
+        {models.length > 0 ? (
+          <>
+            <p className="mb-2 text-[11px] font-semibold text-muted">সেভ করা মডেল থেকে</p>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+              {models.map((m) => {
+                const active = selectedId === m.id
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => { onPickSaved(m.id); onClose() }}
+                    className={cn(
+                      'relative aspect-[3/4] overflow-hidden rounded-xl border transition-all',
+                      active ? 'border-[#E07A5F] ring-2 ring-[#E07A5F]/30' : 'border-border-subtle',
+                    )}
+                    title={`${m.name} (${roleLabelBn(m.role)})`}
+                  >
+                    {m.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={m.imageUrl} alt={m.name} className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="grid h-full w-full place-items-center bg-bg-1 text-muted"><UserSvg className="h-6 w-6" /></span>
+                    )}
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 pb-1 pt-4">
+                      <span className="block truncate text-left text-[10px] font-bold text-white">{m.name}</span>
+                    </div>
+                    {active && (
+                      <span className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-[#E07A5F] text-[10px] text-white shadow">✓</span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+            {onUpload && (
+              <div className="my-3 flex items-center gap-2 text-[10px] text-muted">
+                <span className="h-px flex-1 bg-border-subtle" /> অথবা <span className="h-px flex-1 bg-border-subtle" />
+              </div>
+            )}
+          </>
+        ) : (
+          <p className="mb-3 rounded-xl border border-border-subtle bg-bg-1 px-3 py-2.5 text-[11.5px] text-muted">
+            লাইব্রেরিতে কোনো সেভ করা মডেল নেই। {onUpload ? 'এখন একটা ছবি আপলোড করতে পারেন, অথবা ' : ''}<b className="text-cream">লাইব্রেরি</b> ট্যাবে গিয়ে মডেল সেভ করুন।
+          </p>
+        )}
+
+        {onUpload ? (
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#E07A5F] py-3 text-[14px] font-bold text-white"
+          >
+            📁 নতুন ছবি আপলোড করুন
+          </button>
+        ) : uploadHint ? (
+          <p className="text-center text-[10.5px] text-muted">{uploadHint}</p>
+        ) : null}
+
+        {onClear && hasChoice && (
+          <button
+            type="button"
+            onClick={() => { onClear(); onClose() }}
+            className="mt-2 w-full rounded-xl border border-border py-2.5 text-[12px] font-semibold text-muted"
+          >
+            বাছাই বাদ দিন
+          </button>
+        )}
+      </motion.div>
+    </motion.div>
+  )
+}
+
+/**
+ * Unified model input for Advanced. Tapping it opens the chooser SHEET that first
+ * asks the owner whether to use a SAVED model or UPLOAD a new photo — instead of
+ * jumping straight into the OS file picker. Saved-pick and upload are mutually
+ * exclusive: choosing one clears the other.
+ */
+function ModelSlot({
+  models,
+  selectedId,
+  uploadPreview,
+  onPickSaved,
+  onUpload,
+  onClear,
+  required,
+}: {
+  models: StudioModel[]
+  selectedId: string
+  uploadPreview: string | null
+  onPickSaved: (id: string) => void
+  onUpload: (f: File) => void
+  onClear: () => void
+  required?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const selected = models.find((m) => m.id === selectedId) ?? null
+  const hasChoice = Boolean(selected || uploadPreview)
+
+  return (
+    <div>
+      {/* The slot — shows the current choice, or a prompt. Tap → chooser sheet. */}
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={cn(
+          'flex w-full items-center gap-3 rounded-2xl border-2 border-dashed p-2.5 text-left transition-colors',
+          hasChoice ? 'border-[#E07A5F]/30 bg-card/80' : 'border-border bg-card/80',
+        )}
+      >
+        <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-bg-1 text-muted">
+          {selected?.imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={selected.imageUrl} alt={selected.name} className="h-full w-full object-cover" />
+          ) : uploadPreview ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={uploadPreview} alt="model" className="h-full w-full object-cover" />
+          ) : (
+            <UserSvg className="h-6 w-6" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          {selected ? (
+            <>
+              <p className="truncate text-[14px] font-bold text-cream">{selected.name}</p>
+              <p className="text-[11px] text-muted">সেভ করা মডেল · {roleLabelBn(selected.role)}</p>
+            </>
+          ) : uploadPreview ? (
+            <>
+              <p className="truncate text-[14px] font-bold text-cream">নতুন আপলোড করা ছবি</p>
+              <p className="text-[11px] text-muted">ট্যাপ করে বদলান</p>
+            </>
+          ) : (
+            <>
+              <p className="text-[14px] font-bold text-cream">
+                Model{required && <span className="text-[#E07A5F]"> *</span>}
+              </p>
+              <p className="text-[11px] text-muted">ট্যাপ করুন — সেভ করা মডেল বা নতুন ছবি</p>
+            </>
+          )}
+        </div>
+        <span className="shrink-0 rounded-full bg-[#E07A5F]/12 px-2.5 py-1 text-[11px] font-semibold text-[#E07A5F]">
+          {hasChoice ? 'বদলান' : 'বেছে নিন'}
+        </span>
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <ModelChooserSheet
+            models={models}
+            selectedId={selectedId}
+            onClose={() => setOpen(false)}
+            onPickSaved={onPickSaved}
+            onUpload={onUpload}
+            onClear={onClear}
+            hasChoice={hasChoice}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+const MODEL_ROLES = [
+  { id: 'single', label: 'একক / নিজে' },
+  { id: 'father', label: 'বাবা' },
+  { id: 'mother', label: 'মা' },
+  { id: 'son', label: 'ছেলে (৫–১২)' },
+  { id: 'daughter', label: 'মেয়ে (৫–১০)' },
+] as const
+
+type FamilyRole = 'father' | 'mother' | 'son' | 'daughter'
+
+// Which saved roles each family preset needs. The family chain resolves people
+// BY ROLE from the library (not per-shot multi-select), so a preset can only run
+// once every role below is saved. Drives the pre-Run checklist so missing models
+// are visible up front instead of failing at Run time.
+const FAMILY_REQUIRED_ROLES: Record<string, FamilyRole[]> = {
+  father_son: ['father', 'son'],
+  mother_son: ['mother', 'son'],
+  mother_daughter: ['mother', 'daughter'],
+  father_daughter: ['father', 'daughter'],
+  couple: ['father', 'mother'],
+  full_family: ['father', 'mother', 'son', 'daughter'],
+}
+
+/**
+ * Quick add-model bottom-sheet. Self-contained: pick a photo, name it, save it to
+ * the library. `lockedRole` forces the role (used by the family checklist's "add
+ * son/daughter" shortcut) so the owner can't accidentally save the wrong role.
+ */
+function AddModelSheet({
+  lockedRole,
+  onClose,
+  onSaved,
+}: {
+  lockedRole?: string
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [preview, setPreview] = useState<string | null>(null)
+  const [path, setPath] = useState<string | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [name, setName] = useState('')
+  const [role, setRole] = useState(lockedRole ?? 'single')
+  const [saving, setSaving] = useState(false)
+
+  const onPick = (f: File) => {
+    setPreview((p) => { if (p) URL.revokeObjectURL(p); return URL.createObjectURL(f) })
+    setPath(null)
+    setUploading(true)
+    void uploadStudioFile(f, 'model-library')
+      .then((p) => setPath(p))
+      .catch((err) => toast.error(String(err)))
+      .finally(() => setUploading(false))
+  }
+
+  const save = async () => {
+    if (!name.trim() || !path) { toast.error('নাম আর ছবি — দুটোই দরকার'); return }
+    setSaving(true)
+    try {
+      await saveModel({
+        id: name.trim().toLowerCase().replace(/\s+/g, '-'),
+        name: name.trim(),
+        imagePath: path,
+        role,
+      })
+      toast.success(`মডেল "${name}" সেভ হলো`)
+      if (preview) URL.revokeObjectURL(preview)
+      onSaved()
+      onClose()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const lockedLabel = MODEL_ROLES.find((r) => r.id === lockedRole)?.label
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={() => !saving && onClose()}
+      className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-4"
+    >
+      <motion.div
+        initial={{ y: 40, opacity: 0.6 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: 40, opacity: 0 }}
+        transition={{ type: 'spring', stiffness: 320, damping: 32 }}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-t-3xl border border-border-subtle bg-card p-4 shadow-2xl sm:rounded-3xl"
+        style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+      >
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) onPick(f); e.target.value = '' }}
+        />
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-[15px] font-bold text-cream">
+            {lockedLabel ? `${lockedLabel} মডেল যোগ করুন` : 'নতুন মডেল যোগ করুন'}
+          </h3>
+          <button type="button" onClick={() => !saving && onClose()} className="grid h-7 w-7 place-items-center rounded-full bg-white/8 text-muted">✕</button>
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="relative h-40 w-32 shrink-0 overflow-hidden rounded-xl border-2 border-dashed border-border bg-bg-1"
+          >
+            {preview ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={preview} alt="preview" className="h-full w-full object-cover" />
+            ) : (
+              <span className="grid h-full w-full place-items-center px-2 text-center text-[11px] text-muted">ট্যাপ করে ছবি দিন</span>
+            )}
+            {uploading && (
+              <div className="absolute inset-0 grid place-items-center bg-black/40">
+                <span className="h-6 w-6 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+              </div>
+            )}
+          </button>
+
+          <div className="flex min-w-0 flex-1 flex-col gap-2.5">
+            <div>
+              <label className="mb-1 block text-[10.5px] font-semibold text-muted">নাম</label>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="যেমন: Rakib"
+                className="w-full rounded-xl border border-border bg-bg-1 px-3 py-2.5 text-[13px] text-cream outline-none focus:border-[#E07A5F]/50"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[10.5px] font-semibold text-muted">ধরন</label>
+              {lockedRole ? (
+                <span className="inline-block rounded-full bg-[#E07A5F] px-3 py-1.5 text-[11px] font-bold text-white">{lockedLabel}</span>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {MODEL_ROLES.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => setRole(r.id)}
+                      className={cn(
+                        'rounded-full px-2.5 py-1.5 text-[11px] font-semibold transition-colors',
+                        role === r.id ? 'bg-[#E07A5F] text-white' : 'border border-border bg-bg-1 text-muted',
+                      )}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          disabled={saving || uploading || !path || !name.trim()}
+          onClick={() => void save()}
+          className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#E07A5F] py-3 text-[14px] font-bold text-white transition-opacity disabled:opacity-40"
+        >
+          {saving ? (
+            <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> সেভ হচ্ছে…</>
+          ) : uploading ? 'ছবি আপলোড হচ্ছে…' : 'সেভ করুন'}
+        </button>
+      </motion.div>
+    </motion.div>
+  )
+}
+
+/**
+ * Pre-Run family checklist. When a family preset is active it lists the roles the
+ * shot needs, marks each saved (✓ with the model's face) or missing (⚠ "যোগ করুন"),
+ * so the owner sees up front what's required instead of hitting a Run-time error.
+ */
+function FamilyRoleChecklist({
+  preset,
+  models,
+  onAddRole,
+}: {
+  preset: string
+  models: StudioModel[]
+  onAddRole: (role: FamilyRole) => void
+}) {
+  const required = FAMILY_REQUIRED_ROLES[preset]
+  if (!required) return null
+  const byRole = new Map(models.filter((m) => m.role).map((m) => [m.role as string, m]))
+  const missing = required.filter((r) => !byRole.has(r))
+
+  return (
+    <div className="rounded-2xl border border-border-subtle bg-card/70 p-3">
+      <p className="mb-2 text-[11.5px] font-semibold text-cream">
+        এই ফ্যামিলি শটে যা লাগবে {missing.length === 0 ? '· সব প্রস্তুত ✅' : `· ${missing.length}টি বাকি`}
+      </p>
+      <div className="flex flex-col gap-1.5">
+        {required.map((r) => {
+          const m = byRole.get(r)
+          return (
+            <div key={r} className="flex items-center gap-2.5">
+              <div className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-bg-1 text-muted">
+                {m?.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={m.imageUrl} alt={m.name} className="h-full w-full object-cover" />
+                ) : (
+                  <UserSvg className="h-4 w-4" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-[12px] font-semibold text-cream">{roleLabelBn(r)}</p>
+                <p className="truncate text-[10px] text-muted">{m ? m.name : 'সেভ করা নেই'}</p>
+              </div>
+              {m ? (
+                <span className="shrink-0 text-[13px] text-emerald-400">✓</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onAddRole(r)}
+                  className="shrink-0 rounded-full bg-[#E07A5F] px-3 py-1.5 text-[11px] font-bold text-white"
+                >
+                  যোগ করুন
+                </button>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 // These modes carry no product image, so the Gemini fallback (which requires a
 // product) can't serve them — they only render through FASHN. Gate them in the
@@ -87,29 +603,8 @@ export default function CreativeStudio() {
   }, [])
 
   return (
-    <div className="flex h-full min-h-0 w-full overflow-hidden bg-transparent text-cream">
+    <div className="studio-shell flex h-full min-h-0 w-full overflow-hidden text-cream">
       <Toaster position="top-center" toastOptions={{ duration: 3500 }} />
-      {/* Desktop sidebar */}
-      <aside className="hidden w-[72px] shrink-0 flex-col items-center border-r border-border-subtle bg-card/82 py-4 md:flex">
-        <NavIcon href="/agent" label="Chat" active={false}>
-          <ChatSvg />
-        </NavIcon>
-        <NavIcon label="Studio" active={view === 'studio'} onClick={() => setView('studio')}>
-          <StudioSvg />
-        </NavIcon>
-        <NavIcon label="Gallery" active={view === 'gallery'} onClick={() => setView('gallery')}>
-          <GallerySvg />
-        </NavIcon>
-        <NavIcon label="Models" active={view === 'models'} onClick={() => setView('models')}>
-          <UserSvg />
-        </NavIcon>
-        <NavIcon label="Finishing" active={view === 'finishing'} onClick={() => setView('finishing')}>
-          <BrandingSvg />
-        </NavIcon>
-        <NavIcon label="Video" active={view === 'video'} onClick={() => setView('video')}>
-          <VideoSvg />
-        </NavIcon>
-      </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header
@@ -127,11 +622,15 @@ export default function CreativeStudio() {
               </svg>
             </Link>
             <div className="min-w-0">
-              <p className="text-sm font-bold text-cream">Creative Studio</p>
-              <p className="text-[10px] text-muted">{config?.organization ?? 'Alma Traders'}</p>
+              <p className="text-lg font-extrabold tracking-tight text-cream">ক্রিয়েটিভ স্টুডিও</p>
+              <p className="text-[10px] text-muted">{config?.organization ?? 'ALMA Lifestyle'} · সব ক্রিয়েটিভ এক জায়গায়</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* A1: catalog images cross-link — one central creative place */}
+            <Link href="/agent/catalog-images" className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-muted hover:text-cream">
+              📸 ক্যাটালগ
+            </Link>
             {config && (
               <span
                 className={cn(
@@ -157,89 +656,60 @@ export default function CreativeStudio() {
                 <GalleryView />
               </motion.div>
             )}
-            {view === 'models' && (
-              <motion.div key="models" className="absolute inset-0 overflow-y-auto" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <ModelsView />
-              </motion.div>
-            )}
-            {view === 'finishing' && (
-              <motion.div key="finishing" className="absolute inset-0 overflow-y-auto" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <FinishingView />
+            {view === 'library' && (
+              <motion.div key="library" className="absolute inset-0 overflow-y-auto" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <div className="pb-24">
+                  <ModelsView />
+                  <div className="mx-3 my-1 border-t border-border-subtle" />
+                  <FinishingView />
+                </div>
               </motion.div>
             )}
             {view === 'video' && (
               <motion.div key="video" className="absolute inset-0" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <VideoEditorView />
+                <VideoStudioView onOpenGallery={() => setView('gallery')} />
+              </motion.div>
+            )}
+            {view === 'audio' && (
+              <motion.div key="audio" className="absolute inset-0 overflow-y-auto" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                <AudioLabView />
               </motion.div>
             )}
           </AnimatePresence>
         </main>
 
-        {/* Mobile bottom nav */}
+        {/* Floating iOS-style tab bar — one nav for every screen size */}
         <nav
-          className="flex shrink-0 border-t border-border-subtle bg-card/80 md:hidden"
-          style={{ paddingBottom: 'max(0.35rem, env(safe-area-inset-bottom))' }}
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center"
+          style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
         >
-          {(
-            [
-              ['studio', 'Studio', StudioSvg],
-              ['gallery', 'Gallery', GallerySvg],
-              ['models', 'Models', UserSvg],
-              ['finishing', 'Finishing', BrandingSvg],
-              ['video', 'Video', VideoSvg],
-            ] as const
-          ).map(([id, label, Icon]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setView(id)}
-              className={cn(
-                'flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium',
-                view === id ? 'text-[#E07A5F]' : 'text-muted',
-              )}
-            >
-              <Icon className="h-5 w-5" />
-              {label}
-            </button>
-          ))}
+          <div className="st-tabbar pointer-events-auto flex items-center gap-1 px-2 py-1.5">
+            {(
+              [
+                ['studio', 'স্টুডিও', StudioSvg],
+                ['gallery', 'গ্যালারি', GallerySvg],
+                ['video', 'ভিডিও', VideoSvg],
+                ['audio', 'অডিও', AudioSvg],
+                ['library', 'লাইব্রেরি', UserSvg],
+              ] as const
+            ).map(([id, label, Icon]) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setView(id)}
+                className={cn('st-tab flex flex-col items-center gap-0.5 px-3.5 py-1.5 text-[10px] font-semibold', view === id && 'st-tab-on')}
+              >
+                <Icon className="h-5 w-5" />
+                {label}
+              </button>
+            ))}
+          </div>
         </nav>
       </div>
     </div>
   )
 }
 
-function NavIcon({
-  label,
-  active,
-  onClick,
-  href,
-  children,
-}: {
-  label: string
-  active: boolean
-  onClick?: () => void
-  href?: string
-  children: React.ReactNode
-}) {
-  const cls = cn(
-    'mb-3 flex flex-col items-center gap-1 rounded-xl px-2 py-2 text-[9px] font-medium transition-colors',
-    active ? 'bg-[#E07A5F]/12 text-[#E07A5F]' : 'text-muted hover:text-muted',
-  )
-  if (href) {
-    return (
-      <Link href={href} className={cls}>
-        {children}
-        {label}
-      </Link>
-    )
-  }
-  return (
-    <button type="button" onClick={onClick} className={cls}>
-      {children}
-      {label}
-    </button>
-  )
-}
 
 function StudioWorkspace({
   config,
@@ -284,6 +754,17 @@ function StudioWorkspace({
   const isFamilyMerge =
     familyPreset === 'full_family' && (mode === 'product_to_model' || mode === 'try_on')
 
+  // A role-based family preset is active (baba+chele etc., but NOT the full_family
+  // merge which has its own two-upload UI). When active, the single-model slot is
+  // replaced by the role checklist — members come from the library by role.
+  const familyActive =
+    !isFamilyMerge
+    && (mode === 'product_to_model' || mode === 'try_on')
+    && familyPreset !== 'single'
+    && Boolean(FAMILY_REQUIRED_ROLES[familyPreset])
+  // which role's add-model sheet is open (from the family checklist)
+  const [addRoleSheet, setAddRoleSheet] = useState<FamilyRole | null>(null)
+
   // Any multi-person family preset (baba+chele, ma+meye, full family) must render on
   // Gemini — FASHN tryon-max is single-person only and can't place 2+ people. The
   // backend already forces this; mirror it in the UI so the Run button / provider
@@ -303,11 +784,26 @@ function StudioWorkspace({
       || (roles.has('mother') && roles.has('daughter'))
   }, [models])
 
-  useEffect(() => {
-    void fetchModels()
-      .then((d) => setModels(d.models ?? []))
-      .catch(() => {})
+  const reloadModels = useCallback(async () => {
+    const d = await fetchModels()
+    setModels(d.models ?? [])
   }, [])
+
+  useEffect(() => {
+    void reloadModels().catch(() => {})
+  }, [reloadModels])
+
+  // Auto uses whichever model is the DEFAULT (server-side getDefaultModel). Letting
+  // the owner pick a model in the Auto panel simply promotes it to default, then
+  // refreshes so the card + Auto run both reflect the choice — no backend change.
+  const pickAutoModel = useCallback(async (id: string) => {
+    try {
+      await setDefaultModel(id)
+      await reloadModels()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed')
+    }
+  }, [reloadModels])
 
   const handleAutoRun = async () => {
     if (!productPath) {
@@ -396,11 +892,18 @@ function StudioWorkspace({
     if (mode === 'image_to_video') return Boolean(sourcePath || productPath || modelPath)
     // Family merge needs BOTH uploaded images (1st = baba+chele, 2nd = ma+meye).
     if (isFamilyMerge) return Boolean((sourcePath ?? productPath) && secondSourcePath)
+    // Role-based family: members come from the library by role — need the product +
+    // every required role saved (the checklist shows what's missing).
+    if (familyActive) {
+      if (modeDef.needsProduct && !productPath) return false
+      const have = new Set(models.filter((m) => m.role).map((m) => m.role))
+      return (FAMILY_REQUIRED_ROLES[familyPreset] ?? []).every((r) => have.has(r))
+    }
     if (modeDef.needsProduct && !productPath) return false
     if (modeDef.needsModel && !modelPath && !modelId) return false
     if (modeDef.needsSource && !sourcePath) return false
     return true
-  }, [mode, modeDef, productPath, modelPath, modelId, sourcePath, isFamilyMerge, secondSourcePath])
+  }, [mode, modeDef, productPath, modelPath, modelId, sourcePath, isFamilyMerge, secondSourcePath, familyActive, familyPreset, models])
 
   const handleRun = async () => {
     if (!canRun) {
@@ -446,8 +949,8 @@ function StudioWorkspace({
             type="button"
             onClick={() => setTab(t)}
             className={cn(
-              'flex-1 rounded-xl py-2 text-[12px] font-bold transition-colors',
-              tab === t ? 'bg-[#E07A5F] text-white shadow-sm' : 'border border-border bg-card/70 text-muted',
+              'flex-1 py-2.5 text-[12px]',
+              tab === t ? 'st-chip-on' : 'st-chip',
             )}
           >
             {t === 'auto' ? '✨ Auto — এক ট্যাপ' : '⚙ Advanced'}
@@ -460,6 +963,8 @@ function StudioWorkspace({
           productPreview={productPreview}
           onProduct={(f) => void upload(f, 'product').catch((e) => toast.error(String(e)))}
           defaultModel={defaultModel}
+          models={models}
+          onPickModel={(id) => void pickAutoModel(id)}
           familyAvailable={familyAvailable}
           includeFamily={includeFamily}
           setIncludeFamily={setIncludeFamily}
@@ -495,12 +1000,33 @@ function StudioWorkspace({
               required
             />
           )}
-          {!isFamilyMerge && (modeDef.needsModel || mode === 'try_on') && (
-            <UploadTile
-              label="Model photo"
-              preview={modelPreview}
-              onFile={(f) => void upload(f, 'model').catch((e) => toast.error(String(e)))}
+          {!isFamilyMerge && !familyActive && (modeDef.needsModel || mode === 'product_to_model') && (
+            <ModelSlot
+              models={models}
+              selectedId={modelId}
+              uploadPreview={modelPreview}
               required={modeDef.needsModel}
+              onPickSaved={(id) => {
+                setModelId(id)
+                setModelPreview((p) => { if (p) URL.revokeObjectURL(p); return null })
+                setModelPath(null)
+              }}
+              onUpload={(f) => {
+                setModelId('')
+                void upload(f, 'model').catch((e) => toast.error(String(e)))
+              }}
+              onClear={() => {
+                setModelId('')
+                setModelPreview((p) => { if (p) URL.revokeObjectURL(p); return null })
+                setModelPath(null)
+              }}
+            />
+          )}
+          {familyActive && (
+            <FamilyRoleChecklist
+              preset={familyPreset}
+              models={models}
+              onAddRole={(r) => setAddRoleSheet(r)}
             />
           )}
           {modeDef.needsSource && (
@@ -511,23 +1037,18 @@ function StudioWorkspace({
               required
             />
           )}
-
-          {models.length > 0 && (
-            <select
-              value={modelId}
-              onChange={(e) => setModelId(e.target.value)}
-              className="w-full rounded-xl border border-border bg-card/80 px-3 py-2.5 text-sm"
-            >
-              <option value="">Saved model (optional)</option>
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name} ({m.role})
-                </option>
-              ))}
-            </select>
-          )}
         </div>
       </div>
+
+      <AnimatePresence>
+        {addRoleSheet && (
+          <AddModelSheet
+            lockedRole={addRoleSheet}
+            onClose={() => setAddRoleSheet(null)}
+            onSaved={() => void reloadModels()}
+          />
+        )}
+      </AnimatePresence>
 
       {/* Bottom control dock — FASHN-style */}
       <div
@@ -730,6 +1251,8 @@ function AutoPanel({
   productPreview,
   onProduct,
   defaultModel,
+  models,
+  onPickModel,
   familyAvailable,
   includeFamily,
   setIncludeFamily,
@@ -743,6 +1266,8 @@ function AutoPanel({
   productPreview: string | null
   onProduct: (f: File) => void
   defaultModel: StudioModel | null
+  models: StudioModel[]
+  onPickModel: (id: string) => void
   familyAvailable: boolean
   includeFamily: boolean
   setIncludeFamily: (v: boolean) => void
@@ -753,12 +1278,13 @@ function AutoPanel({
   canRun: boolean
   onRun: () => void
 }) {
+  const [modelSheetOpen, setModelSheetOpen] = useState(false)
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-24 pt-4">
       <div className="mx-auto flex max-w-md flex-col gap-4">
         <div className="text-center">
-          <p className="text-[15px] font-bold text-cream">Product দিন — বাকিটা AI করবে</p>
-          <p className="mt-1 text-[12px] leading-snug text-muted">
+          <p className="text-[19px] font-extrabold tracking-tight text-cream">Product দিন — বাকিটা AI করবে</p>
+          <p className="mt-1.5 text-[12.5px] leading-snug text-muted-hi">
             শুধু পণ্যের ছবি upload করুন। সেভ করা মডেল, prompt, ব্যাকগ্রাউন্ড — সব AI নিজেই ঠিক রাখবে।
           </p>
         </div>
@@ -770,26 +1296,47 @@ function AutoPanel({
           required
         />
 
-        {/* Default model status */}
+        {/* Model — tappable: choose which saved model Auto should use (sets default) */}
         {defaultModel ? (
-          <div className="flex items-center gap-3 rounded-2xl border border-border-subtle bg-card/70 px-3.5 py-3">
-            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#E07A5F]/12 text-[#E07A5F]">
-              <UserSvg className="h-5 w-5" />
+          <button
+            type="button"
+            onClick={() => setModelSheetOpen(true)}
+            className="flex items-center gap-3 rounded-2xl border border-border-subtle bg-card/70 px-3.5 py-3 text-left transition-colors hover:border-[#E07A5F]/30"
+          >
+            <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-[#E07A5F]/12 text-[#E07A5F]">
+              {defaultModel.imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={defaultModel.imageUrl} alt={defaultModel.name} className="h-full w-full object-cover" />
+              ) : (
+                <UserSvg className="h-5 w-5" />
+              )}
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-[13px] font-semibold text-cream">মডেল: {defaultModel.name}</p>
               <p className="text-[10px] text-muted">
-                {bestRealism
-                  ? '🟢 FASHN — best realism engine চালু · Models ট্যাবে বদলানো যাবে'
-                  : 'Gemini engine · FASHN_API_KEY দিলে best realism পাবেন'}
+                {bestRealism ? '🟢 FASHN — best realism engine চালু' : 'Gemini engine · FASHN_API_KEY দিলে best realism'}
               </p>
             </div>
-          </div>
+            <span className="shrink-0 rounded-full bg-[#E07A5F]/12 px-2.5 py-1 text-[11px] font-semibold text-[#E07A5F]">বদলান</span>
+          </button>
         ) : (
           <div className="rounded-2xl border border-amber-400/40 bg-amber-50/10 px-3.5 py-3 text-[12px] text-amber-700">
-            ⚠ এখনো কোনো মডেল সেভ করা নেই। নিচের <b>Models</b> ট্যাবে গিয়ে একটি মডেলের ছবি সেভ করুন — তারপর শুধু product দিলেই হবে।
+            ⚠ এখনো কোনো মডেল সেভ করা নেই। নিচের <b>লাইব্রেরি</b> ট্যাবে গিয়ে একটি মডেলের ছবি সেভ করুন — তারপর শুধু product দিলেই হবে।
           </div>
         )}
+
+        <AnimatePresence>
+          {modelSheetOpen && (
+            <ModelChooserSheet
+              title="Auto কোন মডেল ব্যবহার করবে"
+              models={models}
+              selectedId={defaultModel?.id ?? ''}
+              onClose={() => setModelSheetOpen(false)}
+              onPickSaved={onPickModel}
+              uploadHint="নতুন ছবি আপলোড করতে চাইলে Advanced ট্যাব ব্যবহার করুন।"
+            />
+          )}
+        </AnimatePresence>
 
         {/* Family toggle */}
         {familyAvailable && (
@@ -856,7 +1403,7 @@ function AutoPanel({
           onClick={onRun}
           className={cn(
             'flex w-full items-center justify-center gap-2 rounded-2xl py-4 text-sm font-bold text-white transition-opacity',
-            canRun && !running ? 'bg-[#E07A5F]' : 'bg-[#94A3B8]',
+            canRun && !running ? 'st-btn' : 'bg-[#94A3B8]/70',
           )}
         >
           {running ? (
@@ -905,11 +1452,11 @@ function UploadTile({
         <img src={preview} alt={label} className="mx-auto max-h-44 w-full object-contain p-2" />
       ) : (
         <div className="px-4 py-8 text-center">
-          <p className="text-sm font-semibold text-muted">
+          <p className="text-[15px] font-bold text-cream">
             {label}
             {required && <span className="text-[#E07A5F]"> *</span>}
           </p>
-          <p className="mt-1 text-[11px] text-muted">Tap to upload or drop image</p>
+          <p className="mt-1 text-[11px] text-muted">ট্যাপ করে ছবি দিন — বাকিটা সিস্টেম করবে</p>
         </div>
       )}
     </div>
@@ -918,6 +1465,56 @@ function UploadTile({
 
 const isPendingStatus = (s: string) => s === 'approved' || s === 'pending' || s === 'processing'
 const isFailedStatus = (s: string) => s === 'failed' || s === 'error' || s === 'rejected'
+
+const BN_DIGITS = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯']
+const toBanglaDigits = (n: number) => String(n).split('').map((c) => (c >= '0' && c <= '9' ? BN_DIGITS[+c] : c)).join('')
+
+/**
+ * Generating tile — replaces the plain spinner. A percentage climbs 1→~95%
+ * (eased by elapsed time; it never fakes 100% — that only lands when the real
+ * image arrives) while a coral fill rises from the bottom and a light shimmer
+ * sweeps across, so the tile visibly "fills up" as the render progresses.
+ */
+function GeneratingTile({ createdAt, label = 'তৈরি হচ্ছে…' }: { createdAt: string; label?: string }) {
+  const [pct, setPct] = useState(3)
+  useEffect(() => {
+    const start = new Date(createdAt).getTime() || Date.now()
+    // Typical render ~38s; approach 95% asymptotically and hold — completion snaps to 100.
+    const EST = 38_000
+    const id = setInterval(() => {
+      const elapsed = Date.now() - start
+      const target = 95 * (1 - Math.exp(-elapsed / EST))
+      setPct((p) => (target > p ? p + (target - p) * 0.25 : p))
+    }, 120)
+    return () => clearInterval(id)
+  }, [createdAt])
+
+  return (
+    <div className="absolute inset-0 overflow-hidden">
+      {/* rising fill */}
+      <div
+        className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#E07A5F]/45 via-[#E07A5F]/20 to-[#E07A5F]/5 transition-[height] duration-200 ease-out"
+        style={{ height: `${pct}%` }}
+      />
+      {/* fill top edge glow */}
+      <div className="absolute inset-x-0 h-[2px] bg-[#E07A5F]/70 shadow-[0_0_10px_2px_rgba(224,122,95,0.5)] transition-[bottom] duration-200 ease-out" style={{ bottom: `${pct}%` }} />
+      {/* shimmer sweep */}
+      <motion.div
+        className="pointer-events-none absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-white/12 to-transparent"
+        initial={{ x: '-140%' }}
+        animate={{ x: '340%' }}
+        transition={{ duration: 1.7, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      {/* number */}
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5">
+        <span className="text-[28px] font-extrabold leading-none tabular-nums text-cream drop-shadow">
+          {toBanglaDigits(Math.round(pct))}%
+        </span>
+        <span className="text-[10px] font-medium text-muted">{label}</span>
+      </div>
+    </div>
+  )
+}
 
 function GalleryView() {
   const [items, setItems] = useState<GalleryItem[]>([])
@@ -1028,7 +1625,7 @@ function GalleryView() {
         <div className="mb-3 flex items-center gap-2.5 rounded-xl border border-[#E07A5F]/25 bg-[#E07A5F]/[0.07] px-3 py-2.5">
           <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
           <span className="text-[12px] font-semibold text-[#E07A5F]">
-            {pendingCount}টি ছবি তৈরি হচ্ছে… একটু পর নিচে দেখা যাবে স্যার
+            {pendingCount}টি ছবি/ভিডিও তৈরি হচ্ছে… একটু পর নিচে দেখা যাবে স্যার
           </span>
         </div>
       )}
@@ -1045,6 +1642,7 @@ function GalleryView() {
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
           {items.map((item) => {
             const isVideo = item.storagePath?.endsWith('.mp4') || item.type === 'video_gen'
+            const isAudio = item.type === 'audio_gen'
             const pending = isPendingStatus(item.status)
             const failed = isFailedStatus(item.status)
             return (
@@ -1055,27 +1653,51 @@ function GalleryView() {
                 initial={{ opacity: 0, scale: 0.96 }}
                 animate={{ opacity: 1, scale: 1 }}
                 onClick={() => item.previewUrl && openItem(item)}
-                className="overflow-hidden rounded-xl border border-border-subtle bg-card/80 text-left shadow-sm transition-transform active:scale-[0.98]"
+                className="overflow-hidden st-card text-left shadow-sm transition-transform active:scale-[0.98]"
               >
                 <div className="relative aspect-[4/5] bg-bg-1">
                   {item.previewUrl ? (
-                    isVideo ? (
+                    isAudio ? (
+                      <div className="flex h-full flex-col items-center justify-center gap-1.5 p-2 text-center">
+                        <span className="text-3xl">🎵</span>
+                        <span className="line-clamp-3 text-[10px] text-muted">{item.summary}</span>
+                      </div>
+                    ) : isVideo ? (
                       // eslint-disable-next-line jsx-a11y/media-has-caption
                       <video src={item.previewUrl} className="h-full w-full object-cover" playsInline muted />
                     ) : (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={item.thumbUrl ?? item.previewUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+                      <motion.div
+                        className="h-full w-full"
+                        initial={{ clipPath: 'inset(100% 0% 0% 0%)', opacity: 0.4 }}
+                        animate={{ clipPath: 'inset(0% 0% 0% 0%)', opacity: 1 }}
+                        transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={item.thumbUrl ?? item.previewUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+                      </motion.div>
                     )
+                  ) : pending ? (
+                    <GeneratingTile createdAt={item.createdAt} label={isVideo ? 'ভিডিও হচ্ছে…' : 'তৈরি হচ্ছে…'} />
                   ) : (
                     <div className="flex h-full flex-col items-center justify-center gap-2 p-2 text-center">
-                      {pending ? (
-                        <>
-                          <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
-                          <span className="text-[10px] font-medium text-muted">তৈরি হচ্ছে…</span>
-                        </>
-                      ) : failed ? (
-                        <span className="text-[10px] font-medium text-red-400">
-                          ব্যর্থ{item.error ? ` · ${item.error.slice(0, 40)}` : ''}
+                      {failed ? (
+                        <span className="flex flex-col items-center gap-1.5">
+                          <span className="text-[10px] font-medium text-red-400">
+                            ব্যর্থ{item.error ? ` · ${item.error.slice(0, 40)}` : ''}
+                          </span>
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void retryStudioJob(item.id)
+                                .then(() => { toast.success('আবার চালানো হচ্ছে, স্যার'); void load() })
+                                .catch((err) => toast.error(err instanceof Error ? err.message : 'হয়নি'))
+                            }}
+                            className="rounded-full bg-[#E07A5F] px-2.5 py-1 text-[10px] font-bold text-white"
+                          >
+                            🔁 আবার চালাও
+                          </span>
                         </span>
                       ) : (
                         <span className="text-[10px] text-muted">{item.status}</span>
@@ -1129,9 +1751,30 @@ function GalleryView() {
             >
               ✕
             </button>
-            {selected.storagePath?.endsWith('.mp4') || selected.type === 'video_gen' ? (
+            {selected.type === 'audio_gen' ? (
+              <div onClick={(e) => e.stopPropagation()} className="flex w-[min(92vw,420px)] flex-col items-center gap-3 rounded-2xl bg-black/70 p-5 ring-1 ring-white/15">
+                <span className="text-4xl">🎵</span>
+                <p className="text-center text-[12px] text-white/85">{selected.summary}</p>
+                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                <audio src={selected.previewUrl} controls autoPlay className="w-full" />
+                <button
+                  type="button"
+                  onClick={() => handleDownload(selected.previewUrl, `alma-${selected.id}.mp3`)}
+                  className="rounded-full bg-white/15 px-5 py-2 text-[12px] font-semibold text-white ring-1 ring-white/25"
+                >
+                  ডাউনলোড
+                </button>
+              </div>
+            ) : selected.storagePath?.endsWith('.mp4') || selected.type === 'video_gen' ? (
               // eslint-disable-next-line jsx-a11y/media-has-caption
-              <video src={selected.previewUrl} className="max-h-full max-w-full rounded-lg" controls autoPlay playsInline />
+              <video
+                key={showBranded && selected.brandedUrl ? 'branded' : 'original'}
+                src={(showBranded && selected.brandedUrl) || selected.previewUrl}
+                className="max-h-full max-w-full rounded-lg"
+                controls
+                autoPlay
+                playsInline
+              />
             ) : (
               <motion.img
                 key={showBranded && selected.brandedUrl ? 'branded' : 'original'}
@@ -1189,16 +1832,152 @@ function GalleryView() {
                 >
                   ডাউনলোড
                 </button>
+                {/* CS4: ভালো/বাদ → deterministic scene weighting */}
+                {selected.status === 'executed' && (
+                  <div className="flex items-center gap-1.5 rounded-full bg-black/50 px-2 py-1 ring-1 ring-white/20 backdrop-blur-md">
+                    {(['good', 'bad'] as const).map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => {
+                          void sendItemFeedback(selected.id, v)
+                            .then((r) => toast.success(r.weighted ? (v === 'good' ? 'এই ধরনের সিন বেশি আসবে' : 'এই সিন কম আসবে') : 'নোট করা হলো'))
+                            .catch(() => toast.error('হয়নি'))
+                        }}
+                        className={cn('rounded-full px-2.5 py-1 text-[12px] font-bold', v === 'good' ? 'bg-[#81B29A] text-white' : 'bg-white/15 text-white')}
+                      >
+                        {v === 'good' ? '👍 ভালো' : '👎 বাদ'}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {/* CS4: AI-generated brand model → save into the Models library */}
+                {selected.modelCreator && selected.status === 'executed' && selected.storagePath && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void saveModel({
+                        id: `brand-${selected.modelCreator}`,
+                        name: `ALMA ${selected.modelCreator}`,
+                        imagePath: selected.storagePath!,
+                        role: selected.modelCreator!,
+                      })
+                        .then(() => toast.success('মডেল লাইব্রেরিতে সেভ হয়েছে, স্যার'))
+                        .catch((err) => toast.error(err instanceof Error ? err.message : 'সেভ হয়নি'))
+                    }}
+                    className="rounded-full bg-[#81B29A] px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25"
+                  >
+                    ✅ মডেল হিসেবে সেভ ({selected.modelCreator})
+                  </button>
+                )}
+                {/* V4: one-tap reel from any finished studio image — the family
+                    merge becomes a moving reel; 16/24s = multi-clip Veo chain */}
+                {selected.status === 'executed' && selected.storagePath && (
+                  <div className="flex items-center gap-1.5 rounded-full bg-black/50 px-2 py-1 ring-1 ring-white/20 backdrop-blur-md">
+                    <span className="pl-1 text-[11px] font-semibold text-white/80">রিল:</span>
+                    {[6, 16, 24].map((d) => {
+                      const cost = d >= 16 ? reelCostBdt(8) * Math.round(d / 8) : reelCostBdt(d)
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => {
+                            void runStudioJob({ mode: 'image_to_video', sourceImagePath: selected.storagePath ?? undefined, durationSec: d })
+                              .then(() => toast.success(`${d}s রিল তৈরি হচ্ছে (~৳${cost}) — Gallery-তে আসবে, স্যার`))
+                              .catch((e) => toast.error(e instanceof Error ? e.message : 'শুরু করা যায়নি'))
+                          }}
+                          className="rounded-full bg-[#E07A5F] px-2.5 py-1 text-[11px] font-bold text-white"
+                        >
+                          {d}s ~৳{cost}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             )}
             {selected.type === 'video_gen' || selected.storagePath?.endsWith('.mp4') ? (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); handleDownload(selected.previewUrl, `alma-${selected.id}.mp4`) }}
-                className="absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 rounded-full bg-white/15 px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25 backdrop-blur-md"
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 flex -translate-x-1/2 flex-col items-center gap-2"
               >
-                ডাউনলোড
-              </button>
+                {/* V2: reel cover picker — FB/IG reels need a cover frame */}
+                {(selected.coverOptions?.length ?? 0) > 0 && (
+                  <div className="flex items-center gap-1.5 rounded-2xl bg-black/60 p-1.5 ring-1 ring-white/15 backdrop-blur-md">
+                    <span className="px-1 text-[10px] font-semibold text-white/80">কভার:</span>
+                    {selected.coverOptions!.map((c) => (
+                      <button
+                        key={c.path}
+                        type="button"
+                        onClick={() => {
+                          void setReelCover(selected.id, c.path)
+                            .then(() => toast.success('কভার সেট হয়েছে, স্যার'))
+                            .catch(() => toast.error('কভার সেট করা যায়নি'))
+                        }}
+                        className="h-12 w-8 overflow-hidden rounded-md ring-1 ring-white/20"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={c.url} alt="" className="h-full w-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {selected.brandedUrl && (
+                  <div className="flex overflow-hidden rounded-full bg-white/10 ring-1 ring-white/20">
+                    <button
+                      type="button"
+                      onClick={() => setShowBranded(true)}
+                      className={cn('px-4 py-1.5 text-[12px] font-semibold', showBranded ? 'bg-[#E07A5F] text-white' : 'text-white/80')}
+                    >
+                      টেমপ্লেট সহ
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowBranded(false)}
+                      className={cn('px-4 py-1.5 text-[12px] font-semibold', !showBranded ? 'bg-[#E07A5F] text-white' : 'text-white/80')}
+                    >
+                      আসল
+                    </button>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  {selected.status === 'executed' && (
+                    <button
+                      type="button"
+                      onClick={() => setShowFinish((v) => !v)}
+                      className="rounded-full bg-[#E07A5F] px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25"
+                    >
+                      {showFinish ? 'বন্ধ করুন' : 'টেমপ্লেট ফিনিশিং'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleDownload((showBranded && selected.brandedUrl) || selected.previewUrl, `alma-${selected.id}.mp4`)}
+                    className="rounded-full bg-white/15 px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25 backdrop-blur-md"
+                  >
+                    ডাউনলোড
+                  </button>
+                </div>
+                {showFinish && (
+                  <div className="w-[min(92vw,420px)]">
+                    <VideoFinishPanel
+                      pendingActionId={selected.id}
+                      onDone={() => {
+                        setShowFinish(false)
+                        void fetchGallery(1).then((d) => {
+                          setItems(d.items)
+                          const fresh = d.items.find((it) => it.id === selected.id)
+                          if (fresh) {
+                            setSelected(fresh)
+                            setShowBranded(Boolean(fresh.brandedUrl))
+                          }
+                        })
+                        toast.success('টেমপ্লেট বসে গেছে — "টেমপ্লেট সহ" ভার্সন দেখুন, স্যার')
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
             ) : null}
 
             {/* Finishing panel — per-image code + hook, applied with the real brand frame */}
@@ -1447,11 +2226,15 @@ function FinishPanel({
 }
 
 function ModelsView() {
-  const [models, setModels] = useState<Array<{ id: string; name: string; role: string | null; isDefault: boolean }>>([])
+  const [models, setModels] = useState<StudioModel[]>([])
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [confirmId, setConfirmId] = useState<string | null>(null)
+  // Draft = the add-model sheet: opens once a photo is picked, collects name + role.
+  const [draftPreview, setDraftPreview] = useState<string | null>(null)
+  const [draftPath, setDraftPath] = useState<string | null>(null)
+  const [draftUploading, setDraftUploading] = useState(false)
   const [name, setName] = useState('')
   const [role, setRole] = useState('single')
-  const [preview, setPreview] = useState<string | null>(null)
-  const [path, setPath] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const ref = useRef<HTMLInputElement>(null)
 
@@ -1464,9 +2247,27 @@ function ModelsView() {
     void load().catch(() => {})
   }, [load])
 
+  const closeDraft = useCallback(() => {
+    setDraftPath(null)
+    setDraftUploading(false)
+    setName('')
+    setRole('single')
+    setDraftPreview((p) => { if (p) URL.revokeObjectURL(p); return null })
+  }, [])
+
+  const onPickFile = (f: File) => {
+    setDraftPreview((p) => { if (p) URL.revokeObjectURL(p); return URL.createObjectURL(f) })
+    setDraftPath(null)
+    setDraftUploading(true)
+    void uploadStudioFile(f, 'model-library')
+      .then((p) => setDraftPath(p))
+      .catch((err) => { toast.error(String(err)); closeDraft() })
+      .finally(() => setDraftUploading(false))
+  }
+
   const onSave = async () => {
-    if (!name.trim() || !path) {
-      toast.error('Name + photo required')
+    if (!name.trim() || !draftPath) {
+      toast.error('নাম আর ছবি — দুটোই দরকার')
       return
     }
     setSaving(true)
@@ -1474,14 +2275,11 @@ function ModelsView() {
       await saveModel({
         id: name.trim().toLowerCase().replace(/\s+/g, '-'),
         name: name.trim(),
-        imagePath: path,
+        imagePath: draftPath,
         role,
       })
-      toast.success(`Model "${name}" saved — chat এ "Model ${name}" বলুন`)
-      setName('')
-      setPath(null)
-      if (preview) URL.revokeObjectURL(preview)
-      setPreview(null)
+      toast.success(`মডেল "${name}" সেভ হলো`)
+      closeDraft()
       await load()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Save failed')
@@ -1490,76 +2288,365 @@ function ModelsView() {
     }
   }
 
-  return (
-    <div className="mx-auto max-w-lg px-3 py-4 pb-8">
-      <h2 className="mb-1 text-sm font-bold">Model Library</h2>
-      <p className="mb-3 text-[11px] leading-snug text-muted">
-        Full-body photo save করুন। Chat: &quot;Model Maruf use koro&quot; — agent মনে রাখবে।
-      </p>
+  const makeDefault = async (id: string) => {
+    setBusyId(id)
+    try {
+      await setDefaultModel(id)
+      await load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed')
+    } finally {
+      setBusyId(null)
+    }
+  }
 
-      <div
-        className="mb-3 overflow-hidden rounded-2xl border-2 border-dashed border-border bg-card/80"
-        onClick={() => ref.current?.click()}
-      >
-        <input
-          ref={ref}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0]
-            if (!f) return
-            if (preview) URL.revokeObjectURL(preview)
-            setPreview(URL.createObjectURL(f))
-            void uploadStudioFile(f, 'model-library')
-              .then(setPath)
-              .catch((err) => toast.error(String(err)))
-          }}
-        />
-        {preview ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={preview} alt="Model" className="mx-auto max-h-52 object-contain p-2" />
-        ) : (
-          <p className="py-10 text-center text-sm text-muted">Upload model photo</p>
+  const removeModel = async (id: string) => {
+    setBusyId(id)
+    try {
+      await deleteModel(id)
+      setConfirmId(null)
+      toast.success('মডেল মুছে ফেলা হলো')
+      await load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const draftOpen = Boolean(draftPreview)
+
+  return (
+    <div className="mx-auto max-w-3xl px-4 pt-4 pb-10">
+      <input
+        ref={ref}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0]
+          if (f) onPickFile(f)
+          e.target.value = ''
+        }}
+      />
+
+      {/* Header */}
+      <div className="mb-4 flex items-end justify-between gap-3">
+        <div>
+          <h2 className="text-[17px] font-bold tracking-tight text-cream">মডেল লাইব্রেরি</h2>
+          <p className="mt-0.5 text-[11.5px] leading-snug text-muted">
+            আপনার সেভ করা মডেলগুলো — try-on ও product শুটে এদের ছবি ব্যবহার হবে।
+          </p>
+        </div>
+        {models.length > 0 && (
+          <span className="shrink-0 rounded-full border border-border-subtle bg-card/70 px-2.5 py-1 text-[11px] font-semibold text-muted">
+            {models.length}টি
+          </span>
         )}
       </div>
 
-      <div className="mb-3 grid gap-2 sm:grid-cols-2">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Name (e.g. Maruf)"
-          className="rounded-xl border border-border px-3 py-2.5 text-sm"
-        />
-        <select value={role} onChange={(e) => setRole(e.target.value)} className="rounded-xl border border-border px-3 py-2.5 text-sm">
-          <option value="single">Single / Owner</option>
-          <option value="father">Father</option>
-          <option value="mother">Mother</option>
-          <option value="son">Son (5–12)</option>
-          <option value="daughter">Daughter (5–10)</option>
-        </select>
+      {/* Gallery grid: add-tile first, then every saved model as a portrait card */}
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4">
+        <button
+          type="button"
+          onClick={() => ref.current?.click()}
+          className="group flex aspect-[3/4] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-[#E07A5F]/35 bg-[#E07A5F]/[0.05] text-[#E07A5F] transition-colors hover:bg-[#E07A5F]/[0.09]"
+        >
+          <span className="grid h-11 w-11 place-items-center rounded-full bg-[#E07A5F]/12 text-2xl leading-none transition-transform group-active:scale-95">+</span>
+          <span className="text-[12px] font-semibold">নতুন মডেল</span>
+          <span className="px-3 text-center text-[9.5px] leading-snug text-[#E07A5F]/60">ফুল-বডি ছবি যোগ করুন</span>
+        </button>
+
+        {models.map((m) => {
+          const busy = busyId === m.id
+          const confirming = confirmId === m.id
+          return (
+            <div
+              key={m.id}
+              className="group relative aspect-[3/4] overflow-hidden rounded-2xl border border-border-subtle bg-bg-1 shadow-sm"
+            >
+              {m.imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={m.imageUrl} alt={m.name} loading="lazy" className="h-full w-full object-cover" />
+              ) : (
+                <span className="grid h-full w-full place-items-center text-muted">
+                  <UserSvg className="h-8 w-8" />
+                </span>
+              )}
+
+              {/* bottom gradient + name / role */}
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/35 to-transparent px-2.5 pb-2 pt-8">
+                <p className="truncate text-[13px] font-bold text-white">{m.name}</p>
+                <p className="truncate text-[10px] text-white/70">{roleLabelBn(m.role)}</p>
+              </div>
+
+              {/* default badge */}
+              {m.isDefault && (
+                <span className="absolute left-2 top-2 rounded-full bg-[#E07A5F] px-2 py-0.5 text-[9px] font-bold text-white shadow-sm">
+                  ⭐ ডিফল্ট
+                </span>
+              )}
+
+              {/* action buttons (top-right) */}
+              <div className="absolute right-1.5 top-1.5 flex gap-1">
+                {!m.isDefault && (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void makeDefault(m.id)}
+                    title="ডিফল্ট করুন"
+                    className="grid h-7 w-7 place-items-center rounded-full bg-black/45 text-[13px] text-white backdrop-blur-sm transition-colors hover:bg-black/65 disabled:opacity-50"
+                  >
+                    ☆
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setConfirmId(m.id)}
+                  title="মুছুন"
+                  className="grid h-7 w-7 place-items-center rounded-full bg-black/45 text-[12px] text-white backdrop-blur-sm transition-colors hover:bg-red-500/80 disabled:opacity-50"
+                >
+                  🗑
+                </button>
+              </div>
+
+              {/* delete confirm overlay */}
+              {confirming && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/75 px-3 text-center backdrop-blur-sm">
+                  <p className="text-[12px] font-semibold text-white">মুছে ফেলবেন?</p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void removeModel(m.id)}
+                      className="rounded-full bg-red-500 px-3.5 py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
+                    >
+                      {busy ? '…' : 'হ্যাঁ, মুছুন'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmId(null)}
+                      className="rounded-full bg-white/15 px-3.5 py-1.5 text-[11px] font-semibold text-white"
+                    >
+                      না
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
 
-      <button
-        type="button"
-        disabled={saving}
-        onClick={() => void onSave()}
-        className="mb-6 w-full rounded-xl bg-[#E07A5F] py-3 text-sm font-bold text-white disabled:opacity-50"
-      >
-        {saving ? 'Saving…' : 'Save to agent memory'}
-      </button>
+      {models.length === 0 && (
+        <p className="mt-4 text-center text-[11.5px] text-muted">
+          এখনো কোনো মডেল নেই। উপরের <b className="text-[#E07A5F]">নতুন মডেল</b> কার্ডে ট্যাপ করে শুরু করুন।
+        </p>
+      )}
 
-      <div className="space-y-2">
-        {models.map((m) => (
-          <div key={m.id} className="flex items-center justify-between rounded-xl border border-border-subtle bg-card/80 px-3 py-2.5">
-            <div>
-              <p className="font-semibold">{m.name}</p>
-              <p className="text-[10px] text-muted">{m.role}{m.isDefault ? ' · default' : ''}</p>
-            </div>
-            <code className="text-[9px] text-muted">{m.id}</code>
-          </div>
+      <ModelCreatorCard models={models} onQueued={() => void load()} />
+      <StudioSettingsCard />
+
+      {/* Add-model sheet */}
+      <AnimatePresence>
+        {draftOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => !saving && closeDraft()}
+            className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+          >
+            <motion.div
+              initial={{ y: 40, opacity: 0.6 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 40, opacity: 0 }}
+              transition={{ type: 'spring', stiffness: 320, damping: 32 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-md rounded-t-3xl border border-border-subtle bg-card p-4 shadow-2xl sm:rounded-3xl"
+              style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-[15px] font-bold text-cream">নতুন মডেল যোগ করুন</h3>
+                <button type="button" onClick={() => !saving && closeDraft()} className="grid h-7 w-7 place-items-center rounded-full bg-white/8 text-muted">✕</button>
+              </div>
+
+              <div className="flex gap-3">
+                <div className="relative h-40 w-32 shrink-0 overflow-hidden rounded-xl bg-bg-1">
+                  {draftPreview && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={draftPreview} alt="preview" className="h-full w-full object-cover" />
+                  )}
+                  {draftUploading && (
+                    <div className="absolute inset-0 grid place-items-center bg-black/40">
+                      <span className="h-6 w-6 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => ref.current?.click()}
+                    className="absolute inset-x-0 bottom-0 bg-black/55 py-1 text-center text-[10px] font-semibold text-white backdrop-blur-sm"
+                  >
+                    ছবি বদলান
+                  </button>
+                </div>
+
+                <div className="flex min-w-0 flex-1 flex-col gap-2.5">
+                  <div>
+                    <label className="mb-1 block text-[10.5px] font-semibold text-muted">নাম</label>
+                    <input
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="যেমন: Maruf"
+                      className="w-full rounded-xl border border-border bg-bg-1 px-3 py-2.5 text-[13px] text-cream outline-none focus:border-[#E07A5F]/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[10.5px] font-semibold text-muted">ধরন</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {MODEL_ROLES.map((r) => (
+                        <button
+                          key={r.id}
+                          type="button"
+                          onClick={() => setRole(r.id)}
+                          className={cn(
+                            'rounded-full px-2.5 py-1.5 text-[11px] font-semibold transition-colors',
+                            role === r.id ? 'bg-[#E07A5F] text-white' : 'border border-border bg-bg-1 text-muted',
+                          )}
+                        >
+                          {r.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                disabled={saving || draftUploading || !draftPath || !name.trim()}
+                onClick={() => void onSave()}
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-[#E07A5F] py-3 text-[14px] font-bold text-white transition-opacity disabled:opacity-40"
+              >
+                {saving ? (
+                  <><span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> সেভ হচ্ছে…</>
+                ) : draftUploading ? 'ছবি আপলোড হচ্ছে…' : 'সেভ করুন'}
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/** CS4 — generate the brand's FICTIONAL models once (no real children's photos). */
+function ModelCreatorCard({ models, onQueued }: { models: Array<{ role: string | null }>; onQueued: () => void }) {
+  const roles = [
+    { id: 'father', bn: 'বাবা' },
+    { id: 'mother', bn: 'মা' },
+    { id: 'son', bn: 'ছেলে' },
+    { id: 'daughter', bn: 'মেয়ে' },
+  ]
+  const have = new Set(models.map((m) => m.role))
+  return (
+    <div className="mt-4 st-card p-3">
+      <p className="text-[12px] font-bold text-cream">🧑‍🎨 AI দিয়ে ব্র্যান্ড মডেল বানাও</p>
+      <p className="mb-2 text-[10px] text-muted">
+        একবার বানালে একই মুখ প্রতিবার ফিরে আসবে — বাচ্চার আসল ছবি লাগবে না। তৈরি হলে Gallery-তে গিয়ে “মডেল হিসেবে সেভ” চাপুন।
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {roles.map((r) => (
+          <button
+            key={r.id}
+            type="button"
+            onClick={() => {
+              void generateBrandModel(r.id)
+                .then(() => { toast.success(`${r.bn} মডেল তৈরি হচ্ছে — Gallery-তে আসবে`); onQueued() })
+                .catch((e) => toast.error(e instanceof Error ? e.message : 'হয়নি'))
+            }}
+            className={cn(
+              'rounded-lg px-3 py-1.5 text-[11px] font-semibold',
+              have.has(r.id) ? 'bg-white/10 text-muted' : 'bg-[#E07A5F] text-white',
+            )}
+          >
+            {r.bn}{have.has(r.id) ? ' ✓ আছে' : ''}
+          </button>
         ))}
       </div>
+    </div>
+  )
+}
+
+/** CS4 — QC level + Telegram done-ping + child-garment cache management. */
+function StudioSettingsCard() {
+  const [settings, setSettings] = useState<StudioSettings | null>(null)
+  useEffect(() => {
+    void fetchStudioSettings().then(setSettings).catch(() => {})
+  }, [])
+  if (!settings) return null
+  return (
+    <div className="mt-3 space-y-2.5 st-card p-3">
+      <p className="text-[12px] font-bold text-cream">⚙️ স্টুডিও সেটিংস</p>
+      <label className="flex items-center justify-between gap-2">
+        <span className="text-[11px] text-muted">ছবির QC (মান যাচাই)</span>
+        <select
+          value={settings.qcLevel}
+          onChange={(e) => {
+            const qcLevel = e.target.value as StudioSettings['qcLevel']
+            setSettings({ ...settings, qcLevel })
+            void saveStudioSettings({ qcLevel }).then(() => toast.success('সেভ হয়েছে')).catch(() => toast.error('হয়নি'))
+          }}
+          className="rounded-lg border border-border-subtle bg-bg-1 px-2 py-1 text-[11px] text-cream"
+        >
+          <option value="off">বন্ধ</option>
+          <option value="normal">নরমাল</option>
+          <option value="strict">কড়া</option>
+        </select>
+      </label>
+      <label className="flex items-center justify-between gap-2">
+        <span className="text-[11px] text-muted">কাজ শেষ হলে Telegram-এ জানাও</span>
+        <input
+          type="checkbox"
+          checked={settings.notifyOnDone}
+          onChange={(e) => {
+            const notifyOnDone = e.target.checked
+            setSettings({ ...settings, notifyOnDone })
+            void saveStudioSettings({ notifyOnDone }).then(() => toast.success('সেভ হয়েছে')).catch(() => toast.error('হয়নি'))
+          }}
+          className="h-4 w-4 accent-[#E07A5F]"
+        />
+      </label>
+      {settings.childGarments.length > 0 && (
+        <div>
+          <p className="mb-1 text-[11px] font-semibold text-muted">বাচ্চার গার্মেন্ট ক্যাশ (খারাপ হলে মুছুন — পরের রানে নতুন হবে)</p>
+          <div className="flex flex-wrap gap-1.5">
+            {settings.childGarments.map((g) => (
+              <div key={g.key} className="relative">
+                {g.url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={g.url} alt="" className="h-14 w-11 rounded-md object-cover ring-1 ring-white/15" />
+                ) : (
+                  <div className="grid h-14 w-11 place-items-center rounded-md bg-white/10 text-[9px] text-muted">{g.role}</div>
+                )}
+                <button
+                  type="button"
+                  aria-label="মুছুন"
+                  onClick={() => {
+                    void deleteGarmentCache(g.key)
+                      .then(() => setSettings({ ...settings, childGarments: settings.childGarments.filter((x) => x.key !== g.key) }))
+                      .catch(() => toast.error('হয়নি'))
+                  }}
+                  className="absolute -right-1 -top-1 grid h-4 w-4 place-items-center rounded-full bg-red-500 text-[9px] text-white"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1741,78 +2828,746 @@ function VideoSvg({ className }: { className?: string }) {
   )
 }
 
-function VideoEditorView() {
-  const [loading, setLoading] = useState(true)
-  const [failed, setFailed] = useState(false)
+/**
+ * Phase V1 — Video Studio. The owner uploads his 1–2 min phone shoot, taps a
+ * Recipe (hard presets — zero prompts, zero LLM), and the VPS worker cuts it
+ * into ready reels that land in the Gallery. Replaces the old OpenCut iframe.
+ */
+function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
+  const [uploads, setUploads] = useState<StudioVideoUpload[]>([])
+  const [loadingList, setLoadingList] = useState(true)
+  const [uploadPct, setUploadPct] = useState<number | null>(null)
+  const [selected, setSelected] = useState<StudioVideoUpload | null>(null)
+  const [recipeId, setRecipeId] = useState<string>(VIDEO_RECIPES[0].id)
+  const [targets, setTargets] = useState<number[]>([VIDEO_RECIPES[0].defaultTarget])
+  const [aspect, setAspect] = useState<string>('9:16')
+  const [running, setRunning] = useState(false)
+  const [jobs, setJobs] = useState<Array<{ id: string; label: string; status: VideoJobStatus | null }>>([])
+  const fileRef = useRef<HTMLInputElement>(null)
 
-  // If the embedded editor never signals load (some mobile WebViews block
-  // heavy cross-origin frames), surface a clear fallback instead of a
-  // perpetual spinner.
+  // ── V2 options (defaults = V1 behaviour) ─────────────────────────────────
+  const [captions, setCaptions] = useState(false)
+  const [audioMode, setAudioMode] = useState<VideoAudioMode>('original')
+  const [musicTrackId, setMusicTrackId] = useState<string>('auto')
+  const [voiceoverText, setVoiceoverText] = useState('')
+  const [stings, setStings] = useState(false)
+  const [aiAssist, setAiAssist] = useState(false)
+  const [tracks, setTracks] = useState<StudioMusicTrack[]>([])
+  const [showMusicLib, setShowMusicLib] = useState(false)
+
+  const recipe = VIDEO_RECIPES.find((r) => r.id === recipeId) ?? VIDEO_RECIPES[0]
+
   useEffect(() => {
-    if (!loading) return
-    const t = setTimeout(() => setFailed(true), 12_000)
-    return () => clearTimeout(t)
-  }, [loading])
+    void fetchMusicTracks().then(setTracks).catch(() => {})
+  }, [])
+
+  const loadUploads = useCallback(async () => {
+    try {
+      const list = await fetchStudioVideos()
+      setUploads(list)
+    } catch { /* list stays as-is */ } finally {
+      setLoadingList(false)
+    }
+  }, [])
+
+  useEffect(() => { void loadUploads() }, [loadUploads])
+
+  // Poll running jobs every 4s for ধাপ N/M progress (same rhythm as the gallery).
+  const activeJobIds = jobs.filter((j) => !j.status || j.status.status === 'approved' || j.status.status === 'pending').map((j) => j.id).join(',')
+  useEffect(() => {
+    if (!activeJobIds) return
+    const tick = async () => {
+      const ids = activeJobIds.split(',')
+      const results = await Promise.all(ids.map((id) => fetchVideoJob(id).catch(() => null)))
+      setJobs((prev) =>
+        prev.map((j) => {
+          const idx = ids.indexOf(j.id)
+          return idx >= 0 && results[idx] ? { ...j, status: results[idx] } : j
+        }),
+      )
+    }
+    void tick()
+    const t = window.setInterval(() => void tick(), 4000)
+    return () => window.clearInterval(t)
+  }, [activeJobIds])
+
+  const handleFile = useCallback(async (file: File | null) => {
+    if (!file) return
+    setUploadPct(0)
+    try {
+      const up = await uploadStudioVideo(file, setUploadPct)
+      setUploads((prev) => [up, ...prev])
+      setSelected(up)
+      toast.success('ভিডিও আপলোড হয়েছে, স্যার')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'আপলোড ব্যর্থ হয়েছে')
+    } finally {
+      setUploadPct(null)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }, [])
+
+  const handleDelete = useCallback(async (up: StudioVideoUpload) => {
+    try {
+      await deleteStudioVideo(up.id)
+      setUploads((prev) => prev.filter((u) => u.id !== up.id))
+      setSelected((s) => (s?.id === up.id ? null : s))
+      toast.success('ভিডিও মুছে ফেলা হয়েছে')
+    } catch {
+      toast.error('মুছতে সমস্যা হলো')
+    }
+  }, [])
+
+  const handleRun = useCallback(async () => {
+    if (!selected || targets.length === 0) return
+    setRunning(true)
+    try {
+      const res = await runVideoRecipe({
+        videoPath: selected.path,
+        videoName: selected.name,
+        recipeId: recipe.id,
+        targets,
+        aspect,
+        options: {
+          captions,
+          audioMode,
+          musicTrackId,
+          voiceoverText: voiceoverText.trim() || undefined,
+          stings,
+          aiAssist,
+        },
+      })
+      setJobs((prev) => [
+        ...res.jobs.map((j) => ({ id: j.pendingActionId, label: j.label, status: null })),
+        ...prev,
+      ])
+      toast.success(res.message)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'রিল বানানো শুরু করা যায়নি')
+    } finally {
+      setRunning(false)
+    }
+  }, [selected, recipe, targets, aspect, captions, audioMode, musicTrackId, voiceoverText, stings, aiAssist])
+
+  const fmtSize = (b: number) => (b > 1024 * 1024 ? `${Math.round(b / (1024 * 1024))} MB` : `${Math.round(b / 1024)} KB`)
 
   return (
-    <div className="flex h-full w-full flex-col bg-[#0c0b12]">
-      <div className="flex shrink-0 items-center justify-between border-b border-border-subtle bg-card/85 px-3 py-2">
+    <div className="h-full overflow-y-auto px-3 py-3 pb-20 md:pb-4">
+      <div className="mx-auto max-w-xl space-y-4">
         <div>
-          <p className="text-xs font-bold text-cream">Video Editor</p>
-          <p className="text-[10px] text-muted">OpenCut — short video &amp; reels (beta)</p>
+          <h2 className="text-sm font-bold">ভিডিও স্টুডিও</h2>
+          <p className="text-[11px] text-muted">নিজের শুট করা ভিডিও দিন — রেসিপি বেছে নিলেই রেডি রিল Gallery-তে চলে আসবে।</p>
         </div>
-        <a
-          href={OPENCUT_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="rounded-lg bg-[#E07A5F] px-2.5 py-1.5 text-[11px] font-semibold text-white"
-        >
-          নতুন ট্যাবে ↗
-        </a>
-      </div>
-      <div className="relative min-h-0 flex-1">
-        {loading && !failed && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#0c0b12] text-muted">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#8b7cf6] border-t-transparent" />
-            <p className="text-xs">Video editor লোড হচ্ছে…</p>
-          </div>
-        )}
-        {failed && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-[#0c0b12] px-6 text-center text-muted">
-            <p className="text-xs">এখানে লোড হতে দেরি হচ্ছে। সরাসরি খুলুন —</p>
-            <a
-              href={OPENCUT_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-lg bg-[#E07A5F] px-4 py-2 text-xs font-semibold text-white"
-            >
-              Video Editor খুলুন ↗
-            </a>
-          </div>
-        )}
-        <iframe
-          title="OpenCut Video Editor"
-          src={OPENCUT_URL}
-          onLoad={() => {
-            setLoading(false)
-            setFailed(false)
-          }}
-          className="h-full w-full border-0"
-          allow="clipboard-read; clipboard-write; fullscreen; encrypted-media; autoplay"
-          allowFullScreen
+
+        {/* Upload */}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="video/mp4,video/quicktime,.mp4,.mov,.m4v"
+          className="hidden"
+          onChange={(e) => void handleFile(e.target.files?.[0] ?? null)}
         />
+        {uploadPct !== null ? (
+          <div className="st-card p-3">
+            <p className="mb-2 text-[11px] font-semibold text-cream">আপলোড হচ্ছে… {uploadPct}%</p>
+            <div className="h-2 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full bg-[#E07A5F] transition-all" style={{ width: `${uploadPct}%` }} />
+            </div>
+            <p className="mt-1.5 text-[10px] text-muted">বড় ভিডিওতে কয়েক মিনিট লাগতে পারে — পেজ বন্ধ করবেন না।</p>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-[#E07A5F]/40 bg-[#E07A5F]/[0.06] px-4 py-4 text-[12px] font-semibold text-[#E07A5F]"
+          >
+            <VideoSvg className="h-4 w-4" /> ভিডিও আপলোড করুন (১–২ মিনিটের শুট, mp4/mov)
+          </button>
+        )}
+
+        {/* Uploaded shoots */}
+        {loadingList ? (
+          <div className="h-16 animate-pulse rounded-xl bg-white/[0.05]" />
+        ) : uploads.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-semibold text-muted">আপলোড করা শুট</p>
+            {uploads.map((up) => (
+              <div
+                key={up.id}
+                className={cn(
+                  'flex items-center gap-2 rounded-xl border px-3 py-2.5',
+                  selected?.id === up.id
+                    ? 'border-[#E07A5F]/60 bg-[#E07A5F]/[0.08]'
+                    : 'border-border-subtle bg-card/80',
+                )}
+              >
+                <button type="button" onClick={() => setSelected(up)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+                  <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg', selected?.id === up.id ? 'st-chip-on' : 'st-chip')}>
+                    <VideoSvg className="h-4 w-4" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-[12px] font-semibold text-cream">{up.name}</span>
+                    <span className="block text-[10px] text-muted">{fmtSize(up.sizeBytes)} · {new Date(up.uploadedAt).toLocaleDateString('en-BD')}</span>
+                  </span>
+                </button>
+                <button type="button" onClick={() => void handleDelete(up)} aria-label="মুছুন" className="shrink-0 rounded-lg px-2 py-1 text-[11px] text-muted hover:text-red-400">
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Recipe picker — hard presets, no prompts */}
+        {selected && (
+          <div className="space-y-3 st-card p-3">
+            <p className="text-[11px] font-semibold text-muted">রেসিপি বাছুন — বাকিটা সিস্টেম করবে</p>
+            <div className="grid gap-1.5">
+              {VIDEO_RECIPES.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => {
+                    setRecipeId(r.id)
+                    setTargets((prev) => {
+                      const kept = prev.filter((t) => r.targets.includes(t))
+                      return kept.length > 0 ? kept : [r.defaultTarget]
+                    })
+                  }}
+                  className={cn(
+                    'rounded-xl border px-3 py-2.5 text-left',
+                    recipeId === r.id ? 'border-[#E07A5F]/60 bg-[#E07A5F]/[0.08]' : 'border-border-subtle bg-bg-1/40',
+                  )}
+                >
+                  <p className={cn('text-[12px] font-bold', recipeId === r.id ? 'text-[#E07A5F]' : 'text-cream')}>{r.labelBn}</p>
+                  <p className="text-[10px] text-muted">{r.descriptionBn}</p>
+                </button>
+              ))}
+            </div>
+
+            <div>
+              <p className="mb-1.5 text-[11px] font-semibold text-muted">রিলের দৈর্ঘ্য</p>
+              <div className="flex gap-1.5">
+                {recipe.targets.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() =>
+                      setTargets((prev) =>
+                        prev.includes(t) ? (prev.length > 1 ? prev.filter((x) => x !== t) : prev) : [...prev, t].sort((a, b) => a - b),
+                      )
+                    }
+                    className={cn(
+                      'rounded-lg px-3.5 py-1.5 text-[12px] font-semibold',
+                      targets.includes(t) ? 'st-chip-on' : 'st-chip',
+                    )}
+                  >
+                    {t}s
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-1.5 text-[11px] font-semibold text-muted">সাইজ</p>
+              <div className="flex gap-1.5">
+                {VIDEO_ASPECTS.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => setAspect(a.id)}
+                    className={cn(
+                      'rounded-lg px-3 py-1.5 text-[11px] font-semibold',
+                      aspect === a.id ? 'st-chip-on' : 'st-chip',
+                    )}
+                  >
+                    {a.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* ── V2: caption + audio layer (hard toggles, no prompts) ── */}
+            <div className="space-y-2.5 rounded-xl border border-border-subtle bg-bg-1/40 p-2.5">
+              <label className="flex items-center justify-between">
+                <span className="text-[12px] font-semibold text-cream">বাংলা ক্যাপশন</span>
+                <input type="checkbox" checked={captions} onChange={(e) => setCaptions(e.target.checked)} className="h-4 w-4 accent-[#E07A5F]" />
+              </label>
+
+              <div>
+                <p className="mb-1.5 text-[11px] font-semibold text-muted">সাউন্ড</p>
+                <div className="flex gap-1.5">
+                  {AUDIO_MODES.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setAudioMode(m.id)}
+                      className={cn(
+                        'rounded-lg px-2.5 py-1.5 text-[11px] font-semibold',
+                        audioMode === m.id ? 'st-chip-on' : 'st-chip',
+                      )}
+                    >
+                      {m.labelBn}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {audioMode !== 'original' && (
+                <div>
+                  <p className="mb-1.5 text-[11px] font-semibold text-muted">মিউজিক ট্র্যাক (আপনার অনুমোদিত লাইব্রেরি)</p>
+                  {tracks.length === 0 ? (
+                    <p className="text-[11px] text-amber-400">লাইব্রেরি খালি — নিচের “মিউজিক লাইব্রেরি” থেকে ট্র্যাক আপলোড করুন।</p>
+                  ) : (
+                    <select
+                      value={musicTrackId}
+                      onChange={(e) => setMusicTrackId(e.target.value)}
+                      className="w-full rounded-lg border border-border-subtle bg-bg-1 px-2 py-1.5 text-[12px] text-cream"
+                    >
+                      <option value="auto">অটো (প্রতিবার ভিন্ন ট্র্যাক)</option>
+                      {tracks.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name} · {MUSIC_VIBES.find((v) => v.id === t.vibe)?.labelBn ?? t.vibe}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
+
+              <div>
+                <p className="mb-1 text-[11px] font-semibold text-muted">ভয়েসওভার (ঐচ্ছিক — আপনার লেখা লাইন, আপনার এজেন্টের বাংলা ভয়েসে)</p>
+                <textarea
+                  value={voiceoverText}
+                  onChange={(e) => setVoiceoverText(e.target.value.slice(0, VOICEOVER_MAX_CHARS))}
+                  rows={2}
+                  placeholder="যেমন: বাবা-ছেলের ম্যাচিং পাঞ্জাবি — অর্ডার করতে ইনবক্স করুন"
+                  className="w-full rounded-lg border border-border-subtle bg-bg-1 px-2 py-1.5 text-[12px] text-cream placeholder:text-muted/50"
+                />
+              </div>
+
+              <label className="flex items-center justify-between">
+                <span className="text-[12px] font-semibold text-cream">ALMA লোগো intro/outro</span>
+                <input type="checkbox" checked={stings} onChange={(e) => setStings(e.target.checked)} className="h-4 w-4 accent-[#E07A5F]" />
+              </label>
+
+              <label className="flex items-center justify-between">
+                <span className="text-[12px] font-semibold text-cream">
+                  AI হাইলাইট সাজেশন <span className="text-[10px] text-muted">(বিটা)</span>
+                </span>
+                <input type="checkbox" checked={aiAssist} onChange={(e) => setAiAssist(e.target.checked)} className="h-4 w-4 accent-[#E07A5F]" />
+              </label>
+            </div>
+
+            <button
+              type="button"
+              disabled={running || targets.length === 0}
+              onClick={() => void handleRun()}
+              className="st-btn w-full py-3 text-[13px]"
+            >
+              {running ? 'শুরু হচ্ছে…' : `রিল বানাও (${targets.map((t) => `${t}s`).join(' + ')})`}
+            </button>
+          </div>
+        )}
+
+        {/* Music library — owner-approved beds only (Islamic guardrail) */}
+        <div className="st-card p-3">
+          <button type="button" onClick={() => setShowMusicLib((v) => !v)} className="flex w-full items-center justify-between">
+            <span className="text-[12px] font-bold text-cream">🎵 মিউজিক লাইব্রেরি ({tracks.length})</span>
+            <span className="text-[11px] text-muted">{showMusicLib ? '▲' : '▼'}</span>
+          </button>
+          {showMusicLib && (
+            <MusicLibrary tracks={tracks} onChanged={setTracks} />
+          )}
+        </div>
+
+        {/* Running / finished jobs */}
+        {jobs.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-semibold text-muted">চলমান কাজ</p>
+            {jobs.map((j) => {
+              const st = j.status
+              const done = st?.status === 'executed'
+              const failed = st?.status === 'failed'
+              return (
+                <div key={j.id} className="flex items-center gap-2.5 st-card px-3 py-2.5">
+                  {done ? (
+                    <span className="text-sm">✅</span>
+                  ) : failed ? (
+                    <span className="text-sm">❌</span>
+                  ) : (
+                    <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[11px] font-semibold text-cream">{j.label}</p>
+                    <p className="truncate text-[10px] text-muted">
+                      {failed
+                        ? st?.error ?? 'ব্যর্থ হয়েছে'
+                        : done
+                          ? 'রেডি — Gallery-তে দেখুন'
+                          : st?.videoProgress
+                            ? `ধাপ ${st.videoProgress.step}/${st.videoProgress.total}: ${st.videoProgress.labelBn}`
+                            : 'অপেক্ষায়…'}
+                    </p>
+                  </div>
+                  {done && (
+                    <button type="button" onClick={onOpenGallery} className="shrink-0 text-[11px] font-semibold text-[#E07A5F]">
+                      Gallery →
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
-function ChatSvg({ className }: { className?: string }) {
+/**
+ * V3 — motion-template finishing for a reel: the video twin of the image
+ * FinishPanel. Owner toggles templates + types the values; the worker renders
+ * with Remotion and the finished version lands on this same gallery item.
+ */
+function VideoFinishPanel({ pendingActionId, onDone }: { pendingActionId: string; onDone: () => void }) {
+  const [price, setPrice] = useState('')
+  const [code, setCode] = useState('')
+  const [name, setName] = useState('')
+  const [cta, setCta] = useState('')
+  const [days, setDays] = useState('')
+  const [watermark, setWatermark] = useState(true)
+  const [endCard, setEndCard] = useState(true)
+  const [state, setState] = useState<'idle' | 'queued' | 'working'>('idle')
+  const [progress, setProgress] = useState('')
+
+  const submit = useCallback(async () => {
+    const templates: VideoFinishTemplates = {}
+    if (price.trim()) templates.pricePop = { price: price.trim() }
+    if (code.trim()) templates.lowerThird = { code: code.trim(), name: name.trim() || undefined }
+    if (watermark) templates.logoWatermark = true
+    if (endCard) templates.endCard = { cta: cta.trim() || undefined, code: code.trim() || undefined, price: price.trim() || undefined }
+    if (Number(days) > 0) templates.countdown = { days: Number(days) }
+
+    setState('queued')
+    try {
+      const res = await finishVideo(pendingActionId, templates)
+      setState('working')
+      const poll = window.setInterval(() => {
+        void fetchVideoJob(res.pendingActionId)
+          .then((job) => {
+            if (job.videoProgress) setProgress(`ধাপ ${job.videoProgress.step}/${job.videoProgress.total}: ${job.videoProgress.labelBn}`)
+            if (job.status === 'executed') {
+              window.clearInterval(poll)
+              onDone()
+            } else if (job.status === 'failed') {
+              window.clearInterval(poll)
+              setState('idle')
+              toast.error(job.error ?? 'টেমপ্লেট বসানো ব্যর্থ হয়েছে')
+            }
+          })
+          .catch(() => {})
+      }, 4000)
+    } catch (err) {
+      setState('idle')
+      toast.error(err instanceof Error ? err.message : 'শুরু করা যায়নি')
+    }
+  }, [pendingActionId, price, code, name, cta, days, watermark, endCard, onDone])
+
+  const inputCls = 'w-full rounded-lg border border-white/15 bg-black/40 px-2.5 py-2 text-[13px] text-white placeholder:text-white/40'
+  return (
+    <div className="space-y-2 rounded-2xl bg-black/70 p-3 ring-1 ring-white/15 backdrop-blur-md">
+      {state === 'working' ? (
+        <div className="flex items-center gap-2.5 py-2">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
+          <span className="text-[12px] text-white/85">{progress || 'টেমপ্লেট রেন্ডার হচ্ছে… (১–৩ মিনিট)'}</span>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <input value={price} onChange={(e) => setPrice(e.target.value)} placeholder="দাম (৳)" className={inputCls} />
+            <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="প্রোডাক্ট কোড" className={inputCls} />
+          </div>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="প্রোডাক্টের নাম (ঐচ্ছিক)" className={inputCls} />
+          <div className="grid grid-cols-2 gap-2">
+            <input value={cta} onChange={(e) => setCta(e.target.value)} placeholder="CTA (ডিফল্ট: অর্ডার করতে ইনবক্স করুন)" className={inputCls} />
+            <input value={days} onChange={(e) => setDays(e.target.value.replace(/\D/g, ''))} placeholder="অফার শেষ হতে দিন" className={inputCls} />
+          </div>
+          <div className="flex items-center gap-4 py-0.5">
+            <label className="flex items-center gap-1.5 text-[12px] text-white/85">
+              <input type="checkbox" checked={watermark} onChange={(e) => setWatermark(e.target.checked)} className="h-3.5 w-3.5 accent-[#E07A5F]" />
+              লোগো ওয়াটারমার্ক
+            </label>
+            <label className="flex items-center gap-1.5 text-[12px] text-white/85">
+              <input type="checkbox" checked={endCard} onChange={(e) => setEndCard(e.target.checked)} className="h-3.5 w-3.5 accent-[#E07A5F]" />
+              এন্ড কার্ড (CTA)
+            </label>
+          </div>
+          <button
+            type="button"
+            disabled={state !== 'idle'}
+            onClick={() => void submit()}
+            className="st-btn w-full py-2.5 text-[13px]"
+          >
+            {state === 'queued' ? 'শুরু হচ্ছে…' : 'টেমপ্লেট বসাও'}
+          </button>
+        </>
+      )}
+    </div>
+  )
+}
+
+/** Owner-approved music beds: upload (signed direct), tag by vibe, delete. */
+function MusicLibrary({
+  tracks,
+  onChanged,
+}: {
+  tracks: StudioMusicTrack[]
+  onChanged: (tracks: StudioMusicTrack[]) => void
+}) {
+  const [vibe, setVibe] = useState<string>(MUSIC_VIBES[0].id)
+  const [pct, setPct] = useState<number | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const handleFile = useCallback(async (file: File | null) => {
+    if (!file) return
+    setPct(0)
+    try {
+      const track = await uploadMusicTrack(file, vibe, setPct)
+      onChanged([track, ...tracks])
+      toast.success('ট্র্যাক যোগ হয়েছে, স্যার')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'আপলোড ব্যর্থ')
+    } finally {
+      setPct(null)
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }, [vibe, tracks, onChanged])
+
+  return (
+    <div className="mt-2.5 space-y-2">
+      <p className="text-[10px] text-muted">শুধু আপনার অনুমোদিত ট্র্যাকই রিলে বসে — সিস্টেম নিজে কোথাও থেকে মিউজিক আনে না।</p>
+      <div className="flex items-center gap-1.5">
+        {MUSIC_VIBES.map((v) => (
+          <button
+            key={v.id}
+            type="button"
+            onClick={() => setVibe(v.id)}
+            className={cn(
+              'rounded-lg px-2.5 py-1 text-[11px] font-semibold',
+              vibe === v.id ? 'st-chip-on' : 'st-chip',
+            )}
+          >
+            {v.labelBn}
+          </button>
+        ))}
+      </div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="audio/mpeg,audio/mp4,audio/wav,audio/aac,.mp3,.m4a,.wav,.aac"
+        className="hidden"
+        onChange={(e) => void handleFile(e.target.files?.[0] ?? null)}
+      />
+      {pct !== null ? (
+        <div className="h-2 overflow-hidden rounded-full bg-white/10">
+          <div className="h-full rounded-full bg-[#E07A5F] transition-all" style={{ width: `${pct}%` }} />
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          className="w-full rounded-lg border border-dashed border-[#E07A5F]/40 bg-[#E07A5F]/[0.06] py-2 text-[11px] font-semibold text-[#E07A5F]"
+        >
+          + ট্র্যাক আপলোড ({MUSIC_VIBES.find((v) => v.id === vibe)?.labelBn} হিসেবে)
+        </button>
+      )}
+      {tracks.map((t) => (
+        <div key={t.id} className="flex items-center gap-2 rounded-lg border border-border-subtle bg-bg-1/40 px-2.5 py-1.5">
+          <span className="min-w-0 flex-1 truncate text-[11px] text-cream">{t.name}</span>
+          <span className="shrink-0 rounded bg-white/10 px-1.5 py-0.5 text-[9px] text-muted">
+            {MUSIC_VIBES.find((v) => v.id === t.vibe)?.labelBn ?? t.vibe}
+          </span>
+          <button
+            type="button"
+            aria-label="মুছুন"
+            onClick={() => {
+              void deleteMusicTrack(t.id)
+                .then(() => onChanged(tracks.filter((x) => x.id !== t.id)))
+                .catch(() => toast.error('মুছতে সমস্যা হলো'))
+            }}
+            className="shrink-0 text-[11px] text-muted hover:text-red-400"
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function AudioSvg({ className }: { className?: string }) {
   return (
     <svg className={cn('h-5 w-5', className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+      <path d="M9 18V6l10-2v12" />
+      <circle cx="6.5" cy="18" r="2.5" />
+      <circle cx="16.5" cy="16" r="2.5" />
     </svg>
   )
 }
+
+/**
+ * E1 — Audio Lab (ElevenLabs). Hard presets + owner-typed lines only; the
+ * cloned voice is owner-only by design. Outputs land in the Gallery.
+ */
+function AudioLabView() {
+  const [status, setStatus] = useState<AudioLabStatus | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [musicStyle, setMusicStyle] = useState('celebration')
+  const [musicLine, setMusicLine] = useState('')
+  const [musicSec, setMusicSec] = useState(30)
+  const [occasion, setOccasion] = useState('birthday')
+  const [wishName, setWishName] = useState('')
+  const [voiceText, setVoiceText] = useState('')
+  const [sfxText, setSfxText] = useState('')
+  const [pct, setPct] = useState<number | null>(null)
+  const cloneRef = useRef<HTMLInputElement>(null)
+  const noteRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => { void fetchAudioLabStatus().then(setStatus).catch(() => {}) }, [])
+
+  const run = useCallback((label: string, body: Record<string, unknown>) => {
+    setBusy(label)
+    void queueAudioJob(body)
+      .then((r) => toast.success(`${label} তৈরি হচ্ছে (~৳${r.costBdt}) — Gallery-তে আসবে, স্যার`))
+      .catch((e) => toast.error(e instanceof Error ? e.message : 'হয়নি'))
+      .finally(() => setBusy(null))
+  }, [])
+
+  const card = 'space-y-2 st-card p-3'
+  const input = 'w-full rounded-lg border border-border-subtle bg-bg-1 px-2.5 py-2 text-[12px] text-cream placeholder:text-muted/50'
+  const btn = 'st-btn px-4 py-2 text-[12px]'
+
+  return (
+    <div className="px-3 py-3 pb-20 md:pb-4">
+      <div className="mx-auto max-w-xl space-y-3">
+        <div>
+          <h2 className="text-sm font-bold">🎙️ অডিও ল্যাব</h2>
+          <p className="text-[11px] text-muted">মিউজিক, উইশ গান, আপনার ভয়েস — সব এক জায়গায়। খরচ আগে দেখানো হয়।</p>
+        </div>
+
+        {/* voice clone */}
+        <div className={card}>
+          <p className="text-[12px] font-bold text-cream">
+            🧬 আপনার ভয়েস {status?.voiceCloned ? <span className="text-[#81B29A]">— ক্লোন করা আছে ✓</span> : '— এখনো ক্লোন হয়নি'}
+          </p>
+          <p className="text-[10px] text-muted">১-৩টা পরিষ্কার ভয়েস রেকর্ডিং দিন (একবারই লাগবে)। এই ভয়েস শুধু আপনার নিজের কাজে ব্যবহার হবে — অটো বা কাস্টমার ফ্লোতে কখনোই না।</p>
+          <input ref={cloneRef} type="file" accept="audio/*" multiple className="hidden"
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []).slice(0, 3)
+              if (!files.length) return
+              setPct(0)
+              void Promise.all(files.map((f) => uploadAudioFile(f, setPct)))
+                .then((paths) => run('ভয়েস ক্লোন', { kind: 'voice_clone', samplePaths: paths }))
+                .catch((err) => toast.error(err instanceof Error ? err.message : 'আপলোড ব্যর্থ'))
+                .finally(() => { setPct(null); if (cloneRef.current) cloneRef.current.value = '' })
+            }} />
+          <button type="button" disabled={busy !== null || pct !== null} onClick={() => cloneRef.current?.click()} className={btn}>
+            {pct !== null ? `আপলোড ${pct}%` : status?.voiceCloned ? 'আবার ক্লোন করাও' : 'স্যাম্পল দিয়ে ক্লোন করাও'}
+          </button>
+        </div>
+
+        {/* text → music */}
+        <div className={card}>
+          <p className="text-[12px] font-bold text-cream">🎵 মিউজিক বানাও</p>
+          <div className="flex gap-1.5">
+            {(status?.styles ?? []).map((st) => (
+              <button key={st.id} type="button" onClick={() => setMusicStyle(st.id)}
+                className={cn('rounded-lg px-2.5 py-1.5 text-[11px] font-semibold', musicStyle === st.id ? 'st-chip-on' : 'st-chip')}>
+                {st.labelBn}
+              </button>
+            ))}
+          </div>
+          <input value={musicLine} onChange={(e) => setMusicLine(e.target.value)} placeholder="মুড/থিম এক লাইনে (ঐচ্ছিক)" className={input} />
+          <div className="flex items-center gap-2">
+            {[30, 60].map((s2) => (
+              <button key={s2} type="button" onClick={() => setMusicSec(s2)}
+                className={cn('rounded-lg px-3 py-1.5 text-[11px] font-semibold', musicSec === s2 ? 'st-chip-on' : 'st-chip')}>
+                {s2}s
+              </button>
+            ))}
+            <button type="button" disabled={busy !== null} className={btn}
+              onClick={() => run('মিউজিক', { kind: 'music', styleId: musicStyle, line: musicLine, seconds: musicSec })}>
+              বানাও
+            </button>
+          </div>
+        </div>
+
+        {/* wish song */}
+        <div className={card}>
+          <p className="text-[12px] font-bold text-cream">🎁 উইশ গান (ফিক্সড লিরিক — শুধু নাম বসে)</p>
+          <div className="flex gap-1.5">
+            {(status?.occasions ?? []).map((o) => (
+              <button key={o.id} type="button" onClick={() => setOccasion(o.id)}
+                className={cn('rounded-lg px-2.5 py-1.5 text-[11px] font-semibold', occasion === o.id ? 'st-chip-on' : 'st-chip')}>
+                {o.labelBn}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input value={wishName} onChange={(e) => setWishName(e.target.value)} placeholder="নাম" className={input} />
+            <button type="button" disabled={busy !== null || !wishName.trim()} className={btn}
+              onClick={() => run('উইশ গান', { kind: 'wish_song', occasionId: occasion, name: wishName, seconds: 30 })}>
+              বানাও
+            </button>
+          </div>
+        </div>
+
+        {/* owner voice */}
+        <div className={card}>
+          <p className="text-[12px] font-bold text-cream">🎙️ আমার ভয়েসে বলাও</p>
+          <textarea value={voiceText} onChange={(e) => setVoiceText(e.target.value.slice(0, 600))} rows={2}
+            placeholder="যা বলাতে চান লিখুন…" className={input} />
+          <button type="button" disabled={busy !== null || !voiceText.trim() || !status?.voiceCloned} className={btn}
+            onClick={() => run('ভয়েস লাইন', { kind: 'owner_voice', text: voiceText })}>
+            {status?.voiceCloned ? 'বলাও' : 'আগে ভয়েস ক্লোন করুন'}
+          </button>
+        </div>
+
+        {/* clean voice note */}
+        <div className={card}>
+          <p className="text-[12px] font-bold text-cream">🎧 ভয়েস নোট → স্টুডিও কোয়ালিটি</p>
+          <input ref={noteRef} type="file" accept="audio/*" className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (!f) return
+              setPct(0)
+              void uploadAudioFile(f, setPct)
+                .then((path) => run('ভয়েস ক্লিনআপ', { kind: 'clean_voice', sourcePath: path }))
+                .catch((err) => toast.error(err instanceof Error ? err.message : 'আপলোড ব্যর্থ'))
+                .finally(() => { setPct(null); if (noteRef.current) noteRef.current.value = '' })
+            }} />
+          <button type="button" disabled={busy !== null || pct !== null} onClick={() => noteRef.current?.click()} className={btn}>
+            {pct !== null ? `আপলোড ${pct}%` : 'ভয়েস নোট দিন'}
+          </button>
+        </div>
+
+        {/* sfx */}
+        <div className={card}>
+          <p className="text-[12px] font-bold text-cream">🔊 সাউন্ড ইফেক্ট (রিলের জন্য)</p>
+          <div className="flex gap-2">
+            <input value={sfxText} onChange={(e) => setSfxText(e.target.value)} placeholder="যেমন: whoosh, চুড়ির টুংটাং" className={input} />
+            <button type="button" disabled={busy !== null || !sfxText.trim()} className={btn}
+              onClick={() => run('SFX', { kind: 'sfx', text: sfxText, seconds: 3 })}>
+              বানাও
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function StudioSvg({ className }: { className?: string }) {
   return (
     <svg className={cn('h-5 w-5', className)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>

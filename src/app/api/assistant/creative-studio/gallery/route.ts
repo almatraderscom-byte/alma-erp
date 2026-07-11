@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
   const db = prisma as any
   const rows = await db.agentPendingAction.findMany({
     where: {
-      type: { in: ['image_gen', 'video_gen'] },
+      type: { in: ['image_gen', 'video_gen', 'video_edit', 'audio_gen'] },
     },
     orderBy: { createdAt: 'desc' },
     take: limit + 50,
@@ -73,6 +73,10 @@ export async function GET(req: NextRequest) {
     if (storagePath) pathsToSign.add(storagePath)
     if (brandedPath) pathsToSign.add(brandedPath)
     if (thumbPath) pathsToSign.add(thumbPath)
+    // V2 reel cover candidates (video_edit) — signed for the lightbox picker
+    for (const c of Array.isArray(result.coverCandidates) ? (result.coverCandidates as string[]) : []) {
+      pathsToSign.add(c)
+    }
     return { row, result, storagePath, brandedPath, thumbPath }
   })
 
@@ -112,6 +116,12 @@ export async function GET(req: NextRequest) {
       storagePath,
       // true once the original lives only on Google Drive (UI can show a badge)
       archivedToDrive,
+      // CS4: model-creator output → lightbox shows "মডেল হিসেবে সেভ"
+      modelCreator: (payload.modelCreator as string | undefined) ?? null,
+      // V2 reel cover picker options (video_edit only)
+      coverOptions: (Array.isArray(result.coverCandidates) ? (result.coverCandidates as string[]) : [])
+        .filter((c) => signed[c])
+        .map((c) => ({ path: c, url: signed[c] })),
       error: result.error ?? null,
     }
   })

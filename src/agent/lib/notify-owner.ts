@@ -56,6 +56,11 @@ export async function notifyOwner(opts: {
   message: string
   category?: 'salah' | 'urgent' | 'task' | 'report'
   /**
+   * P3: where a TAP on the native push lands the owner (app deep link), e.g.
+   * '/agent' or '/agent/live-watch'. Native-push only; ntfy/Telegram unaffected.
+   */
+  actionUrl?: string | null
+  /**
    * Internal: skip the quiet-hours (DND) gate. Set only by the morning digest
    * flush, which IS the delivery — it must never re-hold itself. Never set this
    * for ordinary pushes.
@@ -74,6 +79,7 @@ export async function notifyOwner(opts: {
         title: opts.title,
         message: opts.message,
         category: opts.category,
+        actionUrl: opts.actionUrl ?? null,
       })
       if (held) return { channels: ['held_for_morning'], statuses: { dnd: 'held' } }
     } catch {
@@ -101,6 +107,7 @@ export async function notifyOwner(opts: {
       title: opts.title,
       message: opts.message,
       category: opts.category,
+      actionUrl: opts.actionUrl ?? null,
     })
     if (native.attempted) {
       channels.push('native_push')
@@ -171,6 +178,8 @@ export async function notifyOwnerIfAway(opts: {
   title: string
   message: string
   category?: 'salah' | 'urgent' | 'task' | 'report'
+  /** Where a tap on the native push lands the owner (defaults to /agent downstream). */
+  actionUrl?: string | null
 }): Promise<{ skipped: boolean }> {
   try {
     if (await isOwnerAppActive()) return { skipped: true }

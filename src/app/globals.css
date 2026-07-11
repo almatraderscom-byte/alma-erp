@@ -519,12 +519,35 @@ a,
    data-theme wasn't exactly 'light' the toast fell back to the dark slab and the
    message was unreadable in light mode. */
 .alma-toast {
-  --toast-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.97) 0%, rgba(247, 244, 238, 0.97) 100%);
+  --toast-bg: var(--glass-bg-strong, rgba(252, 250, 245, 0.88));
+  --toast-border: var(--glass-border, rgba(0, 0, 0, 0.07));
+  --toast-shadow: var(--glass-shadow-lift, 0 12px 40px -16px rgba(0, 0, 0, 0.22));
   --toast-fg: #1f1d29;
+  position: relative;
+  overflow: hidden;
+  background: var(--toast-bg);
+  border: 1px solid var(--toast-border);
+  -webkit-backdrop-filter: blur(18px) saturate(1.35);
+  backdrop-filter: blur(18px) saturate(1.35);
+  box-shadow: var(--toast-shadow);
+  padding: 0.875rem 1.125rem 0.875rem 1.25rem;
 }
 :root[data-theme='dark'] .alma-toast {
-  --toast-bg: linear-gradient(180deg, rgba(28, 25, 38, 0.94) 0%, rgba(18, 16, 26, 0.94) 100%);
+  --toast-bg: var(--glass-bg-strong, rgba(26, 24, 34, 0.86));
+  --toast-border: var(--glass-border, rgba(255, 255, 255, 0.09));
+  --toast-shadow: var(--glass-shadow-lift, 0 12px 40px -16px rgba(0, 0, 0, 0.60));
   --toast-fg: #ece6da;
+}
+/* Tone accent bar — 3px gradient on the left edge (emerald success / red error);
+   the component sets --toast-accent / --toast-accent-soft per toast tone. */
+.alma-toast::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--toast-accent, #E07A5F), var(--toast-accent-soft, rgba(224, 122, 95, 0.30)));
 }
 
 @keyframes alma-toast-pop {
@@ -1069,4 +1092,260 @@ html.cap-native .alma-glass-portal {
   .ambient-canvas {
     filter: blur(18px);
   }
+}
+
+/* ---- Native iOS shell "embed mode" (added by NativeShellBridge) ----
+   When the app runs inside the native iOS tab-bar shell, hide the web's own
+   bottom chrome so it doesn't stack under the native tab bar. Gated entirely on
+   the `alma-native` class, which is only ever added inside the native shell —
+   zero effect for desktop / mobile-web users.
+
+   NOTE: hide the main ERP bottom nav (the native tab bar replaces it) but KEEP the
+   agent's own sub-nav (Chat / Studio / WhatsApp / Monitor / Costs) — those are real
+   in-section destinations; hiding them would strand the user. Mapping the agent
+   sub-sections into native navigation is a later task. */
+html.alma-native .mobile-app-chrome {
+  display: none !important;
+}
+
+/* The agent's cream/amber "N tasks awaiting your decision" attention banner reads
+   as an out-of-place light bar at the top of the Assistant tab in the dark native
+   shell — hide it there (the Approvals tab surfaces the same items natively). */
+html.alma-native .agent-attention-banner {
+  display: none !important;
+}
+
+/* The agent sub-nav's "ERP" item (href="/") jumps the Assistant web view out to the
+   ERP home — redundant with, and confusing against, the native Dashboard tab that
+   already owns `/` (it would leave two tabs showing ERP content). Hide just that one
+   item in the native shell; the agent-specific destinations (Chat / Studio / WhatsApp
+   / Monitor / Costs) stay. Plain web/desktop keep the full sub-nav. */
+html.alma-native .agent-bottom-nav a[href="/"] {
+  display: none !important;
+}
+
+/* Build 26+ replaces the whole agent sub-nav with a NATIVE segmented control on the
+   Assistant tab (no more web bar stacked above the native tab bar — the "double
+   bottom bar"). Gated on `alma-agent-native`, set only when the native shell injects
+   `window.__almaAgentNative`, so builds 24/25 (which have no native replacement)
+   keep the web sub-nav. Also drop the bottom padding the sub-nav reserved. */
+html.alma-agent-native .agent-bottom-nav {
+  display: none !important;
+}
+
+/* Full-bleed builds: every WebView now also runs UNDER the bottom glass tab bar,
+   so ERP scroll content must clear it — pad the ERP <main> scroller by the exact
+   overlap the shell injects (--alma-bottom-inset; older builds fall back to the
+   safe-area inset). Excludes agent routes (html.agent-route, set by
+   AgentKeyboardManager): on /agent/* BOTH the outer ERP <main> (a non-scrolling
+   flex shell there) and the agent's own <main.agent-main-height> would match a
+   bare `main` selector and double-count the inset — the agent instead sizes
+   itself via the .agent-main-height native override in agent-ambient.css. */
+html.alma-native:not(.agent-route) main {
+  padding-bottom: calc(1rem + var(--alma-bottom-inset, env(safe-area-inset-bottom))) !important;
+}
+/* The web bottom-nav's 6rem scroll spacer would STACK with the padding above in the
+   shell (its nav is hidden there) — drop it; the injected inset is the only reserve. */
+html.alma-native .mobile-bottom-spacer {
+  display: none !important;
+}
+
+/* Native shell: the টুডু pill rides IN the native title row (top-right), so it
+   never overlaps page content. The title row is the BOTTOM ~44pt of the injected
+   top inset; !important beats the component's inline env()-based `top`. The open
+   panel drops just below the bar. Older builds without the var fall back to the
+   web placement. */
+html.alma-native-hdr .owner-todo-fab {
+  top: calc(var(--alma-top-inset, calc(env(safe-area-inset-top) + 0.625rem + 42px)) - 42px) !important;
+}
+html.alma-native-hdr .owner-todo-fab button {
+  min-height: 30px;
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+  /* The pill sits UNDER the translucent native bar material, which washes out
+     web content in that zone. Its 15%-alpha web tint had nothing solid behind
+     it, so it read ghosted. Give it an opaque theme surface; the gold "has
+     todos" tint is re-applied as a gradient overlay below so both states stay
+     distinct but crisp over the native title row. */
+  background-color: var(--bg-2);
+}
+html.alma-native-hdr .owner-todo-fab button.bg-gold\/15 {
+  background-image: linear-gradient(0deg, rgb(var(--c-accent) / 0.18), rgb(var(--c-accent) / 0.18));
+}
+html.alma-native-hdr .owner-todo-panel {
+  top: calc(var(--alma-top-inset, calc(env(safe-area-inset-top) + 2.75rem)) + 6px) !important;
+}
+
+/* Native bars: NO frost, NO strip, NOTHING painted in the bar zones (owner rule:
+   zero shadow top or bottom, ever). The page runs edge-to-edge; native draws only
+   the floating title/buttons/tab items. (A masked backdrop-blur strip lived here
+   briefly — its compositor re-activation popped in ~1s after tab switches and read
+   as a returning shadow, so it was removed outright.) */
+
+/* Elements that open a NATIVE long-press context menu in the shell: suppress the
+   WKWebView's own long-press (text selection / callout / link preview) so it can't
+   cancel our pointer sequence — otherwise the native gesture wins and our menu never
+   fires. Gated on the native shell; web/desktop keep normal selection. */
+html.alma-native [data-ctx-menu] {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* On native web views that carry a NATIVE header (Orders / Approvals / modules
+   opened from More), the native bar already shows the title + back button. Hide
+   ONLY the page-header's title row (data-ph-titlerow) so there's no double title —
+   but KEEP its actions (filters, export, add, etc.) so those pages don't lose
+   function in the app (previously the whole header was hidden, dropping them).
+   De-sticky + strip the header's chrome since the native bar is now the sticky
+   top; a page with no actions collapses to nothing. Gated on `alma-native-hdr`,
+   set only for those web views — Assistant/Dashboard keep their own header. */
+html.alma-native-hdr .page-header {
+  position: static !important;
+  top: auto !important;
+  /* Reserve the status-bar + nav-bar strip so the page's top content never collides
+     with the native header. On the Dashboard (a Capacitor web view that runs FULL
+     SCREEN, underlapping the translucent bar) env(safe-area-inset-top) inside the web
+     view = the bar's bottom (~106px), so this clears the "top layer overlaps text"
+     collision the owner reported. On the Orders / Approvals / More-module web views
+     (pinned BELOW the bar by the native shell) env-top is 0, so this stays 0.5rem —
+     no change. One rule, correct for every page, no risky Capacitor constraint edits.
+     Full-bleed builds: the shell now runs every WebView UNDER the nav bar and injects
+     the exact overlap as --alma-top-inset; prefer it, falling back to env() for older
+     app builds that don't inject the var. */
+  padding-top: calc(0.5rem + var(--alma-top-inset, env(safe-area-inset-top))) !important;
+  border-bottom: 0 !important;
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html.alma-native-hdr .page-header [data-ph-titlerow] {
+  display: none !important;
+}
+
+/* The Assistant tab now carries a NATIVE dark-glass header (title + new-chat +
+   sidebar bar buttons), so hide the web agent's own top bar there — no double
+   header, and the dark status-bar area matches the other tabs (no more light top). */
+html.alma-native-hdr .alma-agent-topbar {
+  display: none !important;
+}
+
+/* ── GLASS MOTION — chat scrolls UNDER the native dark-glass header, blurred ──
+   The Claude-app top bar: content passes under a translucent blurred bar. Build 29+
+   pins the Assistant WebView to the very top (under the nav bar), so INSIDE the
+   WebView env(safe-area-inset-top) becomes the bar's height. We must NOT spend that
+   inset as CONTAINER padding (that just offsets the whole column below the bar — the
+   old look). Instead:
+     1) zero the column's own top inset (.safe-top) so the scroll area reaches y=0
+        and fills the space under the bar;
+     2) move the inset onto the chat scroll CONTENT as top padding, so the first
+        message clears the bar at rest and every later message scrolls under it.
+   On build 28 the WebView still sits below the bar, so env-top is 0 and every rule
+   here is a no-op — the web deploy is safe on the current build without a new flag. */
+html.alma-native-hdr .agent-main-col {
+  padding-top: 0 !important;
+}
+/* The inset comes from the native shell as `--alma-top-inset` (the exact bar height),
+   because the WebView's own env(safe-area-inset-top) is unreliable under
+   contentInsetAdjustmentBehavior=.never. Fall back to env() when the var is absent
+   (older builds / plain browser with ?nativehdr), so this stays additive + safe. */
+html.alma-native-hdr .agent-thread-content {
+  padding-top: calc(1rem + var(--alma-top-inset, env(safe-area-inset-top))) !important;
+}
+/* The "office live" day-shift banner: in the native shell a full-width strip at the
+   very top painted its pale translucent background UP THROUGH the frosted nav bar
+   (the bar blurred the pale strip instead of the chat → read as a flat grey slab —
+   the owner's "frosted bar looks wrong" root cause). Owner-approved fix (2026-07-05):
+   render it as a small floating glass pill UNDER the bar, Claude-style, so the bar
+   blurs real chat content. The long explainer tail is hidden in the pill
+   (.agent-strip-detail); web/desktop keep the full strip unchanged. */
+html.alma-native-hdr .agent-main-col {
+  position: relative;
+}
+html.alma-native-hdr .agent-top-strip {
+  position: absolute !important;
+  top: calc(var(--alma-top-inset, env(safe-area-inset-top)) + 8px) !important;
+  left: 50% !important;
+  transform: translateX(-50%);
+  z-index: 30;
+  width: auto !important;
+  max-width: 86%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid var(--glass-border) !important;
+  background: var(--glass-bg-strong) !important;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-radius: 9999px;
+  padding: 6px 14px !important;
+  box-shadow: var(--glass-shadow-soft);
+  color: #065f46; /* emerald-800 on light glass */
+}
+html[data-theme='dark'].alma-native-hdr .agent-top-strip {
+  color: #6ee7b7; /* emerald-300 on dark glass */
+}
+html.alma-native-hdr .agent-top-strip .agent-strip-detail {
+  display: none;
+}
+
+/* ── Creative Studio design system ──────────────────────────────────────────
+   iOS-inspired, THEME-AWARE (follows the app's light/dark tokens — the old
+   forced-dark scope clashed with the owner's theme). Soft branded shell,
+   glassy cards, pill chips, one floating tab bar. */
+.studio-shell {
+  background:
+    radial-gradient(1100px 700px at 85% -8%, rgba(224, 122, 95, 0.10), transparent 55%),
+    radial-gradient(900px 650px at -8% 108%, rgba(129, 178, 154, 0.09), transparent 50%),
+    var(--bg-0);
+}
+.st-card {
+  /* NOTE: no backdrop-filter here — dozens of blurred cards froze the GPU
+     compositor live (CDP screenshots timed out). Translucency + shadow only. */
+  background: rgb(var(--c-card) / 0.88);
+  border: 1px solid var(--border-subtle);
+  border-radius: 22px;
+  box-shadow: 0 8px 28px rgba(20, 16, 25, 0.07);
+}
+.st-chip {
+  background: rgb(var(--c-ink) / 0.07) !important;
+  color: rgb(var(--c-muted)) !important;
+  border-radius: 999px !important;
+  font-weight: 600;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+.st-chip:active { transform: scale(0.96); }
+.st-chip-on {
+  background: #e07a5f !important;
+  color: #fff !important;
+  border-radius: 999px !important;
+  font-weight: 700;
+  box-shadow: 0 4px 14px rgba(224, 122, 95, 0.35);
+}
+.st-btn {
+  background: linear-gradient(135deg, #e8896f, #dd6f52) !important;
+  color: #fff;
+  border-radius: 16px;
+  font-weight: 700;
+  box-shadow: 0 6px 18px rgba(224, 122, 95, 0.32);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.st-btn:active { transform: scale(0.97); }
+.st-btn:disabled { opacity: 0.45; box-shadow: none; }
+.st-tabbar {
+  background: rgb(var(--c-card) / 0.82);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  box-shadow: 0 10px 34px rgba(20, 16, 25, 0.16);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.st-tab {
+  color: rgb(var(--c-muted));
+  border-radius: 999px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.st-tab-on {
+  color: #e07a5f;
+  background: rgb(224 122 95 / 0.12);
 }

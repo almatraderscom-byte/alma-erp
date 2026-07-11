@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { Hind_Siliguri, Inter, JetBrains_Mono, Noto_Sans_Bengali } from 'next/font/google'
 import './globals.css'
+import '@/styles/ios27.css'
 import '@/components/providers/AppBootSplash.css'
 import { cookies } from 'next/headers'
 import { getServerSession } from 'next-auth'

@@ -46,7 +46,8 @@ export function ApprovalRowProcessingBadge({ ui }: { ui: ApprovalRowUiState }) {
 
   return (
     <div className={`mt-2 flex items-center gap-2 rounded-xl border px-2.5 py-1.5 text-[10px] font-bold ${tone}`}>
-      {ui.state === 'processing' && <Spinner />}
+      {/* No spinner while processing — the row overlay already shows the single
+          canonical spinner; a second one here read as duplicate loaders. */}
       <span>{ui.message || ui.state.replace(/_/g, ' ')}</span>
     </div>
   )

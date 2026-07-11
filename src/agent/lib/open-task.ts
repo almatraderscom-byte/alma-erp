@@ -15,7 +15,7 @@
 import { prisma } from '@/lib/prisma'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 
-export type OpenTaskKind = 'chat_followup' | 'approval_pending'
+export type OpenTaskKind = 'chat_followup' | 'approval_pending' | 'checkpoint_failed' | 'checkpoint_waiting'
 export type OpenTaskStatus = 'open' | 'running' | 'done' | 'cancelled'
 
 export type OpenTaskView = {
@@ -118,7 +118,13 @@ export async function listOpenTasks(conversationId: string, businessId = 'ALMA_L
     orderBy: { createdAt: 'desc' },
   })
 
-  const pendingIds = rows.map((r) => r.pendingActionId).filter((x): x is string => !!x)
+  // Only approval cards reconcile against the pending action's status — P0
+  // checkpoint rows link a FAILED/stuck action on purpose and must stay open
+  // until resolved by a successful retry or the owner.
+  const pendingIds = rows
+    .filter((r) => r.kind === 'approval_pending')
+    .map((r) => r.pendingActionId)
+    .filter((x): x is string => !!x)
   if (pendingIds.length) {
     const actions = await prisma.agentPendingAction.findMany({
       where: { id: { in: pendingIds } },

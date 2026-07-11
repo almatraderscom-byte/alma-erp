@@ -98,14 +98,16 @@ export function AppToast({ t }: { t: Toast }) {
       role="status"
       aria-live="polite"
       onClick={() => hotToast.dismiss(t.id)}
-      className="alma-toast pointer-events-auto flex w-[min(90vw,360px)] cursor-pointer items-center gap-3 rounded-2xl border px-4 py-3 font-sans backdrop-blur-xl"
+      className="alma-toast pointer-events-auto flex w-[min(90vw,360px)] cursor-pointer items-center gap-3 rounded-2xl font-sans"
       style={{
-        background: 'var(--toast-bg)',
-        borderColor: c.ring,
-        boxShadow: `0 0 0 1px ${c.ring}, 0 18px 50px -12px rgba(0,0,0,0.7), 0 0 40px -8px ${c.glow}`,
+        // Surface (glass bg / border / shadow / accent bar) lives in .alma-toast
+        // in globals.css so both themes flip via tokens; only the per-tone accent
+        // and the entrance motion are set here.
+        ['--toast-accent' as string]: c.accent,
+        ['--toast-accent-soft' as string]: c.glow,
         opacity: t.visible ? 1 : 0,
         transform: t.visible ? 'translateY(0) scale(1)' : 'translateY(-16px) scale(0.94)',
-        transition: 'opacity 320ms cubic-bezier(0.22,1,0.36,1), transform 320ms cubic-bezier(0.22,1,0.36,1)',
+        transition: 'opacity 260ms cubic-bezier(0.22,1,0.36,1), transform 380ms cubic-bezier(0.34,1.56,0.64,1)',
       }}
     >
       <ToastIcon tone={tone} accent={c.accent} />

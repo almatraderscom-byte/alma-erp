@@ -26,6 +26,39 @@ function isNativePlatform(): boolean {
   return Boolean(cap?.isNativePlatform?.())
 }
 
+/**
+ * The native-frame iOS shell's haptic bridge. The plain (non-Capacitor) WebView
+ * tabs — Orders, the Assistant composer, search, forms — can't use the Capacitor
+ * Haptics plugin, and the iOS-web fallback (iosSwitchTick) STEALS FOCUS, so it
+ * can't fire while typing (it would dismiss the keyboard). This bridge lets those
+ * WebViews ask native Swift to fire a real UIFeedbackGenerator — soft, and with no
+ * focus change, so the keyboard-typing tick finally works. Absent in normal
+ * browsers (only the native shell injects `almaHaptic`), so web/desktop are
+ * unaffected and fall through to the existing paths.
+ */
+function nativeHapticBridge():
+  | { postMessage: (msg: { kind: string; style?: string }) => void }
+  | null {
+  if (typeof window === 'undefined') return null
+  const w = window as unknown as {
+    webkit?: { messageHandlers?: { almaHaptic?: { postMessage: (m: unknown) => void } } }
+  }
+  return (w.webkit?.messageHandlers?.almaHaptic as
+    | { postMessage: (msg: { kind: string; style?: string }) => void }
+    | undefined) ?? null
+}
+
+function bridgeFire(kind: string, style?: string): boolean {
+  const bridge = nativeHapticBridge()
+  if (!bridge) return false
+  try {
+    bridge.postMessage(style ? { kind, style } : { kind })
+    return true
+  } catch {
+    return false
+  }
+}
+
 // Hidden <label><input type="checkbox" switch></label> — clicking the label on
 // iOS 18+ produces the system switch haptic. Older iOS ignores the attribute
 // and the click is a silent no-op on the invisible checkbox.
@@ -33,6 +66,19 @@ let switchShim: HTMLLabelElement | null = null
 
 function iosSwitchTick(): boolean {
   if (typeof document === 'undefined' || !document.body) return false
+  // CRITICAL: the tick fires by clicking a hidden <input type=checkbox switch>.
+  // Clicking a form control moves focus to it — so while the user is typing (the
+  // keyboard-typing haptic fires on EVERY keystroke via HapticBridge), this would
+  // blur the field and DISMISS THE KEYBOARD on the first keystroke, dropping the
+  // character. In the native-frame shell the plain WebViews aren't Capacitor, so
+  // every haptic falls through to this shim — which made typing impossible in every
+  // webview input (composer, search, forms). When an editable element is focused,
+  // skip the tick (the OS keyboard has its own key feedback) rather than steal focus.
+  const active = document.activeElement as HTMLElement | null
+  if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' ||
+                 active.tagName === 'SELECT' || active.isContentEditable)) {
+    return false
+  }
   try {
     if (!switchShim || !switchShim.isConnected) {
       const label = document.createElement('label')
@@ -73,6 +119,7 @@ function impact(style: ImpactStyle, webMs: number): void {
     Haptics.impact({ style }).catch(() => webVibrate(webMs))
     return
   }
+  if (bridgeFire('impact', style)) return
   webVibrate(webMs)
 }
 
@@ -98,12 +145,21 @@ export function selection(): void {
   if (now - lastSelectionAt < SELECTION_MIN_GAP_MS) return
   lastSelectionAt = now
   if (isNativePlatform()) {
-    // A one-shot selectionChanged needs start/end bracketing on iOS; a Light
-    // impact is the same perceived tick without the session bookkeeping.
-    Haptics.impact({ style: ImpactStyle.Light }).catch(() => webVibrate(8))
+    // The genuinely SOFT keyboard/picker tick — UISelectionFeedbackGenerator via
+    // the Capacitor selection API. An ImpactStyle.Light "thud" (what we used to
+    // fire here) reads too HARD while typing; the selection generator is Apple's
+    // own keyboard/picker feedback and is noticeably softer. Bracket
+    // start→changed→end for a clean one-shot; fall back to a tiny web vibrate.
+    Haptics.selectionStart()
+      .then(() => Haptics.selectionChanged())
+      .then(() => Haptics.selectionEnd())
+      .catch(() => webVibrate(6))
     return
   }
-  webVibrate(8)
+  // Native-shell WebViews: fire a real (soft, no-focus-steal) selection tick in
+  // Swift — this is what finally makes the keyboard-typing haptic work there.
+  if (bridgeFire('selection')) return
+  webVibrate(6)
 }
 
 function webNotifyVibrate(webPattern: number | number[]): void {
@@ -120,6 +176,7 @@ function notify(type: NotificationType, webPattern: number | number[]): void {
     Haptics.notification({ type }).catch(() => webNotifyVibrate(webPattern))
     return
   }
+  if (bridgeFire('notify', type)) return
   webNotifyVibrate(webPattern)
 }
 

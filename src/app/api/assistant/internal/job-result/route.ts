@@ -96,6 +96,54 @@ export async function POST(req: NextRequest) {
   })
 
   const payload = action.payload as Record<string, unknown>
+
+  // Family-chain assembly line: a finished step queues the next one (adult shot →
+  // child garment → child shot → merge). Best-effort — a chain problem must never
+  // fail the worker callback; the chain simply stalls and the tracker shows it.
+  if (payload.familyChain && status === 'success') {
+    try {
+      const { advanceFamilyChain } = await import('@/lib/tryon/family-chain')
+      const storagePath = typeof data?.storagePath === 'string' ? data.storagePath : undefined
+      const nextId = await advanceFamilyChain(action, storagePath)
+      if (nextId) console.log(`[job-result] family chain advanced ${pendingActionId} → ${nextId}`)
+    } catch (chainErr) {
+      console.error('[job-result] family chain advance failed:', chainErr)
+    }
+  }
+
+  // V4 multi-clip Veo reel: a finished clip queues the next clip / the concat.
+  if (payload.veoChain && status === 'success') {
+    try {
+      const { advanceVeoChain } = await import('@/lib/creative-studio/veo-chain')
+      const sp = typeof data?.storagePath === 'string' ? data.storagePath : undefined
+      const nextId = await advanceVeoChain(action, sp)
+      if (nextId) console.log(`[job-result] veo chain advanced ${pendingActionId} → ${nextId}`)
+    } catch (chainErr) {
+      console.error('[job-result] veo chain advance failed:', chainErr)
+    }
+  }
+
+  // CS4: optional Telegram ping when a studio artifact is READY (kv toggle,
+  // default off — studio jobs stay silent by design). Only FINAL artifacts:
+  // internal chain steps and non-final chain/veo clips never ping.
+  if (status === 'success' && payload.creativeStudio && !payload.chainInternal) {
+    try {
+      const chain = payload.familyChain as { stepIndex?: number; plan?: string[] } | undefined
+      const isFinal = chain
+        ? Number(chain.stepIndex) === (chain.plan?.length ?? 1) - 1
+        : !payload.veoChain
+      if (isFinal) {
+        const { readKv, NOTIFY_KEY } = await import('@/lib/creative-studio/taste')
+        if ((await readKv(NOTIFY_KEY)) === '1') {
+          const tg = await sendOwnerText(`✅ Sir, "${action.summary}" রেডি — Studio Gallery-তে দেখুন।`)
+          if (!tg.ok) console.warn('[job-result] studio done-ping failed:', tg.error)
+        }
+      }
+    } catch (pingErr) {
+      console.warn('[job-result] studio done-ping error:', pingErr)
+    }
+  }
+
   const convId = resolveConversationId(action)
   let messageText: string | null = null
   let pushTelegram = false
@@ -176,6 +224,38 @@ export async function POST(req: NextRequest) {
     messageText = `❌ কাজটি সম্পাদন ব্যর্থ হয়েছে।\nকারণ: ${error ?? 'Unknown error'}`
   } else if (status === 'success') {
     messageText = `✅ কাজটি সফলভাবে সম্পাদিত হয়েছে।`
+  }
+
+  // P0 terminal-state contract: EVERY worker-job failure leaves a checkpoint the
+  // owner's next reply can resume from — this one hook covers all job types.
+  if (status === 'failed') {
+    try {
+      const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
+      const goal = (action.summary as string | null)?.split('\n')[0]?.slice(0, 160) || `${action.type} job`
+      const errMsg = (error ?? String(data?.error ?? 'unknown_error')).slice(0, 300)
+      const partial = typeof data?.storagePath === 'string' ? [data.storagePath] : []
+      await writeCheckpoint({
+        taskRef: pendingActionId,
+        taskType: action.type,
+        goal,
+        summaryBn: `"${goal}" কাজটা মাঝপথে ব্যর্থ হয়েছে।`,
+        doneSteps: [],
+        currentStep: `worker executing ${action.type}`,
+        artifacts: partial,
+        error: errMsg,
+        nextActions: ['কারণ দেখে ঠিক করে কাজটা আবার চালাও (নতুন approved action বানিয়ে), অথবা Sir-কে বিকল্প দাও'],
+        resumeHint: `pendingAction ${pendingActionId} (type ${action.type}) failed with: ${errMsg}. Payload payload-এ আগের সব input আছে — same payload দিয়ে retry করা যায়।`,
+        conversationId: convId,
+      })
+    } catch (cpErr) {
+      console.error('[job-result] checkpoint write failed:', cpErr)
+    }
+  } else if (status === 'success') {
+    // a retried task that now succeeded closes its old checkpoint chip
+    try {
+      const { resolveCheckpointByTaskRef } = await import('@/agent/lib/checkpoint')
+      await resolveCheckpointByTaskRef(pendingActionId)
+    } catch { /* best-effort */ }
   }
 
   if (convId && messageText) {

@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { usePathname } from 'next/navigation'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import toast from 'react-hot-toast'
@@ -64,6 +65,9 @@ export function OwnerTodoBar() {
   const { role } = useActor()
   const path = usePathname() ?? ''
   const reduceMotion = useReducedMotion()
+  // Portal target readiness — the chip renders into document.body so NO ancestor
+  // (provider wrapper, page fade, filter/opacity layer) can ever dim the fixed pill.
+  const [mounted, setMounted] = useState(false)
   const [todos, setTodos] = useState<OwnerTodo[]>([])
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState('')
@@ -72,6 +76,10 @@ export function OwnerTodoBar() {
   const [justDone, setJustDone] = useState<Set<string>>(new Set())
   const openRef = useRef(open)
   openRef.current = open
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   const isOwner = role === 'SUPER_ADMIN'
   const hidden = !isOwner || HIDE_PREFIXES.some((p) => path.startsWith(p))
@@ -179,13 +187,13 @@ export function OwnerTodoBar() {
     }
   }, [refresh])
 
-  if (hidden) return null
+  if (hidden || !mounted || typeof document === 'undefined') return null
 
-  return (
+  return createPortal(
     <>
       {/* Collapsed pill — same fixed top-right spot on every ERP page. */}
       <div
-        className="pointer-events-none fixed right-0 z-[70]"
+        className="owner-todo-fab pointer-events-none fixed right-0 z-[70]"
         style={{ top: 'max(0.625rem, env(safe-area-inset-top))', paddingRight: 'max(0.75rem, env(safe-area-inset-right))' }}
       >
         <button
@@ -223,7 +231,7 @@ export function OwnerTodoBar() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6, scale: 0.98 }}
               transition={{ duration: 0.16, ease: 'easeOut' }}
-              className="fixed z-[72] w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-border-subtle bg-card/85 shadow-float backdrop-blur-xl"
+              className="owner-todo-panel fixed z-[72] w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-border-subtle bg-card/85 shadow-float backdrop-blur-xl"
               style={{
                 top: 'calc(max(0.625rem, env(safe-area-inset-top)) + 2.75rem)',
                 right: 'max(0.75rem, env(safe-area-inset-right))',
@@ -321,6 +329,7 @@ export function OwnerTodoBar() {
           </>
         )}
       </AnimatePresence>
-    </>
+    </>,
+    document.body,
   )
 }

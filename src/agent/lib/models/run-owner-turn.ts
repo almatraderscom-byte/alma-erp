@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma'
 import { MAX_TOOL_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET } from '@/agent/config'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
+import { getOfficePulse } from '@/agent/lib/office-pulse'
 import { buildOwnerActiveTasksContextBlock, buildStaffActiveTasksContextBlock } from '@/agent/lib/owner-active-tasks-context'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
 import { getRecentOutcomeLearnings } from '@/lib/outcome-loop'
@@ -115,9 +116,12 @@ async function loadPinnedMemories(
     const rows: Array<{ id: string; content: string; scope: string; metadata: unknown }> =
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (prisma as any).agentMemory.findMany({
-        where: personalMode
-          ? { pinned: true, scope: 'personal' }
-          : { pinned: true, scope: { not: 'personal' } },
+        where: {
+          ...(personalMode
+            ? { pinned: true, scope: 'personal' }
+            : { pinned: true, scope: { not: 'personal' } }),
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
         orderBy: { createdAt: 'desc' },
         take: 60,
         select: { id: true, content: true, scope: true, metadata: true },
@@ -228,9 +232,9 @@ async function* runAlternateProviderTurn(
       if (fresh.status === 'prayed_on_time' || fresh.status === 'prayed_late') {
         intakeContextBlock =
           `[SALAH CONFIRMED — CONSCIENCE NUDGE]\n` +
-          `Sir just told you he prayed ${fresh.waqt} (${fresh.date}); it is ALREADY saved — do NOT call mark_salah for it. ` +
-          `Reply in warm Bangla, addressing him as Sir: (1) a short Alhamdulillah / du'a that Allah accepts it, ` +
-          `(2) then ONE gentle conscience question — ask softly whether he prayed in jamaat or alone ("জামাতে পড়লেন নাকি একা, Sir?"), ` +
+          `Boss just told you he prayed ${fresh.waqt} (${fresh.date}); it is ALREADY saved — do NOT call mark_salah for it. ` +
+          `Reply in warm Bangla, addressing him ONLY as Boss (never Sir/স্যার — owner rule 2026-07-07): (1) a short Alhamdulillah / du'a that Allah accepts it, ` +
+          `(2) then ONE gentle conscience question — ask softly whether he prayed in jamaat or alone ("জামাতে পড়লেন নাকি একা, Boss?"), ` +
           `framed with love and trust, never accusing. Keep it to 2 lines. This gentle question is intentional and owner-requested.`
       } else if (fresh.status === 'qaza' || fresh.status === 'missed') {
         intakeContextBlock =
@@ -251,7 +255,7 @@ async function* runAlternateProviderTurn(
     }
   }
 
-  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot] = await Promise.all([
+  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot, officePulse] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     lastUserText ? retrieveRelevantOldTurns(conversationId, lastUserText) : Promise.resolve([]),
@@ -268,6 +272,13 @@ async function* runAlternateProviderTurn(
     personalMode ? Promise.resolve('') : buildStaffActiveTasksContextBlock(businessId).catch(() => ''),
     selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId, headTier }),
     personalMode || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
+    // LIVE office pulse (owner decision 2026-07-08) — shared rolling summary of
+    // today's office/staff/agent-work state, delta-refreshed ≤10 min. Lets
+    // office questions and autonomous wakes answer in ONE round instead of
+    // paying tool round-trips that re-bill the whole context.
+    personalMode || businessId === 'ALMA_TRADING'
+      ? Promise.resolve(null)
+      : getOfficePulse().catch(() => null),
   ])
 
   const promptArgs = {
@@ -295,6 +306,7 @@ async function* runAlternateProviderTurn(
     staffActiveTasksBlock: staffActiveTasksBlock || undefined,
     activeGroups: toolSelection.groups,
     businessSnapshot,
+    officePulse,
     headTier,
     tailSummary,
   }
@@ -306,7 +318,16 @@ async function* runAlternateProviderTurn(
   // can actually reuse, and it keeps web/Telegram prefixes identical for a
   // conversation. The injection is transient (only the assistant reply is
   // persisted), so replayed history stays clean.
-  const volatileText = systemBlocksToText(volatile)
+  let volatileText = systemBlocksToText(volatile)
+  // P0 resume fast-path: unresolved checkpoints ride the same transient per-turn
+  // injection — the head resumes stalled work from the exact step with ZERO
+  // history re-reading (the note is self-contained by contract). Fail-open.
+  try {
+    const { listUnresolvedCheckpoints, buildCheckpointSystemNote } = await import('@/agent/lib/checkpoint')
+    const cps = await listUnresolvedCheckpoints(conversationId)
+    const note = buildCheckpointSystemNote(cps)
+    if (note) volatileText = volatileText ? `${volatileText}\n\n${note}` : note
+  } catch { /* fail-open — never block the turn */ }
   if (volatileText) {
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i]
@@ -629,6 +650,27 @@ async function* runAlternateProviderTurn(
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])
 
+    // Answer-Gate write path (owner decision 2026-07-08): a tool-free, card-free
+    // answer from an EXPENSIVE head may be cacheable. All hard rules + a cheap
+    // classifier confirm live in maybeCacheQaPair — fire-and-forget, never blocks.
+    if (finalText.trim() && lastUserText) {
+      void import('@/agent/lib/answer-gate')
+        .then(({ maybeCacheQaPair }) =>
+          maybeCacheQaPair({
+            question: lastUserText,
+            answer: finalText,
+            scope: personalMode ? 'personal' : 'business',
+            sourceModelId: model.id,
+            usedTools: toolRecords.length > 0,
+            // Confirm cards are always staged BY a tool call, so usedTools already
+            // covers them; ask-cards are the only card type reachable tool-free.
+            hadCards: emittedAskCards.length > 0,
+            conversationId,
+          }),
+        )
+        .catch(() => {})
+    }
+
     if (toolRecords.length > 0) {
       await db.agentToolCall.createMany({
         data: toolRecords.map((r) => ({
@@ -769,6 +811,46 @@ export async function* runOwnerTurn(
   } catch { /* fail-open: enabled-map glitch must never block the turn */ }
 
   const model = getModel(decision.modelId)
+
+  // ── Answer Gate (owner decision 2026-07-08): EXPENSIVE heads only ──────────
+  // Before paying a Gemini/Opus-class turn (~60k input), check the verified Q&A
+  // cache. Hard rules live in answer-gate.ts (deny-list, standalone-question,
+  // sim ≥ 0.95, TTL) — any doubt falls through to the normal agent. Cheap heads
+  // (DeepSeek-class) and explicit owner pins bypass entirely; a miss costs one
+  // embedding (~$0.000002).
+  if (!options.approveModelSwitch && decision.tier !== 'explicit' && lastUserText) {
+    try {
+      const { ANSWER_GATE_ENABLED, isExpensiveHead, tryAnswerGate, recordGateServe } = await import('@/agent/lib/answer-gate')
+      if (ANSWER_GATE_ENABLED && isExpensiveHead(model)) {
+        const hit = await tryAnswerGate(lastUserText, personalMode ? 'personal' : 'business')
+        if (hit) {
+          const savedDate = new Date(hit.verifiedAt ?? hit.createdAt).toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+          const answerText = `${hit.answer}\n\n💾 _সেভ করা verified উত্তর (${savedDate}) — নতুন করে যাচাই চাইলে বলুন "fresh করে দেখো"।_`
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const db = prisma as any
+          const savedMsg = await db.agentMessage.create({
+            data: {
+              conversationId,
+              role: 'assistant',
+              content: [{ type: 'text', text: answerText }],
+              tokensIn: 0,
+              tokensOut: 0,
+              costUsd: 0,
+              usage: { input_tokens: 0, output_tokens: 0, model: 'answer-gate', provider: 'gate', similarity: hit.similarity, qaId: hit.id },
+            },
+          })
+          await touchConversationActivity(conversationId)
+          void recordGateServe(hit, conversationId)
+          yield { type: 'text_delta', delta: answerText }
+          yield { type: 'done', messageId: savedMsg.id, tokensIn: 0, tokensOut: 0, cacheCreation: 0, cacheRead: 0, costUsd: 0 }
+          return
+        }
+      }
+    } catch (err) {
+      // Gate problems must NEVER block a turn — fall through to the real head.
+      console.warn('[run-owner-turn] answer gate failed open:', err instanceof Error ? err.message : err)
+    }
+  }
 
   // ── Model-upgrade approval gate ───────────────────────────────────────────
   // The owner asked to APPROVE before a thread jumps UP to a premium model

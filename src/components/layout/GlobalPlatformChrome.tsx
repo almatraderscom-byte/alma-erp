@@ -7,6 +7,7 @@ import { DeveloperWatermark } from '@/components/layout/DeveloperWatermark'
 import { ForcedUpdateGate } from '@/components/layout/ForcedUpdateGate'
 import { LivePulseManager } from '@/components/layout/LivePulseManager'
 import { LocalRemindersManager } from '@/components/layout/LocalRemindersManager'
+import { NativeShellBridge } from '@/components/layout/NativeShellBridge'
 import { PlatformDiagnostics } from '@/components/layout/PlatformDiagnostics'
 
 /**
@@ -24,6 +25,7 @@ export function GlobalPlatformChrome() {
       <LocalRemindersManager />
       <LivePulseManager />
       <DeepLinkManager />
+      <NativeShellBridge />
     </>
   )
 }

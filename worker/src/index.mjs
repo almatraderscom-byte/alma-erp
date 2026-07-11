@@ -31,6 +31,7 @@ import { startTwilioHttpServer } from './twilio-http.mjs'
 import { deliverAgentTurn } from './telegram/agent-turn.mjs'
 import { startDiagnosticHttpServer, setRetriggerHandler } from './diagnostic-http.mjs'
 import { processVideoGen } from './video-gen.mjs'
+import { processVideoEdit } from './video-edit.mjs'
 
 // ── Env checks ─────────────────────────────────────────────────────────────
 
@@ -81,9 +82,46 @@ const videoGenQueue = new Queue('video-gen', {
   defaultJobOptions: { attempts: 3, backoff: { type: 'exponential', delay: 15000 } },
 })
 
+// Phase V1: deterministic ffmpeg reel editing of the owner's own shoots.
+// attempts:2 — a transient failure (download hiccup, OOM) retries once; the
+// P0 checkpoint on the failed job-result is the owner-visible fallback.
+const videoEditQueue = new Queue('video-edit', {
+  connection,
+  defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 30000 } },
+})
+
+// Phase V3: Remotion motion-template finishing (attempts:2 — bundling/browser
+// hiccups are transient; the P0 checkpoint covers the final failure).
+const videoFinishQueue = new Queue('video-finish', {
+  connection,
+  defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 30000 } },
+})
+
+// E1: ElevenLabs Audio Lab jobs (owner-initiated only).
+const audioGenQueue = new Queue('audio-gen', {
+  connection,
+  defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 20000 } },
+})
+
 const longTaskQueue = new Queue('long-agent-task', {
   connection: longTaskConnection,
   defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 10000 } },
+})
+
+// P2 workbench — the agent's sandboxed "own computer" (see workbench/executor.mjs).
+// attempts:1 — a failed run must NOT silently auto-retry the same commands; the
+// P0 checkpoint written on the failed job-result is the retry path (head decides).
+const workbenchQueue = new Queue('workbench', {
+  connection,
+  defaultJobOptions: { attempts: 1 },
+})
+
+// Client-SEO end-to-end audit (crawl + audit ANY public site). attempts:1 for
+// the same reason as workbench — a failed audit checkpoints, never silently
+// re-crawls someone's site.
+const seoAuditQueue = new Queue('seo-audit', {
+  connection,
+  defaultJobOptions: { attempts: 1 },
 })
 
 // Track enqueued action IDs to avoid duplicates in polling window
@@ -206,8 +244,28 @@ async function pollPendingJobs() {
         await videoGenQueue.add('generate', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
         console.log(`[worker] enqueued video-gen job for action ${job.id}`)
         handled = true
+      } else if (job.type === 'video_edit') {
+        await videoEditQueue.add('edit', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        console.log(`[worker] enqueued video-edit job for action ${job.id}`)
+        handled = true
+      } else if (job.type === 'audio_gen') {
+        await audioGenQueue.add('gen', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        console.log(`[worker] enqueued audio-lab job for action ${job.id}`)
+        handled = true
+      } else if (job.type === 'video_finish') {
+        await videoFinishQueue.add('finish', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        console.log(`[worker] enqueued video-finish job for action ${job.id}`)
+        handled = true
       } else if (job.type === 'long_agent_task') {
         await longTaskQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        handled = true
+      } else if (job.type === 'workbench_run') {
+        await workbenchQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        console.log(`[worker] enqueued workbench task for action ${job.id}`)
+        handled = true
+      } else if (job.type === 'seo_audit') {
+        await seoAuditQueue.add('run', { pendingActionId: job.id, payload: job.payload }, { jobId: job.id })
+        console.log(`[worker] enqueued seo audit for action ${job.id}`)
         handled = true
       } else if (job.type === 'dispatch_staff_tasks' || job.type === 'add_staff_task_now' || job.type === 'staff_announcement') {
         await staffDispatchQueue.add('dispatch', { pendingActionId: job.id, payload: job.payload, type: job.type }, { jobId: job.id })
@@ -536,6 +594,198 @@ const videoGenWorker = new Worker(
   },
 )
 
+// Phase V1: ffmpeg reel editing — CPU-bound, one at a time; a 2-min 500 MB
+// source can take several minutes to transcode, so the lock is generous.
+const videoEditWorker = new Worker(
+  'video-edit',
+  (job) => processVideoEdit(job, { supabase, callJobResult }),
+  {
+    connection,
+    concurrency: 1,
+    lockDuration: 30 * 60 * 1000,
+  },
+)
+
+// Phase V3: Remotion render + ffmpeg composite — heavy, strictly one at a time.
+const videoFinishWorker = new Worker(
+  'video-finish',
+  async (job) => {
+    const { processVideoFinish } = await import('./video-finish.mjs')
+    return processVideoFinish(job, { supabase, callJobResult })
+  },
+  {
+    connection,
+    concurrency: 1,
+    lockDuration: 30 * 60 * 1000,
+  },
+)
+
+// Pre-warm Chrome Headless Shell + the Remotion bundle so the owner's first
+// finish job doesn't pay the cold start. Best-effort, fully async.
+setTimeout(() => {
+  import('./video-finish.mjs')
+    .then(({ videoFinishPreflight }) => videoFinishPreflight())
+    .catch((err) => console.warn('[worker] video-finish preflight failed (first job will retry):', err?.message))
+}, 30_000)
+
+// E1: Audio Lab worker (ElevenLabs API calls — light, but keep it serial).
+const audioGenWorker = new Worker(
+  'audio-gen',
+  async (job) => {
+    const { processAudioGen } = await import('./audio-lab.mjs')
+    return processAudioGen(job, { supabase, callJobResult })
+  },
+  { connection, concurrency: 1, lockDuration: 10 * 60 * 1000 },
+)
+audioGenWorker.on('completed', (job) => {
+  if (job?.data?.pendingActionId) enqueuedIds.delete(job.data.pendingActionId)
+})
+audioGenWorker.on('failed', async (job, err) => {
+  console.error(`[worker] audio-lab ${job?.id} failed:`, err.message)
+  if (job && job.attemptsMade < (job.opts?.attempts ?? 1)) return
+  captureWorkerError(err, 'worker.audio_gen.failed', { jobId: job?.id })
+  if (job?.data?.pendingActionId) {
+    enqueuedIds.delete(job.data.pendingActionId)
+    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
+  }
+})
+
+// ── P2 workbench worker ─────────────────────────────────────────────────────
+const workbenchWorker = new Worker(
+  'workbench',
+  async (job) => {
+    const { pendingActionId, payload } = job.data
+    try {
+      const { runWorkbenchTask } = await import('./workbench/executor.mjs')
+      const result = await runWorkbenchTask({ ...payload, taskId: pendingActionId })
+
+      // Publish requested artifacts (workspace-relative paths) to agent storage
+      // so the head/owner can open them; capped, best-effort.
+      const artifactPaths = []
+      const wanted = Array.isArray(payload?.artifacts) ? payload.artifacts.slice(0, 10) : []
+      if (result.ok && wanted.length) {
+        const { readFile } = await import('node:fs/promises')
+        const { join } = await import('node:path')
+        for (const rel of wanted) {
+          const clean = String(rel).replace(/^\/+/, '')
+          if (!clean || clean.includes('..')) continue
+          try {
+            const buf = await readFile(join(result.workspace, clean))
+            if (buf.length > 20 * 1024 * 1024) continue
+            const storagePath = `workbench/${pendingActionId}/${clean.replace(/\//g, '_')}`
+            await supabase.storage.from('agent-files').upload(storagePath, buf, { upsert: true })
+            artifactPaths.push(storagePath)
+          } catch {
+            /* artifact missing — the steps log tells the story */
+          }
+        }
+        // Uploads done — now reclaim the workspace the executor kept for us
+        // (it skips its own success-cleanup when artifacts are requested).
+        if (!payload?.keepWorkspace) {
+          const { rm } = await import('node:fs/promises')
+          await rm(result.workspace, { recursive: true, force: true }).catch(() => {})
+        }
+      }
+
+      if (result.ok) {
+        await callJobResult(pendingActionId, 'success', {
+          steps: result.steps,
+          artifacts: artifactPaths,
+        })
+        console.log(`[worker] workbench ${pendingActionId} done (${result.steps.length} steps, ${artifactPaths.length} artifacts)`)
+      } else {
+        await callJobResult(pendingActionId, 'failed', { steps: result.steps }, result.error ?? 'workbench_failed')
+        console.warn(`[worker] workbench ${pendingActionId} failed: ${result.error}`)
+      }
+    } catch (err) {
+      captureWorkerError(err, 'worker.workbench.failed', { jobId: job?.id })
+      await callJobResult(pendingActionId, 'failed', undefined, err.message ?? 'workbench_crashed')
+    }
+  },
+  { connection, concurrency: 1 },
+)
+workbenchWorker.on('failed', (job, err) => {
+  console.error(`[worker] workbench job ${job?.id} failed:`, err?.message)
+})
+
+// ── Client-SEO audit worker ──────────────────────────────────────────────────
+const seoAuditWorker = new Worker(
+  'seo-audit',
+  async (job) => {
+    const { pendingActionId, payload } = job.data
+    try {
+      const { runSeoAudit } = await import('./seo/audit.mjs')
+      const result = await runSeoAudit(payload)
+      if (!result.ok) {
+        await callJobResult(pendingActionId, 'failed', undefined, result.error ?? 'seo_audit_failed')
+        console.warn(`[worker] seo-audit ${pendingActionId} failed: ${result.error}`)
+        return
+      }
+      // Publish the report (markdown) + full findings (json) as artifacts.
+      const base = `seo-audits/${pendingActionId}`
+      const artifacts = []
+      try {
+        await supabase.storage
+          .from('agent-files')
+          .upload(`${base}/report.md`, Buffer.from(result.reportMarkdown, 'utf8'), { upsert: true, contentType: 'text/markdown' })
+        artifacts.push(`${base}/report.md`)
+        await supabase.storage
+          .from('agent-files')
+          .upload(`${base}/audit.json`, Buffer.from(JSON.stringify(result.auditJson), 'utf8'), { upsert: true, contentType: 'application/json' })
+        artifacts.push(`${base}/audit.json`)
+      } catch (upErr) {
+        // Report built but upload failed → NOT success (never claim done without the proof).
+        await callJobResult(pendingActionId, 'failed', { score: result.score }, `artifact upload failed: ${upErr.message}`)
+        return
+      }
+      await callJobResult(pendingActionId, 'success', {
+        score: result.score,
+        counts: result.counts,
+        pagesCrawled: result.pagesCrawled,
+        avgTtfbMs: result.avgTtfbMs,
+        artifacts,
+        reportPreview: result.reportMarkdown.slice(0, 1500),
+      })
+      console.log(`[worker] seo-audit ${pendingActionId} done — score ${result.score}, ${result.pagesCrawled} pages`)
+    } catch (err) {
+      captureWorkerError(err, 'worker.seo_audit.failed', { jobId: job?.id })
+      await callJobResult(pendingActionId, 'failed', undefined, err.message ?? 'seo_audit_crashed')
+    }
+  },
+  { connection, concurrency: 1, lockDuration: 10 * 60 * 1000 },
+)
+seoAuditWorker.on('failed', (job, err) => {
+  console.error(`[worker] seo-audit job ${job?.id} failed:`, err?.message)
+})
+
+// Startup preflight: create WORKBENCH_ROOT + survey allowlisted binaries (the
+// VPS has no inbound SSH — provisioning ships through the repo, pull-deployed).
+try {
+  const { workbenchPreflight } = await import('./workbench/executor.mjs')
+  const pre = await workbenchPreflight()
+  if (pre.missing.length) {
+    console.warn(`[worker] workbench preflight: MISSING binaries on this box: ${pre.missing.join(', ')} (root ${pre.root})`)
+  } else {
+    console.log(`[worker] workbench preflight OK — root ${pre.root}, all allowlisted binaries present`)
+  }
+} catch (err) {
+  console.error('[worker] workbench preflight error:', err.message)
+}
+
+// Workspace janitor: failed/kept workspaces are retained for diagnosis; this
+// sweep reclaims them after WORKBENCH_KEEP_DAYS (default 7). Startup + every 6h.
+async function sweepWorkbenchWorkspaces() {
+  try {
+    const { cleanupWorkspaces } = await import('./workbench/executor.mjs')
+    const { removed, kept } = await cleanupWorkspaces()
+    if (removed > 0) console.log(`[worker] workbench janitor: removed ${removed} old workspaces (${kept} kept)`)
+  } catch (err) {
+    console.error('[worker] workbench janitor error:', err.message)
+  }
+}
+await sweepWorkbenchWorkspaces()
+const workbenchJanitorInterval = setInterval(sweepWorkbenchWorkspaces, 6 * 60 * 60 * 1000)
+
 const longTaskWorker = new Worker('long-agent-task', async (job) => {
   // A2: owner web turn enqueued by /api/assistant/turn. Identified by turnId.
   // Runs the turn via the chat route in stream mode and republishes events to
@@ -716,6 +966,35 @@ videoGenWorker.on('failed', async (job, err) => {
   }
 })
 
+videoEditWorker.on('completed', (job) => {
+  console.log(`[worker] video-edit ${job.id} completed`)
+  if (job?.data?.pendingActionId) enqueuedIds.delete(job.data.pendingActionId)
+})
+videoEditWorker.on('failed', async (job, err) => {
+  console.error(`[worker] video-edit ${job?.id} failed:`, err.message)
+  // BullMQ retries first (attempts:2); only the FINAL failure reaches the app.
+  if (job && job.attemptsMade < (job.opts?.attempts ?? 1)) return
+  captureWorkerError(err, 'worker.video_edit.failed', { jobId: job?.id })
+  if (job?.data?.pendingActionId) {
+    enqueuedIds.delete(job.data.pendingActionId)
+    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
+  }
+})
+
+videoFinishWorker.on('completed', (job) => {
+  console.log(`[worker] video-finish ${job.id} completed`)
+  if (job?.data?.pendingActionId) enqueuedIds.delete(job.data.pendingActionId)
+})
+videoFinishWorker.on('failed', async (job, err) => {
+  console.error(`[worker] video-finish ${job?.id} failed:`, err.message)
+  if (job && job.attemptsMade < (job.opts?.attempts ?? 1)) return
+  captureWorkerError(err, 'worker.video_finish.failed', { jobId: job?.id })
+  if (job?.data?.pendingActionId) {
+    enqueuedIds.delete(job.data.pendingActionId)
+    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
+  }
+})
+
 // ── Telegram bot (singleton — one getUpdates poller per process) ───────────
 
 let telegramBot = null
@@ -865,6 +1144,7 @@ async function shutdown(signal) {
   clearInterval(csMessengerPollInterval)
   clearInterval(heartbeatInterval)
   clearInterval(healthPingInterval)
+  clearInterval(workbenchJanitorInterval)
   if (schedulerTeardown?.retriggerPoll) clearInterval(schedulerTeardown.retriggerPoll)
   if (schedulerTeardown?.dutyTimePoll) clearInterval(schedulerTeardown.dutyTimePoll)
   await stopTelegramBot(signal)
@@ -872,6 +1152,8 @@ async function shutdown(signal) {
     imageGenWorker.close(),
     videoGenWorker.close(),
     longTaskWorker.close(),
+    workbenchWorker.close(),
+    seoAuditWorker.close(),
     staffDispatchWorker.close(),
     csReplyWorker.close(),
     schedulerTeardown?.schedulerWorker?.close(),

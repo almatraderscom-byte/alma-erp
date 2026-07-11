@@ -4,14 +4,13 @@ import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer'
 import { A4_SIZE, A4_PADDING_PT } from '@/lib/pdf/a4'
 import { getPdfFontFamily } from '@/lib/pdf/fonts'
 import { pdfMoney } from '@/lib/pdf/format'
+import {
+  auraPalette, AuraBackdrop, AuraDocHeader, AuraStatCard, AuraFooter, auraTableStyles,
+} from './aura'
 import type { ERPFinanceExpense } from '@/types/hr'
 
-const BG = '#FFFFFF'
-const TEXT = '#1a1a2e'
-const MUTED = '#6b7280'
-const GOLD = '#E07A5F'
-const LINE = 'rgba(224,122,95,0.22)'
-const HEAD_BG = 'rgba(224,122,95,0.12)'
+const p = auraPalette('light')
+const t = auraTableStyles(p)
 
 const styles = StyleSheet.create({
   page: {
@@ -20,18 +19,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: A4_PADDING_PT.horizontal,
     fontFamily: getPdfFontFamily(),
     fontSize: 7.5,
-    color: TEXT,
-    backgroundColor: BG,
+    color: p.ink,
+    backgroundColor: p.bg,
   },
-  title: { fontSize: 16, fontWeight: 700, color: GOLD, marginBottom: 4 },
-  sub: { fontSize: 9, color: MUTED, marginBottom: 12 },
-  row: { flexDirection: 'row', borderBottomWidth: 0.5, borderBottomColor: LINE, paddingVertical: 3.5, backgroundColor: 'rgba(0,0,0,0.02)' },
-  cellD: { width: '13%' },
-  cellT: { width: '24%' },
-  cellC: { width: '16%' },
+  statRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  cellD: { width: '13%', paddingRight: 4 },
+  cellT: { width: '24%', paddingRight: 4 },
+  cellC: { width: '16%', paddingRight: 4 },
   cellA: { width: '12%', textAlign: 'right' as const },
-  cellS: { width: '35%' },
-  th: { fontWeight: 700, backgroundColor: HEAD_BG, paddingVertical: 5, borderBottomColor: LINE },
+  cellS: { width: '35%', paddingLeft: 8 },
+  totalStrip: {
+    alignSelf: 'flex-end' as const,
+    marginTop: 12,
+    backgroundColor: p.accentWash,
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    flexDirection: 'row' as const,
+    gap: 8,
+  },
 })
 
 function fmtMoney(n: number) {
@@ -54,32 +60,52 @@ export function ExpenseLedgerDocument({
   return (
     <Document title={`${title} — ${businessLabel}`}>
       <Page size={A4_SIZE} style={styles.page}>
-        <Text style={styles.title}>{title}</Text>
-        <Text style={styles.sub}>{businessLabel} · {rangeLabel}</Text>
-
-        <View style={[styles.row, styles.th]}>
-          <Text style={styles.cellD}>Date</Text>
-          <Text style={styles.cellT}>Title</Text>
-          <Text style={styles.cellC}>Category</Text>
-          <Text style={styles.cellA}>Amount</Text>
-          <Text style={styles.cellS}>Notes</Text>
+        <AuraBackdrop p={p} />
+        <AuraDocHeader
+          p={p}
+          companyName={businessLabel}
+          docTitle={title.toUpperCase()}
+          meta={[rangeLabel, `${rows.length} entries`]}
+        />
+        <View style={styles.statRow}>
+          <AuraStatCard p={p} label="Total Spend" value={fmtMoney(total)} emphasis />
+          <AuraStatCard p={p} label="Entries" value={String(rows.length)} hint={rangeLabel} />
         </View>
-        {rows.map((r, i) => (
-          <View style={styles.row} key={`${r.exp_id || ''}-${r.date}-${i}`}>
-            <Text style={styles.cellD}>{String(r.date || '').slice(0, 10)}</Text>
-            <Text style={styles.cellT}>{r.title || r.category}</Text>
-            <Text style={styles.cellC}>{r.category}</Text>
-            <Text style={[styles.cellA, { color: GOLD }]}>{fmtMoney(r.amount)}</Text>
-            <Text style={[styles.cellS, { color: MUTED }]}>
-              {[r.payment_status, r.notes].filter(Boolean).join(' · ') || '—'}
-            </Text>
+
+        <View style={t.container}>
+          <View style={t.headRow}>
+            <Text style={[t.th, styles.cellD]}>Date</Text>
+            <Text style={[t.th, styles.cellT]}>Title</Text>
+            <Text style={[t.th, styles.cellC]}>Category</Text>
+            <Text style={[t.th, styles.cellA]}>Amount</Text>
+            <Text style={[t.th, styles.cellS]}>Notes</Text>
           </View>
-        ))}
-
-        <View style={{ marginTop: 14, flexDirection: 'row', justifyContent: 'flex-end', gap: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: LINE }}>
-          <Text style={{ fontWeight: 700, color: TEXT }}>Total</Text>
-          <Text style={{ fontWeight: 700, color: GOLD }}>{fmtMoney(total)}</Text>
+          {rows.map((r, i) => (
+            <View
+              key={`${r.exp_id || ''}-${r.date}-${i}`}
+              style={[
+                t.row,
+                ...(i % 2 === 1 ? [t.rowAlt] : []),
+                ...(i === rows.length - 1 ? [t.lastRow] : []),
+              ]}
+            >
+              <Text style={styles.cellD}>{String(r.date || '').slice(0, 10)}</Text>
+              <Text style={styles.cellT}>{r.title || r.category}</Text>
+              <Text style={styles.cellC}>{r.category}</Text>
+              <Text style={[styles.cellA, { color: p.accent, fontWeight: 600 }]}>{fmtMoney(r.amount)}</Text>
+              <Text style={[styles.cellS, { color: p.muted }]}>
+                {[r.payment_status, r.notes].filter(Boolean).join(' · ') || '—'}
+              </Text>
+            </View>
+          ))}
         </View>
+
+        <View style={styles.totalStrip}>
+          <Text style={{ fontWeight: 700, color: p.ink }}>Total</Text>
+          <Text style={{ fontWeight: 700, color: p.accent }}>{fmtMoney(total)}</Text>
+        </View>
+
+        <AuraFooter p={p} lines={[`${businessLabel} · ${rangeLabel} · ALMA ERP`]} />
       </Page>
     </Document>
   )

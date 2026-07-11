@@ -18,7 +18,7 @@ import { Telegraf } from 'telegraf'
 import { transcribeVoiceNote } from './voice.mjs'
 import { setTelegramForNotify } from '../notify/index.mjs'
 import { setDispatcherBot, getDispatcherBot } from './dispatcher.mjs'
-import { handleSalahCallback, handleSalahJamaatCallback } from '../salah/scheduler.mjs'
+import { handleSalahCallback, handleSalahJamaatCallback, handleSalahSnoozeCallback } from '../salah/scheduler.mjs'
 import { handleReminderCallback } from '../reminders/callbacks.mjs'
 import { handlePawnaCommand, handleDetailsCommand } from '../finance/index.mjs'
 import {
@@ -1371,6 +1371,16 @@ export function createTelegramBot() {
         dateYmd,
         createSupabase(),
       )
+
+    } else if (data.startsWith('salah_snooze:')) {
+      // salah_snooze:<waqt>:<15|30>[:YYYY-MM-DD] — owner picked how long to push
+      // calls back under "🕐 পরে পড়বো" (১৫ repeatable, ৩০ once per waqt).
+      const parts = data.split(':')
+      const waqt = parts[1]
+      const minutes = parts[2]
+      const maybeDate = parts[3]
+      const snoozeDate = /^\d{4}-\d{2}-\d{2}$/.test(maybeDate) ? maybeDate : null
+      await handleSalahSnoozeCallback(ctx, waqt, minutes, snoozeDate)
 
     } else if (data.startsWith('salah_jamaat:')) {
       // salah_jamaat:<waqt>:<jamaat|alone>[:YYYY-MM-DD] — one-tap answer to the

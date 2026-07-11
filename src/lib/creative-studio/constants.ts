@@ -36,6 +36,8 @@ export const FAMILY_PRESETS: Array<{ id: FamilyPresetId; label: string; labelBn:
   { id: 'father_son', label: 'Baba + Chele', labelBn: 'বাবা + ছেলে' },
   { id: 'mother_daughter', label: 'Ma + Meyе', labelBn: 'মা + মেয়ে' },
   { id: 'mother_son', label: 'Ma + Chele', labelBn: 'মা + ছেলে' },
+  { id: 'father_daughter', label: 'Baba + Meye', labelBn: 'বাবা + মেয়ে' },
+  { id: 'couple', label: 'Couple', labelBn: 'কাপল' },
   { id: 'full_family', label: 'Full Family', labelBn: 'পুরো ফ্যামিলি' },
 ]
 

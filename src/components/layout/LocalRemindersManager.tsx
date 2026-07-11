@@ -37,6 +37,7 @@ export function LocalRemindersManager() {
   useEffect(() => {
     if (!isCapacitorNative()) return
     let resumeHandle: { remove: () => void } | undefined
+    let pauseHandle: { remove: () => void } | undefined
     let tapHandle: { remove: () => void } | undefined
 
     // Sync on mount (app open).
@@ -46,6 +47,19 @@ export function LocalRemindersManager() {
       try {
         resumeHandle = await CapApp.addListener('resume', () => {
           syncIfNotThrottled()
+        })
+      } catch {
+        /* listener is best-effort */
+      }
+      try {
+        // Sync on BACKGROUND too (throttle-bypassed): 'pause' fires when the app
+        // backgrounds — including the moment before a force-quit. This schedules a
+        // just-created reminder locally so it still fires even if the owner sets a
+        // reminder and immediately kills the app (best-effort: iOS grants only a
+        // few seconds on pause, so a slow fetch may not finish — native push covers
+        // the online case regardless).
+        pauseHandle = await CapApp.addListener('pause', () => {
+          void syncLocalReminders()
         })
       } catch {
         /* listener is best-effort */
@@ -66,6 +80,7 @@ export function LocalRemindersManager() {
 
     return () => {
       resumeHandle?.remove()
+      pauseHandle?.remove()
       tapHandle?.remove()
     }
   }, [])

@@ -15,9 +15,9 @@
  *   • KV-gated (`agent_native_push_enabled`, default OFF) so the owner opts in with
  *     no redeploy, and fail-OPEN so a glitch never breaks the ntfy/Telegram path.
  *
- * Platform note: Android is fully wired (the APK registers + the `alma_alerts`
- * channel exists). iOS stays partial until Apple Developer enrollment (APNs);
- * until then iOS subscriptions simply don't exist, so this no-ops for them.
+ * Platform note: Android and iOS are both wired — the Capacitor shells register
+ * via `OneSignal.login(userId)` and taps are routed in-app by the click listener
+ * in `src/lib/native-push.ts` reading `data.actionUrl`.
  */
 import { prisma } from '@/lib/prisma'
 import { ANDROID_NOTIFICATION_CHANNEL_ID } from '@/lib/notification-sound'
@@ -147,7 +147,11 @@ export async function pushNativeToOwner(opts: {
     if (!userIds.length) return { attempted: false, ok: false, reason: 'no_owner_user_id' }
 
     const usesV2Key = apiKey.startsWith('os_v2_')
-    const url = absoluteUrl(opts.actionUrl)
+    // Every agent push must land SOMEWHERE on tap. Callers that don't name a
+    // page fall back to the agent chat — without this the native click listener
+    // gets data.actionUrl=null, does nothing, and the tap dumps the owner on
+    // whatever screen the app opens to (the dashboard).
+    const url = absoluteUrl(opts.actionUrl) ?? absoluteUrl('/agent')
     // tier 1 = routine, 2 = important, 3 = emergency → OneSignal priority 5/10.
     const priority = opts.tier >= 2 ? 10 : 5
 

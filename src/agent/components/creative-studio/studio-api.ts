@@ -24,6 +24,10 @@ export type GalleryItem = {
   /** branded variant (logo + code + hook), when produced */
   brandedUrl?: string | null
   storagePath: string | null
+  /** V2: reel cover picker options (video_edit items) */
+  coverOptions?: Array<{ path: string; url: string }>
+  /** CS4: role when this image is an AI-generated brand model portrait */
+  modelCreator?: string | null
   error: string | null
 }
 
@@ -214,10 +218,351 @@ export async function fetchGallery(page = 1): Promise<{ items: GalleryItem[]; ha
   return res.json()
 }
 
+export type SavedStudioModel = {
+  id: string
+  name: string
+  role: string | null
+  isDefault: boolean
+  /** raw storage object path (private) */
+  imagePath?: string
+  /** signed, ready-to-render URL for the saved photo (1h) */
+  imageUrl?: string | null
+}
+
 export async function fetchModels() {
   const res = await fetch('/api/assistant/brand-models')
   if (!res.ok) throw new Error('models_failed')
-  return res.json() as Promise<{ models: Array<{ id: string; name: string; role: string | null; isDefault: boolean }> }>
+  return res.json() as Promise<{ models: SavedStudioModel[] }>
+}
+
+/** Make one saved model the default the Auto tab uses (per-image select stays manual). */
+export async function setDefaultModel(id: string) {
+  const res = await fetch('/api/assistant/brand-models', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'set_default', id }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message ?? data.error ?? 'set_default_failed')
+  return data
+}
+
+/** Remove a saved model from the library. */
+export async function deleteModel(id: string) {
+  const res = await fetch('/api/assistant/brand-models', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'remove', id }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message ?? data.error ?? 'delete_failed')
+  return data
+}
+
+// ── Phase V1: owner-shot video → deterministic recipe reels ─────────────────
+
+export type StudioVideoUpload = {
+  id: string
+  path: string
+  name: string
+  sizeBytes: number
+  uploadedAt: string
+}
+
+export type VideoJobStatus = {
+  id: string
+  status: string
+  summary: string | null
+  previewUrl: string | null
+  storagePath: string | null
+  videoProgress: { step: number; total: number; labelBn: string } | null
+  error: string | null
+}
+
+export async function fetchStudioVideos(): Promise<StudioVideoUpload[]> {
+  const res = await fetch('/api/assistant/creative-studio/video')
+  if (!res.ok) throw new Error('videos_failed')
+  const data = await res.json()
+  return (data.uploads ?? []) as StudioVideoUpload[]
+}
+
+/**
+ * Big phone shoots (up to ~500 MB) go STRAIGHT to Supabase storage with a
+ * signed upload URL — Vercel never sees the body. XHR (not fetch) so the owner
+ * gets a real progress bar on a multi-minute upload.
+ */
+export async function uploadStudioVideo(
+  file: File,
+  onProgress?: (pct: number) => void,
+): Promise<StudioVideoUpload> {
+  const urlRes = await fetch('/api/assistant/creative-studio/video/upload-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileName: file.name, sizeBytes: file.size }),
+  })
+  const urlData = await urlRes.json().catch(() => ({}))
+  if (!urlRes.ok) throw new Error(urlData.error ?? 'upload_url_failed')
+
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', urlData.uploadUrl)
+    xhr.setRequestHeader('Content-Type', urlData.contentType ?? file.type ?? 'video/mp4')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100))
+    }
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(new Error(`upload_failed_${xhr.status}`))
+    xhr.onerror = () => reject(new Error('upload_network_error'))
+    xhr.send(file)
+  })
+
+  const regRes = await fetch('/api/assistant/creative-studio/video', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ uploadId: urlData.uploadId, path: urlData.path, name: file.name, sizeBytes: file.size }),
+  })
+  const regData = await regRes.json().catch(() => ({}))
+  if (!regRes.ok) throw new Error(regData.error ?? 'register_failed')
+  return regData.upload as StudioVideoUpload
+}
+
+export async function deleteStudioVideo(id: string): Promise<void> {
+  const res = await fetch(`/api/assistant/creative-studio/video?id=${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) throw new Error('delete_failed')
+}
+
+export type StudioMusicTrack = {
+  id: string
+  path: string
+  name: string
+  vibe: string
+  sizeBytes: number
+  uploadedAt: string
+}
+
+export async function fetchMusicTracks(): Promise<StudioMusicTrack[]> {
+  const res = await fetch('/api/assistant/creative-studio/music')
+  if (!res.ok) throw new Error('music_failed')
+  const data = await res.json()
+  return (data.tracks ?? []) as StudioMusicTrack[]
+}
+
+/** Owner-approved music beds only — uploaded from his own files, signed direct upload. */
+export async function uploadMusicTrack(
+  file: File,
+  vibe: string,
+  onProgress?: (pct: number) => void,
+): Promise<StudioMusicTrack> {
+  const urlRes = await fetch('/api/assistant/creative-studio/music/upload-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileName: file.name, sizeBytes: file.size }),
+  })
+  const urlData = await urlRes.json().catch(() => ({}))
+  if (!urlRes.ok) throw new Error(urlData.error ?? 'upload_url_failed')
+
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', urlData.uploadUrl)
+    xhr.setRequestHeader('Content-Type', urlData.contentType ?? file.type ?? 'audio/mpeg')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100))
+    }
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`upload_failed_${xhr.status}`))
+    xhr.onerror = () => reject(new Error('upload_network_error'))
+    xhr.send(file)
+  })
+
+  const regRes = await fetch('/api/assistant/creative-studio/music', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ uploadId: urlData.uploadId, path: urlData.path, name: file.name, vibe, sizeBytes: file.size }),
+  })
+  const regData = await regRes.json().catch(() => ({}))
+  if (!regRes.ok) throw new Error(regData.error ?? 'register_failed')
+  return regData.track as StudioMusicTrack
+}
+
+export async function deleteMusicTrack(id: string): Promise<void> {
+  const res = await fetch(`/api/assistant/creative-studio/music?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('delete_failed')
+}
+
+/** Set a reel's cover from the worker's candidate frames. */
+export async function setReelCover(pendingActionId: string, coverPath: string): Promise<{ thumbUrl: string | null }> {
+  const res = await fetch('/api/assistant/creative-studio/video/cover', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pendingActionId, coverPath }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? 'cover_failed')
+  return data as { thumbUrl: string | null }
+}
+
+export type VideoFinishTemplates = {
+  pricePop?: { price: string }
+  lowerThird?: { code: string; name?: string }
+  logoWatermark?: boolean
+  endCard?: { cta?: string; code?: string; price?: string }
+  countdown?: { days: number }
+}
+
+/** V3: queue motion-template finishing for a rendered reel. */
+export async function finishVideo(
+  pendingActionId: string,
+  templates: VideoFinishTemplates,
+): Promise<{ pendingActionId: string; message: string }> {
+  const res = await fetch('/api/assistant/creative-studio/video/finish', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pendingActionId, templates }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? 'finish_failed')
+  return data
+}
+
+// ── E1 Audio Lab helpers ─────────────────────────────────────────────────────
+
+export type AudioLabStatus = {
+  voiceCloned: boolean
+  styles: Array<{ id: string; labelBn: string }>
+  occasions: Array<{ id: string; labelBn: string }>
+}
+
+export async function fetchAudioLabStatus(): Promise<AudioLabStatus> {
+  const res = await fetch('/api/assistant/creative-studio/audio')
+  if (!res.ok) throw new Error('audio_status_failed')
+  return res.json()
+}
+
+export async function queueAudioJob(body: Record<string, unknown>) {
+  const res = await fetch('/api/assistant/creative-studio/audio', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? 'audio_failed')
+  return data as { pendingActionId: string; costBdt: number }
+}
+
+export async function uploadAudioFile(file: File, onProgress?: (pct: number) => void): Promise<string> {
+  const urlRes = await fetch('/api/assistant/creative-studio/audio/upload-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileName: file.name, sizeBytes: file.size }),
+  })
+  const urlData = await urlRes.json().catch(() => ({}))
+  if (!urlRes.ok) throw new Error(urlData.error ?? 'upload_url_failed')
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', urlData.uploadUrl)
+    xhr.setRequestHeader('Content-Type', urlData.contentType ?? file.type ?? 'audio/mpeg')
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100))
+    }
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`upload_failed_${xhr.status}`)))
+    xhr.onerror = () => reject(new Error('upload_network_error'))
+    xhr.send(file)
+  })
+  return urlData.path as string
+}
+
+// ── CS4 helpers ──────────────────────────────────────────────────────────────
+
+export async function sendItemFeedback(pendingActionId: string, verdict: 'good' | 'bad') {
+  const res = await fetch('/api/assistant/creative-studio/feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pendingActionId, verdict }),
+  })
+  if (!res.ok) throw new Error('feedback_failed')
+  return res.json() as Promise<{ weighted: boolean; weight?: number }>
+}
+
+export async function retryStudioJob(pendingActionId: string) {
+  const res = await fetch(`/api/assistant/creative-studio/jobs/${pendingActionId}/retry`, { method: 'POST' })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? 'retry_failed')
+  return data as { pendingActionId: string }
+}
+
+export type StudioSettings = {
+  qcLevel: 'off' | 'normal' | 'strict'
+  notifyOnDone: boolean
+  sceneWeights: Record<string, number>
+  childGarments: Array<{ key: string; role: string; productPath: string; garmentPath: string; url: string | null }>
+}
+
+export async function fetchStudioSettings(): Promise<StudioSettings> {
+  const res = await fetch('/api/assistant/creative-studio/settings')
+  if (!res.ok) throw new Error('settings_failed')
+  return res.json()
+}
+
+export async function saveStudioSettings(patch: { qcLevel?: string; notifyOnDone?: boolean }) {
+  const res = await fetch('/api/assistant/creative-studio/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) throw new Error('settings_save_failed')
+}
+
+export async function deleteGarmentCache(key: string) {
+  const res = await fetch(`/api/assistant/creative-studio/settings?key=${encodeURIComponent(key)}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('cache_delete_failed')
+}
+
+export async function generateBrandModel(role: string) {
+  const res = await fetch('/api/assistant/creative-studio/model-creator', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? 'model_gen_failed')
+  return data as { pendingActionId: string }
+}
+
+export type VideoRunOptions = {
+  captions?: boolean
+  audioMode?: 'original' | 'music' | 'music_duck'
+  musicTrackId?: string
+  voiceoverText?: string
+  stings?: boolean
+  aiAssist?: boolean
+}
+
+export async function runVideoRecipe(body: {
+  videoPath: string
+  videoName: string
+  recipeId: string
+  targets: number[]
+  aspect: string
+  options?: VideoRunOptions
+}): Promise<{ jobs: Array<{ pendingActionId: string; label: string; targetSec: number }>; message: string }> {
+  const res = await fetch('/api/assistant/creative-studio/video/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? 'run_failed')
+  return data
+}
+
+export async function fetchVideoJob(id: string): Promise<VideoJobStatus> {
+  const res = await fetch(`/api/assistant/creative-studio/jobs/${id}`)
+  if (!res.ok) throw new Error('job_failed')
+  return res.json() as Promise<VideoJobStatus>
 }
 
 export async function saveModel(body: {

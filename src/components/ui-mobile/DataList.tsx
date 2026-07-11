@@ -47,7 +47,7 @@ export function DataList<T>({
 }: Props<T>) {
   if (rows.length === 0) {
     return (
-      <div className={cn('rounded-2xl border border-border-subtle bg-card p-8 text-center text-sm text-muted', className)}>
+      <div className={cn('rounded-[var(--ios-radius-card)] border border-border-subtle bg-card p-8 text-center text-sm text-muted', className)}>
         {empty ?? 'No records.'}
       </div>
     )
@@ -78,7 +78,8 @@ export function DataList<T>({
                 : undefined
             }
             className={cn(
-              'min-w-0 rounded-2xl border border-border-subtle bg-card p-4 shadow-card',
+              // iOS 27: 26px card radius; p-4 keeps the 16px side padding of iOS list cells
+              'min-w-0 rounded-[var(--ios-radius-card)] border border-border-subtle bg-card p-4 shadow-card',
               clickable && 'cursor-pointer transition-transform active:scale-[0.99]',
             )}
           >
@@ -99,10 +100,11 @@ export function DataList<T>({
 
       {/* ── Wide: real table ── */}
       <div className="hidden md:block">
-        <div className="table-scroll rounded-2xl border border-border-subtle bg-card">
+        <div className="table-scroll rounded-[var(--ios-radius-card)] border border-border-subtle bg-card">
           <table className="w-full border-collapse text-sm">
             <thead>
-              <tr className="border-b border-border-subtle">
+              {/* iOS 27 hairline separator token; 16px cell padding = the iOS inset */}
+              <tr className="border-b border-[color:var(--ios-separator)]">
                 {columns.map((col) => (
                   <th
                     key={col.key}
@@ -123,7 +125,7 @@ export function DataList<T>({
                   key={rowKey(row)}
                   onClick={clickable ? () => onRowClick!(row) : undefined}
                   className={cn(
-                    'border-b border-border-subtle last:border-0',
+                    'border-b border-[color:var(--ios-separator)] last:border-0',
                     clickable && 'cursor-pointer transition-colors hover:bg-bg-2',
                   )}
                 >
