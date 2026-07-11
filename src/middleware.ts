@@ -213,6 +213,8 @@ export async function middleware(req: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|OneSignalSDKWorker.js|OneSignalSDKUpdaterWorker.js|offline.html|download.html|fonts/|releases/|sounds/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|apk|html|mp3)$).*)',
+    // companion/ + companion-*.{json,sh} = the ALMA Companion extension's public
+    // auto-update feed (per-machine updaters fetch these with no session).
+    '/((?!_next/static|_next/image|favicon.ico|manifest.json|sw.js|OneSignalSDKWorker.js|OneSignalSDKUpdaterWorker.js|offline.html|download.html|fonts/|releases/|sounds/|companion/|companion-version.json|companion-updater.sh|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|apk|html|mp3)$).*)',
   ],
 }
