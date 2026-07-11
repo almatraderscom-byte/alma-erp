@@ -151,8 +151,12 @@ export function runningTransactions(entries: WalletEntryLike[]): WalletTransacti
   let balance = 0
   return [...entries]
     .sort((a, b) => {
-      const d = new Date(a.date).getTime() - new Date(b.date).getTime()
-      if (d !== 0) return d
+      // Booking order: `date` is the VALUE date (a June salary posted July 10
+      // is dated June 1), so sorting by it buried fresh salary/recovery rows a
+      // month back. Order by when the entry actually happened.
+      const at = new Date((a.createdAt ?? a.date) as Date | string).getTime()
+      const bt = new Date((b.createdAt ?? b.date) as Date | string).getTime()
+      if (at !== bt) return at - bt
       return String(a.id || '').localeCompare(String(b.id || ''))
     })
     .map(entry => {
