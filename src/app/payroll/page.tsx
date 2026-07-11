@@ -106,10 +106,10 @@ export default function PayrollPage() {
   const [orphanLedgerCount, setOrphanLedgerCount] = useState(0)
   const [walletLoading, setWalletLoading] = useState(false)
   const [walletError, setWalletError] = useState<string | null>(null)
-  const [automation, setAutomation] = useState<{ enabled: boolean; dayOfMonth: number; timezone: string } | null>(null)
+  const [automation, setAutomation] = useState<{ enabled: boolean; dayOfMonth: number; timezone: string; heldBusinessIds?: string[] } | null>(null)
   const [preview, setPreview] = useState<{ totalPreviewSalary: number; alreadyAccruedCount: number; employees: Array<{ employeeId: string; name: string; salary: number; alreadyAccrued: boolean }> } | null>(null)
   const [history, setHistory] = useState<Array<{ id: string; periodYm: string; status: string; trigger: string; createdCount: number; skippedCount: number; createdAt: string; error?: string | null }>>([])
-  const [review, setReview] = useState<{ id: string; action: 'APPROVE' | 'REJECT'; type: string; requestedAmount: number; approvedAmount: string; transactionId: string } | null>(null)
+  const [review, setReview] = useState<{ id: string; action: 'APPROVE' | 'REJECT'; type: string; requestedAmount: number; approvedAmount: string; transactionId: string; paidVia: string } | null>(null)
   const [reviewBusy, setReviewBusy] = useState(false)
   const [ledgerTypeFilter, setLedgerTypeFilter] = useState('ALL')
   const [employeeFilter, setEmployeeFilter] = useState('')
@@ -176,7 +176,7 @@ export default function PayrollPage() {
       safeFetchJsonWithToast<Record<string, unknown>>(`/api/payroll/wallet/accruals/history?business_id=${business.id}`, { cache: 'no-store', toastOnError: false }),
     ])
     if (settingRes.ok) {
-      const s = unwrapApiData<{ setting: { enabled: boolean; dayOfMonth: number; timezone: string } }>(settingRes.data as Record<string, unknown>)
+      const s = unwrapApiData<{ setting: { enabled: boolean; dayOfMonth: number; timezone: string; heldBusinessIds?: string[] } }>(settingRes.data as Record<string, unknown>)
       setAutomation(s.setting)
     }
     if (previewRes.ok) setPreview(unwrapApiData(previewRes.data as Record<string, unknown>) as NonNullable<typeof preview>)
@@ -370,7 +370,11 @@ export default function PayrollPage() {
       return
     }
     const transactionId = review.transactionId.trim()
-    if (review.action === 'APPROVE' && review.type === 'WITHDRAWAL' && !transactionId) {
+    if (review.action === 'APPROVE' && review.type === 'WITHDRAWAL' && !review.paidVia) {
+      toast.error('কীভাবে টাকা দিলেন — ক্যাশ/বিকাশ/নগদ/ব্যাংক বাছাই করুন')
+      return
+    }
+    if (review.action === 'APPROVE' && review.type === 'WITHDRAWAL' && review.paidVia !== 'CASH' && !transactionId) {
       toast.error('Transaction ID দিন (staff-কে SMS-এ পাঠানো হবে)')
       return
     }
@@ -379,7 +383,7 @@ export default function PayrollPage() {
       const result = await safeFetchJsonWithToast(`/api/payroll/wallet/requests/${review.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: review.action, approvedAmount, note: '', transactionId }),
+        body: JSON.stringify({ action: review.action, approvedAmount, note: '', transactionId, paid_via: review.paidVia || undefined }),
       })
       if (!result.ok) return
       toast.success(review.action === 'APPROVE' ? 'Approved · wallet ledger updated' : 'Rejected')
@@ -411,6 +415,19 @@ export default function PayrollPage() {
     toast.success('Monthly salary accrual checked')
     void loadWallets(true)
     void loadAutomation()
+  }
+
+  async function toggleBusinessHold(businessId: string) {
+    const current = automation?.heldBusinessIds ?? []
+    const next = current.includes(businessId) ? current.filter(b => b !== businessId) : [...current, businessId]
+    const result = await safeFetchJsonWithToast<{ setting: NonNullable<typeof automation> }>('/api/payroll/wallet/automation', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ heldBusinessIds: next }),
+    })
+    if (!result.ok) return
+    setAutomation(result.data.setting)
+    toast.success(next.includes(businessId) ? 'বিজনেস হোল্ডে — অটো/ম্যানুয়াল কোনো বেতন-রান চলবে না' : 'হোল্ড তোলা হয়েছে — বেতন-রান আবার চলবে')
   }
 
   async function toggleAutomation(enabled: boolean) {
@@ -950,8 +967,8 @@ export default function PayrollPage() {
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
                         <span className="font-mono text-sm font-bold text-gold">৳ {Number(req.requestedAmount).toLocaleString('en-BD')}</span>
-                        <Button size="xs" variant="secondary" type="button" onClick={() => setReview({ id: req.id, action: 'REJECT', type: req.type, requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount), transactionId: '' })}>প্রত্যাখ্যান</Button>
-                        <Button size="xs" variant="gold" type="button" onClick={() => setReview({ id: req.id, action: 'APPROVE', type: req.type, requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount), transactionId: '' })}>অনুমোদন</Button>
+                        <Button size="xs" variant="secondary" type="button" onClick={() => setReview({ id: req.id, action: 'REJECT', type: req.type, requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount), transactionId: '', paidVia: '' })}>প্রত্যাখ্যান</Button>
+                        <Button size="xs" variant="gold" type="button" onClick={() => setReview({ id: req.id, action: 'APPROVE', type: req.type, requestedAmount: Number(req.requestedAmount), approvedAmount: String(req.requestedAmount), transactionId: '', paidVia: '' })}>অনুমোদন</Button>
                       </div>
                     </div>
                   ))}
@@ -1039,6 +1056,25 @@ export default function PayrollPage() {
                       {automation?.enabled ? 'বন্ধ করুন' : 'চালু করুন'}
                     </Button>
                     <Button size="xs" variant="gold" onClick={() => void runAccrual()}>এখনই চালান</Button>
+                  </div>
+                </div>
+                <div className="mt-4 border-t border-white/[0.06] pt-3">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-muted">বিজনেস-ধরে হোল্ড</p>
+                  <p className="mt-1 text-[10px] text-muted">হোল্ডে থাকা বিজনেসে অটো বা ম্যানুয়াল — কোনো বেতন-রানই চলবে না।</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {([['ALMA_LIFESTYLE', 'Alma Lifestyle'], ['ALMA_TRADING', 'Alma Trading'], ['CREATIVE_DIGITAL_IT', 'CDIT']] as const).map(([id, label]) => {
+                      const heldNow = (automation?.heldBusinessIds ?? []).includes(id)
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => void toggleBusinessHold(id)}
+                          className={`rounded-full border px-3.5 py-1.5 text-[11px] font-bold transition ${heldNow ? 'border-red-400/60 bg-red-400/15 text-red-400' : 'border-white/[0.1] bg-card/85 text-muted hover:border-gold/40'}`}
+                        >
+                          {label}{heldNow ? ' · হোল্ডে' : ''}
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
               </Card>
@@ -1301,7 +1337,25 @@ export default function PayrollPage() {
                   />
                 </label>
               )}
-              {review.action === 'APPROVE' && review.type === 'WITHDRAWAL' && (
+              {review.action === 'APPROVE' && (
+                <div className="mt-3">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-muted">কীভাবে টাকা দিলেন</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {([['CASH', 'ক্যাশ'], ['BKASH', 'বিকাশ'], ['NAGAD', 'নগদ'], ['BANK', 'ব্যাংক']] as const).map(([val, label]) => (
+                      <button
+                        key={val}
+                        type="button"
+                        onClick={() => setReview(r => r ? { ...r, paidVia: val } : r)}
+                        className={`rounded-full border px-4 py-1.5 text-xs font-bold transition ${review.paidVia === val ? 'border-gold bg-gold text-white' : 'border-white/[0.1] bg-card/85 text-muted hover:border-gold/40'}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="mt-1 block text-[10px] text-muted">লেনদেনের খাতায় লেখা থাকবে — সবাই দেখবে কীভাবে পেমেন্ট হয়েছে।</span>
+                </div>
+              )}
+              {review.action === 'APPROVE' && review.type === 'WITHDRAWAL' && review.paidVia !== 'CASH' && (
                 <label className="mt-3 block text-[11px] font-bold uppercase tracking-wider text-muted">
                   ট্রানজেকশন আইডি
                   <input

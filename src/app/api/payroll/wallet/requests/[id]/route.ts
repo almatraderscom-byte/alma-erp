@@ -25,8 +25,20 @@ export async function PATCH(
     approvedAmount?: number
     note?: string
     transactionId?: string
+    paid_via?: string
   }
   const transactionId = body.transactionId?.trim().slice(0, 120) || null
+  // Disbursement channel — owner rule 2026-07-11: the approval records HOW the
+  // money was handed over, and the ledger note says it in Bangla.
+  const PAID_VIA_BN: Record<string, string> = {
+    CASH: 'ক্যাশ (নগদ হাতে)',
+    BKASH: 'বিকাশ',
+    NAGAD: 'নগদ (Nagad)',
+    BANK: 'ব্যাংক ট্রান্সফার',
+  }
+  const paidVia = body.paid_via && PAID_VIA_BN[String(body.paid_via).toUpperCase()]
+    ? String(body.paid_via).toUpperCase()
+    : null
   const ctx = await getWalletContext(req)
   if ('error' in ctx) return ctx.error
   if (!ctx.isAdmin) return forbidden('Only HR/Admin can review wallet requests.')
@@ -143,7 +155,10 @@ export async function PATCH(
         date: new Date(),
         type: entryTypeForRequest(request.type),
         amount: moneyDecimal(approvedAmount),
-        note: body.note?.slice(0, 500) || request.reason,
+        note: [
+          paidVia ? `${PAID_VIA_BN[paidVia]}-এ প্রদান` : null,
+          body.note?.slice(0, 400) || request.reason,
+        ].filter(Boolean).join(' · '),
         createdById: request.userId,
         approvedById: ctx.userId,
         source: 'wallet_request',
@@ -161,6 +176,7 @@ export async function PATCH(
         reviewedAt: new Date(),
         ledgerEntryId: entry.id,
         transactionId: request.type === 'WITHDRAWAL' ? transactionId : null,
+        paidVia,
       },
     })
     const approval = await resolveApprovalRequest({

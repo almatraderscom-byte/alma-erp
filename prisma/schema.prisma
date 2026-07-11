@@ -378,6 +378,8 @@ model WalletRequest {
   approvedAmount  Decimal?            @db.Decimal(12, 2)
   reason          String              @db.Text
   paymentMethodId String?
+  /// How the money was actually handed over at approval (CASH/BKASH/NAGAD/BANK).
+  paidVia         String?
   reviewNote      String?             @db.Text
   reviewedById    String?
   reviewedAt      DateTime?
@@ -719,6 +721,8 @@ model PayrollAutomationSetting {
   id                    String   @id @default("global")
   enabled               Boolean  @default(true)
   dayOfMonth            Int      @default(10)
+  /// Businesses temporarily excluded from payroll runs (owner: Trading is off).
+  heldBusinessIds       String[] @default([])
   timezone              String   @default("Asia/Dhaka")
   retryAfterMinutes     Int      @default(60)
   notifyAdminsOnFailure Boolean  @default(true)
