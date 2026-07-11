@@ -212,7 +212,10 @@ export default function WalletStatementPage() {
 
   useEffect(() => {
     if (loadingMe) return
-    if (systemOwner || (isAdmin && !empId)) {
+    // Anyone with a linked employee ID may see their own statement — the owner
+    // and admins are employees here too. Only unlinked admin/owner accounts
+    // bounce to the admin payroll page.
+    if ((systemOwner || isAdmin) && !empId) {
       router.replace('/payroll')
     }
   }, [loadingMe, systemOwner, isAdmin, empId, router])
@@ -278,7 +281,7 @@ export default function WalletStatementPage() {
     reloadActive()
   }
 
-  if (loadingMe || systemOwner || (isAdmin && !empId)) {
+  if (loadingMe || ((systemOwner || isAdmin) && !empId)) {
     return (
       <FinancePageChrome title="সম্পূর্ণ হিসাব" subtitle="আপনার ওয়ালেটের সব লেনদেন ও জরিমানার আপিল অবস্থা" hideDateFilter>
         <Skeleton className="h-52 w-full rounded-2xl" />
