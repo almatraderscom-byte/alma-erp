@@ -511,7 +511,10 @@ export default function EmployeePortalPage() {
         )}
 
         {!systemOwner && <Card className="p-5 md:col-span-2">
-          <p className="text-sm font-bold text-cream mb-3">Wallet transaction history</p>
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <p className="text-sm font-bold text-cream">Wallet transaction history</p>
+            {empId && <Link href="/portal/wallet" className="text-[11px] font-bold text-gold-lt hover:text-gold">সম্পূর্ণ হিসাব →</Link>}
+          </div>
           {!empId ? (
             <p className="text-[11px] text-muted">Link your HR employee ID (Users settings) to activate the payroll wallet.</p>
           ) : walletLoading ? (
