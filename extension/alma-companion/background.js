@@ -833,7 +833,9 @@ async function waitForTabLoad(tabId, timeoutMs) {
     try {
       const t = await chrome.tabs.get(tabId)
       if (t && t.status === 'complete') {
-        await new Promise((r) => setTimeout(r, 500)) // small settle for late scripts
+        // Heavy SPAs (Facebook etc.) fire 'complete' on the skeleton — give client
+        // rendering a real beat so reads/screenshots see actual content.
+        await new Promise((r) => setTimeout(r, 1500))
         return
       }
     } catch {
@@ -933,7 +935,7 @@ async function executeCommand(cmd) {
     return { ok: true, data: { back: true } }
   }
   if (action === 'screenshot') {
-    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 55 })
+    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 80 })
     return { ok: true, screenshot: dataUrl }
   }
   if (action === 'read_text') {
