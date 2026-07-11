@@ -42,6 +42,9 @@ export type WalletSummary = {
   companyLiability: number
   availableWithdrawable: number
   thisMonthSalaryAdded: number
+  /** Salary credited for the CURRENT cycle (prior calendar month's periodYm). */
+  currentCycleSalaryAdded: number
+  cyclePeriodYm: string
   entryCount: number
 }
 
@@ -137,6 +140,9 @@ export function computeWalletSummary(
   now = new Date(),
 ): WalletSummary {
   const currentPeriod = periodFromDate(now)
+  // Current salary CYCLE: on the 10th we credit the PREVIOUS calendar month,
+  // so "paid this cycle" means a SALARY_ACCRUAL for last month's periodYm.
+  const cyclePeriod = payrollAccrualPeriodYm(now)
   let totalAccrued = 0
   let totalBonuses = 0
   let totalCommissions = 0
@@ -152,12 +158,14 @@ export function computeWalletSummary(
   let totalAdvanceDisbursed = 0
   let totalAdvanceRecovered = 0
   let thisMonthSalaryAdded = 0
+  let currentCycleSalaryAdded = 0
 
   for (const e of entries) {
     const amount = Number(e.amount || 0)
     if (e.type === 'SALARY_ACCRUAL') {
       totalAccrued += amount
       if (e.periodYm === currentPeriod) thisMonthSalaryAdded += amount
+      if (e.periodYm === cyclePeriod) currentCycleSalaryAdded += amount
     } else if (e.type === 'COMMISSION') totalCommissions += amount
     else if (e.type === 'EID_BONUS') totalEidBonuses += amount
     else if (e.type === 'PERFORMANCE_BONUS') totalPerformanceBonuses += amount
@@ -207,6 +215,8 @@ export function computeWalletSummary(
     companyLiability: Math.max(0, currentBalance),
     availableWithdrawable: Math.max(0, currentBalance),
     thisMonthSalaryAdded,
+    currentCycleSalaryAdded,
+    cyclePeriodYm: cyclePeriod,
     entryCount: entries.length,
   }
 }

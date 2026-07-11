@@ -492,9 +492,9 @@ export default function PayrollPage() {
   const calendarYm = useMemo(() => currentCalendarYm(), [])
 
   const totalEmployees = compWallets.length
-  const paidEmployees = compWallets.filter(w => (w.summary?.thisMonthSalaryAdded ?? 0) > 0).length
+  const paidEmployees = compWallets.filter(w => (w.summary?.currentCycleSalaryAdded ?? 0) > 0).length
   const unpaidEmployees = totalEmployees - paidEmployees
-  const givenThisCycle = compWallets.reduce((sum, w) => sum + (w.summary?.thisMonthSalaryAdded ?? 0), 0)
+  const givenThisCycle = compWallets.reduce((sum, w) => sum + (w.summary?.currentCycleSalaryAdded ?? 0), 0)
   const monthlyBudget = k?.total_monthly_salary ?? 0
   const remainingThisCycle = Math.max(0, roundMoney(monthlyBudget - givenThisCycle))
   const pendingCount = walletData?.pendingRequests.length ?? 0
@@ -645,7 +645,7 @@ export default function PayrollPage() {
               ) : (
                 <div className="divide-y divide-white/[0.05]">
                   {compWallets.map(w => {
-                    const paidAmt = w.summary?.thisMonthSalaryAdded ?? 0
+                    const paidAmt = w.summary?.currentCycleSalaryAdded ?? 0
                     const paid = paidAmt > 0
                     return (
                       <div key={`${w.businessId}:${w.employeeId}`} className="flex items-center gap-3 px-4 py-3">

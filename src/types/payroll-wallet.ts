@@ -24,6 +24,9 @@ export type WalletSummary = {
   companyLiability: number
   availableWithdrawable: number
   thisMonthSalaryAdded: number
+  /** Salary credited for the current cycle (prior calendar month's periodYm). */
+  currentCycleSalaryAdded: number
+  cyclePeriodYm: string
   entryCount: number
 }
 
