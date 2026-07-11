@@ -572,7 +572,7 @@ function StatementRow({ entry, onOpenAppeal }: { entry: WalletStatementEntry; on
         <p className={`font-mono text-sm font-bold tabular-nums ${entry.signedAmount >= 0 ? 'text-green-400' : 'text-red-400'}`}>
           {entry.signedAmount >= 0 ? '+' : '-'}{moneyBn(Math.abs(entry.signedAmount))}
         </p>
-        <p className="mt-0.5 font-mono text-[10px] tabular-nums text-gold-lt">{moneyBn(entry.runningBalance)}</p>
+        <p className="mt-0.5 font-mono text-[10px] tabular-nums text-gold-lt">ব্যালেন্স {moneyBn(entry.runningBalance)}</p>
       </div>
     </div>
   )
