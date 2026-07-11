@@ -47,7 +47,7 @@ const order_lifecycle_scan: AgentTool = {
       lines.push('')
 
       if (planned.length === 0) {
-        lines.push('এখন কোনো অর্ডার-সমস্যা চোখে পড়ছে না, Sir — সব ঠিক আছে।')
+        lines.push('এখন কোনো অর্ডার-সমস্যা চোখে পড়ছে না, Boss — সব ঠিক আছে।')
       } else {
         lines.push(`আমি যা দেখছি (${bn(planned.length)}টি):`)
         for (const p of planned) {

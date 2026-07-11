@@ -223,7 +223,7 @@ export async function runStuckTaskWatchdogTick(): Promise<{ stuck: number; pinge
       pinged++
       try {
         const { sendOwnerText } = await import('@/agent/lib/telegram-owner-notify')
-        await sendOwnerText(`⚠️ Sir, একটা কাজ আটকে গেছে (${ageMin} মিনিট): ${goal}\nআমি checkpoint রেখেছি — chat-এ reply দিলেই ওখান থেকে ধরবো।`)
+        await sendOwnerText(`⚠️ Boss, একটা কাজ আটকে গেছে (${ageMin} মিনিট): ${goal}\nআমি checkpoint রেখেছি — chat-এ reply দিলেই ওখান থেকে ধরবো।`)
       } catch { /* best-effort */ }
     }
   }
@@ -251,7 +251,7 @@ export function buildCheckpointSystemNote(cps: CheckpointView[]): string {
   return (
     '[চেকপয়েন্ট নোট — অসমাপ্ত কাজ] এই কথোপকথনে আগের কাজ মাঝপথে থেমেছিল। ' +
     'নিচের চেকপয়েন্ট থেকে ঠিক সেখান থেকেই চালিয়ে যাও — আগের ইতিহাস আবার পড়া বা কাজ নতুন করে শুরু করার দরকার নেই। ' +
-    'Sir-এর নতুন বার্তা যদি ভিন্ন বিষয়ে হয়, আগে সেটার উত্তর দাও, তারপর জিজ্ঞেস করো থেমে থাকা কাজটা চালাবে কি না।\n' +
+    'Boss-এর নতুন বার্তা যদি ভিন্ন বিষয়ে হয়, আগে সেটার উত্তর দাও, তারপর জিজ্ঞেস করো থেমে থাকা কাজটা চালাবে কি না।\n' +
     blocks.join('\n')
   )
 }

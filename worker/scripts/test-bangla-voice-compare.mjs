@@ -19,7 +19,7 @@ const BASE = 'https://api.elevenlabs.io/v1'
 
 /** Pure Bangla — real staff-dispatch style sentence */
 const TEST_TEXT =
-  'স্যার, আসসালামু আলাইকুম। আমি আপনার ব্যবসার সহকারী। আজ অফিসে তিনটি জরুরি কাজ আছে। সময়মতো শেষ করলে ভালো হবে। ধন্যবাদ।'
+  'বস, আসসালামু আলাইকুম। আমি আপনার ব্যবসার সহকারী। আজ অফিসে তিনটি জরুরি কাজ আছে। সময়মতো শেষ করলে ভালো হবে। ধন্যবাদ।'
 
 /** Bengali-capable voices on this account + current default */
 const CANDIDATES = [

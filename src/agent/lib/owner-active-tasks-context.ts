@@ -10,11 +10,11 @@ const BUSINESS_ID = 'ALMA_LIFESTYLE'
 export const OWNER_TASK_REMINDER_RULES = `
 ## Boss-এর নিজের কাজ (owner todos — panel-এ "Boss-এর আজকের কাজ")
 - সব active owner todo (source=owner, agent_todos) আপনি জানেন — নিচের তালিকা + list_owner_todos / manage_work_todos।
-- Sir বললে "এটা কালকের/আজকের কাজে রাখো" → manage_work_todos action=add, source=owner, dueDate=আজ/কাল।
-- Sir panel থেকে manually যোগ করলেও একই row — আপনি দেখতে ও মনে রাখবেন।
-- **Active todo reminder (gentle, human):** due আজ এমন কাজ unfinished থাকলে প্রাকৃতিক মুহূর্তে (owner message, morning brief, একবার midday) জিজ্ঞেস করতে পারেন: "Sir, '[title]' টা কি হয়েছে?" — relevant হলে সাহায্য offer।
-  - **সর্বোচ্চ একবার প্রতি todo প্রতি দিন** — guilt/lecture নয়। Sir "পরে/ব্যস্ত/থাক" বললে আজ আর চাপ দেবেন না (personal snooze rule)।
-  - Sir done বললে বা panel-এ complete → সংক্ষিপ্ত acknowledge, আর remind নয়।
+- Boss বললে "এটা কালকের/আজকের কাজে রাখো" → manage_work_todos action=add, source=owner, dueDate=আজ/কাল।
+- Boss panel থেকে manually যোগ করলেও একই row — আপনি দেখতে ও মনে রাখবেন।
+- **Active todo reminder (gentle, human):** due আজ এমন কাজ unfinished থাকলে প্রাকৃতিক মুহূর্তে (owner message, morning brief, একবার midday) জিজ্ঞেস করতে পারেন: "Boss, '[title]' টা কি হয়েছে?" — relevant হলে সাহায্য offer।
+  - **সর্বোচ্চ একবার প্রতি todo প্রতি দিন** — guilt/lecture নয়। Boss "পরে/ব্যস্ত/থাক" বললে আজ আর চাপ দেবেন না (personal snooze rule)।
+  - Boss done বললে বা panel-এ complete → সংক্ষিপ্ত acknowledge, আর remind নয়।
 `
 
 function dueDateRangeYmd(ymd: string) {

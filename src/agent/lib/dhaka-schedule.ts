@@ -1,5 +1,5 @@
 /**
- * Sir's Dhaka mosque schedule (+06:00) — reads configurable times from KV.
+ * Boss's Dhaka mosque schedule (+06:00) — reads configurable times from KV.
  */
 import { getSalahTimeConfig } from '@/lib/salah/time-config'
 import { buildDhakaSchedule, type WaqtSchedule } from '@/lib/salah/build-schedule'

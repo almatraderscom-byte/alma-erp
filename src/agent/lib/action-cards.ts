@@ -171,7 +171,7 @@ export function renderActionCardsBangla(cards: ActionCard[]): string {
     lines.push(`   [${c.action.label}]`)
   })
   lines.push('')
-  lines.push('কোন কার্ডে কাজ করব বলুন — "১ নম্বরটা করো" বললেই অ্যাকশন নেব, Sir।')
+  lines.push('কোন কার্ডে কাজ করব বলুন — "১ নম্বরটা করো" বললেই অ্যাকশন নেব, Boss।')
   return lines.join('\n')
 }
 

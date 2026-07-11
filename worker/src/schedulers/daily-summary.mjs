@@ -90,7 +90,7 @@ export async function runDailySummary({ supabase, bot }) {
     `${expenseLine}\n` +
     `${aiCostLine}\n\n` +
     (salahCounts.missed > 0
-      ? `⚠️ আজ ${salahCounts.missed}টি নামাজ মিস হয়েছে — কাযা পড়ুন, Sir।`
+      ? `⚠️ আজ ${salahCounts.missed}টি নামাজ মিস হয়েছে — কাযা পড়ুন, Boss।`
       : `জাযাকাল্লাহ খাইর। ভালো রাত কাটান।`)
 
   await notify({

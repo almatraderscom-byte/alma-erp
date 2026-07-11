@@ -116,12 +116,12 @@ function deterministicFallback(s: OpsStaffSnapshot, briefing?: OwnerBriefingData
   const y = briefing?.staffYesterday
   const yLine = y ? ` গতকাল ${y.done}/${y.total} কাজ শেষ হয়েছিল।` : ''
   if (s.pendingDispatch || s.proposedUnapproved > 0) {
-    return `Sir, আজকের স্টাফ টাস্ক এখনো আপনার approval-এর অপেক্ষায় — dispatch হলে কাজ শুরু হবে।${yLine}`
+    return `Boss, আজকের স্টাফ টাস্ক এখনো আপনার approval-এর অপেক্ষায় — dispatch হলে কাজ শুরু হবে।${yLine}`
   }
   if (s.total === 0) {
-    return `Sir, আজ এখনো কোনো স্টাফ টাস্ক dispatch হয়নি।${yLine} আপনি চাইলে আজকের কাজ ঠিক করে দিই।`
+    return `Boss, আজ এখনো কোনো স্টাফ টাস্ক dispatch হয়নি।${yLine} আপনি চাইলে আজকের কাজ ঠিক করে দিই।`
   }
-  return `Sir, আজ ${s.done}/${s.total} স্টাফ কাজ শেষ${s.lowPerformers > 0 ? `, ${s.lowPerformers} জনের পারফরম্যান্স দুর্বল` : ''}।${yLine}`
+  return `Boss, আজ ${s.done}/${s.total} স্টাফ কাজ শেষ${s.lowPerformers > 0 ? `, ${s.lowPerformers} জনের পারফরম্যান্স দুর্বল` : ''}।${yLine}`
 }
 
 async function recentOfficeMemoryLines(): Promise<string[]> {
@@ -139,11 +139,11 @@ async function recentOfficeMemoryLines(): Promise<string[]> {
 
 function buildSystemPrompt(): string {
   return (
-    'তুমি ALMA Lifestyle-এর একজন অভিজ্ঞ অফিস ম্যানেজার তথা পার্টনার, owner (Sir)-কে রিপোর্ট করছো। ' +
+    'তুমি ALMA Lifestyle-এর একজন অভিজ্ঞ অফিস ম্যানেজার তথা পার্টনার, owner (Boss)-কে রিপোর্ট করছো। ' +
     'তোমার কাজ: আজকের স্টাফ/অফিস অবস্থা একজন মানুষ পার্টনারের মতো সংক্ষেপে বলা — robotic table নয়, ' +
     'প্রতিবার হুবহু একই বাক্য নয়। বাস্তব context (গতকালের কাজ, সাপ্তাহিক প্যাটার্ন) ব্যবহার করে ভিন্নভাবে বলো। ' +
     'যদি অবস্থা গতবারের মতোই থাকে, নতুন কিছু না বানিয়ে সংক্ষেপে অপরিবর্তিত বলে দাও। ' +
-    'নিয়ম: ২–৪ লাইন বিশুদ্ধ বাংলা, Sir সম্বোধন, কোনো অপ্রয়োজনীয় ভূমিকা/markdown table নয়, কোনো সংখ্যা বানাবে না — শুধু দেওয়া ডেটা ব্যবহার করো।'
+    'নিয়ম: ২–৪ লাইন বিশুদ্ধ বাংলা, Boss সম্বোধন, কোনো অপ্রয়োজনীয় ভূমিকা/markdown table নয়, কোনো সংখ্যা বানাবে না — শুধু দেওয়া ডেটা ব্যবহার করো।'
   )
 }
 

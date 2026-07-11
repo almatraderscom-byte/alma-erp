@@ -198,7 +198,7 @@ const send_urgent_alert: AgentTool = {
   description:
     'Sends an immediate urgent alert via notify (ntfy + Telegram + optional voice/call). ' +
     'tier 2=critical ntfy (5/hour limit). tier 3=phone call — requires confirm card (5/24h limit, salah excluded). ' +
-    'Use when Sir says urgent/জরুরি or explicitly asks for a call.',
+    'Use when Boss says urgent/জরুরি or explicitly asks for a call.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -257,7 +257,7 @@ const get_outbound_call_status: AgentTool = {
   description:
     'Returns status of recent outbound phone calls (pending, dialed, answered, no-answer). ' +
     'Searches across ALL conversations — not limited to the current one. ' +
-    'Use when Sir asks whether a call was placed, answered, or what happened — do NOT create a new outbound_phone_call.',
+    'Use when Boss asks whether a call was placed, answered, or what happened — do NOT create a new outbound_phone_call.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -303,9 +303,9 @@ const outbound_phone_call: AgentTool = {
   description:
     'ONE-WAY voice call: dials a number, speaks a fixed Bangla TTS message, then hangs up. ' +
     'The agent does NOT listen and gets NO reply back — it cannot answer questions or report ' +
-    'what the other person said. Use ONLY when Sir just wants a message DELIVERED/announced and ' +
+    'what the other person said. Use ONLY when Boss just wants a message DELIVERED/announced and ' +
     'expects nothing back (e.g. "017… কে কল করে জানিয়ে দাও/বলে দাও …"). ' +
-    'If Sir wants the agent to ASK something, LISTEN, hold a conversation, or report back what ' +
+    'If Boss wants the agent to ASK something, LISTEN, hold a conversation, or report back what ' +
     'the person said, DO NOT use this — use place_agent_call (two-way) instead. ' +
     'Always requires Approve confirm card before dialing. Owner-only; Bangladesh +880 numbers.',
   input_schema: {
@@ -316,7 +316,7 @@ const outbound_phone_call: AgentTool = {
       ttsProvider: {
         type: 'string',
         enum: ['google', 'elevenlabs'],
-        description: 'google = default. elevenlabs when Sir asks for ElevenLabs voice on the call.',
+        description: 'google = default. elevenlabs when Boss asks for ElevenLabs voice on the call.',
       },
       voiceGender: {
         type: 'string',
@@ -361,7 +361,7 @@ const outbound_phone_call: AgentTool = {
           // preview (the preview only fires when a card surfaces this turn). Instead,
           // update the draft in place with the latest wording/voice and re-surface it:
           // returning pendingActionId makes core.ts emit a fresh confirm_card, which the
-          // delivery layer turns into a NEW voice preview — so Sir always hears the
+          // delivery layer turns into a NEW voice preview — so Boss always hears the
           // CURRENT message. No reject-then-recreate dance, no "duplicate" dead-ends.
           if (duplicate.status === 'pending') {
             const updated = await db.agentPendingAction.update({
@@ -383,7 +383,7 @@ const outbound_phone_call: AgentTool = {
                 phone,
                 updatedExisting: true,
                 message:
-                  'Existing draft updated with the new wording — confirm card refreshed and the voice preview re-sent. Sir must Approve before dialing.',
+                  'Existing draft updated with the new wording — confirm card refreshed and the voice preview re-sent. Boss must Approve before dialing.',
               },
             }
           }
@@ -426,7 +426,7 @@ const outbound_phone_call: AgentTool = {
         data: {
           pendingActionId: action.id,
           phone,
-          message: 'Outbound call queued — Sir must Approve before dialing.',
+          message: 'Outbound call queued — Boss must Approve before dialing.',
         },
       }
     } catch (err) {
@@ -438,9 +438,9 @@ const outbound_phone_call: AgentTool = {
 const preview_call_voice: AgentTool = {
   name: 'preview_call_voice',
   description:
-    'Re-sends the VOICE PREVIEW (spoken audio) of a pending outbound-call draft so Sir can HEAR the exact words before approving. ' +
-    'Use whenever Sir asks to hear/replay the call message ("voice শোনাও / draft শুনি / আগে শোনাও / let me hear it"). ' +
-    'You DO have this capability — never tell Sir you cannot play or preview the call audio. ' +
+    'Re-sends the VOICE PREVIEW (spoken audio) of a pending outbound-call draft so Boss can HEAR the exact words before approving. ' +
+    'Use whenever Boss asks to hear/replay the call message ("voice শোনাও / draft শুনি / আগে শোনাও / let me hear it"). ' +
+    'You DO have this capability — never tell Boss you cannot play or preview the call audio. ' +
     'Defaults to the most recent pending draft; pass phone or pendingActionId to target a specific one.',
   input_schema: {
     type: 'object' as const,
@@ -486,14 +486,14 @@ const preview_call_voice: AgentTool = {
       }
 
       // Returning pendingActionId makes core.ts emit a confirm_card for this still-pending
-      // draft; the delivery layer turns that into a fresh voice preview Sir can hear.
+      // draft; the delivery layer turns that into a fresh voice preview Boss can hear.
       return {
         success: true,
         data: {
           pendingActionId: row.id,
           phone: String(row.payload?.phone ?? ''),
           previewResent: true,
-          message: 'Voice preview re-sent — Sir can hear the draft now; ask him to Approve when satisfied.',
+          message: 'Voice preview re-sent — Boss can hear the draft now; ask him to Approve when satisfied.',
         },
       }
     } catch (err) {

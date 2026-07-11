@@ -979,7 +979,7 @@ function ActivityTimeline({
 
 /**
  * Model-upgrade approval card. The router wants a stronger (paid) model for this
- * question; the owner approves or keeps the cheap one. Bangla, "Sir" tone.
+ * question; the owner approves or keeps the cheap one. Bangla, "Boss" tone.
  */
 function AgentModelSwitchCard({
   card,
@@ -997,7 +997,7 @@ function AgentModelSwitchCard({
         <span aria-hidden className="text-base leading-none">🧠</span>
         <div className="text-[13px] leading-snug text-muted-hi">
           এই প্রশ্নটার জন্য শক্তিশালী মডেল <b>{card.toLabel}</b> দরকার (এখন চলছে{' '}
-          <b>{card.fromLabel}</b>)। এটা একটু বেশি খরচ — চালাবো, স্যার?
+          <b>{card.fromLabel}</b>)। এটা একটু বেশি খরচ — চালাবো, বস?
         </div>
       </div>
 

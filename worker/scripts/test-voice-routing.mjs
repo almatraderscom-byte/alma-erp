@@ -12,7 +12,7 @@ dotenv.config({ path: join(__dir, '../.env'), override: true })
 installTelegramProxy()
 
 const STAFF_TEXT = 'আসসালামু আলাইকুম ইয়াফি ভাই। আজ তিনটি কাজ দেওয়া হয়েছে। বিস্তারিত টেলিগ্রামে দেখুন।'
-const FEMALE_TEXT = 'স্যার, আসসালামু আলাইকুম। এটি রিভার ফিমেল ভয়েসের পরীক্ষা।'
+const FEMALE_TEXT = 'বস, আসসালামু আলাইকুম। এটি রিভার ফিমেল ভয়েসের পরীক্ষা।'
 
 async function main() {
   const token = process.env.ASSISTANT_BOT_TOKEN

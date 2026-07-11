@@ -16,7 +16,7 @@ const request_agent_action: AgentTool = {
     "Propose an ACTION for the owner's internal ALMA agent to perform. You (the read-only " +
     "co-worker) cannot edit or act on the business directly — this is your ONLY way to make " +
     "something happen. It does NOT execute anything: it files a proposal that the internal " +
-    "agent surfaces to the owner (Sir) for approval, and only AFTER the owner approves does " +
+    "agent surfaces to the owner (Boss) for approval, and only AFTER the owner approves does " +
     "the internal agent carry it out with its real business tools. Use this when the owner " +
     "asks you to DO something (place/edit an order, change inventory, run a marketing post, " +
     "assign staff, record finance, generate content) rather than just give information. " +
@@ -64,7 +64,7 @@ const request_agent_action: AgentTool = {
           id,
           status: 'pending_owner_approval',
           message:
-            'Proposal filed for the owner. The internal agent will surface it to Sir for ' +
+            'Proposal filed for the owner. The internal agent will surface it to Boss for ' +
             'approval and execute it only after he says yes — nothing has happened yet.',
         },
       }

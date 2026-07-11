@@ -66,7 +66,7 @@ async function pollStaffMessageEscalations(supabase) {
     if (shouldCall) {
       const staffName = action.payload?.staffName ?? 'Unknown'
       const type = action.payload?.type ?? 'message'
-      const callMessage = `Sir, ${staffName} er jonno ${type} message approve lagbe. Please check your Telegram.`
+      const callMessage = `Boss, ${staffName} er jonno ${type} message approve lagbe. Please check your Telegram.`
 
       try {
         await placeTier3Call({
@@ -125,7 +125,7 @@ async function pollDutyApprovalEscalations(supabase, bot) {
 
     if (ageMin >= 10 && level < 1) {
       const callMessage =
-        `Sir, office duty "${label}" apnar approval chara atke ache. Telegram ba agent chat theke approve korun.`
+        `Boss, office duty "${label}" apnar approval chara atke ache. Telegram ba agent chat theke approve korun.`
       try {
         await placeTier3Call({
           title: 'Duty Approval Needed',
@@ -149,7 +149,7 @@ async function pollDutyApprovalEscalations(supabase, bot) {
 
     if (ageMin >= 30 && level < 2) {
       const callMessage =
-        `Sir, abar bolchi — "${label}" ekhono approve hoyni. Doyakore ekhoni approve korun.`
+        `Boss, abar bolchi — "${label}" ekhono approve hoyni. Doyakore ekhoni approve korun.`
       try {
         await placeTier3Call({
           title: 'Duty Approval — 2nd Reminder',
@@ -172,7 +172,7 @@ async function pollDutyApprovalEscalations(supabase, bot) {
     }
 
     if (ageMin >= 30 && level >= 2 && !action.payload?.fallbackNotified) {
-      const msg = `⏳ Sir, "${label}" এখনো approval-এর অপেক্ষায় — chat/Telegram থেকে approve করলে শেষ করবো।`
+      const msg = `⏳ Boss, "${label}" এখনো approval-এর অপেক্ষায় — chat/Telegram থেকে approve করলে শেষ করবো।`
 
       try {
         const res = await fetch(`${getAppUrl()}/api/assistant/internal/urgent-alert`, {

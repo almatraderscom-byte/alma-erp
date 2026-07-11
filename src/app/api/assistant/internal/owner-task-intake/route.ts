@@ -1,6 +1,6 @@
 /**
  * POST /api/assistant/internal/owner-task-intake
- * Evening Sir-task intake (worker scheduler @ 20:30 Dhaka).
+ * Evening Boss-task intake (worker scheduler @ 20:30 Dhaka).
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'

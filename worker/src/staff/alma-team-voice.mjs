@@ -2,7 +2,7 @@
 import { enforceIslamicGreeting } from './greeting-sanitize.mjs'
 
 const OWNER_PROXY = [
-  [/(?:মালিক|Maruf|Boss|Sir|দোলার|Doler|owner).{0,30}(?:বলেছেন|বলেছে|নির্দেশ|আদেশ|চান|চায়|জন্য|jonno)/gi, 'ALMA টিম'],
+  [/(?:মালিক|Maruf|Boss|Boss|দোলার|Doler|owner).{0,30}(?:বলেছেন|বলেছে|নির্দেশ|আদেশ|চান|চায়|জন্য|jonno)/gi, 'ALMA টিম'],
   [/(?:তোমার|আপনার)\s+দোষ/gi, 'আমাদের টিম স্ট্যান্ডার্ড'],
   [/দোলার\s+জন্য\s+দায়িত্ব/gi, 'ALMA টিমের দায়িত্ব'],
   [/মালিকের\s+পক্ষ\s+থেকে/gi, 'ALMA টিমের পক্ষ থেকে'],

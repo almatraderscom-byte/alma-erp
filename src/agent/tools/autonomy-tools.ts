@@ -9,7 +9,7 @@
  *                        floor, a single category's mode). Owner-only knobs; writes KV.
  *   • undo_action      — reverse a recorded autonomous action (by id or "last").
  *
- * All Bangla owner-facing, "Sir/Boss" tone. Read paths fail safe; the setter only
+ * All Bangla owner-facing, "Boss/Boss" tone. Read paths fail safe; the setter only
  * touches KV (no migration, owner-tunable without redeploy).
  */
 import type { AgentTool } from './registry'
@@ -218,7 +218,7 @@ const set_autonomy_policy: AgentTool = {
       }
 
       const policy = await getAutonomyPolicy()
-      const message = `✅ ঠিক আছে, Sir — ${changes.join('; ')}।`
+      const message = `✅ ঠিক আছে, Boss — ${changes.join('; ')}।`
 
       return {
         success: true,
@@ -260,11 +260,11 @@ const undo_action: AgentTool = {
       if (!res.ok) {
         const reason =
           res.detail === 'not_found'
-            ? 'এই কাজটা খুঁজে পেলাম না, Sir।'
+            ? 'এই কাজটা খুঁজে পেলাম না, Boss।'
             : res.detail === 'already_undone'
-              ? 'এটা তো আগেই ফেরানো হয়ে গেছে, Sir।'
+              ? 'এটা তো আগেই ফেরানো হয়ে গেছে, Boss।'
               : res.detail === 'no_undo_available'
-                ? 'এই কাজটা ফেরানো যায় না, Sir — এর কোনো undo নেই।'
+                ? 'এই কাজটা ফেরানো যায় না, Boss — এর কোনো undo নেই।'
                 : `ফেরাতে পারলাম না: ${res.detail}`
         return { success: false, error: res.detail, data: { ok: false, message: reason, entry: res.entry } }
       }
@@ -275,7 +275,7 @@ const undo_action: AgentTool = {
         data: {
           ok: true,
           entry: res.entry,
-          message: `✅ ফিরিয়ে দিলাম, Sir — "${label}"।`,
+          message: `✅ ফিরিয়ে দিলাম, Boss — "${label}"।`,
         },
       }
     } catch (err) {

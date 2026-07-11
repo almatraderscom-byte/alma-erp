@@ -52,7 +52,7 @@ async function summarizeConversation(messages: Array<{ role: string; content: un
       'Summarize this owner↔agent chat for long-term memory. Extract ONLY durable items:\n' +
       '- ভালো লাগা / খারাপ লাগা: ANYTHING the owner liked, disliked, praised, or complained ' +
       'about (agent behavior, designs, products, people, routines) — capture these FIRST, ' +
-      'verbatim-ish ("স্যারের ভালো লেগেছে: …" / "স্যারের পছন্দ না: …")\n' +
+      'verbatim-ish ("বসের ভালো লেগেছে: …" / "বসের পছন্দ না: …")\n' +
       '- Standing instructions / preferences ("এভাবে কর", "daily এটা করবি", "আর করবা না")\n' +
       '- Owner\'s key decisions and corrections (including corrections of the agent\'s mistakes ' +
       '— note the RIGHT behavior)\n' +

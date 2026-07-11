@@ -64,8 +64,8 @@ const resolve_open_task: AgentTool = {
   name: 'resolve_open_task',
   description:
     'Mark a previously tracked open task as finished (done) or dropped (cancelled). ' +
-    'Call this the moment you complete the tracked work, OR when Sir says to drop / defer it ("বাদ দাও", "পরে করব") — so the "বাকি কাজ" chip clears immediately. ' +
-    'You usually do NOT need an id: omit openTaskId and it resolves the task Sir is currently working on (the one just continued), or the only open task. ' +
+    'Call this the moment you complete the tracked work, OR when Boss says to drop / defer it ("বাদ দাও", "পরে করব") — so the "বাকি কাজ" chip clears immediately. ' +
+    'You usually do NOT need an id: omit openTaskId and it resolves the task Boss is currently working on (the one just continued), or the only open task. ' +
     'If several are open and it cannot tell which, it returns the list so you can call again with the right openTaskId.',
   input_schema: {
     type: 'object' as const,
@@ -94,7 +94,7 @@ const resolve_open_task: AgentTool = {
         else if (followups.length === 1) id = followups[0].id
         else {
           // Genuinely ambiguous — hand the list back so the head retries with an id
-          // (never dead-end and tell Sir to dismiss manually).
+          // (never dead-end and tell Boss to dismiss manually).
           return {
             success: false,
             error: 'multiple open tasks — call again with openTaskId',

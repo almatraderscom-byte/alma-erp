@@ -13,7 +13,7 @@ dotenv.config({ path: join(__dir, '../.env'), override: true })
 installTelegramProxy()
 
 const TEXT =
-  'স্যার, আসসালামু আলাইকুম। আমি আপনার ব্যবসার সহকারী। আজ অফিসে তিনটি জরুরি কাজ আছে। সময়মতো শেষ করলে ভালো হবে। ধন্যবাদ।'
+  'বস, আসসালামু আলাইকুম। আমি আপনার ব্যবসার সহকারী। আজ অফিসে তিনটি জরুরি কাজ আছে। সময়মতো শেষ করলে ভালো হবে। ধন্যবাদ।'
 
 /** Male premade voices — good candidates for Bangla on eleven_v3 */
 const VOICES = [

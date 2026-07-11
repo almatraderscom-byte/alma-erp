@@ -10,7 +10,7 @@ describe('detectOutboundCallIntent', () => {
   // The owner's real messages from the bug reports (Banglish + Bangla).
   it('detects the call instruction WITHOUT a number yet (two-message flow)', () => {
     const text =
-      'আচ্ছা আমি তোমাকে একটা নাম্বার দিবো, বাংলাদেশের নাম্বার। তুমি সেই নাম্বারে কল দিবে এবং কল দিয়ে বলবে, আমি মারুফ স্যারের এজেন্ট। ইলেভেন লাবস ভয়েস ইউজ করবে। আমি তোমাকে নাম্বারটা এখন দিচ্ছি।'
+      'আচ্ছা আমি তোমাকে একটা নাম্বার দিবো, বাংলাদেশের নাম্বার। তুমি সেই নাম্বারে কল দিবে এবং কল দিয়ে বলবে, আমি মারুফ বসের এজেন্ট। ইলেভেন লাবস ভয়েস ইউজ করবে। আমি তোমাকে নাম্বারটা এখন দিচ্ছি।'
     const r = detectOutboundCallIntent(text)
     expect(r.isCall).toBe(true)
     expect(r.hasNumber).toBe(false)

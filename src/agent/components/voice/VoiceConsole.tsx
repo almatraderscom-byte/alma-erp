@@ -70,7 +70,7 @@ const bnTime = () =>
 
 /** Short spoken acknowledgements — the agent responds the moment it has HEARD,
  *  like a person would, instead of dead air until the full answer. */
-const SPOKEN_ACKS = ['জি স্যার।', 'আচ্ছা স্যার, দেখছি।', 'ঠিক আছে স্যার।', 'জি, এক্ষুনি দেখছি।']
+const SPOKEN_ACKS = ['জি বস।', 'আচ্ছা বস, দেখছি।', 'ঠিক আছে বস।', 'জি, এক্ষুনি দেখছি।']
 
 export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceConsoleProps) {
   const [state, setState] = useState<VoiceState>('idle')
@@ -217,7 +217,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
       if (!openRef.current || stateRef.current !== 'thinking') return
       if (Date.now() - lastAudioRef.current >= 14000) {
         lastAudioRef.current = Date.now()
-        player.say('এখনো কাজ চলছে স্যার, একটু সময় দিন…')
+        player.say('এখনো কাজ চলছে বস, একটু সময় দিন…')
       }
     }, 4000)
 
@@ -237,7 +237,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
           if (Date.now() - lastNarration >= 6000) {
             lastNarration = Date.now()
             lastAudioRef.current = Date.now()
-            player.say(`${toolDisplay(evt.name).label}, স্যার…`)
+            player.say(`${toolDisplay(evt.name).label}, বস…`)
           }
         } else if (evt.type === 'ask_card') {
           // The head is ASKING — speak the question and show tappable options.
@@ -245,7 +245,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
           lastAudioRef.current = Date.now()
           player.say(evt.question)
           if (evt.options.length > 0) {
-            player.say(`${evt.options.join(', নাকি ')} — কোনটা, স্যার?`)
+            player.say(`${evt.options.join(', নাকি ')} — কোনটা, বস?`)
           }
           setCards((prev) => [...prev, {
             id: `ask-${evt.askCardId || prev.length}`, kind: 'ask', icon: '❓',
@@ -255,7 +255,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
         } else if (evt.type === 'model_switch_required') {
           sawInteraction = true
           lastAudioRef.current = Date.now()
-          player.say('এটার জন্য আরও শক্তিশালী মডেল দরকার, স্যার — অনুমতি দিলে এগিয়ে যাই।')
+          player.say('এটার জন্য আরও শক্তিশালী মডেল দরকার, বস — অনুমতি দিলে এগিয়ে যাই।')
           setCards((prev) => [...prev, {
             id: `modelswitch-${prev.length}`, kind: 'model_switch', icon: '🧠',
             title: 'শক্তিশালী মডেলের অনুমতি দরকার', done: false, at: bnTime(),
@@ -264,11 +264,11 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
           if (!verificationSaid) {
             verificationSaid = true
             lastAudioRef.current = Date.now()
-            player.say('একটু যাচাই করে ঠিক করে নিচ্ছি, স্যার…')
+            player.say('একটু যাচাই করে ঠিক করে নিচ্ছি, বস…')
           }
         } else if (evt.type === 'error') {
           lastAudioRef.current = Date.now()
-          player.say('দুঃখিত স্যার, একটা সমস্যা হয়েছে — একটু পরে আরেকবার বলুন।')
+          player.say('দুঃখিত বস, একটা সমস্যা হয়েছে — একটু পরে আরেকবার বলুন।')
         }
       })
       clearInterval(heartbeat)
@@ -293,7 +293,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
         if (openRef.current) setState('idle')
       } else {
         toast.error('উত্তর পেতে ব্যর্থ')
-        player.say('দুঃখিত স্যার, সংযোগে সমস্যা হলো — আরেকবার বলুন।')
+        player.say('দুঃখিত বস, সংযোগে সমস্যা হলো — আরেকবার বলুন।')
         player.finish() // onDone → idle → auto-listen keeps the loop alive
       }
     }
@@ -319,7 +319,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
     onError: (msg) => {
       toast.error(msg)
       // Hands-free owner can't read a toast — say it (owner audit gap #5).
-      void speakLine('শুনতে পাইনি স্যার — আরেকবার বলুন।', () => openRef.current)
+      void speakLine('শুনতে পাইনি বস — আরেকবার বলুন।', () => openRef.current)
       setState('error')
       setTimeout(() => { if (openRef.current) setState('idle') }, 2000)
     },
@@ -352,7 +352,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
     },
     onError: (msg) => {
       toast.error(msg)
-      void speakLine('শুনতে পাইনি স্যার — আরেকবার বলুন।', () => openRef.current)
+      void speakLine('শুনতে পাইনি বস — আরেকবার বলুন।', () => openRef.current)
       setState('error')
       setTimeout(() => { if (openRef.current) setState('idle') }, 2000)
     },
@@ -431,7 +431,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
     const hour = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Dhaka', hour: 'numeric', hour12: false }).format(new Date()), 10)
     const daypart = hour >= 5 && hour < 12 ? 'সুপ্রভাত' : hour >= 12 && hour < 17 ? 'শুভ দুপুর' : hour >= 17 && hour < 21 ? 'শুভ সন্ধ্যা' : 'শুভ রাত্রি'
     const t = setTimeout(() => {
-      void speakLine(`${daypart} স্যার — বলুন, কী করতে হবে।`, () => openRef.current && stateRef.current === 'idle')
+      void speakLine(`${daypart} বস — বলুন, কী করতে হবে।`, () => openRef.current && stateRef.current === 'idle')
     }, 500)
     return () => clearTimeout(t)
   }, [open])
@@ -443,7 +443,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
     const onVis = () => {
       if (!document.hidden && hiddenAbortRef.current) {
         hiddenAbortRef.current = false
-        void speakLine('স্যার, মাঝপথে অ্যাপ ব্যাকগ্রাউন্ডে চলে গিয়েছিল — উত্তরটা চ্যাটে রেখে দিয়েছি।', () => openRef.current)
+        void speakLine('বস, মাঝপথে অ্যাপ ব্যাকগ্রাউন্ডে চলে গিয়েছিল — উত্তরটা চ্যাটে রেখে দিয়েছি।', () => openRef.current)
       }
     }
     document.addEventListener('visibilitychange', onVis)
@@ -471,7 +471,7 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
       stopTts()
       void runTurn(lastTextRef.current, { approve: true })
     } else {
-      void speakLine('আচ্ছা স্যার, তাহলে বাদ দিলাম।', () => openRef.current)
+      void speakLine('আচ্ছা বস, তাহলে বাদ দিলাম।', () => openRef.current)
     }
   }, [runTurn, stopTts])
 
@@ -519,9 +519,9 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
     // cleanly first, or the player's chain is severed and auto-listen dies.
     if (playerRef.current) stopTts()
     void speakLine(
-      resolution === 'approved' ? 'অনুমোদন করে দিয়েছি স্যার, কাজ এগোচ্ছে।'
-        : resolution === 'rejected' ? 'বাতিল করে দিয়েছি, স্যার।'
-          : 'এটা আগেই নিষ্পত্তি হয়ে গেছে, স্যার।',
+      resolution === 'approved' ? 'অনুমোদন করে দিয়েছি বস, কাজ এগোচ্ছে।'
+        : resolution === 'rejected' ? 'বাতিল করে দিয়েছি, বস।'
+          : 'এটা আগেই নিষ্পত্তি হয়ে গেছে, বস।',
       () => openRef.current && stateRef.current !== 'listening',
     )
   }, [stopTts])
@@ -624,8 +624,8 @@ export default function VoiceConsole({ open, onClose, onSendMessage }: VoiceCons
                 <p className="vc-caption dim">
                   {state === 'idle'
                     ? (wakeAvailable && wakeMode
-                        ? <>&ldquo;ALMA&rdquo; বললেই শুনব, <span className="sir">Sir</span> — বা অর্বে ট্যাপ করুন।</>
-                        : <>বলুন, <span className="sir">Sir</span> — অর্বে ট্যাপ করুন।</>)
+                        ? <>&ldquo;ALMA&rdquo; বললেই শুনব, <span className="sir">Boss</span> — বা অর্বে ট্যাপ করুন।</>
+                        : <>বলুন, <span className="sir">Boss</span> — অর্বে ট্যাপ করুন।</>)
                     : ' '}
                 </p>
               )}

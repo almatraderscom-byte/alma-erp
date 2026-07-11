@@ -69,7 +69,7 @@ export async function carryOverIncompleteTodos(today = todayYmdDhaka()): Promise
 function composeFollowupMessage(carried: CarryTodo[]): string {
   const lines = carried.map((t) => `• ${t.title}`).join('\n')
   return (
-    `📋 Sir, আগের দিনের ${carried.length}টি কাজ এখনো শেষ হয়নি — আজকের জন্য টেনে আনলাম:\n${lines}\n\n` +
+    `📋 Boss, আগের দিনের ${carried.length}টি কাজ এখনো শেষ হয়নি — আজকের জন্য টেনে আনলাম:\n${lines}\n\n` +
     `এগুলোর কী অবস্থা? হয়ে গেলে বলুন "হয়ে গেছে", আর কিছু বদলাতে চাইলে বলে দিন — আমি ঠিক করে দিচ্ছি।`
   )
 }
@@ -170,12 +170,12 @@ export async function processOwnerFollowupReply(
       data: { status: 'completed', completedAt: new Date() },
     })
     await markResolved(today, 'done')
-    return { autoReply: `আলহামদুলিল্লাহ Sir, ${ids.length}টি কাজ শেষ হিসেবে বন্ধ করে দিলাম। 🤝` }
+    return { autoReply: `আলহামদুলিল্লাহ Boss, ${ids.length}টি কাজ শেষ হিসেবে বন্ধ করে দিলাম। 🤝` }
   }
 
   if (DEFER_PATTERN.test(trimmed)) {
     await markResolved(today, 'deferred')
-    return { autoReply: 'ঠিক আছে Sir, কাজগুলো আজকের তালিকায় রেখে দিলাম — পরে দেখা যাবে।' }
+    return { autoReply: 'ঠিক আছে Boss, কাজগুলো আজকের তালিকায় রেখে দিলাম — পরে দেখা যাবে।' }
   }
 
   // Mixed / specific instructions → let the head adjust each item via tools.
@@ -183,7 +183,7 @@ export async function processOwnerFollowupReply(
   return {
     contextBlock:
       `[FOLLOW-UP — CARRIED TODOS ACTIVE]\n` +
-      `Sir was asked about ${ids.length} unfinished task(s) carried into today: ${titles.join(' · ')}. ` +
+      `Boss was asked about ${ids.length} unfinished task(s) carried into today: ${titles.join(' · ')}. ` +
       `Parse his reply and update each item with manage_work_todos: action=complete for done ones, ` +
       `action=update (status/priority) or action=remove as he says. If he asks to be reminded at a time, ` +
       `use set_reminder. Reply in Bangla, concise, confirm what you changed. Do NOT re-list everything.`,

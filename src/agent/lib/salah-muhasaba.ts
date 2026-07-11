@@ -69,23 +69,23 @@ async function tallyToday(now = new Date()): Promise<DayTally> {
 
 function encouragement(t: DayTally): string {
   if (t.onTime === WAQTS.length) {
-    return 'মাশাআল্লাহ Sir — আজ পাঁচ ওয়াক্তই সময়মতো! 🤲 আল্লাহ এই অভ্যাস ধরে রাখার তাওফিক দিন। এটাই আপনার আসল সম্পদ।'
+    return 'মাশাআল্লাহ Boss — আজ পাঁচ ওয়াক্তই সময়মতো! 🤲 আল্লাহ এই অভ্যাস ধরে রাখার তাওফিক দিন। এটাই আপনার আসল সম্পদ।'
   }
   if (t.missed === 0 && t.qaza === 0) {
-    return 'আলহামদুলিল্লাহ, আজ একটা ওয়াক্তও মিস হয়নি Sir। কাল ইনশাআল্লাহ দেরিগুলোও জামাতে ধরার চেষ্টা করি।'
+    return 'আলহামদুলিল্লাহ, আজ একটা ওয়াক্তও মিস হয়নি Boss। কাল ইনশাআল্লাহ দেরিগুলোও জামাতে ধরার চেষ্টা করি।'
   }
   if (t.missed > 0 || t.qaza > 0) {
     return (
-      'Sir, যেগুলো মিস বা কাযা হয়েছে — সেটা স্বীকার করাটাই সততা, আর আল্লাহ সততা ভালোবাসেন। ' +
+      'Boss, যেগুলো মিস বা কাযা হয়েছে — সেটা স্বীকার করাটাই সততা, আর আল্লাহ সততা ভালোবাসেন। ' +
       'একটু তাওবা করে নিন, অপরাধবোধে ডুবে থাকবেন না। কাল নতুন সুযোগ — ইনশাআল্লাহ আমরা একসাথে ধরবো। 💚'
     )
   }
-  return 'Sir, আজকের চেষ্টাটুকু আল্লাহ দেখেছেন। কাল আরেকটু যত্ন নিলেই হবে ইনশাআল্লাহ। 🤲'
+  return 'Boss, আজকের চেষ্টাটুকু আল্লাহ দেখেছেন। কাল আরেকটু যত্ন নিলেই হবে ইনশাআল্লাহ। 🤲'
 }
 
 function composeMuhasaba(t: DayTally): string {
   const lines = [
-    `🌙 *Sir, দিনের শেষে একটু মুহাসাবা করি* — আজকের নামাজের হিসাব:`,
+    `🌙 *Boss, দিনের শেষে একটু মুহাসাবা করি* — আজকের নামাজের হিসাব:`,
     ``,
     `✅ সময়মতো: ${t.onTime}`,
     `🕐 দেরিতে: ${t.late}`,
@@ -95,7 +95,7 @@ function composeMuhasaba(t: DayTally): string {
   if (t.pending > 0) lines.push(`⏳ এখনো বাকি: ${t.pending}`)
   lines.push(``, encouragement(t), ``)
   lines.push(
-    `নিজের কাছে সৎ থেকে একটু ভাবুন Sir — কোন ওয়াক্তটা আরেকটু যত্ন চাইত? ` +
+    `নিজের কাছে সৎ থেকে একটু ভাবুন Boss — কোন ওয়াক্তটা আরেকটু যত্ন চাইত? ` +
     `দু-এক লাইনে বললে আমি মনে রাখবো, কাল সেটা জামাতে ধরতে সাহায্য করবো। 🤲`,
   )
   return lines.join('\n')
@@ -173,7 +173,7 @@ export async function processMuhasabaReply(
     await createOrUpdateAgentMemory({
       scope: 'business',
       key: `salah_muhasaba:${today}`,
-      content: `রাতের সালাহ মুহাসাবা (${today}) — Sir-এর নিজের প্রতিফলন: ${reflection}`,
+      content: `রাতের সালাহ মুহাসাবা (${today}) — Boss-এর নিজের প্রতিফলন: ${reflection}`,
       metadata: { type: 'salah_muhasaba', date: today, businessId: BUSINESS_ID },
       importance: 2,
     })
@@ -186,9 +186,9 @@ export async function processMuhasabaReply(
   return {
     contextBlock:
       `[SALAH MUHASABA — ACTIVE]\n` +
-      `It is night reflection time. Sir just shared his own muhasaba (self-reflection) about today's prayers; ` +
+      `It is night reflection time. Boss just shared his own muhasaba (self-reflection) about today's prayers; ` +
       `it is ALREADY saved to memory — do NOT call save_memory for it. ` +
-      `Respond in warm Bangla as Sir: (1) acknowledge his honesty/effort with genuine encouragement (uttaho) and NO blame, ` +
+      `Respond in warm Bangla as Boss: (1) acknowledge his honesty/effort with genuine encouragement (uttaho) and NO blame, ` +
       `(2) give ONE small, practical du'a or tip to help tomorrow's prayers go better (e.g. an early reminder, wudu ready, jamaat intention), ` +
       `(3) end with a short hopeful du'a. Keep it 3-4 lines, gentle and uplifting.`,
   }

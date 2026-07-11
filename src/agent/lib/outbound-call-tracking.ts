@@ -18,7 +18,7 @@ export async function findOutboundActionByCallSid(callSid: string) {
 
 export function buildOutboundDialMessage(phone: string, callSid?: string): string {
   return (
-    `✅ স্যার, কল দেওয়া হয়েছে — ${phone}।\n\n` +
+    `✅ বস, কল দেওয়া হয়েছে — ${phone}।\n\n` +
     `লাইনে রিং চলছে; কেউ ধরলে বা না ধরলে আলাদা মেসেজ পাবেন।` +
     (callSid ? `\n(Ref: ${callSid.slice(0, 12)}…)` : '')
   )

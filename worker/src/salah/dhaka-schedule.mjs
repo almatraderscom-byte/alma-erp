@@ -1,5 +1,5 @@
 /**
- * Sir's Dhaka mosque schedule (+06:00) — reads configurable times from KV.
+ * Boss's Dhaka mosque schedule (+06:00) — reads configurable times from KV.
  * Keep defaults in sync with src/lib/salah/time-config.ts
  */
 

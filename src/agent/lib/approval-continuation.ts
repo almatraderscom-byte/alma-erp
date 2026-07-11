@@ -1,7 +1,7 @@
 // Shared "keep going" continuation enqueue. After an owner approval (synchronous
 // actions) OR an async generation job (image/video) genuinely COMPLETES, we resume
 // the agent with one continuation turn so it carries on its task on its own instead
-// of going silent until Sir messages again (owner request, issue #3).
+// of going silent until Boss messages again (owner request, issue #3).
 //
 // Why a shared module: the synchronous approval path (actions/[id]/approve) and the
 // async worker-callback path (internal/job-result) BOTH need to resume the head, but

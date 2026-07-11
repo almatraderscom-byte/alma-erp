@@ -1,5 +1,5 @@
 /**
- * Phase D — evening owner-task intake (Sir-tasks for tomorrow) + respectful no-task streak.
+ * Phase D — evening owner-task intake (Boss-tasks for tomorrow) + respectful no-task streak.
  */
 import { prisma } from '@/lib/prisma'
 import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
@@ -10,13 +10,13 @@ import { getOrCreateDayShiftConversation, appendShiftNarrative } from '@/agent/l
 const BUSINESS_ID = 'ALMA_LIFESTYLE'
 
 const INTAKE_MESSAGE =
-  '🌙 Sir, কালকের জন্য আপনার কোন কাজগুলো রাখবো? বলে দিন, আমি যোগ করে রাখি।'
+  '🌙 Boss, কালকের জন্য আপনার কোন কাজগুলো রাখবো? বলে দিন, আমি যোগ করে রাখি।'
 
 const NUDGE_MESSAGE =
-  'Sir, ২ দিন ধরে আপনি নিজের জন্য কোনো কাজ রাখছেন না। ব্যবসাটা দাঁড় করাতে আরেকটু পরিশ্রম দরকার — ' +
+  'Boss, ২ দিন ধরে আপনি নিজের জন্য কোনো কাজ রাখছেন না। ব্যবসাটা দাঁড় করাতে আরেকটু পরিশ্রম দরকার — ' +
   'নাকি অন্য কিছু নিয়ে চিন্তায় আছেন? বলতে পারেন, আমি আছি।'
 
-const NO_TASK_ACCEPT = 'ঠিক আছে Sir, কালকের জন্য কিছু রাখছি না।'
+const NO_TASK_ACCEPT = 'ঠিক আছে Boss, কালকের জন্য কিছু রাখছি না।'
 
 const NO_TASK_PATTERN =
   /\b(kichu\s*korbo\s*na|kichu\s*rakhbo\s*na|kalk\s*kichu\s*na|kalke\s*kichu\s*na|nothing|no\s*tasks?)\b|কিছু\s*করব\s*না|কিছু\s*রাখব\s*না|কাল\s*কিছু\s*না|আজ\s*থাক|থাক\s*$|না\s*রাখ|রাখব\s*না/i
@@ -272,7 +272,7 @@ export async function processOwnerIntakeReply(
       contextBlock:
         `${PERSONAL_ADVISOR_PROMPT}\n\n` +
         `[OWNER TASK INTAKE — ADVISOR MODE]\n` +
-        `Sir shared a personal/struggle signal after ${streak} days without self-tasks. Listen first, then practical + gentle Islamic encouragement. ` +
+        `Boss shared a personal/struggle signal after ${streak} days without self-tasks. Listen first, then practical + gentle Islamic encouragement. ` +
         `Do NOT guilt-trip or mention slacking. Do NOT pull business/staff data unless he asks.`,
     }
   }
@@ -285,8 +285,8 @@ export async function processOwnerIntakeReply(
     return {
       autoReply:
         created.length > 0
-          ? `ঠিক আছে Sir, কালকের জন্য ${created.length}টি কাজ রেখে দিয়েছি: ${list}।`
-          : `Sir, ওই কাজগুলো ইতিমধ্যে তালিকায় আছে।`,
+          ? `ঠিক আছে Boss, কালকের জন্য ${created.length}টি কাজ রেখে দিয়েছি: ${list}।`
+          : `Boss, ওই কাজগুলো ইতিমধ্যে তালিকায় আছে।`,
       tasksAdded: created.length > 0 ? created : titles,
     }
   }
@@ -294,7 +294,7 @@ export async function processOwnerIntakeReply(
   return {
     contextBlock:
       `[OWNER TASK INTAKE — ACTIVE]\n` +
-      `Sir was asked for tomorrow's personal tasks (${tomorrow}). Parse his message into 1+ concrete tasks. ` +
+      `Boss was asked for tomorrow's personal tasks (${tomorrow}). Parse his message into 1+ concrete tasks. ` +
       `Use manage_work_todos action=add, source=owner, dueDate=${tomorrow} for each task (intake only — do NOT auto-complete). ` +
       `If he declines ("কিছু করব না"), accept warmly and stop. One gentle line max if unclear.`,
   }

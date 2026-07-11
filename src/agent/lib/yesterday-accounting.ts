@@ -78,7 +78,7 @@ export async function isAccountingPendingToday(todayYmd = todayYmdDhaka()): Prom
 
 function composeAccountingQuestion(yesterdayYmd: string): string {
   return (
-    `🗓️ Sir, নতুন দিন শুরু করার আগে একটা হিসাব নিই — গতকাল (${yesterdayYmd}) অফিসের মূল কাজটা ` +
+    `🗓️ Boss, নতুন দিন শুরু করার আগে একটা হিসাব নিই — গতকাল (${yesterdayYmd}) অফিসের মূল কাজটা ` +
     `(স্টাফ টাস্ক dispatch) হয়নি মনে হচ্ছে। কারণটা একটু বলবেন? ` +
     `আপনি জানালে আমি মনে রাখবো, একটা পরামর্শ দেবো, তারপর আজকের কাজ শুরু করি।`
   )
@@ -199,7 +199,7 @@ export async function processOwnerAccountingReply(
     savedReason: reason,
     contextBlock:
       `[YESTERDAY ACCOUNTING — ACTIVE]\n` +
-      `Sir was asked why yesterday's (${yesterday}) main office work (staff task dispatch) did not happen. ` +
+      `Boss was asked why yesterday's (${yesterday}) main office work (staff task dispatch) did not happen. ` +
       `His reply (the reason) has ALREADY been saved to memory — do NOT call save_memory again for it. ` +
       `Respond in Bangla: (1) briefly + empathetically acknowledge the reason without blame, ` +
       `(2) give ONE concrete, practical suggestion so it does not repeat today, ` +

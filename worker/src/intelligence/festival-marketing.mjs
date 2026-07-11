@@ -100,7 +100,7 @@ export async function runFestivalMarketing(context) {
     const when = f.daysUntil === 0 ? 'আজ' : `${f.daysUntil} দিন পর`
     const msg =
       `🎉 *${f.name} আসছে — ${when} (${f.ymd})*\n\n` +
-      `Sir, মার্কেটিং পুশ শুরু করার সময় হয়েছে:\n` +
+      `Boss, মার্কেটিং পুশ শুরু করার সময় হয়েছে:\n` +
       `  • festival কালেকশন / অফার ঠিক করুন\n` +
       `  • ক্যাম্পেইন ও ক্রিয়েটিভ প্ল্যান করুন\n` +
       `  • স্টক ও কুরিয়ার প্রস্তুত রাখুন\n\n` +

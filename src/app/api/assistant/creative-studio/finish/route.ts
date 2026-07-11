@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
   const storagePath = typeof body.storagePath === 'string' ? body.storagePath.trim() : ''
   if (!storagePath) return Response.json({ error: 'storagePath_required' }, { status: 400 })
   if (storagePath.endsWith('.mp4')) {
-    return Response.json({ error: 'video_not_supported', message: 'ভিডিওতে ফিনিশিং করা যায় না, স্যার।' }, { status: 400 })
+    return Response.json({ error: 'video_not_supported', message: 'ভিডিওতে ফিনিশিং করা যায় না, বস।' }, { status: 400 })
   }
 
   const hook = (typeof body.hook === 'string' ? body.hook : '').trim()

@@ -14,7 +14,7 @@ dotenv.config({ path: join(__dir, '../.env'), override: true })
 installTelegramProxy()
 
 const ADAM = 'pNInz6obpgDQGcFmaJgB'
-const TEXT = 'আপনার বাংলা টেক্সট এখানে লিখুন। স্যার, আসসালামু আলাইকুম। এটি অ্যাডাম ভয়েসের পরীক্ষা।'
+const TEXT = 'আপনার বাংলা টেক্সট এখানে লিখুন। বস, আসসালামু আলাইকুম। এটি অ্যাডাম ভয়েসের পরীক্ষা।'
 
 async function playgroundExact(apiKey, text) {
   const res = await fetch(

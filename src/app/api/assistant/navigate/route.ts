@@ -103,7 +103,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (!parsed) {
-    return Response.json({ reply: 'বুঝতে পারিনি, Sir — আবার একটু সহজ করে বলবেন?' } satisfies NavResult)
+    return Response.json({ reply: 'বুঝতে পারিনি, Boss — আবার একটু সহজ করে বলবেন?' } satisfies NavResult)
   }
 
   // Validate navigation against the role's allow-list — never trust the model

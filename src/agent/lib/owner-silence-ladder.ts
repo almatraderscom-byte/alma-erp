@@ -182,7 +182,7 @@ function composeAlert(esc: SilenceEscalation, count: number): { title: string; m
     return {
       title: '🚨 জরুরি — সিদ্ধান্ত আটকে আছে',
       message:
-        `Sir, ${count}টি approval এখনো আটকে — সবচেয়ে পুরোনোটা ${hrs} ঘণ্টা ধরে অপেক্ষায়, ` +
+        `Boss, ${count}টি approval এখনো আটকে — সবচেয়ে পুরোনোটা ${hrs} ঘণ্টা ধরে অপেক্ষায়, ` +
         `আর এর মধ্যে money/critical একটা আছে। এটা হারিয়ে যাওয়ার আগে এখনই একটু দেখুন — ` +
         `দরকার হলে ফোনেও জানাতে পারি। "approve/হ্যাঁ" বললে এগিয়ে নিই।`,
     }
@@ -190,7 +190,7 @@ function composeAlert(esc: SilenceEscalation, count: number): { title: string; m
   return {
     title: '⏳ এখনো আপনার সিদ্ধান্তের অপেক্ষায়',
     message:
-      `Sir, ${count}টি বিষয় ${hrs} ঘণ্টা ধরে আপনার confirm-এর অপেক্ষায় আছে — যেন হারিয়ে না যায় তাই ` +
+      `Boss, ${count}টি বিষয় ${hrs} ঘণ্টা ধরে আপনার confirm-এর অপেক্ষায় আছে — যেন হারিয়ে না যায় তাই ` +
       `জোরে মনে করালাম। "approve/হ্যাঁ" বললে এগিয়ে নিই, ব্যস্ত থাকলে "পরে" বলুন।`,
   }
 }

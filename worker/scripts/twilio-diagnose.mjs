@@ -68,8 +68,8 @@ if (placeCall) {
   console.log(`\n--- Placing test call (${mode}) ---`)
   const result = await makeTwilioCall(
     salahCall
-      ? 'আস্সালামু আলাইকুম স্যার। এটি নামাজ রিমাইন্ডার টেস্ট কল। দয়া করে ফোন ধরুন।'
-      : 'আস্সালামু আলাইকুম স্যার। এটি ALMA টেস্ট কল। দয়া করে ফোন ধরুন।',
+      ? 'আস্সালামু আলাইকুম বস। এটি নামাজ রিমাইন্ডার টেস্ট কল। দয়া করে ফোন ধরুন।'
+      : 'আস্সালামু আলাইকুম বস। এটি ALMA টেস্ট কল। দয়া করে ফোন ধরুন।',
     { force: forceCall, salah: salahCall, purpose: salahCall ? 'salah' : undefined },
   )
   console.log('place:', JSON.stringify(result))

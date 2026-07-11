@@ -212,8 +212,8 @@ export async function runOpenTaskNudgeTick(businessId = 'ALMA_LIFESTYLE'): Promi
   const lines = due.map((t) => `• ${t.title}`).join('\n')
   const head =
     due.length === 1
-      ? '🔔 একটি কাজ এখনো বাকি আছে, স্যার —'
-      : `🔔 ${due.length}টি কাজ এখনো বাকি আছে, স্যার —`
+      ? '🔔 একটি কাজ এখনো বাকি আছে, বস —'
+      : `🔔 ${due.length}টি কাজ এখনো বাকি আছে, বস —`
   await sendOwnerText(`${head}\n${lines}\n\nএগুলো চালিয়ে যেতে চান? চ্যাটে "বাকি কাজ" থেকে চালিয়ে যাও চাপুন।`).catch(
     () => ({ ok: false }),
   )

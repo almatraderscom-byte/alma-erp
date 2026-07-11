@@ -28,7 +28,7 @@ console.log('[test] Tier 2 — Telegram + ntfy general + ntfy critical...')
 const r1 = await notify({
   tier: 2,
   title: 'ALMA Test Notification',
-  message: `স্যার, এটি একটি টেস্ট (${ts} Dhaka)। ntfy + Telegram যাচাই।`,
+  message: `বস, এটি একটি টেস্ট (${ts} Dhaka)। ntfy + Telegram যাচাই।`,
   category: 'salah',
   voice: false,
 })
@@ -38,7 +38,7 @@ console.log('[test] Tier 3 — voice + Twilio call...')
 const r2 = await notify({
   tier: 3,
   title: 'ALMA Test Call',
-  message: 'স্যার, এটি একটি টেস্ট কল। নোটিফিকেশন সিস্টেম যাচাই হচ্ছে।',
+  message: 'বস, এটি একটি টেস্ট কল। নোটিফিকেশন সিস্টেম যাচাই হচ্ছে।',
   category: 'urgent',
   voice: true,
 })

@@ -78,7 +78,7 @@ export function resolveMemoryExpiry(
  * Personal mode → personal memories only (a personal chat must not pull business
  * facts). Business mode → business/staff memories scoped to the active business,
  * PLUS all personal memories. The owner is the same person across every chat, so
- * a personal fact ("স্যারের স্ত্রীর নাম: Mim, নম্বর …") must still surface when
+ * a personal fact ("বসের স্ত্রীর নাম: Mim, নম্বর …") must still surface when
  * asked inside a business thread. Previously business mode used `scope != 'personal'`,
  * which hard-excluded personal memories — so the agent truthfully said it couldn't
  * find a number that was actually saved. Personal memories are cross-business and

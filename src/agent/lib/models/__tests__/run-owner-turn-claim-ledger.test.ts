@@ -28,7 +28,7 @@ function ledgerFromRecords(records: ToolRecord[]): ToolLedgerEntry[] {
 }
 
 describe('runOwnerTurn claim verification — honors tool failure (audit #6)', () => {
-  const claim = 'আলহামদুলিল্লাহ স্যার, মনে রেখেছি — save করেছি।'
+  const claim = 'আলহামদুলিল্লাহ বস, মনে রেখেছি — save করেছি।'
 
   it('OLD name-only path is fooled: a failed save_memory still looks satisfied', () => {
     // Reproduces the bug: Layer-1 sees the tool name present → no violation,
@@ -52,7 +52,7 @@ describe('runOwnerTurn claim verification — honors tool failure (audit #6)', (
   })
 
   it('a generic completion claim with NO write tool at all is flagged', () => {
-    const v = verifyClaimsAgainstLedger('কাজটা সম্পন্ন হয়েছে স্যার।', ledgerFromRecords([]))
+    const v = verifyClaimsAgainstLedger('কাজটা সম্পন্ন হয়েছে বস।', ledgerFromRecords([]))
     expect(v.length).toBeGreaterThan(0)
   })
 })

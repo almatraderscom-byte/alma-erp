@@ -83,7 +83,7 @@ async function requireActiveDevice(
     return {
       ok: false,
       error:
-        'লাইভ ব্রাউজার এখন বন্ধ আছে, Sir। আগে "live browser চালু করো" বলুন, তারপর আপনার Chrome-এর ' +
+        'লাইভ ব্রাউজার এখন বন্ধ আছে, Boss। আগে "live browser চালু করো" বলুন, তারপর আপনার Chrome-এর ' +
         'ALMA Companion এক্সটেনশনটা যুক্ত (pair) থাকতে হবে।',
     }
   }
@@ -93,7 +93,7 @@ async function requireActiveDevice(
     return {
       ok: false,
       error:
-        'আপনার কোনো Chrome এখন অনলাইনে যুক্ত নেই, Sir। Chrome খুলুন এবং ALMA Companion এক্সটেনশনে ' +
+        'আপনার কোনো Chrome এখন অনলাইনে যুক্ত নেই, Boss। Chrome খুলুন এবং ALMA Companion এক্সটেনশনে ' +
         '"থামান" করা থাকলে চালু করুন — তারপর আবার বলুন।',
     }
   }
@@ -108,7 +108,7 @@ async function requireActiveDevice(
       return {
         ok: false,
         error:
-          `"${hint}" নামের কোনো অনলাইন Chrome পেলাম না, Sir। এখন অনলাইন আছে: ` +
+          `"${hint}" নামের কোনো অনলাইন Chrome পেলাম না, Boss। এখন অনলাইন আছে: ` +
           `${online.map((d) => d.name).join(', ')}। কোনটা ব্যবহার করব?`,
       }
     }
@@ -119,7 +119,7 @@ async function requireActiveDevice(
     return {
       ok: false,
       error:
-        `আপনার একাধিক Chrome এখন অনলাইন, Sir: ${online.map((d) => d.name).join(', ')}। ` +
+        `আপনার একাধিক Chrome এখন অনলাইন, Boss: ${online.map((d) => d.name).join(', ')}। ` +
         'কোনটাতে কাজ করব বলুন (যেমন "Windows-টায়" বা "Mac-টায়")।',
     }
   }
@@ -147,9 +147,9 @@ const set_live_browser: AgentTool = {
         data: {
           enabled,
           message: enabled
-            ? 'লাইভ ব্রাউজার চালু করলাম, Sir। এবার আপনার Chrome-এ ALMA Companion এক্সটেনশনটা যুক্ত থাকলে ' +
+            ? 'লাইভ ব্রাউজার চালু করলাম, Boss। এবার আপনার Chrome-এ ALMA Companion এক্সটেনশনটা যুক্ত থাকলে ' +
               'আমি আপনার নিজের লগইন দিয়ে কাজ করতে পারব, আপনি লাইভ দেখবেন। যুক্ত করা না থাকলে "pair code দাও" বলুন।'
-            : 'লাইভ ব্রাউজার বন্ধ করলাম, Sir — এখন আমি আপনার Chrome-এ কিছু করতে পারব না।',
+            : 'লাইভ ব্রাউজার বন্ধ করলাম, Boss — এখন আমি আপনার Chrome-এ কিছু করতে পারব না।',
         },
       }
     } catch (err) {
@@ -178,7 +178,7 @@ const live_browser_pair: AgentTool = {
         return {
           success: false,
           error:
-            'আগে লাইভ ব্রাউজার চালু করতে হবে, Sir — "live browser চালু করো" বলুন, তারপর কোড নিন।',
+            'আগে লাইভ ব্রাউজার চালু করতে হবে, Boss — "live browser চালু করো" বলুন, তারপর কোড নিন।',
         }
       }
       const ticket = await createPairingTicket(String(input.deviceName ?? '') || undefined)
@@ -189,7 +189,7 @@ const live_browser_pair: AgentTool = {
           code: ticket.code,
           expiresInMinutes: mins,
           message:
-            `আপনার এক-বারের পেয়ারিং কোড: ${ticket.code} (প্রায় ${mins} মিনিট চলবে), Sir।\n` +
+            `আপনার এক-বারের পেয়ারিং কোড: ${ticket.code} (প্রায় ${mins} মিনিট চলবে), Boss।\n` +
             'আপনার Chrome-এ ALMA Companion এক্সটেনশন খুলে কোডটা বসান — তাহলে শুধু আমি, আপনার নিজের ' +
             'লগইন দিয়ে, এই ব্রাউজারে কাজ করতে পারব আর আপনি সব লাইভ দেখবেন।',
         },
@@ -200,7 +200,7 @@ const live_browser_pair: AgentTool = {
         success: false,
         error:
           msg.includes('owner_user_unresolved')
-            ? 'মালিকের ইউজার আইডি বের করতে পারলাম না, Sir — agent_owner_user_id সেট করতে হতে পারে।'
+            ? 'মালিকের ইউজার আইডি বের করতে পারলাম না, Boss — agent_owner_user_id সেট করতে হতে পারে।'
             : msg,
       }
     }
@@ -224,10 +224,10 @@ const live_browser_status: AgentTool = {
           enabled,
           devices: devices.map((d) => ({ name: d.name, online: d.online, lastSeenAt: d.lastSeenAt })),
           summary: !enabled
-            ? 'লাইভ ব্রাউজার বন্ধ আছে, Sir।'
+            ? 'লাইভ ব্রাউজার বন্ধ আছে, Boss।'
             : devices.length === 0
-              ? 'কোনো Chrome এখনো যুক্ত করা হয়নি, Sir — "pair code দাও" বললে কোড দিই।'
-              : `${devices.length}টি Chrome যুক্ত, এখন অনলাইন ${online}টি, Sir।`,
+              ? 'কোনো Chrome এখনো যুক্ত করা হয়নি, Boss — "pair code দাও" বললে কোড দিই।'
+              : `${devices.length}টি Chrome যুক্ত, এখন অনলাইন ${online}টি, Boss।`,
         },
       }
     } catch (err) {
@@ -616,8 +616,8 @@ const live_browser_trust: AgentTool = {
             entries,
             summary:
               entries.length === 0
-                ? 'কোনো সাইটের আলাদা tier সেট করা নেই, Sir — সব সাইট "general" (সাবধানে কাজ)।'
-                : `${entries.length}টি সাইটের tier সেট করা আছে, Sir। lockdown মানে ওই সাইটে শুধু পড়া — ক্লিক/টাইপ বন্ধ।`,
+                ? 'কোনো সাইটের আলাদা tier সেট করা নেই, Boss — সব সাইট "general" (সাবধানে কাজ)।'
+                : `${entries.length}টি সাইটের tier সেট করা আছে, Boss। lockdown মানে ওই সাইটে শুধু পড়া — ক্লিক/টাইপ বন্ধ।`,
           },
         }
       }
@@ -635,10 +635,10 @@ const live_browser_trust: AgentTool = {
         if (!res.ok) return { success: false, error: res.error }
         const bn =
           tier === 'lockdown'
-            ? `${res.domain} এখন lockdown, Sir — ওই সাইটে আমি শুধু পড়তে পারব, কোনো ক্লিক/টাইপ না।`
+            ? `${res.domain} এখন lockdown, Boss — ওই সাইটে আমি শুধু পড়তে পারব, কোনো ক্লিক/টাইপ না।`
             : tier === 'trusted'
-              ? `${res.domain} এখন trusted, Sir — স্বাভাবিকভাবে কাজ চলবে।`
-              : `${res.domain} tier মুছে দিলাম, Sir — এখন সাধারণ (general) নিয়মে চলবে।`
+              ? `${res.domain} এখন trusted, Boss — স্বাভাবিকভাবে কাজ চলবে।`
+              : `${res.domain} tier মুছে দিলাম, Boss — এখন সাধারণ (general) নিয়মে চলবে।`
         return { success: true, data: { domain: res.domain, tier, message: bn } }
       }
       return { success: false, error: `unsupported action: ${action}` }

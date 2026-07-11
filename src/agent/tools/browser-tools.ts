@@ -70,7 +70,7 @@ const run_browser_task: AgentTool = {
           error: 'browser_agent_disabled',
           data: {
             message:
-              'ব্রাউজার দিয়ে কাজ করার ক্ষমতা এখন বন্ধ আছে, Sir। চালু করতে বলুন — ' +
+              'ব্রাউজার দিয়ে কাজ করার ক্ষমতা এখন বন্ধ আছে, Boss। চালু করতে বলুন — ' +
               '"ব্রাউজার এজেন্ট চালু করো" (settings: browser_agent_enabled = true)।',
           },
         }
@@ -81,7 +81,7 @@ const run_browser_task: AgentTool = {
         return {
           success: false,
           error: cap.error,
-          data: { message: 'আজকের ব্রাউজার-টাস্কের সীমা পূর্ণ হয়ে গেছে, Sir — কাল আবার চেষ্টা করুন বা সীমা বাড়াতে বলুন।' },
+          data: { message: 'আজকের ব্রাউজার-টাস্কের সীমা পূর্ণ হয়ে গেছে, Boss — কাল আবার চেষ্টা করুন বা সীমা বাড়াতে বলুন।' },
         }
       }
 
@@ -113,7 +113,7 @@ const run_browser_task: AgentTool = {
           stepCount: payload.steps.length,
           summary,
           message:
-            'ব্রাউজার টাস্কটা তৈরি করলাম, Sir — আপনার অনুমতির পরই ব্রাউজারে চালাব।' +
+            'ব্রাউজার টাস্কটা তৈরি করলাম, Boss — আপনার অনুমতির পরই ব্রাউজারে চালাব।' +
             (critical ? ' ⚠️ এতে টাকা/অপরিবর্তনীয় কিছু থাকতে পারে, দেখে অনুমতি দিন।' : ''),
         },
       }

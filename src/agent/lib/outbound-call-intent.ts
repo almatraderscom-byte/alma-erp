@@ -71,15 +71,15 @@ export function isOutboundCallIntent(text: string): boolean {
 export function buildOutboundCallIntakeBlock(hasNumber: boolean): string {
   const head =
     '[OUTBOUND CALL REQUEST — ACT, DO NOT LOG]\n' +
-    'Sir is instructing YOU to place a phone call to a person and speak a message on his behalf. ' +
+    'Boss is instructing YOU to place a phone call to a person and speak a message on his behalf. ' +
     'This is NOT a reminder, NOT a todo, NOT "কালকের কাজ". Do NOT call set_reminder, manage_work_todos, ' +
     'or promise to "remind in X minutes" for this.'
   const withNumber =
     ' A phone number is present in his message → call outbound_phone_call now with that exact number and the ' +
-    'EXACT message Sir dictated. If Sir said "ElevenLabs voice / এলেভেনল্যাবস", set ttsProvider=elevenlabs. ' +
-    'It makes a confirm card — tell Sir to Approve and it will dial.'
+    'EXACT message Boss dictated. If Boss said "ElevenLabs voice / এলেভেনল্যাবস", set ttsProvider=elevenlabs. ' +
+    'It makes a confirm card — tell Boss to Approve and it will dial.'
   const withoutNumber =
-    ' The number is not in this message yet (Sir said he will send it). Reply in ONE short Bangla line that you ' +
+    ' The number is not in this message yet (Boss said he will send it). Reply in ONE short Bangla line that you ' +
     'are ready and ask him to send the number now; then call outbound_phone_call the moment it arrives with the ' +
     'exact message he dictated (ttsProvider=elevenlabs if he asked for ElevenLabs voice). Do NOT set any reminder ' +
     'while waiting.'

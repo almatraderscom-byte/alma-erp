@@ -139,7 +139,7 @@ const ANNOUNCED_TOOL_INTENT =
 const ACT_NOW_NUDGE =
   'তুমি বললে যে একটা টুল/চেক চালাবে কিন্তু আসলে কোনো টুল কল করোনি — এই টার্নেই থেমে গেছ। ' +
   'শুধু "দেখি/চেক করি" বলে থেমো না। এখনই, এই একই টার্নে, দরকারি টুলটা আসলে কল করো ' +
-  'এবং ফলাফল দেখে তারপর Sir-কে উত্তর দাও। মালিককে আবার তাগাদা দিতে হবে না।'
+  'এবং ফলাফল দেখে তারপর Boss-কে উত্তর দাও। মালিককে আবার তাগাদা দিতে হবে না।'
 
 // ── Anthropic client ────────────────────────────────────────────────────────
 
@@ -292,7 +292,7 @@ async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
               type: 'text',
               text:
                 '[সংযুক্ত ছবি/ফাইলটি লোড করা যায়নি — storage থেকে আনা যায়নি। ' +
-                'এটা পড়তে পারোনি বলে স্যারকে স্পষ্ট জানাও এবং ছবিটা আবার পাঠাতে বলো। ' +
+                'এটা পড়তে পারোনি বলে বসকে স্পষ্ট জানাও এবং ছবিটা আবার পাঠাতে বলো। ' +
                 'ছবি দেখতে পেয়েছ ভান কোরো না।]',
             })
           }
@@ -565,7 +565,7 @@ export async function* runAgentTurn(
     if (conv?.contextSummary && messages.length <= 2) {
       messages = [
         { role: 'user', content: `[পূর্ববর্তী কথোপকথনের সারাংশ]\n${conv.contextSummary}` },
-        { role: 'assistant', content: 'বুঝেছি, আগের কথোপকথনের সব প্রসঙ্গ মনে আছে। বলুন স্যার।' },
+        { role: 'assistant', content: 'বুঝেছি, আগের কথোপকথনের সব প্রসঙ্গ মনে আছে। বলুন বস।' },
         ...messages,
       ]
     }
@@ -655,7 +655,7 @@ export async function* runAgentTurn(
           })
           if (res) {
             intakeAutoReply =
-              `ঠিক আছে স্যার — ${res.grantedMin} মিনিটের জন্য নামাজের কল ও রিমাইন্ডার বন্ধ রাখলাম ` +
+              `ঠিক আছে বস — ${res.grantedMin} মিনিটের জন্য নামাজের কল ও রিমাইন্ডার বন্ধ রাখলাম ` +
               `(${res.resumeAtLabel}-এ আবার মনে করিয়ে দেব)। নিশ্চিন্তে সেরে নিন। 🤝`
           }
         }
@@ -762,9 +762,9 @@ export async function* runAgentTurn(
       if (fresh.status === 'prayed_on_time' || fresh.status === 'prayed_late') {
         intakeContextBlock =
           `[SALAH CONFIRMED — CONSCIENCE NUDGE]\n` +
-          `Sir just told you he prayed ${fresh.waqt} (${fresh.date}); it is ALREADY saved — do NOT call mark_salah for it. ` +
-          `Reply in warm Bangla, addressing him as Sir: (1) a short Alhamdulillah / du'a that Allah accepts it, ` +
-          `(2) then ONE gentle conscience question — ask softly whether he prayed in jamaat or alone ("জামাতে পড়লেন নাকি একা, Sir?"), ` +
+          `Boss just told you he prayed ${fresh.waqt} (${fresh.date}); it is ALREADY saved — do NOT call mark_salah for it. ` +
+          `Reply in warm Bangla, addressing him as Boss: (1) a short Alhamdulillah / du'a that Allah accepts it, ` +
+          `(2) then ONE gentle conscience question — ask softly whether he prayed in jamaat or alone ("জামাতে পড়লেন নাকি একা, Boss?"), ` +
           `framed with love and trust, never accusing. Keep it to 2 lines. This gentle question is intentional and owner-requested — it helps his conscience stay honest before Allah.`
         // Mark a one-shot pending so the owner's next reply ("eka"/"jamaate") is
         // captured as a conversational answer, never turned into a todo/reminder.
@@ -777,8 +777,8 @@ export async function* runAgentTurn(
       } else if (fresh.status === 'qaza' || fresh.status === 'missed') {
         intakeContextBlock =
           `[SALAH ${fresh.status.toUpperCase()} — HONESTY HONOURED]\n` +
-          `Sir honestly told you ${fresh.waqt} (${fresh.date}) was ${fresh.status === 'qaza' ? 'prayed as qaza (made up late)' : 'missed'}; it is ALREADY saved — do NOT call mark_salah for it. ` +
-          `Reply in warm Bangla as Sir: (1) sincerely thank/encourage him for telling the truth instead of a false "porechi" — this honesty pleases Allah, ` +
+          `Boss honestly told you ${fresh.waqt} (${fresh.date}) was ${fresh.status === 'qaza' ? 'prayed as qaza (made up late)' : 'missed'}; it is ALREADY saved — do NOT call mark_salah for it. ` +
+          `Reply in warm Bangla as Boss: (1) sincerely thank/encourage him for telling the truth instead of a false "porechi" — this honesty pleases Allah, ` +
           `(2) absolutely NO blame or guilt-tripping, ` +
           `(3) gently encourage tawba and catching the next waqt on time in jamaat. Keep it to 2-3 lines.`
       }

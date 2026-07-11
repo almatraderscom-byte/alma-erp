@@ -54,7 +54,7 @@ export function isOwnerTodoSource(source: string): boolean {
 export function isApprovalPendingTodo(todo: Todo): boolean {
   if (todo.status !== 'pending') return false
   const d = todo.description ?? ''
-  return /approval\s*লাগবে|আপনার\s*approval|⏳\s*Sir,\s*এটা\s*হয়নি/i.test(d)
+  return /approval\s*লাগবে|আপনার\s*approval|⏳\s*Boss,\s*এটা\s*হয়নি/i.test(d)
 }
 
 export function isInProgressStatus(status: string): boolean {

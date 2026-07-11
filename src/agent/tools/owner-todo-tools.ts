@@ -171,7 +171,7 @@ const update_owner_todo: AgentTool = {
     'Mark an owner todo done, or change its priority/detail, or REMOVE (drop) it. Use when the owner says ' +
     '"oita hoye geche", "X kaj ta done", "oita baad dao", "list theke soraw". NOTE: status=dropped is ' +
     'destructive — it does NOT remove anything immediately; it returns a confirm card (actionType ' +
-    'todo_cancel). Only after Sir approves does the real removal happen, and the row then shows a red cross ' +
+    'todo_cancel). Only after Boss approves does the real removal happen, and the row then shows a red cross ' +
     'with the agent name. Never claim a todo is removed before the card is approved.',
   input_schema: {
     type: 'object' as const,
@@ -204,7 +204,7 @@ const update_owner_todo: AgentTool = {
 
       const status = input.status ? String(input.status) : null
 
-      // Removal/cancel is destructive → confirm-gate (Sir's rule: confirm before
+      // Removal/cancel is destructive → confirm-gate (Boss's rule: confirm before
       // any destructive action except salah). Nothing is changed optimistically:
       // the real soft-cancel happens only after the owner approves the card, and
       // the todolist row then shows a red cross + the agent's name. Mirrors the
@@ -240,7 +240,7 @@ const update_owner_todo: AgentTool = {
             costEstimate: 0,
             actionType: 'todo_cancel',
             message:
-              `"${existing.title}" সরানোর জন্য Sir-এর confirm দরকার — approve করলে তালিকা থেকে সরবে এবং ` +
+              `"${existing.title}" সরানোর জন্য Boss-এর confirm দরকার — approve করলে তালিকা থেকে সরবে এবং ` +
               `লাল ক্রস + এজেন্টের নাম সহ দেখাবে।`,
           },
         }
@@ -292,7 +292,7 @@ owner-এর নিজের কাজ (staff task নয়) ট্র্যা
 - owner-এর টুডু এখন ERP-র সব পেজের উপরের "টুডু" বারে দেখা যায় (agent chat-এর পুরনো প্যানেল নেই) — টুডু done/remove না হওয়া পর্যন্ত তালিকায় থাকে, দিন পেরোলেও হারায় না।
 - কাজ হয়ে গেলে ("oita done", "hoye geche") → update_owner_todo status=done।
 - **সরাতে/বাদ দিতে বললে ("baad dao", "list theke soraw", "cancel") → update_owner_todo status=dropped।**
-  এটা সাথে সাথে সরায় না — একটা **confirm card** ফেরত আসে। Sir Approve করলেই বাস্তবে সরে, তারপর সেই row লাল ক্রস + এজেন্টের নাম সহ দেখায়। **Approve হওয়ার আগে "সরিয়ে দিলাম" বলবেন না** — আগে বাস্তবে হোক, তারপর তালিকায় mark হবে (ঠিক যেমন Claude কাজ শেষ হলে তবেই todo done করে)।
+  এটা সাথে সাথে সরায় না — একটা **confirm card** ফেরত আসে। Boss Approve করলেই বাস্তবে সরে, তারপর সেই row লাল ক্রস + এজেন্টের নাম সহ দেখায়। **Approve হওয়ার আগে "সরিয়ে দিলাম" বলবেন না** — আগে বাস্তবে হোক, তারপর তালিকায় mark হবে (ঠিক যেমন Claude কাজ শেষ হলে তবেই todo done করে)।
 - সকালের এক জায়গায় সব overview চাইলে → get_daily_digest।
 - এই todo গুলো owner চ্যাটের todo তালিকা ও Monitor — দুই জায়গাতেই একই (এক source)।
 `
