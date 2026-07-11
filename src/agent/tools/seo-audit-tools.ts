@@ -13,12 +13,21 @@
  * critical parts himself.
  */
 import { prisma } from '@/lib/prisma'
-import { agentStorageDownload, agentStorageSignedUrl, agentStorageUpload } from '@/agent/lib/storage'
+import { agentStorageDownload, agentStorageUpload } from '@/agent/lib/storage'
 import { buildClientReportMarkdown, buildCompareMarkdown, buildIssuesCsv, type AuditJson } from '@/agent/lib/seo-report'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
+
+// SHORT stable owner link to a private artifact (302→fresh signed URL on click,
+// owner login required). The head must copy links verbatim into its reply — a
+// 300-char signed JWT once got corrupted in transit (one mistyped char = dead
+// link), so we never hand it long URLs.
+const ownerFileUrl = (path: string) => {
+  const base = (process.env.APP_URL || process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://alma-erp-six.vercel.app').replace(/\/$/, '')
+  return `${base}/api/assistant/files?path=${encodeURIComponent(path)}&redirect=1`
+}
 
 const run_website_seo_audit: AgentTool = {
   name: 'run_website_seo_audit',
@@ -92,12 +101,12 @@ const check_website_seo_audit: AgentTool = {
     'To READ the FULL report, call this tool again with read:"report" — it returns the whole ' +
     'CLIENT-GRADE Bangla report (executive summary, scorecard, every issue WITH evidence + fix, page ' +
     'inventory, action plan). This is the ONLY way; the storage paths are private — a workbench ' +
-    'curl/cat can NEVER fetch them, do not try. Call with read:"links" to get 24h DOWNLOAD LINKS the ' +
+    'curl/cat can NEVER fetch them, do not try. Call with read:"links" to get STABLE download links the ' +
     'owner can hand a client: the report (.md), the raw findings (.json) and an Excel-openable issues ' +
     'CSV (with evidence + fix columns) — include these as markdown links in your reply.\n' +
     'read:"compare" builds the BEFORE/AFTER proof report: it diffs this audit against the PREVIOUS ' +
     'audit of the SAME site (score change, resolved issues with evidence, new issues, remaining) and ' +
-    'returns the markdown + a 24h download link. Use it after client fixes are done and a fresh ' +
+    'returns the markdown + a stable download link. Use it after client fixes are done and a fresh ' +
     're-audit has executed — this is the proof file the owner sends the client.\n' +
     'After status=executed you MUST put the report content (score, every critical/high issue, ' +
     'prioritized fixes) AND the download links INTO THE SAME REPLY — saying "রিপোর্ট উপরে দিয়েছি" or ' +
@@ -117,7 +126,7 @@ const check_website_seo_audit: AgentTool = {
         enum: ['report', 'json', 'links', 'compare'],
         description:
           'Optional: "report" = the FULL client-grade Bangla report text; "json" = the raw audit.json ' +
-          'findings; "links" = 24h signed DOWNLOAD links (report.md + audit.json + issues.csv for ' +
+          'findings; "links" = stable download links (report.md + audit.json + issues.csv for ' +
           'Excel) to hand the owner; "compare" = before/after proof report vs the previous audit of ' +
           'the same site. Use "report" then "links" once status=executed, before replying.',
       },
@@ -183,12 +192,11 @@ const check_website_seo_audit: AgentTool = {
           // (upsert: replaces the worker's bare version and any stale copy).
           await agentStorageUpload(reportPath, Buffer.from(buildClientReportMarkdown(loaded.audit, { keywordsNote }), 'utf8'), 'text/markdown', { upsert: true })
           await agentStorageUpload(csvPath, Buffer.from(buildIssuesCsv(loaded.audit), 'utf8'), 'text/csv', { upsert: true })
-          const DAY = 86_400
           links = {
-            reportUrl: await agentStorageSignedUrl(reportPath, DAY),
-            auditJsonUrl: await agentStorageSignedUrl(loaded.path, DAY),
-            issuesCsvUrl: await agentStorageSignedUrl(csvPath, DAY),
-            note: 'লিংকগুলো ২৪ ঘণ্টা কাজ করবে — reply-তে markdown link হিসেবে দাও: [পুরো রিপোর্ট (md)](…), [সব issue Excel/CSV](…), [raw findings (json)](…)',
+            reportUrl: ownerFileUrl(reportPath),
+            auditJsonUrl: ownerFileUrl(loaded.path),
+            issuesCsvUrl: ownerFileUrl(csvPath),
+            note: 'লিংকগুলো স্থায়ী — বস তার লগইন-করা ব্রাউজারে ক্লিক করলেই ফাইল নামবে। URL গুলো অক্ষরে-অক্ষরে হুবহু কপি করে reply-তে markdown link হিসেবে দাও: [পুরো রিপোর্ট (md)](…), [সব issue Excel/CSV](…), [raw findings (json)](…)',
           }
         } catch (err) {
           return { success: false, error: `লিংক বানানো গেল না: ${String(err)}` }
@@ -227,8 +235,8 @@ const check_website_seo_audit: AgentTool = {
           await agentStorageUpload(comparePath, Buffer.from(md, 'utf8'), 'text/markdown', { upsert: true })
           compare = {
             compareMarkdown: cap(md, 30_000),
-            compareUrl: await agentStorageSignedUrl(comparePath, 86_400),
-            note: 'এটাই client-কে দেওয়ার আগে-পরে প্রমাণ ফাইল — reply-তে সারাংশ + [আগে-পরে রিপোর্ট](লিংক) দাও।',
+            compareUrl: ownerFileUrl(comparePath),
+            note: 'এটাই client-কে দেওয়ার আগে-পরে প্রমাণ ফাইল — reply-তে সারাংশ + [আগে-পরে রিপোর্ট](লিংক) দাও (লিংক হুবহু কপি)।',
           }
         } catch (err) {
           return { success: false, error: `তুলনা রিপোর্ট বানানো গেল না: ${String(err)}` }
