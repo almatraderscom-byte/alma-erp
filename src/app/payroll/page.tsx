@@ -493,7 +493,8 @@ export default function PayrollPage() {
 
   const totalEmployees = compWallets.length
   const paidEmployees = compWallets.filter(w => (w.summary?.currentCycleSalaryAdded ?? 0) > 0 && !(w.summary?.salaryDueMonths ?? []).length).length
-  const dueWallets = compWallets.filter(w => (w.summary?.salaryDueMonths ?? []).length > 0)
+  // Zero-salary rows (test/legacy employees) can't owe salary — keep the due list real.
+  const dueWallets = compWallets.filter(w => (w.summary?.salaryDueMonths ?? []).length > 0 && (w.monthlySalary ?? 0) > 0)
   const unpaidEmployees = dueWallets.length
   const totalDueAmount = dueWallets.reduce((sum, w) => sum + (w.summary?.salaryDueMonths?.length ?? 0) * (w.monthlySalary ?? 0), 0)
   const givenThisCycle = compWallets.reduce((sum, w) => sum + (w.summary?.currentCycleSalaryAdded ?? 0), 0)
