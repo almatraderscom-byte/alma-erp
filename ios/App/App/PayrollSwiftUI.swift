@@ -97,12 +97,14 @@ struct PayrollWalletTotalsModel: Decodable, Equatable {
     let availableWithdrawable: Int
     let thisMonthSalaryAdded: Int
     let entryCount: Int
+    /// periodYms with no salary accrual (owner rule: show WHO is due, WHICH month).
+    let salaryDueMonths: [String]
 
     private enum Keys: String, CodingKey {
         case lifetimeEarned, lifetimeWithdrawn, totalAccrued, totalBonuses, totalCommissions
         case totalOvertime, totalReimbursements, totalMealDeductions, totalPenalties
         case outstandingAdvance, currentBalance, companyLiability, availableWithdrawable
-        case thisMonthSalaryAdded, entryCount
+        case thisMonthSalaryAdded, entryCount, salaryDueMonths
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -121,6 +123,7 @@ struct PayrollWalletTotalsModel: Decodable, Equatable {
         availableWithdrawable = payrollFlexInt(c, .availableWithdrawable) ?? 0
         thisMonthSalaryAdded = payrollFlexInt(c, .thisMonthSalaryAdded) ?? 0
         entryCount = payrollFlexInt(c, .entryCount) ?? 0
+        salaryDueMonths = (try? c.decodeIfPresent([String].self, forKey: .salaryDueMonths)) ?? []
     }
 }
 
@@ -2071,6 +2074,14 @@ private struct PayrollWalletCard: View {
                     .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
             }
             if let s = wallet.summary {
+                // Owner rule 2026-07-11: super admin must see WHO is unpaid and WHICH month.
+                if !s.salaryDueMonths.isEmpty, (wallet.monthlySalary ?? 0) > 0 {
+                    Text("বেতন বাকি — " + s.salaryDueMonths.map { PayrollFormat.periodBn($0) }.joined(separator: ", "))
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(PayrollPalette.amber600)
+                        .padding(.horizontal, 9).padding(.vertical, 3)
+                        .background(PayrollPalette.amber600.opacity(0.14), in: Capsule())
+                }
                 HStack(spacing: 0) {
                     walletStat("Earned", s.lifetimeEarned, .primary)
                     walletStat("Held", s.companyLiability, PayrollPalette.pos(colorScheme))
@@ -2117,6 +2128,15 @@ private struct PayrollEmployeeDetailSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
+                if let s = wallet.summary, !s.salaryDueMonths.isEmpty, (wallet.monthlySalary ?? 0) > 0 {
+                    Text("বেতন বাকি — " + s.salaryDueMonths.map { PayrollFormat.periodBn($0) }.joined(separator: ", ")
+                         + " · ৳ \((s.salaryDueMonths.count * (wallet.monthlySalary ?? 0)).formatted())")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(PayrollPalette.amber600)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(PayrollPalette.amber600.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                }
                 statementButton
                 summaryCard
                 entriesCard
@@ -2126,7 +2146,7 @@ private struct PayrollEmployeeDetailSheet: View {
         }
         .presentationBackground { PayrollAurora() }
         .fullScreenCover(isPresented: $statementOpen) {
-            WalletStatementScreen(employeeId: wallet.employeeId, businessId: wallet.businessId)
+            WalletStatementScreen(employeeId: wallet.employeeId, businessId: wallet.businessId, allowAppeal: false)
         }
     }
 
@@ -2272,6 +2292,21 @@ private enum PayrollFormat {
         let parts = name.split(separator: " ").prefix(2)
         let letters = parts.compactMap { $0.first.map(String.init) }
         return letters.isEmpty ? "?" : letters.joined().uppercased()
+    }
+
+    private static let bnDigits: [Character: Character] = [
+        "0": "০", "1": "১", "2": "২", "3": "৩", "4": "৪",
+        "5": "৫", "6": "৬", "7": "৭", "8": "৮", "9": "৯",
+    ]
+    private static let bnMonths = ["জানুয়ারি", "ফেব্রুয়ারি", "মার্চ", "এপ্রিল", "মে", "জুন",
+                                   "জুলাই", "আগস্ট", "সেপ্টেম্বর", "অক্টোবর", "নভেম্বর", "ডিসেম্বর"]
+
+    /// "2026-06" → "জুন ২০২৬"
+    static func periodBn(_ ym: String) -> String {
+        let parts = ym.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 2, (1...12).contains(parts[1]) else { return ym }
+        let year = String(String(parts[0]).map { bnDigits[$0] ?? $0 })
+        return "\(bnMonths[parts[1] - 1]) \(year)"
     }
 }
 

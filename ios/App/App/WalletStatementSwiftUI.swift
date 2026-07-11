@@ -261,9 +261,13 @@ struct WalletStatementScreen: View {
     @Environment(\.dismiss) private var dismiss
     @State private var vm: WalletStatementVM
     @State private var appealTarget: WSEntry? = nil
+    /// Appeals belong to the wallet's OWNER. Admin/boss views pass false and see
+    /// status chips only (owner rule 2026-07-11).
+    let allowAppeal: Bool
 
-    init(employeeId: String, businessId: String) {
+    init(employeeId: String, businessId: String, allowAppeal: Bool = true) {
         _vm = State(initialValue: WalletStatementVM(employeeId: employeeId, businessId: businessId))
+        self.allowAppeal = allowAppeal
     }
 
     /// Newest-first, paginated FIRST (visibleCount rows), then month-bucketed —
@@ -547,15 +551,19 @@ struct WalletStatementScreen: View {
                 chip("আপিলের সময় শেষ — \(WSFormat.bnDigits(String(vm.appealWindowDays))) দিন পেরিয়েছে", .secondary)
             default:
                 if a.appealable && a.attendanceRecordId != nil {
-                    Button {
-                        appealTarget = e
-                    } label: {
-                        Text("আপিল করুন — আর \(WSFormat.bnDigits(String(a.daysLeft))) দিন")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(WSPalette.coral)
-                            .padding(.horizontal, 10).padding(.vertical, 4)
-                            .background(WSPalette.coral.opacity(0.12), in: Capsule())
-                            .overlay(Capsule().strokeBorder(WSPalette.coral.opacity(0.5), lineWidth: 1))
+                    if allowAppeal {
+                        Button {
+                            appealTarget = e
+                        } label: {
+                            Text("আপিল করুন — আর \(WSFormat.bnDigits(String(a.daysLeft))) দিন")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(WSPalette.coral)
+                                .padding(.horizontal, 10).padding(.vertical, 4)
+                                .background(WSPalette.coral.opacity(0.12), in: Capsule())
+                                .overlay(Capsule().strokeBorder(WSPalette.coral.opacity(0.5), lineWidth: 1))
+                        }
+                    } else {
+                        chip("আপিল হয়নি — স্টাফ চাইলে আর \(WSFormat.bnDigits(String(a.daysLeft))) দিন করতে পারবে", .secondary)
                     }
                 }
             }
