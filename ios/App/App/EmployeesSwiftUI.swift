@@ -208,6 +208,9 @@ struct EmployeeWalletEntry: Decodable, Identifiable, Equatable {
     let periodYm: String?
     let type: String?
     let note: String?
+    /// Ledger source — the native salary slip needs the web's approved-withdrawal
+    /// filter (salary-slip.ts APPROVED_WITHDRAWAL_SOURCES).
+    let source: String?
     /// Unsigned entry amount (web `entry.amount`) — the salary-correction flow keys off it.
     let amount: Int
     let signedAmount: Int
@@ -216,7 +219,7 @@ struct EmployeeWalletEntry: Decodable, Identifiable, Equatable {
     let id: String
 
     private enum Keys: String, CodingKey {
-        case id, date, periodYm, type, note, amount, signedAmount, runningBalance
+        case id, date, periodYm, type, note, amount, signedAmount, runningBalance, source
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -225,6 +228,7 @@ struct EmployeeWalletEntry: Decodable, Identifiable, Equatable {
         periodYm = try? c.decodeIfPresent(String.self, forKey: .periodYm)
         type = try? c.decodeIfPresent(String.self, forKey: .type)
         note = try? c.decodeIfPresent(String.self, forKey: .note)
+        source = try? c.decodeIfPresent(String.self, forKey: .source)
         amount = employeeFlexInt(c, .amount) ?? 0
         signedAmount = employeeFlexInt(c, .signedAmount) ?? 0
         runningBalance = employeeFlexInt(c, .runningBalance) ?? 0
@@ -1169,6 +1173,7 @@ private struct EmployeeDetailSheet: View {
     @State private var showReverseConfirm = false
     @State private var resetTarget: EmployeeAttendanceRecord? = nil
     @State private var showResetConfirm = false
+    @State private var slipShare: EmployeeSlipFile? = nil
 
     var body: some View {
         ScrollView {
@@ -1647,20 +1652,163 @@ private struct EmployeeDetailSheet: View {
         }
     }
 
-    /// Slip PDF + profile photo upload are the only web-only leftovers.
+    /// Native salary slip (owner 2026-07-11) — month menu → on-device PDF → share.
+    /// Only the profile-photo upload remains on the web page.
     private var webLink: some View {
-        Button {
-            dismiss()
-            let encoded = employee.empId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? employee.empId
-            openWeb("/employees/\(encoded)", employee.name)
-        } label: {
-            Text("ওয়েব ভার্সন (Slip PDF · ছবি আপলোড)")
-                .font(.caption2)
-                .underline()
+        VStack(spacing: 8) {
+            Menu {
+                ForEach(EmployeeSlipPdf.recentPeriods(), id: \.self) { ym in
+                    Button(EmployeeSlipPdf.periodLabel(ym)) {
+                        if let url = EmployeeSlipPdf.make(
+                            employeeName: employee.name,
+                            employeeId: employee.empId,
+                            entries: vm.wallet?.entries ?? [],
+                            periodYm: ym) {
+                            slipShare = EmployeeSlipFile(url: url)
+                        }
+                    }
+                }
+            } label: {
+                Label("স্যালারি স্লিপ (PDF)", systemImage: "doc.richtext")
+                    .font(.caption.weight(.bold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 9)
+                    .background(Color.primary.opacity(0.06),
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            Button {
+                dismiss()
+                let encoded = employee.empId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? employee.empId
+                openWeb("/employees/\(encoded)", employee.name)
+            } label: {
+                Text("ওয়েব ভার্সন (ছবি আপলোড)")
+                    .font(.caption2)
+                    .underline()
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.tertiary)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.tertiary)
         .padding(.top, 2)
+        .sheet(item: $slipShare) { wrap in
+            EmployeeSlipShareSheet(url: wrap.url)
+                .presentationDetents([.medium])
+        }
+    }
+}
+
+/// Identifiable wrapper so a freshly generated slip can drive a .sheet(item:).
+private struct EmployeeSlipFile: Identifiable {
+    let url: URL
+    var id: String { url.absoluteString }
+}
+
+@available(iOS 17.0, *)
+private struct EmployeeSlipShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
+}
+
+/// Native salary-slip PDF — ports src/lib/salary-slip.ts buildSalarySlipBreakdown
+/// (period-scoped basic salary / penalty / net pay / withdrawn / PAID) and renders
+/// an A4 slip with the same data story as the web SalarySlipDocument.
+private enum EmployeeSlipPdf {
+    /// Web APPROVED_WITHDRAWAL_SOURCES verbatim (empty source counts as approved).
+    private static let approvedSources: Set<String> = ["wallet_request", "legacy_hr_payroll", "manual_entry"]
+
+    static func recentPeriods(count: Int = 6) -> [String] {
+        let cal = Calendar(identifier: .gregorian)
+        let now = Date()
+        return (0..<count).compactMap { back in
+            guard let d = cal.date(byAdding: .month, value: -back, to: now) else { return nil }
+            let c = cal.dateComponents([.year, .month], from: d)
+            return String(format: "%04d-%02d", c.year ?? 0, c.month ?? 0)
+        }
+    }
+
+    static func periodLabel(_ ym: String) -> String {
+        let bits = ym.split(separator: "-").compactMap { Int($0) }
+        guard bits.count == 2 else { return ym }
+        let f = DateFormatter()
+        f.dateFormat = "MMMM yyyy"
+        f.locale = Locale(identifier: "en_BD")
+        var comps = DateComponents(); comps.year = bits[0]; comps.month = bits[1]; comps.day = 1
+        guard let d = Calendar(identifier: .gregorian).date(from: comps) else { return ym }
+        return f.string(from: d)
+    }
+
+    private static func inPeriod(_ e: EmployeeWalletEntry, _ ym: String) -> Bool {
+        if e.periodYm == ym { return true }
+        guard let raw = e.date, raw.count >= 7 else { return false }
+        return String(raw.prefix(7)) == ym
+    }
+
+    static func make(employeeName: String, employeeId: String,
+                     entries: [EmployeeWalletEntry], periodYm: String) -> URL? {
+        // buildSalarySlipBreakdown port.
+        var basic = 0, penalty = 0, withdrawn = 0
+        for e in entries where inPeriod(e, periodYm) {
+            let amount = abs(e.amount)
+            guard amount > 0 else { continue }
+            switch e.type {
+            case "SALARY_ACCRUAL": basic += amount
+            case "PENALTY": penalty += amount
+            case "WITHDRAWAL":
+                let src = (e.source ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+                if src.isEmpty || approvedSources.contains(src) { withdrawn += amount }
+            default: break
+            }
+        }
+        let net = basic - penalty
+        let isPaid = net > 0 && withdrawn >= net
+
+        let pageRect = CGRect(x: 0, y: 0, width: 595, height: 842)
+        let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
+        let data = renderer.pdfData { ctx in
+            ctx.beginPage()
+            var y: CGFloat = 48
+            func line(_ text: String, size: CGFloat, bold: Bool = false,
+                      color: UIColor = .black, x: CGFloat = 48, dy: CGFloat = 18) {
+                text.draw(at: CGPoint(x: x, y: y), withAttributes: [
+                    .font: bold ? UIFont.boldSystemFont(ofSize: size) : UIFont.systemFont(ofSize: size),
+                    .foregroundColor: color,
+                ])
+                y += dy
+            }
+            line("Alma Lifestyle", size: 18, bold: true, dy: 24)
+            line("SALARY SLIP — \(periodLabel(periodYm))", size: 11, bold: true,
+                 color: .darkGray, dy: 28)
+            line("Employee: \(employeeName)", size: 11, dy: 16)
+            line("Employee ID: \(employeeId)", size: 9, color: .darkGray, dy: 26)
+
+            func row(_ label: String, _ value: Int, bold: Bool = false, color: UIColor = .black) {
+                label.draw(at: CGPoint(x: 48, y: y), withAttributes: [
+                    .font: bold ? UIFont.boldSystemFont(ofSize: 10) : UIFont.systemFont(ofSize: 10)])
+                "৳\(value.formatted())".draw(at: CGPoint(x: 420, y: y), withAttributes: [
+                    .font: bold ? UIFont.boldSystemFont(ofSize: 10) : UIFont.systemFont(ofSize: 10),
+                    .foregroundColor: color])
+                y += 18
+            }
+            row("Basic salary (accrued this period)", basic)
+            row("Penalty", -penalty, color: penalty > 0 ? .red : .black)
+            y += 4
+            row("Net pay", net, bold: true)
+            row("Withdrawn in period", withdrawn)
+            y += 10
+            line(isPaid ? "STATUS: PAID" : "STATUS: UNPAID", size: 11, bold: true,
+                 color: isPaid ? UIColor(red: 0, green: 0.55, blue: 0.35, alpha: 1) : .red, dy: 26)
+            let stamp = DateFormatter()
+            stamp.dateFormat = "yyyy-MM-dd"
+            line("Generated \(stamp.string(from: Date())) · ALMA ERP", size: 8, color: .gray)
+        }
+        let safe = employeeName.replacingOccurrences(of: "[^\\w\\s-]", with: "",
+                                                     options: .regularExpression)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("salary-slip-\(safe)-\(periodYm).pdf")
+        try? data.write(to: url)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 }
 
