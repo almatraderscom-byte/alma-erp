@@ -1997,11 +1997,13 @@ private struct PayrollEmployeeDetailSheet: View {
     let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @State private var statementOpen = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
+                statementButton
                 summaryCard
                 entriesCard
                 webLink
@@ -2009,6 +2011,27 @@ private struct PayrollEmployeeDetailSheet: View {
             .padding(18)
         }
         .presentationBackground { PayrollAurora() }
+        .fullScreenCover(isPresented: $statementOpen) {
+            WalletStatementScreen(employeeId: wallet.employeeId, businessId: wallet.businessId)
+        }
+    }
+
+    /// Boss opens the employee's FULL transparency statement (fines + appeal
+    /// history + period totals) — owner spec 2026-07-11.
+    private var statementButton: some View {
+        Button {
+            statementOpen = true
+        } label: {
+            HStack {
+                Text("সম্পূর্ণ হিসাব — জরিমানা ও আপিলসহ")
+                    .font(.caption.weight(.bold))
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+            }
+            .foregroundStyle(PayrollPalette.coral)
+            .padding(13)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 13))
+        }
     }
 
     private var header: some View {
