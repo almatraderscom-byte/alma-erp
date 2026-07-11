@@ -186,27 +186,73 @@ struct CrmCustomersResponse: Decodable {
     }
 }
 
-/// Light slice of an order row for the detail sheet's "Recent Orders" block.
+/// Light slice of an order row for the detail sheet's "Recent Orders" block +
+/// the order-derived return insights (web buildCustomerReturnInsights parity).
 struct CrmRecentOrder: Decodable, Identifiable, Equatable {
     let id: String
     let date: String?
     let status: String
     let sellPrice: Int?
+    /// Server-persisted return net profit when the sheet carries it (web reads
+    /// `o.return_net_profit ?? calculateOrderAccounting(…)` — same precedence here).
+    let returnNetProfitWire: Int?
+    let shippingFee: Int?
+    let courierCharge: Int?
 
     private enum Keys: String, CodingKey {
         case id, date, status
         case sellPrice = "sell_price"
+        case returnNetProfitWire = "return_net_profit"
+        case shippingFee = "shipping_fee"
+        case courierCharge = "courier_charge"
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? ""
         date = try? c.decodeIfPresent(String.self, forKey: .date)
         status = (try? c.decode(String.self, forKey: .status)) ?? "Pending"
-        if let i = try? c.decodeIfPresent(Int.self, forKey: .sellPrice) { sellPrice = i }
-        else if let d = try? c.decodeIfPresent(Double.self, forKey: .sellPrice) { sellPrice = Int(d.rounded()) }
-        else if let s = try? c.decodeIfPresent(String.self, forKey: .sellPrice) { sellPrice = Int(s) }
-        else { sellPrice = nil }
+        sellPrice = Self.flexInt(c, .sellPrice)
+        returnNetProfitWire = Self.flexInt(c, .returnNetProfitWire)
+        shippingFee = Self.flexInt(c, .shippingFee)
+        courierCharge = Self.flexInt(c, .courierCharge)
     }
+
+    private static func flexInt(_ c: KeyedDecodingContainer<Keys>, _ k: Keys) -> Int? {
+        if let i = try? c.decodeIfPresent(Int.self, forKey: k) { return i }
+        if let d = try? c.decodeIfPresent(Double.self, forKey: k) { return Int(d.rounded()) }
+        if let s = try? c.decodeIfPresent(String.self, forKey: k) { return Int(s) }
+        return nil
+    }
+
+    /// Web normalizeOrderStatusKey: trim → UPPER_SNAKE; FAILED_DELIVERY folds
+    /// into RETURNED_UNPAID.
+    var statusKey: String {
+        let key = status.trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: "_")
+        return key == "FAILED_DELIVERY" ? "RETURNED_UNPAID" : key
+    }
+
+    /// Web isTerminalReturnOrderStatus.
+    var isReturn: Bool {
+        let k = statusKey
+        return k == "RETURNED" || k == "RETURNED_PAID" || k == "RETURNED_UNPAID"
+    }
+
+    /// Web return-scenario math (order-return-profit.ts): RETURNED_PAID nets
+    /// shipping fee minus the round-trip courier; RETURNED / RETURNED_UNPAID eat
+    /// the round-trip courier outright. Wire value wins when the sheet has it.
+    var returnNetProfit: Int {
+        if let wire = returnNetProfitWire { return wire }
+        guard isReturn else { return 0 }
+        let courier = max(0, courierCharge ?? 0)
+        let ship = max(0, shippingFee ?? 0)
+        return statusKey == "RETURNED_PAID" ? ship - 2 * courier : -(2 * courier)
+    }
+
+    /// Web `returnLoss`: only a negative return net counts as loss.
+    var returnLoss: Int { returnNetProfit < 0 ? -returnNetProfit : 0 }
 
     /// Web tone-* pill colours (same table the Orders screen carries).
     var tint: Color {
@@ -239,6 +285,44 @@ struct CrmOrdersLookupResponse: Decodable {
         let root = try decoder.container(keyedBy: Keys.self)
         let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
         orders = (try? c.decode([CrmRecentOrder].self, forKey: .orders)) ?? []
+    }
+}
+
+/// Order-derived return insights for the detail sheet — the native mirror of the
+/// web's buildCustomerReturnInsights (customer-order-insights.ts), computed over
+/// the same per-customer order rows the sheet already fetches by phone.
+private struct CrmReturnInsights {
+    let totalOrders: Int
+    let returnCount: Int
+    let returnRatePct: Int
+    let returnsLast30Days: Int
+    let computedRisk: String      // LOW | MEDIUM | HIGH (web thresholds)
+    let totalReturnLoss: Int
+
+    init(orders: [CrmRecentOrder], now: Date = Date()) {
+        totalOrders = orders.count
+        let cutoff = now.addingTimeInterval(-30 * 86_400)
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyy-MM-dd"
+        var returns = 0, recent30 = 0, loss = 0
+        for o in orders where o.isReturn {
+            returns += 1
+            loss += o.returnLoss
+            if let raw = o.date, raw.count >= 10,
+               let d = df.date(from: String(raw.prefix(10))), d >= cutoff {
+                recent30 += 1
+            }
+        }
+        returnCount = returns
+        returnsLast30Days = recent30
+        totalReturnLoss = loss
+        returnRatePct = totalOrders > 0
+            ? Int((Double(returns) / Double(totalOrders) * 100).rounded()) : 0
+        // Web: >2 returns in 30d = HIGH; any in 30d or 2+ lifetime = MEDIUM.
+        if recent30 > 2 { computedRisk = "HIGH" }
+        else if recent30 >= 1 || returns >= 2 { computedRisk = "MEDIUM" }
+        else { computedRisk = "LOW" }
     }
 }
 
@@ -532,27 +616,50 @@ private struct CrmCustomerRow: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        HStack(spacing: 12) {
-            avatar
-            VStack(alignment: .leading, spacing: 2) {
-                Text(customer.name).font(.subheadline.weight(.semibold)).lineLimit(1)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer(minLength: 6)
-            VStack(alignment: .trailing, spacing: 3) {
-                Text("৳\((customer.totalSpent ?? 0).formatted())")
-                    .font(.footnote.weight(.bold).monospacedDigit())
-                HStack(spacing: 5) {
-                    Text("\(customer.totalOrders ?? 0) orders")
-                        .font(.caption2).foregroundStyle(.secondary)
-                    segmentPill
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                avatar
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(customer.name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text("৳\((customer.totalSpent ?? 0).formatted())")
+                        .font(.footnote.weight(.bold).monospacedDigit())
+                    HStack(spacing: 5) {
+                        Text("\(customer.totalOrders ?? 0) orders")
+                            .font(.caption2).foregroundStyle(.secondary)
+                        segmentPill
+                    }
                 }
             }
+            clvBar
         }
         .padding(.horizontal, 14).padding(.vertical, 11)
         .crmGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture(perform: onTap)
+    }
+
+    /// Web ClvBar (row-level): thin track filled to the score, number at right —
+    /// same >60 gold / >30 amber / else muted map as the detail sheet.
+    private var clvBar: some View {
+        let score = min(max(customer.clvScore ?? 0, 0), 100)
+        let tint = CrmPalette.clv(score, colorScheme)
+        return HStack(spacing: 8) {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.primary.opacity(0.08))
+                    Capsule().fill(tint)
+                        .frame(width: geo.size.width * CGFloat(score) / 100)
+                }
+            }
+            .frame(height: 3)
+            Text("\(score)")
+                .font(.system(size: 10, weight: .bold)).monospacedDigit()
+                .foregroundStyle(score > 60 ? CrmPalette.accentText(colorScheme) : .secondary)
+        }
     }
 
     /// Web Avatar: initials circle — VIP wears the gold tint, others muted glass.
@@ -599,6 +706,9 @@ private struct CrmDetailSheet: View {
     @State private var recentOrders: [CrmRecentOrder] = []
     @State private var ordersLoading = true
 
+    /// Order-derived return insights — recomputed over the fetched rows (≤10).
+    private var insights: CrmReturnInsights { CrmReturnInsights(orders: recentOrders) }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
@@ -640,10 +750,26 @@ private struct CrmDetailSheet: View {
         HStack(spacing: 6) {
             pill(customer.segment ?? "—", CrmPalette.segment(customer.segment, colorScheme))
             pill(customer.riskLevel ?? "LOW", CrmPalette.risk(customer.riskLevel, colorScheme))
+            returnRiskBadge
             if customer.waOptin == "Yes" {
                 pill("WA Opt-in", CrmPalette.green400)
             }
             Spacer()
+        }
+    }
+
+    /// Web escalation badge (page.tsx): shows when the order-derived risk is HIGH,
+    /// or MEDIUM while the sheet still says LOW, or any returns exist at all.
+    @ViewBuilder private var returnRiskBadge: some View {
+        if !ordersLoading, !recentOrders.isEmpty {
+            let ins = insights
+            let escalated = ins.computedRisk == "HIGH"
+                || (ins.computedRisk == "MEDIUM" && (customer.riskLevel ?? "LOW") == "LOW")
+            if escalated || ins.returnCount > 0 {
+                pill("Return risk: \(ins.computedRisk)"
+                        + (ins.returnsLast30Days > 0 ? " · \(ins.returnsLast30Days) in 30d" : ""),
+                     ins.computedRisk == "HIGH" ? CrmPalette.red400 : CrmPalette.amber500)
+            }
         }
     }
 
@@ -697,8 +823,15 @@ private struct CrmDetailSheet: View {
             scoreBar(value: score, tint: scoreTint)
             statRow("COD Fail Rate", CrmFormat.pct(customer.codFailPct),
                     tint: (customer.codFailPct ?? 0) > 0.5 ? CrmPalette.red400 : CrmPalette.green400)
-            statRow("Return Rate", CrmFormat.pct(customer.returnRate),
+            statRow("Return Rate (sheet)", CrmFormat.pct(customer.returnRate),
                     tint: (customer.returnRate ?? 0) > 0.3 ? CrmPalette.red400 : CrmPalette.green400)
+            if !ordersLoading, !recentOrders.isEmpty {
+                let ins = insights
+                statRow("Return Rate (orders)", "\(ins.returnRatePct)%",
+                        tint: ins.returnRatePct > 30 ? CrmPalette.red400 : .primary)
+                statRow("Return Loss (orders)", "৳\(ins.totalReturnLoss.formatted())",
+                        tint: ins.totalReturnLoss > 0 ? CrmPalette.red400 : CrmPalette.green400)
+            }
             statRow("CLV Score", "\(customer.clvScore ?? 0)/100",
                     tint: CrmPalette.clv(customer.clvScore ?? 0, colorScheme))
             statRow("Days Inactive", "\(customer.daysInactive ?? 0)",
@@ -756,12 +889,20 @@ private struct CrmDetailSheet: View {
                             Text("৳\(amt.formatted())")
                                 .font(.caption.weight(.bold).monospacedDigit())
                         }
-                        HStack(spacing: 4) {
-                            Circle().fill(o.tint).frame(width: 6, height: 6)
-                            Text(o.label).font(.caption2.weight(.semibold))
+                        VStack(alignment: .trailing, spacing: 3) {
+                            HStack(spacing: 4) {
+                                Circle().fill(o.tint).frame(width: 6, height: 6)
+                                Text(o.label).font(.caption2.weight(.semibold))
+                            }
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(o.tint.opacity(0.13), in: Capsule())
+                            // Web: returned rows carry their loss under the badge.
+                            if o.isReturn && o.returnLoss > 0 {
+                                Text("−৳\(o.returnLoss.formatted())")
+                                    .font(.caption2.weight(.semibold).monospacedDigit())
+                                    .foregroundStyle(CrmPalette.red400)
+                            }
                         }
-                        .padding(.horizontal, 7).padding(.vertical, 3)
-                        .background(o.tint.opacity(0.13), in: Capsule())
                     }
                 }
             }

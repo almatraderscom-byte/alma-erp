@@ -108,6 +108,10 @@ struct TradingAccountsRow: Decodable, Identifiable, Equatable {
     let startDate: String?
     let assignedUserName: String?
     let notes: String?
+    // Native edit form prefill (owner 2026-07-11: account create/edit goes native).
+    let merchantTarget: Double?
+    let completionBonus: Double?
+    let assignedUserId: String?
 
     private enum Keys: String, CodingKey {
         case id, accountTitle, binanceUid, accountType, status
@@ -117,6 +121,7 @@ struct TradingAccountsRow: Decodable, Identifiable, Equatable {
         case lastPartnershipSettledAt
         case commissionType, commissionRate, fixedCommission
         case startDate, assignedUser, notes
+        case merchantTarget, completionBonus, assignedUserId
     }
     private enum UserKeys: String, CodingKey { case name }
 
@@ -145,6 +150,9 @@ struct TradingAccountsRow: Decodable, Identifiable, Equatable {
         notes = try? c.decodeIfPresent(String.self, forKey: .notes)
         let u = try? c.nestedContainer(keyedBy: UserKeys.self, forKey: .assignedUser)
         assignedUserName = u.flatMap { try? $0.decodeIfPresent(String.self, forKey: .name) }
+        merchantTarget = tradingAccountsFlexDouble(c, .merchantTarget)
+        completionBonus = tradingAccountsFlexDouble(c, .completionBonus)
+        assignedUserId = try? c.decodeIfPresent(String.self, forKey: .assignedUserId)
     }
 
     static func == (a: TradingAccountsRow, b: TradingAccountsRow) -> Bool { a.id == b.id }
@@ -391,6 +399,101 @@ final class TradingAccountsVM {
     func loadDetail(id: String) async throws -> TradingAccountsDetail {
         try await AlmaAPI.shared.get("/api/trading/accounts/\(id)/summary")
     }
+
+    // ── Native writes (owner 2026-07-11: account create/edit/archive goes native;
+    //    web TradingAccountModal payload verbatim). ──
+
+    var toast: String? = nil
+    var staff: [TradingAccountsStaff] = []
+
+    struct AccountPayload: Encodable {
+        let accountTitle: String
+        let binanceUid: String
+        let accountType: String
+        let status: String
+        let startingCapital: Double
+        let merchantTarget: Double?
+        let commissionType: String
+        let commissionRate: Double
+        let fixedCommission: Double
+        let completionBonus: Double
+        let startDate: String
+        let assignedUserId: String?
+        let notes: String
+        let partnershipEnabled: Bool
+        let staffSharePercent: Double
+        var action: String? = nil          // PATCH-only: "update" | "archive"
+    }
+    private struct SaveResponse: Decodable {
+        let ok: Bool?, error: String?
+    }
+
+    /// GET /api/trading/staff — assignment picker (web loads it for the modal).
+    func loadStaff() async {
+        struct StaffResponse: Decodable { let staff: [TradingAccountsStaff]? }
+        if let r: StaffResponse = try? await AlmaAPI.shared.get("/api/trading/staff") {
+            staff = r.staff ?? []
+        }
+    }
+
+    /// Create (POST) or update (PATCH) — returns success, reloads the list.
+    func saveAccount(_ payload: AccountPayload, editingId: String?) async -> Bool {
+        do {
+            let res: SaveResponse
+            if let editingId {
+                res = try await AlmaAPI.shared.send("PATCH", "/api/trading/accounts/\(editingId)", body: payload)
+            } else {
+                res = try await AlmaAPI.shared.send("POST", "/api/trading/accounts", body: payload)
+            }
+            guard res.ok ?? false else {
+                toast = res.error ?? "Could not save account"
+                return false
+            }
+            toast = editingId == nil ? "Trading account created" : "Trading account updated"
+            await load()
+            return true
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return false
+        } catch {
+            if Self.isCancellation(error) { return false }
+            toast = error.localizedDescription
+            return false
+        }
+    }
+
+    /// Archive — the web sends PATCH {action:'archive'}.
+    func archiveAccount(_ row: TradingAccountsRow) async -> Bool {
+        struct ArchiveBody: Encodable { let action = "archive" }
+        do {
+            let res: SaveResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/trading/accounts/\(row.id)", body: ArchiveBody())
+            guard res.ok ?? false else {
+                toast = res.error ?? "Archive হয়নি"
+                return false
+            }
+            toast = "অ্যাকাউন্ট archive হয়েছে"
+            await load()
+            return true
+        } catch {
+            toast = error.localizedDescription
+            return false
+        }
+    }
+}
+
+/// GET /api/trading/staff rows (web TradingUser: id/name/role).
+struct TradingAccountsStaff: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let role: String?
+    private enum Keys: String, CodingKey { case id, name, role }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        name = (try? c.decode(String.self, forKey: .name)) ?? "—"
+        role = try? c.decodeIfPresent(String.self, forKey: .role)
+    }
 }
 
 // MARK: - Screen
@@ -401,12 +504,16 @@ struct TradingAccountsScreen: View {
     @State private var vm = TradingAccountsVM()
     @State private var selected: TradingAccountsRow? = nil
     @State private var searchDebounce: Task<Void, Never>? = nil
+    @State private var showCreate = false
+    @State private var editing: TradingAccountsRow? = nil
+    @State private var archiving: TradingAccountsRow? = nil
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 10) {
                 heroBoard
+                newAccountButton
                 searchRow
                 statusChips
                 if vm.authExpired { authCard }
@@ -416,6 +523,12 @@ struct TradingAccountsScreen: View {
                     TradingAccountsRowCard(account: a) {
                         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                         selected = a
+                    }
+                    .contextMenu {
+                        Button { editing = a } label: { Label("সম্পাদনা", systemImage: "pencil") }
+                        Button(role: .destructive) { archiving = a } label: {
+                            Label("Archive", systemImage: "archivebox")
+                        }
                     }
                 }
                 if !vm.loading && vm.accounts.isEmpty && vm.error == nil && !vm.authExpired {
@@ -430,12 +543,59 @@ struct TradingAccountsScreen: View {
         .background(TradingAccountsAurora())
         .claudeTopFade()
         .refreshable { await vm.load() }
-        .task { await vm.load() }
+        .task { await vm.load(); await vm.loadStaff() }
         .sheet(item: $selected) { a in
             TradingAccountsDetailSheet(row: a, vm: vm, openWeb: openWeb)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showCreate) { TradingAccountsFormSheet(vm: vm, editing: nil) }
+        .sheet(item: $editing) { row in TradingAccountsFormSheet(vm: vm, editing: row) }
+        .confirmationDialog(
+            "\"\(archiving?.accountTitle ?? "")\" archive করবেন? Active list থেকে সরে যাবে।",
+            isPresented: Binding(get: { archiving != nil }, set: { if !$0 { archiving = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, archive করুন", role: .destructive) {
+                if let row = archiving { Task { _ = await vm.archiveAccount(row) } }
+                archiving = nil
+            }
+            Button("বাতিল", role: .cancel) { archiving = nil }
+        }
+        .overlay(alignment: .bottom) {
+            if let t = vm.toast {
+                Text(t)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task {
+                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+                        withAnimation { vm.toast = nil }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: vm.toast != nil)
+    }
+
+    /// Web header "Create trading account" button — native form sheet.
+    private var newAccountButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showCreate = true
+        } label: {
+            Label("নতুন trading account", systemImage: "plus.circle.fill")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(TradingAccountsPalette.accentText(colorScheme))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(TradingAccountsPalette.coral.opacity(0.10),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+                    .strokeBorder(TradingAccountsPalette.coral.opacity(0.3), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     // ── Bento board (list columns rolled up: balance hero + capital/expense tiles) ──
@@ -1383,4 +1543,271 @@ private struct TradingAccountsHeroCard: View {
 @available(iOS 17.0, *)
 #Preview("Trading Accounts — Light") {
     TradingAccountsScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - Create / edit form (owner 2026-07-11: native writes — web TradingAccountModal
+// parity: same fields, same payload, partnership + commission blocks included).
+
+@available(iOS 17.0, *)
+private struct TradingAccountsFormSheet: View {
+    let vm: TradingAccountsVM
+    let editing: TradingAccountsRow?
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+
+    @State private var accountTitle = ""
+    @State private var startingCapital = ""
+    @State private var accountType = "BINANCE_P2P"
+    @State private var binanceUid = ""
+    @State private var merchantTarget = ""
+    @State private var status = "ACTIVE"
+    @State private var assignedUserId = ""
+    @State private var partnershipEnabled = false
+    @State private var staffSharePercent = "50"
+    @State private var commissionType = "NONE"
+    @State private var commissionRate = ""
+    @State private var fixedCommission = ""
+    @State private var completionBonus = ""
+    @State private var notes = ""
+    @State private var startDate = Date()
+    @State private var submitting = false
+    @State private var errorText: String? = nil
+    @State private var confirming = false
+
+    private func num(_ s: String) -> Double { Double(s.replacingOccurrences(of: ",", with: "")) ?? 0 }
+    private var canSubmit: Bool {
+        !accountTitle.trimmingCharacters(in: .whitespaces).isEmpty && num(startingCapital) > 0
+    }
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(editing == nil ? "Create trading account" : "Edit trading account")
+                        .font(.subheadline.weight(.bold))
+                    Text("নিজস্ব capital, staff, খরচ ও ROI-সহ স্বাধীন merchant wallet।")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Close") { dismiss() }
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 18).padding(.top, 20).padding(.bottom, 12)
+            Divider().opacity(0.4)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    field("Account Name *", text: $accountTitle, keyboard: .default)
+                    field("Initial Capital (BDT) *", text: $startingCapital)
+                    labeledPicker("Account type", selection: $accountType, options: [
+                        ("Binance P2P", "BINANCE_P2P"), ("Merchant", "MERCHANT"),
+                        ("Staff operated", "STAFF_OPERATED"), ("Other", "OTHER"),
+                    ])
+                    field("Binance UID", text: $binanceUid, keyboard: .default)
+                    field("Merchant Goal / Monthly Target", text: $merchantTarget)
+                    labeledPicker("Status", selection: $status, options: [
+                        ("Active", "ACTIVE"), ("Paused", "PAUSED"),
+                        ("Completed", "COMPLETED"), ("Closed", "CLOSED"),
+                    ])
+                    staffPicker
+                    DatePicker("Start date", selection: $startDate, displayedComponents: .date)
+                        .font(.subheadline)
+
+                    // Partnership block (web: 50-50 loss share).
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("PARTNERSHIP / 50-50 LOSS SHARE")
+                            .font(.system(size: 9, weight: .bold)).tracking(1).foregroundStyle(.secondary)
+                        Toggle("Enable partnership settlement", isOn: $partnershipEnabled)
+                            .font(.subheadline)
+                            .tint(TradingAccountsPalette.coral)
+                        if partnershipEnabled {
+                            field("Staff share % (default 50)", text: $staffSharePercent)
+                            Text("Partnership ON হলে trade commission auto-disable হবে — loss/expense settlement আলাদা হিসাবে হবে।")
+                                .font(.caption2)
+                                .foregroundStyle(scheme == .dark ? TradingAccountsPalette.amber500
+                                                                 : TradingAccountsPalette.amber600)
+                        }
+                    }
+                    .padding(12)
+                    .background(Color.primary.opacity(0.04),
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+
+                    // Commission block (disabled while partnership on — web parity).
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("OPTIONAL STAFF COMMISSION")
+                            .font(.system(size: 9, weight: .bold)).tracking(1).foregroundStyle(.secondary)
+                        if partnershipEnabled {
+                            Text("Commission disabled while partnership is active.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Group {
+                            labeledPicker("Commission type", selection: $commissionType, options: [
+                                ("No commission", "NONE"), ("Percentage of profit", "PERCENTAGE"),
+                                ("Fixed per profitable sell", "FIXED"),
+                            ])
+                            field("Commission % of profit", text: $commissionRate)
+                            field("Fixed commission BDT", text: $fixedCommission)
+                            field("Merchant completion bonus BDT", text: $completionBonus)
+                        }
+                        .disabled(partnershipEnabled)
+                        .opacity(partnershipEnabled ? 0.5 : 1)
+                    }
+                    .padding(12)
+                    .background(Color.primary.opacity(0.04),
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+
+                    field("Notes", text: $notes, keyboard: .default)
+                    Text("Wallet formula: Initial Capital + Net Profit - Expenses - Withdrawals. Account expenses also feed global finance and management reports.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    if let errorText {
+                        Text(errorText).font(.caption2.weight(.semibold))
+                            .foregroundStyle(TradingAccountsPalette.red500)
+                    }
+                }
+                .padding(18)
+            }
+            .scrollDismissesKeyboard(.interactively)
+
+            Divider().opacity(0.4)
+            Button {
+                confirming = true
+            } label: {
+                HStack(spacing: 8) {
+                    if submitting { ProgressView().tint(.white) }
+                    Text(submitting ? "Saving…" : "Save account").font(.subheadline.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(canSubmit && !submitting ? AlmaSwiftTheme.coral : AlmaSwiftTheme.coral.opacity(0.4),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSubmit || submitting)
+            .padding(.horizontal, 18).padding(.vertical, 14)
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .background(AlmaSwiftTheme.rootBg(scheme))
+        .onAppear(perform: prefill)
+        .confirmationDialog(
+            editing == nil
+                ? "\"\(accountTitle)\" তৈরি করবেন? Capital \(AlmaSwiftTheme.takaShort(Int(num(startingCapital).rounded())))"
+                : "\"\(accountTitle)\" আপডেট করবেন?",
+            isPresented: $confirming, titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, সেভ করুন") { submit() }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+
+    private func prefill() {
+        guard let a = editing else { return }
+        accountTitle = a.accountTitle
+        startingCapital = a.startingCapital.map { String(format: "%.0f", $0) } ?? ""
+        accountType = a.accountType ?? "BINANCE_P2P"
+        binanceUid = a.binanceUid ?? ""
+        merchantTarget = a.merchantTarget.map { String(format: "%.0f", $0) } ?? ""
+        status = a.status ?? "ACTIVE"
+        assignedUserId = a.assignedUserId ?? ""
+        partnershipEnabled = a.partnershipEnabled ?? false
+        staffSharePercent = a.staffSharePercent.map { String(format: "%.0f", $0) } ?? "50"
+        commissionType = a.commissionType ?? "NONE"
+        commissionRate = a.commissionRate.map { String(format: "%.2f", $0) } ?? ""
+        fixedCommission = a.fixedCommission.map { String(format: "%.0f", $0) } ?? ""
+        completionBonus = a.completionBonus.map { String(format: "%.0f", $0) } ?? ""
+        notes = a.notes ?? ""
+        if let s = a.startDate, let d = Self.dateFormatter.date(from: String(s.prefix(10))) {
+            startDate = d
+        }
+    }
+
+    private func submit() {
+        guard canSubmit, !submitting else { return }
+        submitting = true; errorText = nil
+        let payload = TradingAccountsVM.AccountPayload(
+            accountTitle: accountTitle.trimmingCharacters(in: .whitespaces),
+            binanceUid: binanceUid,
+            accountType: accountType,
+            status: status,
+            startingCapital: num(startingCapital),
+            merchantTarget: merchantTarget.isEmpty ? nil : num(merchantTarget),
+            commissionType: commissionType,
+            commissionRate: num(commissionRate),
+            fixedCommission: num(fixedCommission),
+            completionBonus: num(completionBonus),
+            startDate: Self.dateFormatter.string(from: startDate),
+            assignedUserId: assignedUserId.isEmpty ? nil : assignedUserId,
+            notes: notes,
+            partnershipEnabled: partnershipEnabled,
+            staffSharePercent: num(staffSharePercent) > 0 ? num(staffSharePercent) : 50,
+            action: editing == nil ? nil : "update")
+        Task {
+            defer { submitting = false }
+            let ok = await vm.saveAccount(payload, editingId: editing?.id)
+            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+            if ok { dismiss() } else { errorText = vm.toast }
+        }
+    }
+
+    // ── Small form atoms ──
+
+    private func field(_ placeholder: String, text: Binding<String>,
+                       keyboard: UIKeyboardType = .decimalPad) -> some View {
+        TextField(placeholder, text: text)
+            .keyboardType(keyboard)
+            .font(.subheadline)
+            .padding(.horizontal, 12).padding(.vertical, 11)
+            .background(Color.primary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+    }
+
+    private func labeledPicker(_ label: String, selection: Binding<String>,
+                               options: [(String, String)]) -> some View {
+        Menu {
+            ForEach(options, id: \.1) { opt in
+                Button(opt.0) { selection.wrappedValue = opt.1 }
+            }
+        } label: {
+            HStack {
+                Text(options.first(where: { $0.1 == selection.wrappedValue })?.0 ?? label)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down").font(.caption2)
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 12).padding(.vertical, 11)
+            .background(Color.primary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        }
+    }
+
+    private var staffPicker: some View {
+        Menu {
+            Button("Unassigned") { assignedUserId = "" }
+            ForEach(vm.staff) { s in
+                Button("\(s.name)\(s.role.map { " · \($0)" } ?? "")") { assignedUserId = s.id }
+            }
+        } label: {
+            HStack {
+                Text(assignedUserId.isEmpty
+                     ? "Unassigned"
+                     : (vm.staff.first(where: { $0.id == assignedUserId })?.name ?? "Staff"))
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Image(systemName: "person.crop.circle").font(.caption)
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 12).padding(.vertical, 11)
+            .background(Color.primary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        }
+    }
 }

@@ -13,6 +13,12 @@
 //    POST /api/attendance/leave                           → ছুটির আবেদন (kind/dates/times/reason)
 //    POST /api/attendance/exceptions                      → checkout-exception (scope + reason)
 //    POST /api/payroll/wallet/advance-notice              → advance-notice "বুঝেছি" ack
+//    GET  /api/payroll/meal-allowance/eligibility          → meal-allowance status
+//    POST /api/payroll/meal-allowance/requests             → meal-allowance self-request
+//    GET  /api/payroll/driving-mode/status                 → driving-mode session state
+//    POST /api/payroll/driving-mode/start | /end           → driving-mode start / end
+//    POST /api/attendance/waivers                          → penalty-appeal (review request)
+//    DELETE /api/attendance/waivers/{id}                   → cancel pending appeal
 //  iOS re-set: personal dashboard cards — greeting, my balance, my tasks with
 //  status circles, attendance summary — plus NATIVE request sheets (wallet
 //  withdraw/advance, leave apply, checkout exception) with confirm dialogs.
@@ -118,22 +124,69 @@ struct PortalProfileResponse: Decodable {
 
 /// One attendance day (web AttendanceRecordDto slice the desk shows).
 struct PortalAttendanceToday: Decodable {
+    let id: String?
+    let attendanceDate: String?
     let checkInAt: String?
     let checkOutAt: String?
     let totalWorkMinutes: Int?
     let lateMinutes: Int?
     let penaltyAmount: Int?
+    let waiverRequests: [PortalWaiver]
 
     private enum Keys: String, CodingKey {
-        case checkInAt, checkOutAt, totalWorkMinutes, lateMinutes, penaltyAmount
+        case id, attendanceDate, checkInAt, checkOutAt, totalWorkMinutes, lateMinutes
+        case penaltyAmount, waiverRequests
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
+        id = try? c.decodeIfPresent(String.self, forKey: .id)
+        attendanceDate = try? c.decodeIfPresent(String.self, forKey: .attendanceDate)
         checkInAt = try? c.decodeIfPresent(String.self, forKey: .checkInAt)
         checkOutAt = try? c.decodeIfPresent(String.self, forKey: .checkOutAt)
         totalWorkMinutes = portalFlexInt(c, .totalWorkMinutes)
         lateMinutes = portalFlexInt(c, .lateMinutes)
         penaltyAmount = portalFlexInt(c, .penaltyAmount)
+        waiverRequests = (try? c.decodeIfPresent([PortalWaiver].self, forKey: .waiverRequests)) ?? []
+    }
+}
+
+/// One penalty-appeal waiver (web AttendanceWaiverDto slice the desk shows).
+struct PortalWaiver: Decodable, Identifiable {
+    let id: String
+    let status: String
+    let statusLabel: String?
+    let requestType: String?
+    let originalPenaltyAmount: Int?
+    let requestedReductionAmount: Int?
+    let approvedReductionAmount: Int?
+    let finalAppliedPenalty: Int?
+    let adminNote: String?
+
+    private enum Keys: String, CodingKey {
+        case id, status, statusLabel, requestType, originalPenaltyAmount
+        case requestedReductionAmount, approvedReductionAmount, finalAppliedPenalty, adminNote
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? "PENDING"
+        statusLabel = try? c.decodeIfPresent(String.self, forKey: .statusLabel)
+        requestType = try? c.decodeIfPresent(String.self, forKey: .requestType)
+        originalPenaltyAmount = portalFlexInt(c, .originalPenaltyAmount)
+        requestedReductionAmount = portalFlexInt(c, .requestedReductionAmount)
+        approvedReductionAmount = portalFlexInt(c, .approvedReductionAmount)
+        finalAppliedPenalty = portalFlexInt(c, .finalAppliedPenalty)
+        adminNote = try? c.decodeIfPresent(String.self, forKey: .adminNote)
+    }
+
+    /// Web PenaltyAppealStatus: statusLabel wins over raw status for display.
+    var effectiveStatus: String { statusLabel ?? status }
+    /// Web labelStatus() — "fully approved" / "partially approved" / lowercased.
+    var statusText: String {
+        let s = effectiveStatus
+        if s == "FULLY_APPROVED" || s == "APPROVED" { return "fully approved" }
+        if s == "PARTIALLY_APPROVED" { return "partially approved" }
+        return s.lowercased().replacingOccurrences(of: "_", with: " ")
     }
 }
 
@@ -380,6 +433,54 @@ struct PortalExceptionResponse: Decodable {
     }
 }
 
+/// GET /api/payroll/meal-allowance/eligibility → web MealEligibility
+/// { enabled, amountBdt, canRequestToday, pendingRequest: { status, amountBdt } | null, reason }.
+struct PortalMealEligibility: Decodable {
+    let enabled: Bool
+    let amountBdt: Int
+    let canRequestToday: Bool
+    let pendingStatus: String?
+    let pendingAmount: Int?
+    let reason: String?
+
+    private enum Keys: String, CodingKey { case ok, data, enabled, amountBdt, canRequestToday, pendingRequest, reason }
+    private enum PendingKeys: String, CodingKey { case status, amountBdt }
+    init(from decoder: Decoder) throws {
+        let root = try decoder.container(keyedBy: Keys.self)
+        let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+        enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
+        amountBdt = portalFlexInt(c, .amountBdt) ?? 0
+        canRequestToday = (try? c.decodeIfPresent(Bool.self, forKey: .canRequestToday)) ?? false
+        let p = try? c.nestedContainer(keyedBy: PendingKeys.self, forKey: .pendingRequest)
+        pendingStatus = p.flatMap { try? $0.decodeIfPresent(String.self, forKey: .status) }
+        pendingAmount = p.flatMap { portalFlexInt($0, .amountBdt) }
+        reason = try? c.decodeIfPresent(String.self, forKey: .reason)
+    }
+}
+
+/// GET /api/payroll/driving-mode/status → web DrivingStatus
+/// { enabled, activeSession | null, pendingSession | null, canStart, reason }.
+struct PortalDrivingStatus: Decodable {
+    let enabled: Bool
+    let hasActiveSession: Bool
+    let hasPendingSession: Bool
+    let canStart: Bool
+    let reason: String?
+
+    private enum Keys: String, CodingKey { case ok, data, enabled, activeSession, pendingSession, canStart, reason }
+    private enum SessionKeys: String, CodingKey { case id }
+    init(from decoder: Decoder) throws {
+        let root = try decoder.container(keyedBy: Keys.self)
+        let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
+        enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
+        // Session objects arrive as { id, … } or null — presence is the state.
+        hasActiveSession = (try? c.nestedContainer(keyedBy: SessionKeys.self, forKey: .activeSession)) != nil
+        hasPendingSession = (try? c.nestedContainer(keyedBy: SessionKeys.self, forKey: .pendingSession)) != nil
+        canStart = (try? c.decodeIfPresent(Bool.self, forKey: .canStart)) ?? false
+        reason = try? c.decodeIfPresent(String.self, forKey: .reason)
+    }
+}
+
 /// Mutation ack — every portal POST answers { ok } (+ optional error message).
 struct PortalActionResponse: Decodable {
     let ok: Bool
@@ -409,8 +510,10 @@ final class PortalVM {
     var tasks: [PortalTaskAssignment] = []
     var leaves: [PortalLeave] = []
     var exceptionStatus: String? = nil    // today's rule-waiver request (web exceptionStatus)
+    var mealEligibility: PortalMealEligibility? = nil
+    var drivingStatus: PortalDrivingStatus? = nil
     var loading = false
-    var busyActions: Set<String> = []     // "wallet" | "leave" | "exception" | "ack"
+    var busyActions: Set<String> = []     // "wallet" | "leave" | "exception" | "ack" | "meal" | "driving" | "appeal" | "cancelWaiver"
     var error: String? = nil
     var notice: String? = nil             // success line (the web's toast)
     var authExpired = false
@@ -458,6 +561,12 @@ final class PortalVM {
         async let exceptionResp = Self.fetch(
             PortalExceptionResponse.self, "/api/attendance/exceptions",
             ["business_id": Self.businessId])
+        async let mealResp = Self.fetch(
+            PortalMealEligibility.self, "/api/payroll/meal-allowance/eligibility",
+            ["business_id": Self.businessId])
+        async let drivingResp = Self.fetch(
+            PortalDrivingStatus.self, "/api/payroll/driving-mode/status",
+            ["business_id": Self.businessId])
 
         attendance = await attendanceResp
         if let w = await walletResp {
@@ -469,6 +578,8 @@ final class PortalVM {
         tasks = (await tasksResp)?.tasks ?? []
         leaves = (await leavesResp)?.leaves ?? []
         exceptionStatus = (await exceptionResp)?.status
+        mealEligibility = await mealResp
+        drivingStatus = await drivingResp
     }
 
     // MARK: Native staff actions (web form parity — same endpoints, same bodies)
@@ -551,6 +662,80 @@ final class PortalVM {
                       success: nil)
     }
 
+    /// Web MealAllowanceCard submit: POST /api/payroll/meal-allowance/requests
+    /// { business_id, reason }.
+    func submitMealRequest(reason: String) async {
+        _ = await act("meal", path: "/api/payroll/meal-allowance/requests",
+                      body: [
+                          "business_id": AnyEncodable(Self.businessId),
+                          "reason": AnyEncodable(reason),
+                      ],
+                      success: "Meal allowance request submitted")
+    }
+
+    /// Web DrivingModeCard start: POST /api/payroll/driving-mode/start
+    /// { business_id, reason } — reason optional (web sends the trimmed string).
+    func startDrivingMode(reason: String) async {
+        _ = await act("driving", path: "/api/payroll/driving-mode/start",
+                      body: [
+                          "business_id": AnyEncodable(Self.businessId),
+                          "reason": AnyEncodable(reason),
+                      ],
+                      success: "Driving mode request sent for approval")
+    }
+
+    /// Web DrivingModeCard end: POST /api/payroll/driving-mode/end { business_id }.
+    func endDrivingMode() async {
+        _ = await act("driving", path: "/api/payroll/driving-mode/end",
+                      body: ["business_id": AnyEncodable(Self.businessId)],
+                      success: "Driving mode ended — welcome back")
+    }
+
+    /// Web PenaltyAppealModal submit: POST /api/attendance/waivers
+    /// { business_id, attendance_record_id, reason, request_type,
+    ///   requested_reduction_amount? } — attachment stays a web-only extra.
+    func submitPenaltyAppeal(recordId: String, requestType: String,
+                             reason: String, partialAmount: Int?) async {
+        var body: [String: AnyEncodable] = [
+            "business_id": AnyEncodable(Self.businessId),
+            "attendance_record_id": AnyEncodable(recordId),
+            "reason": AnyEncodable(reason),
+            "request_type": AnyEncodable(requestType),
+        ]
+        if requestType == "PARTIAL_REDUCE" {
+            body["requested_reduction_amount"] = AnyEncodable(partialAmount ?? 0)
+        }
+        _ = await act("appeal", path: "/api/attendance/waivers", body: body,
+                      success: "Penalty review request submitted")
+    }
+
+    /// Web cancelAppeal: DELETE /api/attendance/waivers/{id}. business_id is
+    /// optional server-side (wallet context falls back to the JWT's own scope).
+    func cancelPenaltyAppeal(waiverId: String) async {
+        guard !busyActions.contains("cancelWaiver") else { return }
+        busyActions.insert("cancelWaiver")
+        notice = nil
+        error = nil
+        defer { busyActions.remove("cancelWaiver") }
+        do {
+            let encoded = waiverId.addingPercentEncoding(
+                withAllowedCharacters: .urlPathAllowedCharacters) ?? waiverId
+            let resp: PortalActionResponse = try await AlmaAPI.shared.send(
+                "DELETE", "/api/attendance/waivers/\(encoded)")
+            guard resp.ok else {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                error = resp.errorMessage ?? "Request failed"
+                return
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            notice = "Review request cancelled"
+            await load()
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            self.error = Self.serverMessage(error)
+        }
+    }
+
     /// Prefer the API's own { error } message over the raw HTTP dump.
     static func serverMessage(_ error: Error) -> String {
         if case AlmaAPIError.http(_, let body) = error,
@@ -597,7 +782,21 @@ struct PortalScreen: View {
     @State private var walletSheet = false
     @State private var leaveSheet = false
     @State private var exceptionSheet = false
+    @State private var appealSheet = false
+    @State private var mealReason = ""
+    @State private var confirmMeal = false
+    @State private var drivingReason = ""
+    @State private var confirmDrivingStart = false
+    @State private var confirmDrivingEnd = false
+    @State private var cancelWaiverId: String? = nil
+    @State private var confirmCancelWaiver = false
     let openWeb: (_ path: String, _ title: String) -> Void
+
+    /// Web gate for OfficeAdvanceDeskCard: ADMIN / SUPER_ADMIN only.
+    private var isAdminRole: Bool {
+        let role = vm.profile?.role ?? ""
+        return role == "ADMIN" || role == "SUPER_ADMIN"
+    }
 
     var body: some View {
         ScrollView {
@@ -615,7 +814,15 @@ struct PortalScreen: View {
                             advanceNotice(s.outstandingAdvance)
                         }
                         attendanceCard
+                        // Web page order: payout identity + expense-refund entry
+                        // cards, then the admin office-fund desk card.
+                        payoutIdentityCard
+                        expenseRefundCard
+                        if isAdminRole { officeFundCard }
                         walletCard
+                        salarySlipCard
+                        if vm.mealEligibility?.enabled == true { mealAllowanceCard }
+                        if vm.drivingStatus?.enabled == true { drivingModeCard }
                         if !vm.tasks.isEmpty { tasksCard }
                         leaveCard
                         walletHistoryCard
@@ -656,6 +863,21 @@ struct PortalScreen: View {
                 Task { await vm.submitException(scope: scope, reason: reason) }
             }
             .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $appealSheet) {
+            PortalAppealSheet(
+                penaltyAmount: vm.attendance?.today?.penaltyAmount ?? 0,
+                lateMinutes: vm.attendance?.today?.lateMinutes ?? 0,
+                attendanceDate: vm.attendance?.today?.attendanceDate
+            ) { requestType, reason, partialAmount in
+                guard let recordId = vm.attendance?.today?.id else { return }
+                Task {
+                    await vm.submitPenaltyAppeal(recordId: recordId, requestType: requestType,
+                                                 reason: reason, partialAmount: partialAmount)
+                }
+            }
+            .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
     }
@@ -812,6 +1034,10 @@ struct PortalScreen: View {
                         statTile("Waived", PortalFormat.money(s.waivedPenalties), tone: PortalPalette.green400)
                     }
                 }
+                // Web PenaltyAppealStatus — shown when today carries a penalty.
+                if let today, (today.penaltyAmount ?? 0) > 0 {
+                    penaltyAppealBlock(today)
+                }
             }
 
             // Check-in / check-out involve the selfie camera + GPS geofence — that
@@ -873,6 +1099,331 @@ struct PortalScreen: View {
         .background(PortalPalette.amber500.opacity(0.10), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
             .strokeBorder(PortalPalette.amber500.opacity(0.40), lineWidth: 1))
+    }
+
+    // ── Penalty appeal (web PenaltyAppealStatus — status + request/cancel) ──
+
+    private func penaltyAppealBlock(_ today: PortalAttendanceToday) -> some View {
+        let waivers = today.waiverRequests
+        let active = waivers.first(where: { $0.status == "PENDING" }) ?? waivers.first
+        let canRequest = !waivers.contains(where: { $0.status == "PENDING" })
+        return VStack(alignment: .leading, spacing: 6) {
+            Text("LATE PENALTY")
+                .font(.caption2.weight(.heavy))
+                .foregroundStyle(PortalPalette.red500)
+            Text(PortalFormat.money(today.penaltyAmount ?? 0))
+                .font(.subheadline.monospaced().weight(.black))
+            Text("Late by \(today.lateMinutes ?? 0) minutes · deducted from wallet")
+                .font(.caption2).foregroundStyle(.secondary)
+
+            if let active {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Review \(active.statusText)"
+                         + (active.requestType.map { " · \($0.replacingOccurrences(of: "_", with: " ").lowercased())" } ?? ""))
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(PortalPalette.requestStatus(active.effectiveStatus == "FULLY_APPROVED" || active.effectiveStatus == "PARTIALLY_APPROVED" ? "APPROVED" : active.effectiveStatus))
+                    if active.status == "PENDING" {
+                        Text("Waiting for admin review. You asked to reduce \(PortalFormat.money(active.requestedReductionAmount ?? active.originalPenaltyAmount ?? 0)).")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    } else if active.status == "APPROVED" || active.status == "PARTIALLY_APPROVED" {
+                        Text("Approved reduction \(PortalFormat.money(active.approvedReductionAmount ?? 0)) · final penalty \(PortalFormat.money(active.finalAppliedPenalty ?? 0))")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    } else if active.status == "REJECTED" {
+                        Text("Request rejected — full penalty remains.")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    if let note = active.adminNote, !note.isEmpty {
+                        Text("Admin: \(note)").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    if active.status == "PENDING" {
+                        Button {
+                            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                            cancelWaiverId = active.id
+                            confirmCancelWaiver = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                if vm.busyActions.contains("cancelWaiver") { ProgressView().controlSize(.mini) }
+                                Text(vm.busyActions.contains("cancelWaiver") ? "Cancelling…" : "রিকোয়েস্ট বাতিল করুন")
+                                    .font(.caption.weight(.bold))
+                            }
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 12).padding(.vertical, 5)
+                            .background(Color.primary.opacity(0.06), in: Capsule())
+                            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.15), lineWidth: 1))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(vm.busyActions.contains("cancelWaiver"))
+                        .padding(.top, 2)
+                    }
+                }
+                .padding(8)
+                .background(Color.white.opacity(colorScheme == .dark ? 0.05 : 0.35),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            }
+
+            if canRequest, today.id != nil {
+                Button {
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                    appealSheet = true
+                } label: {
+                    HStack(spacing: 6) {
+                        if vm.busyActions.contains("appeal") { ProgressView().controlSize(.mini) }
+                        Text(vm.busyActions.contains("appeal") ? "পাঠানো হচ্ছে..." : "রিভিউ চান")
+                            .font(.caption.weight(.bold))
+                    }
+                    .foregroundStyle(PortalPalette.accentText(colorScheme))
+                    .padding(.horizontal, 14).padding(.vertical, 6)
+                    .background(PortalPalette.coral.opacity(0.13), in: Capsule())
+                    .overlay(Capsule().strokeBorder(PortalPalette.coral.opacity(0.35), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.busyActions.contains("appeal"))
+                .padding(.top, 2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(PortalPalette.red500.opacity(0.06), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+            .strokeBorder(PortalPalette.red500.opacity(0.25), lineWidth: 1))
+        .confirmationDialog("রিভিউ অনুরোধ বাতিল করবেন?",
+                            isPresented: $confirmCancelWaiver, titleVisibility: .visible) {
+            Button("হ্যাঁ, বাতিল করুন", role: .destructive) {
+                if let id = cancelWaiverId {
+                    Task { await vm.cancelPenaltyAppeal(waiverId: id) }
+                }
+                cancelWaiverId = nil
+            }
+            Button("না", role: .cancel) { cancelWaiverId = nil }
+        }
+    }
+
+    // ── Entry link cards (web "Payout identity" / "নিজ খরচ ফেরত" / office fund) ──
+
+    private func entryLinkCard(_ heading: String, _ desc: String,
+                               _ buttonLabel: String, path: String, title: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(heading)
+                .font(.caption2.weight(.heavy))
+                .foregroundStyle(PortalPalette.accentText(colorScheme))
+            Text(desc).font(.caption2).foregroundStyle(.secondary)
+            portalLinkButton(buttonLabel) { openWeb(path, title) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+    }
+
+    private var payoutIdentityCard: some View {
+        entryLinkCard("PAYOUT IDENTITY",
+                      "bKash, Nagad, Rocket, or bank — used when wallet requests are approved.",
+                      "Payment accounts",
+                      path: "/portal/payment-accounts", title: "Payment accounts")
+    }
+
+    private var expenseRefundCard: some View {
+        entryLinkCard("নিজ খরচ ফেরত",
+                      "নিজের পকেট থেকে অফিসের খরচ করেছেন? ফেরতের আবেদন করুন — মালিক অনুমোদন করলে ওয়ালেটে যোগ হবে।",
+                      "খরচ ফেরত চান",
+                      path: "/portal/expense", title: "Portal expense")
+    }
+
+    /// Web OfficeAdvanceDeskCard (admin office-fund advances desk) — the ledger
+    /// itself lives on /finance/office-fund; the desk card links there.
+    private var officeFundCard: some View {
+        entryLinkCard("অফিস অ্যাডভান্স — হিসাব বাকি",
+                      "অফিসের কাজে নেওয়া টাকার হিসাব দিন — কত খরচ হয়েছে আর কত ফেরত, তা জানান।",
+                      "হিসাব দিন",
+                      path: "/finance/office-fund", title: "Office fund")
+    }
+
+    /// Web MySalarySlipCard builds the PDF client-side — that stays a web escape.
+    private var salarySlipCard: some View {
+        entryLinkCard("MY SALARY SLIP",
+                      "মাসিক বেতন স্লিপ — হিসাবসহ PDF ডাউনলোড।",
+                      "স্যালারি স্লিপ (PDF) — ওয়েবে খুলুন",
+                      path: "/portal", title: "My Desk")
+    }
+
+    // ── Meal allowance (web MealAllowanceCard — status + self-request) ──
+
+    private var mealAllowanceCard: some View {
+        let e = vm.mealEligibility
+        let amount = e?.amountBdt ?? 0
+        let pendingStatus = e?.pendingStatus
+        let displayAmount = e?.pendingAmount ?? amount
+        let canRequest = e?.canRequestToday == true
+        let reasonTrimmed = mealReason.trimmingCharacters(in: .whitespacesAndNewlines)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("MEAL ALLOWANCE")
+                        .font(.caption2.weight(.heavy))
+                        .foregroundStyle(PortalPalette.accentText(colorScheme))
+                    Text(canRequest
+                         ? "No kitchen today? Request your meal allowance."
+                         : pendingStatus == "APPROVED"
+                             ? "Meal allowance approved for today"
+                             : "Request pending approval")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(pendingStatus == "PENDING" ? "PENDING \(PortalFormat.money(displayAmount))"
+                     : pendingStatus == "APPROVED" ? "APPROVED \(PortalFormat.money(displayAmount))"
+                     : PortalFormat.money(amount))
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(PortalPalette.goldLt)
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(PortalPalette.coral.opacity(0.12), in: Capsule())
+                    .overlay(Capsule().strokeBorder(PortalPalette.goldDim.opacity(0.4), lineWidth: 1))
+            }
+            if canRequest {
+                if vm.employeeId == nil {
+                    Text("Ask an admin to link your HR employee ID before requesting meal allowance.")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(PortalPalette.amber600)
+                } else {
+                    TextField("e.g. No food arranged today", text: $mealReason, axis: .vertical)
+                        .lineLimit(2...3)
+                        .padding(10)
+                        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+                    Button {
+                        confirmMeal = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            if vm.busyActions.contains("meal") { ProgressView().controlSize(.mini) }
+                            Text(vm.busyActions.contains("meal") ? "Submitting…" : "Request \(PortalFormat.money(amount)) allowance")
+                                .font(.footnote.weight(.semibold))
+                        }
+                        .foregroundStyle(PortalPalette.accentText(colorScheme))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(PortalPalette.coral.opacity(0.13), in: Capsule())
+                        .overlay(Capsule().strokeBorder(PortalPalette.coral.opacity(0.35), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.busyActions.contains("meal") || reasonTrimmed.isEmpty)
+                    .confirmationDialog("খাবার ভাতা \(PortalFormat.money(amount)) রিকোয়েস্ট পাঠাবেন?",
+                                        isPresented: $confirmMeal, titleVisibility: .visible) {
+                        Button("রিকোয়েস্ট পাঠান") {
+                            let r = reasonTrimmed
+                            mealReason = ""
+                            Task { await vm.submitMealRequest(reason: r) }
+                        }
+                        Button("বাতিল", role: .cancel) {}
+                    }
+                    if reasonTrimmed.isEmpty {
+                        Text("Please add a short reason")
+                            .font(.caption2).foregroundStyle(PortalPalette.amber600)
+                    }
+                }
+            } else if let r = e?.reason, !r.isEmpty {
+                Text(r).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+    }
+
+    // ── Driving mode (web DrivingModeCard — start/end with session state) ──
+
+    private var drivingModeCard: some View {
+        let st = vm.drivingStatus
+        let active = st?.hasActiveSession == true
+        let pending = st?.hasPendingSession == true
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("🚗 DRIVING MODE")
+                        .font(.caption2.weight(.heavy))
+                        .foregroundStyle(PortalPalette.accentText(colorScheme))
+                    Text(active
+                         ? "You are on the road — office follow-ups are paused."
+                         : pending
+                             ? "Driving mode request pending approval."
+                             : "Going on the road? Start driving mode so the office pauses your follow-ups.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(active ? "DRIVING" : pending ? "PENDING" : "OFF")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(active ? PortalPalette.green400
+                                     : pending ? PortalPalette.amber600 : .secondary)
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(PortalPalette.coral.opacity(0.12), in: Capsule())
+                    .overlay(Capsule().strokeBorder(PortalPalette.goldDim.opacity(0.4), lineWidth: 1))
+            }
+            if active {
+                Button {
+                    confirmDrivingEnd = true
+                } label: {
+                    HStack(spacing: 6) {
+                        if vm.busyActions.contains("driving") { ProgressView().controlSize(.mini) }
+                        Text(vm.busyActions.contains("driving") ? "Ending…" : "End driving — back to work")
+                            .font(.footnote.weight(.semibold))
+                    }
+                    .foregroundStyle(PortalPalette.accentText(colorScheme))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .background(PortalPalette.coral.opacity(0.13), in: Capsule())
+                    .overlay(Capsule().strokeBorder(PortalPalette.coral.opacity(0.35), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.busyActions.contains("driving"))
+                .confirmationDialog("ড্রাইভিং মোড শেষ করবেন? অফিস ফলো-আপ আবার চালু হবে।",
+                                    isPresented: $confirmDrivingEnd, titleVisibility: .visible) {
+                    Button("হ্যাঁ, শেষ করুন") {
+                        Task { await vm.endDrivingMode() }
+                    }
+                    Button("বাতিল", role: .cancel) {}
+                }
+            } else if pending {
+                Text(st?.reason?.isEmpty == false ? (st?.reason ?? "") : "Waiting for the owner to approve.")
+                    .font(.caption2).foregroundStyle(.secondary)
+            } else if st?.canStart == true {
+                if vm.employeeId == nil {
+                    Text("Ask an admin to link your HR employee ID first.")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(PortalPalette.amber600)
+                } else {
+                    TextField("e.g. Going for delivery / pickup (optional)", text: $drivingReason, axis: .vertical)
+                        .lineLimit(2...3)
+                        .padding(10)
+                        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+                    Button {
+                        confirmDrivingStart = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            if vm.busyActions.contains("driving") { ProgressView().controlSize(.mini) }
+                            Text(vm.busyActions.contains("driving") ? "Submitting…" : "Start driving mode")
+                                .font(.footnote.weight(.semibold))
+                        }
+                        .foregroundStyle(PortalPalette.accentText(colorScheme))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(PortalPalette.coral.opacity(0.13), in: Capsule())
+                        .overlay(Capsule().strokeBorder(PortalPalette.coral.opacity(0.35), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.busyActions.contains("driving"))
+                    .confirmationDialog("ড্রাইভিং মোড শুরুর অনুরোধ মালিকের কাছে পাঠাবেন?",
+                                        isPresented: $confirmDrivingStart, titleVisibility: .visible) {
+                        Button("অনুরোধ পাঠান") {
+                            let r = drivingReason.trimmingCharacters(in: .whitespacesAndNewlines)
+                            drivingReason = ""
+                            Task { await vm.startDrivingMode(reason: r) }
+                        }
+                        Button("বাতিল", role: .cancel) {}
+                    }
+                }
+            } else if let r = st?.reason, !r.isEmpty {
+                Text(r).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
     private func statTile(_ label: String, _ value: String, tone: Color = .primary) -> some View {
@@ -1559,6 +2110,126 @@ private struct PortalExceptionSheet: View {
                     Button("অনুমতি পাঠান") {
                         dismiss()
                         onSubmit(scope, reasonTrimmed)
+                    }
+                    Button("বাতিল", role: .cancel) {}
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(18)
+        }
+        .presentationBackground { PortalAurora() }
+    }
+}
+
+// MARK: - Penalty appeal sheet (web PenaltyAppealModal parity — attachment stays web)
+
+@available(iOS 17.0, *)
+private struct PortalAppealSheet: View {
+    let penaltyAmount: Int
+    let lateMinutes: Int
+    let attendanceDate: String?
+    let onSubmit: (_ requestType: String, _ reason: String, _ partialAmount: Int?) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var requestType = "FULL_WAIVE"
+    @State private var reason = ""
+    @State private var partialAmount = ""
+    @State private var confirmSend = false
+
+    /// Web REQUEST_TYPES verbatim (label + hint).
+    private static let types: [(String, String, String)] = [
+        ("FULL_WAIVE", "Full waive", "Remove the entire penalty"),
+        ("PARTIAL_REDUCE", "Partial reduction", "Ask to reduce part of the amount"),
+        ("RECONSIDERATION", "Reconsideration", "Explain circumstances for review"),
+    ]
+
+    private var reasonTrimmed: String { reason.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var partialValue: Int { Int(partialAmount.trimmingCharacters(in: .whitespaces)) ?? 0 }
+    private var partialInvalid: Bool {
+        requestType == "PARTIAL_REDUCE" && (partialValue <= 0 || partialValue > penaltyAmount)
+    }
+    private var valid: Bool { reasonTrimmed.count >= 3 && !partialInvalid }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Penalty appeal").font(.headline)
+                Text("Late \(lateMinutes)m · penalty \(PortalFormat.money(penaltyAmount))"
+                     + (attendanceDate.map { " · \(String($0.prefix(10)))" } ?? ""))
+                    .font(.caption).foregroundStyle(.secondary)
+
+                // Request type — the web radio cards as one-tap rows.
+                VStack(spacing: 6) {
+                    ForEach(Self.types, id: \.0) { value, label, hint in
+                        Button {
+                            UISelectionFeedbackGenerator().selectionChanged()
+                            requestType = value
+                        } label: {
+                            HStack(alignment: .top) {
+                                Image(systemName: requestType == value ? "largecircle.fill.circle" : "circle")
+                                    .font(.footnote)
+                                    .foregroundStyle(requestType == value ? PortalPalette.coral : .secondary)
+                                    .padding(.top, 1)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(label).font(.footnote.weight(requestType == value ? .bold : .regular))
+                                    Text(hint).font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                            }
+                            .padding(.horizontal, 12).padding(.vertical, 9)
+                            .portalGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                if requestType == "PARTIAL_REDUCE" {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("AMOUNT TO REDUCE (MAX \(PortalFormat.money(penaltyAmount)))")
+                            .font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                        TextField("\(penaltyAmount / 2)", text: $partialAmount)
+                            .keyboardType(.numberPad)
+                            .font(.body.monospaced())
+                            .padding(12)
+                            .portalGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+                        if partialInvalid {
+                            Text("১ থেকে \(PortalFormat.money(penaltyAmount)) এর মধ্যে দিন।")
+                                .font(.caption2).foregroundStyle(PortalPalette.red500)
+                        }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    TextField("কেন রিভিউ চান, সংক্ষেপে লিখুন", text: $reason, axis: .vertical)
+                        .lineLimit(3...5)
+                        .padding(12)
+                        .portalGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+                    if reasonTrimmed.count < 3 {
+                        Text("কারণ লিখুন (অন্তত ৩ অক্ষর)।")
+                            .font(.caption2).foregroundStyle(PortalPalette.amber600)
+                    }
+                }
+
+                // Proof-photo attach is a web-only extra (file picker + data URL).
+                Text("ছবি/প্রমাণ যোগ করতে চাইলে ওয়েব ভার্সনে আবেদন করুন।")
+                    .font(.caption2).foregroundStyle(.secondary)
+
+                Button {
+                    confirmSend = true
+                } label: {
+                    Text("রিভিউ আবেদন পাঠান")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 4)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(PortalPalette.coral)
+                .disabled(!valid)
+                .confirmationDialog("জরিমানা রিভিউয়ের আবেদন মালিকের কাছে পাঠাবেন?",
+                                    isPresented: $confirmSend, titleVisibility: .visible) {
+                    Button("আবেদন পাঠান") {
+                        dismiss()
+                        onSubmit(requestType, reasonTrimmed,
+                                 requestType == "PARTIAL_REDUCE" ? partialValue : nil)
                     }
                     Button("বাতিল", role: .cancel) {}
                 }

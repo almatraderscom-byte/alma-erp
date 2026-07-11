@@ -29,6 +29,11 @@ private enum AnalyticsPalette {
     static let emerald600 = Color(red: 0.020, green: 0.588, blue: 0.412)     // #059669
     static let green400 = Color(red: 0.290, green: 0.871, blue: 0.502)       // #4ADE80
 
+    /// Web buildReturnsByTypePie slice colours (order-analytics.ts).
+    static let pieDelivered = Color(red: 0.180, green: 0.800, blue: 0.443)      // #2ECC71
+    static let pieReturnPaid = Color(red: 0.961, green: 0.651, blue: 0.137)     // #F5A623
+    static let pieReturnRefused = Color(red: 0.906, green: 0.298, blue: 0.235)  // #E74C3C
+
     /// Web category PALETTE ['#E07A5F','#C45A3C','#F4A28C','#D4956A','#8B5E3C','#A0644A'].
     static let series: [Color] = [
         coral, goldDim, goldLt,
@@ -301,12 +306,53 @@ enum AnalyticsDatePreset: String, CaseIterable {
     }
 }
 
+// MARK: - Return math (faithful port of src/lib/order-analytics.ts builders —
+// buildReturnsByTypePie / buildReturnLossTrend — over the same /api/orders/orders rows
+// the native Orders tab already fetches)
+
+private enum AnalyticsReturnMath {
+    /// Web normalizeOrderStatusKey: trim · uppercase · whitespace→underscore,
+    /// legacy FAILED_DELIVERY folds into RETURNED_UNPAID.
+    static func statusKey(_ status: String) -> String {
+        let key = status.trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+            .replacingOccurrences(of: "\\s+", with: "_", options: .regularExpression)
+        return key == "FAILED_DELIVERY" ? "RETURNED_UNPAID" : key
+    }
+
+    /// Web isTerminalReturnOrderStatus (post-normalization key).
+    static func isTerminalReturn(_ key: String) -> Bool {
+        key == "RETURNED" || key == "RETURNED_PAID" || key == "RETURNED_UNPAID"
+    }
+
+    /// Web calculateOrderAccounting returnNetProfit fallback when the row carries no
+    /// return_net_profit: paid return → shippingFee − 2×courier; refused/legacy
+    /// return → −2×courier (inputs floored at 0, whole-taka ints throughout).
+    static func fallbackReturnNet(_ key: String, _ o: AlmaOrder) -> Int {
+        let shipping = max(o.shippingFee ?? 0, 0)
+        let courier = max(o.courierCharge ?? 0, 0)
+        return key == "RETURNED_PAID" ? shipping - 2 * courier : -2 * courier
+    }
+}
+
+/// One day of the web buildReturnLossTrend output ({date, return_loss, returns}).
+private struct AnalyticsReturnLossDay: Identifiable, Equatable {
+    let date: String     // yyyy-MM-dd
+    let loss: Int        // BDT courier loss that day
+    let returns: Int     // return orders that day
+    var id: String { date }
+}
+
 // MARK: - View model
 
 @available(iOS 17.0, *)
 @Observable
 final class AnalyticsVM {
     var data: AnalyticsResponse? = nil
+    /// Raw order rows for the selected range (same /api/orders/orders call the native
+    /// Orders tab makes) — feeds the two client-computed return charts, exactly like the
+    /// web's OrdersDataContext. nil = fetch unavailable/failed → those cards hide silently.
+    fileprivate var orders: [AlmaOrder]? = nil
     var preset: AnalyticsDatePreset = .last30    // web default (DateRangeContext 'last30')
     var loading = false
     var error: String? = nil
@@ -335,6 +381,29 @@ final class AnalyticsVM {
         } catch {
             if Self.isCancellation(error) { return }   // pull-to-refresh let go early
             self.error = error.localizedDescription
+        }
+        guard !authExpired else { return }
+        await loadOrders(range: range)
+    }
+
+    /// Second fetch: raw order rows for the range (the exact call the native Orders tab
+    /// makes — no status filter, whole window, limit 500). Best-effort by design: any
+    /// failure just nils the rows so the two return charts hide without touching the
+    /// rest of the screen (web parity — the page renders fine when orders are off).
+    private func loadOrders(range: (start: String, end: String)) async {
+        do {
+            let resp: OrdersListResponse = try await AlmaAPI.shared.get(
+                "/api/orders/orders",
+                query: [
+                    "business_id": Self.businessId,
+                    "startDate": range.start,
+                    "endDate": range.end,
+                    "limit": "500",
+                ])
+            withAnimation(.spring(duration: 0.4, bounce: 0.15)) { orders = resp.orders }
+        } catch {
+            if Self.isCancellation(error) { return }
+            orders = nil   // silent — cards hide, no error banner
         }
     }
 
@@ -374,6 +443,46 @@ final class AnalyticsVM {
                         : 0) }
             .sorted { $0.stat.revenue > $1.stat.revenue }
     }
+
+    /// Web buildReturnsByTypePie: delivered vs paid return vs refused return counts
+    /// (legacy RETURNED → refused), zero-count slices dropped, same slice colours.
+    fileprivate var returnsPie: [(name: String, value: Int, color: Color)] {
+        guard let orders else { return [] }
+        var delivered = 0, paid = 0, refused = 0
+        for o in orders {
+            let key = AnalyticsReturnMath.statusKey(o.status)
+            if key == "DELIVERED" { delivered += 1 }
+            else if key == "RETURNED_PAID" { paid += 1 }
+            else if key == "RETURNED_UNPAID" || key == "RETURNED" { refused += 1 }
+        }
+        return [
+            (name: "Delivered", value: delivered, color: AnalyticsPalette.pieDelivered),
+            (name: "Returned (paid)", value: paid, color: AnalyticsPalette.pieReturnPaid),
+            (name: "Returned (refused)", value: refused, color: AnalyticsPalette.pieReturnRefused),
+        ].filter { $0.value > 0 }
+    }
+
+    /// Web buildReturnLossTrend: per-day courier loss (negative return_net_profit,
+    /// abs'd) + return count over terminal-return orders, sorted by day.
+    fileprivate var returnLossTrend: [AnalyticsReturnLossDay] {
+        guard let orders else { return [] }
+        var daily: [String: (loss: Int, returns: Int)] = [:]
+        for o in orders {
+            let key = AnalyticsReturnMath.statusKey(o.status)
+            guard AnalyticsReturnMath.isTerminalReturn(key) else { continue }
+            guard let raw = o.date, !raw.isEmpty else { continue }
+            let d = String(raw.prefix(10))
+            let net = o.returnNetProfit ?? AnalyticsReturnMath.fallbackReturnNet(key, o)
+            let loss = net < 0 ? abs(net) : 0
+            var entry = daily[d] ?? (loss: 0, returns: 0)
+            entry.loss += loss
+            entry.returns += 1
+            daily[d] = entry
+        }
+        return daily
+            .sorted { $0.key < $1.key }
+            .map { AnalyticsReturnLossDay(date: $0.key, loss: $0.value.loss, returns: $0.value.returns) }
+    }
 }
 
 // MARK: - Screen
@@ -396,6 +505,8 @@ struct AnalyticsScreen: View {
                 } else {
                     kpiGrid
                     returnKpiStrip
+                    returnsByTypeCard
+                    returnLossTrendCard
                     trendCard
                     statusCard
                     channelCard
@@ -491,6 +602,72 @@ struct AnalyticsScreen: View {
     private func money(_ amount: Int?) -> String {
         guard let amount else { return "—" }
         return AlmaSwiftTheme.takaShort(amount)
+    }
+
+    // ── Returns by Type (web DonutChart card — client-computed from order rows) ──
+    // Both return cards hide silently when the orders fetch is unavailable (web parity:
+    // the page renders without them when OrdersDataContext is off).
+
+    @ViewBuilder private var returnsByTypeCard: some View {
+        if vm.orders != nil {
+            let slices = vm.returnsPie
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Returns by Type").font(.subheadline.weight(.bold))
+                Text("Delivered vs paid vs refused").font(.caption2).foregroundStyle(.secondary)
+                if slices.isEmpty {
+                    emptyBlock("◫", "No returns in period", "Pie chart appears when return orders exist")
+                } else {
+                    AnalyticsDonut(slices: slices.map { ($0.name, $0.value, $0.color) })
+                        .padding(.top, 12)
+                    // Web legend rows: swatch · name · count.
+                    VStack(spacing: 7) {
+                        ForEach(slices, id: \.name) { s in
+                            HStack(spacing: 6) {
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(s.color)
+                                    .frame(width: 8, height: 8)
+                                Text(s.name).font(.caption2).foregroundStyle(.secondary)
+                                Spacer()
+                                Text("\(s.value)")
+                                    .font(.caption2.weight(.bold).monospacedDigit())
+                            }
+                        }
+                    }
+                    .padding(.top, 12)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        }
+    }
+
+    // ── Return Loss Trend (web ReturnLossTrendChart — daily courier loss, red) ──
+
+    @ViewBuilder private var returnLossTrendCard: some View {
+        if vm.orders != nil {
+            let days = vm.returnLossTrend
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Return Loss Trend").font(.subheadline.weight(.bold))
+                Text("Daily courier loss from returns").font(.caption2).foregroundStyle(.secondary)
+                if days.isEmpty {
+                    emptyBlock("◈", "No return loss yet", "Trend builds as returns are recorded")
+                } else {
+                    AnalyticsLossBars(days: days)
+                        .padding(.top, 10)
+                    HStack(spacing: 14) {
+                        legendDot(AnalyticsPalette.red500, "Return loss")
+                        Spacer()
+                        Text("\(days.reduce(0) { $0 + $1.returns }) returns")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 8)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        }
     }
 
     // ── Revenue vs Profit trend (native gradient bars; tap a month → detail sheet) ──
@@ -859,6 +1036,100 @@ private struct AnalyticsTrendBars: View {
         }
         .contentShape(Rectangle())
         .onTapGesture { onSelect(p) }
+    }
+}
+
+// MARK: - Returns donut (native re-set of the web DonutChart — the Dashboard
+// order-status donut recipe: trimmed stroke ring, clockwise sweep-in from 12 o'clock,
+// frozen under Reduce Motion / Low Power Mode)
+
+@available(iOS 17.0, *)
+private struct AnalyticsDonut: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let slices: [(String, Int, Color)]
+    var size: CGFloat = 132
+    var lineWidth: CGFloat = 18
+    @State private var sweep: CGFloat = 0
+    private var total: Int { max(slices.reduce(0) { $0 + $1.1 }, 1) }
+
+    var body: some View {
+        ZStack {
+            ForEach(Array(segments.enumerated()), id: \.offset) { _, seg in
+                Circle()
+                    .trim(from: seg.start * sweep, to: seg.end * sweep)
+                    .stroke(seg.color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
+                    .rotationEffect(.degrees(-90))
+            }
+            VStack(spacing: 0) {
+                Text("\(total)")
+                    .font(.system(size: 18, weight: .bold)).monospacedDigit()
+                Text("মোট").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .padding(lineWidth / 2)
+        .frame(width: size + lineWidth, height: size + lineWidth)
+        .frame(maxWidth: .infinity)
+        .animation(.spring(duration: 0.6, bounce: 0.1), value: slices.map { $0.1 })
+        .onAppear {
+            if anMotionOK(reduceMotion) {
+                withAnimation(.spring(duration: 0.8, bounce: 0)) { sweep = 1 }
+            } else {
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { sweep = 1 }
+            }
+        }
+    }
+
+    private var segments: [(start: CGFloat, end: CGFloat, color: Color)] {
+        var acc: CGFloat = 0
+        return slices.map { s in
+            let frac = CGFloat(s.1) / CGFloat(total)
+            let seg = (start: acc, end: acc + frac, color: s.2)
+            acc += frac
+            return seg
+        }
+    }
+}
+
+// MARK: - Return-loss bars (native re-set of the web ReturnLossTrendChart — the same
+// red daily series, as this file's gradient-bar chart language)
+
+@available(iOS 17.0, *)
+private struct AnalyticsLossBars: View {
+    let days: [AnalyticsReturnLossDay]
+
+    private var maxLoss: Int { max(days.map(\.loss).max() ?? 1, 1) }
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .bottom, spacing: 10) {
+                ForEach(days) { d in
+                    bar(d)
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+        .animation(.spring(duration: 0.45, bounce: 0.2), value: days)
+    }
+
+    private func bar(_ d: AnalyticsReturnLossDay) -> some View {
+        let h = max(CGFloat(d.loss) / CGFloat(maxLoss) * 96, 3)
+        return VStack(spacing: 4) {
+            Text(AlmaSwiftTheme.takaShort(d.loss))
+                .font(.system(size: 8, weight: .semibold).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1).fixedSize()
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(LinearGradient(
+                    colors: [AnalyticsPalette.red500.opacity(0.55), AnalyticsPalette.red500],
+                    startPoint: .top, endPoint: .bottom))
+                .frame(width: 26, height: h)
+                .frame(height: 100, alignment: .bottom)
+            // Web x-axis tickFormatter: yyyy-MM-dd → "MM-dd".
+            Text(String(d.date.suffix(5)))
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+        }
     }
 }
 

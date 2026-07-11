@@ -1354,8 +1354,10 @@ private struct InvBentoHeroCard: View {
     let paid: Int
     let unpaid: Int
 
+    // paid/unpaid are invoice COUNTS from the registry (route counts .length),
+    // amount alone is money — share must be count/count, S8 audit fix.
     private var paidShare: CGFloat {
-        amount > 0 ? CGFloat(paid) / CGFloat(amount) : 0
+        count > 0 ? CGFloat(paid) / CGFloat(count) : 0
     }
 
     var body: some View {
@@ -1411,7 +1413,7 @@ private struct InvBentoHeroCard: View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.5)
                 .foregroundStyle(.white.opacity(0.55))
-            InvCountUp(target: value, format: { InvoiceFormat.taka($0) })
+            InvCountUp(target: value, format: { "\($0)টি" })
                 .font(.system(size: 20, weight: .heavy)).monospacedDigit()
                 .foregroundStyle(tint)
                 .lineLimit(1).minimumScaleFactor(0.55)

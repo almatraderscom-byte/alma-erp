@@ -224,24 +224,95 @@ struct AttendanceSelfieLog: Decodable, Identifiable, Equatable {
     }
 }
 
+/// One row of the web's "Repeat late penalties" analytics footer.
+private struct AttendanceRepeatOffender: Decodable, Equatable {
+    let employeeId: String
+    let penaltyCount: Int
+    let penaltyTotal: Int
+
+    private enum Keys: String, CodingKey { case employeeId, penaltyCount, penaltyTotal }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        employeeId = (try? c.decode(String.self, forKey: .employeeId)) ?? "—"
+        penaltyCount = attendanceFlexInt(c, .penaltyCount) ?? 0
+        penaltyTotal = attendanceFlexInt(c, .penaltyTotal) ?? 0
+    }
+}
+
 /// Web "Penalty appeal analytics (this month)" — GET /api/attendance/waivers/analytics
 /// answers `{ ok, month, analytics: {…} }` flat (no data wrapper).
 struct AttendancePenaltyAnalytics: Decodable, Equatable {
     let totalPenalties: Int
     let waivedAmount: Int
+    let reducedAmount: Int
     let netPenaltiesAfterWaivers: Int
+    let appealCount: Int
+    let pendingCount: Int
     let approvalRate: Int
+    fileprivate let repeatOffenders: [AttendanceRepeatOffender]
 
     private enum Keys: String, CodingKey {
-        case ok, analytics, totalPenalties, waivedAmount, netPenaltiesAfterWaivers, approvalRate
+        case ok, analytics, totalPenalties, waivedAmount, reducedAmount
+        case netPenaltiesAfterWaivers, appealCount, pendingCount, approvalRate, repeatOffenders
     }
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Keys.self)
         let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .analytics)) ?? root
         totalPenalties = attendanceFlexInt(c, .totalPenalties) ?? 0
         waivedAmount = attendanceFlexInt(c, .waivedAmount) ?? 0
+        reducedAmount = attendanceFlexInt(c, .reducedAmount) ?? 0
         netPenaltiesAfterWaivers = attendanceFlexInt(c, .netPenaltiesAfterWaivers) ?? 0
+        appealCount = attendanceFlexInt(c, .appealCount) ?? 0
+        pendingCount = attendanceFlexInt(c, .pendingCount) ?? 0
         approvalRate = attendanceFlexInt(c, .approvalRate) ?? 0
+        repeatOffenders = (try? c.decodeIfPresent([AttendanceRepeatOffender].self, forKey: .repeatOffenders)) ?? []
+    }
+}
+
+// MARK: - Integrity monitor models (web AttendanceDashboard.integrity — SUPER_ADMIN
+// duplicate/cross-business audit block; every field lenient/optional)
+
+private struct AttendanceIntegrityIssue: Decodable, Equatable {
+    let kind: String
+    let businessId: String?
+    let employeeId: String?
+    let name: String?
+    let todayCount: Int?
+
+    private enum Keys: String, CodingKey { case kind, businessId, employeeId, name, todayCount }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        kind = (try? c.decode(String.self, forKey: .kind)) ?? "issue"
+        businessId = try? c.decodeIfPresent(String.self, forKey: .businessId)
+        employeeId = try? c.decodeIfPresent(String.self, forKey: .employeeId)
+        name = try? c.decodeIfPresent(String.self, forKey: .name)
+        todayCount = attendanceFlexInt(c, .todayCount)
+    }
+}
+
+private struct AttendanceCrossBizHint: Decodable, Equatable {
+    let businessId: String
+    let todayCount: Int
+
+    private enum Keys: String, CodingKey { case businessId, todayCount }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        businessId = (try? c.decode(String.self, forKey: .businessId)) ?? "?"
+        todayCount = attendanceFlexInt(c, .todayCount) ?? 0
+    }
+}
+
+private struct AttendanceIntegrity: Decodable, Equatable {
+    let issueCount: Int
+    let issues: [AttendanceIntegrityIssue]
+    let crossBusinessHint: [AttendanceCrossBizHint]
+
+    private enum Keys: String, CodingKey { case issueCount, issues, crossBusinessHint }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        issueCount = attendanceFlexInt(c, .issueCount) ?? 0
+        issues = (try? c.decodeIfPresent([AttendanceIntegrityIssue].self, forKey: .issues)) ?? []
+        crossBusinessHint = (try? c.decodeIfPresent([AttendanceCrossBizHint].self, forKey: .crossBusinessHint)) ?? []
     }
 }
 
@@ -288,9 +359,10 @@ struct AttendanceDashboardResponse: Decodable {
     let selfieLogs: [AttendanceSelfieLog]
     let ranking: [AttendanceRankRow]
     let scopeAllBusinesses: Bool
+    fileprivate let integrity: AttendanceIntegrity?
 
     private enum Keys: String, CodingKey {
-        case ok, data, kpis, records, absentEmployees, pendingWaivers, selfieLogs, ranking, scopeAllBusinesses
+        case ok, data, kpis, records, absentEmployees, pendingWaivers, selfieLogs, ranking, scopeAllBusinesses, integrity
     }
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Keys.self)
@@ -302,6 +374,7 @@ struct AttendanceDashboardResponse: Decodable {
         selfieLogs = (try? c.decode([AttendanceSelfieLog].self, forKey: .selfieLogs)) ?? []
         ranking = (try? c.decode([AttendanceRankRow].self, forKey: .ranking)) ?? []
         scopeAllBusinesses = (try? c.decodeIfPresent(Bool.self, forKey: .scopeAllBusinesses)) ?? false
+        integrity = try? c.decodeIfPresent(AttendanceIntegrity.self, forKey: .integrity)
     }
 }
 
@@ -318,6 +391,9 @@ final class AttendanceVM {
     var ranking: [AttendanceRankRow] = []
     var analytics: AttendancePenaltyAnalytics? = nil
     var scopeAllBusinesses = false
+    fileprivate var integrity: AttendanceIntegrity? = nil
+    /// Web viewAllBusinesses (SUPER_ADMIN defaults to ALL) — drives `business_id`.
+    var viewAll = true
     var loading = false
     var error: String? = nil
     var notice: String? = nil             // success line (the web's toast)
@@ -340,7 +416,8 @@ final class AttendanceVM {
         do {
             let resp: AttendanceDashboardResponse = try await AlmaAPI.shared.get(
                 "/api/attendance",
-                query: ["business_id": "ALL", "date": AttendanceFormat.dayParam(day)])
+                query: ["business_id": viewAll ? "ALL" : "ALMA_LIFESTYLE",
+                        "date": AttendanceFormat.dayParam(day)])
             kpis = resp.kpis
             records = resp.records
             absentees = resp.absentEmployees
@@ -348,6 +425,7 @@ final class AttendanceVM {
             selfieLogs = resp.selfieLogs
             ranking = resp.ranking
             scopeAllBusinesses = resp.scopeAllBusinesses
+            integrity = resp.integrity
             authExpired = false
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
@@ -523,6 +601,7 @@ struct AttendanceScreen: View {
     @State private var vm = AttendanceVM()
     @State private var selected: AttendanceRecordRow? = nil
     @State private var showDatePicker = false
+    @State private var showIntegrity = false    // web showIntegrity toggle
     // Action targets — each mutating call passes a Bangla confirmationDialog first.
     @State private var reviewing: AttendanceWaiverReviewTarget? = nil
     @State private var resetTarget: AttendanceRecordRow? = nil
@@ -538,9 +617,11 @@ struct AttendanceScreen: View {
         ScrollView {
             LazyVStack(spacing: 10) {
                 dateNav
+                controlsRow
                 if vm.authExpired { authCard }
                 if let err = vm.error { noticeCard(err) }
                 if let ok = vm.notice { successCard(ok) }
+                integritySection
                 summaryTrio
                 kpiStrip
                 analyticsSection
@@ -669,6 +750,102 @@ struct AttendanceScreen: View {
         .disabled(disabled)
     }
 
+    // ── Header controls (web actions row: business scope · Integrity · My desk) ──
+
+    private var controlsRow: some View {
+        HStack(spacing: 8) {
+            controlChip(vm.viewAll ? "সব বিজনেস" : "Alma Lifestyle",
+                        icon: "building.2", active: vm.viewAll) {
+                vm.viewAll.toggle()
+                Task { await vm.load() }
+            }
+            controlChip("Integrity", icon: "checkmark.shield", active: showIntegrity) {
+                withAnimation(.snappy) { showIntegrity.toggle() }
+            }
+            controlChip("My Desk", icon: "person.crop.square", active: false) {
+                openWeb("/portal", "My Desk")
+            }
+        }
+    }
+
+    private func controlChip(_ label: String, icon: String, active: Bool,
+                             action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            action()
+        } label: {
+            Label(label, systemImage: icon)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .foregroundStyle(active ? AttendancePalette.accentText(colorScheme) : .secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background((active ? AttendancePalette.coral : Color.primary).opacity(active ? 0.14 : 0.05),
+                            in: Capsule())
+                .overlay(Capsule().strokeBorder(
+                    (active ? AttendancePalette.coral : Color.primary).opacity(active ? 0.35 : 0.12),
+                    lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // ── Attendance Integrity Monitor (web amber card — issue count hero + rows + hint) ──
+
+    @ViewBuilder private var integritySection: some View {
+        if showIntegrity, let integ = vm.integrity {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(integ.issueCount)")
+                        .font(.system(size: 26, weight: .heavy)).monospacedDigit()
+                        .foregroundStyle(integ.issueCount > 0 ? AttendancePalette.amber600
+                                                              : AttendancePalette.emerald600)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Attendance Integrity Monitor")
+                            .font(.footnote.weight(.bold))
+                        Text("\(vm.scopeAllBusinesses ? "Viewing all businesses" : "Scoped to Alma Lifestyle") · \(integ.issueCount) issue(s)")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                if !integ.crossBusinessHint.isEmpty && !vm.viewAll {
+                    Text("Activity today in other businesses: "
+                         + integ.crossBusinessHint.map { "\($0.businessId) (\($0.todayCount))" }
+                             .joined(separator: ", ")
+                         + " — সব বিজনেস চালু করে দেখুন।")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(AttendancePalette.amber600)
+                }
+                if integ.issueCount > 0 {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(Array(integ.issues.prefix(12).enumerated()), id: \.offset) { _, row in
+                            Text(integrityIssueLine(row))
+                                .font(.system(size: 10)).foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                } else {
+                    Text("কোনো সমস্যা পাওয়া যায়নি ✅")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(AttendancePalette.emerald600)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(AttendancePalette.amber500.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                .strokeBorder(AttendancePalette.amber500.opacity(0.35), lineWidth: 1))
+        }
+    }
+
+    /// Web issue row: kind + whichever of businessId / employeeId / name exists.
+    private func integrityIssueLine(_ row: AttendanceIntegrityIssue) -> String {
+        var bits = [row.kind.replacingOccurrences(of: "_", with: " ")]
+        if let biz = row.businessId, !biz.isEmpty { bits.append(biz) }
+        if let emp = row.employeeId, !emp.isEmpty { bits.append(emp) }
+        if let name = row.name, !name.isEmpty { bits.append(name) }
+        return bits.joined(separator: " · ")
+    }
+
     // ── Summary (web: Present / Absent / Late, exact tints) — bento dark hero
     //    (owner spec 2026-07-08): same three numbers, presentation only. ──
 
@@ -735,6 +912,15 @@ struct AttendanceScreen: View {
                                   tint: .primary)
                     analyticsStat("Approval", "\(a.approvalRate)%",
                                   tint: AttendancePalette.goldLt)
+                }
+                // Web footer line (page.tsx:402-406): repeat offenders, first four.
+                if !a.repeatOffenders.isEmpty {
+                    Text("Repeat late penalties: "
+                         + a.repeatOffenders.prefix(4)
+                             .map { "\($0.employeeId) (\(AttendanceFormat.money($0.penaltyTotal)))" }
+                             .joined(separator: " · "))
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

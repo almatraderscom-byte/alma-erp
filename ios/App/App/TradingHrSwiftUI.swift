@@ -122,11 +122,12 @@ private struct TradingHrProfile: Decodable, Equatable {
     let merchantCompletionBonus: Int
     let milestoneBonus: Int
     let notes: String?
+    let joiningDate: String?          // native edit-form prefill (owner 2026-07-11)
 
     private enum Keys: String, CodingKey {
         case employeeIdGas, roleTitle, shift, status, salary
         case commissionType, commissionRate, fixedCommission
-        case merchantCompletionBonus, milestoneBonus, notes
+        case merchantCompletionBonus, milestoneBonus, notes, joiningDate
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -141,6 +142,7 @@ private struct TradingHrProfile: Decodable, Equatable {
         merchantCompletionBonus = tradingHrFlexInt(c, .merchantCompletionBonus) ?? 0
         milestoneBonus = tradingHrFlexInt(c, .milestoneBonus) ?? 0
         notes = try? c.decodeIfPresent(String.self, forKey: .notes)
+        joiningDate = try? c.decodeIfPresent(String.self, forKey: .joiningDate)
     }
 }
 
@@ -504,6 +506,68 @@ private final class TradingHrVM {
             return resp.reports
         } catch {
             return []
+        }
+    }
+
+    // ── Native writes (owner 2026-07-11) — web saveHrProfile / submitEmployeeReport. ──
+
+    var toast: String? = nil
+
+    struct ProfilePayload: Encodable {
+        let userId: String
+        let employeeIdGas: String
+        let roleTitle: String
+        let shift: String
+        let status: String
+        let salary: Int
+        let commissionType: String
+        let commissionRate: Double
+        let fixedCommission: Int
+        let merchantCompletionBonus: Int
+        let milestoneBonus: Int
+        let joiningDate: String
+        let notes: String
+    }
+    struct ReportPayload: Encodable {
+        let userId: String
+        let reportDate: String
+        let accountIds: [String]
+        let totalTrades: Int
+        let dailyProfitBdt: Double
+        let dailyLossBdt: Double
+        let issues: String
+        let screenshotProof: String
+        let operationalNotes: String
+    }
+    private struct WriteResponse: Decodable { let ok: Bool?, error: String? }
+
+    func saveProfile(_ p: ProfilePayload) async -> Bool {
+        await write(success: "Trading employee profile saved") {
+            try await AlmaAPI.shared.send("POST", "/api/trading/hr", body: p)
+        }
+    }
+    func submitReport(_ p: ReportPayload) async -> Bool {
+        await write(success: "Daily employee report submitted") {
+            try await AlmaAPI.shared.send("POST", "/api/trading/hr/reports", body: p)
+        }
+    }
+    private func write(success: String, _ op: () async throws -> WriteResponse) async -> Bool {
+        do {
+            let res = try await op()
+            if let err = res.error {
+                toast = err
+                return false
+            }
+            toast = success
+            await load()
+            return true
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return false
+        } catch {
+            if Self.isCancellation(error) { return false }
+            toast = error.localizedDescription
+            return false
         }
     }
 }
@@ -923,11 +987,14 @@ private struct TradingHrDetailSheet: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var reports: [TradingHrDailyReport] = []
     @State private var reportsLoading = true
+    @State private var editingProfile = false
+    @State private var addingReport = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
+                writeButtons
                 profileCard
                 metricsCard
                 walletCard
@@ -941,6 +1008,39 @@ private struct TradingHrDetailSheet: View {
         .task {
             reports = await vm.reports(for: employee.user.id)
             reportsLoading = false
+        }
+        .sheet(isPresented: $editingProfile) {
+            TradingHrProfileSheet(employee: employee, vm: vm)
+        }
+        .sheet(isPresented: $addingReport) {
+            TradingHrReportSheet(employee: employee, vm: vm) {
+                Task { reports = await vm.reports(for: employee.user.id) }
+            }
+        }
+    }
+
+    /// Native writes (owner 2026-07-11): profile save + daily report — web parity.
+    private var writeButtons: some View {
+        HStack(spacing: 10) {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                editingProfile = true
+            } label: {
+                Label("Profile সম্পাদনা", systemImage: "pencil")
+                    .font(.caption.weight(.bold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 9)
+            }
+            .buttonStyle(.bordered)
+            .tint(TradingHrPalette.sage)
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                addingReport = true
+            } label: {
+                Label("Daily report", systemImage: "square.and.pencil")
+                    .font(.caption.weight(.bold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 9)
+            }
+            .buttonStyle(.bordered)
         }
     }
 
@@ -1418,4 +1518,310 @@ private struct TradingHrBentoHeroCard: View {
 @available(iOS 17.0, *)
 #Preview("Trading HR — Light") {
     TradingHrScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - Native write sheets (owner 2026-07-11 — web HR profile form + daily report
+// form, POST /api/trading/hr and /api/trading/hr/reports verbatim).
+
+@available(iOS 17.0, *)
+private struct TradingHrProfileSheet: View {
+    let employee: TradingHrEmployeeItem
+    let vm: TradingHrVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+
+    @State private var employeeIdGas = ""
+    @State private var roleTitle = ""
+    @State private var shift = "DAY"
+    @State private var status = "ACTIVE"
+    @State private var salary = ""
+    @State private var commissionType = "NONE"
+    @State private var commissionRate = ""
+    @State private var fixedCommission = ""
+    @State private var completionBonus = ""
+    @State private var milestoneBonus = ""
+    @State private var joiningDate = ""
+    @State private var notes = ""
+    @State private var submitting = false
+    @State private var confirming = false
+    @State private var errorText: String? = nil
+
+    private func num(_ s: String) -> Double { Double(s.replacingOccurrences(of: ",", with: "")) ?? 0 }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("HR profile — \(employee.user.name)").font(.subheadline.weight(.bold))
+                    Text("Salary পরিবর্তন wallet accrual-এ প্রভাব ফেলে।")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Close") { dismiss() }
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 18).padding(.top, 20).padding(.bottom, 12)
+            Divider().opacity(0.4)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    field("Employee ID (GAS)", text: $employeeIdGas)
+                    field("Role title", text: $roleTitle)
+                    Picker("Shift", selection: $shift) {
+                        Text("Day").tag("DAY")
+                        Text("Night").tag("NIGHT")
+                        Text("Rotating").tag("ROTATING")
+                    }
+                    .pickerStyle(.segmented)
+                    Picker("Status", selection: $status) {
+                        Text("Active").tag("ACTIVE")
+                        Text("Inactive").tag("INACTIVE")
+                        Text("On leave").tag("ON_LEAVE")
+                    }
+                    .pickerStyle(.segmented)
+                    field("Salary (BDT)", text: $salary, keyboard: .numberPad)
+                    Menu {
+                        Button("No commission") { commissionType = "NONE" }
+                        Button("Percentage of profit") { commissionType = "PERCENTAGE" }
+                        Button("Fixed per profitable sell") { commissionType = "FIXED" }
+                    } label: {
+                        HStack {
+                            Text(commissionType == "NONE" ? "No commission"
+                                 : commissionType == "PERCENTAGE" ? "Percentage of profit"
+                                 : "Fixed per profitable sell")
+                                .font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Image(systemName: "chevron.up.chevron.down").font(.caption2)
+                        }
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 12).padding(.vertical, 11)
+                        .background(Color.primary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    }
+                    field("Commission % of profit", text: $commissionRate)
+                    field("Fixed commission BDT", text: $fixedCommission, keyboard: .numberPad)
+                    field("Merchant completion bonus BDT", text: $completionBonus, keyboard: .numberPad)
+                    field("Milestone bonus BDT", text: $milestoneBonus, keyboard: .numberPad)
+                    field("Joining date (YYYY-MM-DD)", text: $joiningDate, keyboard: .numbersAndPunctuation)
+                    field("Notes", text: $notes, keyboard: .default)
+                    if let errorText {
+                        Text(errorText).font(.caption2.weight(.semibold))
+                            .foregroundStyle(TradingHrPalette.red500)
+                    }
+                }
+                .padding(18)
+            }
+            .scrollDismissesKeyboard(.interactively)
+
+            Divider().opacity(0.4)
+            Button {
+                confirming = true
+            } label: {
+                HStack(spacing: 8) {
+                    if submitting { ProgressView().tint(.white) }
+                    Text(submitting ? "Saving…" : "Save profile").font(.subheadline.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(!submitting ? AlmaSwiftTheme.coral : AlmaSwiftTheme.coral.opacity(0.4),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(submitting)
+            .padding(.horizontal, 18).padding(.vertical, 14)
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .background(AlmaSwiftTheme.rootBg(scheme))
+        .onAppear(perform: prefill)
+        .confirmationDialog(
+            "\(employee.user.name)-এর HR profile সেভ করবেন? Salary ৳\(Int(num(salary)).formatted())",
+            isPresented: $confirming, titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, সেভ করুন") { submit() }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+
+    private func prefill() {
+        let p = employee.profile
+        employeeIdGas = p?.employeeIdGas ?? employee.user.employeeIdGas ?? ""
+        roleTitle = p?.roleTitle ?? ""
+        shift = p?.shift ?? "DAY"
+        status = p?.status ?? "ACTIVE"
+        salary = p.map { String($0.salary) } ?? ""
+        commissionType = p?.commissionType ?? "NONE"
+        commissionRate = p.map { String($0.commissionRate) } ?? ""
+        fixedCommission = p.map { String($0.fixedCommission) } ?? ""
+        completionBonus = p.map { String($0.merchantCompletionBonus) } ?? ""
+        milestoneBonus = p.map { String($0.milestoneBonus) } ?? ""
+        joiningDate = String((p?.joiningDate ?? employee.user.joiningDate ?? "").prefix(10))
+        notes = p?.notes ?? ""
+    }
+
+    private func submit() {
+        guard !submitting else { return }
+        submitting = true; errorText = nil
+        Task {
+            defer { submitting = false }
+            let ok = await vm.saveProfile(.init(
+                userId: employee.user.id,
+                employeeIdGas: employeeIdGas,
+                roleTitle: roleTitle,
+                shift: shift,
+                status: status,
+                salary: Int(num(salary)),
+                commissionType: commissionType,
+                commissionRate: num(commissionRate),
+                fixedCommission: Int(num(fixedCommission)),
+                merchantCompletionBonus: Int(num(completionBonus)),
+                milestoneBonus: Int(num(milestoneBonus)),
+                joiningDate: joiningDate,
+                notes: notes))
+            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+            if ok { dismiss() } else { errorText = vm.toast }
+        }
+    }
+
+    private func field(_ placeholder: String, text: Binding<String>,
+                       keyboard: UIKeyboardType = .decimalPad) -> some View {
+        TextField(placeholder, text: text)
+            .keyboardType(keyboard)
+            .font(.subheadline)
+            .padding(.horizontal, 12).padding(.vertical, 11)
+            .background(Color.primary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+    }
+}
+
+@available(iOS 17.0, *)
+private struct TradingHrReportSheet: View {
+    let employee: TradingHrEmployeeItem
+    let vm: TradingHrVM
+    var onDone: (() -> Void)? = nil
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+
+    @State private var reportDate = Date()
+    @State private var selectedAccountIds: Set<String> = []
+    @State private var totalTrades = ""
+    @State private var profit = ""
+    @State private var loss = ""
+    @State private var issues = ""
+    @State private var opNotes = ""
+    @State private var submitting = false
+    @State private var confirming = false
+
+    private func num(_ s: String) -> Double { Double(s.replacingOccurrences(of: ",", with: "")) ?? 0 }
+    private static let ymd: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Daily report — \(employee.user.name)").font(.subheadline.weight(.bold))
+                    Text("দিনের ট্রেড সংখ্যা ও P/L।").font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Close") { dismiss() }
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 18).padding(.top, 20).padding(.bottom, 12)
+            Divider().opacity(0.4)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    DatePicker("Report date", selection: $reportDate, displayedComponents: .date)
+                        .font(.subheadline)
+                    if !employee.assignedAccounts.isEmpty {
+                        Text("ACCOUNTS").font(.system(size: 9, weight: .bold)).tracking(1)
+                            .foregroundStyle(.secondary)
+                        ForEach(employee.assignedAccounts) { a in
+                            Toggle(a.accountTitle, isOn: Binding(
+                                get: { selectedAccountIds.contains(a.id) },
+                                set: { on in
+                                    if on { selectedAccountIds.insert(a.id) }
+                                    else { selectedAccountIds.remove(a.id) }
+                                }))
+                                .font(.subheadline)
+                                .tint(TradingHrPalette.sage)
+                        }
+                    }
+                    field("Total trades", text: $totalTrades, keyboard: .numberPad)
+                    field("Daily profit (BDT)", text: $profit)
+                    field("Daily loss (BDT)", text: $loss)
+                    field("Issues", text: $issues, keyboard: .default)
+                    field("Operational notes", text: $opNotes, keyboard: .default)
+                }
+                .padding(18)
+            }
+            .scrollDismissesKeyboard(.interactively)
+
+            Divider().opacity(0.4)
+            Button {
+                confirming = true
+            } label: {
+                HStack(spacing: 8) {
+                    if submitting { ProgressView().tint(.white) }
+                    Text(submitting ? "Submitting…" : "Submit report").font(.subheadline.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(!submitting ? TradingHrPalette.sage : TradingHrPalette.sage.opacity(0.4),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(submitting)
+            .padding(.horizontal, 18).padding(.vertical, 14)
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .background(AlmaSwiftTheme.rootBg(scheme))
+        .confirmationDialog(
+            "Report সাবমিট করবেন? Net ৳\(Int(num(profit) - num(loss)).formatted())",
+            isPresented: $confirming, titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, সাবমিট করুন") { submit() }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+
+    private func submit() {
+        guard !submitting else { return }
+        submitting = true
+        Task {
+            defer { submitting = false }
+            let ok = await vm.submitReport(.init(
+                userId: employee.user.id,
+                reportDate: Self.ymd.string(from: reportDate),
+                accountIds: Array(selectedAccountIds),
+                totalTrades: Int(num(totalTrades)),
+                dailyProfitBdt: num(profit),
+                dailyLossBdt: num(loss),
+                issues: issues,
+                screenshotProof: "",
+                operationalNotes: opNotes))
+            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+            if ok { onDone?(); dismiss() }
+        }
+    }
+
+    private func field(_ placeholder: String, text: Binding<String>,
+                       keyboard: UIKeyboardType = .decimalPad) -> some View {
+        TextField(placeholder, text: text)
+            .keyboardType(keyboard)
+            .font(.subheadline)
+            .padding(.horizontal, 12).padding(.vertical, 11)
+            .background(Color.primary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+    }
 }

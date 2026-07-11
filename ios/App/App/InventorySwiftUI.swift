@@ -703,14 +703,26 @@ struct InventoryScreen: View {
 
     /// Small escape into the web page (photo upload / collection add / anything else).
     private var webEscape: some View {
-        Button {
-            openWeb("/inventory", "Inventory")
-        } label: {
-            Label("ওয়েব ভার্সন", systemImage: "safari")
-                .font(.caption)
+        VStack(spacing: 10) {
+            // Web header's "Import Supplier" affordance — cross-page push, the router
+            // resolves it to the native SupplierImportScreen (S8 audit fix).
+            Button {
+                openWeb("/inventory/supplier-import", "Supplier import")
+            } label: {
+                Label("সাপ্লায়ার ইমপোর্ট", systemImage: "square.and.arrow.down.on.square")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(InventoryPalette.coral)
+            Button {
+                openWeb("/inventory", "Inventory")
+            } label: {
+                Label("ওয়েব ভার্সন", systemImage: "safari")
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
         .padding(.vertical, 4)
     }
 }

@@ -309,6 +309,54 @@ final class DigitalClientsVM {
             return nil
         }
     }
+
+    // ── Native writes (owner 2026-07-11) — web page payloads verbatim. ──
+
+    var toast: String? = nil
+
+    struct ClientPayload: Encodable {
+        let name: String, company: String, phone: String, email: String
+        let country: String, service_type: String, lead_source: String
+        let notes: String, tags: String
+        let business_id = "CREATIVE_DIGITAL_IT"
+    }
+    struct PaymentPayload: Encodable {
+        let invoice_id: String?
+        let project_id: String?
+        let client_id: String
+        let client_name: String
+        let amount: Int
+        let payment_method: String
+        let payment_type = "income"
+        let business_id = "CREATIVE_DIGITAL_IT"
+    }
+    private struct WriteResponse: Decodable { let ok: Bool?, error: String? }
+
+    func createClient(_ p: ClientPayload) async -> Bool {
+        await write("/api/digital/clients", p, success: "Client সেভ হয়েছে")
+    }
+    func recordPayment(_ p: PaymentPayload) async -> Bool {
+        await write("/api/digital/payments", p, success: "Payment রেকর্ড হয়েছে")
+    }
+    private func write(_ path: String, _ body: some Encodable, success: String) async -> Bool {
+        do {
+            let res: WriteResponse = try await AlmaAPI.shared.send("POST", path, body: body)
+            guard res.ok ?? false else {
+                toast = res.error ?? "সেভ হয়নি — আবার চেষ্টা করুন"
+                return false
+            }
+            toast = success
+            await load()
+            return true
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return false
+        } catch {
+            if Self.isCancellation(error) { return false }
+            toast = error.localizedDescription
+            return false
+        }
+    }
 }
 
 // MARK: - Screen
@@ -319,12 +367,14 @@ struct DigitalClientsScreen: View {
     @State private var vm = DigitalClientsVM()
     @State private var selected: DigitalClientsClient? = nil
     @State private var searchDebounce: Task<Void, Never>? = nil
+    @State private var showCreate = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 10) {
                 heroCard
+                addClientButton
                 searchRow
                 if vm.authExpired { authCard }
                 if let err = vm.error { errorCard(err) }
@@ -353,6 +403,41 @@ struct DigitalClientsScreen: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showCreate) { DigitalClientsCreateSheet(vm: vm) }
+        .overlay(alignment: .bottom) {
+            if let t = vm.toast {
+                Text(t)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task {
+                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+                        withAnimation { vm.toast = nil }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: vm.toast != nil)
+    }
+
+    /// Web header "+ Add Client" — native form sheet (owner 2026-07-11).
+    private var addClientButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showCreate = true
+        } label: {
+            Label("+ Add Client", systemImage: "person.badge.plus")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(DigitalClientsPalette.accent(colorScheme))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(DigitalClientsPalette.cditBlue.opacity(0.10),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+                    .strokeBorder(DigitalClientsPalette.cditBlue.opacity(0.3), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     // ── Hero anchor (bento language) — client count + service split, CDIT blue wash ──
@@ -500,6 +585,7 @@ private struct DigitalClientsDetailSheet: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var detail: DigitalClientsDetail? = nil
     @State private var loading = true
+    @State private var showPayment = false
 
     var body: some View {
         ScrollView {
@@ -514,6 +600,7 @@ private struct DigitalClientsDetailSheet: View {
                     .padding(.vertical, 24)
                 } else {
                     billingCard
+                    recordPaymentButton
                     contactCard
                     projectsCard
                     historyCard
@@ -527,6 +614,31 @@ private struct DigitalClientsDetailSheet: View {
             detail = await vm.detail(id: client.id)
             loading = false
         }
+        .sheet(isPresented: $showPayment) {
+            DigitalClientsPaymentSheet(clientId: client.id, clientName: client.name, vm: vm) {
+                Task { detail = await vm.detail(id: client.id) }
+            }
+        }
+    }
+
+    /// Web client-detail "Record payment" — native sheet (owner 2026-07-11).
+    private var recordPaymentButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showPayment = true
+        } label: {
+            Label("Record payment", systemImage: "banknote")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(colorScheme == .dark ? DigitalClientsPalette.emerald400
+                                                      : DigitalClientsPalette.emerald600)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(DigitalClientsPalette.emerald600.opacity(0.10),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+                    .strokeBorder(DigitalClientsPalette.emerald600.opacity(0.3), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     /// Freshest client record — the detail payload when it lands, list row before.
@@ -1006,4 +1118,234 @@ private struct DigitalClientsHeroCard: View {
 @available(iOS 17.0, *)
 #Preview("CDIT Clients — Light") {
     DigitalClientsScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - Create client (owner 2026-07-11: native writes — web "New Client" card parity,
+// POST /api/digital/clients with the exact same payload).
+
+@available(iOS 17.0, *)
+private struct DigitalClientsCreateSheet: View {
+    let vm: DigitalClientsVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+
+    // Web CDIT_SERVICES verbatim (src/types/cdit.ts).
+    private static let services = ["Website Development", "Facebook Marketing", "SEO",
+                                   "Branding", "Video Editing", "Graphics", "Monthly Retainer"]
+
+    @State private var name = ""
+    @State private var company = ""
+    @State private var phone = ""
+    @State private var email = ""
+    @State private var country = "Bangladesh"
+    @State private var leadSource = ""
+    @State private var tags = ""
+    @State private var serviceType = "Website Development"
+    @State private var notes = ""
+    @State private var submitting = false
+    @State private var errorText: String? = nil
+
+    private var canSubmit: Bool { !name.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("New Client").font(.subheadline.weight(.bold))
+                    Text("Agency client — CRM এ যোগ হবে।").font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Close") { dismiss() }
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 18).padding(.top, 20).padding(.bottom, 12)
+            Divider().opacity(0.4)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    field("Name *", text: $name)
+                    field("Company", text: $company)
+                    field("Phone", text: $phone, keyboard: .phonePad)
+                    field("Email", text: $email, keyboard: .emailAddress)
+                    field("Country", text: $country)
+                    field("Lead source", text: $leadSource)
+                    field("Tags", text: $tags)
+                    Menu {
+                        ForEach(Self.services, id: \.self) { s in
+                            Button(s) { serviceType = s }
+                        }
+                    } label: {
+                        HStack {
+                            Text(serviceType).font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Image(systemName: "chevron.up.chevron.down").font(.caption2)
+                        }
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 12).padding(.vertical, 11)
+                        .background(Color.primary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    }
+                    field("Notes", text: $notes)
+                    if let errorText {
+                        Text(errorText).font(.caption2.weight(.semibold))
+                            .foregroundStyle(DigitalClientsPalette.red500)
+                    }
+                }
+                .padding(18)
+            }
+            .scrollDismissesKeyboard(.interactively)
+
+            Divider().opacity(0.4)
+            Button {
+                submit()
+            } label: {
+                HStack(spacing: 8) {
+                    if submitting { ProgressView().tint(.white) }
+                    Text(submitting ? "Saving…" : "Save Client").font(.subheadline.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(canSubmit && !submitting
+                            ? DigitalClientsPalette.cditBlue
+                            : DigitalClientsPalette.cditBlue.opacity(0.4),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSubmit || submitting)
+            .padding(.horizontal, 18).padding(.vertical, 14)
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .background(AlmaSwiftTheme.rootBg(scheme))
+    }
+
+    private func field(_ placeholder: String, text: Binding<String>,
+                       keyboard: UIKeyboardType = .default) -> some View {
+        TextField(placeholder, text: text)
+            .keyboardType(keyboard)
+            .textInputAutocapitalization(keyboard == .emailAddress ? .never : .words)
+            .autocorrectionDisabled(keyboard == .emailAddress)
+            .font(.subheadline)
+            .padding(.horizontal, 12).padding(.vertical, 11)
+            .background(Color.primary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+    }
+
+    private func submit() {
+        guard canSubmit, !submitting else { return }
+        submitting = true; errorText = nil
+        Task {
+            defer { submitting = false }
+            let ok = await vm.createClient(.init(
+                name: name.trimmingCharacters(in: .whitespaces),
+                company: company, phone: phone, email: email,
+                country: country, service_type: serviceType,
+                lead_source: leadSource, notes: notes, tags: tags))
+            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+            if ok { dismiss() } else { errorText = vm.toast }
+        }
+    }
+}
+
+// MARK: - Record payment (owner 2026-07-11: native writes — web client-detail
+// "Record payment" parity, POST /api/digital/payments).
+
+@available(iOS 17.0, *)
+struct DigitalClientsPaymentSheet: View {
+    let clientId: String
+    let clientName: String
+    var invoiceId: String? = nil
+    var projectId: String? = nil
+    let vm: DigitalClientsVM
+    var onDone: (() -> Void)? = nil
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+
+    // Web CDIT_PAYMENT_METHODS verbatim.
+    private static let methods = ["Bank Transfer", "bKash", "Nagad", "Cash",
+                                  "PayPal", "Stripe", "Other"]
+
+    @State private var amount = ""
+    @State private var method = "Bank Transfer"
+    @State private var submitting = false
+    @State private var confirming = false
+    @State private var errorText: String? = nil
+
+    private var taka: Int { Int(Double(amount.replacingOccurrences(of: ",", with: "")) ?? 0) }
+    private var canSubmit: Bool { taka > 0 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Record payment").font(.subheadline.weight(.bold)).padding(.top, 20)
+            Text(clientName).font(.caption).foregroundStyle(.secondary)
+            TextField("Amount (BDT)", text: $amount)
+                .keyboardType(.numberPad)
+                .font(.title3.weight(.bold)).monospacedDigit()
+                .padding(.horizontal, 12).padding(.vertical, 12)
+                .background(Color.primary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            Menu {
+                ForEach(Self.methods, id: \.self) { m in Button(m) { method = m } }
+            } label: {
+                HStack {
+                    Text(method).font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down").font(.caption2)
+                }
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 12).padding(.vertical, 11)
+                .background(Color.primary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            }
+            if let errorText {
+                Text(errorText).font(.caption2.weight(.semibold))
+                    .foregroundStyle(DigitalClientsPalette.red500)
+            }
+            Button {
+                confirming = true
+            } label: {
+                HStack(spacing: 8) {
+                    if submitting { ProgressView().tint(.white) }
+                    Text("Record payment").font(.subheadline.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 13)
+                .background(canSubmit && !submitting
+                            ? DigitalClientsPalette.emerald600
+                            : DigitalClientsPalette.emerald600.opacity(0.4),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSubmit || submitting)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 18)
+        .presentationDetents([.height(320)])
+        .presentationDragIndicator(.visible)
+        .background(AlmaSwiftTheme.rootBg(scheme))
+        .confirmationDialog(
+            "৳\(taka.formatted()) payment (\(method)) রেকর্ড করবেন?",
+            isPresented: $confirming, titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, রেকর্ড করুন") { submit() }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+
+    private func submit() {
+        guard canSubmit, !submitting else { return }
+        submitting = true; errorText = nil
+        Task {
+            defer { submitting = false }
+            let ok = await vm.recordPayment(.init(
+                invoice_id: invoiceId, project_id: projectId,
+                client_id: clientId, client_name: clientName,
+                amount: taka, payment_method: method))
+            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+            if ok { onDone?(); dismiss() } else { errorText = vm.toast }
+        }
+    }
 }

@@ -220,6 +220,47 @@ private final class DigitalProjectsVM {
         if case AlmaAPIError.transport(let t) = error, (t as? URLError)?.code == .cancelled { return true }
         return (error as? URLError)?.code == .cancelled
     }
+
+    // ── Native create (owner 2026-07-11) — web "New Project" card payload verbatim. ──
+
+    var toast: String? = nil
+
+    struct ProjectPayload: Encodable {
+        let project_name: String
+        let title: String
+        let client_id: String
+        let client_name: String
+        let service_type: String
+        let total_amount: Int
+        let currency = "BDT"
+        let start_date: String
+        let status = "Lead"
+        let deadline: String
+        let assigned_to = ""
+        let priority = "Medium"
+        let business_id = "CREATIVE_DIGITAL_IT"
+    }
+    private struct WriteResponse: Decodable { let ok: Bool?, error: String? }
+
+    func createProject(_ p: ProjectPayload) async -> Bool {
+        do {
+            let res: WriteResponse = try await AlmaAPI.shared.send("POST", "/api/digital/projects", body: p)
+            guard res.ok ?? false else {
+                toast = res.error ?? "Could not create project"
+                return false
+            }
+            toast = "Project created"
+            await load()
+            return true
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return false
+        } catch {
+            if Self.isCancellation(error) { return false }
+            toast = error.localizedDescription
+            return false
+        }
+    }
 }
 
 // MARK: - Screen
@@ -230,12 +271,14 @@ struct DigitalProjectsScreen: View {
     @State private var vm = DigitalProjectsVM()
     @State private var selected: DigitalProject? = nil
     @State private var searchDebounce: Task<Void, Never>? = nil
+    @State private var showCreate = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 10) {
                 hero
+                newProjectButton
                 statusChips
                 searchRow
                 if vm.authExpired { authCard }
@@ -265,6 +308,41 @@ struct DigitalProjectsScreen: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showCreate) { DigitalProjectsCreateSheet(vm: vm) }
+        .overlay(alignment: .bottom) {
+            if let t = vm.toast {
+                Text(t)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task {
+                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+                        withAnimation { vm.toast = nil }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: vm.toast != nil)
+    }
+
+    /// Web header "+ New Project" — native form sheet (owner 2026-07-11).
+    private var newProjectButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showCreate = true
+        } label: {
+            Label("+ New Project", systemImage: "hammer")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(DigitalProjectsPalette.goldText(colorScheme))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(DigitalProjectsPalette.accentBlue.opacity(0.10),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+                    .strokeBorder(DigitalProjectsPalette.accentBlue.opacity(0.3), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     // ── Bento hero (web CditPageShell subtitle "N projects · billing tracked"
@@ -882,4 +960,168 @@ private extension View {
 @available(iOS 17.0, *)
 #Preview("CDIT Projects — Light") {
     DigitalProjectsScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - Create project (owner 2026-07-11: native writes — web "New Project" card
+// parity, POST /api/digital/projects with the exact same payload).
+
+@available(iOS 17.0, *)
+private struct DigitalProjectsCreateSheet: View {
+    let vm: DigitalProjectsVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+
+    // Web CDIT_SERVICES verbatim (src/types/cdit.ts).
+    private static let services = ["Website Development", "Facebook Marketing", "SEO",
+                                   "Branding", "Video Editing", "Graphics", "Monthly Retainer"]
+
+    @State private var projectName = ""
+    @State private var clientId = ""
+    @State private var clientName = ""
+    @State private var totalAmount = ""
+    @State private var serviceType = "Website Development"
+    @State private var startDate: Date? = nil
+    @State private var deadline: Date? = nil
+    @State private var submitting = false
+    @State private var confirming = false
+    @State private var errorText: String? = nil
+
+    private var taka: Int { Int(Double(totalAmount.replacingOccurrences(of: ",", with: "")) ?? 0) }
+    private var canSubmit: Bool { !projectName.trimmingCharacters(in: .whitespaces).isEmpty }
+    private static let ymd: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("New Project").font(.subheadline.weight(.bold))
+                    Text("Billing-tracked client project।").font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Close") { dismiss() }
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 18).padding(.top, 20).padding(.bottom, 12)
+            Divider().opacity(0.4)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    field("Project name *", text: $projectName)
+                    field("Client ID", text: $clientId)
+                    field("Client name", text: $clientName)
+                    field("Contract value (BDT)", text: $totalAmount, keyboard: .numberPad)
+                    Menu {
+                        ForEach(Self.services, id: \.self) { s in Button(s) { serviceType = s } }
+                    } label: {
+                        HStack {
+                            Text(serviceType).font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Image(systemName: "chevron.up.chevron.down").font(.caption2)
+                        }
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 12).padding(.vertical, 11)
+                        .background(Color.primary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    }
+                    optionalDate("Start date", date: $startDate)
+                    optionalDate("Deadline", date: $deadline)
+                    if let errorText {
+                        Text(errorText).font(.caption2.weight(.semibold))
+                            .foregroundStyle(DigitalProjectsPalette.red500)
+                    }
+                }
+                .padding(18)
+            }
+            .scrollDismissesKeyboard(.interactively)
+
+            Divider().opacity(0.4)
+            Button {
+                confirming = true
+            } label: {
+                HStack(spacing: 8) {
+                    if submitting { ProgressView().tint(.white) }
+                    Text(submitting ? "Saving…" : "Create Project").font(.subheadline.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(canSubmit && !submitting
+                            ? DigitalProjectsPalette.accentBlue
+                            : DigitalProjectsPalette.accentBlue.opacity(0.4),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSubmit || submitting)
+            .padding(.horizontal, 18).padding(.vertical, 14)
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .background(AlmaSwiftTheme.rootBg(scheme))
+        .confirmationDialog(
+            "\"\(projectName)\" তৈরি করবেন?\(taka > 0 ? " Value ৳\(taka.formatted())" : "")",
+            isPresented: $confirming, titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, তৈরি করুন") { submit() }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+
+    private func field(_ placeholder: String, text: Binding<String>,
+                       keyboard: UIKeyboardType = .default) -> some View {
+        TextField(placeholder, text: text)
+            .keyboardType(keyboard)
+            .font(.subheadline)
+            .padding(.horizontal, 12).padding(.vertical, 11)
+            .background(Color.primary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+    }
+
+    /// Web's optional date inputs — empty string when unset.
+    private func optionalDate(_ label: String, date: Binding<Date?>) -> some View {
+        HStack {
+            Text(label).font(.subheadline)
+            Spacer()
+            if let d = date.wrappedValue {
+                DatePicker("", selection: Binding(get: { d }, set: { date.wrappedValue = $0 }),
+                           displayedComponents: .date)
+                    .labelsHidden()
+                Button {
+                    date.wrappedValue = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill").font(.caption).foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            } else {
+                Button("সেট করুন") { date.wrappedValue = Date() }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.bordered)
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(Color.primary.opacity(0.04),
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+    }
+
+    private func submit() {
+        guard canSubmit, !submitting else { return }
+        submitting = true; errorText = nil
+        let name = projectName.trimmingCharacters(in: .whitespaces)
+        Task {
+            defer { submitting = false }
+            let ok = await vm.createProject(.init(
+                project_name: name, title: name,
+                client_id: clientId, client_name: clientName,
+                service_type: serviceType, total_amount: taka,
+                start_date: startDate.map { Self.ymd.string(from: $0) } ?? "",
+                deadline: deadline.map { Self.ymd.string(from: $0) } ?? ""))
+            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+            if ok { dismiss() } else { errorText = vm.toast }
+        }
+    }
 }

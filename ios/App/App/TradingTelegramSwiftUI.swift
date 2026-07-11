@@ -455,6 +455,52 @@ final class TradingTelegramVM {
         }
     }
 
+    // ── Native draft actions (owner 2026-07-11: money writes go native — web
+    //    TradingTelegramAdmin PATCH/bulk endpoints verbatim). ──
+
+    var toast: String? = nil
+    var actingDraftId: String? = nil       // one spinner per row, never global
+
+    private struct DraftActionBody: Encodable {
+        let action: String
+        var reason: String? = nil
+        var deleteReason: String? = nil
+    }
+    private struct DraftActionResponse: Decodable {
+        let ok: Bool?, error: String?, posted: Int?, rejected: Int?, failed: Int?
+    }
+
+    /// PATCH /api/trading/telegram/drafts/{id} — approve | reject | reopen | request_delete.
+    func draftAction(_ id: String, action: String,
+                     reason: String? = nil, deleteReason: String? = nil) async -> Bool {
+        actingDraftId = id
+        defer { actingDraftId = nil }
+        do {
+            let res: DraftActionResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/trading/telegram/drafts/\(id)",
+                body: DraftActionBody(action: action, reason: reason, deleteReason: deleteReason))
+            if let err = res.error {
+                toast = err
+                return false
+            }
+            toast = switch action {
+            case "approve": "Trade confirmed to ledger"
+            case "reject": "Draft rejected"
+            case "reopen": "Draft reopened"
+            default: "Delete request sent to admin for approval"
+            }
+            await load()
+            return true
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return false
+        } catch {
+            if Self.isCancellation(error) { return false }
+            toast = error.localizedDescription
+            return false
+        }
+    }
+
     func loadLive() async {
         do {
             let resp: TradingTelegramLive = try await AlmaAPI.shared.get(
@@ -538,6 +584,21 @@ struct TradingTelegramScreen: View {
             if vm.mappingLoaded { await vm.loadMapping(force: true) }
         }
         .task { await vm.load() }
+        .overlay(alignment: .bottom) {
+            if let t = vm.toast {
+                Text(t)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task {
+                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+                        withAnimation { vm.toast = nil }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: vm.toast != nil)
     }
 
     // ── Hero (bento anchor — trading green accent): pending queue + posted /
@@ -602,11 +663,11 @@ struct TradingTelegramScreen: View {
             emptyState("কোনো Telegram ড্রাফট নেই", icon: "paperplane")
         } else if !vm.draftGroups.isEmpty {
             ForEach(vm.draftGroups) { g in
-                TradingTelegramGroupCard(group: g)
+                TradingTelegramGroupCard(group: g, vm: vm)
             }
         } else {
             ForEach(vm.drafts) { d in
-                TradingTelegramDraftCard(draft: d)
+                TradingTelegramDraftCard(draft: d, vm: vm)
             }
         }
     }
@@ -712,6 +773,7 @@ struct TradingTelegramScreen: View {
 @available(iOS 17.0, *)
 private struct TradingTelegramGroupCard: View {
     let group: TradingTelegramDraftGroup
+    var vm: TradingTelegramVM? = nil
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -735,7 +797,7 @@ private struct TradingTelegramGroupCard: View {
             }
             Divider().opacity(0.4)
             ForEach(group.drafts) { d in
-                TradingTelegramDraftBody(draft: d, showMeta: false)
+                TradingTelegramDraftBody(draft: d, showMeta: false, vm: vm)
             }
         }
         .padding(14)
@@ -746,10 +808,11 @@ private struct TradingTelegramGroupCard: View {
 @available(iOS 17.0, *)
 private struct TradingTelegramDraftCard: View {
     let draft: TradingTelegramDraft
+    var vm: TradingTelegramVM? = nil
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        TradingTelegramDraftBody(draft: draft, showMeta: true)
+        TradingTelegramDraftBody(draft: draft, showMeta: true, vm: vm)
             .padding(14)
             .tradingTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
@@ -759,7 +822,13 @@ private struct TradingTelegramDraftCard: View {
 private struct TradingTelegramDraftBody: View {
     let draft: TradingTelegramDraft
     let showMeta: Bool
+    var vm: TradingTelegramVM? = nil
     @Environment(\.colorScheme) private var colorScheme
+    @State private var confirmingApprove = false
+    @State private var rejectReason = ""
+    @State private var askingReject = false
+    @State private var deleteReason = ""
+    @State private var askingDelete = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -802,7 +871,81 @@ private struct TradingTelegramDraftBody: View {
                 Text(TradingTelegramFormat.when(at))
                     .font(.caption2).foregroundStyle(.tertiary)
             }
+            actionsRow
         }
+    }
+
+    // ── Native draft actions (owner 2026-07-11): confirm-to-ledger / reject /
+    //    request-delete on PENDING·LOCKED, reopen on REJECTED — web parity. ──
+
+    @ViewBuilder private var actionsRow: some View {
+        if let vm {
+            let acting = vm.actingDraftId == draft.id
+            HStack(spacing: 8) {
+                if draft.status == "PENDING" || draft.status == "LOCKED" {
+                    actionButton("লেজারে পোস্ট", tint: TradingTelegramPalette.tradeGreen, busy: acting) {
+                        confirmingApprove = true
+                    }
+                    actionButton("Reject", tint: TradingTelegramPalette.red400, busy: acting) {
+                        rejectReason = ""; askingReject = true
+                    }
+                    actionButton("Delete?", tint: TradingTelegramPalette.amber500, busy: acting) {
+                        deleteReason = ""; askingDelete = true
+                    }
+                } else if draft.status == "REJECTED" {
+                    actionButton("Reopen", tint: TradingTelegramPalette.orange500, busy: acting) {
+                        Task { _ = await vm.draftAction(draft.id, action: "reopen") }
+                    }
+                }
+            }
+            .confirmationDialog(
+                "এই draft লেজারে পোস্ট করবেন? Balance আর P/L বদলাবে।\n\(draft.headline)",
+                isPresented: $confirmingApprove, titleVisibility: .visible
+            ) {
+                Button("হ্যাঁ, পোস্ট করুন") {
+                    Task { _ = await vm.draftAction(draft.id, action: "approve") }
+                }
+                Button("বাতিল", role: .cancel) {}
+            }
+            .alert("Reject reason?", isPresented: $askingReject) {
+                TextField("Rejected", text: $rejectReason)
+                Button("Reject", role: .destructive) {
+                    Task {
+                        _ = await vm.draftAction(draft.id, action: "reject",
+                                                 reason: rejectReason.isEmpty ? "Rejected" : rejectReason)
+                    }
+                }
+                Button("বাতিল", role: .cancel) {}
+            }
+            .alert("Delete request-এর কারণ?", isPresented: $askingDelete) {
+                TextField("Why delete this draft?", text: $deleteReason)
+                Button("Request delete", role: .destructive) {
+                    let r = deleteReason.trimmingCharacters(in: .whitespaces)
+                    guard !r.isEmpty else { return }
+                    Task { _ = await vm.draftAction(draft.id, action: "request_delete", deleteReason: r) }
+                }
+                Button("বাতিল", role: .cancel) {}
+            }
+        }
+    }
+
+    private func actionButton(_ label: String, tint: Color, busy: Bool,
+                              action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            HStack(spacing: 4) {
+                if busy { ProgressView().controlSize(.mini) }
+                Text(label).font(.system(size: 10, weight: .bold))
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(tint.opacity(0.12), in: Capsule())
+            .overlay(Capsule().strokeBorder(tint.opacity(0.3), lineWidth: 0.8))
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
     }
 }
 

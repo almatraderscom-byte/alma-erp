@@ -579,7 +579,8 @@ struct ApprovalsScreen: View {
                 showStatusLine: vm.statusFilter != "PENDING",
                 onTap: { selected = ap },
                 onApprove: { requestApprove(ap) },
-                onReject: { rejecting = ap })
+                onReject: { rejecting = ap },
+                openWeb: openWeb)
         }
         if !vm.loading && vm.approvals.isEmpty && vm.error == nil && !vm.authExpired {
             emptyState
@@ -854,6 +855,7 @@ private struct ApprovalCard: View {
     let onTap: () -> Void
     let onApprove: () -> Void
     let onReject: () -> Void
+    let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -931,7 +933,22 @@ private struct ApprovalCard: View {
         return bits.joined(separator: " · ")
     }
 
-    private var requesterLine: some View {
+    /// Web parity: the requester links to /employees/{employeeIdGas} when linked.
+    @ViewBuilder private var requesterLine: some View {
+        let gasId = approval.requester?.employeeIdGas ?? ""
+        if gasId.isEmpty {
+            requesterRow(linked: false)
+        } else {
+            requesterRow(linked: true)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                    openWeb("/employees/\(gasId)", "Employee")
+                }
+        }
+    }
+
+    private func requesterRow(linked: Bool) -> some View {
         let name = approval.requester?.name ?? approval.requestedBy ?? "—"
         let role = (approval.requester?.role ?? "Requester").replacingOccurrences(of: "_", with: " ")
         return HStack(spacing: 8) {
@@ -944,6 +961,11 @@ private struct ApprovalCard: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(name).font(.footnote.weight(.semibold))
                 Text(role).font(.caption2).foregroundStyle(.secondary)
+            }
+            if linked {
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary.opacity(0.7))
             }
         }
     }
@@ -1318,9 +1340,11 @@ private struct ApprovalDetailSheet: View {
         }
     }
 
+    /// Web parity: the requester links to /employees/{employeeIdGas} when linked.
     private var requesterCard: some View {
         let name = approval.requester?.name ?? approval.requestedBy ?? "—"
         let role = (approval.requester?.role ?? "Requester").replacingOccurrences(of: "_", with: " ")
+        let gasId = approval.requester?.employeeIdGas ?? ""
         return HStack(spacing: 10) {
             Text(ApprovalFormat.initials(name))
                 .font(.subheadline.weight(.bold))
@@ -1332,10 +1356,23 @@ private struct ApprovalDetailSheet: View {
                 Text(name).font(.subheadline.weight(.bold))
                 Text(role).font(.caption).foregroundStyle(.secondary)
             }
+            if !gasId.isEmpty {
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary.opacity(0.7))
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .onTapGesture {
+            guard !gasId.isEmpty else { return }
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            dismiss()
+            openWeb("/employees/\(gasId)", "Employee")
+        }
     }
 
     private var infoRows: some View {

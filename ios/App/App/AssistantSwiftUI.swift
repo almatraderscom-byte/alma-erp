@@ -229,6 +229,50 @@ struct AgentOpenTask: Decodable, Identifiable, Equatable {
 struct AgentOpenTasksResponse: Decodable { let tasks: [AgentOpenTask]? }
 struct AgentOpenTaskActionResponse: Decodable { let ok: Bool?; let action: String?; let resumeNote: String?; let title: String? }
 
+/// S8 additive — per-conversation artifacts (web AgentArtifactsPanel wire shape).
+/// GET /api/assistant/conversations/[id]/artifacts returns a plain array.
+private struct AgentArtifactWire: Decodable, Identifiable, Equatable {
+    let id: String
+    let messageId: String?
+    let type: String?
+    let title: String?
+    let content: String?
+    let version: Int?
+    let createdAt: String?
+}
+
+/// S8 additive — Plan-Drive "Live Desk" (web PlanDriveTimeline wire shapes).
+/// GET /api/assistant/plan-driver; everything optional — lenient decoding.
+private struct AgentPlanDriveStep: Decodable, Identifiable, Equatable {
+    let id: String
+    let action: String?
+    let status: String?      // pending | running | done | failed | skipped
+    let toolName: String?
+    let detail: String?
+}
+
+private struct AgentPlanDriveView: Decodable, Identifiable, Equatable {
+    let planId: String
+    let goal: String?
+    let conversationId: String?
+    let phase: String?        // driving | waiting-approval | needs-decision | done
+    let steps: [AgentPlanDriveStep]?
+    let doneCount: Int?
+    let totalCount: Int?
+    let currentLine: String?
+    let waitingReason: String?
+    let nextTickAt: String?
+    let attemptCount: Int?
+    let maxAttempts: Int?
+    let costTaka: Double?
+    var id: String { planId }
+}
+
+private struct AgentPlanDrivePanel: Decodable, Equatable {
+    let enabled: Bool?
+    let drives: [AgentPlanDriveView]?
+}
+
 // Model picker (web AgentModelSelector parity)
 struct AgentModelInfo: Decodable, Identifiable, Equatable {
     let id: String
@@ -744,6 +788,11 @@ final class AssistantVM {
     var openTasks: [AgentOpenTask] = []
     var openTaskBusyId: String?
 
+    // S8 additive — artifacts (display-only) + Plan-Drive Live Desk
+    fileprivate var artifacts: [AgentArtifactWire] = []
+    fileprivate var planDrive: AgentPlanDrivePanel?
+    var planDriveBusyPlanId: String?
+
     // TTS playback ("শুনুন")
     var ttsPlayingId: String?
     var ttsLoadingId: String?
@@ -828,6 +877,7 @@ final class AssistantVM {
         }
         await loadModels()
         await loadActiveConversation()
+        await loadPlanDrive()
         startPolling()
     }
 
@@ -838,6 +888,7 @@ final class AssistantVM {
                 conversationId = cid
                 modelId = ptr.modelId
                 await loadMessages(showSpinner: messages.isEmpty)
+                await loadArtifacts()
                 await resumeRunningTurnIfAny()
             }
             authExpired = false
@@ -935,6 +986,7 @@ final class AssistantVM {
             mergeServerMessages(wire)
             justSettledId = messages.last(where: { $0.role == .assistant })?.id
             await loadOpenTasks()
+            await loadArtifacts()   // the turn may have just produced one
         }
     }
 
@@ -953,6 +1005,9 @@ final class AssistantVM {
                     let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/presence",
                                                                         body: [String: String]())
                 }
+                // Plan-Drive Live Desk — web polls every 30s; every other 12s
+                // tick (~24s) keeps the in-thread timeline fresh.
+                if tick % 2 == 1 { await self.loadPlanDrive() }
             }
         }
     }
@@ -1087,7 +1142,9 @@ final class AssistantVM {
         modelId = conversations.first { $0.id == id }?.modelId   // pinned model follows the chat
         messages = []
         openTasks = []
+        artifacts = []
         await loadMessages(showSpinner: true)
+        await loadArtifacts()
         let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/active-conversation",
                                                             body: ["conversationId": id])
         await resumeRunningTurnIfAny()
@@ -1099,6 +1156,7 @@ final class AssistantVM {
         messages = []
         pendingFiles = []
         openTasks = []
+        artifacts = []
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
@@ -1138,6 +1196,46 @@ final class AssistantVM {
             "POST", "/api/assistant/open-tasks",
             body: ["id": task.id, "action": "cancel"])
         await loadOpenTasks()
+    }
+
+    // ── Artifacts + Plan-Drive (S8 additive; web AgentApp parity) ──────────
+
+    /// Web parity: artifacts are fetched alongside the conversation's messages
+    /// (AgentApp loadConversation) and again when a turn settles — a turn may
+    /// have just produced one.
+    fileprivate func loadArtifacts() async {
+        guard let cid = conversationId else { artifacts = []; return }
+        if let rows: [AgentArtifactWire] = try? await AlmaAPI.shared.get(
+            "/api/assistant/conversations/\(cid)/artifacts") {
+            artifacts = rows
+        }
+    }
+
+    /// Web parity: GET /api/assistant/plan-driver, polled while the chat is open
+    /// (web polls every 30s). Read-only; safe to poll.
+    fileprivate func loadPlanDrive() async {
+        if let panel: AgentPlanDrivePanel = try? await AlmaAPI.shared.get("/api/assistant/plan-driver") {
+            planDrive = panel
+        }
+    }
+
+    /// Owner one-click Plan-Drive control (web handlePlanDriveAction):
+    /// resume / add-budget / abandon → POST, then refresh the panel.
+    func planDriveAct(planId: String, action: String) async {
+        guard planDriveBusyPlanId == nil else { return }
+        planDriveBusyPlanId = planId
+        defer { planDriveBusyPlanId = nil }
+        do {
+            let _: OkResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/plan-driver/action",
+                body: ["planId": planId, "action": action])
+            errorToast = action == "abandon" ? "প্ল্যান বাদ দেওয়া হলো"
+                : action == "add-budget" ? "বাজেট বাড়িয়ে আবার চালু করা হলো"
+                : "আবার চালু করা হলো"
+            await loadPlanDrive()
+        } catch {
+            errorToast = "কাজটি করা গেল না"
+        }
     }
 
     // ── TTS ("শুনুন") ──────────────────────────────────────────────────────
@@ -4445,6 +4543,435 @@ struct AgentPendingTasksSheet: View {
     }
 }
 
+// MARK: - Plan-Drive Live Desk card (S8 additive; web PlanDriveTimeline parity, compact)
+
+/// In-thread compact timeline for in-flight autonomous plans: attention cards
+/// (needs-decision / needs-approval) first, then working step ladders. Renders
+/// only while a plan exists — this is a chat surface, not a page.
+@available(iOS 17.0, *)
+private struct AgentPlanDriveCard: View {
+    @Bindable var vm: AssistantVM
+    let pal: AgentPalette
+    @State private var expanded: Set<String> = []
+    @State private var confirm: Confirm?
+    @State private var ping = false
+
+    private struct Confirm: Identifiable {
+        let id = UUID()
+        let planId: String
+        let action: String
+        let question: String
+        let button: String
+    }
+
+    private var drives: [AgentPlanDriveView] { vm.planDrive?.drives ?? [] }
+    private var attention: [AgentPlanDriveView] {
+        drives.filter { $0.phase == "needs-decision" || $0.phase == "waiting-approval" }
+    }
+    private var working: [AgentPlanDriveView] { drives.filter { $0.phase == "driving" } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            header
+            ForEach(attention) { attentionRow($0) }
+            ForEach(working) { workingRow($0) }
+        }
+        .padding(13)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous)
+            .strokeBorder(AgentPalette.coral.opacity(0.22), lineWidth: 1))
+        .confirmationDialog(
+            confirm?.question ?? "",
+            isPresented: Binding(get: { confirm != nil },
+                                 set: { if !$0 { confirm = nil } }),
+            titleVisibility: .visible
+        ) {
+            if let c = confirm {
+                Button(c.button, role: c.action == "abandon" ? .destructive : nil) {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    Task { await vm.planDriveAct(planId: c.planId, action: c.action) }
+                }
+                Button("থাক", role: .cancel) {}
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            ZStack {
+                Circle().fill(AgentPalette.teal.opacity(0.55))
+                    .frame(width: 7, height: 7)
+                    .scaleEffect(ping ? 2.1 : 1)
+                    .opacity(ping ? 0 : 0.7)
+                Circle().fill(working.isEmpty ? pal.muted.opacity(0.6) : AgentPalette.teal)
+                    .frame(width: 7, height: 7)
+            }
+            .onAppear {
+                withAnimation(.easeOut(duration: 1.2).repeatForever(autoreverses: false)) { ping = true }
+            }
+            Text("এজেন্ট লাইভ ডেস্ক")
+                .font(.system(size: 12.5, weight: .bold)).foregroundStyle(pal.ink)
+            Text("Plan-Drive").font(.system(size: 9.5)).foregroundStyle(pal.muted)
+            Spacer()
+            if !attention.isEmpty {
+                Text("\(almaBn(attention.count)) অপেক্ষায়")
+                    .font(.system(size: 9, weight: .bold)).foregroundStyle(.red)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(Color.red.opacity(0.12), in: Capsule())
+            }
+            if !working.isEmpty {
+                Text("\(almaBn(working.count)) চলছে")
+                    .font(.system(size: 9, weight: .bold)).foregroundStyle(AgentPalette.teal)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(AgentPalette.teal.opacity(0.14), in: Capsule())
+            }
+        }
+    }
+
+    /// ⚠️ Waiting on the owner — loud card; one-click decisions for needs-decision
+    /// (web AttentionCard parity: resume / add-budget / abandon, Bangla confirm first).
+    @ViewBuilder private func attentionRow(_ d: AgentPlanDriveView) -> some View {
+        let isDecision = d.phase == "needs-decision"
+        let tint: Color = isDecision ? Color(red: 0.937, green: 0.267, blue: 0.267)
+                                     : Color(red: 0.851, green: 0.600, blue: 0.110)
+        let busy = vm.planDriveBusyPlanId == d.planId
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Text(isDecision ? "🛑" : "✋").font(.system(size: 13))
+                Text(isDecision ? "সিদ্ধান্ত দরকার" : "অনুমোদন দরকার")
+                    .font(.system(size: 8.5, weight: .heavy))
+                    .foregroundStyle(tint)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(tint.opacity(0.13), in: Capsule())
+                Text(d.goal ?? "প্ল্যান")
+                    .font(.system(size: 12, weight: .bold)).foregroundStyle(pal.ink)
+                    .lineLimit(1)
+            }
+            if let why = d.waitingReason, !why.isEmpty {
+                Text(why).font(.system(size: 11)).foregroundStyle(pal.mutedHi)
+                    .lineLimit(3).lineSpacing(2)
+            }
+            HStack(spacing: 5) {
+                Text("\(almaBn(d.doneCount ?? 0))/\(almaBn(d.totalCount ?? d.steps?.count ?? 0)) ধাপ শেষ")
+                if let taka = d.costTaka, taka > 0 { Text("· ৳\(almaBn(Int(taka))) খরচ") }
+            }
+            .font(.system(size: 9.5)).foregroundStyle(pal.muted)
+            if isDecision {
+                HStack(spacing: 7) {
+                    actBtn(busy ? "⏳" : "▶ আবার চালাও", AgentPalette.teal) {
+                        confirm = Confirm(planId: d.planId, action: "resume",
+                                          question: "প্ল্যানটা আবার চালু করবেন?", button: "হ্যাঁ, চালাও")
+                    }
+                    actBtn(busy ? "⏳" : "৳ বাজেট বাড়াও", AgentPalette.coral) {
+                        confirm = Confirm(planId: d.planId, action: "add-budget",
+                                          question: "বাজেট বাড়িয়ে আবার চালু করবেন?", button: "হ্যাঁ, বাড়াও")
+                    }
+                    actBtn(busy ? "⏳" : "✕ বাদ দাও", pal.mutedHi) {
+                        confirm = Confirm(planId: d.planId, action: "abandon",
+                                          question: "প্ল্যানটা কি একেবারে বাদ দেবেন?", button: "হ্যাঁ, বাদ দাও")
+                    }
+                }
+                .disabled(busy)
+                .opacity(busy ? 0.55 : 1)
+            }
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.07), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .strokeBorder(tint.opacity(0.3), lineWidth: 1))
+    }
+
+    /// ▶ Actively driving — goal + live line + progress rail; tap to unfold the
+    /// step ladder (status-coloured nodes, web WorkingPlan parity).
+    @ViewBuilder private func workingRow(_ d: AgentPlanDriveView) -> some View {
+        let steps = d.steps ?? []
+        let done = d.doneCount ?? steps.filter { $0.status == "done" }.count
+        let total = max(d.totalCount ?? steps.count, 1)
+        let open = expanded.contains(d.planId)
+        VStack(alignment: .leading, spacing: 7) {
+            Button {
+                UISelectionFeedbackGenerator().selectionChanged()
+                withAnimation(.snappy(duration: 0.22)) {
+                    if open { expanded.remove(d.planId) } else { expanded.insert(d.planId) }
+                }
+            } label: {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 7) {
+                        Circle().fill(AgentPalette.coral).frame(width: 7, height: 7)
+                        Text(d.goal ?? "প্ল্যান")
+                            .font(.system(size: 12.5, weight: .semibold)).foregroundStyle(pal.ink)
+                            .lineLimit(1)
+                        Spacer()
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(pal.muted)
+                            .rotationEffect(.degrees(open ? 180 : 0))
+                    }
+                    if let line = d.currentLine, !line.isEmpty {
+                        Text(line).font(.system(size: 10.5)).foregroundStyle(pal.muted).lineLimit(1)
+                    }
+                    HStack(spacing: 8) {
+                        ProgressView(value: Double(min(done, total)), total: Double(total))
+                            .tint(AgentPalette.coral)
+                        Text("\(almaBn(done))/\(almaBn(total))")
+                            .font(.system(size: 10, weight: .semibold)).monospacedDigit()
+                            .foregroundStyle(pal.muted)
+                        if let taka = d.costTaka, taka > 0 {
+                            Text("৳\(almaBn(Int(taka)))")
+                                .font(.system(size: 9.5)).foregroundStyle(pal.muted)
+                        }
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if open {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(steps.enumerated()), id: \.element.id) { i, s in
+                        HStack(alignment: .top, spacing: 8) {
+                            stepDot(s.status).padding(.top, 3.5)
+                            Text("\(almaBn(i + 1)). \(s.action ?? "")")
+                                .font(.system(size: 11))
+                                .foregroundStyle(stepInk(s.status))
+                                .strikethrough(s.status == "done", color: AgentPalette.teal.opacity(0.5))
+                        }
+                    }
+                }
+                .padding(.leading, 2)
+                .transition(.opacity)
+            }
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(pal.card.opacity(0.5), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .strokeBorder(pal.borderSubtle, lineWidth: 1))
+    }
+
+    private func stepDot(_ status: String?) -> some View {
+        let color: Color
+        switch status ?? "pending" {
+        case "done": color = AgentPalette.teal
+        case "running": color = AgentPalette.coral
+        case "failed": color = .red
+        default: color = pal.muted.opacity(0.35)
+        }
+        return Circle().fill(color).frame(width: 7, height: 7)
+    }
+
+    private func stepInk(_ status: String?) -> Color {
+        switch status ?? "pending" {
+        case "done": return pal.muted
+        case "running": return pal.ink
+        case "failed": return .red
+        default: return pal.mutedHi
+        }
+    }
+
+    private func actBtn(_ label: String, _ color: Color, action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            Text(label)
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(color)
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(color.opacity(0.1), in: Capsule())
+                .overlay(Capsule().strokeBorder(color.opacity(0.35), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Artifacts sheet (S8 additive; web AgentArtifactsPanel parity, display-only)
+
+/// Glossy list → detail sheet for the conversation's artifacts. Text/markdown/code
+/// render natively; HTML/SVG get an "ওয়েবে খুলুন" escape (no native editing/saving).
+@available(iOS 17.0, *)
+private struct AgentArtifactsSheet: View {
+    @Bindable var vm: AssistantVM
+    let openWeb: (_ path: String, _ title: String) -> Void
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.dismiss) private var dismiss
+    @State private var selected: AgentArtifactWire?
+    @State private var copied = false
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Button {
+                    if selected != nil {
+                        withAnimation(.snappy(duration: 0.2)) { selected = nil }
+                    } else { dismiss() }
+                } label: {
+                    Image(systemName: selected != nil ? "chevron.left" : "xmark")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(pal.muted)
+                        .frame(width: 32, height: 32)
+                        .background(Color.white.opacity(0.08), in: Circle())
+                }
+                Spacer()
+                Text(selected?.title ?? "আর্টিফ্যাক্ট (\(almaBn(vm.artifacts.count)))")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(pal.ink)
+                    .lineLimit(1)
+                Spacer()
+                Color.clear.frame(width: 32, height: 32)
+            }
+            .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 10)
+            Rectangle().fill(AgentPalette.coral.opacity(0.35)).frame(height: 1)
+
+            ScrollView {
+                if let art = selected { detail(art, pal: pal) } else { list(pal: pal) }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(26)
+        .presentationBackground {
+            Color(red: 0.23, green: 0.23, blue: 0.275).opacity(0.42)
+                .background(.ultraThinMaterial)
+        }
+    }
+
+    // ── List ───────────────────────────────────────────────────────────────
+
+    @ViewBuilder private func list(pal: AgentPalette) -> some View {
+        VStack(spacing: 10) {
+            ForEach(vm.artifacts) { a in
+                Button {
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    withAnimation(.snappy(duration: 0.2)) { selected = a }
+                } label: {
+                    HStack(spacing: 11) {
+                        Image(systemName: icon(a))
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(AgentPalette.coral)
+                            .frame(width: 34, height: 34)
+                            .background(AgentPalette.coral.opacity(0.12),
+                                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(a.title ?? "শিরোনামহীন")
+                                .font(.system(size: 13.5, weight: .semibold))
+                                .foregroundStyle(pal.ink).lineLimit(1)
+                            HStack(spacing: 6) {
+                                Text((a.type ?? "text").uppercased())
+                                    .font(.system(size: 8, weight: .heavy))
+                                    .foregroundStyle(pal.mutedHi)
+                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(Color.white.opacity(0.08), in: Capsule())
+                                if let v = a.version, v > 1 {
+                                    Text("v\(almaBn(v))").font(.system(size: 9.5)).foregroundStyle(pal.muted)
+                                }
+                                if let d = a.createdAt, d.count >= 10 {
+                                    Text(String(d.prefix(10))).font(.system(size: 9.5)).foregroundStyle(pal.muted)
+                                }
+                            }
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(pal.muted.opacity(0.5))
+                    }
+                    .padding(12)
+                    .background(Color.white.opacity(0.05),
+                                in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.09), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+            if vm.artifacts.isEmpty {
+                Text("এই চ্যাটে কোনো আর্টিফ্যাক্ট নেই")
+                    .font(.system(size: 13)).foregroundStyle(pal.muted)
+                    .frame(maxWidth: .infinity).padding(.vertical, 28)
+            }
+        }
+        .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 26)
+    }
+
+    // ── Detail ─────────────────────────────────────────────────────────────
+
+    @ViewBuilder private func detail(_ a: AgentArtifactWire, pal: AgentPalette) -> some View {
+        let content = a.content ?? ""
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Button {
+                    UIPasteboard.general.string = content
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { copied = false }
+                } label: {
+                    Label(copied ? "কপি হয়েছে ✓" : "কপি", systemImage: "doc.on.doc")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(pal.mutedHi)
+                        .padding(.horizontal, 11).padding(.vertical, 7)
+                        .background(Color.white.opacity(0.08), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                Spacer()
+            }
+            if isWebOnly(a) {
+                // Live HTML/SVG preview stays a web feature — offer the escape.
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    let open = openWeb
+                    dismiss()
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                        open("/agent", "ALMA AI")
+                    }
+                } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: "safari")
+                            .font(.system(size: 14)).foregroundStyle(AgentPalette.coral)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("ওয়েবে খুলুন")
+                                .font(.system(size: 13, weight: .semibold)).foregroundStyle(pal.ink)
+                            Text("এই ধরনের আর্টিফ্যাক্টের লাইভ প্রিভিউ ওয়েবে দেখা যায়")
+                                .font(.system(size: 10.5)).foregroundStyle(pal.muted)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(pal.muted.opacity(0.5))
+                    }
+                    .padding(12)
+                    .background(Color.white.opacity(0.05),
+                                in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(AgentPalette.coral.opacity(0.3), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                AgentMarkdownText(text: "```\n\(content)\n```", pal: pal)
+            } else if (a.type ?? "").lowercased() == "code", !content.contains("```") {
+                AgentMarkdownText(text: "```\n\(content)\n```", pal: pal)
+            } else {
+                AgentMarkdownText(text: content, pal: pal)
+            }
+        }
+        .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 26)
+    }
+
+    private func icon(_ a: AgentArtifactWire) -> String {
+        switch (a.type ?? "").lowercased() {
+        case "html", "svg": return "globe"
+        case "code": return "chevron.left.forwardslash.chevron.right"
+        default: return "doc.richtext"
+        }
+    }
+
+    /// Web isPreviewable parity: explicit html/svg type, or html-looking content.
+    private func isWebOnly(_ a: AgentArtifactWire) -> Bool {
+        let t = (a.type ?? "").lowercased()
+        if t == "html" || t == "svg" { return true }
+        let c = (a.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return c.hasPrefix("<!doctype html") || c.hasPrefix("<html") || c.hasPrefix("<svg")
+    }
+}
+
 // MARK: - Screen
 
 @available(iOS 17.0, *)
@@ -4455,6 +4982,7 @@ struct AssistantScreen: View {
     @State private var toolSheet: AgentChatMessage.Tool?
     @State private var activitySheet: AgentActivitySheetRequest?
     @State private var bottomScrollGeneration: UInt = 0
+    @State private var showArtifacts = false
 
     let openWeb: (_ path: String, _ title: String) -> Void
     /// Wired by makeAssistantTab so the native bar buttons drive this screen.
@@ -4484,6 +5012,11 @@ struct AssistantScreen: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         if vm.loadingHistory && vm.messages.isEmpty {
                             AlmaPageLoader()
+                        }
+                        // Plan-Drive Live Desk — in-thread only while a plan is in flight.
+                        if !(vm.planDrive?.drives ?? []).isEmpty {
+                            AgentPlanDriveCard(vm: vm, pal: pal)
+                                .padding(.bottom, 12)
                         }
                         if !vm.loadingHistory && vm.messages.isEmpty && !vm.isStreaming {
                             AgentEmptyStateView(pal: pal) { vm.send($0) }
@@ -4609,8 +5142,36 @@ struct AssistantScreen: View {
         .sheet(item: $activitySheet) { req in
             AgentThoughtProcessSheet(request: req)
         }
+        .sheet(isPresented: $showArtifacts) {
+            AgentArtifactsSheet(vm: vm, openWeb: openWeb)
+        }
         .overlay(alignment: .top) {
             if vm.authExpired { authBanner(pal) }
+        }
+        // Artifacts badge — web header-badge parity: appears only when this
+        // conversation actually has artifacts; tap → glossy list/detail sheet.
+        .overlay(alignment: .topTrailing) {
+            if !vm.artifacts.isEmpty && !vm.authExpired {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    showArtifacts = true
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "doc.richtext")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(almaBn(vm.artifacts.count))
+                            .font(.system(size: 11.5, weight: .bold))
+                    }
+                    .foregroundStyle(AgentPalette.coral)
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlay(Capsule().strokeBorder(AgentPalette.coral.opacity(0.4), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 14).padding(.top, 6)
+                .transition(.scale(scale: 0.8).combined(with: .opacity))
+            }
         }
         .overlay(alignment: .bottom) {
             if let toast = vm.errorToast { toastView(toast, pal) }
@@ -4793,9 +5354,12 @@ extension AlmaTabBarController {
                     navRef.value?.popToRootViewController(animated: true)
                 },
                 nativePushItem("Studio", "/agent/creative-studio"),
-                webPushItem("WhatsApp", "/agent/whatsapp"),
-                webPushItem("Monitor", "/agent/staff-monitor"),
-                webPushItem("Costs", "/agent/costs"),
+                // S8 audit: these three have native screens (AlmaNativeRouter cases
+                // /agent/whatsapp, /agent/staff-monitor, /agent/costs) — push them
+                // natively like Studio; nativePushItem still falls back to web.
+                nativePushItem("WhatsApp", "/agent/whatsapp"),
+                nativePushItem("Monitor", "/agent/staff-monitor"),
+                nativePushItem("Costs", "/agent/costs"),
             ])
             host.view.addSubview(assistive)
             assistive.attach(to: host.view, tabBarHeight: 49)

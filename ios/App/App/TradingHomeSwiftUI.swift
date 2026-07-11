@@ -306,9 +306,16 @@ private struct TradingHomeAccount: Decodable, Identifiable {
     let status: String?
     let startingCapital: Int?
     let currentBalance: Int?
+    // Native writes (owner 2026-07-11): the trade sheet's live P/L preview needs the
+    // inventory position, the expense sheet needs the partnership flag — same fields
+    // the web TradingAccount type reads.
+    let usdtBalance: Double?
+    let inventoryCostBdt: Double?
+    let partnershipEnabled: Bool
 
     private enum Keys: String, CodingKey {
         case id, accountTitle, binanceUid, accountType, status, startingCapital, currentBalance
+        case usdtBalance, inventoryCostBdt, partnershipEnabled
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -319,6 +326,21 @@ private struct TradingHomeAccount: Decodable, Identifiable {
         status = try? c.decodeIfPresent(String.self, forKey: .status)
         startingCapital = c.tradingHomeInt(.startingCapital)
         currentBalance = c.tradingHomeInt(.currentBalance)
+        usdtBalance = c.tradingHomeDouble(.usdtBalance)
+        inventoryCostBdt = c.tradingHomeDouble(.inventoryCostBdt)
+        partnershipEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .partnershipEnabled)) ?? false
+    }
+}
+
+/// POST answers `{ ok, ... }` — only ok matters to the sheets (web checks res?.ok).
+private struct TradingHomeMutationResponse: Decodable {
+    let ok: Bool
+    let error: String?
+    private enum Keys: String, CodingKey { case ok, error }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        ok = (try? c.decodeIfPresent(Bool.self, forKey: .ok)) ?? false
+        error = try? c.decodeIfPresent(String.self, forKey: .error)
     }
 }
 
@@ -387,6 +409,106 @@ private final class TradingHomeVM {
         if case AlmaAPIError.transport(let t) = error, (t as? URLError)?.code == .cancelled { return true }
         return (error as? URLError)?.code == .cancelled
     }
+
+    // ── Native writes (owner 2026-07-11: money entry goes native, not web escape).
+    //    Same endpoints/payloads the web hooks fire (src/lib/api.ts trading section). ──
+
+    struct TradePayload: Encodable {
+        let tradingAccountId: String, tradeType: String
+        let usdtAmount: Double, bdtRate: Double, feeUsdt: Double
+        let notes: String
+    }
+    struct BkashPayload: Encodable {
+        let tradingAccountId: String, summaryDate: String
+        let totalOrders: Int, totalProfitBdt: Double, totalLossBdt: Double
+        let notes: String
+    }
+    struct ExpensePayload: Encodable {
+        let tradingAccountId: String, expenseType: String
+        let amount: Double
+        let paidBy: String?
+        let notes: String
+        let attachmentUrl: String?
+    }
+    struct CapitalPayload: Encodable {
+        let tradingAccountId: String, entryType: String
+        let amount: Double
+        let notes: String
+    }
+
+    var toast: String? = nil
+
+    /// One shared runner: POST → ok-check → reload dashboards. Returns success.
+    private func post(_ path: String, _ body: some Encodable, success: String) async -> Bool {
+        do {
+            let res: TradingHomeMutationResponse = try await AlmaAPI.shared.send("POST", path, body: body)
+            guard res.ok else {
+                toast = res.error ?? "সেভ হয়নি — আবার চেষ্টা করুন"
+                return false
+            }
+            toast = success
+            await load()
+            return true
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return false
+        } catch {
+            if Self.isCancellation(error) { return false }
+            toast = error.localizedDescription
+            return false
+        }
+    }
+
+    func submitTrade(_ p: TradePayload) async -> Bool {
+        await post("/api/trading/trades", p, success: "ট্রেড সেভ হয়েছে")
+    }
+    func submitBkash(_ p: BkashPayload) async -> Bool {
+        await post("/api/trading/accounts/\(p.tradingAccountId)/bkash-summary", p,
+                   success: "Bkash summary সেভ হয়েছে")
+    }
+    func addExpense(_ p: ExpensePayload) async -> Bool {
+        await post("/api/trading/expenses", p, success: "খরচ যোগ হয়েছে")
+    }
+    func addCapital(_ p: CapitalPayload) async -> Bool {
+        await post("/api/trading/capital", p, success: "Capital entry পোস্ট হয়েছে")
+    }
+
+    /// Expense attachment (image/PDF) → returns the stored URL for the payload.
+    struct AttachmentResponse: Decodable {
+        struct Attachment: Decodable { let url: String? }
+        let ok: Bool?, attachment: Attachment?
+    }
+    func uploadAttachment(data: Data, filename: String, mime: String) async -> String? {
+        let res: AttachmentResponse? = try? await AlmaAPI.shared.uploadMultipart(
+            "/api/trading/attachments", fileField: "file", filename: filename, mime: mime, data: data)
+        return res?.attachment?.url
+    }
+
+    /// Compliance screenshot — multipart to the account's performance endpoint.
+    func uploadScreenshot(accountId: String, data: Data, shotDate: String, note: String) async -> Bool {
+        struct ShotResponse: Decodable { let ok: Bool? }
+        do {
+            var fields = ["shotDate": shotDate]
+            if !note.isEmpty { fields["note"] = note }
+            let res: ShotResponse = try await AlmaAPI.shared.uploadMultipart(
+                "/api/trading/accounts/\(accountId)/performance",
+                fileField: "file", filename: "screenshot.jpg", mime: "image/jpeg",
+                data: data, fields: fields)
+            guard res.ok ?? false else {
+                toast = "স্ক্রিনশট আপলোড হয়নি"
+                return false
+            }
+            toast = "স্ক্রিনশট আপলোড হয়েছে"
+            await load()
+            return true
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return false
+        } catch {
+            toast = error.localizedDescription
+            return false
+        }
+    }
 }
 
 // MARK: - Formatting helpers
@@ -409,6 +531,10 @@ private enum TradingHomeFormat {
 struct TradingHomeScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = TradingHomeVM()
+    @State private var showTrade = false
+    @State private var showExpense = false
+    @State private var showCapital = false
+    @State private var showShot = false
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -420,6 +546,7 @@ struct TradingHomeScreen: View {
                     loadingRows
                 } else {
                     kpiBoard
+                    workflowActions
                     quickNav
                     if vm.complianceNeedsAttention { complianceStrip }
                     accountsCard
@@ -437,6 +564,58 @@ struct TradingHomeScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task { await vm.load() }
+        .sheet(isPresented: $showTrade) { TradingHomeTradeSheet(vm: vm) }
+        .sheet(isPresented: $showExpense) { TradingHomeExpenseSheet(vm: vm) }
+        .sheet(isPresented: $showCapital) { TradingHomeCapitalSheet(vm: vm) }
+        .sheet(isPresented: $showShot) { TradingHomeShotSheet(vm: vm) }
+        .overlay(alignment: .bottom) {
+            if let t = vm.toast {
+                Text(t)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task {
+                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+                        withAnimation { vm.toast = nil }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: vm.toast != nil)
+    }
+
+    // ── Workflow actions (web TradingQuickActions parity — native sheets, owner
+    //    2026-07-11: money entry native). ──
+    private var workflowActions: some View {
+        HStack(spacing: 8) {
+            workflowButton("plus.circle.fill", "Add Trade", TradingHomePalette.gold(colorScheme)) { showTrade = true }
+            workflowButton("banknote", "Expense", TradingHomePalette.signed(-1, colorScheme)) { showExpense = true }
+            workflowButton("arrow.up.arrow.down.circle", "Capital", AlmaSwiftTheme.sage) { showCapital = true }
+            workflowButton("camera.viewfinder", "Screenshot", AlmaSwiftTheme.violet) { showShot = true }
+        }
+    }
+    private func workflowButton(_ icon: String, _ label: String, _ tint: Color,
+                                action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            VStack(spacing: 6) {
+                Image(systemName: icon).font(.system(size: 17, weight: .semibold))
+                Text(label).font(.system(size: 10, weight: .bold))
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .foregroundStyle(tint)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+                .strokeBorder(tint.opacity(0.25), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(vm.accounts.isEmpty)
+        .opacity(vm.accounts.isEmpty ? 0.5 : 1)
     }
 
     // ── KPI board (web: Today net / Current balance / Today profit / Today loss +
@@ -1186,4 +1365,532 @@ private struct TradingHomeHeroCard: View {
 @available(iOS 17.0, *)
 #Preview("Trading — Light") {
     TradingHomeScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - Native write sheets (owner 2026-07-11: trade/expense/capital/screenshot
+// entry goes native — web TradingModals.tsx parity, same payloads).
+
+import PhotosUI
+
+/// Shared sheet chrome: title bar + footer submit button, web ModalFrame parity.
+@available(iOS 17.0, *)
+private struct TradingHomeSheetFrame<Content: View>: View {
+    let title: String
+    let desc: String
+    let submitLabel: String
+    let submitting: Bool
+    let canSubmit: Bool
+    let onSubmit: () -> Void
+    @ViewBuilder let content: Content
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.subheadline.weight(.bold))
+                    Text(desc).font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Close") { dismiss() }
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 18).padding(.top, 20).padding(.bottom, 12)
+            Divider().opacity(0.4)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) { content }
+                    .padding(18)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            Divider().opacity(0.4)
+            Button(action: onSubmit) {
+                HStack(spacing: 8) {
+                    if submitting { ProgressView().tint(.white) }
+                    Text(submitLabel).font(.subheadline.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(canSubmit && !submitting ? AlmaSwiftTheme.coral : AlmaSwiftTheme.coral.opacity(0.4),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSubmit || submitting)
+            .padding(.horizontal, 18).padding(.vertical, 14)
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .background(AlmaSwiftTheme.rootBg(scheme))
+    }
+}
+
+/// Small labelled numeric/text field, web Input parity.
+@available(iOS 17.0, *)
+private struct TradingHomeField: View {
+    let placeholder: String
+    @Binding var text: String
+    var keyboard: UIKeyboardType = .decimalPad
+
+    var body: some View {
+        TextField(placeholder, text: $text)
+            .keyboardType(keyboard)
+            .font(.subheadline.weight(keyboard == .decimalPad ? .bold : .regular))
+            .padding(.horizontal, 12).padding(.vertical, 11)
+            .background(Color.primary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+    }
+}
+
+/// Account picker used by every write sheet.
+@available(iOS 17.0, *)
+private struct TradingHomeAccountPicker: View {
+    let accounts: [TradingHomeAccount]
+    @Binding var selectedId: String
+
+    var body: some View {
+        Menu {
+            ForEach(accounts) { a in
+                Button(a.accountTitle) { selectedId = a.id }
+            }
+        } label: {
+            HStack {
+                Text(accounts.first(where: { $0.id == selectedId })?.accountTitle ?? "অ্যাকাউন্ট বাছুন")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down").font(.caption2)
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 12).padding(.vertical, 11)
+            .background(Color.primary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        }
+    }
+}
+
+// ── Add Trade (web TradeEntryModal: BKASH daily summary / BANK P2P engine) ──
+
+@available(iOS 17.0, *)
+private struct TradingHomeTradeSheet: View {
+    let vm: TradingHomeVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @State private var accountId = ""
+    @State private var mode = "BANK"           // BANK | BKASH — web defaults BANK
+    @State private var tradeType = "BUY"
+    @State private var usdtAmount = ""
+    @State private var bdtRate = ""
+    @State private var feeUsdt = ""
+    @State private var notes = ""
+    @State private var bkashDate = TradingHomeDateHelper.today()
+    @State private var bkashProfit = ""
+    @State private var bkashLoss = ""
+    @State private var submitting = false
+    @State private var errorText: String? = nil
+    @State private var confirming = false
+
+    private var account: TradingHomeAccount? { vm.accounts.first(where: { $0.id == accountId }) }
+    private func num(_ s: String) -> Double { Double(s.replacingOccurrences(of: ",", with: "")) ?? 0 }
+
+    // Web calc block parity (TradingModals.tsx calc useMemo).
+    private var totalBdt: Double { num(usdtAmount) * num(bdtRate) }
+    private var feeBdt: Double { num(feeUsdt) * num(bdtRate) }
+    private var netBdt: Double { tradeType == "BUY" ? totalBdt + feeBdt : totalBdt - feeBdt }
+    private var avgCostRate: Double {
+        let bal = account?.usdtBalance ?? 0
+        return bal > 0 ? (account?.inventoryCostBdt ?? 0) / bal : 0
+    }
+    private var sellNet: Double { netBdt - num(usdtAmount) * avgCostRate }
+    private var bkashNet: Double { num(bkashProfit) - num(bkashLoss) }
+
+    private var canSubmit: Bool {
+        guard account != nil else { return false }
+        if mode == "BKASH" { return num(bkashProfit) > 0 || num(bkashLoss) > 0 }
+        return num(usdtAmount) > 0 && num(bdtRate) > 0 && num(feeUsdt) >= 0
+    }
+
+    var body: some View {
+        TradingHomeSheetFrame(
+            title: "Add Trade Entry",
+            desc: account?.accountTitle ?? "Choose account · Bkash summary or Bank/P2P",
+            submitLabel: mode == "BKASH" ? "Save Bkash summary" : "Submit trade",
+            submitting: submitting, canSubmit: canSubmit,
+            onSubmit: { confirming = true }
+        ) {
+            if vm.accounts.count > 1 {
+                TradingHomeAccountPicker(accounts: vm.accounts, selectedId: $accountId)
+            }
+            Picker("Mode", selection: $mode) {
+                Text("BKASH").tag("BKASH")
+                Text("BANK / P2P").tag("BANK")
+            }
+            .pickerStyle(.segmented)
+
+            if mode == "BKASH" {
+                Text("২০০-৩০০+ ছোট merchant action-এর দিনের ফল — USDT/rate/fee লাগে না।")
+                    .font(.caption2).foregroundStyle(.secondary)
+                DatePicker("তারিখ", selection: Binding(
+                    get: { TradingHomeDateHelper.parse(bkashDate) },
+                    set: { bkashDate = TradingHomeDateHelper.string($0) }
+                ), displayedComponents: .date)
+                .font(.subheadline)
+                TradingHomeField(placeholder: "Total daily profit (BDT)", text: $bkashProfit)
+                TradingHomeField(placeholder: "Total daily loss (BDT)", text: $bkashLoss)
+                resultPanel(label: "Net result = profit - loss", value: bkashNet, signed: true)
+            } else {
+                Picker("Type", selection: $tradeType) {
+                    Text("BUY").tag("BUY")
+                    Text("SELL").tag("SELL")
+                }
+                .pickerStyle(.segmented)
+                TradingHomeField(placeholder: "USDT amount", text: $usdtAmount)
+                TradingHomeField(placeholder: "BDT Rate", text: $bdtRate)
+                TradingHomeField(placeholder: "Binance Fee (USDT)", text: $feeUsdt)
+                HStack(spacing: 8) {
+                    calcTile(tradeType == "BUY" ? "Total BDT" : "Sell BDT", totalBdt)
+                    calcTile("Fee BDT", feeBdt)
+                    calcTile(tradeType == "BUY" ? "Net Buy Cost" : "Net Receive", netBdt)
+                }
+                if tradeType == "SELL" {
+                    resultPanel(label: "Live profit / loss (avg cost ৳\(String(format: "%.2f", avgCostRate)))",
+                                value: sellNet, signed: true)
+                }
+                if tradeType == "SELL", num(usdtAmount) > (account?.usdtBalance ?? 0) {
+                    Label("Sell USDT অ্যাকাউন্টের USDT ব্যালান্সের বেশি", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2.weight(.semibold)).foregroundStyle(TradingHomePalette.signed(-1, scheme))
+                }
+            }
+            TradingHomeField(placeholder: "Notes", text: $notes, keyboard: .default)
+            if let errorText {
+                Text(errorText).font(.caption2.weight(.semibold))
+                    .foregroundStyle(TradingHomePalette.signed(-1, scheme))
+            }
+        }
+        .onAppear { if accountId.isEmpty { accountId = vm.accounts.first?.id ?? "" } }
+        .confirmationDialog(
+            mode == "BKASH"
+                ? "Bkash summary সেভ করবেন? Net \(TradingHomeFormat.taka(Int(bkashNet.rounded())))"
+                : "\(tradeType) ট্রেড সাবমিট করবেন? Net \(TradingHomeFormat.taka(Int(netBdt.rounded())))",
+            isPresented: $confirming, titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, সেভ করুন") { submit() }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+
+    private func calcTile(_ label: String, _ value: Double) -> some View {
+        VStack(spacing: 3) {
+            Text(label).font(.system(size: 9)).foregroundStyle(.secondary)
+            Text(TradingHomeFormat.taka(Int(value.rounded())))
+                .font(.caption.weight(.bold)).monospacedDigit()
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 8)
+        .background(Color.primary.opacity(0.05),
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+    }
+
+    private func resultPanel(label: String, value: Double, signed: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.system(size: 9, weight: .bold)).tracking(0.6)
+                .foregroundStyle(.secondary)
+            Text("\(value >= 0 ? "+" : "-")\(TradingHomeFormat.taka(Int(abs(value).rounded())))")
+                .font(.system(size: 26, weight: .bold)).monospacedDigit()
+                .foregroundStyle(TradingHomePalette.signed(value >= 0 ? 1 : -1, scheme))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(TradingHomePalette.signed(value >= 0 ? 1 : -1, scheme).opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+    }
+
+    private func submit() {
+        guard let account, !submitting else { return }
+        if mode == "BANK", tradeType == "SELL", num(usdtAmount) > (account.usdtBalance ?? 0) {
+            errorText = "Sell USDT exceeds account USDT balance."
+            return
+        }
+        submitting = true; errorText = nil
+        Task {
+            defer { submitting = false }
+            let ok: Bool
+            if mode == "BKASH" {
+                ok = await vm.submitBkash(.init(
+                    tradingAccountId: account.id, summaryDate: bkashDate, totalOrders: 0,
+                    totalProfitBdt: num(bkashProfit), totalLossBdt: num(bkashLoss), notes: notes))
+            } else {
+                ok = await vm.submitTrade(.init(
+                    tradingAccountId: account.id, tradeType: tradeType,
+                    usdtAmount: num(usdtAmount), bdtRate: num(bdtRate), feeUsdt: num(feeUsdt),
+                    notes: notes.trimmingCharacters(in: .whitespaces)))
+            }
+            if ok {
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                dismiss()
+            } else {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                errorText = vm.toast
+            }
+        }
+    }
+}
+
+// ── Expense entry (web ExpenseEntryModal — attachment optional) ──
+
+@available(iOS 17.0, *)
+private struct TradingHomeExpenseSheet: View {
+    let vm: TradingHomeVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @State private var accountId = ""
+    @State private var expenseType = "Mobile purchase"
+    @State private var amount = ""
+    @State private var paidBy = "OWNER"
+    @State private var notes = ""
+    @State private var attachmentUrl: String? = nil
+    @State private var uploading = false
+    @State private var pickedItem: PhotosPickerItem? = nil
+    @State private var submitting = false
+    @State private var confirming = false
+
+    // Web EXPENSE_TYPES verbatim (trading-utils.ts).
+    private let types = ["Mobile purchase", "Internet/MB", "SIM", "Travel",
+                         "Device purchase", "Banking charges", "Misc operational"]
+
+    private var account: TradingHomeAccount? { vm.accounts.first(where: { $0.id == accountId }) }
+    private func num(_ s: String) -> Double { Double(s.replacingOccurrences(of: ",", with: "")) ?? 0 }
+    private var canSubmit: Bool { account != nil && num(amount) > 0 && !uploading }
+
+    var body: some View {
+        TradingHomeSheetFrame(
+            title: "Add account expense",
+            desc: "Account ledger খরচ — global finance/analytics-এও যাবে।",
+            submitLabel: "Add expense", submitting: submitting, canSubmit: canSubmit,
+            onSubmit: { confirming = true }
+        ) {
+            TradingHomeAccountPicker(accounts: vm.accounts, selectedId: $accountId)
+            Menu {
+                ForEach(types, id: \.self) { t in Button(t) { expenseType = t } }
+            } label: {
+                HStack {
+                    Text(expenseType).font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down").font(.caption2)
+                }
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 12).padding(.vertical, 11)
+                .background(Color.primary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            }
+            TradingHomeField(placeholder: "Expense Amount (BDT)", text: $amount)
+            if account?.partnershipEnabled == true {
+                Picker("কে দিয়েছে", selection: $paidBy) {
+                    Text("আমি (Owner)").tag("OWNER")
+                    Text("Staff").tag("STAFF")
+                }
+                .pickerStyle(.segmented)
+            }
+            PhotosPicker(selection: $pickedItem, matching: .images) {
+                HStack(spacing: 8) {
+                    Image(systemName: attachmentUrl != nil ? "checkmark.circle.fill" : "paperclip")
+                    Text(uploading ? "Uploading…"
+                         : attachmentUrl != nil ? "Attachment ready"
+                         : "রিসিট/স্ক্রিনশট যোগ করুন (ঐচ্ছিক)")
+                        .font(.caption.weight(.semibold))
+                    if uploading { ProgressView().controlSize(.mini) }
+                }
+                .foregroundStyle(attachmentUrl != nil ? AlmaSwiftTheme.sage : .secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12).padding(.vertical, 11)
+                .background(Color.primary.opacity(0.05),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            }
+            .onChange(of: pickedItem) { _, item in
+                guard let item else { return }
+                uploading = true
+                Task {
+                    defer { uploading = false }
+                    if let data = try? await item.loadTransferable(type: Data.self) {
+                        attachmentUrl = await vm.uploadAttachment(
+                            data: data, filename: "receipt.jpg", mime: "image/jpeg")
+                    }
+                }
+            }
+            TradingHomeField(placeholder: "Notes", text: $notes, keyboard: .default)
+        }
+        .onAppear { if accountId.isEmpty { accountId = vm.accounts.first?.id ?? "" } }
+        .confirmationDialog(
+            "\(TradingHomeFormat.taka(Int(num(amount).rounded()))) খরচ যোগ করবেন (\(expenseType))?",
+            isPresented: $confirming, titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, যোগ করুন") { submit() }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+
+    private func submit() {
+        guard let account, !submitting else { return }
+        submitting = true
+        Task {
+            defer { submitting = false }
+            let ok = await vm.addExpense(.init(
+                tradingAccountId: account.id, expenseType: expenseType, amount: num(amount),
+                paidBy: account.partnershipEnabled ? paidBy : nil,
+                notes: notes, attachmentUrl: attachmentUrl))
+            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+            if ok { dismiss() }
+        }
+    }
+}
+
+// ── Capital entry (web CapitalEntryModal: deposit / withdraw / adjustment) ──
+
+@available(iOS 17.0, *)
+private struct TradingHomeCapitalSheet: View {
+    let vm: TradingHomeVM
+    @Environment(\.dismiss) private var dismiss
+    @State private var accountId = ""
+    @State private var entryType = "DEPOSIT"
+    @State private var amount = ""
+    @State private var notes = ""
+    @State private var submitting = false
+    @State private var confirming = false
+
+    private var account: TradingHomeAccount? { vm.accounts.first(where: { $0.id == accountId }) }
+    private func num(_ s: String) -> Double { Double(s.replacingOccurrences(of: ",", with: "")) ?? 0 }
+    private var canSubmit: Bool { account != nil && num(amount) != 0 }
+    private var typeLabel: String {
+        entryType == "DEPOSIT" ? "Deposit" : entryType == "WITHDRAW" ? "Withdraw" : "Adjustment"
+    }
+
+    var body: some View {
+        TradingHomeSheetFrame(
+            title: "Capital entry",
+            desc: account?.accountTitle ?? "Deposit, withdraw, or adjustment",
+            submitLabel: "Post capital entry", submitting: submitting, canSubmit: canSubmit,
+            onSubmit: { confirming = true }
+        ) {
+            TradingHomeAccountPicker(accounts: vm.accounts, selectedId: $accountId)
+            Picker("Type", selection: $entryType) {
+                Text("Deposit").tag("DEPOSIT")
+                Text("Withdraw").tag("WITHDRAW")
+                Text("Adjustment").tag("ADJUSTMENT")
+            }
+            .pickerStyle(.segmented)
+            TradingHomeField(placeholder: "Amount", text: $amount)
+            TradingHomeField(placeholder: "Notes", text: $notes, keyboard: .default)
+        }
+        .onAppear { if accountId.isEmpty { accountId = vm.accounts.first?.id ?? "" } }
+        .confirmationDialog(
+            "\(typeLabel) \(TradingHomeFormat.taka(Int(num(amount).rounded()))) পোস্ট করবেন?",
+            isPresented: $confirming, titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, পোস্ট করুন") { submit() }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+
+    private func submit() {
+        guard let account, !submitting else { return }
+        submitting = true
+        Task {
+            defer { submitting = false }
+            let ok = await vm.addCapital(.init(
+                tradingAccountId: account.id, entryType: entryType,
+                amount: num(amount), notes: notes))
+            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+            if ok { dismiss() }
+        }
+    }
+}
+
+// ── Compliance screenshot upload (web ScreenshotUploadModal essentials) ──
+
+@available(iOS 17.0, *)
+private struct TradingHomeShotSheet: View {
+    let vm: TradingHomeVM
+    @Environment(\.dismiss) private var dismiss
+    @State private var accountId = ""
+    @State private var shotDate = TradingHomeDateHelper.today()
+    @State private var note = ""
+    @State private var pickedItem: PhotosPickerItem? = nil
+    @State private var imageData: Data? = nil
+    @State private var preview: UIImage? = nil
+    @State private var submitting = false
+
+    private var canSubmit: Bool { !accountId.isEmpty && imageData != nil }
+
+    var body: some View {
+        TradingHomeSheetFrame(
+            title: "Upload Screenshot",
+            desc: "দিনের performance screenshot — compliance এখান থেকেই আপডেট হয়।",
+            submitLabel: "Upload", submitting: submitting, canSubmit: canSubmit,
+            onSubmit: submit
+        ) {
+            TradingHomeAccountPicker(accounts: vm.accounts, selectedId: $accountId)
+            DatePicker("তারিখ", selection: Binding(
+                get: { TradingHomeDateHelper.parse(shotDate) },
+                set: { shotDate = TradingHomeDateHelper.string($0) }
+            ), displayedComponents: .date)
+            .font(.subheadline)
+            PhotosPicker(selection: $pickedItem, matching: .screenshots) {
+                Group {
+                    if let preview {
+                        Image(uiImage: preview)
+                            .resizable().scaledToFit()
+                            .frame(maxHeight: 220)
+                            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "photo.badge.plus").font(.title2)
+                            Text("স্ক্রিনশট বাছুন").font(.caption.weight(.semibold))
+                        }
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 36)
+                        .background(Color.primary.opacity(0.05),
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    }
+                }
+            }
+            .onChange(of: pickedItem) { _, item in
+                guard let item else { return }
+                Task {
+                    if let data = try? await item.loadTransferable(type: Data.self) {
+                        imageData = data
+                        preview = UIImage(data: data)
+                    }
+                }
+            }
+            TradingHomeField(placeholder: "Note (ঐচ্ছিক)", text: $note, keyboard: .default)
+        }
+        .onAppear { if accountId.isEmpty { accountId = vm.accounts.first?.id ?? "" } }
+    }
+
+    private func submit() {
+        guard let imageData, !submitting else { return }
+        submitting = true
+        Task {
+            defer { submitting = false }
+            let ok = await vm.uploadScreenshot(
+                accountId: accountId, data: imageData, shotDate: shotDate, note: note)
+            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+            if ok { dismiss() }
+        }
+    }
+}
+
+/// yyyy-MM-dd helpers for the web's date payloads (Dhaka-day semantics live server-side).
+private enum TradingHomeDateHelper {
+    static let formatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+    static func today() -> String { string(Date()) }
+    static func string(_ d: Date) -> String { formatter.string(from: d) }
+    static func parse(_ s: String) -> Date { formatter.date(from: s) ?? Date() }
 }

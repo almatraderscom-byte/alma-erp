@@ -42,6 +42,15 @@ enum AlmaNativeRouter {
         switch clean {
         // Cases are appended batch-by-batch as pages migrate (S6 marathon).
         case "/", "/dashboard": return host(DashboardScreen(openWeb: openWebForced), "Dashboard")
+        // Owner 2026-07-11: login goes NATIVE — every authCard's "লগইন খুলুন" push lands
+        // here via pushSmart; the screen's own "ওয়েবে লগইন" fallback stays forced-web.
+        case "/login": return host(NativeLoginScreen(onSuccess: {}, openWeb: openWebForced), "Sign in")
+        // S8 audit fix: the three tab pages were reachable natively ONLY as tab roots —
+        // any cross-page link (Dashboard "সব দেখুন" → /orders, briefing → /approvals)
+        // fell through to the web view. One case each closes that hole.
+        case "/orders": return host(OrdersScreen(openWeb: openWebForced), "Orders")
+        case "/orders/new": return host(OrderCreateSheet(onCreated: {}, openWeb: openWebForced), "নতুন অর্ডার")
+        case "/approvals": return host(ApprovalsScreen(openWeb: openWebForced), "Approvals")
         case "/finance": return host(FinanceScreen(openWeb: openWebForced), "Finance")
         case "/invoice": return host(InvoicesScreen(openWeb: openWebForced), "Invoices")
         case "/expenses": return host(ExpensesScreen(openWeb: openWebForced), "Expenses")

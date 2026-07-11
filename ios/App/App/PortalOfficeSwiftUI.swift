@@ -2080,6 +2080,14 @@ struct PortalOwnerHubView: View {
                     Text("\(a.staffName) — মাশাআল্লাহ!").font(.subheadline.weight(.bold))
                 }
                 Spacer()
+                // Manual selection (recompute / pin / clear) is the web AwardModal — escape.
+                Button {
+                    openWeb("/portal/office", "Office")
+                } label: {
+                    Image(systemName: "slider.horizontal.3").font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
             if let s = stats {
                 HStack(spacing: 8) {

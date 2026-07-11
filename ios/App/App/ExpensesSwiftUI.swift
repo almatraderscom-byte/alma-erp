@@ -18,6 +18,7 @@
 //
 
 import SwiftUI
+import PhotosUI
 
 // MARK: - Web palette (exact hexes from globals.css / tailwind tokens)
 
@@ -205,16 +206,21 @@ struct ExpenseCreateBody: Encodable {
     let recurring: Bool
     let date: String
     let businessId: String
+    // Owner 2026-07-11: receipt upload goes native — web payload keys verbatim.
+    let receiptRef: String
+    let receiptAttachmentId: String?
 
     private enum CodingKeys: String, CodingKey {
         case title, category, amount, notes, recurring, date
         case paymentStatus = "payment_status"
         case paymentMethod = "payment_method"
         case businessId = "business_id"
+        case receiptRef = "receipt_ref"
+        case receiptAttachmentId = "receipt_attachment_id"
     }
 }
 
-/// Native add-expense form state (web modal fields, minus the receipt drop zone).
+/// Native add-expense form state (web modal fields, receipt included since S9).
 struct ExpenseDraft {
     var title = ""
     var category = ""
@@ -224,6 +230,8 @@ struct ExpenseDraft {
     var paymentMethod = ""
     var notes = ""
     var recurring = false
+    var receiptUrl: String? = nil    // POST /api/finance/receipts result
+    var receiptId: String? = nil
 
     var amount: Int? {
         let trimmed = amountText.trimmingCharacters(in: .whitespaces)
@@ -355,7 +363,9 @@ final class ExpensesVM {
                 notes: draft.notes.trimmingCharacters(in: .whitespacesAndNewlines),
                 recurring: draft.recurring,
                 date: fmt.string(from: draft.date),
-                businessId: "ALMA_LIFESTYLE")
+                businessId: "ALMA_LIFESTYLE",
+                receiptRef: draft.receiptUrl ?? "",
+                receiptAttachmentId: draft.receiptId)
             let resp: ExpenseAddResponse = try await AlmaAPI.shared.send("POST", "/api/finance", body: body)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             if resp.pendingApproval == true {
@@ -374,6 +384,106 @@ final class ExpensesVM {
             return false
         }
     }
+
+    // ── Receipt upload (owner 2026-07-11: native — web POST /api/finance/receipts). ──
+
+    struct ReceiptUpload: Decodable {
+        struct Attachment: Decodable { let id: String?, url: String? }
+        let attachment: Attachment?
+        let error: String?
+    }
+    func uploadReceipt(data: Data, filename: String, mime: String) async -> (id: String?, url: String)? {
+        // Web guard: image/PDF only, ≤10 MB.
+        guard data.count <= 10 * 1024 * 1024 else {
+            error = "Receipt must be 10 MB or smaller"
+            return nil
+        }
+        do {
+            let res: ReceiptUpload = try await AlmaAPI.shared.uploadMultipart(
+                "/api/finance/receipts", fileField: "file", filename: filename,
+                mime: mime, data: data, fields: ["business_id": "ALMA_LIFESTYLE"])
+            guard let url = res.attachment?.url else {
+                error = res.error ?? "Receipt upload failed"
+                return nil
+            }
+            return (res.attachment?.id, url)
+        } catch {
+            self.error = "Receipt upload failed"
+            return nil
+        }
+    }
+
+    // ── Exports (owner 2026-07-11: native PDF + CSV — web export-expenses.ts parity;
+    //    XLSX stays web-only, CSV opens in Excel/Numbers anyway). ──
+
+    /// expensesToCsv() verbatim: BOM + same header + same columns.
+    func csvFile(rangeLabel: String) -> URL? {
+        func esc(_ s: String) -> String {
+            s.contains(where: { ",\"\n".contains($0) }) ? "\"\(s.replacingOccurrences(of: "\"", with: "\"\""))\"" : s
+        }
+        let header = ["date", "title", "category", "amount", "payment_status",
+                      "payment_method", "recurring", "notes", "receipt"]
+        let lines = filtered.map { r in
+            [r.date, r.title, r.category, String(r.amount),
+             r.paymentStatus ?? "", r.paymentMethod ?? "",
+             (r.recurring ?? false) ? "yes" : "no",
+             (r.notes ?? "").replacingOccurrences(of: "\n", with: " "),
+             r.receiptRef ?? ""].map(esc).joined(separator: ",")
+        }
+        let csv = "\u{FEFF}" + header.joined(separator: ",") + "\n" + lines.joined(separator: "\n")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("expenses-\(rangeLabel.replacingOccurrences(of: " ", with: "-")).csv")
+        try? csv.data(using: .utf8)?.write(to: url)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Native ledger PDF (UIGraphicsPDFRenderer) — same data story as the web's
+    /// ExpenseLedgerDocument: title, business, range, row table, total.
+    func pdfFile(rangeLabel: String) -> URL? {
+        let rows = filtered
+        let pageRect = CGRect(x: 0, y: 0, width: 595, height: 842)   // A4 @72dpi
+        let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
+        let margin: CGFloat = 36
+        let colX: [CGFloat] = [36, 110, 300, 400, 480]               // date/title/category/status/amount
+        let data = renderer.pdfData { ctx in
+            var y: CGFloat = 0
+            func newPage() {
+                ctx.beginPage()
+                y = margin
+                "Expense ledger".draw(at: CGPoint(x: margin, y: y),
+                    withAttributes: [.font: UIFont.boldSystemFont(ofSize: 16)])
+                y += 22
+                "Alma Lifestyle · \(rangeLabel)".draw(at: CGPoint(x: margin, y: y),
+                    withAttributes: [.font: UIFont.systemFont(ofSize: 9), .foregroundColor: UIColor.darkGray])
+                y += 20
+                let headers = ["Date", "Title", "Category", "Status", "Amount"]
+                for (i, h) in headers.enumerated() {
+                    h.draw(at: CGPoint(x: colX[i], y: y),
+                           withAttributes: [.font: UIFont.boldSystemFont(ofSize: 8)])
+                }
+                y += 14
+            }
+            newPage()
+            let cell: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 8)]
+            for r in rows {
+                if y > pageRect.height - margin - 30 { newPage() }
+                String(r.date.prefix(10)).draw(at: CGPoint(x: colX[0], y: y), withAttributes: cell)
+                String(r.title.prefix(38)).draw(at: CGPoint(x: colX[1], y: y), withAttributes: cell)
+                String(r.category.prefix(18)).draw(at: CGPoint(x: colX[2], y: y), withAttributes: cell)
+                (r.paymentStatus ?? "—").draw(at: CGPoint(x: colX[3], y: y), withAttributes: cell)
+                "৳\(r.amount.formatted())".draw(at: CGPoint(x: colX[4], y: y), withAttributes: cell)
+                y += 12
+            }
+            y += 8
+            "Total: ৳\(rows.reduce(0) { $0 + $1.amount }.formatted())".draw(
+                at: CGPoint(x: colX[3], y: y),
+                withAttributes: [.font: UIFont.boldSystemFont(ofSize: 10)])
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("expenses-\(rangeLabel.replacingOccurrences(of: " ", with: "-")).pdf")
+        try? data.write(to: url)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
 }
 
 // MARK: - Screen
@@ -384,6 +494,7 @@ struct ExpensesScreen: View {
     @State private var vm = ExpensesVM()
     @State private var selected: ExpenseLedgerRow? = nil
     @State private var adding = false
+    @State private var exportShare: ExpensesExportFile? = nil
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -640,18 +751,61 @@ struct ExpensesScreen: View {
         }
     }
 
+    /// Native exports (owner 2026-07-11): PDF + CSV built on-device ON TAP (never in
+    /// body — temp-file writes must not ride every render) and handed to the iOS
+    /// share sheet. Excel stays web-only (CSV opens in Excel/Numbers anyway).
     private var webEscape: some View {
-        Button {
-            openWeb("/expenses", "Expenses")
-        } label: {
-            Label("সব অপশন (PDF/CSV/রিসিট আপলোড সহ) — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                exportButton("PDF", icon: "doc.richtext") { vm.pdfFile(rangeLabel: vm.dateFilter.label) }
+                exportButton("CSV", icon: "tablecells") { vm.csvFile(rangeLabel: vm.dateFilter.label) }
+            }
+            Button {
+                openWeb("/expenses", "Expenses")
+            } label: {
+                Label("ওয়েব ভার্সন (Excel export)", systemImage: "safari")
+                    .font(.footnote)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
         .padding(.vertical, 6)
+        .sheet(item: $exportShare) { wrap in
+            ExpensesShareSheet(url: wrap.url)
+                .presentationDetents([.medium])
+        }
     }
+
+    private func exportButton(_ label: String, icon: String,
+                              make: @escaping () -> URL?) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            if let url = make() { exportShare = ExpensesExportFile(url: url) }
+        } label: {
+            Label(label, systemImage: icon)
+                .font(.caption.weight(.bold))
+                .frame(maxWidth: .infinity).padding(.vertical, 9)
+        }
+        .buttonStyle(.bordered)
+        .disabled(vm.filtered.isEmpty)
+    }
+}
+
+/// Identifiable wrapper so a freshly generated export can drive a .sheet(item:).
+private struct ExpensesExportFile: Identifiable {
+    let url: URL
+    var id: String { url.absoluteString }
+}
+
+/// UIActivityViewController bridge — share the generated ledger file.
+@available(iOS 17.0, *)
+private struct ExpensesShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
 }
 
 // MARK: - Donut (web DonutChart parity, drawn natively with trimmed circles)
@@ -930,6 +1084,8 @@ private struct ExpenseAddSheet: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var draft = ExpenseDraft()
     @State private var confirming = false
+    @State private var pickedReceipt: PhotosPickerItem? = nil
+    @State private var uploadingReceipt = false
     @FocusState private var focusedField: Field?
 
     private enum Field { case title, amount, method, notes }
@@ -1051,17 +1207,49 @@ private struct ExpenseAddSheet: View {
         }
     }
 
+    /// Native receipt uploader (owner 2026-07-11) — PhotosPicker → POST
+    /// /api/finance/receipts; the resulting URL/id rides the create payload.
     private var receiptHint: some View {
-        Button {
-            dismiss()
-            openWeb("/expenses", "Expenses")
-        } label: {
-            Label("রিসিট/ছবি যুক্ত করতে হলে — ওয়েবে খুলুন", systemImage: "paperclip")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+            PhotosPicker(selection: $pickedReceipt, matching: .images) {
+                HStack(spacing: 8) {
+                    Image(systemName: draft.receiptUrl != nil ? "checkmark.circle.fill" : "paperclip")
+                    Text(uploadingReceipt ? "রিসিট আপলোড হচ্ছে…"
+                         : draft.receiptUrl != nil ? "রিসিট যুক্ত হয়েছে"
+                         : "রিসিট/ছবি যুক্ত করুন (ঐচ্ছিক)")
+                        .font(.caption.weight(.semibold))
+                    if uploadingReceipt { ProgressView().controlSize(.mini) }
+                    Spacer()
+                    if draft.receiptUrl != nil {
+                        Button {
+                            draft.receiptUrl = nil; draft.receiptId = nil; pickedReceipt = nil
+                        } label: {
+                            Image(systemName: "xmark.circle.fill").font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .foregroundStyle(draft.receiptUrl != nil
+                                 ? (colorScheme == .dark ? ExpensePalette.green400 : ExpensePalette.emerald600)
+                                 : .secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(11)
+                .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+            }
+            .onChange(of: pickedReceipt) { _, item in
+                guard let item else { return }
+                uploadingReceipt = true
+                Task {
+                    defer { uploadingReceipt = false }
+                    if let data = try? await item.loadTransferable(type: Data.self),
+                       let up = await vm.uploadReceipt(data: data, filename: "receipt.jpg", mime: "image/jpeg") {
+                        draft.receiptUrl = up.url
+                        draft.receiptId = up.id
+                    }
+                }
+            }
         }
-        .buttonStyle(.plain)
     }
 
     private var saveRow: some View {

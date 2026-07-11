@@ -479,6 +479,17 @@ final class CreditUsageVM {
         }
     }
 
+    /// Web's manual "refresh balances" — POST forces the provider fetch, returns the
+    /// fresh cache (the 20s auto-poll only reads the cache). S8 audit fix.
+    var balancesRefreshing = false
+    func refreshBalances() async {
+        guard !balancesRefreshing else { return }
+        balancesRefreshing = true; defer { balancesRefreshing = false }
+        if let b: CUBalances = try? await AlmaAPI.shared.send("POST", "/api/assistant/costs/balances") {
+            balances = b
+        }
+    }
+
     /// First page (reset) or next page (reset: false) of the range-filtered log.
     /// Load-more keeps the SAME window the first page resolved, so keyset
     /// pagination stays consistent while "Past X" ranges slide with the clock.
@@ -791,6 +802,17 @@ struct CreditUsageScreen: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Provider ক্রেডিট").font(.system(size: 13, weight: .bold)); Spacer()
+                Button {
+                    Task { await vm.refreshBalances() }
+                } label: {
+                    if vm.balancesRefreshing {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "arrow.clockwise").font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain).disabled(vm.balancesRefreshing)
                 Text("← swipe").font(.system(size: 10.5)).foregroundStyle(.tertiary)
             }.padding(.horizontal, 3)
             ScrollView(.horizontal, showsIndicators: false) {

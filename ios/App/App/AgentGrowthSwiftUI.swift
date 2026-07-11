@@ -512,6 +512,8 @@ struct AgentGrowthScreen: View {
                     detail: gbpDetail(f.gbp),
                     action: f.gbp.state == "pending_google"
                         ? "Google-এর access form (project 207682606576)" : nil,
+                    actionURL: f.gbp.state == "pending_google"
+                        ? "https://support.google.com/business/contact/api_default" : nil,
                     critical: f.gbp.state == "error")
                 AgentGrowthStatusRow(
                     tone: f.indexnow.state == "ok" ? .ok : .warn, icon: "⚡",
@@ -528,6 +530,8 @@ struct AgentGrowthScreen: View {
                     detail: emailDetail(f.email),
                     action: ["sandbox", "send_only"].contains(f.email.state)
                         ? "Resend → Domains → Add almatraders.com" : nil,
+                    actionURL: ["sandbox", "send_only"].contains(f.email.state)
+                        ? "https://resend.com/domains" : nil,
                     critical: f.email.state == "bad_key")
                 AgentGrowthStatusRow(
                     tone: .ok, icon: "🛡️",
@@ -671,6 +675,9 @@ private struct AgentGrowthStatusRow: View {
     let title: String
     let detail: String
     var action: String? = nil
+    /// External destination for `action` (web renders these as target=_blank links —
+    /// GBP access form, Resend domains). Tap opens Safari. S8 audit fix.
+    var actionURL: String? = nil
     /// bad_key / hard-error states read red instead of the muted detail colour.
     var critical: Bool = false
     @Environment(\.colorScheme) private var colorScheme
@@ -688,9 +695,21 @@ private struct AgentGrowthStatusRow: View {
                     .lineSpacing(2)
                     .foregroundStyle(critical ? AgentGrowthPalette.red500 : Color.secondary)
                 if let action {
-                    Text("→ \(action)")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(AgentGrowthPalette.amber400)
+                    if let actionURL, let url = URL(string: actionURL) {
+                        Link(destination: url) {
+                            HStack(spacing: 3) {
+                                Text("→ \(action)")
+                                Image(systemName: "arrow.up.right.square").font(.system(size: 9))
+                            }
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(AgentGrowthPalette.amber400)
+                            .underline()
+                        }
+                    } else {
+                        Text("→ \(action)")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(AgentGrowthPalette.amber400)
+                    }
                 }
             }
             Spacer(minLength: 0)

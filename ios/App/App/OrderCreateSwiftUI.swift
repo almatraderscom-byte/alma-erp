@@ -283,11 +283,22 @@ struct OrderCreateSheet: View {
     @State private var submitting = false
     @State private var errorMsg: String? = nil
     @State private var successId: String? = nil
+    // Role (same OrdIdentity as the orders drawer — GET /api/users/me, cached).
+    @State private var role: String? = OrdIdentity.cached?.role
 
     private let sources = ["Facebook", "WhatsApp", "Instagram", "Website", "Walk-in", "Referral"]
     private let payments = ["COD", "bKash", "Nagad", "Rocket", "Bank Transfer", "Card"]
-    private let couriers = ["Pathao", "Redx", "Steadfast", "Paperfly", "E-courier", "Sundarban", "SA Paribahan"]
+    /// "Not assigned" mirrors the web's empty `<option value="">` — payload sends "".
+    private let courierUnassigned = "Not assigned"
+    private var couriers: [String] {
+        [courierUnassigned, "Pathao", "Redx", "Steadfast", "Paperfly", "E-courier", "Sundarban", "SA Paribahan"]
+    }
     private let statuses = ["Pending", "Confirmed", "Packed", "Shipped", "Delivered"]
+
+    /// Buying price / profit are owner+admin only (web parity: canSeeProfit in
+    /// new-order-form-fields.tsx — staff create orders without seeing margin).
+    /// Unknown/unloaded role = hide, same as the web's VIEWER fallback.
+    private var canSeeProfit: Bool { role == "SUPER_ADMIN" || role == "ADMIN" }
 
     // ── Money math (calculate-totals.ts parity) ──
     private var subtotal: Int { items.reduce(0) { $0 + $1.subtotal } }
@@ -308,7 +319,9 @@ struct OrderCreateSheet: View {
         items.filter { ($0.stock.buyingPrice ?? 0) > 0 && $0.sellPrice < ($0.stock.buyingPrice ?? 0) }
     }
     /// The order is a loss if any line sells below cost OR the estimated profit is negative.
-    private var isLossOrder: Bool { !belowCostItems.isEmpty || estimatedProfit < 0 }
+    /// Only enforced for roles that can SEE profit — staff can't see the loss, so the web
+    /// lets them submit and the server re-checks; blocking them here would leak cost info.
+    private var isLossOrder: Bool { canSeeProfit && (!belowCostItems.isEmpty || estimatedProfit < 0) }
     /// Plain-Bangla reason shown to the owner when the order is blocked for a loss.
     private var lossReason: String? {
         guard isLossOrder else { return nil }
@@ -358,6 +371,9 @@ struct OrderCreateSheet: View {
                 }
             }
             .task { await loadCatalog() }
+            .task {
+                if role == nil, let me = await OrdIdentity.load() { role = me.role }
+            }
             .alert("অর্ডার তৈরি হয়েছে ✅", isPresented: Binding(
                 get: { successId != nil }, set: { if !$0 { successId = nil } })) {
                 Button("ঠিক আছে") { dismiss(); onCreated() }
@@ -628,8 +644,9 @@ struct OrderCreateSheet: View {
                 Text("৳\(it.subtotal.formatted())")
                     .font(.subheadline.weight(.bold)).foregroundStyle(AlmaSwiftTheme.coral)
             }
-            // Below-cost warning on the offending line (buying price is known only to the owner).
-            if (it.stock.buyingPrice ?? 0) > 0, it.sellPrice < (it.stock.buyingPrice ?? 0) {
+            // Below-cost warning on the offending line — canSeeProfit only, since it
+            // reveals the buying price (web parity: staff never see cost/margin).
+            if canSeeProfit, (it.stock.buyingPrice ?? 0) > 0, it.sellPrice < (it.stock.buyingPrice ?? 0) {
                 Label("বিক্রয়মূল্য কেনা দামের (৳\(it.stock.buyingPrice ?? 0)) নিচে",
                       systemImage: "exclamationmark.triangle.fill")
                     .font(.caption2.weight(.semibold)).foregroundStyle(AlmaSwiftTheme.ios27Red(scheme))
@@ -714,18 +731,21 @@ struct OrderCreateSheet: View {
             summaryRow("সাবটোটাল", subtotal)
             summaryRow("মোট পরিশোধ্য", payable, bold: true)
             summaryRow("বাকি", due)
-            HStack {
-                // Label flips to "ক্ষতি" (loss) when profit is negative — never call a loss "লাভ".
-                Text(estimatedProfit >= 0 ? "আনুমানিক লাভ" : "আনুমানিক ক্ষতি")
-                    .font(.subheadline.weight(estimatedProfit >= 0 ? .regular : .semibold))
-                    .foregroundStyle(estimatedProfit >= 0 ? Color.primary : AlmaSwiftTheme.ios27Red(scheme))
-                Spacer()
-                Text("৳\(abs(estimatedProfit).formatted())")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(estimatedProfit >= 0
-                        ? AlmaSwiftTheme.ios27Green(scheme) : AlmaSwiftTheme.ios27Red(scheme))
+            // Margin is owner+admin only (canSeeProfit) — staff see no profit/loss line.
+            if canSeeProfit {
+                HStack {
+                    // Label flips to "ক্ষতি" (loss) when profit is negative — never call a loss "লাভ".
+                    Text(estimatedProfit >= 0 ? "আনুমানিক লাভ" : "আনুমানিক ক্ষতি")
+                        .font(.subheadline.weight(estimatedProfit >= 0 ? .regular : .semibold))
+                        .foregroundStyle(estimatedProfit >= 0 ? Color.primary : AlmaSwiftTheme.ios27Red(scheme))
+                    Spacer()
+                    Text("৳\(abs(estimatedProfit).formatted())")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(estimatedProfit >= 0
+                            ? AlmaSwiftTheme.ios27Green(scheme) : AlmaSwiftTheme.ios27Red(scheme))
+                }
+                .padding(.vertical, 3)
             }
-            .padding(.vertical, 3)
         }
     }
 
@@ -950,7 +970,8 @@ struct OrderCreateSheet: View {
             payment_method: payment, payment: payment,
             source: source,
             status: status,
-            courier: courier,
+            // Web parity: the "Not assigned" option is `<option value="">` — send "".
+            courier: courier == courierUnassigned ? "" : courier,
             notes: notes,
             sku: first.stock.sku ?? "",
             cogs: inventoryCost,

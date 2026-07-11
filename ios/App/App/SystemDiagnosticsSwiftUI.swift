@@ -236,13 +236,26 @@ private enum SysDiagFlex {
     }
 }
 
+/// The web page's business picker options (global business switcher parity —
+/// same ids/order the BusinessArchive native screen uses).
+private struct SysDiagBusiness: Identifiable, Equatable {
+    let id: String
+    let name: String
+
+    static let all: [SysDiagBusiness] = [
+        .init(id: "ALMA_LIFESTYLE", name: "Alma Lifestyle"),
+        .init(id: "ALMA_TRADING", name: "Alma Trading"),
+        .init(id: "CREATIVE_DIGITAL_IT", name: "Creative Digital IT"),
+    ]
+}
+
 // MARK: - View model
 
 @available(iOS 17.0, *)
 @Observable
 final class SystemDiagnosticsVM {
-    /// The same business the other native tabs scope to (web _businessId default).
-    static let businessId = "ALMA_LIFESTYLE"
+    /// Web scopes via the global business switcher — native mirrors it with chips.
+    var businessId = "ALMA_LIFESTYLE"     // web DEFAULT_BUSINESS_ID
 
     var data: SystemDiagnosticsResponse? = nil
     var loading = false
@@ -256,7 +269,7 @@ final class SystemDiagnosticsVM {
         do {
             let resp: SystemDiagnosticsResponse = try await AlmaAPI.shared.get(
                 "/api/operations/system-diagnostics",
-                query: ["business_id": Self.businessId])
+                query: ["business_id": businessId])
             data = resp
             authExpired = false
         } catch AlmaAPIError.notAuthenticated {
@@ -291,6 +304,7 @@ struct SystemDiagnosticsScreen: View {
         ScrollView {
             LazyVStack(spacing: 10) {
                 headerRow
+                businessChips
                 if vm.authExpired { authCard }
                 if let err = vm.error { noticeCard(err, tone: .error) }
                 if vm.loading && vm.data == nil {
@@ -334,6 +348,43 @@ struct SystemDiagnosticsScreen: View {
             .disabled(vm.loading)
         }
         .padding(.top, 4)
+    }
+
+    // ── Business picker (web global business switcher parity) ──
+
+    private var businessChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(SysDiagBusiness.all) { b in
+                    sysDiagChip(b.name, active: vm.businessId == b.id) {
+                        vm.businessId = b.id
+                        Task { await vm.load() }
+                    }
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+        .padding(.top, 4)
+    }
+
+    private func sysDiagChip(_ label: String, active: Bool, action: @escaping () -> Void) -> some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            action()
+        } label: {
+            Text(label)
+                .font(.footnote.weight(active ? .semibold : .regular))
+                .foregroundStyle(active ? SysDiagPalette.accentText(colorScheme) : .secondary)
+                .padding(.horizontal, 12).padding(.vertical, 7)
+                .background(active ? SysDiagPalette.coral.opacity(colorScheme == .dark ? 0.28 : 0.14)
+                                   : Color.white.opacity(colorScheme == .dark ? 0.08 : 0.45),
+                            in: Capsule())
+                .overlay(Capsule().strokeBorder(
+                    active ? SysDiagPalette.coral.opacity(0.55)
+                           : Color.white.opacity(colorScheme == .dark ? 0.10 : 0.4),
+                    lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     // ── System config (web ConfigBadge dots + red warning lines) ──

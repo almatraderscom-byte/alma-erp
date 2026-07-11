@@ -321,6 +321,92 @@ private final class TargetControlVM {
         if case AlmaAPIError.transport(let t) = error, (t as? URLError)?.code == .cancelled { return true }
         return (error as? URLError)?.code == .cancelled
     }
+
+    // ── Native writes (owner 2026-07-11) — web api.trading.volumeTarget* verbatim. ──
+
+    var toast: String? = nil
+    var busyId: String? = nil
+    var accounts: [(id: String, title: String)] = []
+
+    private struct AnyOkResponse: Decodable { let ok: Bool?, error: String? }
+
+    /// Account options for the create sheet (web useTradingAccounts ACTIVE).
+    func loadAccounts() async {
+        struct Row: Decodable { let id: String?, accountTitle: String? }
+        struct Resp: Decodable { let accounts: [Row]? }
+        if let r: Resp = try? await AlmaAPI.shared.get(
+            "/api/trading/accounts", query: ["status": "ACTIVE"]) {
+            accounts = (r.accounts ?? []).compactMap { row in
+                guard let id = row.id else { return nil }
+                return (id, row.accountTitle ?? "Account")
+            }
+        }
+    }
+
+    struct CreatePayload: Encodable {
+        let trading_account_id: String
+        let target_date: String
+        let target_usdt: Double
+        let penalty_amount_bdt: Double?
+    }
+    func createTarget(_ p: CreatePayload) async -> Bool {
+        await write(success: "Daily target created") {
+            try await AlmaAPI.shared.send("POST", "/api/trading/volume-targets", body: p)
+        }
+    }
+
+    /// POST /api/trading/volume-targets/{id}/actions — REFRESH / APPLY_PENALTY /
+    /// WAIVE_PENALTY / IGNORE (web runAction).
+    struct ActionPayload: Encodable {
+        let action: String
+        var amount_bdt: Double? = nil
+        var waive_amount_bdt: Double? = nil
+    }
+    func runAction(_ id: String, _ p: ActionPayload) async -> Bool {
+        busyId = id
+        defer { busyId = nil }
+        return await write(success: "Updated") {
+            try await AlmaAPI.shared.send("POST", "/api/trading/volume-targets/\(id)/actions", body: p)
+        }
+    }
+
+    func deleteTarget(_ id: String) async -> Bool {
+        busyId = id
+        defer { busyId = nil }
+        return await write(success: "Removed") {
+            try await AlmaAPI.shared.send("DELETE", "/api/trading/volume-targets/\(id)")
+        }
+    }
+
+    struct SettingsPayload: Encodable {
+        let auto_penalty_enabled: Bool
+        let default_penalty_bdt: Double
+    }
+    func saveSettings(_ p: SettingsPayload) async -> Bool {
+        await write(success: "Auto-penalty settings saved") {
+            try await AlmaAPI.shared.send("PATCH", "/api/trading/volume-targets/settings", body: p)
+        }
+    }
+
+    private func write(success: String, _ op: () async throws -> AnyOkResponse) async -> Bool {
+        do {
+            let res = try await op()
+            if let err = res.error {
+                toast = err
+                return false
+            }
+            toast = success
+            await load()
+            return true
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return false
+        } catch {
+            if Self.isCancellation(error) { return false }
+            toast = error.localizedDescription
+            return false
+        }
+    }
 }
 
 private enum TargetControlTab: String, CaseIterable {
@@ -333,6 +419,9 @@ private enum TargetControlTab: String, CaseIterable {
 struct TargetControlScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = TargetControlVM()
+    @State private var showCreate = false
+    @State private var settingsAutoPenalty = false
+    @State private var settingsPenaltyText = "500"
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -362,7 +451,30 @@ struct TargetControlScreen: View {
         .background(TargetControlAurora())
         .claudeTopFade()
         .refreshable { await vm.load() }
-        .task { await vm.load() }
+        .task {
+            await vm.load()
+            await vm.loadAccounts()
+            if let s = vm.settings {
+                settingsAutoPenalty = s.autoPenaltyEnabled
+                settingsPenaltyText = String(Int(s.defaultPenaltyBdt))
+            }
+        }
+        .sheet(isPresented: $showCreate) { TargetControlCreateSheet(vm: vm) }
+        .overlay(alignment: .bottom) {
+            if let t = vm.toast {
+                Text(t)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task {
+                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+                        withAnimation { vm.toast = nil }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: vm.toast != nil)
     }
 
     // ── Bento board: dark hero (day USDT progress) + month KPI tiles
@@ -485,13 +597,30 @@ struct TargetControlScreen: View {
 
     @ViewBuilder private var targetList: some View {
         let rows = vm.tab == .penalties ? vm.penaltyQueue : vm.targets
+        if vm.canManage {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                showCreate = true
+            } label: {
+                Label("+ Set target", systemImage: "target")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(TargetControlPalette.accentText(colorScheme))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 11)
+                    .background(TargetControlPalette.tradingGreen.opacity(0.10),
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+                        .strokeBorder(TargetControlPalette.tradingGreen.opacity(0.3), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+        }
         if vm.loading && vm.targets.isEmpty {
             loadingRows
         } else if rows.isEmpty && !vm.loading && vm.error == nil && !vm.authExpired {
             emptyState
         } else {
             ForEach(rows) { row in
-                TargetControlRowCard(row: row)
+                TargetControlRowCard(row: row, vm: vm)
             }
         }
     }
@@ -544,7 +673,38 @@ struct TargetControlScreen: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("AUTO-PENALTY CONFIGURATION")
                 .font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
-            if let s = vm.settings {
+            if vm.settings != nil, vm.canManage {
+                // Native settings write (owner 2026-07-11) — web saveSettings parity.
+                Toggle("Auto-penalty", isOn: $settingsAutoPenalty)
+                    .font(.subheadline)
+                    .tint(TargetControlPalette.tradingGreen)
+                HStack {
+                    Text("Default penalty (৳)").font(.subheadline)
+                    Spacer()
+                    TextField("500", text: $settingsPenaltyText)
+                        .keyboardType(.numberPad)
+                        .font(.subheadline.weight(.bold).monospacedDigit())
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 100)
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(Color.primary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                Button {
+                    let amount = Double(settingsPenaltyText) ?? 500
+                    Task {
+                        _ = await vm.saveSettings(.init(
+                            auto_penalty_enabled: settingsAutoPenalty,
+                            default_penalty_bdt: amount))
+                    }
+                } label: {
+                    Text("Save settings")
+                        .font(.caption.weight(.bold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 9)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(TargetControlPalette.tradingGreen)
+            } else if let s = vm.settings {
                 HStack {
                     Text("Auto-penalty").font(.subheadline)
                     Spacer()
@@ -567,7 +727,7 @@ struct TargetControlScreen: View {
             Button {
                 openWeb("/trading/target-control", "Target control")
             } label: {
-                Label("সেটিংস বদলাতে — ওয়েবে খুলুন", systemImage: "safari")
+                Label("ওয়েব ভার্সন", systemImage: "safari")
                     .font(.footnote.weight(.semibold))
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 9)
@@ -653,7 +813,10 @@ struct TargetControlScreen: View {
 @available(iOS 17.0, *)
 private struct TargetControlRowCard: View {
     let row: TargetControlRow
+    var vm: TargetControlVM? = nil
     @Environment(\.colorScheme) private var colorScheme
+    @State private var confirmingDelete = false
+    @State private var confirmingPenalty = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -691,9 +854,80 @@ private struct TargetControlRowCard: View {
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(TargetControlPalette.amber500)
             }
+
+            actionsRow
         }
         .padding(14)
         .targetControlGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+    }
+
+    // ── Native manage actions (owner 2026-07-11) — web runAction/delete parity,
+    //    SUPER_ADMIN only (vm.canManage mirrors the web's role gate). ──
+
+    @ViewBuilder private var actionsRow: some View {
+        if let vm, vm.canManage {
+            let busy = vm.busyId == row.id
+            let defaultPenalty = Double(vm.settings?.defaultPenaltyBdt ?? 500)
+            HStack(spacing: 8) {
+                chip("Refresh", TargetControlPalette.tradingGreen, busy) {
+                    Task { _ = await vm.runAction(row.id, .init(action: "REFRESH")) }
+                }
+                if row.status == "MISSED", row.penalty == nil || row.penalty?.status == "PENDING" {
+                    chip("Penalty", TargetControlPalette.red400, busy) { confirmingPenalty = true }
+                    if let p = row.penalty {
+                        chip("Waive", TargetControlPalette.slate400, busy) {
+                            Task {
+                                _ = await vm.runAction(row.id, .init(
+                                    action: "WAIVE_PENALTY", waive_amount_bdt: p.finalPenaltyBdt))
+                            }
+                        }
+                    }
+                    chip("Ignore", TargetControlPalette.slate400, busy) {
+                        Task { _ = await vm.runAction(row.id, .init(action: "IGNORE")) }
+                    }
+                }
+                chip("Delete", TargetControlPalette.red400, busy) { confirmingDelete = true }
+            }
+            .confirmationDialog("Delete this target?", isPresented: $confirmingDelete,
+                                titleVisibility: .visible) {
+                Button("Delete", role: .destructive) {
+                    Task { _ = await vm.deleteTarget(row.id) }
+                }
+                Button("বাতিল", role: .cancel) {}
+            }
+            .confirmationDialog(
+                "৳\(Int((row.penaltyAmountBdt ?? defaultPenalty).rounded()).formatted()) penalty apply করবেন?",
+                isPresented: $confirmingPenalty, titleVisibility: .visible
+            ) {
+                Button("হ্যাঁ, apply করুন", role: .destructive) {
+                    Task {
+                        _ = await vm.runAction(row.id, .init(
+                            action: "APPLY_PENALTY",
+                            amount_bdt: row.penaltyAmountBdt ?? defaultPenalty))
+                    }
+                }
+                Button("বাতিল", role: .cancel) {}
+            }
+        }
+    }
+
+    private func chip(_ label: String, _ tint: Color, _ busy: Bool,
+                      action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            HStack(spacing: 4) {
+                if busy { ProgressView().controlSize(.mini) }
+                Text(label).font(.system(size: 10, weight: .bold))
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, 9).padding(.vertical, 6)
+            .background(tint.opacity(0.12), in: Capsule())
+            .overlay(Capsule().strokeBorder(tint.opacity(0.3), lineWidth: 0.8))
+        }
+        .buttonStyle(.plain)
+        .disabled(busy)
     }
 
     private var barTint: Color {
@@ -1054,4 +1288,105 @@ private extension View {
 @available(iOS 17.0, *)
 #Preview("Target Control — Light") {
     TargetControlScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - Create target sheet (owner 2026-07-11 — web "+ Set target" form parity).
+
+@available(iOS 17.0, *)
+private struct TargetControlCreateSheet: View {
+    let vm: TargetControlVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @State private var accountId = ""
+    @State private var targetUsdt = ""
+    @State private var penaltyBdt = ""
+    @State private var submitting = false
+    @State private var confirming = false
+    @State private var errorText: String? = nil
+
+    private func num(_ s: String) -> Double { Double(s.replacingOccurrences(of: ",", with: "")) ?? 0 }
+    private var canSubmit: Bool { !accountId.isEmpty && num(targetUsdt) > 0 }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Set daily target").font(.subheadline.weight(.bold)).padding(.top, 20)
+            Text("তারিখ: \(vm.dateParam)").font(.caption).foregroundStyle(.secondary)
+            Menu {
+                ForEach(vm.accounts, id: \.id) { a in
+                    Button(a.title) { accountId = a.id }
+                }
+            } label: {
+                HStack {
+                    Text(vm.accounts.first(where: { $0.id == accountId })?.title ?? "অ্যাকাউন্ট বাছুন")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Image(systemName: "chevron.up.chevron.down").font(.caption2)
+                }
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 12).padding(.vertical, 11)
+                .background(Color.primary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            }
+            TextField("Target USDT", text: $targetUsdt)
+                .keyboardType(.decimalPad)
+                .font(.title3.weight(.bold)).monospacedDigit()
+                .padding(.horizontal, 12).padding(.vertical, 11)
+                .background(Color.primary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            TextField("Penalty BDT (ঐচ্ছিক — default \(vm.settings?.defaultPenaltyBdt ?? 500))", text: $penaltyBdt)
+                .keyboardType(.numberPad)
+                .font(.subheadline)
+                .padding(.horizontal, 12).padding(.vertical, 11)
+                .background(Color.primary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            if let errorText {
+                Text(errorText).font(.caption2.weight(.semibold))
+                    .foregroundStyle(TargetControlPalette.red400)
+            }
+            Button {
+                confirming = true
+            } label: {
+                HStack(spacing: 8) {
+                    if submitting { ProgressView().tint(.white) }
+                    Text("Create target").font(.subheadline.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 13)
+                .background(canSubmit && !submitting
+                            ? TargetControlPalette.tradingGreen
+                            : TargetControlPalette.tradingGreen.opacity(0.4),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSubmit || submitting)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 18)
+        .presentationDetents([.height(400)])
+        .presentationDragIndicator(.visible)
+        .background(AlmaSwiftTheme.rootBg(scheme))
+        .confirmationDialog(
+            "\(TargetControlFormat.usdt(num(targetUsdt))) USDT target সেট করবেন?",
+            isPresented: $confirming, titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, সেট করুন") { submit() }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+
+    private func submit() {
+        guard canSubmit, !submitting else { return }
+        submitting = true; errorText = nil
+        Task {
+            defer { submitting = false }
+            let ok = await vm.createTarget(.init(
+                trading_account_id: accountId,
+                target_date: vm.dateParam,
+                target_usdt: num(targetUsdt),
+                penalty_amount_bdt: penaltyBdt.isEmpty ? nil : num(penaltyBdt)))
+            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+            if ok { dismiss() } else { errorText = vm.toast }
+        }
+    }
 }

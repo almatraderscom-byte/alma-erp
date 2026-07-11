@@ -297,6 +297,7 @@ final class CreativeStudioVM {
             }
         } catch AlmaAPIError.notAuthenticated {
             toast = "সেশন শেষ — আবার লগইন করুন"
+            authExpired = true
         } catch {
             toast = "জেনারেট করা গেল না"
         }
@@ -379,6 +380,28 @@ struct CreativeStudioScreen: View {
         .background(AgentPalette(scheme).bg0.ignoresSafeArea())
         .task { await vm.loadAll() }
         .overlay(alignment: .top) { CSToastView(message: vm.toast) }
+        // S8 audit fix: auth expiry used to surface only as a toast — the one screen
+        // without the standard login-recovery card. Banner gives the re-login path.
+        .overlay(alignment: .top) {
+            if vm.authExpired {
+                HStack(spacing: 10) {
+                    Image(systemName: "lock.slash").font(.caption.weight(.bold))
+                    Text("সেশন পাওয়া যায়নি").font(.caption.weight(.semibold))
+                    Spacer()
+                    Button("লগইন খুলুন") { openWeb("/login", "Login") }
+                        .font(.caption.weight(.bold))
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.mini)
+                        .tint(CS.cta)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(.orange.opacity(0.45), lineWidth: 1))
+                .padding(.horizontal, 16).padding(.top, 54)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
         .toolbar(.hidden, for: .navigationBar)
     }
 }

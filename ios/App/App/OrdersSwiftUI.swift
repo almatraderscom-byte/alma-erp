@@ -490,7 +490,7 @@ struct OrdersScreen: View {
                 if let err = vm.error { errorCard(err) }
                 if vm.loading && vm.orders.isEmpty { loadingRows }
                 ForEach(vm.orders) { order in
-                    OrderCard(order: order)
+                    OrderCard(order: order, onView: { selected = order })
                         .onTapGesture {
                             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                             selected = order
@@ -766,6 +766,8 @@ struct OrdersScreen: View {
 @available(iOS 17.0, *)
 private struct OrderCard: View {
     let order: AlmaOrder
+    /// Long-press "বিস্তারিত" — opens the detail sheet, same as a tap.
+    var onView: (() -> Void)? = nil
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -803,7 +805,69 @@ private struct OrderCard: View {
         }
         .padding(14)
         .ordersGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        // Web parity: orderRowAccentClass (orders/page.tsx) — returned rows carry a
+        // coloured left border + faint wash (amber = paid, red = unpaid/returned).
+        .overlay {
+            if let accent = returnAccent {
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(accent.wash)
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .leading) {
+            if let accent = returnAccent {
+                Capsule()
+                    .fill(accent.bar.opacity(0.8))
+                    .frame(width: 3)
+                    .padding(.vertical, 6)
+                    .allowsHitTesting(false)
+            }
+        }
         .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        // Web parity: long-press quick actions (mobile context menu on orders/page.tsx) —
+        // view / copy order-# / WhatsApp the customer.
+        .contextMenu {
+            Button {
+                onView?()
+            } label: {
+                Label("বিস্তারিত", systemImage: "doc.text.magnifyingglass")
+            }
+            Button {
+                UIPasteboard.general.string = order.id
+            } label: {
+                Label("অর্ডার নম্বর কপি", systemImage: "doc.on.doc")
+            }
+            if let phone = order.phone, let wa = Self.whatsAppURL(for: phone) {
+                Button {
+                    UIApplication.shared.open(wa)
+                } label: {
+                    Label("WhatsApp", systemImage: "message.fill")
+                }
+            }
+        }
+    }
+
+    /// Same phone normalization as the detail sheet's WhatsApp button:
+    /// local 0XXXXXXXXXX → wa.me/880XXXXXXXXXX.
+    private static func whatsAppURL(for phone: String) -> URL? {
+        let trimmed = phone.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let msisdn = trimmed.hasPrefix("0") ? "880\(trimmed.dropFirst())" : trimmed
+        return URL(string: "https://wa.me/\(msisdn)")
+    }
+
+    /// Port of the web's orderRowAccentClass: amber for RETURNED_PAID,
+    /// red for RETURNED_UNPAID / RETURNED, nothing otherwise.
+    private var returnAccent: (bar: Color, wash: Color)? {
+        let key = order.status
+            .trimmingCharacters(in: .whitespaces)
+            .uppercased()
+            .replacingOccurrences(of: " ", with: "_")
+        let amber = Color(red: 0.961, green: 0.620, blue: 0.043) // #F59E0B (palette tone-amber)
+        let red = Color(red: 0.937, green: 0.267, blue: 0.267)   // #EF4444 (palette tone-red)
+        if key == "RETURNED_PAID" { return (amber, amber.opacity(0.04)) }
+        if key == "RETURNED_UNPAID" || key == "RETURNED" { return (red, red.opacity(0.05)) }
+        return nil
     }
 
     private var productLine: String {

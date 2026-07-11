@@ -252,6 +252,76 @@ private final class DigitalInvoicesVM {
         if case AlmaAPIError.transport(let t) = error, (t as? URLError)?.code == .cancelled { return true }
         return (error as? URLError)?.code == .cancelled
     }
+
+    // ── Native writes (owner 2026-07-11) — web page payloads verbatim. ──
+
+    var toast: String? = nil
+
+    struct InvoicePayload: Encodable {
+        let client_name: String
+        let client_id: String
+        let project_id: String
+        let amount: Int                      // web roundMoney() → whole taka
+        let invoice_type: String             // one-time | recurring
+        let due_date: String
+        let recurring_interval: String
+        let notes: String
+        let status = "Sent"
+        let business_id = "CREATIVE_DIGITAL_IT"
+    }
+    struct PaymentPayload: Encodable {
+        let invoice_id: String
+        let client_id: String
+        let client_name: String
+        let amount: Int
+        let payment_method: String
+        let payment_type = "income"
+        let business_id = "CREATIVE_DIGITAL_IT"
+    }
+    private struct WriteResponse: Decodable { let ok: Bool?, error: String? }
+    private struct PdfResponse: Decodable { let ok: Bool?, pdf_url: String?, error: String? }
+
+    func createInvoice(_ p: InvoicePayload) async -> Bool {
+        await write("/api/digital/invoices", p, success: "Invoice created")
+    }
+    func recordPayment(_ p: PaymentPayload) async -> Bool {
+        await write("/api/digital/payments", p, success: "Payment recorded")
+    }
+    /// Web api.digital.invoices.generatePdf — POST returns a hosted pdf_url.
+    func generatePdf(invoiceId: String) async -> URL? {
+        struct Body: Encodable { let invoice_id: String }
+        do {
+            let res: PdfResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/digital/invoices/pdf", body: Body(invoice_id: invoiceId))
+            guard res.ok ?? false, let raw = res.pdf_url, let url = URL(string: raw) else {
+                toast = res.error ?? "PDF তৈরি হয়নি"
+                return nil
+            }
+            return url
+        } catch {
+            toast = error.localizedDescription
+            return nil
+        }
+    }
+    private func write(_ path: String, _ body: some Encodable, success: String) async -> Bool {
+        do {
+            let res: WriteResponse = try await AlmaAPI.shared.send("POST", path, body: body)
+            guard res.ok ?? false else {
+                toast = res.error ?? "সেভ হয়নি — আবার চেষ্টা করুন"
+                return false
+            }
+            toast = success
+            await load()
+            return true
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return false
+        } catch {
+            if Self.isCancellation(error) { return false }
+            toast = error.localizedDescription
+            return false
+        }
+    }
 }
 
 // MARK: - Screen
@@ -260,6 +330,8 @@ private final class DigitalInvoicesVM {
 struct DigitalInvoicesScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = DigitalInvoicesVM()
+    @State private var showCreate = false
+    @State private var selected: DigitalInvoiceRow? = nil
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -268,13 +340,14 @@ struct DigitalInvoicesScreen: View {
                 if vm.authExpired { authCard }
                 if let err = vm.error { errorCard(err) }
                 heroBoard
+                newInvoiceButton
                 rangeChips
                 statusChips
                 if vm.loading && vm.invoices.isEmpty { loadingRows }
                 ForEach(vm.filtered) { inv in
                     DigitalInvoiceCard(invoice: inv) {
                         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
-                        openWeb("/digital/invoices", "CDIT Invoices")
+                        selected = inv          // native actions sheet (owner 2026-07-11)
                     }
                 }
                 if !vm.loading && vm.filtered.isEmpty && vm.error == nil && !vm.authExpired {
@@ -290,6 +363,46 @@ struct DigitalInvoicesScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task { await vm.load() }
+        .sheet(isPresented: $showCreate) { DigitalInvoicesCreateSheet(vm: vm) }
+        .sheet(item: $selected) { inv in
+            DigitalInvoiceActionsSheet(invoice: inv, vm: vm, openWeb: openWeb)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .overlay(alignment: .bottom) {
+            if let t = vm.toast {
+                Text(t)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task {
+                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+                        withAnimation { vm.toast = nil }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: vm.toast != nil)
+    }
+
+    /// Web header "+ New Invoice" — native form sheet (owner 2026-07-11).
+    private var newInvoiceButton: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            showCreate = true
+        } label: {
+            Label("+ New Invoice", systemImage: "doc.badge.plus")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(DigitalInvoicesPalette.accentText(colorScheme))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(DigitalInvoicesPalette.cditBlue.opacity(0.10),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+                    .strokeBorder(DigitalInvoicesPalette.cditBlue.opacity(0.3), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 
     // ── Hero board — bento language (owner spec 2026-07-08): dark anchor with the
@@ -880,4 +993,310 @@ private struct DigitalInvoicesHeroCard: View {
 @available(iOS 17.0, *)
 #Preview("CDIT Invoices — Light") {
     DigitalInvoicesScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - Native write sheets (owner 2026-07-11 — web "+ New Invoice" form, per-invoice
+// Record-payment + premium PDF, same endpoints/payloads as the web page).
+
+@available(iOS 17.0, *)
+private struct DigitalInvoicesCreateSheet: View {
+    let vm: DigitalInvoicesVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+
+    @State private var clientName = ""
+    @State private var clientId = ""
+    @State private var projectId = ""
+    @State private var amount = ""
+    @State private var invoiceType = "one-time"
+    @State private var dueDate: Date? = nil
+    @State private var recurringInterval = ""
+    @State private var notes = ""
+    @State private var submitting = false
+    @State private var confirming = false
+    @State private var errorText: String? = nil
+
+    private var taka: Int { Int(Double(amount.replacingOccurrences(of: ",", with: "")) ?? 0) }
+    private var canSubmit: Bool { !clientName.trimmingCharacters(in: .whitespaces).isEmpty && taka > 0 }
+    private static let ymd: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("New Invoice").font(.subheadline.weight(.bold))
+                    Text("তৈরি হলে status = Sent।").font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Close") { dismiss() }
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 18).padding(.top, 20).padding(.bottom, 12)
+            Divider().opacity(0.4)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    field("Client name *", text: $clientName)
+                    field("Client ID", text: $clientId)
+                    field("Project ID", text: $projectId)
+                    field("Amount (BDT) *", text: $amount, keyboard: .numberPad)
+                    Picker("Type", selection: $invoiceType) {
+                        Text("One-time").tag("one-time")
+                        Text("Recurring").tag("recurring")
+                    }
+                    .pickerStyle(.segmented)
+                    if invoiceType == "recurring" {
+                        field("Recurring interval (e.g. monthly)", text: $recurringInterval)
+                    }
+                    HStack {
+                        Text("Due date").font(.subheadline)
+                        Spacer()
+                        if let d = dueDate {
+                            DatePicker("", selection: Binding(get: { d }, set: { dueDate = $0 }),
+                                       displayedComponents: .date)
+                                .labelsHidden()
+                            Button {
+                                dueDate = nil
+                            } label: {
+                                Image(systemName: "xmark.circle.fill").font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            Button("সেট করুন") { dueDate = Date() }
+                                .font(.caption.weight(.semibold))
+                                .buttonStyle(.bordered)
+                        }
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(Color.primary.opacity(0.04),
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    field("Notes", text: $notes)
+                    if let errorText {
+                        Text(errorText).font(.caption2.weight(.semibold))
+                            .foregroundStyle(DigitalInvoicesPalette.red500)
+                    }
+                }
+                .padding(18)
+            }
+            .scrollDismissesKeyboard(.interactively)
+
+            Divider().opacity(0.4)
+            Button {
+                confirming = true
+            } label: {
+                HStack(spacing: 8) {
+                    if submitting { ProgressView().tint(.white) }
+                    Text(submitting ? "Saving…" : "Create Invoice").font(.subheadline.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(canSubmit && !submitting
+                            ? DigitalInvoicesPalette.cditBlue
+                            : DigitalInvoicesPalette.cditBlue.opacity(0.4),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSubmit || submitting)
+            .padding(.horizontal, 18).padding(.vertical, 14)
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .background(AlmaSwiftTheme.rootBg(scheme))
+        .confirmationDialog(
+            "\(clientName)-এর জন্য ৳\(taka.formatted()) invoice তৈরি করবেন?",
+            isPresented: $confirming, titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, তৈরি করুন") { submit() }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+
+    private func field(_ placeholder: String, text: Binding<String>,
+                       keyboard: UIKeyboardType = .default) -> some View {
+        TextField(placeholder, text: text)
+            .keyboardType(keyboard)
+            .font(.subheadline)
+            .padding(.horizontal, 12).padding(.vertical, 11)
+            .background(Color.primary.opacity(0.06),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+    }
+
+    private func submit() {
+        guard canSubmit, !submitting else { return }
+        submitting = true; errorText = nil
+        Task {
+            defer { submitting = false }
+            let ok = await vm.createInvoice(.init(
+                client_name: clientName.trimmingCharacters(in: .whitespaces),
+                client_id: clientId, project_id: projectId, amount: taka,
+                invoice_type: invoiceType,
+                due_date: dueDate.map { Self.ymd.string(from: $0) } ?? "",
+                recurring_interval: recurringInterval, notes: notes))
+            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+            if ok { dismiss() } else { errorText = vm.toast }
+        }
+    }
+}
+
+/// Per-invoice actions: record payment (native POST), premium PDF (native generate +
+/// share), open on web. Replaces the old row tap that always bounced to the web page.
+@available(iOS 17.0, *)
+private struct DigitalInvoiceActionsSheet: View {
+    let invoice: DigitalInvoiceRow
+    let vm: DigitalInvoicesVM
+    let openWeb: (_ path: String, _ title: String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+
+    private static let methods = ["Bank Transfer", "bKash", "Nagad", "Cash",
+                                  "PayPal", "Stripe", "Other"]
+
+    @State private var payAmount = ""
+    @State private var payMethod = "Bank Transfer"
+    @State private var paying = false
+    @State private var confirmingPay = false
+    @State private var pdfURL: URL? = nil
+    @State private var makingPdf = false
+
+    private var taka: Int { Int(Double(payAmount.replacingOccurrences(of: ",", with: "")) ?? 0) }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                // Header — invoice identity + status.
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(invoice.clientName).font(.headline)
+                    Text("\(invoice.id) · \(invoice.invoiceType ?? "one-time")")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    HStack(spacing: 12) {
+                        stat("Amount", invoice.amount ?? 0)
+                        stat("Paid", invoice.totalPaid ?? 0)
+                        stat("Due", invoice.dueAmount ?? 0)
+                    }
+                    .padding(.top, 6)
+                }
+
+                // Record payment (web handlePartialPay parity).
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("RECORD PAYMENT").font(.system(size: 9, weight: .bold)).tracking(1)
+                        .foregroundStyle(.secondary)
+                    TextField("Amount (BDT)", text: $payAmount)
+                        .keyboardType(.numberPad)
+                        .font(.title3.weight(.bold)).monospacedDigit()
+                        .padding(.horizontal, 12).padding(.vertical, 11)
+                        .background(Color.primary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    Menu {
+                        ForEach(Self.methods, id: \.self) { m in Button(m) { payMethod = m } }
+                    } label: {
+                        HStack {
+                            Text(payMethod).font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Image(systemName: "chevron.up.chevron.down").font(.caption2)
+                        }
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 12).padding(.vertical, 11)
+                        .background(Color.primary.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+                    }
+                    Button {
+                        confirmingPay = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            if paying { ProgressView().tint(.white) }
+                            Text("Record payment").font(.subheadline.weight(.bold))
+                        }
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(taka > 0 && !paying
+                                    ? DigitalInvoicesPalette.emerald600
+                                    : DigitalInvoicesPalette.emerald600.opacity(0.4),
+                                    in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(taka <= 0 || paying)
+                }
+                .padding(12)
+                .background(Color.primary.opacity(0.04),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+
+                // Premium PDF — native generate + iOS share sheet.
+                if let pdfURL {
+                    ShareLink(item: pdfURL) {
+                        Label("PDF শেয়ার করুন", systemImage: "square.and.arrow.up")
+                            .font(.caption.weight(.bold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 11)
+                    }
+                    .buttonStyle(.bordered)
+                } else {
+                    Button {
+                        makingPdf = true
+                        Task {
+                            pdfURL = await vm.generatePdf(invoiceId: invoice.id)
+                            makingPdf = false
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if makingPdf { ProgressView().controlSize(.mini) }
+                            Label("Premium PDF তৈরি করুন", systemImage: "doc.richtext")
+                                .font(.caption.weight(.bold))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(makingPdf)
+                }
+
+                Button {
+                    dismiss()
+                    openWeb("/digital/invoices", "CDIT Invoices")
+                } label: {
+                    Label("ওয়েবে খুলুন", systemImage: "safari").font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+            }
+            .padding(18)
+        }
+        .background(AlmaSwiftTheme.rootBg(scheme))
+        .confirmationDialog(
+            "৳\(taka.formatted()) payment (\(payMethod)) রেকর্ড করবেন?",
+            isPresented: $confirmingPay, titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, রেকর্ড করুন") { pay() }
+            Button("বাতিল", role: .cancel) {}
+        }
+    }
+
+    private func stat(_ label: String, _ value: Int) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.system(size: 9)).foregroundStyle(.secondary)
+            Text("৳\(value.formatted())").font(.caption.weight(.bold)).monospacedDigit()
+        }
+    }
+
+    private func pay() {
+        guard taka > 0, !paying else { return }
+        paying = true
+        Task {
+            defer { paying = false }
+            let ok = await vm.recordPayment(.init(
+                invoice_id: invoice.id, client_id: invoice.clientId ?? "",
+                client_name: invoice.clientName, amount: taka, payment_method: payMethod))
+            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+            if ok { dismiss() }
+        }
+    }
 }
