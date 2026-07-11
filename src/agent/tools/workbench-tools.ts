@@ -20,6 +20,11 @@ const run_workbench_task: AgentTool = {
     'USE FOR: data crunching (CSV/reports), scraping+analysis of PUBLIC pages, file conversion, small ' +
     'scripts/tools, SEO crawls. NOT for: anything needing the owner\'s logins (use live_browser), ' +
     'anything touching ERP data directly (use the ERP tools), or long-running servers.\n' +
+    'CANNOT REACH: private storage (Supabase buckets like agent-files / seo-audits paths) — the env is ' +
+    'scrubbed and such URLs/paths will ALWAYS fail here. To read an SEO audit report use ' +
+    'check_website_seo_audit with read:"report"; for other stored files use their dedicated tools. ' +
+    'Also: a step being "ok" only means the command exited 0 — READ its stdout and verify it is the ' +
+    'real data (not an error page) before treating the task as successful.\n' +
     'LIMITS (hard, per run): 20 commands, 2 min/command, 8 min total, 200KB output/step, 500MB disk, ' +
     'no shell operators (each command = one binary + args array), no private/internal network access.\n' +
     'ITERATE: run → read step outputs → fix your script → run again (new task). Ask for output files ' +

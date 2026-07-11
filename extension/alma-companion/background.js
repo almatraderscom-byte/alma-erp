@@ -240,6 +240,25 @@ function pageOverlay(arg) {
   }
   const txt = document.getElementById('__alma_txt__')
   if (txt) txt.textContent = 'ALMA কাজ করছে · ' + label
+  // Idle watchdog (owner feedback 2026-07-11): when the agent finishes, fails or
+  // gets stuck, the page must return to NORMAL by itself. Every overlay update
+  // refreshes the stamp; one page-side interval fades everything out after 25s
+  // with no new command. The next command recreates the overlay from scratch.
+  window.__almaOverlayStamp = Date.now()
+  if (!window.__almaOverlayWatchdog) {
+    window.__almaOverlayWatchdog = setInterval(() => {
+      if (Date.now() - (window.__almaOverlayStamp || 0) < 25000) return
+      clearInterval(window.__almaOverlayWatchdog)
+      window.__almaOverlayWatchdog = null
+      for (const id of ['__alma_bar__', '__alma_aura__', '__alma_cur__']) {
+        const el = document.getElementById(id)
+        if (!el) continue
+        el.style.transition = 'opacity .8s ease'
+        el.style.opacity = '0'
+        setTimeout(() => el.remove(), 900)
+      }
+    }, 5000)
+  }
   if (typeof box.x === 'number' && typeof box.y === 'number') {
     let cur = document.getElementById('__alma_cur__')
     if (!cur) {
