@@ -442,7 +442,11 @@ async function* runAlternateProviderTurn(
       // Second empty-round retry also goes text-only: Gemini sometimes wedges
       // trying to emit another tool call — with no tools it must speak.
       const overBudget = isMarketingHead && headToolRounds >= MARKETING_HEAD_TOOL_BUDGET
-      const iterationTools = nearDeadline || overBudget || emptyRoundRetries >= 2 ? [] : neutralTools
+      // Models whose provider offers no tool-calling (e.g. Qwen 2.5 VL 72B on
+      // OpenRouter) get a chat/vision-only turn — sending tool defs would 4xx
+      // the request and bounce the owner to the cheap-head fallback.
+      const iterationTools =
+        nearDeadline || overBudget || emptyRoundRetries >= 2 || !model.supportsTools ? [] : neutralTools
       if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
