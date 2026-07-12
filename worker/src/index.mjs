@@ -369,6 +369,113 @@ async function generateImageToStorage({
     if (p2) imageParts.push(p2)
   }
 
+  // ── Seedream engine (owner-switchable via cs_image_models → "seedream-5.0-pro") ──
+  // ByteDance Seedream 5.0 Pro via fal.ai (verdict 2026-07-12: the only genuine
+  // Nano-Banana challenger — 2K detail + strong text). Reference images go
+  // through /edit (data-URI inputs), fresh prompts through /text-to-image; the
+  // returned image URL is fetched and landed in the same storage path shape so
+  // the rest of the pipeline stays engine-blind.
+  if (modelName.startsWith('seedream')) {
+    const key = process.env.FAL_KEY
+    if (!key) throw new Error('FAL_KEY missing on worker — Seedream engine unavailable (env-set it, or switch cs_image_models back to Gemini)')
+    const ratio = /^\d+:\d+$/.test(resolvedAspectRatio) ? resolvedAspectRatio : '4:5'
+    const [rw, rh] = ratio.split(':').map(Number)
+    // standard stays in fal's cheaper ≤1536px band; pro renders the 2K tier.
+    const maxSide = quality === 'standard' ? 1536 : 2048
+    const scale = maxSide / Math.max(rw, rh)
+    const width = Math.max(512, Math.round((rw * scale) / 32) * 32)
+    const height = Math.max(512, Math.round((rh * scale) / 32) * 32)
+    const endpoint = imageParts.length
+      ? 'https://fal.run/bytedance/seedream/v5/pro/edit'
+      : 'https://fal.run/bytedance/seedream/v5/pro/text-to-image'
+    const body = imageParts.length
+      ? {
+          prompt,
+          image_urls: imageParts.map((p) => `data:${p.inlineData.mimeType || 'image/png'};base64,${p.inlineData.data}`),
+          image_size: { width, height },
+        }
+      : { prompt, image_size: { width, height } }
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { Authorization: `Key ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '')
+      throw new Error(`Seedream (fal) ${res.status}: ${errBody.slice(0, 300)}`)
+    }
+    const json = await res.json()
+    const url = json?.images?.[0]?.url
+    if (!url) throw new Error('No image in Seedream response')
+    const imgRes = await fetch(url)
+    if (!imgRes.ok) throw new Error(`Seedream image download ${imgRes.status}`)
+    const buf = Buffer.from(await imgRes.arrayBuffer())
+    const contentType = imgRes.headers.get('content-type') || 'image/png'
+    const ext = contentType.includes('jpeg') ? 'jpg' : 'png'
+    const storagePath = suffix
+      ? `generated/${pendingActionId}-${suffix}.${ext}`
+      : `generated/${pendingActionId}.${ext}`
+    const { error: uploadErr } = await supabase
+      .storage
+      .from('agent-files')
+      .upload(storagePath, buf, { contentType, upsert: true })
+    if (uploadErr) throw new Error(`Supabase upload failed: ${uploadErr.message}`)
+    return { storagePath, modelName, quality, resolvedAspectRatio, resolvedImageSize }
+  }
+
+  // ── OpenAI engine (owner-switchable via cs_image_models → "gpt-image-2") ──
+  // Verdict 2026-07-12: GPT Image 2 wins text-in-image + speed; Nano Banana
+  // stays the photorealism/face default. References go through /images/edits
+  // (multi-image), fresh prompts through /images/generations; output lands in
+  // the same storage path shape so the rest of the pipeline is engine-blind.
+  if (modelName.startsWith('gpt-image')) {
+    const key = process.env.OPENAI_API_KEY
+    if (!key) throw new Error('OPENAI_API_KEY missing on worker — GPT image engine unavailable (env-set it, or switch cs_image_models back to Gemini)')
+    const portrait = ['9:16', '3:4', '4:5', '2:3'].includes(resolvedAspectRatio)
+    const landscape = ['16:9', '4:3', '5:4', '3:2'].includes(resolvedAspectRatio)
+    const size = portrait ? '1024x1536' : landscape ? '1536x1024' : '1024x1024'
+    const gptQuality = quality === 'standard' ? 'medium' : 'high'
+    let res
+    if (imageParts.length) {
+      const form = new FormData()
+      form.append('model', modelName)
+      form.append('prompt', prompt)
+      form.append('size', size)
+      form.append('quality', gptQuality)
+      imageParts.forEach((part, i) => {
+        const buf = Buffer.from(part.inlineData.data, 'base64')
+        form.append('image[]', new Blob([buf], { type: part.inlineData.mimeType || 'image/png' }), `ref-${i}.png`)
+      })
+      res = await fetch('https://api.openai.com/v1/images/edits', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${key}` },
+        body: form,
+      })
+    } else {
+      res = await fetch('https://api.openai.com/v1/images/generations', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelName, prompt, size, quality: gptQuality }),
+      })
+    }
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '')
+      throw new Error(`OpenAI image ${res.status}: ${errBody.slice(0, 300)}`)
+    }
+    const json = await res.json()
+    const b64 = json?.data?.[0]?.b64_json
+    if (!b64) throw new Error('No image in OpenAI response')
+    const storagePath = suffix
+      ? `generated/${pendingActionId}-${suffix}.png`
+      : `generated/${pendingActionId}.png`
+    const { error: uploadErr } = await supabase
+      .storage
+      .from('agent-files')
+      .upload(storagePath, Buffer.from(b64, 'base64'), { contentType: 'image/png', upsert: true })
+    if (uploadErr) throw new Error(`Supabase upload failed: ${uploadErr.message}`)
+    return { storagePath, modelName, quality, resolvedAspectRatio, resolvedImageSize }
+  }
+
   const contents = imageParts.length ? [...imageParts, { text: prompt }] : [{ text: prompt }]
 
   const response = await genai.models.generateContent({

@@ -2606,6 +2606,22 @@ function StudioSettingsCard() {
         </select>
       </label>
       <label className="flex items-center justify-between gap-2">
+        <span className="text-[11px] text-muted">ইমেজ ইঞ্জিন</span>
+        <select
+          value={settings.imageEngine}
+          onChange={(e) => {
+            const imageEngine = e.target.value as StudioSettings['imageEngine']
+            setSettings({ ...settings, imageEngine })
+            void saveStudioSettings({ imageEngine }).then(() => toast.success('সেভ হয়েছে — পরের রেন্ডার থেকে কার্যকর')).catch(() => toast.error('হয়নি'))
+          }}
+          className="rounded-lg border border-border-subtle bg-bg-1 px-2 py-1 text-[11px] text-cream"
+        >
+          <option value="gemini">Nano Banana (ফটোরিয়াল · মুখ/মডেল সেরা)</option>
+          <option value="gpt">GPT Image 2 (লেখা/পোস্টার সেরা · দ্রুত)</option>
+          <option value="seedream">Seedream 5.0 Pro (2K ডিটেইল · নতুন)</option>
+        </select>
+      </label>
+      <label className="flex items-center justify-between gap-2">
         <span className="text-[11px] text-muted">কাজ শেষ হলে Telegram-এ জানাও</span>
         <input
           type="checkbox"
