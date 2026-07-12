@@ -67,6 +67,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -1125,6 +1126,14 @@ private fun AttendanceCard(
     val summary = vm.attendanceSummary
     val linked = vm.employeeId != null && !vm.needsEmployeeLink
 
+    // Native check-in (front-camera selfie) + check-out (GPS) — replaces the old web
+    // escape (owner directive 2026-07-12: attendance must be fully native).
+    val context = LocalContext.current
+    val cardScope = rememberCoroutineScope()
+    var showCheckIn by remember { mutableStateOf(false) }
+    var checkingOut by remember { mutableStateOf(false) }
+    var attendanceError by remember { mutableStateOf<String?>(null) }
+
     Column(
         Modifier.fillMaxWidth().almaGlass(dark, AlmaTheme.R_CARD).padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1182,34 +1191,43 @@ private fun AttendanceCard(
             }
         }
 
-        // Android deferral: selfie check-in / GPS check-out run on the web page
-        // (camera + geolocation hardware); iOS build 66 does these natively.
-        if (today == null) {
-            Text(
-                "📸 চেক-ইন করুন (সেলফি + GPS) — ওয়েবে",
-                color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(PortalPalette.emerald600, RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
-                    .plainClick { onOpenWeb("/portal", "My Desk") }
-                    .padding(vertical = 12.dp),
-            )
-            Text(
-                "সেলফি ক্যামেরা ও GPS-এর জন্য চেক-ইন ওয়েব ভিউতে হয়।",
-                color = AlmaTheme.inkSecondary(dark), fontSize = 10.sp,
-            )
-        } else if (today.checkOutAt == null) {
-            Text(
-                "চেক-আউট করুন — ওয়েবে",
-                color = AlmaTheme.ink(dark), fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .almaGlass(dark, AlmaTheme.R_CONTROL)
-                    .plainClick { onOpenWeb("/portal", "My Desk") }
-                    .padding(vertical = 12.dp),
-            )
+        // Native selfie check-in / GPS check-out (camera + LocationManager).
+        if (linked) {
+            attendanceError?.let {
+                Text(it, color = PortalPalette.red500, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
+            if (today == null) {
+                Text(
+                    "📸 চেক-ইন করুন (সেলফি + GPS)",
+                    color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(PortalPalette.emerald600, RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+                        .plainClick { attendanceError = null; showCheckIn = true }
+                        .padding(vertical = 13.dp),
+                )
+            } else if (today.checkOutAt == null) {
+                Text(
+                    if (checkingOut) "চেক-আউট হচ্ছে…" else "চেক-আউট করুন (GPS)",
+                    color = AlmaTheme.ink(dark), fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .almaGlass(dark, AlmaTheme.R_CONTROL)
+                        .plainClick {
+                            if (checkingOut) return@plainClick
+                            attendanceError = null
+                            checkingOut = true
+                            cardScope.launch {
+                                val err = runAttendanceCheckOut(context, PORTAL_BUSINESS_ID)
+                                checkingOut = false
+                                if (err == null) vm.load() else attendanceError = err
+                            }
+                        }
+                        .padding(vertical = 13.dp),
+                )
+            }
         }
         PortalLinkButton("ওয়েব ভার্সন", dark) { onOpenWeb("/portal", "My Desk") }
 
@@ -1217,6 +1235,15 @@ private fun AttendanceCard(
         if (linked && today != null && today.checkOutAt == null) {
             ExceptionBlock(vm, dark, onAskException)
         }
+    }
+
+    if (showCheckIn) {
+        AttendanceCheckInSheet(
+            businessId = PORTAL_BUSINESS_ID,
+            dark = dark,
+            onDismiss = { showCheckIn = false },
+            onSuccess = { cardScope.launch { vm.load() } },
+        )
     }
 }
 
