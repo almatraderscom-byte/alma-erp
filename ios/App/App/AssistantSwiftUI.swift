@@ -2208,6 +2208,45 @@ struct AlmaShimmerText: View {
     }
 }
 
+/// Glyph-only shimmer for the LIVE process row (approved demo, 2026-07-12).
+/// The wrapped content — leading SF Symbol, headline text, trailing chevron —
+/// keeps its normal muted colors; a narrow brighter band sweeps left→right and
+/// is MASKED to the rendered glyphs, so the gaps between icon/text/chevron and
+/// everything behind the row stay fully transparent. Never a background, never
+/// an unmasked overlay. Inactive (settled) rows and Reduce Motion render the
+/// content untouched.
+@available(iOS 17.0, *)
+struct AgentGlyphShimmerModifier: ViewModifier {
+    let active: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let period: Double = 1.8
+
+    func body(content: Content) -> some View {
+        if active && !reduceMotion {
+            content
+                .overlay(
+                    GeometryReader { g in
+                        TimelineView(.animation) { context in
+                            let phase = context.date.timeIntervalSinceReferenceDate
+                                .truncatingRemainder(dividingBy: Self.period) / Self.period
+                            let band = max(44, g.size.width * 0.3)   // narrow highlight
+                            let travel = g.size.width + band * 2
+                            LinearGradient(colors: [.clear, .white.opacity(0.9), .clear],
+                                           startPoint: .leading, endPoint: .trailing)
+                                .frame(width: band)
+                                .offset(x: -band + travel * phase)
+                        }
+                    }
+                    .mask(content)          // gradient exists ONLY inside the glyphs
+                    .allowsHitTesting(false)
+                )
+        } else {
+            content
+        }
+    }
+}
+
 /// The glossy tool I/O sheet — glides up from the bottom (web GlassSheet parity).
 @available(iOS 17.0, *)
 struct AgentToolIOSheet: View {
@@ -3122,28 +3161,26 @@ struct AgentCompactActivityRow: View {
             onTap()
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: failed ? "xmark.circle" : icon)
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundStyle(failed ? Color.red.opacity(0.8) : iconColor)
-                    .frame(width: 18, alignment: .center)
-                // Claude: chevron hugs the text; long labels truncate well before the
-                // screen edge (trailing gap keeps the row ending ~mid-right, never edge).
-                if shimmer {
-                    AlmaShimmerText(text: label,
-                                    font: .system(size: 14, weight: italic ? .regular : .medium),
-                                    base: labelColor)
-                        .lineLimit(1)
-                } else {
+                // Icon + headline + chevron grouped so the live glyph-shimmer band
+                // is masked to exactly these shapes — never the row bounds.
+                HStack(spacing: 8) {
+                    Image(systemName: failed ? "xmark.circle" : icon)
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundStyle(failed ? Color.red.opacity(0.8) : iconColor)
+                        .frame(width: 18, alignment: .center)
+                    // Claude: chevron hugs the text; long labels truncate well before the
+                    // screen edge (trailing gap keeps the row ending ~mid-right, never edge).
                     Text(label)
                         .font(.system(size: 14, weight: italic ? .regular : .medium))
-                        .italic(italic)
+                        .italic(italic && !shimmer)   // live row was never italic (AlmaShimmerText parity)
                         .foregroundStyle(labelColor)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(labelColor.opacity(0.45))
                 }
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(labelColor.opacity(0.45))
+                .modifier(AgentGlyphShimmerModifier(active: shimmer))
                 Spacer(minLength: 0)
             }
             .padding(.trailing, 96)
