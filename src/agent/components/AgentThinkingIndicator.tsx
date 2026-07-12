@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { AlmaSpinner, type AlmaSpinnerMode } from './AlmaSpinner'
 
@@ -16,7 +17,7 @@ export type ModelVariant = 'claude' | 'qwen' | 'deepseek' | 'default'
  * 'settled' that hides the indicator. Drives both the AlmaSpinner animation and
  * its rotating verb (Thinking → Searching → Writing).
  */
-export type ThinkingMode = 'thinking' | 'searching' | 'writing' | 'settled'
+export type ThinkingMode = 'understanding' | 'thinking' | 'searching' | 'writing' | 'settled'
 
 /** Human-facing model/brand name shown beside the spinner. */
 const VARIANT_NAME: Record<ModelVariant, string> = {
@@ -55,12 +56,52 @@ export function AgentThinkingIndicator({
   variant = 'default',
   className,
 }: AgentThinkingIndicatorProps) {
-  if (mode === 'settled') return null
+  const [displayMode, setDisplayMode] = useState<ThinkingMode>(mode)
+  const requestedModeRef = useRef<ThinkingMode>(mode)
+  const understandingUntilRef = useRef(0)
+
+  useEffect(() => {
+    requestedModeRef.current = mode
+    let timer: number | undefined
+
+    if (mode === 'settled') {
+      understandingUntilRef.current = 0
+      setDisplayMode('settled')
+      return
+    }
+
+    const now = Date.now()
+    if (mode === 'understanding') {
+      understandingUntilRef.current = now + 2080
+      setDisplayMode('understanding')
+      timer = window.setTimeout(() => {
+        const requested = requestedModeRef.current
+        setDisplayMode(requested === 'understanding' ? 'thinking' : requested)
+        understandingUntilRef.current = 0
+      }, 2080)
+    } else {
+      const remaining = understandingUntilRef.current - now
+      if (remaining > 0) {
+        timer = window.setTimeout(() => {
+          setDisplayMode(requestedModeRef.current)
+          understandingUntilRef.current = 0
+        }, remaining)
+      } else {
+        setDisplayMode(mode)
+      }
+    }
+
+    return () => {
+      if (timer) window.clearTimeout(timer)
+    }
+  }, [mode])
+
+  if (displayMode === 'settled') return null
 
   // The three states map 1:1 onto the AlmaSpinner's own modes + rotating verbs
   // (thinking → "Pondering…", searching → "Searching…", writing → "Writing…"),
   // exactly the Claude-app feel the owner asked for.
-  const spinnerMode: AlmaSpinnerMode = mode
+  const spinnerMode: AlmaSpinnerMode = displayMode
   const name = VARIANT_NAME[variant] ?? 'ALMA'
 
   return (
@@ -69,9 +110,9 @@ export function AgentThinkingIndicator({
           the synced per-tick haptic + sound while the agent is WORKING — the owner
           wants this rhythm back (the 2-tap-only version felt too quiet). Plus the
           single start/finish taps fired in AgentThread. */}
-      <AlmaSpinner mode={spinnerMode} size={18} showVerb haptics sound />
+      <AlmaSpinner mode={spinnerMode} size={20} showVerb haptics sound={false} />
       {/* Brand + model name so the owner always sees WHO is working. */}
-      <span className="alma-thinking-shimmer text-[12px] font-medium text-muted">
+      <span className="alma-brand-shimmer text-[12px] font-semibold">
         {variant === 'default' ? 'ALMA' : `ALMA · ${name}`}
       </span>
     </div>
