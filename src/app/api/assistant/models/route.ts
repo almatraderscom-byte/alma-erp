@@ -14,9 +14,18 @@ export async function GET(req: NextRequest) {
   if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
   const enabledMap = await getModelEnabledMap()
+  // Worker-only models (headPickable:false — e.g. Gemini 2.5 Flash LITE, GLM 32B)
+  // are hidden from every picker (web + native + android all read this route):
+  // picked as a head they answer from thin air instead of calling tools
+  // (2026-07-12 salah incident). The tier-router still uses them for sub-tasks.
+  const pickable = MODEL_REGISTRY.filter((m) => m.headPickable !== false)
+  const byProvider = modelsByProvider()
+  for (const key of Object.keys(byProvider) as Array<keyof ReturnType<typeof modelsByProvider>>) {
+    byProvider[key] = byProvider[key].filter((m) => m.headPickable !== false)
+  }
   return Response.json({
     defaultModelId: DEFAULT_MODEL_ID,
-    models: MODEL_REGISTRY.map(({ id, label, provider, supportsCaching, default: isDefault }) => ({
+    models: pickable.map(({ id, label, provider, supportsCaching, default: isDefault }) => ({
       id,
       label,
       provider,
@@ -24,7 +33,7 @@ export async function GET(req: NextRequest) {
       default: isDefault ?? false,
       enabled: isModelEnabledSync(id, enabledMap),
     })),
-    byProvider: modelsByProvider(),
+    byProvider,
   })
 }
 
