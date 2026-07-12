@@ -304,13 +304,13 @@ fun AgentCostsScreen(ctx: PushCtx) {
         }
         item {
             Text(
-                "🌐 সব অপশন (বাজেট/লগ/CSV সহ) — ওয়েবে খুলুন",
-                color = AlmaTheme.inkSecondary(dark).copy(alpha = 0.7f), fontSize = 12.sp,
+                "বাজেট · লগ · CSV — Credit Usage-এ দেখুন",
+                color = CostPalette.accentText(dark), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .plainClick { ctx.openWebForced("/agent/costs", "Costs") }
-                    .padding(vertical = 6.dp),
+                    .plainClick { ctx.openSmart("/agent/credit-usage", "Credit usage") }
+                    .padding(vertical = 8.dp),
             )
         }
         item { Spacer(Modifier.height(8.dp)) }

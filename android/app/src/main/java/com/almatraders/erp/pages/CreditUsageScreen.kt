@@ -686,16 +686,31 @@ fun CreditUsageScreen(ctx: PushCtx) {
         }
 
         item {
-            // Web escape: budget config / CSV stay on the web.
-            Text(
-                "🌐 বাজেট কনফিগ / CSV — ওয়েবে খুলুন",
-                color = AlmaTheme.inkSecondary(dark), fontSize = 12.sp, textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .almaGlass(dark, AlmaTheme.R_CONTROL)
-                    .plainClick { ctx.openWebForced("/agent/costs", "Costs") }
-                    .padding(vertical = 12.dp),
-            )
+            // Budget config is native above; CSV export is native too (share sheet).
+            val ctxLocal = androidx.compose.ui.platform.LocalContext.current
+            if (vm.usageEvents.isNotEmpty()) {
+                Text(
+                    "⬇ ব্যবহার লগ CSV এক্সপোর্ট",
+                    color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(CUPalette.coral, RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+                        .plainClick {
+                            shareCsv(
+                                ctxLocal, "credit-usage",
+                                headers = listOf("Time", "Provider", "Kind", "Model", "Task", "Cost USD", "Input Tokens", "Output Tokens"),
+                                rows = vm.usageEvents.map { e ->
+                                    listOf(
+                                        e.occurredAt, e.provider, e.kindLabel ?: e.kind,
+                                        e.model ?: e.modelId ?: "", e.taskLabel ?: "",
+                                        e.costUsd.toString(), (e.inputTokens ?: 0).toString(), (e.outputTokens ?: 0).toString(),
+                                    )
+                                },
+                            )
+                        }
+                        .padding(vertical = 12.dp),
+                )
+            }
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
