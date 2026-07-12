@@ -5,7 +5,7 @@
 //  SwiftUIShell architecture 1:1:
 //
 //    • 5 tabs: Dashboard (Capacitor WebView, kept mounted — push/OneSignal/login
-//      live there), Orders (native), Assistant (web), Approvals (native), More (native).
+//      live there), Orders (native), Assistant (native), Approvals (native), More (native).
 //    • Per-tab push stacks; pushed screens are native when AlmaNativeRouter knows the
 //      route, web fallback otherwise (pushSmart). Native screens receive a FORCED-web
 //      escape (never recurses into the router) — same recursion guard as iOS.

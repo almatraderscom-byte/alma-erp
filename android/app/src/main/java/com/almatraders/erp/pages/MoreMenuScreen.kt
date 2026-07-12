@@ -591,10 +591,18 @@ fun MoreMenuScreen(ctx: PushCtx) {
     // Hardware back closes the pushed group page first (shell stack is empty here).
     BackHandler(enabled = openGroup != null) { openGroup = null }
 
-    // Businesses the sheet offers: filtered by the server's access list once known.
-    val allowedBusinesses = remember(st.allowedBusinessIds, businesses) {
-        if (st.allowedBusinessIds.isEmpty()) businesses
-        else businesses.filter { it.bizId in st.allowedBusinessIds }.ifEmpty { businesses }
+    // Businesses the sheet offers: FAIL-CLOSED by access list (security audit 2026-07-12).
+    // The Trading/Digital business homes reach money-writes whose only web gate is route
+    // middleware that native navigation bypasses — so the switcher must never over-offer.
+    // Owner (isSystemOwner) sees all; everyone else sees exactly their businessAccess list,
+    // and an unknown/empty list falls back to Lifestyle ONLY (the base business), never all 3.
+    val allowedBusinesses = remember(st.allowedBusinessIds, st.isOwner, businesses) {
+        when {
+            st.isOwner -> businesses
+            st.allowedBusinessIds.isNotEmpty() ->
+                businesses.filter { it.bizId in st.allowedBusinessIds }.ifEmpty { businesses.take(1) }
+            else -> businesses.take(1)   // fail-closed: Lifestyle only
+        }
     }
 
     // Settings-style push: root list ⇄ group page (iOS pushNative twin — PushCtx

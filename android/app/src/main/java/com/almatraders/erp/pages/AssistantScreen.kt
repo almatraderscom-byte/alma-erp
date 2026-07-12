@@ -405,7 +405,7 @@ private suspend fun sseStream(
         .header("Accept", "text/event-stream")
         .header("X-Requested-With", "XMLHttpRequest")
     android.webkit.CookieManager.getInstance()
-        .getCookie("https://alma-erp-six.vercel.app")?.let { builder.header("Cookie", it) }
+        .getCookie(AlmaTheme.BASE_URL)?.let { builder.header("Cookie", it) }
     builder.method(method, jsonBody?.toRequestBody(sseJsonMedia))
     val call = sseClient.newCall(builder.build())
     onCall(call)
