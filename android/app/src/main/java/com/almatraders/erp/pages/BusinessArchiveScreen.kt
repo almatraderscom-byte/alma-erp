@@ -246,6 +246,56 @@ private class BusinessArchiveState {
             loading = false
         }
     }
+
+    // ── Archive / restore (SUPER_ADMIN, reversible) — native replacement for the web
+    //    escape. Archive is guarded by a typed confirmation phrase, exactly like web. ──
+
+    /** POST preview → (confirmationPhrase, human summary), or null on failure. */
+    suspend fun preview(moduleKeys: List<String>): Pair<String, String>? {
+        return try {
+            val resp = AlmaApi.send(
+                "POST", "/api/business-archive/preview",
+                JSONObject().put("business_id", businessId).put("module_keys", org.json.JSONArray(moduleKeys)),
+            )
+            val d = resp.optJSONObject("data") ?: resp
+            val phrase = d.str("confirmationPhrase") ?: d.str("confirmation_phrase") ?: return null
+            val prev = d.optJSONObject("preview") ?: d
+            val total = prev.flexInt("totalRows") ?: prev.flexInt("total") ?: prev.flexInt("count") ?: 0
+            Pair(phrase, "মোট ~$total রেকর্ড আর্কাইভ হবে")
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** POST execute with the typed confirmation. null = archived, else error string. */
+    suspend fun execute(moduleKeys: List<String>, batchName: String, confirmation: String): String? {
+        return try {
+            AlmaApi.send(
+                "POST", "/api/business-archive/execute",
+                JSONObject().put("business_id", businessId).put("module_keys", org.json.JSONArray(moduleKeys))
+                    .put("batch_name", batchName).put("confirmation", confirmation),
+            )
+            load()
+            null
+        } catch (e: AlmaApiException.Http) {
+            e.message?.substringAfter(": ")?.takeIf { it.isNotBlank() } ?: "আর্কাইভ হয়নি"
+        } catch (_: Exception) {
+            "আর্কাইভ হয়নি — আবার চেষ্টা করুন"
+        }
+    }
+
+    /** POST restore {batch_id}. null = restored, else error string. */
+    suspend fun restore(batchId: String): String? {
+        return try {
+            AlmaApi.send("POST", "/api/business-archive/restore", JSONObject().put("batch_id", batchId))
+            load()
+            null
+        } catch (e: AlmaApiException.Http) {
+            e.message?.substringAfter(": ")?.takeIf { it.isNotBlank() } ?: "রিস্টোর হয়নি"
+        } catch (_: Exception) {
+            "রিস্টোর হয়নি — আবার চেষ্টা করুন"
+        }
+    }
 }
 
 // ── Screen ─────────────────────────────────────────────────────────────────────────
@@ -382,36 +432,99 @@ fun BusinessArchiveScreen(ctx: PushCtx) {
             }
         }
 
-        item {
-            Text(
-                "🌐 আর্কাইভ / রিস্টোর করতে — ওয়েবে খুলুন",
-                color = AlmaTheme.inkSecondary(dark).copy(alpha = 0.7f), fontSize = 11.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .plainClick { ctx.openWebForced("/operations/business-archive", "Business archive") }
-                    .padding(vertical = 6.dp),
-            )
-        }
         item { Spacer(Modifier.height(8.dp)) }
     }
 
+    // Archive confirm (typed phrase) + restore confirm state.
+    var archiveTarget by remember { mutableStateOf<Triple<List<String>, String, String>?>(null) } // keys, phrase, summary
+    var archiveName by remember { mutableStateOf("") }
+    var typed by remember { mutableStateOf("") }
+    var restoreBatch by remember { mutableStateOf<ArchiveBatch?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var actionMsg by remember { mutableStateOf<String?>(null) }
+
     selectedModule?.let { m ->
         ModalBottomSheet(onDismissRequest = { selectedModule = null }, containerColor = AlmaTheme.rootBg(dark)) {
-            ArchiveModuleSheet(m, vm.stat(m.key), dark) { p, t ->
+            ArchiveModuleSheet(m, vm.stat(m.key), dark) {
                 selectedModule = null
-                ctx.openWebForced(p, t)
+                scope.launch {
+                    busy = true
+                    val p = vm.preview(listOf(m.key))
+                    busy = false
+                    if (p != null) { archiveName = m.label ?: m.key; typed = ""; archiveTarget = Triple(listOf(m.key), p.first, p.second) }
+                    else actionMsg = "প্রিভিউ পাওয়া যায়নি"
+                }
             }
         }
     }
 
     selectedBatch?.let { b ->
         ModalBottomSheet(onDismissRequest = { selectedBatch = null }, containerColor = AlmaTheme.rootBg(dark)) {
-            ArchiveBatchSheet(b, dark) { p, t ->
+            ArchiveBatchSheet(b, dark) {
                 selectedBatch = null
-                ctx.openWebForced(p, t)
+                restoreBatch = b
             }
         }
+    }
+
+    // ── Archive confirm dialog — user must type the exact confirmation phrase ──
+    archiveTarget?.let { (keys, phrase, summary) ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { if (!busy) archiveTarget = null },
+            title = { Text("আর্কাইভ: $archiveName") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("$summary\n\nনিশ্চিত করতে নিচের ফ্রেজ হুবহু টাইপ করুন:", fontSize = 13.sp)
+                    Text(phrase, color = ArchivePalette.coral, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    androidx.compose.material3.OutlinedTextField(
+                        value = typed, onValueChange = { typed = it }, singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    enabled = !busy && typed.trim() == phrase.trim(),
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            val err = vm.execute(keys, "Native archive", phrase)
+                            busy = false; archiveTarget = null
+                            actionMsg = err ?: "✅ আর্কাইভ সম্পন্ন হয়েছে"
+                        }
+                    },
+                ) { Text(if (busy) "চলছে…" else "আর্কাইভ করুন") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { if (!busy) archiveTarget = null }) { Text("বাতিল") } },
+        )
+    }
+
+    // ── Restore confirm ──
+    restoreBatch?.let { b ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { if (!busy) restoreBatch = null },
+            title = { Text("রিস্টোর: ${b.name ?: "ব্যাচ"}") },
+            text = { Text("এই ব্যাচের রেকর্ড আবার সক্রিয় স্টোরেজে ফিরিয়ে আনা হবে।", fontSize = 13.sp) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(enabled = !busy, onClick = {
+                    scope.launch {
+                        busy = true
+                        val err = vm.restore(b.id)
+                        busy = false; restoreBatch = null
+                        actionMsg = err ?: "✅ রিস্টোর সম্পন্ন হয়েছে"
+                    }
+                }) { Text(if (busy) "চলছে…" else "রিস্টোর করুন") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { if (!busy) restoreBatch = null }) { Text("বাতিল") } },
+        )
+    }
+
+    actionMsg?.let { msg ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { actionMsg = null },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { actionMsg = null }) { Text("ঠিক আছে") } },
+            text = { Text(msg) },
+        )
     }
 }
 
@@ -608,7 +721,7 @@ private fun ArchiveModuleSheet(
     module: ArchiveModule,
     stat: ArchiveStat?,
     dark: Boolean,
-    openWeb: (path: String, title: String) -> Unit,
+    onArchive: () -> Unit,
 ) {
     Column(
         Modifier
@@ -649,20 +762,22 @@ private fun ArchiveModuleSheet(
         }
 
         Text(
-            "আর্কাইভ চালাতে (dry run · confirm phrase) ওয়েব পেজ ব্যবহার করুন — এই স্ক্রিনটি শুধু দেখার জন্য।",
+            "আর্কাইভ করলে পুরনো রেকর্ড আলাদা স্টোরেজে সরে যাবে — পরে ব্যাচ থেকে রিস্টোর করা যায়। কনফার্মেশন ফ্রেজ টাইপ করতে হবে।",
             color = AlmaTheme.inkSecondary(dark), fontSize = 11.sp,
         )
 
-        Text(
-            "🌐 Archive Control — ওয়েবে খুলুন",
-            color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-            textAlign = TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(ArchivePalette.coral, RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
-                .plainClick { openWeb("/operations/business-archive", "Business archive") }
-                .padding(vertical = 11.dp),
-        )
+        if (stat?.available != false && (stat?.activeCount ?: 0) > 0) {
+            Text(
+                "🗄 এই মডিউল আর্কাইভ করুন",
+                color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(ArchivePalette.coral, RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+                    .plainClick(onArchive)
+                    .padding(vertical = 11.dp),
+            )
+        }
     }
 }
 
@@ -672,7 +787,7 @@ private fun ArchiveModuleSheet(
 private fun ArchiveBatchSheet(
     batch: ArchiveBatch,
     dark: Boolean,
-    openWeb: (path: String, title: String) -> Unit,
+    onRestore: () -> Unit,
 ) {
     Column(
         Modifier
@@ -716,23 +831,22 @@ private fun ArchiveBatchSheet(
             }
         }
 
-        if (batch.status == "COMPLETED") {
+        if (batch.status == "COMPLETED" && batch.restoredAt == null) {
             Text(
-                "Restore batch চালাতে ওয়েব পেজ ব্যবহার করুন — এই স্ক্রিনটি শুধু দেখার জন্য।",
+                "রিস্টোর করলে এই ব্যাচের রেকর্ড আবার সক্রিয় স্টোরেজে ফিরে আসবে।",
                 color = AlmaTheme.inkSecondary(dark), fontSize = 11.sp,
             )
+            Text(
+                "♻️ এই ব্যাচ রিস্টোর করুন",
+                color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(ArchivePalette.emerald600, RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+                    .plainClick(onRestore)
+                    .padding(vertical = 11.dp),
+            )
         }
-
-        Text(
-            if (batch.status == "COMPLETED") "🌐 Restore — ওয়েবে খুলুন" else "🌐 Archive Control — ওয়েবে খুলুন",
-            color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
-            textAlign = TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(ArchivePalette.coral, RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
-                .plainClick { openWeb("/operations/business-archive", "Business archive") }
-                .padding(vertical = 11.dp),
-        )
     }
 }
 
