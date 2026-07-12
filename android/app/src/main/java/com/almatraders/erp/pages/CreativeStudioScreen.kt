@@ -948,9 +948,12 @@ private fun CsDetailSheet(
     onDismiss: () -> Unit,
     openWeb: (String, String) -> Unit,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var showBranded by remember { mutableStateOf(true) }
     var rating by remember { mutableStateOf<String?>(null) }
     var showFinish by remember { mutableStateOf(false) }
+    var showPlayer by remember { mutableStateOf(false) }
+    var mediaMsg by remember { mutableStateOf<String?>(null) }
     val displayUrl = if (showBranded) (item.brandedFull ?: item.previewFull) else item.previewFull ?: item.imageUrl
 
     Column(
@@ -967,7 +970,7 @@ private fun CsDetailSheet(
             if (item.isVideo || item.isAudio) {
                 Box(
                     Modifier.align(Alignment.Center).size(56.dp).background(Color.Black.copy(alpha = 0.55f), CircleShape)
-                        .plainClick { openWeb(CS_WEB_PATH, "প্লেব্যাক") },
+                        .plainClick { if (!displayUrl.isNullOrEmpty()) showPlayer = true },
                     contentAlignment = Alignment.Center,
                 ) { Text(if (item.isVideo) "▶" else "🎵", color = Color.White, fontSize = 22.sp) }
             }
@@ -991,11 +994,21 @@ private fun CsDetailSheet(
             CsMetaTag(if (item.isExecuted) "পোস্ট হয়েছে" else if (item.isFailed) "ব্যর্থ" else "পেন্ডিং", dark)
         }
 
-        // Actions row — download/share/editor open the web finishing editor (Android media picker deferred).
+        // Actions — download & share are NATIVE now (fetch → native share sheet).
+        // The finishing editor (drag/resize overlay) stays web for now.
         Row(Modifier.fillMaxWidth().padding(top = 18.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            CsActionBtn("⬇ ডাউনলোড", primary = true, dark, Modifier.weight(1f)) { openWeb(CS_WEB_PATH, "ডাউনলোড") }
-            CsActionBtn("↗ শেয়ার", primary = false, dark, Modifier.weight(1f)) { openWeb(CS_WEB_PATH, "শেয়ার") }
+            val mime = if (item.isVideo) "video/mp4" else if (item.isAudio) "audio/mp4" else "image/jpeg"
+            val ext = if (item.isVideo) "mp4" else if (item.isAudio) "m4a" else "jpg"
+            CsActionBtn("⬇ ডাউনলোড", primary = true, dark, Modifier.weight(1f)) {
+                displayUrl?.let { u -> mediaMsg = "…"; downloadAndShareMedia(context, u, mime, "alma-${item.id}.$ext") { mediaMsg = it } }
+            }
+            CsActionBtn("↗ শেয়ার", primary = false, dark, Modifier.weight(1f)) {
+                displayUrl?.let { u -> mediaMsg = "…"; downloadAndShareMedia(context, u, mime, "alma-${item.id}.$ext") { mediaMsg = it } }
+            }
             CsActionBtn("⚙ এডিটর", primary = false, dark, Modifier.weight(1f)) { openWeb(CS_WEB_PATH, "ফিনিশিং এডিটর") }
+        }
+        mediaMsg?.takeIf { it.isNotEmpty() && it != "…" }?.let {
+            Text(it, color = AlmaTheme.coral, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
         }
 
         // Retry (failed renders)
@@ -1050,6 +1063,16 @@ private fun CsDetailSheet(
                 CsFinishPanel(item, vm, dark, scope, Modifier.padding(top = 12.dp)) { showFinish = false; showBranded = true }
             }
         }
+    }
+
+    if (showPlayer && !displayUrl.isNullOrEmpty()) {
+        AlmaMediaPlayerSheet(
+            url = displayUrl,
+            isVideo = item.isVideo,
+            title = item.title,
+            dark = dark,
+            onDismiss = { showPlayer = false },
+        )
     }
 }
 
