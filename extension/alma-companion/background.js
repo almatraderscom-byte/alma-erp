@@ -2,17 +2,20 @@
  * ALMA Companion — background service worker (MV3).
  *
  * Bridges the ALMA agent (server) to THIS Chrome. It long-polls the agent's
- * live-browser command endpoint, runs each command in a DEDICATED ALMA window
- * (the owner's own logged-in session — same cookies), draws a live on-page
- * status banner + highlight so the owner can watch every step, and posts the
- * result + a screenshot back.
+ * live-browser command endpoint, runs each command in a grouped "ALMA" tab of
+ * the owner's OWN window (his logged-in session — same cookies), draws a live
+ * on-page status banner + highlight so the owner can watch every step, and
+ * posts the result + a screenshot back.
  *
- * Why a dedicated window (v0.2.0):
- *   • The agent NEVER hijacks the tab the owner is working in. It opens/keeps
- *     one separate ALMA window and drives that, so the owner can keep browsing
- *     (and keep chatting with the agent) in his other windows/tabs.
- *   • Screenshots use captureVisibleTab on that window, which works even when
- *     it's not focused — so the owner watches without being interrupted.
+ * Why grouped tabs in the owner's window (v0.8.0, owner ask 2026-07-12):
+ *   • Claude-in-Chrome parity: the agent works in tabs inside the CURRENT
+ *     window, collected in a labeled tab group — one tab after another as the
+ *     task needs, never a detached second window.
+ *   • The agent still never types over the tab the owner was using — it opens
+ *     its own tab(s); the owner can click away any time.
+ *   • Screenshots go through chrome.debugger (CDP), which captures the agent
+ *     tab even while it is in the BACKGROUND — captureVisibleTab remains only
+ *     as a fallback.
  *
  * Safety model:
  *   • Paired to ONE owner via a one-time code → a bearer `token` (kept in
@@ -59,8 +62,36 @@ async function getConfig() {
   }
 }
 
-// ---- dedicated ALMA work window --------------------------------------------
-// All page actions run here, never in the owner's active tab.
+// ---- ALMA tab group in the OWNER'S OWN window --------------------------------
+// v0.8.0 (owner ask 2026-07-12): no separate window. The agent works in TABS
+// inside the owner's current window, collected in a labeled "ALMA" tab group —
+// exactly the Claude-in-Chrome shape. New tabs the task needs join the same
+// group. Screenshots use the chrome.debugger CDP path so a BACKGROUND tab
+// captures fine and the agent never has to steal the owner's active tab.
+
+async function groupAgentTab(tabId) {
+  try {
+    const { agentGroupId } = await chrome.storage.local.get('agentGroupId')
+    let groupId = null
+    if (agentGroupId != null) {
+      try {
+        await chrome.tabGroups.get(agentGroupId) // still alive?
+        groupId = await chrome.tabs.group({ tabIds: tabId, groupId: agentGroupId })
+      } catch {
+        groupId = null // group gone — create a fresh one below
+      }
+    }
+    if (groupId == null) {
+      groupId = await chrome.tabs.group({ tabIds: tabId })
+      try {
+        await chrome.tabGroups.update(groupId, { title: 'ALMA', color: 'yellow' })
+      } catch { /* cosmetic only */ }
+    }
+    await chrome.storage.local.set({ agentGroupId: groupId })
+  } catch {
+    /* grouping is cosmetic — the tab still works ungrouped */
+  }
+}
 
 async function getAgentTab(createIfMissing = true) {
   const { agentTabId } = await chrome.storage.local.get('agentTabId')
@@ -73,17 +104,12 @@ async function getAgentTab(createIfMissing = true) {
     }
   }
   if (!createIfMissing) return null
-  // First creation is focused=true so the owner SEES the ALMA window appear and
-  // knows where to watch; later navigations won't steal focus again.
-  const win = await chrome.windows.create({
-    url: 'about:blank',
-    focused: true,
-    width: 1200,
-    height: 860,
-  })
-  const tab = win && win.tabs && win.tabs[0]
+  // Create the work tab IN THE OWNER'S CURRENT WINDOW, active so he sees where
+  // the agent works; it immediately joins (or starts) the "ALMA" tab group.
+  const tab = await chrome.tabs.create({ url: 'about:blank', active: true })
   if (tab && tab.id) {
-    await chrome.storage.local.set({ agentTabId: tab.id, agentWindowId: win.id })
+    await chrome.storage.local.set({ agentTabId: tab.id, agentWindowId: tab.windowId })
+    await groupAgentTab(tab.id)
     return tab
   }
   return null
@@ -91,10 +117,13 @@ async function getAgentTab(createIfMissing = true) {
 
 // Persist which tab/window the agent currently drives (used when following a
 // popup or a newly-opened tab so subsequent commands act on the right page).
+// The followed tab is pulled into the ALMA group so the whole task stays one
+// visible strip of grouped tabs, Claude-style.
 async function setAgentTab(tabId, windowId) {
   const patch = { agentTabId: tabId }
   if (windowId != null) patch.agentWindowId = windowId
   await chrome.storage.local.set(patch)
+  await groupAgentTab(tabId)
 }
 
 // Find the tab the agent should follow to — a link/button often opens a new tab
@@ -970,6 +999,66 @@ function lockdownMatch(url, domains) {
 
 const WRITE_VERBS = new Set(['click', 'type', 'press', 'select_option'])
 
+// ---- CDP screenshots (chrome.debugger) ---------------------------------------
+// captureVisibleTab only shoots the ACTIVE tab of a window; now that the agent
+// works in a grouped tab of the owner's own window, the tab is often in the
+// background. The debugger path captures the agent tab regardless of focus —
+// the same mechanism Claude-in-Chrome uses (Chrome shows its standard
+// "…is debugging this browser" bar while attached; it clears on detach).
+
+async function ensureDebugger(tabId) {
+  const { cdpTabId } = await chrome.storage.local.get('cdpTabId')
+  if (cdpTabId != null && cdpTabId !== tabId) {
+    try {
+      await chrome.debugger.detach({ tabId: cdpTabId })
+    } catch { /* old tab gone */ }
+    await chrome.storage.local.remove('cdpTabId')
+  }
+  try {
+    await chrome.debugger.attach({ tabId }, '1.3')
+    await chrome.storage.local.set({ cdpTabId: tabId })
+    return true
+  } catch (err) {
+    if (/already attached/i.test(String(err && err.message))) {
+      await chrome.storage.local.set({ cdpTabId: tabId })
+      return true
+    }
+    return false
+  }
+}
+
+async function captureAgentTab(tab) {
+  // 1) CDP — works even when the agent tab is in the background.
+  if (await ensureDebugger(tab.id)) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const shot = await chrome.debugger.sendCommand({ tabId: tab.id }, 'Page.captureScreenshot', {
+          format: 'jpeg',
+          quality: 80,
+        })
+        if (shot && shot.data) return 'data:image/jpeg;base64,' + shot.data
+        break
+      } catch {
+        // Stale attachment (worker restarted, Chrome dropped it) → re-attach once.
+        await chrome.storage.local.remove('cdpTabId')
+        if (!(await ensureDebugger(tab.id))) break
+      }
+    }
+  }
+  // 2) Fallback — visible-tab capture; only right when the agent tab is active
+  //    (e.g. the owner revoked the debugger permission or DevTools is attached).
+  try {
+    return await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 80 })
+  } catch {
+    return null
+  }
+}
+
+chrome.debugger?.onDetach?.addListener(async (source) => {
+  const { cdpTabId } = await chrome.storage.local.get('cdpTabId')
+  if (source && source.tabId === cdpTabId) await chrome.storage.local.remove('cdpTabId')
+})
+
 async function executeCommand(cmd) {
   const action = String(cmd.action || '')
   if (!ALLOWED_ACTIONS.has(action)) return { ok: false, error: `unsupported action: ${action}` }
@@ -1004,13 +1093,13 @@ async function executeCommand(cmd) {
   if (action === 'navigate') {
     if (!/^https?:\/\//i.test(cmd.url || '')) return { ok: false, error: 'navigate needs http(s) url' }
     await chrome.tabs.update(tab.id, { url: cmd.url })
-    // Bring the ALMA window to the front so the owner SEES each page as it loads.
-    // (This is the "watch live" moment; between tasks he can click back to his
-    // own window, or hit Pause in the popup to stop entirely.)
+    // Front the ALMA tab (inside the owner's own window) so he SEES each page as
+    // it loads — Claude-in-Chrome behaviour. Screenshots don't need this (CDP
+    // captures background tabs); it's purely the "watch live" moment.
     try {
-      await chrome.windows.update(tab.windowId, { focused: true, drawAttention: true })
+      await chrome.tabs.update(tab.id, { active: true })
     } catch {
-      /* window gone — ignore, next getAgentTab recreates */
+      /* tab gone — next getAgentTab recreates */
     }
     await waitForTabLoad(tab.id, 15000)
     await showOverlay(tab.id, 'পেজ খুলছে: ' + cmd.url.replace(/^https?:\/\//, '').slice(0, 48))
@@ -1027,7 +1116,8 @@ async function executeCommand(cmd) {
     return { ok: true, data: { back: true } }
   }
   if (action === 'screenshot') {
-    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 80 })
+    const dataUrl = await captureAgentTab(tab)
+    if (!dataUrl) return { ok: false, error: 'could not capture screenshot' }
     return { ok: true, screenshot: dataUrl }
   }
   if (action === 'read_text') {
@@ -1082,10 +1172,10 @@ async function executeCommand(cmd) {
     if (!picked) return { ok: false, error: 'no other tab to switch to' }
     try {
       await chrome.tabs.update(picked.id, { active: true })
-      await chrome.windows.update(picked.windowId, { focused: true, drawAttention: true })
     } catch {
       return { ok: false, error: 'could not switch tab' }
     }
+    // setAgentTab also pulls the followed tab into the ALMA tab group.
     await setAgentTab(picked.id, picked.windowId)
     await waitForTabLoad(picked.id, 12000)
     await showOverlay(picked.id, 'নতুন ট্যাবে গেছে')
@@ -1253,19 +1343,21 @@ chrome.alarms.onAlarm.addListener(async (a) => {
 
 chrome.runtime.onStartup.addListener(() => loop())
 chrome.runtime.onInstalled.addListener(async () => {
-  // Forget any window from a previous load so the next task opens a fresh,
-  // visible ALMA window (avoids reusing one buried behind other windows).
-  await chrome.storage.local.remove(['agentTabId', 'agentWindowId'])
+  // Forget any tab/group/debugger state from a previous load so the next task
+  // starts a fresh grouped tab (a reload also drops CDP attachments).
+  await chrome.storage.local.remove(['agentTabId', 'agentWindowId', 'agentGroupId', 'cdpTabId'])
   loop()
 })
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.token || changes.paused) loop()
 })
 
-// If the owner closes the ALMA window, forget it so the next command opens a fresh one.
+// If the owner closes the ALMA tab, forget it (and its debugger attachment) so
+// the next command opens a fresh grouped tab.
 chrome.tabs.onRemoved.addListener(async (tabId) => {
-  const { agentTabId } = await chrome.storage.local.get('agentTabId')
+  const { agentTabId, cdpTabId } = await chrome.storage.local.get(['agentTabId', 'cdpTabId'])
   if (agentTabId === tabId) await chrome.storage.local.remove(['agentTabId', 'agentWindowId'])
+  if (cdpTabId === tabId) await chrome.storage.local.remove('cdpTabId')
 })
 
 // Popup ↔ background messaging (pairing / status / kill switch).

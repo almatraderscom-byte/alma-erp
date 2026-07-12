@@ -26,7 +26,7 @@ import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
 import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/message-recall'
 import { getBusinessSnapshot } from '@/agent/lib/business-snapshot'
 import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
-import { toolResultPreview } from '@/agent/lib/tool-labels'
+import { toolResultPreview, extractScreenshotUrl } from '@/agent/lib/tool-labels'
 import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { logCost } from '@/agent/lib/cost-events'
@@ -380,7 +380,7 @@ async function* runAlternateProviderTurn(
   type TimelineEntry =
     | { t: 'think'; text: string }
     | { t: 'text'; text: string }
-    | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string }
+    | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; shot?: string }
     | { t: 'file'; id: string; name: string; kind?: string }
   const timeline: TimelineEntry[] = []
   const compactTimelineInput = (input: unknown): unknown => {
@@ -574,6 +574,7 @@ async function* runAlternateProviderTurn(
           t: 'tool', name: call.name, ok: result.success,
           input: compactTimelineInput(call.input),
           result: toolResultPreview(result),
+          shot: extractScreenshotUrl(result),
         })
 
         yield {
@@ -583,6 +584,7 @@ async function* runAlternateProviderTurn(
           success: result.success,
           error: result.error,
           resultPreview: toolResultPreview(result),
+          screenshot: extractScreenshotUrl(result),
         }
 
         // A tool filed a document as a conversation artifact (save_artifact, SEO

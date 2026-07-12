@@ -26,7 +26,7 @@ import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
 import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/message-recall'
 import { getBusinessSnapshot } from '@/agent/lib/business-snapshot'
 import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
-import { toolResultPreview } from '@/agent/lib/tool-labels'
+import { toolResultPreview, extractScreenshotUrl } from '@/agent/lib/tool-labels'
 import { decodeUnicodeEscapes } from '@/agent/lib/decode-unicode-escapes'
 import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
 import { bumpPlaybookRulesForDomains } from '@/agent/lib/learning/learned-rules'
@@ -71,7 +71,7 @@ export type AgentEvent =
       fallbackModelId: string
     }
   | { type: 'tool_start'; id: string; name: string; input?: unknown }
-  | { type: 'tool_end'; id: string; name: string; success: boolean; error?: string; resultPreview?: string }
+  | { type: 'tool_end'; id: string; name: string; success: boolean; error?: string; resultPreview?: string; screenshot?: string }
   | { type: 'subagent_start'; id: string; role: string; roleLabel: string; task: string }
   | { type: 'subagent_end'; id: string; role: string; success: boolean; summary?: string; toolsUsed?: string[]; error?: string }
   | { type: 'confirm_card'; pendingActionId: string; summary: string; costEstimate?: number; actionType?: string; entryCount?: number; isFinance?: boolean; isBatch?: boolean }
@@ -954,7 +954,7 @@ export async function* runAgentTurn(
   type TimelineEntry =
     | { t: 'think'; text: string }
     | { t: 'text'; text: string }
-    | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string }
+    | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; shot?: string }
     | { t: 'file'; id: string; name: string; kind?: string }
   const timeline: TimelineEntry[] = []
   const compactTimelineInput = (input: unknown): unknown => {
@@ -1308,6 +1308,7 @@ export async function* runAgentTurn(
           t: 'tool', name: tb.name, ok: result.success,
           input: compactTimelineInput(tb.input),
           result: toolResultPreview(result),
+          shot: extractScreenshotUrl(result),
         })
 
         // A tool filed a document as a conversation artifact (save_artifact, SEO
@@ -1348,7 +1349,7 @@ export async function* runAgentTurn(
             error: result.error,
           }
         } else {
-          yield { type: 'tool_end', id: tb.id, name: tb.name, success: result.success, error: result.error, resultPreview: toolResultPreview(result) }
+          yield { type: 'tool_end', id: tb.id, name: tb.name, success: result.success, error: result.error, resultPreview: toolResultPreview(result), screenshot: extractScreenshotUrl(result) }
         }
 
         if (result.success && !personalMode) {

@@ -60,7 +60,9 @@ async function persistScreenshot(dataUrl: string | null | undefined): Promise<st
     const buf = Buffer.from(b64, 'base64')
     const path = `live-browser/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
     await agentStorageUpload(path, buf, ext === 'png' ? 'image/png' : 'image/jpeg', { upsert: true })
-    return await agentStorageSignedUrl(path, 3600)
+    // 7 days — these screenshots now render INLINE in the chat history (owner ask
+    // 2026-07-12), so a 1-hour link would leave older messages with broken images.
+    return await agentStorageSignedUrl(path, 7 * 24 * 3600)
   } catch {
     return null
   }

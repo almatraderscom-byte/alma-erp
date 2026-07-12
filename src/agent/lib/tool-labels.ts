@@ -65,6 +65,20 @@ function truncate(s: string, max = 28): string {
 }
 
 /**
+ * Live-browser tools attach a screenshot of the page after each look/act —
+ * surface its URL separately so the chat can render the image INLINE on the
+ * tool step (owner ask 2026-07-12: "ss soho details chat-এ"), instead of the
+ * URL drowning (or being truncated away) inside the JSON preview.
+ */
+export function extractScreenshotUrl(result: unknown): string | undefined {
+  if (!result || typeof result !== 'object') return undefined
+  const data = (result as { data?: unknown }).data
+  if (!data || typeof data !== 'object') return undefined
+  const url = (data as { screenshotUrl?: unknown }).screenshotUrl
+  return typeof url === 'string' && url.startsWith('http') ? url : undefined
+}
+
+/**
  * Build a compact, safe preview of a tool's RESULT for the expandable "Result"
  * card (Claude-app style: click a tool to see what it returned). We never dump an
  * unbounded payload into the stream — the JSON is pretty-printed and hard-capped
