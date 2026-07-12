@@ -1072,6 +1072,17 @@ async function executeCommand(cmd) {
   const tab = await getAgentTab(true)
   if (!tab || !tab.id) return { ok: false, error: 'could not open ALMA window' }
 
+  // Write verbs need the agent tab FOCUSED: since v0.8.0 it lives in the owner's
+  // own window, and sites like Facebook close open dropdowns/menus the moment the
+  // tab blurs — a click sequence spanning two commands (open dropdown → click
+  // option) kept failing with element-not-found because the list vanished
+  // between rounds. Fronting the tab for interactions mirrors a human session.
+  if (WRITE_VERBS.has(action)) {
+    try {
+      if (!tab.active) await chrome.tabs.update(tab.id, { active: true })
+    } catch { /* tab gone — the command itself will surface the error */ }
+  }
+
   // READ-ONLY lockdown: refuse writes on a lockdown-tier site. Reading, scrolling,
   // screenshots and navigation stay allowed — lockdown means extraction-only.
   if (WRITE_VERBS.has(action)) {
