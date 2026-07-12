@@ -58,13 +58,31 @@ export async function runImageQcLoop({
   let currentPath = initialPath
 
   for (let i = 0; i < maxGenerations; i++) {
-    const qc = await scoreImageViaApi({
-      appUrl,
-      token,
-      storagePath: currentPath,
-      productType,
-      productImagePath,
-    })
+    // QC FAIL-OPEN (2026-07-12): the scorer rides Gemini vision — when that is
+    // down (e.g. Google prepaid credits depleted → 429) the render itself may
+    // be perfectly fine. A dead QC must never kill a paid, finished image:
+    // deliver what we have, flagged so the owner knows QC was skipped.
+    let qc
+    try {
+      qc = await scoreImageViaApi({
+        appUrl,
+        token,
+        storagePath: currentPath,
+        productType,
+        productImagePath,
+      })
+    } catch (err) {
+      console.warn('[image-qc] scorer unavailable — delivering unscored:', err?.message ?? err)
+      return {
+        storagePath: currentPath,
+        qc: {
+          pass: true,
+          attempts: attempts.length + 1,
+          skipped: 'qc_unavailable',
+          flagged: 'QC চালানো যায়নি (ভিশন API ডাউন) — ছবি আন-চেকড ডেলিভার হয়েছে',
+        },
+      }
+    }
     attempts.push({
       storagePath: currentPath,
       pass: Boolean(qc.pass),
