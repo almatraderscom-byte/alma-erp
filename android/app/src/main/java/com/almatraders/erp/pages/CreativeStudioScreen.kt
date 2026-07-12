@@ -2,9 +2,9 @@
 //  CreativeStudioScreen.kt
 //  ALMA ERP — native Creative Studio, ported from CreativeStudioSwiftUI.swift (build 66).
 //  Image-forward "professional AI studio" over the shared aurora: 6-tab floating bar
-//  (হোম / তৈরি / গ্যালারি / ভিডিও / অডিও / লাইব্রেরি). Asset gallery + browsing + status
-//  + item actions are native (Coil AsyncImage). Photo-picker uploads and the long
-//  video/audio labs are web-escape buttons (Android media picker deferred).
+//  (হোম / তৈরি / গ্যালারি / ভিডিও / অডিও / লাইব্রেরি). Home + gallery + Create (native
+//  product-photo → Auto generate) + item actions are native (Coil AsyncImage + the
+//  system Photo Picker). Only the long video/audio labs stay web-escape buttons.
 //
 //  Endpoints (same JSON APIs the web/iOS page calls, via AlmaApi cookie bridge):
 //    GET  /api/assistant/creative-studio/config          → { organization, *Configured }
@@ -61,6 +61,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -284,6 +285,32 @@ private class CreativeStudioState {
         g?.optJSONArray("items")?.let { arr -> gallery = arr.mapObjects { CsGalleryItem.from(it) } }
     }
 
+    /** Native Auto create (web/iOS parity): upload the product photo, then run auto:true
+     *  so the server dresses the default saved model in it (+ optional family + reel). */
+    var creating by mutableStateOf(false)
+    suspend fun createAuto(product: PickedImage, includeFamily: Boolean, includeReel: Boolean): Boolean {
+        creating = true
+        return try {
+            val up = AlmaApi.uploadMultipart("/api/assistant/upload", listOf(product.toFilePart("file")))
+            val path = up.str("path") ?: up.optJSONObject("data")?.str("path")
+            if (path.isNullOrEmpty()) { toast = "ছবি আপলোড ব্যর্থ"; return false }
+            AlmaApi.send(
+                "POST", "/api/assistant/creative-studio/run",
+                JSONObject().put("auto", true).put("productImagePath", path)
+                    .put("includeFamily", includeFamily).put("includeReel", includeReel),
+            )
+            toast = "তৈরি হচ্ছে — Gallery-তে দেখুন, Boss"
+            refreshGallery()
+            true
+        } catch (e: AlmaApiException.Http) {
+            toast = CsData.serverMessage(e.message) ?: "তৈরি করা গেল না"; false
+        } catch (_: Exception) {
+            toast = "তৈরি করা গেল না"; false
+        } finally {
+            creating = false
+        }
+    }
+
     private suspend fun reloadModels() {
         val m = runCatching { AlmaApi.getObject("/api/assistant/brand-models") }.getOrNull()
         m?.optJSONArray("models")?.let { arr -> models = arr.mapObjects { CsModel.from(it) } }
@@ -418,11 +445,7 @@ fun CreativeStudioScreen(ctx: PushCtx) {
         when (tab) {
             CsTab.HOME -> CsHomeTab(vm, dark, go = { tab = it }, onExit = { ctx.pop() })
             CsTab.GALLERY -> CsGalleryTab(vm, dark, scope, onOpen = { detail = it })
-            CsTab.CREATE -> CsEscapeTab(
-                "ক্রিয়েটিভ বানাও", "নতুন জেনারেশন",
-                "প্রোডাক্ট/মডেল ছবি আপলোড করে Auto বা Advanced জেনারেশন — ছবি বাছাই ওয়েবে খুলবে।",
-                "🪄 তৈরি করতে ওয়েব খুলুন", dark,
-            ) { ctx.openWebForced(CS_WEB_PATH, "ক্রিয়েটিভ স্টুডিও") }
+            CsTab.CREATE -> CsCreateTab(vm, dark, scope, onDone = { tab = CsTab.GALLERY })
             CsTab.VIDEO -> CsEscapeTab(
                 "ভিডিও স্টুডিও", "রিল ও ভিডিও",
                 "ফোনের শুট আপলোড → রেসিপি → রিল + মিউজিক লাইব্রেরি। বড় ভিডিও আপলোড ওয়েবে খুলবে।",
@@ -915,7 +938,90 @@ private fun CsFeatureRow(image: String?, name: String, badge: String?, desc: Str
     }
 }
 
-// ── Web-escape tab (Create / Video / Audio: uploads + labs live on web) ───────────────
+// ── Native CREATE tab (product photo → Auto generate; web parity, no escape) ──────────
+
+@Composable
+private fun CsCreateTab(vm: CreativeStudioState, dark: Boolean, scope: CoroutineScope, onDone: () -> Unit) {
+    var picked by remember { mutableStateOf<PickedImage?>(null) }
+    var includeFamily by remember { mutableStateOf(false) }
+    var includeReel by remember { mutableStateOf(false) }
+    val pickGallery = rememberGalleryPick { it?.let { p -> picked = p } }
+    val pickCamera = rememberCameraPick { it?.let { p -> picked = p } }
+
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp)) {
+        CsHeader(dark, "নতুন জেনারেশন", "ক্রিয়েটিভ বানাও", onBack = null)
+        Spacer(Modifier.height(16.dp))
+        // Product photo picker / preview.
+        Box(
+            Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(20.dp))
+                .almaGlass(dark, 20).plainClick { pickGallery() },
+            contentAlignment = Alignment.Center,
+        ) {
+            val p = picked
+            if (p != null) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current).data(p.bytes).build(),
+                    contentDescription = null, contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("📷", fontSize = 40.sp)
+                    Text("প্রোডাক্ট ছবি বাছুন", color = CsPalette.muted(dark), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("ট্যাপ করে গ্যালারি — নিচে ক্যামেরাও আছে", color = CsPalette.muted(dark), fontSize = 11.sp)
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            CsPickChip("🖼 গ্যালারি", dark, Modifier.weight(1f)) { pickGallery() }
+            CsPickChip("📸 ক্যামেরা", dark, Modifier.weight(1f)) { pickCamera() }
+        }
+        Spacer(Modifier.height(16.dp))
+        Column(Modifier.fillMaxWidth().almaGlass(dark, AlmaTheme.R_CARD).padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            CsSwitchRow("পরিবার সহ (মা + সন্তান)", includeFamily, dark) { includeFamily = it }
+            CsSwitchRow("সাথে রিল ভিডিও", includeReel, dark) { includeReel = it }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "ডিফল্ট সেভ করা মডেলকে এই প্রোডাক্টে সাজিয়ে ছবি বানাবে। মডেল না থাকলে Library ট্যাবে একটি সেভ করুন।",
+            color = CsPalette.muted(dark), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 4.dp),
+        )
+        Spacer(Modifier.height(16.dp))
+        val ready = picked != null && !vm.creating
+        Box(
+            Modifier.fillMaxWidth().background(CsPalette.cta, RoundedCornerShape(16.dp))
+                .alpha(if (ready) 1f else 0.5f)
+                .plainClick {
+                    val p = picked
+                    if (p != null && !vm.creating) scope.launch { if (vm.createAuto(p, includeFamily, includeReel)) onDone() }
+                }
+                .padding(vertical = 14.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (vm.creating) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+            else Text("🪄 তৈরি করুন", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(120.dp))
+    }
+}
+
+@Composable
+private fun CsPickChip(label: String, dark: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    Text(
+        label, color = AlmaTheme.ink(dark), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+        textAlign = TextAlign.Center,
+        modifier = modifier.almaGlass(dark, AlmaTheme.R_CONTROL).plainClick(onClick).padding(vertical = 11.dp),
+    )
+}
+
+@Composable
+private fun CsSwitchRow(label: String, checked: Boolean, dark: Boolean, onChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = AlmaTheme.ink(dark), fontSize = 13.sp, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
 
 @Composable
 private fun CsEscapeTab(title: String, eyebrow: String, note: String, cta: String, dark: Boolean, onOpen: () -> Unit) {
