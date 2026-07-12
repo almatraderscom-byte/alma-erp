@@ -350,14 +350,13 @@ async function* runAlternateProviderTurn(
   // incident). Anchor it: this is the ANSWER to your own question — resume, don't
   // re-derive. Fail-open.
   try {
+    // NOTE: agent_ask_cards has no updatedAt column — filter by status only and
+    // let the option-prefix check below gate relevance (the card may have been
+    // CREATED long before it was answered).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const card = await (prisma as any).agentAskCard.findFirst({
-      where: {
-        conversationId,
-        status: 'answered',
-        updatedAt: { gt: new Date(Date.now() - 5 * 60_000) },
-      },
-      orderBy: { updatedAt: 'desc' },
+      where: { conversationId, status: 'answered' },
+      orderBy: { createdAt: 'desc' },
       select: { question: true, selectedOption: true },
     })
     if (card?.selectedOption && lastUserText && lastUserText.startsWith(String(card.selectedOption).slice(0, 40))) {
