@@ -1189,6 +1189,10 @@ final class AssistantVM {
     func newChat() async {
         stopStreaming(cancelServer: false)
         conversationId = nil     // server creates one on the first send
+        // Owner rule 2026-07-12: a NEW chat always starts on Auto (router picks) —
+        // it must not inherit the previous conversation's pinned model (the picker
+        // was silently carrying over e.g. Sonnet 4.6 from the last-opened chat).
+        modelId = nil
         messages = []
         pendingFiles = []
         openTasks = []
@@ -2715,12 +2719,20 @@ struct AgentBrandWordmark: View {
         if isCurrent { currentBody } else { staticBody }
     }
 
-    /// Older replies: the burst has moved on — plain small ALMA text only.
+    /// Idle/settled wordmark colours — the SAME loader aura (blue→violet→magenta→
+    /// coral), but STATIC: owner rule 2026-07-12, "idle-এ শুধু রংটা বদলাবে" (no
+    /// animation once the reply has settled).
+    static let idleGradient = LinearGradient(
+        colors: AlmaRayBurst.colors,
+        startPoint: .leading, endPoint: .trailing)
+
+    /// Older replies: the burst has moved on — small multicolour ALMA text only.
     private var staticBody: some View {
         Text("ALMA")
             .font(.system(size: 11, weight: .bold))
             .tracking(1.4)
-            .foregroundStyle(AgentPalette.coral.opacity(0.6))
+            .foregroundStyle(Self.idleGradient)
+            .opacity(0.75)
     }
 
     private var currentBody: some View {
@@ -2733,7 +2745,9 @@ struct AgentBrandWordmark: View {
                     Text(ch)
                         .font(.system(size: 11.5, weight: .bold))
                         .tracking(1.6)
-                        .foregroundStyle(AgentPalette.coral.opacity(0.95))
+                        // Per-letter slice of the loader aura so the settled
+                        // wordmark reads multicolour, matching the burst beside it.
+                        .foregroundStyle(AlmaRayBurst.colors[min(i + 1, AlmaRayBurst.colors.count - 1)])
                         .opacity(shown && !retracted ? 1 : 0)
                         .offset(x: shown && !retracted ? 0 : -14)
                         .animation(.spring(response: 0.5, dampingFraction: 0.86)

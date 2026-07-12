@@ -2889,12 +2889,16 @@ private struct CSLibraryTab: View {
             }
             VStack(alignment: .leading, spacing: 6) {
                 Text("ইমেজ ইঞ্জিন").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(AgentPalette(scheme).ink)
-                HStack(spacing: 6) {
+                // 3 engines don't fit one row on smaller widths — wrap in a grid.
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 6)], alignment: .leading, spacing: 6) {
                     CSChip(text: "Nano Banana (ফটোরিয়াল)", on: (vm.settings?.imageEngine ?? "gemini") == "gemini") {
                         Task { await vm.saveSettings(imageEngine: "gemini") }
                     }
                     CSChip(text: "GPT Image 2 (লেখা/পোস্টার)", on: vm.settings?.imageEngine == "gpt") {
                         Task { await vm.saveSettings(imageEngine: "gpt") }
+                    }
+                    CSChip(text: "Seedream 5.0 Pro (2K · নতুন)", on: vm.settings?.imageEngine == "seedream") {
+                        Task { await vm.saveSettings(imageEngine: "seedream") }
                     }
                 }
                 Text("পরের রেন্ডার থেকে কার্যকর · try-on (FASHN) এতে বদলায় না")

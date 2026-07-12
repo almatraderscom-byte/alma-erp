@@ -241,7 +241,11 @@ final class KnownPeopleVM {
     private struct SettingsBody: Encodable {
         let deviceId: String, enabled: Bool, startHm: String, endHm: String, cooldownMin: Int
     }
-    private struct AddBody: Encodable { let name: String, role: String, photos: [String] }
+    /// The API expects photo OBJECTS with RAW base64 (`{base64, mimeType}`) — a
+    /// data-URL string array silently matched nothing server-side and every native
+    /// add failed with "at least one photo required" (owner report 2026-07-12).
+    struct PhotoBody: Encodable { let base64: String, mimeType: String }
+    private struct AddBody: Encodable { let name: String, role: String, photos: [PhotoBody] }
     private struct ActiveBody: Encodable { let active: Bool }
     private struct WriteResponse: Decodable { let ok: Bool?, error: String? }
 
@@ -275,7 +279,9 @@ final class KnownPeopleVM {
         busy = true
         defer { busy = false }
         do {
-            let encoded = photos.prefix(3).map { "data:image/jpeg;base64,\($0.base64EncodedString())" }
+            let encoded = photos.prefix(3).map {
+                PhotoBody(base64: $0.base64EncodedString(), mimeType: "image/jpeg")
+            }
             let res: WriteResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/known-people",
                 body: AddBody(name: name, role: role, photos: encoded))
@@ -285,6 +291,47 @@ final class KnownPeopleVM {
             return true
         } catch {
             toast = "⚠️ যোগ করা যায়নি — আবার চেষ্টা করুন"
+            return false
+        }
+    }
+
+    /// Native edit (owner 2026-07-12 — no more "ওয়েবে খুলুন"): PATCH name/role.
+    func updatePerson(_ p: KnownPersonItem, name: String, role: String) async -> Bool {
+        busy = true
+        defer { busy = false }
+        struct EditBody: Encodable { let name: String, role: String }
+        do {
+            let res: WriteResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/assistant/known-people/\(p.id)",
+                body: EditBody(name: name, role: role))
+            if let err = res.error { toast = "⚠️ \(err)"; return false }
+            toast = "✅ সেভ হয়েছে"
+            await load()
+            return true
+        } catch {
+            toast = "⚠️ সেভ হয়নি — নেটওয়ার্ক সমস্যা"
+            return false
+        }
+    }
+
+    /// Swap ALL reference photos (server replacePhotos — same PhotoBody format).
+    func replacePhotos(_ p: KnownPersonItem, photos: [Data]) async -> Bool {
+        busy = true
+        defer { busy = false }
+        struct ReplaceBody: Encodable { let replacePhotos: [PhotoBody] }
+        do {
+            let encoded = photos.prefix(3).map {
+                PhotoBody(base64: $0.base64EncodedString(), mimeType: "image/jpeg")
+            }
+            let res: WriteResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/assistant/known-people/\(p.id)",
+                body: ReplaceBody(replacePhotos: encoded))
+            if let err = res.error { toast = "⚠️ \(err)"; return false }
+            toast = "✅ ছবি বদলে দেওয়া হয়েছে"
+            await load()
+            return true
+        } catch {
+            toast = "⚠️ ছবি বদলানো যায়নি — নেটওয়ার্ক সমস্যা"
             return false
         }
     }
@@ -355,7 +402,6 @@ struct KnownPeopleScreen: View {
                 roleChips
                 if vm.loading && vm.people.isEmpty { loadingRows }
                 peopleList
-                webEscape
                 Color.clear.frame(height: 8)
             }
             .padding(.horizontal, 14)
@@ -369,7 +415,7 @@ struct KnownPeopleScreen: View {
             KnownPersonDetailSheet(
                 person: person,
                 thumbURL: vm.thumbs[person.id],
-                openWeb: openWeb)
+                vm: vm)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
@@ -636,18 +682,6 @@ struct KnownPeopleScreen: View {
         }
     }
 
-    private var webEscape: some View {
-        Button {
-            openWeb("/agent/known-people", "Known people")
-        } label: {
-            Label("যোগ/এডিট/টেস্ট — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .padding(.vertical, 6)
-    }
 }
 
 // MARK: - Person row (iOS Contacts feel: avatar · name · role capsule · state)
@@ -739,26 +773,175 @@ private struct KnownPersonAvatar: View {
     }
 }
 
-// MARK: - Detail sheet (read-only person card; edits stay on the web)
+// MARK: - Detail sheet — FULL native edit (owner 2026-07-12): name/role save,
+// photo replace, delete. No more "ওয়েবে খুলুন" punt.
 
 @available(iOS 17.0, *)
 private struct KnownPersonDetailSheet: View {
     let person: KnownPersonItem
     let thumbURL: String?
-    let openWeb: (_ path: String, _ title: String) -> Void
+    let vm: KnownPeopleVM
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+
+    @State private var editName = ""
+    @State private var editRole = "staff"
+    @State private var pickedItems: [PhotosPickerItem] = []
+    @State private var newPhotos: [Data] = []
+    @State private var saving = false
+    @State private var swapping = false
+    @State private var confirmDelete = false
+    @State private var feedback: String? = nil
+
+    private static let roles: [(String, String)] = [
+        ("মালিক", "owner"), ("স্টাফ", "staff"), ("পরিবার", "family"), ("অন্যান্য", "other"),
+    ]
+
+    private var dirty: Bool {
+        editName.trimmingCharacters(in: .whitespaces) != person.name || editRole != person.role
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 headerCard
                 infoCard
-                webLink
+                editCard
+                photoCard
+                deleteButton
             }
             .padding(18)
         }
         .presentationBackground { KnownPeopleAurora() }
+        .onAppear {
+            editName = person.name
+            editRole = person.role
+        }
+        .confirmationDialog("\(person.name)-কে মুছে ফেলবেন?",
+                            isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("হ্যাঁ, মুছুন", role: .destructive) {
+                Task {
+                    await vm.removePerson(person)
+                    dismiss()
+                }
+            }
+            Button("থাক", role: .cancel) {}
+        }
+    }
+
+    private var editCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("এডিট").font(.caption2.weight(.heavy)).textCase(.uppercase)
+                .foregroundStyle(.secondary)
+            TextField("নাম", text: $editName)
+                .font(.subheadline)
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(Color.primary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            Picker("Role", selection: $editRole) {
+                ForEach(Self.roles, id: \.1) { r in Text(r.0).tag(r.1) }
+            }
+            .pickerStyle(.segmented)
+            Button {
+                guard dirty, !saving else { return }
+                saving = true
+                Task {
+                    defer { saving = false }
+                    let ok = await vm.updatePerson(person,
+                                                   name: editName.trimmingCharacters(in: .whitespaces),
+                                                   role: editRole)
+                    feedback = vm.toast
+                    UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+                    if ok { dismiss() }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if saving { ProgressView().tint(.white).controlSize(.small) }
+                    Text(saving ? "সেভ হচ্ছে…" : "সেভ করুন").font(.footnote.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(dirty && !saving ? KnownPeoplePalette.coral : KnownPeoplePalette.coral.opacity(0.35),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(!dirty || saving)
+            if let feedback {
+                Text(feedback).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .knownPeopleGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+    }
+
+    private var photoCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("রেফারেন্স ছবি বদল").font(.caption2.weight(.heavy)).textCase(.uppercase)
+                .foregroundStyle(.secondary)
+            PhotosPicker(selection: $pickedItems, maxSelectionCount: 3, matching: .images) {
+                HStack(spacing: 8) {
+                    Image(systemName: newPhotos.isEmpty ? "photo.badge.plus" : "checkmark.circle.fill")
+                    Text(newPhotos.isEmpty ? "নতুন ১-৩টা পরিষ্কার মুখের ছবি বাছুন"
+                                           : "\(newPhotos.count)টা ছবি বাছাই হয়েছে")
+                        .font(.caption.weight(.semibold))
+                }
+                .foregroundStyle(newPhotos.isEmpty ? .secondary : KnownPeoplePalette.emerald600)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12).padding(.vertical, 11)
+                .background(Color.primary.opacity(0.05),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            }
+            .onChange(of: pickedItems) { _, items in
+                Task { newPhotos = await KnownPeoplePhotoPrep.shrink(items) }
+            }
+            Button {
+                guard !newPhotos.isEmpty, !swapping else { return }
+                swapping = true
+                Task {
+                    defer { swapping = false }
+                    let ok = await vm.replacePhotos(person, photos: newPhotos)
+                    feedback = vm.toast
+                    UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+                    if ok { dismiss() }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if swapping { ProgressView().tint(.white).controlSize(.small) }
+                    Text(swapping ? "বদলানো হচ্ছে…" : "ছবি বদলে দিন").font(.footnote.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(!newPhotos.isEmpty && !swapping
+                            ? KnownPeoplePalette.emerald600 : KnownPeoplePalette.emerald600.opacity(0.35),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(newPhotos.isEmpty || swapping)
+            Text("নতুন ছবি আগের সব রেফারেন্স ছবির জায়গা নেবে।")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .knownPeopleGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+    }
+
+    private var deleteButton: some View {
+        Button(role: .destructive) {
+            confirmDelete = true
+        } label: {
+            Label("\(person.name)-কে মুছে ফেলুন", systemImage: "trash")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(KnownPeoplePalette.red500)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(KnownPeoplePalette.red500.opacity(0.1),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 2)
     }
 
     private var headerCard: some View {
@@ -814,20 +997,6 @@ private struct KnownPersonDetailSheet: View {
                 .foregroundStyle(.secondary)
             Text(value).font(.footnote.weight(.semibold))
         }
-    }
-
-    private var webLink: some View {
-        Button {
-            dismiss()
-            openWeb("/agent/known-people", "Known people")
-        } label: {
-            Label("এডিট/ছবি বদল/মুছুন — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .padding(.top, 2)
     }
 }
 
@@ -985,6 +1154,31 @@ private extension View {
 
 import PhotosUI
 
+/// Shared picked-photo shrink (web fileToSmallBase64 parity): ≤640px JPEG q0.7.
+@available(iOS 17.0, *)
+enum KnownPeoplePhotoPrep {
+    static func shrink(_ items: [PhotosPickerItem]) async -> [Data] {
+        var loaded: [Data] = []
+        for item in items.prefix(3) {
+            if let data = try? await item.loadTransferable(type: Data.self),
+               let ui = UIImage(data: data) {
+                let side: CGFloat = 640
+                let scale = min(1, side / max(ui.size.width, ui.size.height))
+                let target = CGSize(width: ui.size.width * scale,
+                                    height: ui.size.height * scale)
+                let renderer = UIGraphicsImageRenderer(size: target)
+                let small = renderer.image { _ in
+                    ui.draw(in: CGRect(origin: .zero, size: target))
+                }
+                if let jpeg = small.jpegData(compressionQuality: 0.7) {
+                    loaded.append(jpeg)
+                }
+            }
+        }
+        return loaded
+    }
+}
+
 @available(iOS 17.0, *)
 private struct KnownPeopleAddSheet: View {
     let vm: KnownPeopleVM
@@ -1033,27 +1227,7 @@ private struct KnownPeopleAddSheet: View {
                             in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
             }
             .onChange(of: pickedItems) { _, items in
-                Task {
-                    var loaded: [Data] = []
-                    for item in items.prefix(3) {
-                        if let data = try? await item.loadTransferable(type: Data.self),
-                           let ui = UIImage(data: data) {
-                            // Web fileToSmallBase64 shrinks before upload — mirror it.
-                            let side: CGFloat = 640
-                            let scale = min(1, side / max(ui.size.width, ui.size.height))
-                            let target = CGSize(width: ui.size.width * scale,
-                                                height: ui.size.height * scale)
-                            let renderer = UIGraphicsImageRenderer(size: target)
-                            let small = renderer.image { _ in
-                                ui.draw(in: CGRect(origin: .zero, size: target))
-                            }
-                            if let jpeg = small.jpegData(compressionQuality: 0.7) {
-                                loaded.append(jpeg)
-                            }
-                        }
-                    }
-                    photos = loaded
-                }
+                Task { photos = await KnownPeoplePhotoPrep.shrink(items) }
             }
             if let errorText {
                 Text(errorText).font(.caption2.weight(.semibold))

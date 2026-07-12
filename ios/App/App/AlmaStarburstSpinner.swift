@@ -84,7 +84,9 @@ enum AlmaStarburstMode: String, CaseIterable, Identifiable {
 // MARK: - Palette + organic ray data
 
 @available(iOS 17.0, *)
-private enum AlmaRayBurst {
+// Internal (was private): the settled chat wordmark reuses the aura palette so
+// idle "ALMA" matches the loader colours (owner ask 2026-07-12).
+enum AlmaRayBurst {
     static let outer: [CGFloat] = [43, 38, 45, 40, 46, 39, 44, 37, 45, 40, 47, 38]
     static let widths: [CGFloat] = [7.8, 6.4, 7.3, 6.2, 8, 6.6, 7.5, 6.3, 7.8, 6.5, 7.4, 6.4]
     static let collapsed: [CGFloat] = [15, 13, 16, 14, 15, 13, 16, 14, 15, 13, 16, 14]
