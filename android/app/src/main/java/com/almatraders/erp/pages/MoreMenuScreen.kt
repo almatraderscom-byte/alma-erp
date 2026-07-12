@@ -580,8 +580,19 @@ fun MoreMenuScreen(ctx: PushCtx) {
     val dark = AlmaTheme.isDark
     val st = remember { MoreState() }
     val scope = rememberCoroutineScope()
-    val groups = remember { buildMoreGroups() }
     val businesses = remember { buildBusinesses() }
+
+    // Role-gated menu (security audit 2026-07-12): a non-privileged user must not even
+    // SEE a section they can't use. Drop items the role can't reach (web nav gate
+    // mirror, via AlmaSession.canSee), then drop any group left empty. Fail-closed —
+    // an unknown/not-yet-loaded role reads as STAFF, so nothing privileged flashes.
+    val role = com.almatraders.erp.shell.AlmaSession.effectiveRole
+    val groups = remember(role) {
+        buildMoreGroups().mapNotNull { g ->
+            val items = g.items.filter { com.almatraders.erp.shell.AlmaSession.canSee(it.path) }
+            if (items.isEmpty()) null else MenuGroup(g.header, g.icon, items)
+        }
+    }
 
     var openGroup by remember { mutableStateOf<MenuGroup?>(null) }
     var showBusinessSheet by remember { mutableStateOf(false) }
@@ -903,7 +914,17 @@ private fun MoreHeroRow(st: MoreState, dark: Boolean, openPath: (String, String)
         ) {
             item { ClockHeroCard(dark, cardW) }
             item { AlertsHeroCard(st, dark, cardW) { openPath("/portal/office", "Office") } }
-            item { ProgressHeroCard(st, dark, cardW) { openPath("/attendance", "Attendance") } }
+            item {
+                ProgressHeroCard(st, dark, cardW) {
+                    // /attendance is admin/HR-only; a STAFF/VIEWER tap would land on a
+                    // web login page. Route them to their own desk instead.
+                    if (com.almatraders.erp.shell.AlmaSession.canSee("/attendance")) {
+                        openPath("/attendance", "Attendance")
+                    } else {
+                        openPath("/portal", "My Desk")
+                    }
+                }
+            }
         }
     }
 }

@@ -39,6 +39,23 @@ object AlmaSession {
     /** Trading/Digital admin-only writes (accounts, targets, HR, invoices, payments). */
     val canManageBusiness: Boolean get() = isAdmin
 
+    /**
+     * Normalised role used for nav gating. The system owner is always SUPER_ADMIN.
+     * A not-yet-loaded / blank role falls back to STAFF (least-privilege) so the app
+     * NEVER flashes privileged nav before the real role arrives — it only ever GAINS
+     * sections once loaded, never wrongly shows them first.
+     */
+    val effectiveRole: String
+        get() = when {
+            isOwner -> AlmaRoles.SUPER_ADMIN
+            role != null -> AlmaRoles.normalize(role)
+            else -> AlmaRoles.STAFF
+        }
+
+    /** Should this role see/reach a route? Defense-in-depth mirror of the web nav gate. */
+    fun canSee(path: String, businessId: String = AlmaBusinesses.LIFESTYLE): Boolean =
+        AlmaAccess.isPathAllowedForRole(path, effectiveRole, businessId)
+
     suspend fun load(force: Boolean = false) {
         if (loaded && !force) return
         // Role from /api/users/me (authoritative role string).

@@ -48,6 +48,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
@@ -147,17 +148,26 @@ object NativeShell {
 // ── Tabs ──────────────────────────────────────────────────────────────────────────
 
 private class TabSpec(
+    /** Stable identity + index into ALL_TABS — content/stacks key off this, not the
+     *  visible position (which shifts as role gating hides tabs). */
+    val index: Int,
     val title: String,
     val icon: ImageVector,
     val nativeHeader: Boolean,
+    /** Route the tab leads to; null = always shown (Dashboard hosts the Capacitor
+     *  bridge, More is the container). Non-null tabs are hidden when the role can't
+     *  reach the route — the web `filterNavByRole` behaviour. */
+    val gatePath: String?,
 )
 
-private val TABS = listOf(
-    TabSpec("Dashboard", Icons.Outlined.GridView, nativeHeader = true),
-    TabSpec("Orders", Icons.Outlined.Inventory2, nativeHeader = true),
-    TabSpec("Assistant", Icons.Outlined.AutoAwesome, nativeHeader = false),
-    TabSpec("Approvals", Icons.Outlined.Verified, nativeHeader = true),
-    TabSpec("More", Icons.Outlined.MoreHoriz, nativeHeader = true),
+// The full tab set; the visible subset is computed per role in ShellRoot. Order and
+// index are fixed so TabContent(index) and the per-tab push stacks stay stable.
+private val ALL_TABS = listOf(
+    TabSpec(0, "Dashboard", Icons.Outlined.GridView, nativeHeader = true, gatePath = null),
+    TabSpec(1, "Orders", Icons.Outlined.Inventory2, nativeHeader = true, gatePath = "/orders"),
+    TabSpec(2, "Assistant", Icons.Outlined.AutoAwesome, nativeHeader = false, gatePath = "/agent"),
+    TabSpec(3, "Approvals", Icons.Outlined.Verified, nativeHeader = true, gatePath = "/approvals"),
+    TabSpec(4, "More", Icons.Outlined.MoreHoriz, nativeHeader = true, gatePath = null),
 )
 
 // ── Root composable ───────────────────────────────────────────────────────────────
@@ -176,8 +186,23 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
     }
 
     var selectedTab = rememberSaveable { mutableIntStateOf(0) }
-    // One push stack per tab (iOS: one UINavigationController per tab).
-    val stacks = remember { List(TABS.size) { mutableStateListOf<StackEntry>() } }
+    // One push stack per tab (iOS: one UINavigationController per tab). Sized to the
+    // FULL tab set (indexed by TabSpec.index) so gating a tab in/out never reshuffles.
+    val stacks = remember { List(ALL_TABS.size) { mutableStateListOf<StackEntry>() } }
+
+    // Role-gated visible tabs (fail-closed via AlmaSession.effectiveRole). Loaded once
+    // at the shell root so the bar is correct before the first paint settles; reading
+    // effectiveRole here makes the bar recompose the moment the real role arrives.
+    LaunchedEffect(Unit) { AlmaSession.load() }
+    val role = AlmaSession.effectiveRole
+    val visibleTabs = remember(role) {
+        ALL_TABS.filter { it.gatePath == null || AlmaSession.canSee(it.gatePath) }
+    }
+    // If the selected tab got gated away (e.g. role loaded after a default select),
+    // fall back to Dashboard so we never render a hidden tab's content.
+    LaunchedEffect(visibleTabs) {
+        if (visibleTabs.none { it.index == selectedTab.intValue }) selectedTab.intValue = 0
+    }
     val stack = stacks[selectedTab.intValue]
 
     fun pushWebForced(path: String, title: String) {
@@ -225,7 +250,7 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
             Box(Modifier.fillMaxSize().padding(bottom = 0.dp).weight(1f)) {
                 // ── Active tab root ──
                 val tabIndex = selectedTab.intValue
-                val spec = TABS[tabIndex]
+                val spec = ALL_TABS[tabIndex]
                 Column(Modifier.fillMaxSize()) {
                     if (spec.nativeHeader && stack.isEmpty()) {
                         ShellHeader(title = spec.title, dark = dark, onBack = null)
@@ -255,6 +280,7 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
                 }
             }
             ShellTabBar(
+                tabs = visibleTabs,
                 selected = selectedTab.intValue,
                 dark = dark,
                 onSelect = { i ->
@@ -313,9 +339,10 @@ fun ShellHeader(title: String, dark: Boolean, onBack: (() -> Unit)?) {
     }
 }
 
-/** Transparent tab bar: violet selected / muted unselected (AlmaTheme.tabBarAppearance twin). */
+/** Transparent tab bar: violet selected / muted unselected (AlmaTheme.tabBarAppearance
+ *  twin). Renders only the role-visible tabs; each keys off its stable TabSpec.index. */
 @Composable
-private fun ShellTabBar(selected: Int, dark: Boolean, onSelect: (Int) -> Unit) {
+private fun ShellTabBar(tabs: List<TabSpec>, selected: Int, dark: Boolean, onSelect: (Int) -> Unit) {
     val mutedTint = if (dark) Color.White.copy(alpha = 0.45f) else Color.Black.copy(alpha = 0.42f)
     Row(
         Modifier
@@ -324,13 +351,13 @@ private fun ShellTabBar(selected: Int, dark: Boolean, onSelect: (Int) -> Unit) {
             .navigationBarsPadding()
             .height(56.dp),
     ) {
-        TABS.forEachIndexed { i, tab ->
+        tabs.forEach { tab ->
             TabItem(
                 tab = tab,
-                active = i == selected,
+                active = tab.index == selected,
                 activeTint = AlmaTheme.violet,
                 mutedTint = mutedTint,
-                onClick = { onSelect(i) },
+                onClick = { onSelect(tab.index) },
             )
         }
     }
