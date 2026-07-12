@@ -127,13 +127,38 @@ function pageReadText() {
 
 function pageReadDom() {
   const out = []
+  // Heavy SPAs (Facebook Ads Manager / Business Suite) build everything from divs:
+  // options, radios, switches and grid cells are ARIA roles, and many clickables are
+  // bare [tabindex] divs. Cover those too, and read the elements IN THE VIEWPORT
+  // first — on a huge page the old first-250-in-DOM-order sample was mostly nav
+  // chrome while the actual target (a dropdown option, a table row) never made the
+  // list. That was the root cause of the 2026-07-12 Ads Manager failure.
   const sel =
-    'a,button,input,textarea,select,[role=button],[role=link],[role=combobox],[role=menuitem],[role=tab],[role=checkbox],[role=radio],[contenteditable=true]'
-  const els = Array.from(document.querySelectorAll(sel)).slice(0, 250)
-  let n = 0
-  for (const el of els) {
+    'a,button,input,textarea,select,[role=button],[role=link],[role=combobox],[role=menuitem],' +
+    '[role=menuitemradio],[role=menuitemcheckbox],[role=tab],[role=checkbox],[role=radio],' +
+    '[role=option],[role=switch],[role=treeitem],[role=gridcell],[contenteditable=true],[tabindex]'
+  const all = []
+  const seen = new Set()
+  for (const el of Array.from(document.querySelectorAll(sel))) {
+    if (seen.has(el)) continue
+    seen.add(el)
+    if (el.getAttribute && el.getAttribute('tabindex') === '-1' && !el.getAttribute('role')) continue
+    all.push(el)
+  }
+  const vh = window.innerHeight
+  const vw = window.innerWidth
+  const inViewport = (r) => r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw
+  const visible = []
+  for (const el of all) {
     const r = el.getBoundingClientRect()
     if (r.width === 0 && r.height === 0) continue
+    visible.push({ el, vp: inViewport(r) })
+  }
+  // In-viewport elements first, DOM order preserved within each group.
+  visible.sort((a, b) => (a.vp === b.vp ? 0 : a.vp ? -1 : 1))
+  const els = visible.slice(0, 300)
+  let n = 0
+  for (const { el, vp } of els) {
     // Stamp a STABLE ref onto the real DOM node. It survives across executeScript
     // injections (same page), so click/type/select can target `ref` for a precise
     // hit on crowded pages instead of re-matching fuzzy text.
@@ -147,6 +172,7 @@ function pageReadDom() {
       ref,
       tag: el.tagName.toLowerCase(),
       type: el.getAttribute('type') || (el.tagName === 'SELECT' ? 'select' : null),
+      role: el.getAttribute('role') || null,
       name: el.getAttribute('name') || el.getAttribute('aria-label') || null,
       text: (el.innerText || el.value || el.placeholder || '').trim().slice(0, 80),
       // For a <select>, surface its options so the model can pick one by exact text.
@@ -157,6 +183,8 @@ function pageReadDom() {
               .map((o) => (o.text || '').trim())
           : undefined,
       id: el.id || null,
+      // vp=false → below/above the fold; scroll_to its ref before clicking.
+      vp,
     })
   }
   return { url: location.href, title: document.title, elements: out }
@@ -296,9 +324,15 @@ async function pageClick(arg) {
   }
   if (!el && text) {
     const needle = String(text).trim().toLowerCase()
+    // Facebook-class SPAs render "buttons" as divs with ARIA roles (option/radio/
+    // checkbox/switch/gridcell) or bare [tabindex] — the old anchor/button-only list
+    // returned "element not found" on exactly those (Ads Manager incident 2026-07-12).
     const cand = Array.from(
       document.querySelectorAll(
-        'a,button,[role=button],[role=link],[role=menuitem],[role=tab],input[type=submit],input[type=button],label,summary,[onclick]',
+        'a,button,[role=button],[role=link],[role=menuitem],[role=menuitemradio],[role=menuitemcheckbox],' +
+          '[role=tab],[role=option],[role=radio],[role=checkbox],[role=switch],[role=combobox],' +
+          '[role=treeitem],[role=gridcell],input[type=submit],input[type=button],input[type=radio],' +
+          'input[type=checkbox],label,summary,[onclick],[tabindex]',
       ),
     ).filter(visible)
     const hay = (e) =>
@@ -312,7 +346,39 @@ async function pageClick(arg) {
         .trim()
         .toLowerCase()
     // Prefer an exact match, then a substring match — steadier than "first contains".
-    el = cand.find((e) => hay(e) === needle) || cand.find((e) => hay(e).includes(needle)) || null
+    // Among substring matches prefer the SHORTEST haystack (the tightest element),
+    // not the first in DOM order — big wrapper divs often contain the text too.
+    el = cand.find((e) => hay(e) === needle) || null
+    if (!el) {
+      const subs = cand.filter((e) => {
+        const h = hay(e)
+        return h && h.includes(needle) && h.length <= needle.length + 220
+      })
+      subs.sort((a, b) => hay(a).length - hay(b).length)
+      el = subs[0] || null
+    }
+    // Last resort: find the deepest visible node containing the text, then climb to
+    // the nearest clickable ancestor. Catches text inside spans whose clickable
+    // wrapper carries no matching label/aria of its own.
+    if (!el) {
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+      let leaf = null
+      while (walker.nextNode()) {
+        const node = walker.currentNode
+        if (!node.textContent || !node.textContent.toLowerCase().includes(needle)) continue
+        const p = node.parentElement
+        if (!p || !visible(p)) continue
+        leaf = p
+        break
+      }
+      if (leaf) {
+        el =
+          leaf.closest(
+            'a,button,[role=button],[role=link],[role=menuitem],[role=menuitemradio],[role=tab],' +
+              '[role=option],[role=radio],[role=checkbox],[role=switch],[role=combobox],label,[onclick],[tabindex]',
+          ) || leaf
+      }
+    }
   }
   if (!el) return { ok: false, error: 'element not found' }
   // FINAL-SUBMIT BAN (enforced in code — mirrors src/agent/lib/browser/final-submit.ts;
@@ -383,15 +449,31 @@ async function pageClick(arg) {
     document.documentElement.appendChild(rip)
     setTimeout(() => rip.remove(), 650)
   } catch { /* visual only */ }
-  // Fire a real mouse-event sequence — many sites (React/SPA) ignore a bare
-  // .click() but respond to pointer/mouse events. Then call .click() as backstop.
+  // Fire a real pointer+mouse event sequence — many sites (React/SPA, and Facebook
+  // in particular) listen on POINTER events and ignore a bare .click(). Then call
+  // .click() as backstop.
   const mo = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy }
+  try {
+    el.dispatchEvent(new PointerEvent('pointerover', mo))
+    el.dispatchEvent(new PointerEvent('pointerdown', mo))
+  } catch {
+    /* engines without PointerEvent — mouse sequence below still fires */
+  }
   try {
     el.dispatchEvent(new MouseEvent('mouseover', mo))
     el.dispatchEvent(new MouseEvent('mousedown', mo))
-    el.dispatchEvent(new MouseEvent('mouseup', mo))
   } catch {
     /* older engines — ignore */
+  }
+  try {
+    el.dispatchEvent(new PointerEvent('pointerup', mo))
+  } catch {
+    /* ignore */
+  }
+  try {
+    el.dispatchEvent(new MouseEvent('mouseup', mo))
+  } catch {
+    /* ignore */
   }
   el.click()
   setTimeout(() => {
@@ -709,7 +791,12 @@ function pageScrollTo(arg) {
   if (!el && text) {
     const needle = String(text).toLowerCase()
     el =
-      Array.from(document.querySelectorAll('a,button,h1,h2,h3,h4,li,td,th,span,p,label,[role=button],[role=link]'))
+      Array.from(
+        document.querySelectorAll(
+          'a,button,h1,h2,h3,h4,li,td,th,span,p,label,[role=button],[role=link],[role=option],' +
+            '[role=radio],[role=checkbox],[role=menuitem],[role=tab],[role=gridcell],[tabindex]',
+        ),
+      )
         .filter(visible)
         .find((e) => (e.innerText || e.getAttribute('aria-label') || '').trim().toLowerCase().includes(needle)) ||
       null
@@ -752,7 +839,12 @@ function pageHover(arg) {
   if (!el && text) {
     const needle = String(text).toLowerCase()
     el =
-      Array.from(document.querySelectorAll('a,button,li,span,div,[role=button],[role=link],[role=menuitem]'))
+      Array.from(
+        document.querySelectorAll(
+          'a,button,li,span,div,[role=button],[role=link],[role=menuitem],[role=option],[role=tab],' +
+            '[role=gridcell],[role=combobox],[tabindex]',
+        ),
+      )
         .filter(visible)
         .find((e) => (e.innerText || e.getAttribute('aria-label') || '').trim().toLowerCase().includes(needle)) ||
       null
