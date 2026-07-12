@@ -1223,6 +1223,11 @@ private struct CSCreateTab: View {
     @Environment(\.colorScheme) private var scheme
 
     @State private var isAdvanced = false
+    /// Unified engine choice (owner 2026-07-12): 0 FASHN Pro · 1 Nano Banana ·
+    /// 2 GPT Image 2 · 3 Seedream 5.0 Pro. Shared with the Advanced panel so the
+    /// quick row and the run pipeline can never disagree.
+    @State private var engineIdx = 0
+    @State private var engineSeeded = false
 
     var body: some View {
         ScrollView {
@@ -1232,7 +1237,7 @@ private struct CSCreateTab: View {
                     get: { isAdvanced ? 1 : 0 }, set: { isAdvanced = ($0 == 1) }))
                     .padding(.horizontal, 18).padding(.top, 14)
                 engineRow
-                if isAdvanced { CSAdvancedPanel(vm: vm) } else { CSAutoPanel(vm: vm) }
+                if isAdvanced { CSAdvancedPanel(vm: vm, engineIdx: $engineIdx) } else { CSAutoPanel(vm: vm) }
                 Color.clear.frame(height: 130)
             }
         }
@@ -1240,28 +1245,58 @@ private struct CSCreateTab: View {
         .scrollDismissesKeyboard(.interactively)
         // The engine chips need the saved settings even when the Library tab was
         // never opened this session.
-        .task { if vm.settings == nil { await vm.loadLibraryExtras() } }
+        .task {
+            if vm.settings == nil { await vm.loadLibraryExtras() }
+            // Seed the shared engine choice once: FASHN when configured (today's
+            // default behaviour), else whatever render model the kv points at.
+            if !engineSeeded {
+                engineSeeded = true
+                if vm.config?.fashnConfigured == true { engineIdx = 0 }
+                else {
+                    switch vm.settings?.imageEngine {
+                    case "gpt": engineIdx = 2
+                    case "seedream": engineIdx = 3
+                    default: engineIdx = 1
+                    }
+                }
+            }
+        }
     }
 
-    /// Engine quick-switch ON the work screen (owner 2026-07-12: "কাজ করার সময়
-    /// এখান থেকেই বদলাতে চাই") — same settings API as the Library card, applies
-    /// from the NEXT render; FASHN try-on is engine-independent.
+    /// Engine quick-switch ON the work screen (owner 2026-07-12) — ONE selector
+    /// for the whole pipeline: FASHN Pro (try-on/মডেল-শট) or one of the three
+    /// render models. Picking a render model also writes the cs_image_models kv,
+    /// so the next render uses it everywhere (native = web = worker).
     private var engineRow: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("ইমেজ ইঞ্জিন")
+            Text("ইঞ্জিন")
                 .font(.system(size: 11, weight: .bold)).tracking(0.6)
                 .foregroundStyle(AgentPalette(scheme).muted)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 148), spacing: 6)], alignment: .leading, spacing: 6) {
-                CSChip(text: "Nano Banana (ফটোরিয়াল)", on: (vm.settings?.imageEngine ?? "gemini") == "gemini") {
+                CSChip(text: "FASHN Pro (মডেল-শট)", on: engineIdx == 0) {
+                    if vm.config?.fashnConfigured == true {
+                        engineIdx = 0
+                    } else {
+                        vm.flash("FASHN Pro এখন configure করা নেই")
+                    }
+                }
+                CSChip(text: "Nano Banana (ফটোরিয়াল)", on: engineIdx == 1) {
+                    engineIdx = 1
                     Task { await vm.saveSettings(imageEngine: "gemini") }
                 }
-                CSChip(text: "GPT Image 2 (লেখা/পোস্টার)", on: vm.settings?.imageEngine == "gpt") {
+                CSChip(text: "GPT Image 2 (লেখা/পোস্টার)", on: engineIdx == 2) {
+                    engineIdx = 2
                     Task { await vm.saveSettings(imageEngine: "gpt") }
                 }
-                CSChip(text: "Seedream 5.0 Pro (2K · নতুন)", on: vm.settings?.imageEngine == "seedream") {
+                CSChip(text: "Seedream 5.0 Pro (2K · নতুন)", on: engineIdx == 3) {
+                    engineIdx = 3
                     Task { await vm.saveSettings(imageEngine: "seedream") }
                 }
             }
+            Text(engineIdx == 0
+                 ? "Try-on/মডেল-শট FASHN-এ — best realism। ছবি/পোস্টার রেন্ডার পাশের মডেলগুলোতে।"
+                 : "পরের রেন্ডার থেকে কার্যকর · Advanced-এর Run-ও এই ইঞ্জিনে চলবে")
+                .font(.system(size: 10)).foregroundStyle(AgentPalette(scheme).muted)
         }
         .padding(.horizontal, 18).padding(.top, 12)
     }
@@ -1404,7 +1439,7 @@ private struct CSAdvancedPanel: View {
     @State private var numImages = 1
     @State private var vibe = 0
     @State private var durationSec = 6
-    @State private var providerPick = 0      // 0 = FASHN Pro, 1 = Gemini
+    @Binding var engineIdx: Int               // shared: 0 FASHN · 1 NB · 2 GPT · 3 Seedream
     @State private var modelSheet = false
     @State private var addRoleSheet: String?  // family checklist "add" role
 
@@ -1423,8 +1458,17 @@ private struct CSAdvancedPanel: View {
     private var bothProviders: Bool { (vm.config?.fashnConfigured ?? false) && (vm.config?.geminiConfigured ?? false) }
     private var provider: String {
         if mode.fashnOnly { return "fashn" }
-        if bothProviders { return providerPick == 0 ? "fashn" : "gemini" }
+        if bothProviders { return engineIdx == 0 ? "fashn" : "gemini" }
         return (vm.config?.fashnConfigured ?? false) ? "fashn" : "gemini"
+    }
+    /// Bangla label of the picked engine — for the Run button.
+    private var engineLabel: String {
+        if effectiveProvider == "fashn" { return "FASHN Pro" }
+        switch engineIdx {
+        case 2: return "GPT Image 2"
+        case 3: return "Seedream 5.0"
+        default: return "Nano Banana"
+        }
     }
     private var effectiveProvider: String { isMultiPersonFamily ? "gemini" : provider }
 
@@ -1652,10 +1696,6 @@ private struct CSAdvancedPanel: View {
                 CSSegment(items: CS.resolutions, index: $resolution)
                 CSSegment(items: CS.genModes, index: $genMode)
             }.padding(.horizontal, 18).padding(.top, 10)
-            if bothProviders && !mode.fashnOnly {
-                stepLabel("ইঞ্জিন")
-                CSSegment(items: ["FASHN Pro", "Gemini"], index: $providerPick).padding(.horizontal, 18)
-            }
             stepLabel("কয়টি ছবি")
             HStack(spacing: 10) {
                 ForEach(1...4, id: \.self) { n in
@@ -1695,7 +1735,7 @@ private struct CSAdvancedPanel: View {
                 HStack(spacing: 9) {
                     if vm.generating { ProgressView().tint(.white) }
                     else { Image(systemName: "wand.and.stars").font(.system(size: 17, weight: .semibold)) }
-                    Text(vm.generating ? "জেনারেট হচ্ছে…" : "Run — \(effectiveProvider == "fashn" ? "FASHN Pro" : "Gemini")")
+                    Text(vm.generating ? "জেনারেট হচ্ছে…" : "Run — \(engineLabel)")
                         .font(.system(size: 16, weight: .bold))
                 }
                 .foregroundStyle(.white).frame(maxWidth: .infinity).padding(16)
