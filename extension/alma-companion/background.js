@@ -436,6 +436,10 @@ async function pageClick(arg) {
     ].join('|'),
     'i',
   )
+  // Composition-mode exemption (mirrors COMPOSE_EXEMPT_RE in final-submit.ts):
+  // "Create post" / "New ad" only OPEN an editor — the draft still needs a
+  // separate Publish click, which stays blocked.
+  const composeExemptRe = /\b(create|new)\s+(a\s+)?(post|ad)\b|নতুন\s*(পোস্ট|বিজ্ঞাপন)|পোস্ট\s*তৈরি/i
   const elLabel = (
     (el.innerText || el.value || '') +
     ' ' +
@@ -445,7 +449,7 @@ async function pageClick(arg) {
   )
     .trim()
     .slice(0, 120)
-  if (finalSubmitRe.test(elLabel)) {
+  if (!composeExemptRe.test(elLabel) && finalSubmitRe.test(elLabel)) {
     return {
       ok: false,
       blocked: true,
