@@ -119,6 +119,27 @@ export async function addKnownPersonPhotos(personId: string, photos: NewPhoto[])
   return toKnownPerson(updated)
 }
 
+/** Replace ALL reference photos (native "ছবি বদল") — old storage objects are
+ *  orphan-safe (private bucket), so cleanup failures never block the swap. */
+export async function replaceKnownPersonPhotos(personId: string, photos: NewPhoto[]): Promise<KnownPerson> {
+  const row = (await db.agentKnownPerson.findUnique({ where: { id: personId } })) as KnownPersonRow | null
+  if (!row) throw new Error('person not found')
+  const next = photos.slice(0, MAX_PHOTOS_PER_PERSON)
+  if (next.length === 0) throw new Error('at least one reference photo required')
+  const paths: string[] = []
+  for (let i = 0; i < next.length; i++) {
+    const p = next[i]!
+    const objectPath = `known-people/${personId}/${Date.now()}-${i}.${extForMime(p.mimeType)}`
+    await agentStorageUpload(objectPath, Buffer.from(p.base64, 'base64'), p.mimeType, { upsert: true })
+    paths.push(objectPath)
+  }
+  const updated = (await db.agentKnownPerson.update({
+    where: { id: personId },
+    data: { photoPaths: paths },
+  })) as KnownPersonRow
+  return toKnownPerson(updated)
+}
+
 export async function updateKnownPerson(
   personId: string,
   data: { name?: string; role?: string; active?: boolean; note?: string },
