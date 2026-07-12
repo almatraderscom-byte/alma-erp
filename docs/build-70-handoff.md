@@ -33,6 +33,20 @@ Native (`ios/App/App/AssistantSwiftUI.swift` — needs sim build):
 8. **Long-press copy** — agent prose, full reply, and user bubbles →
    context menu "কপি করুন" + haptic.
 
+Round 2 (2026-07-12, commit d188323):
+
+9. **Opinion on cron approval cards** — on a pending "Dispatch tasks" card
+   (evening cron, no chat behind it), submit an opinion → NO "ইতিমধ্যে সম্পন্ন"
+   error; the head revises the same card (stays pending) and replies what
+   changed. Server-side — verify on the Vercel preview.
+10. **Ask-card answer binding** — tap a card option mid-long-conversation →
+    the head's next turn acts on THAT option (thought should reference it),
+    never the other one. Server-side.
+11. **Dashboard "আমার টুডু" scope** — native widget + web bar show ONLY the
+    owner's own todos + today's owner_action items; agent duties (ব্রিফিং,
+    স্ট্র্যাটেজি পাস, কস্ট রিকনসাইল…) gone; count drops accordingly. Native
+    part needs the sim build; web part visible on the preview.
+
 ## Ship gate
 
 - `swiftc -typecheck` / sim build green, screenshots of 4–8 captured.
