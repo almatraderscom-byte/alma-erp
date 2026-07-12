@@ -238,6 +238,20 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     thinking: 'level',
   },
   {
+    id: 'or-grok-4.20',
+    label: 'Grok 4.20 (OpenRouter)',
+    provider: 'openrouter',
+    apiModel: 'x-ai/grok-4.20',
+    supportsTools: true,
+    // OpenRouter lists input_cache_read pricing ($0.20/M) — prompt caching works.
+    supportsCaching: true,
+    // The registry's biggest window — 2M tokens (long documents / huge context).
+    contextWindow: 2_000_000,
+    inPerM: 1.25,
+    outPerM: 2.5,
+    thinking: 'level',
+  },
+  {
     id: 'or-deepseek-v4-pro',
     label: 'DeepSeek V4 Pro (OpenRouter)',
     provider: 'openrouter',
