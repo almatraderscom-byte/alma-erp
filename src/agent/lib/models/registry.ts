@@ -226,10 +226,12 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     thinking: 'none',
   },
   {
-    id: 'or-gemini-2.5-flash',
-    label: 'Gemini 2.5 Flash (OpenRouter)',
-    provider: 'openrouter',
-    apiModel: 'google/gemini-2.5-flash',
+    // Direct Google API like the other Gemini heads (owner 2026-07-12: no
+    // OpenRouter detour — same GEMINI_API_KEY billing as 3.x).
+    id: 'gemini-2.5-flash',
+    label: 'Gemini 2.5 Flash',
+    provider: 'google',
+    apiModel: 'gemini-2.5-flash',
     supportsTools: true,
     supportsCaching: false,
     contextWindow: 1_000_000,
