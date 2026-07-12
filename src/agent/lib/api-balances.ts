@@ -18,6 +18,7 @@ export type BalanceProviderId =
   | 'oxylabs'
   | 'elevenlabs'
   | 'veo'
+  | 'fal'
 
 export type ApiBalanceCredit = {
   initialCredit: number
@@ -77,6 +78,10 @@ export const PROVIDER_ALIASES: Record<string, BalanceProviderId> = {
   veo: 'veo',
   'veo 3': 'veo',
   veo3: 'veo',
+  fal: 'fal',
+  'fal.ai': 'fal',
+  falai: 'fal',
+  seedream: 'fal',
 }
 
 const PROVIDER_META: Record<BalanceProviderId, { label: string; source: string; free?: boolean }> = {
@@ -90,10 +95,11 @@ const PROVIDER_META: Record<BalanceProviderId, { label: string; source: string; 
   oxylabs: { label: 'Oxylabs', source: 'Credit track' },
   elevenlabs: { label: 'ElevenLabs', source: 'Live API' },
   veo: { label: 'VEO 3', source: 'Input+Track' },
+  fal: { label: 'fal.ai (Seedream)', source: 'Live API' },
 }
 
 const TRACKED_COST_PROVIDERS: BalanceProviderId[] = [
-  'anthropic', 'twilio', 'openai', 'openrouter', 'gemini', 'google_tts', 'oxylabs', 'elevenlabs', 'veo',
+  'anthropic', 'twilio', 'openai', 'openrouter', 'gemini', 'google_tts', 'oxylabs', 'elevenlabs', 'veo', 'fal',
 ]
 
 function creditKey(provider: BalanceProviderId): string {
@@ -372,6 +378,26 @@ async function fetchOpenRouterActivityMonthUsd(
   }
 }
 
+/** fal.ai prepaid credits — the admin key's account billing API (owner 2026-07-12:
+ *  live balance visible on the Credit Usage + Subscriptions screens). */
+async function fetchFalBalanceUsd(): Promise<number | null> {
+  const apiKey = process.env.FAL_KEY
+  if (!apiKey) return null
+  try {
+    const res = await fetch('https://api.fal.ai/v1/account/billing?expand=credits', {
+      headers: { Authorization: `Key ${apiKey}` },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) return null
+    const data = await res.json() as { credits?: { current_balance?: number } }
+    const bal = data.credits?.current_balance
+    return typeof bal === 'number' && Number.isFinite(bal) ? roundUsd(bal) : null
+  } catch (err) {
+    console.warn('[api-balances] fetchFalBalance failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
 /** ElevenLabs subscription — character quota remaining (Starter plan). */
 async function fetchElevenLabsBalanceUsd(): Promise<number | null> {
   const apiKey = process.env.ELEVENLABS_API_KEY
@@ -440,13 +466,14 @@ export async function refreshApiBalanceCache(): Promise<{
     querySpendByProviderBetween(monthStart, monthEnd),
   ])
 
-  const [twilioLive, anthropicAdminMonth, openaiAdminMonth, openRouterLive, openRouterActivityMonth, elevenLabsLive] = await Promise.all([
+  const [twilioLive, anthropicAdminMonth, openaiAdminMonth, openRouterLive, openRouterActivityMonth, elevenLabsLive, falLive] = await Promise.all([
     fetchTwilioBalance(),
     fetchAnthropicMonthSpendUsd(todayStr),
     fetchOpenAIMonthSpendUsd(monthStart, monthEnd),
     fetchOpenRouterCreditsUsd(),
     fetchOpenRouterActivityMonthUsd(todayStr),
     fetchElevenLabsBalanceUsd(),
+    fetchFalBalanceUsd(),
   ])
 
   let twilioRaw: { balance: string; currency: string } | null = null
@@ -471,6 +498,8 @@ export async function refreshApiBalanceCache(): Promise<{
       balanceUsd = elevenLabsLive
     } else if (id === 'openrouter' && openRouterLive != null) {
       balanceUsd = openRouterLive
+    } else if (id === 'fal' && falLive != null) {
+      balanceUsd = falLive
     }
 
     // ---- Authoritative month-to-date from each provider's billing API ----
@@ -490,7 +519,8 @@ export async function refreshApiBalanceCache(): Promise<{
     // OpenRouter balance is live from the credits API; fall back to KV-credit
     // tracking only if the live call returned null (key unset / API down).
     const openRouterLiveResolved = id === 'openrouter' && openRouterLive != null
-    if (id !== 'twilio' && id !== 'elevenlabs' && !openRouterLiveResolved && credit) {
+    const falLiveResolved = id === 'fal' && falLive != null
+    if (id !== 'twilio' && id !== 'elevenlabs' && !openRouterLiveResolved && !falLiveResolved && credit) {
       const since = new Date(credit.lastTopup)
       const spent = await querySpendSince(id, since)
       balanceUsd = roundUsd(credit.initialCredit - spent)
@@ -532,6 +562,7 @@ export async function refreshApiBalanceCache(): Promise<{
   creditFlags.elevenlabs = Boolean(process.env.ELEVENLABS_API_KEY || (await getApiBalanceCredit('elevenlabs')))
   // OpenRouter low-balance alerting keys off the live credits API being available.
   creditFlags.openrouter = Boolean(process.env.OPENROUTER_API_KEY || (await getApiBalanceCredit('openrouter')))
+  creditFlags.fal = Boolean(process.env.FAL_KEY || (await getApiBalanceCredit('fal')))
 
   const alerts = computeLowBalanceAlerts(providers, {
     anthropicAdmin: Boolean(process.env.ANTHROPIC_ADMIN_API_KEY),
