@@ -107,6 +107,20 @@ const MARKETING_HEAD_WRAPUP_NUDGE =
   'হাতে যা তথ্য আছে তা দিয়েই মার্কেটিং কাজটা নিজে শেষ করো এবং সংক্ষেপে চূড়ান্ত উত্তর দাও। ' +
   'মার্কেটিং তোমার নিজের বিশেষত্ব — এটা অন্য কাউকে দিয়ো না।'
 
+// ── Announced-intent-but-no-action (adapter heads) ───────────────────────────
+// Flash-tier heads (Gemini Flash, DeepSeek…) constantly END a turn mid-task by
+// ANNOUNCING the next step ("এখন Manual destination সিলেক্ট করা হবে…") without
+// doing it — the owner had to say "continue" after every round (2026-07-12
+// Ads Manager incident). core.ts has this net only for zero-tool Claude turns;
+// here we check the TAIL of the final text so a turn that already ran tools but
+// signs off with a future promise gets pushed to actually act. Bounded 2×.
+const INTENT_TAIL_RE =
+  /(করা\s*হবে|করবো?\b|করে\s*দিচ্ছি|করে\s*দেব|করছি\s*[.…]*$|যাচ্ছি\s*[.…]*$|খুলছি\s*[.…]*$|সিলেক্ট\s*কর(ছি|া\s*হবে)|ক্লিক\s*কর(ছি|া\s*হবে)|let me\s|i('|’)?ll\s|now i (will|am)|going to\s)/i
+const ADAPTER_ACT_NOW_NUDGE =
+  'তুমি বললে পরের ধাপটা করবে, কিন্তু না করেই টার্ন শেষ করে দিয়েছ। ঘোষণা নয় — কাজ। ' +
+  'এখনই, এই একই টার্নে, যে ধাপটার কথা বললে সেটা live_browser_act/দরকারি টুল দিয়ে আসলে করো, ' +
+  'তারপর ফলাফল নিজের চোখে দেখে Boss-কে জানাও। Boss-কে যেন আবার তাগাদা দিতে না হয়।'
+
 async function loadPinnedMemories(
   personalMode: boolean,
   businessId: AgentBusinessId,
@@ -360,6 +374,8 @@ async function* runAlternateProviderTurn(
   // Gemini does this occasionally and ending the turn there strands the owner
   // with a blank reply (2026-07-12: WhatsApp-fix turn died after one navigate).
   let emptyRoundRetries = 0
+  // Announced-intent guard (see INTENT_TAIL_RE above).
+  let intentNudges = 0
   let memoryNudgeSent = false
   let finalText = ''
   let delegationAwaiting = false
@@ -513,6 +529,23 @@ async function* runAlternateProviderTurn(
                 'হয় পরের টুল স্টেপটা চালাও, নয়তো এ পর্যন্ত কী হলো বসকে বাংলায় জানাও। চুপ করে থেমো না।',
             },
           ]
+          continue
+        }
+        // The model signed off by PROMISING the next step instead of doing it —
+        // push it to act now, in this same turn (flash-tier heads do this a lot).
+        if (
+          !signal?.aborted
+          && intentNudges < 2
+          && iterationText.trim()
+          && INTENT_TAIL_RE.test(iterationText.trim().slice(-260))
+        ) {
+          intentNudges++
+          messages = [
+            ...messages,
+            { role: 'assistant', content: iterationText },
+            { role: 'user', content: ADAPTER_ACT_NOW_NUDGE },
+          ]
+          finalText = ''
           continue
         }
         if (!signal?.aborted && verifyRetries < MAX_VERIFY_RETRIES && iterationText.trim()) {
