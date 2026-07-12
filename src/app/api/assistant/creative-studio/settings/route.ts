@@ -30,12 +30,21 @@ export async function GET(req: NextRequest) {
   const denied = await auth(req)
   if (denied) return denied
 
-  const [qcLevel, notify, weights, garmentRows] = await Promise.all([
+  const [qcLevel, notify, weights, garmentRows, imageModels] = await Promise.all([
     readKv(QC_LEVEL_KEY),
     readKv(NOTIFY_KEY),
     readSceneWeights(),
     db.agentKvSetting.findMany({ where: { key: { startsWith: GARMENT_PREFIX } } }),
+    readKv('cs_image_models'),
   ])
+
+  // Image engine — which model family the worker's Gemini-path renders use.
+  // 'gpt' when the kv points the pro tier at a gpt-image model, else 'gemini'.
+  let imageEngine: 'gemini' | 'gpt' = 'gemini'
+  try {
+    const cfg = imageModels ? (JSON.parse(imageModels) as { pro?: string }) : null
+    if (cfg?.pro?.startsWith('gpt-image')) imageEngine = 'gpt'
+  } catch { /* malformed kv → default */ }
 
   const garments = (garmentRows as Array<{ key: string; value: string }>).map((r) => {
     const [role, ...rest] = r.key.slice(GARMENT_PREFIX.length).split(':')
@@ -49,6 +58,7 @@ export async function GET(req: NextRequest) {
   return Response.json({
     qcLevel: qcLevel ?? 'normal',
     notifyOnDone: notify === '1',
+    imageEngine,
     sceneWeights: weights,
     childGarments: garments.map((g) => ({ ...g, url: signed[g.garmentPath] ?? null })),
   })
@@ -57,7 +67,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const denied = await auth(req)
   if (denied) return denied
-  let body: { qcLevel?: string; notifyOnDone?: boolean }
+  let body: { qcLevel?: string; notifyOnDone?: boolean; imageEngine?: string }
   try { body = await req.json() } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }) }
 
   if (body.qcLevel && ['off', 'normal', 'strict'].includes(body.qcLevel)) {
@@ -65,6 +75,16 @@ export async function POST(req: NextRequest) {
   }
   if (typeof body.notifyOnDone === 'boolean') {
     await writeKv(NOTIFY_KEY, body.notifyOnDone ? '1' : '0')
+  }
+  // Image engine switch (owner request 2026-07-12): the worker re-reads the
+  // cs_image_models kv before every render, so this applies to the NEXT job —
+  // no redeploy. 'gpt' → GPT Image 2 both tiers (worker maps standard→medium,
+  // pro→high quality); 'gemini' → delete the kv, back to Nano Banana defaults.
+  // FASHN try-on renders are engine-independent and unaffected.
+  if (body.imageEngine === 'gpt') {
+    await writeKv('cs_image_models', JSON.stringify({ standard: 'gpt-image-2', pro: 'gpt-image-2' }))
+  } else if (body.imageEngine === 'gemini') {
+    await db.agentKvSetting.deleteMany({ where: { key: 'cs_image_models' } })
   }
   return Response.json({ ok: true })
 }

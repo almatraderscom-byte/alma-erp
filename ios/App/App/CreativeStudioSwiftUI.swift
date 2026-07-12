@@ -203,6 +203,7 @@ struct CSChildGarment: Decodable, Identifiable, Equatable {
 struct CSStudioSettings: Decodable {
     let qcLevel: String?
     let notifyOnDone: Bool?
+    let imageEngine: String?
     let childGarments: [CSChildGarment]?
 }
 
@@ -846,10 +847,11 @@ final class CreativeStudioVM {
         if let b2 { brandStatus = b2 }
     }
 
-    func saveSettings(qcLevel: String? = nil, notifyOnDone: Bool? = nil) async {
+    func saveSettings(qcLevel: String? = nil, notifyOnDone: Bool? = nil, imageEngine: String? = nil) async {
         var body: [String: AnyEncodable] = [:]
         if let qcLevel { body["qcLevel"] = AnyEncodable(qcLevel) }
         if let notifyOnDone { body["notifyOnDone"] = AnyEncodable(notifyOnDone) }
+        if let imageEngine { body["imageEngine"] = AnyEncodable(imageEngine) }
         do {
             let _: CSOK = try await AlmaAPI.shared.send("POST", "/api/assistant/creative-studio/settings", body: body)
             toast = "সেভ হয়েছে"
@@ -863,6 +865,7 @@ final class CreativeStudioVM {
                 "DELETE", "/api/assistant/creative-studio/settings?key=\(key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key)")
             if let st = settings {
                 settings = CSStudioSettings(qcLevel: st.qcLevel, notifyOnDone: st.notifyOnDone,
+                                            imageEngine: st.imageEngine,
                                             childGarments: st.childGarments?.filter { $0.key != key })
             }
         } catch { toast = "হয়নি" }
@@ -2876,6 +2879,19 @@ private struct CSLibraryTab: View {
                         }
                     }
                 }
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text("ইমেজ ইঞ্জিন").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(AgentPalette(scheme).ink)
+                HStack(spacing: 6) {
+                    CSChip(text: "Nano Banana (ফটোরিয়াল)", on: (vm.settings?.imageEngine ?? "gemini") == "gemini") {
+                        Task { await vm.saveSettings(imageEngine: "gemini") }
+                    }
+                    CSChip(text: "GPT Image 2 (লেখা/পোস্টার)", on: vm.settings?.imageEngine == "gpt") {
+                        Task { await vm.saveSettings(imageEngine: "gpt") }
+                    }
+                }
+                Text("পরের রেন্ডার থেকে কার্যকর · try-on (FASHN) এতে বদলায় না")
+                    .font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted)
             }
             Toggle("কাজ শেষ হলে Telegram-এ জানাও", isOn: Binding(
                 get: { vm.settings?.notifyOnDone ?? false },

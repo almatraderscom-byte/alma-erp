@@ -497,6 +497,8 @@ export async function retryStudioJob(pendingActionId: string) {
 export type StudioSettings = {
   qcLevel: 'off' | 'normal' | 'strict'
   notifyOnDone: boolean
+  /** Which model family renders images: Nano Banana (default) or GPT Image 2. */
+  imageEngine: 'gemini' | 'gpt'
   sceneWeights: Record<string, number>
   childGarments: Array<{ key: string; role: string; productPath: string; garmentPath: string; url: string | null }>
 }
@@ -507,7 +509,7 @@ export async function fetchStudioSettings(): Promise<StudioSettings> {
   return res.json()
 }
 
-export async function saveStudioSettings(patch: { qcLevel?: string; notifyOnDone?: boolean }) {
+export async function saveStudioSettings(patch: { qcLevel?: string; notifyOnDone?: boolean; imageEngine?: 'gemini' | 'gpt' }) {
   const res = await fetch('/api/assistant/creative-studio/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
