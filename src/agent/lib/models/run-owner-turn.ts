@@ -114,8 +114,10 @@ const MARKETING_HEAD_WRAPUP_NUDGE =
 // Ads Manager incident). core.ts has this net only for zero-tool Claude turns;
 // here we check the TAIL of the final text so a turn that already ran tools but
 // signs off with a future promise gets pushed to actually act. Bounded 2×.
+// NOTE: no \b after Bangla letters — JS ASCII \b never matches next to them
+// (the first version silently never fired on "সিলেক্ট করব।").
 const INTENT_TAIL_RE =
-  /(করা\s*হবে|করবো?\b|করে\s*দিচ্ছি|করে\s*দেব|করছি\s*[.…]*$|যাচ্ছি\s*[.…]*$|খুলছি\s*[.…]*$|সিলেক্ট\s*কর(ছি|া\s*হবে)|ক্লিক\s*কর(ছি|া\s*হবে)|let me\s|i('|’)?ll\s|now i (will|am)|going to\s)/i
+  /(করা\s*হবে|করব(ো)?(?![ঀ-ৼ])|করে\s*দিচ্ছি|করে\s*দেব|নির্বাচন\s*কর|সিলেক্ট\s*কর(ব|ছি|া\s*হবে)|ক্লিক\s*কর(ব|ছি|া\s*হবে)|পরের\s*ধাপে|let me\s|i('|’)?ll\s|now i (will|am)|going to\s)/i
 const ADAPTER_ACT_NOW_NUDGE =
   'তুমি বললে পরের ধাপটা করবে, কিন্তু না করেই টার্ন শেষ করে দিয়েছ। ঘোষণা নয় — কাজ। ' +
   'এখনই, এই একই টার্নে, যে ধাপটার কথা বললে সেটা live_browser_act/দরকারি টুল দিয়ে আসলে করো, ' +
