@@ -812,6 +812,7 @@ fun PortalOfficeScreen(ctx: PushCtx) {
     var showSelfCreate by remember { mutableStateOf(false) }
     var showChat by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
+    var showIntercom by remember { mutableStateOf(false) }
 
     // Live 1s tick for the lunch countdown.
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -837,13 +838,8 @@ fun PortalOfficeScreen(ctx: PushCtx) {
             vm.selfRole == "owner" -> ownerHub(vm, dark, scope = { block -> scope.launch { block() } }, onOwnerTask = { ownerTask = it }, onChat = { showChat = true }, onHistory = { showHistory = true }, onWeb = ctx.openWebForced)
             else -> staffOffice(vm, dark, nowMs, onTask = { detailTask = it }, onSelfCreate = { showSelfCreate = true }, onChat = { showChat = true }, onLunch = { scope.launch { vm.lunchToggle() } }, onMarkAll = { scope.launch { vm.markAllRead() } }, onMarkOne = { n -> scope.launch { vm.markRead(n) } })
         }
-        item {
-            Text(
-                "ওয়েব ভার্সন",
-                color = AlmaTheme.inkSecondary(dark), fontSize = 11.sp,
-                textDecoration = TextDecoration.Underline, textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().plainClick { ctx.openWebForced("/portal/office", "Office") }.padding(vertical = 6.dp),
-            )
+        if (vm.roleResolved && !vm.authExpired) {
+            item { IntercomLaunchCard(dark) { showIntercom = true } }
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
@@ -872,6 +868,9 @@ fun PortalOfficeScreen(ctx: PushCtx) {
         ModalBottomSheet(onDismissRequest = { showHistory = false }, containerColor = AlmaTheme.rootBg(dark)) {
             OfficeHistorySheet(dark)
         }
+    }
+    if (showIntercom) {
+        IntercomSheet(isOwner = vm.selfRole == "owner", dark = dark, onDismiss = { showIntercom = false })
     }
 }
 
