@@ -4,7 +4,7 @@
  * Other providers use normalized adapters with the same tool handlers + claim-verifier.
  */
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET } from '@/agent/config'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { getOfficePulse } from '@/agent/lib/office-pulse'
@@ -397,9 +397,12 @@ async function* runAlternateProviderTurn(
   let headToolRounds = 0
   let budgetNudgeSent = false
   let canceled = false
+  // Live-browser turns raise this cap (see BROWSER_TURN_MAX_ITERATIONS) — a real
+  // UI task is 15–30 look→act rounds and must not die silently at the default cap.
+  let maxIterations = MAX_TOOL_ITERATIONS
 
   try {
-    for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+    for (let iteration = 0; iteration < maxIterations; iteration++) {
       if (signal?.aborted) break
       // Owner hit Stop — cross-instance cancel flag (see core.ts for rationale).
       if (await isTurnCancelRequested(turnId)) { canceled = true; break }
@@ -508,7 +511,12 @@ async function* runAlternateProviderTurn(
       }
 
       // This turn requested tools → count it against the head's tool-round budget.
-      headToolRounds++
+      // EXCEPT live-browser-only rounds: driving the owner's Chrome is inherently
+      // many small owner-supervised steps that no cheap worker can take over, so
+      // they neither burn the budget nor stay confined to the default cap.
+      const browserRound = calls.length > 0 && calls.every((c) => c.name.startsWith('live_browser_'))
+      if (browserRound) maxIterations = BROWSER_TURN_MAX_ITERATIONS
+      else headToolRounds++
 
       const toolResults: Array<{ id: string; name: string; result: unknown }> = []
       for (const call of calls) {
