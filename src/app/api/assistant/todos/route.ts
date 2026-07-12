@@ -36,6 +36,49 @@ export async function GET(req: NextRequest) {
   const statusParam = req.nextUrl.searchParams.get('status')
   const includeCompleted = req.nextUrl.searchParams.get('includeCompleted') === 'true'
 
+  // view=owner — the dashboard "আমার টুডু" scope (owner rule 2026-07-12): ONLY
+  //   1. the owner's own todos (source='owner' — added by him in the UI, or added
+  //      for him by the agent on his request) → persist until HE completes them;
+  //   2. agent-raised items that need the OWNER's action today
+  //      (source='owner_action') → shown for the day they were raised, then they
+  //      reset (drop off) at the Dhaka day end automatically.
+  // The agent's own work items (source='agent'), scheduler duties (day_shift /
+  // dutyKey) and every other machine source NEVER appear in this view — that
+  // noise is what inflated the widget to 23 "pending" items.
+  if (req.nextUrl.searchParams.get('view') === 'owner') {
+    const { start, end } = dueDateRangeDhaka(todayYmdDhaka())
+    const [ownerTodos, ownerActions] = await Promise.all([
+      prisma.agentTodo.findMany({
+        where: {
+          businessId,
+          source: 'owner',
+          dutyKey: null,
+          status: includeCompleted ? undefined : { notIn: ['completed', 'cancelled'] },
+        },
+        orderBy: [{ createdAt: 'desc' }],
+      }),
+      prisma.agentTodo.findMany({
+        where: {
+          businessId,
+          source: 'owner_action',
+          status: { notIn: ['completed', 'cancelled'] },
+          OR: [
+            { createdAt: { gte: start, lte: end } },
+            { dueDate: { gte: start, lte: end } },
+          ],
+        },
+        orderBy: [{ createdAt: 'desc' }],
+      }),
+    ])
+    const serializedOwner = sortTodosForDisplay([...ownerActions, ...ownerTodos]).map((t) => ({
+      ...t,
+      dueDate: t.dueDate?.toISOString() ?? null,
+      createdAt: t.createdAt.toISOString(),
+      completedAt: t.completedAt?.toISOString() ?? null,
+    }))
+    return NextResponse.json({ todos: serializedOwner })
+  }
+
   const where: Record<string, unknown> = { businessId }
 
   if (statusParam) {

@@ -89,12 +89,28 @@ export async function POST(
   }
 
   const rawConvId = action.conversationId ?? (action.payload as Record<string, unknown>)?.conversationId
-  const conversationId = typeof rawConvId === 'string' && rawConvId.trim() ? rawConvId.trim() : null
+  let conversationId = typeof rawConvId === 'string' && rawConvId.trim() ? rawConvId.trim() : null
   if (!conversationId) {
-    return Response.json(
-      { error: 'no_conversation', message: 'এই কার্ডটি কোনো চ্যাটের সাথে যুক্ত নয়, তাই রিভাইজ করা যাচ্ছে না।' },
-      { status: 409 },
-    )
+    // Cron-born cards (evening dispatch proposal, duty digests) legitimately have
+    // no chat conversation — but the owner's opinion must still reach the head.
+    // The old 409 here surfaced in every client as the WRONG error ("এই অ্যাকশনটি
+    // ইতিমধ্যে সম্পন্ন হয়েছে" — clients map all 409s to already-resolved; owner bug
+    // 2026-07-12). Home the revise turn in the day-shift conversation instead and
+    // link the card to it so follow-up opinions land in the same thread.
+    try {
+      const { getOrCreateDayShiftConversation } = await import('@/agent/lib/day-shift')
+      conversationId = await getOrCreateDayShiftConversation()
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { conversationId },
+      })
+    } catch (err) {
+      console.error('[revise] day-shift conversation fallback failed:', err instanceof Error ? err.message : err)
+      return Response.json(
+        { error: 'no_conversation', message: 'রিভাইজ চালানোর মতো চ্যাট তৈরি করা যায়নি — একটু পরে আবার চেষ্টা করুন।' },
+        { status: 503 },
+      )
+    }
   }
 
   const businessId = (action.businessId as AgentBusinessId) ?? ('ALMA_LIFESTYLE' as AgentBusinessId)

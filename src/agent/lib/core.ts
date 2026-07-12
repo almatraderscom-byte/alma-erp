@@ -246,6 +246,21 @@ async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
     select: { role: true, content: true },
   })
 
+  // Durable ask-card answers, joined into the ask-card history notes below so the
+  // model always sees which option the owner actually chose for each question —
+  // the bare tapped-option text arrives as a detached user message and used to get
+  // bound to the wrong question in long contexts (owner bug 2026-07-12). Fail-open.
+  let askAnswers: Map<string, { status: string; selectedOption: string | null }> | undefined
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const askRows: Array<{ id: string; status: string; selectedOption: string | null }> =
+      await (prisma as any).agentAskCard.findMany({
+        where: { conversationId },
+        select: { id: true, status: true, selectedOption: true },
+      })
+    askAnswers = new Map(askRows.map((r) => [r.id, { status: r.status, selectedOption: r.selectedOption }]))
+  } catch { /* fail-open — plain notes */ }
+
   // Identify indices of user messages that contain file_ref blocks (most-recent first).
   const fileMessageIndices: number[] = []
   for (let i = rows.length - 1; i >= 0; i--) {
@@ -320,9 +335,17 @@ async function loadHistory(conversationId: string): Promise<ApiMessage[]> {
         apiBlocks.push({ type: 'text', text: `[অনুমোদনের কার্ড দেখানো হয়েছিল: ${cc.summary}]` })
       } else if (block.type === 'ask_card') {
         // Ask-card breadcrumb — same rule as confirm cards: a UI-only block that
-        // must never reach the API verbatim; collapse it to a short note.
+        // must never reach the API verbatim; collapse it to a note carrying the
+        // options and the owner's recorded answer (misbinding guard, 2026-07-12).
         const ac = block as Extract<StoredContentBlock, { type: 'ask_card' }>
-        apiBlocks.push({ type: 'text', text: `[প্রশ্ন কার্ড দেখানো হয়েছিল: ${ac.question}]` })
+        const opts = Array.isArray(ac.options) && ac.options.length
+          ? ` | অপশন: ${ac.options.join(' / ')}`
+          : ''
+        const ans = askAnswers?.get(ac.askCardId)
+        const answered = ans?.status === 'answered' && ans.selectedOption
+          ? ` | Boss-এর নির্বাচিত উত্তর: "${ans.selectedOption}" — এটাই এই প্রশ্নের চূড়ান্ত উত্তর, অন্য কোনো বার্তাকে এই প্রশ্নের উত্তর ধরবে না`
+          : ' | (এখনও উত্তর দেননি)'
+        apiBlocks.push({ type: 'text', text: `[প্রশ্ন কার্ড দেখানো হয়েছিল: ${ac.question}${opts}${answered}]` })
       } else {
         apiBlocks.push(block as unknown as Anthropic.Messages.ContentBlockParam)
       }

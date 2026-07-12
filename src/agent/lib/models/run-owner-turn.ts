@@ -227,7 +227,21 @@ async function* runAlternateProviderTurn(
     console.warn('[run-owner-turn] tail compaction failed:', err instanceof Error ? err.message : String(err))
   }
 
-  let messages: NeutralMsg[] = dbRowsToNeutral(rows)
+  // Durable ask-card answers — joined into the history notes so every question
+  // card in context carries its options AND the owner's exact recorded choice
+  // (misbinding guard, owner bug 2026-07-12). Fail-open to plain notes.
+  let askAnswers: Map<string, { status: string; selectedOption: string | null }> | undefined
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const askRows: Array<{ id: string; status: string; selectedOption: string | null }> =
+      await (prisma as any).agentAskCard.findMany({
+        where: { conversationId },
+        select: { id: true, status: true, selectedOption: true },
+      })
+    askAnswers = new Map(askRows.map((r) => [r.id, { status: r.status, selectedOption: r.selectedOption }]))
+  } catch { /* fail-open */ }
+
+  let messages: NeutralMsg[] = dbRowsToNeutral(rows, askAnswers)
 
   const recentUserTexts: string[] = []
   for (let i = messages.length - 1; i >= 0 && recentUserTexts.length < 12; i--) {
@@ -350,21 +364,53 @@ async function* runAlternateProviderTurn(
   // incident). Anchor it: this is the ANSWER to your own question — resume, don't
   // re-derive. Fail-open.
   try {
-    // NOTE: agent_ask_cards has no updatedAt column — filter by status only and
-    // let the option-prefix check below gate relevance (the card may have been
-    // CREATED long before it was answered).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const card = await (prisma as any).agentAskCard.findFirst({
-      where: { conversationId, status: 'answered' },
-      orderBy: { createdAt: 'desc' },
-      select: { question: true, selectedOption: true },
-    })
-    if (card?.selectedOption && lastUserText && lastUserText.startsWith(String(card.selectedOption).slice(0, 40))) {
-      const answerNote =
-        `[ASK-CARD উত্তর] Boss-এর এই বার্তাটা তোমারই প্রশ্নের উত্তর — প্রশ্ন ছিল: "${card.question}"। ` +
-        'এটা নতুন কাজ নয়: আগের চলমান কাজটা ঠিক যেখানে ছিলে সেখান থেকে চালিয়ে যাও (চেকপয়েন্ট নোট দেখো)। ' +
-        'আগে live_browser_look দিয়ে এখনকার পেজ দেখো — গোড়া থেকে navigate করা বা main view-এ ফেরত যাওয়া নিষেধ।'
-      volatileText = volatileText ? `${volatileText}\n\n${answerNote}` : answerNote
+    if (lastUserText) {
+      // Find the card this exact message answers — match by OPTION TEXT across the
+      // recent cards, never "latest answered by createdAt" (the old lookup): the
+      // web client fires the turn without awaiting the answer write, so the tapped
+      // card can still be 'pending' here, and the latest-answered card could be a
+      // DIFFERENT question — the head then bound the reply to the wrong question
+      // (owner bug 2026-07-12: tapped "অন্য কিছু change চাই", head ran "Ok" approve).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const recentCards: Array<{ id: string; question: string; status: string; selectedOption: string | null; options: unknown }> =
+        await (prisma as any).agentAskCard.findMany({
+          where: { conversationId },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          select: { id: true, question: true, status: true, selectedOption: true, options: true },
+        })
+      const matchesText = (opt: unknown): boolean =>
+        typeof opt === 'string' && !!opt.trim() && lastUserText.startsWith(opt.trim().slice(0, 40))
+      let matched = recentCards.find((c) => matchesText(c.selectedOption))
+      if (!matched) {
+        // Race self-heal: the tapped option arrived as the message but the answer
+        // write hasn't landed (or failed) — the card is still pending. Record it
+        // ourselves so the durable row and the anchoring note agree.
+        const pendingHit = recentCards.find(
+          (c) => c.status === 'pending' && Array.isArray(c.options) && (c.options as unknown[]).some(matchesText),
+        )
+        if (pendingHit) {
+          const chosen = (pendingHit.options as unknown[]).find(matchesText) as string
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (prisma as any).agentAskCard.update({
+            where: { id: pendingHit.id },
+            data: { status: 'answered', selectedOption: chosen },
+          }).catch(() => {})
+          matched = { ...pendingHit, status: 'answered', selectedOption: chosen }
+        }
+      }
+      if (matched?.selectedOption) {
+        const others = Array.isArray(matched.options)
+          ? (matched.options as unknown[]).filter((o): o is string => typeof o === 'string' && o !== matched!.selectedOption)
+          : []
+        const answerNote =
+          `[ASK-CARD উত্তর] Boss-এর এই বার্তাটা তোমারই প্রশ্নের উত্তর — প্রশ্ন ছিল: "${matched.question}"। ` +
+          `Boss বেছে নিয়েছেন: "${matched.selectedOption}"।` +
+          (others.length ? ` তিনি এগুলো বেছে নেননি: ${others.map((o) => `"${o}"`).join(', ')} — সেগুলোর অর্থ ধরে কাজ করবে না।` : '') +
+          ' এটা নতুন কাজ নয়: আগের চলমান কাজটা ঠিক যেখানে ছিলে সেখান থেকে চালিয়ে যাও (চেকপয়েন্ট নোট দেখো)। ' +
+          'ব্রাউজার-কাজ চললে আগে live_browser_look দিয়ে এখনকার পেজ দেখো — গোড়া থেকে navigate করা বা main view-এ ফেরত যাওয়া নিষেধ।'
+        volatileText = volatileText ? `${volatileText}\n\n${answerNote}` : answerNote
+      }
     }
   } catch { /* fail-open */ }
   if (volatileText) {

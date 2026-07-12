@@ -2,7 +2,10 @@ import type Anthropic from '@anthropic-ai/sdk'
 import type { AgentTool } from '@/agent/tools/registry'
 import type { NeutralMsg, NeutralTool } from '@/agent/lib/models/types'
 
-type StoredBlock = { type: string; text?: string; tool_use_id?: string; content?: string; path?: string; summary?: string; status?: string; question?: string }
+type StoredBlock = { type: string; text?: string; tool_use_id?: string; content?: string; path?: string; summary?: string; status?: string; question?: string; askCardId?: string; options?: string[] }
+
+/** Durable answer state for an ask card, keyed by askCardId (agent_ask_cards). */
+export type AskCardAnswerMap = Map<string, { status: string; selectedOption: string | null }>
 
 export function toolsToNeutral(tools: AgentTool[]): NeutralTool[] {
   return tools.map((t) => ({
@@ -26,6 +29,7 @@ export function systemBlocksToText(blocks: Anthropic.Messages.TextBlockParam[]):
 
 export function dbRowsToNeutral(
   rows: Array<{ role: string; content: unknown }>,
+  askAnswers?: AskCardAnswerMap,
 ): NeutralMsg[] {
   const out: NeutralMsg[] = []
   for (const row of rows) {
@@ -60,9 +64,23 @@ export function dbRowsToNeutral(
       .join('\n')
     // Ask-card breadcrumbs — same rationale as confirm cards: keep a short note so
     // the head remembers a question card was shown (never ship the raw block).
+    // The note carries the OPTIONS and, once answered, the owner's EXACT choice
+    // (from the durable agent_ask_cards row): the bare option text used to arrive
+    // as a detached user message and the head sometimes bound the wrong reply to
+    // the wrong question in a long context (owner bug 2026-07-12 — tapped
+    // "অন্য কিছু change চাই" but the head proceeded as if he approved).
     const askParts = blocks
       .filter((b) => b.type === 'ask_card')
-      .map((b) => `[প্রশ্ন কার্ড দেখানো হয়েছিল: ${b.question ?? ''}]`)
+      .map((b) => {
+        const opts = Array.isArray(b.options) && b.options.length
+          ? ` | অপশন: ${b.options.join(' / ')}`
+          : ''
+        const ans = b.askCardId ? askAnswers?.get(b.askCardId) : undefined
+        const answered = ans?.status === 'answered' && ans.selectedOption
+          ? ` | Boss-এর নির্বাচিত উত্তর: "${ans.selectedOption}" — এটাই এই প্রশ্নের চূড়ান্ত উত্তর, অন্য কোনো বার্তাকে এই প্রশ্নের উত্তর ধরবে না`
+          : ' | (এখনও উত্তর দেননি)'
+        return `[প্রশ্ন কার্ড দেখানো হয়েছিল: ${b.question ?? ''}${opts}${answered}]`
+      })
       .join('\n')
 
     const combined = [fileParts, textParts, cardParts, askParts].filter(Boolean).join('\n').trim()

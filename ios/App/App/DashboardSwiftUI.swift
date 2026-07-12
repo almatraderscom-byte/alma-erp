@@ -736,7 +736,11 @@ private final class OwnerTodoVM {
 
     func load() async {
         do {
-            let env: TodosEnvelope = try await AlmaAPI.shared.get("/api/assistant/todos")
+            // view=owner (owner rule 2026-07-12): only the owner's own todos
+            // (persist until he finishes) + agent-raised owner_action items
+            // (today only, reset at day end). Agent duties never show here.
+            let env: TodosEnvelope = try await AlmaAPI.shared.get(
+                "/api/assistant/todos", query: ["view": "owner"])
             let list = env.todos.filter { Self.open.contains($0.status) }
                 .sorted { a, b in
                     a.priorityRank != b.priorityRank ? a.priorityRank > b.priorityRank
