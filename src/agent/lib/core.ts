@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
-import { AGENT_MODEL, MAX_TOOL_ITERATIONS, HEAD_TOOL_BUDGET } from '@/agent/config'
+import { AGENT_MODEL, MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, HEAD_TOOL_BUDGET } from '@/agent/config'
 import { getModel } from '@/agent/lib/models/registry'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
@@ -965,8 +965,12 @@ export async function* runAgentTurn(
     return input
   }
 
+  // Live-browser turns raise this cap (see BROWSER_TURN_MAX_ITERATIONS) — a real
+  // UI task is 15–30 look→act rounds and must not die silently at the default cap.
+  let maxIterations = MAX_TOOL_ITERATIONS
+
   try {
-    for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+    for (let iteration = 0; iteration < maxIterations; iteration++) {
       if (signal?.aborted) break
       // Owner hit Stop — a cross-instance cancel flag flipped in the DB. The
       // running turn lives in a different serverless instance than the cancel
@@ -1202,7 +1206,17 @@ export async function* runAgentTurn(
       // This turn requested tools → it counts against the head's tool-round
       // budget. (Counts ROUNDS, i.e. model re-invocations, not parallel calls —
       // re-invoking the expensive model with the growing transcript is the cost.)
-      headToolRounds++
+      // EXCEPT live-browser-only rounds: driving the owner's Chrome is inherently
+      // many small owner-supervised steps that no cheap worker can take over, so
+      // they neither burn the delegate budget nor stay confined to the default
+      // iteration cap (see BROWSER_TURN_MAX_ITERATIONS).
+      const roundToolNames = currentBlocks
+        .filter((b): b is Extract<CollectedBlock, { type: 'tool_use' }> => b.type === 'tool_use')
+        .map((b) => b.name)
+      const browserRound =
+        roundToolNames.length > 0 && roundToolNames.every((n) => n.startsWith('live_browser_'))
+      if (browserRound) maxIterations = BROWSER_TURN_MAX_ITERATIONS
+      else headToolRounds++
 
       messages = [
         ...messages,
