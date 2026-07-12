@@ -17,6 +17,15 @@ export interface ModelEntry {
   outPerM: number
   thinking?: 'adaptive' | 'level' | 'none'
   default?: boolean
+  /**
+   * false = worker-only model: the tier-router may use it for cheap sub-tasks,
+   * but it must NEVER be offered (or run) as the owner's chat head. Added
+   * 2026-07-12 after Gemini 2.5 Flash **Lite** was picked as a head and answered
+   * a salah-status question 3x from thin air without a single tool call — these
+   * small models hold a worker brief fine but ignore tools under a full head
+   * prompt. Omitted = true (pickable).
+   */
+  headPickable?: boolean
 }
 
 export const DEFAULT_MODEL_ID = 'claude-sonnet-4-6'
@@ -162,6 +171,7 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     inPerM: 0.1,
     outPerM: 0.1,
     thinking: 'none',
+    headPickable: false, // worker-only — too weak to drive the full head toolset
   },
   {
     id: 'or-gemini-2.5-flash-lite',
@@ -174,6 +184,10 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     inPerM: 0.1,
     outPerM: 0.4,
     thinking: 'none',
+    // Worker-only. 2026-07-12 incident: picked as head (label confusable with the
+    // real "Gemini 2.5 Flash"), it answered the owner's salah question 3x with
+    // invented data and ZERO tool calls. Stays for HEAVY-tier sub-tasks only.
+    headPickable: false,
   },
   // ── Project A cost-optimization workers (non-critical tiers only) ──────────
   // Slugs + pricing verified by owner against openrouter.ai. supportsCaching now has

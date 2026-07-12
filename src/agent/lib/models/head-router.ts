@@ -42,7 +42,7 @@ const triageModelId = (): string => process.env.CHEAP_HEAD_TRIAGE_MODEL_ID?.trim
 // Owner-tunable via HEAVY_HEAD_MODEL_ID (no redeploy). Falls back to DEFAULT_MODEL_ID
 // only if the configured id is unknown — DEFAULT_MODEL_ID itself stays Claude because
 // it guards the finance/CRITICAL sub-agent path, which is separate from the head.
-const heavyHeadModelId = (): string => {
+export const heavyHeadModelId = (): string => {
   const id = process.env.HEAVY_HEAD_MODEL_ID?.trim() || 'gemini-3.1-pro'
   return isKnownModelId(id) ? id : DEFAULT_MODEL_ID
 }
@@ -346,7 +346,9 @@ export async function resolveHeadModelId(opts: {
     const sticky = await loadStickyHeadModelId(opts.conversationId)
     if (sticky && isKnownModelId(sticky)) {
       const m = getModel(sticky)
-      if (m.provider !== 'anthropic' && m.supportsTools) {
+      // headPickable check: never let a follow-up inherit a worker-only head
+      // (e.g. a pre-cleanup conversation whose last turn ran Flash Lite).
+      if (m.provider !== 'anthropic' && m.supportsTools && m.headPickable !== false) {
         const tier: HeadTier = sticky === marketingHeadModelId() ? 'marketing' : 'light'
         return { modelId: sticky, tier, via: 'sticky_followup' }
       }

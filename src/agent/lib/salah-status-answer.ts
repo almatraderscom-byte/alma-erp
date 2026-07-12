@@ -15,6 +15,13 @@ function label(waqt: string) {
   return WAQT_BN[waqt] ?? waqt
 }
 
+/** One waqt's truth as a server-built Bangla line — exported so the salah tools
+ *  can embed it PER WAQT (2026-07-12: Grok skipped the top-level answerBangla,
+ *  parsed raw rows and told Boss maghrib was qaza mid-window). */
+export function waqtStatusLineBangla(s: WaqtSummary): string {
+  return statusLine(s)
+}
+
 function statusLine(s: WaqtSummary): string {
   if (s.notYetDue) return `${label(s.waqt)} — এখনো সময় হয়নি (বাকি)`
   if (s.isPhantom) return `${label(s.waqt)} — বাকি (ভুল মার্ক ঠিক করা হয়েছে)`
