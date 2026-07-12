@@ -74,6 +74,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset as ChatHeadOffset
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -1955,5 +1975,129 @@ private fun OfficeHistorySheet(dark: Boolean) {
                 }
             }
         }
+    }
+}
+
+// ── Always-visible office chat head (iOS FloatingChatHead parity) ────────────────────
+
+private const val CHATHEAD_PREFS = "alma-native-shell"
+private const val CHATHEAD_Y_KEY = "office.chathead.y"
+private val CHATHEAD_CORAL = Color(0xFFE6785E)   // iOS 0.902/0.471/0.369
+private val CHATHEAD_VIOLET = Color(0xFF8B5CF6)  // iOS 0.545/0.361/0.965
+
+/**
+ * The Messenger-style office chat head that floats over the WHOLE app (every tab +
+ * pushed screen). Overlay this as the last child of the shell root Box. It self-loads
+ * the office role once; with no office session it renders nothing. Drag → snaps to the
+ * nearest side edge; tap → office group chat; long-press → walkie-talkie intercom.
+ */
+@Composable
+fun OfficeChatFloatingHead(dark: Boolean, onWeb: (String, String) -> Unit) {
+    val vm = remember { OfficeState() }
+    LaunchedEffect(Unit) { if (!vm.roleResolved) vm.loadHub() }
+    if (!vm.roleResolved || vm.authExpired || vm.selfRole == "none" || vm.selfRole.isBlank()) return
+
+    val ctx = LocalContext.current
+    val density = LocalDensity.current
+    val haptic = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+
+    var showChat by remember { mutableStateOf(false) }
+    var showIntercom by remember { mutableStateOf(false) }
+
+    val sizePx = with(density) { 60.dp.toPx() }
+    val marginPx = with(density) { 12.dp.toPx() }
+    val topInsetPx = with(density) {
+        WindowInsets.statusBars.asPaddingValues().calculateTopPadding().toPx()
+    } + with(density) { 44.dp.toPx() }
+    val bottomGuardPx = with(density) { 70.dp.toPx() }
+
+    var size by remember { mutableStateOf(IntSize.Zero) }
+    var placed by remember { mutableStateOf(false) }
+    val cx = remember { Animatable(0f) }
+    val cy = remember { Animatable(0f) }
+    val scale = remember { Animatable(1f) }
+
+    LaunchedEffect(size) {
+        if (size != IntSize.Zero && !placed) {
+            val savedY = ctx.getSharedPreferences(CHATHEAD_PREFS, android.content.Context.MODE_PRIVATE)
+                .getFloat(CHATHEAD_Y_KEY, -1f)
+            val minY = topInsetPx + sizePx / 2f
+            val maxY = size.height - sizePx / 2f - bottomGuardPx
+            val y = if (savedY > 0) savedY.coerceIn(minY, maxY) else size.height * 0.60f
+            cx.snapTo(size.width - marginPx - sizePx / 2f)
+            cy.snapTo(y)
+            placed = true
+        }
+    }
+
+    fun snap(vx: Float) {
+        val half = sizePx / 2f
+        val minY = topInsetPx + half
+        val maxY = size.height - half - bottomGuardPx
+        val goRight = if (vx > 250f) true else if (vx < -250f) false else cx.value > size.width / 2f
+        val targetX = if (goRight) size.width - marginPx - half else marginPx + half
+        val y = cy.value.coerceIn(minY, maxY)
+        scope.launch { cx.animateTo(targetX, spring(0.62f, Spring.StiffnessMediumLow, 0.5f)) }
+        scope.launch { cy.animateTo(y, spring(0.62f, Spring.StiffnessMediumLow, 0.5f)) }
+        scope.launch { scale.animateTo(1f, tween(150)) }
+        ctx.getSharedPreferences(CHATHEAD_PREFS, android.content.Context.MODE_PRIVATE)
+            .edit().putFloat(CHATHEAD_Y_KEY, y).apply()
+    }
+
+    Box(Modifier.fillMaxSize().onSizeChanged { size = it }) {
+        if (placed) {
+            Box(
+                Modifier
+                    .zIndex(30f)
+                    .graphicsLayer {
+                        translationX = cx.value - sizePx / 2f
+                        translationY = cy.value - sizePx / 2f
+                        scaleX = scale.value
+                        scaleY = scale.value
+                    }
+                    .size(60.dp)
+                    .shadow(9.dp, CircleShape)
+                    .background(Brush.linearGradient(listOf(CHATHEAD_CORAL, CHATHEAD_VIOLET)), CircleShape)
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                showChat = true
+                            },
+                            onLongPress = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                showIntercom = true
+                            },
+                        )
+                    }
+                    .pointerInput(size) {
+                        detectDragGestures(
+                            onDragStart = { scope.launch { scale.animateTo(1.12f, tween(150)) } },
+                            onDragEnd = { snap(0f) },
+                            onDragCancel = { snap(0f) },
+                        ) { change, drag ->
+                            change.consume()
+                            val half = sizePx / 2f
+                            scope.launch {
+                                cx.snapTo((cx.value + drag.x).coerceIn(half + marginPx, size.width - half - marginPx))
+                                cy.snapTo((cy.value + drag.y).coerceIn(topInsetPx + half, size.height - half - bottomGuardPx))
+                            }
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("💬", fontSize = 24.sp)
+            }
+        }
+    }
+
+    if (showChat) {
+        ModalBottomSheet(onDismissRequest = { showChat = false }, containerColor = AlmaTheme.rootBg(dark)) {
+            OfficeGroupChatSheet(vm, dark, isOwner = vm.selfRole == "owner", onWeb = onWeb)
+        }
+    }
+    if (showIntercom) {
+        IntercomSheet(isOwner = vm.selfRole == "owner", dark = dark, onDismiss = { showIntercom = false })
     }
 }

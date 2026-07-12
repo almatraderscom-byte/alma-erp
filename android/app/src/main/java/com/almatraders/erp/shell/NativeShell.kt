@@ -347,6 +347,11 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
                 },
             )
         }
+
+        // ── Always-visible office chat head (iOS FloatingChatHead parity) ──
+        // Floats over every tab + pushed screen; tap = office group chat, long-press =
+        // walkie-talkie intercom. Self-hides when there's no office session.
+        com.almatraders.erp.pages.OfficeChatFloatingHead(dark = dark) { p, t -> pushWebForced(p, t) }
     }
 }
 
