@@ -119,6 +119,8 @@ import androidx.compose.material.icons.outlined.TrackChanges
 import androidx.compose.material.icons.outlined.TrendingUp
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.PhonelinkRing
+import androidx.compose.ui.zIndex
 import androidx.compose.material.icons.outlined.Wallet
 import androidx.compose.material.icons.outlined.Work
 import androidx.compose.material3.AlertDialog
@@ -231,11 +233,12 @@ private class MenuItem(val title: String, val icon: ImageVector, val path: Strin
 private class MenuGroup(val header: String, val icon: ImageVector, val items: List<MenuItem>)
 
 private fun buildMoreGroups(): List<MenuGroup> = listOf(
-    // iOS also has "Phone Companion" (native:companion) + DEBUG "Loader Preview"
-    // here — no Android native twins yet, deferred.
+    // "Phone Companion" (native:companion) is a NATIVE screen (agent drives this phone's
+    // browser on the live-browser bus) — handled by a sentinel path, not a web push.
     MenuGroup(
         "Agent", Icons.Outlined.AutoAwesome,
         listOf(
+            MenuItem("Phone Companion", Icons.Outlined.PhonelinkRing, "native:companion"),
             MenuItem("Live Watch", Icons.Outlined.Visibility, "/agent/live-watch"),
             MenuItem("Credit Usage", Icons.Outlined.QueryStats, "/agent/credit-usage"),
             MenuItem("Subscriptions", Icons.Outlined.Repeat, "/agent/subscriptions"),
@@ -597,6 +600,12 @@ fun MoreMenuScreen(ctx: PushCtx) {
     var openGroup by remember { mutableStateOf<MenuGroup?>(null) }
     var showBusinessSheet by remember { mutableStateOf(false) }
     var showProfileSheet by remember { mutableStateOf(false) }
+    var showCompanion by remember { mutableStateOf(false) }
+
+    // native: sentinel paths open a NATIVE screen in-place; everything else is a web push.
+    fun openItem(path: String, title: String) {
+        if (path == "native:companion") showCompanion = true else ctx.openSmart(path, title)
+    }
 
     LaunchedEffect(Unit) { st.loadIfStale() }
     // Hardware back closes the pushed group page first (shell stack is empty here).
@@ -637,14 +646,22 @@ fun MoreMenuScreen(ctx: PushCtx) {
                 onBusiness = { showBusinessSheet = true },
                 onProfile = { showProfileSheet = true },
                 onGroup = { openGroup = it },
-                openPath = { path, title -> ctx.openSmart(path, title) },
+                openPath = { path, title -> openItem(path, title) },
             )
         } else {
             MoreGroupPage(
                 group = group, dark = dark,
                 onBack = { openGroup = null },
-                open = { item -> ctx.openSmart(item.path, item.title) },
+                open = { item -> openItem(item.path, item.title) },
             )
+        }
+    }
+
+    // Phone Companion — full-screen native overlay (agent drives this phone's browser).
+    if (showCompanion) {
+        BackHandler { showCompanion = false }
+        Box(Modifier.fillMaxSize().zIndex(50f)) {
+            AlmaCompanionScreen(dark = dark, onClose = { showCompanion = false })
         }
     }
 
