@@ -4,7 +4,7 @@
  * Other providers use normalized adapters with the same tool handlers + claim-verifier.
  */
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET } from '@/agent/config'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { getOfficePulse } from '@/agent/lib/office-pulse'
@@ -26,7 +26,7 @@ import { retrieveRelevantMemories } from '@/agent/lib/agent-memory'
 import { embedMessageInBackground, retrieveRelevantOldTurns } from '@/agent/lib/message-recall'
 import { getBusinessSnapshot } from '@/agent/lib/business-snapshot'
 import { annotateEmptyResult } from '@/agent/lib/tool-result-note'
-import { toolResultPreview } from '@/agent/lib/tool-labels'
+import { toolResultPreview, extractScreenshotUrl } from '@/agent/lib/tool-labels'
 import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { logCost } from '@/agent/lib/cost-events'
@@ -356,6 +356,10 @@ async function* runAlternateProviderTurn(
   }
   const toolRecords: ToolRecord[] = []
   let verifyRetries = 0
+  // Guard against a fully EMPTY model round (no text, no tool calls) mid-task —
+  // Gemini does this occasionally and ending the turn there strands the owner
+  // with a blank reply (2026-07-12: WhatsApp-fix turn died after one navigate).
+  let emptyRoundRetries = 0
   let memoryNudgeSent = false
   let finalText = ''
   let delegationAwaiting = false
@@ -376,7 +380,7 @@ async function* runAlternateProviderTurn(
   type TimelineEntry =
     | { t: 'think'; text: string }
     | { t: 'text'; text: string }
-    | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string }
+    | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; shot?: string }
     | { t: 'file'; id: string; name: string; kind?: string }
   const timeline: TimelineEntry[] = []
   const compactTimelineInput = (input: unknown): unknown => {
@@ -397,9 +401,12 @@ async function* runAlternateProviderTurn(
   let headToolRounds = 0
   let budgetNudgeSent = false
   let canceled = false
+  // Live-browser turns raise this cap (see BROWSER_TURN_MAX_ITERATIONS) — a real
+  // UI task is 15–30 look→act rounds and must not die silently at the default cap.
+  let maxIterations = MAX_TOOL_ITERATIONS
 
   try {
-    for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+    for (let iteration = 0; iteration < maxIterations; iteration++) {
       if (signal?.aborted) break
       // Owner hit Stop — cross-instance cancel flag (see core.ts for rationale).
       if (await isTurnCancelRequested(turnId)) { canceled = true; break }
@@ -466,6 +473,27 @@ async function* runAlternateProviderTurn(
       if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
 
       if (calls.length === 0 || signal?.aborted) {
+        // Fully empty round mid-task → nudge the model to continue instead of
+        // silently ending the turn with a blank message. Bounded to 2 retries.
+        if (
+          !signal?.aborted
+          && !iterationText.trim()
+          && !finalText.trim()
+          && toolRecords.length > 0
+          && emptyRoundRetries < 2
+        ) {
+          emptyRoundRetries++
+          messages = [
+            ...messages,
+            {
+              role: 'user',
+              content:
+                'তোমার আগের রাউন্ডটা ফাঁকা ছিল — কোনো টেক্সট বা টুল কল আসেনি। কাজটা এখনো শেষ হয়নি: ' +
+                'হয় পরের টুল স্টেপটা চালাও, নয়তো এ পর্যন্ত কী হলো বসকে বাংলায় জানাও। চুপ করে থেমো না।',
+            },
+          ]
+          continue
+        }
         if (!signal?.aborted && verifyRetries < MAX_VERIFY_RETRIES && iterationText.trim()) {
           // Build a ledger that carries each tool's success/error — not just its
           // name — so the verifier catches "done!" claims made after a tool that
@@ -511,7 +539,12 @@ async function* runAlternateProviderTurn(
       }
 
       // This turn requested tools → count it against the head's tool-round budget.
-      headToolRounds++
+      // EXCEPT live-browser-only rounds: driving the owner's Chrome is inherently
+      // many small owner-supervised steps that no cheap worker can take over, so
+      // they neither burn the budget nor stay confined to the default cap.
+      const browserRound = calls.length > 0 && calls.every((c) => c.name.startsWith('live_browser_'))
+      if (browserRound) maxIterations = BROWSER_TURN_MAX_ITERATIONS
+      else headToolRounds++
 
       const toolResults: Array<{ id: string; name: string; result: unknown }> = []
       for (const call of calls) {
@@ -544,6 +577,7 @@ async function* runAlternateProviderTurn(
           t: 'tool', name: call.name, ok: result.success,
           input: compactTimelineInput(call.input),
           result: toolResultPreview(result),
+          shot: extractScreenshotUrl(result),
         })
 
         yield {
@@ -553,6 +587,7 @@ async function* runAlternateProviderTurn(
           success: result.success,
           error: result.error,
           resultPreview: toolResultPreview(result),
+          screenshot: extractScreenshotUrl(result),
         }
 
         // A tool filed a document as a conversation artifact (save_artifact, SEO

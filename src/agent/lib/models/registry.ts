@@ -209,25 +209,10 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     thinking: 'level',
   },
   // ── Owner-picked additions 2026-07-12 (slugs/pricing/tool-support verified
-  // against openrouter.ai /api/v1/models the same day) ────────────────────────
+  // against openrouter.ai /api/v1/models + Google docs the same day) ─────────
   {
-    id: 'or-qwen2.5-vl-72b',
-    label: 'Qwen 2.5 VL 72B (OpenRouter)',
-    provider: 'openrouter',
-    apiModel: 'qwen/qwen2.5-vl-72b-instruct',
-    // OpenRouter offers NO tool-calling for this model (supported_parameters
-    // lacks "tools") — run-owner-turn strips tools when supportsTools=false, so
-    // picking it gives a chat/vision-only head instead of a crash+fallback.
-    supportsTools: false,
-    supportsCaching: false,
-    contextWindow: 131_072,
-    inPerM: 0.25,
-    outPerM: 0.75,
-    thinking: 'none',
-  },
-  {
-    // Direct Google API like the other Gemini heads (owner 2026-07-12: no
-    // OpenRouter detour — same GEMINI_API_KEY billing as 3.x).
+    // Direct Google API like the other Gemini heads (owner: no OpenRouter
+    // detour — same GEMINI_API_KEY billing as 3.x). Full multimodal input.
     id: 'gemini-2.5-flash',
     label: 'Gemini 2.5 Flash',
     provider: 'google',
@@ -266,6 +251,21 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     inPerM: 0.435,
     outPerM: 0.87,
     thinking: 'level',
+  },
+  {
+    id: 'or-qwen2.5-vl-72b',
+    label: 'Qwen 2.5 VL 72B (OpenRouter)',
+    provider: 'openrouter',
+    apiModel: 'qwen/qwen2.5-vl-72b-instruct',
+    // OpenRouter offers NO tool-calling for this model (supported_parameters
+    // lacks "tools") — run-owner-turn strips tools when supportsTools=false, so
+    // picking it gives a chat/vision-only head instead of a crash+fallback.
+    supportsTools: false,
+    supportsCaching: false,
+    contextWindow: 131_072,
+    inPerM: 0.25,
+    outPerM: 0.75,
+    thinking: 'none',
   },
 ]
 

@@ -21,7 +21,20 @@ export const isAnthropicConfigured = () => {
 
 export const AGENT_MODEL = 'claude-sonnet-4-6'
 
-export const MAX_TOOL_ITERATIONS = 8
+export const MAX_TOOL_ITERATIONS = Number(process.env.MAX_TOOL_ITERATIONS) || 8
+
+/**
+ * Live-browser turns need far more look→act rounds than ordinary tool turns —
+ * a real UI task (Ads Manager, Business Suite) is 15–30 small steps. When a
+ * turn starts driving the owner's Chrome (any live_browser_* call), its
+ * iteration cap is raised to this value so the task doesn't die silently at
+ * MAX_TOOL_ITERATIONS mid-flight (2026-07-12: both WhatsApp-number fix
+ * attempts ended at round 8 with no final answer). Env-tunable, no redeploy.
+ */
+export const BROWSER_TURN_MAX_ITERATIONS = Math.max(
+  Number(process.env.BROWSER_TURN_MAX_ITERATIONS) || 30,
+  Number(process.env.MAX_TOOL_ITERATIONS) || 8,
+)
 
 /**
  * HARD tool-round budget for EXPENSIVE heads (Sonnet, and the Qwen marketing

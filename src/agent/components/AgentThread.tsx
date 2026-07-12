@@ -54,7 +54,7 @@ function fmtTok(n: number): string {
 export type TimelineEntry =
   | { t: 'think'; text: string }
   | { t: 'text'; text: string }
-  | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; live?: boolean; id?: string }
+  | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; live?: boolean; id?: string; shot?: string }
   | { t: 'file'; id: string; name: string; kind?: string }
 
 export interface ChatMessage {
@@ -62,7 +62,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
   files?: Array<{ previewUrl: string; mediaType: string; path?: string }>
-  toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean; stopped?: boolean; input?: unknown; result?: string }>
+  toolActivity?: Array<{ id: string; name: string; done: boolean; success?: boolean; stopped?: boolean; input?: unknown; result?: string; screenshot?: string }>
   /** Specialist sub-agent delegations spawned by the head agent (Cursor-style cards). */
   delegations?: Array<{
     id: string
@@ -586,6 +586,15 @@ function ToolIOSheet({ tool, onClose }: { tool: ToolRow | null; onClose: () => v
           </button>
         </div>
         <div className="mobile-modal-body space-y-3 px-5 pb-5 pt-1">
+          {t?.shot && (
+            <div>
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">স্ক্রিনশট · screenshot</div>
+              <a href={t.shot} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-xl border border-white/[0.08]">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={t.shot} alt="ব্রাউজার স্ক্রিনশট" className="w-full" />
+              </a>
+            </div>
+          )}
           {inputStr && (
             <div>
               <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted/70">ইনপুট · input</div>
@@ -598,7 +607,7 @@ function ToolIOSheet({ tool, onClose }: { tool: ToolRow | null; onClose: () => v
               <pre className={`max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-white/[0.06] bg-black/25 p-3 text-[12px] leading-relaxed [overflow-wrap:anywhere] ${failed ? 'text-red-300/90' : 'text-cream/85'}`}>{resultStr}</pre>
             </div>
           )}
-          {!inputStr && !resultStr && (
+          {!inputStr && !resultStr && !t?.shot && (
             <p className="py-6 text-center text-[12px] text-muted">এই টুলের কোনো ইনপুট/ফলাফল নেই।</p>
           )}
         </div>
@@ -606,7 +615,7 @@ function ToolIOSheet({ tool, onClose }: { tool: ToolRow | null; onClose: () => v
   )
 }
 
-type ToolRow = { name: string; ok: boolean; input?: unknown; result?: string; live: boolean }
+type ToolRow = { name: string; ok: boolean; input?: unknown; result?: string; live: boolean; shot?: string }
 
 /**
  * A work "phase": a clear headline (what the agent is doing, in its own words —
@@ -738,7 +747,7 @@ function ActivityTimeline({
     const fb: TimelineEntry[] = []
     if (thinking && thinking.trim()) fb.push({ t: 'think', text: thinking })
     for (const t of toolActivity ?? []) {
-      fb.push({ t: 'tool', name: t.name, ok: t.success !== false, input: t.input, result: t.result, live: !t.done })
+      fb.push({ t: 'tool', name: t.name, ok: t.success !== false, input: t.input, result: t.result, live: !t.done, shot: t.screenshot })
     }
     return fb
   }, [timeline, thinking, toolActivity])
@@ -765,7 +774,7 @@ function ActivityTimeline({
         }
       } else if (e.t === 'tool') {
         if (!cur) cur = { headline: '', detail: '', tools: [], live: false }
-        const tool: ToolRow = { name: e.name, ok: e.ok, input: e.input, result: e.result, live: Boolean(e.live) }
+        const tool: ToolRow = { name: e.name, ok: e.ok, input: e.input, result: e.result, live: Boolean(e.live), shot: e.shot }
         cur.tools.push(tool)
         if (tool.live) cur.live = true
       }
@@ -915,7 +924,7 @@ function ActivityTimeline({
                             const d = toolDisplay(t.name)
                             const target = toolDetail(t.name, t.input)
                             const failed = t.ok === false
-                            const hasIO = Boolean(formatToolInput(t.input) || (t.result && t.result.trim()))
+                            const hasIO = Boolean(formatToolInput(t.input) || (t.result && t.result.trim()) || t.shot)
                             return (
                               <div key={j} className="rounded-lg border border-border-subtle bg-card/40">
                                 {/* 3 — tool row; tap opens the floating I/O sheet */}
@@ -957,6 +966,34 @@ function ActivityTimeline({
                                     </svg>
                                   </span>
                                 </button>
+                                {/* NO SILENT FAILURE (owner ask 2026-07-12): a failed
+                                    step shows its reason right here in the flow — not
+                                    hidden behind a tap. */}
+                                {failed && t.result && t.result.trim() && (
+                                  <div className="mx-2 mb-1.5 rounded-md border border-danger/25 bg-danger/[0.07] px-2 py-1.5 text-[11.5px] leading-relaxed text-red-300/95 break-words [overflow-wrap:anywhere]">
+                                    <span className="mr-1 font-semibold">কারণ:</span>
+                                    {t.result.trim().slice(0, 260)}
+                                    {t.result.trim().length > 260 ? '…' : ''}
+                                  </div>
+                                )}
+                                {/* Live-browser screenshot INLINE — the owner sees what
+                                    the agent saw, Claude-Code style, without opening
+                                    the I/O sheet. Tap the image for the full view. */}
+                                {t.shot && (
+                                  <button
+                                    type="button"
+                                    onClick={() => { selection(); setIoSheet(t) }}
+                                    className="mx-2 mb-2 block overflow-hidden rounded-lg border border-white/[0.08] transition-all hover:border-gold-dim/40 active:scale-[0.99]"
+                                  >
+                                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                                    <img
+                                      src={t.shot}
+                                      alt="ব্রাউজার স্ক্রিনশট"
+                                      loading="lazy"
+                                      className="max-h-56 w-full object-cover object-top"
+                                    />
+                                  </button>
+                                )}
                               </div>
                             )
                           })}

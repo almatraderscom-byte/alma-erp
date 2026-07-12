@@ -2,17 +2,20 @@
  * ALMA Companion — background service worker (MV3).
  *
  * Bridges the ALMA agent (server) to THIS Chrome. It long-polls the agent's
- * live-browser command endpoint, runs each command in a DEDICATED ALMA window
- * (the owner's own logged-in session — same cookies), draws a live on-page
- * status banner + highlight so the owner can watch every step, and posts the
- * result + a screenshot back.
+ * live-browser command endpoint, runs each command in a grouped "ALMA" tab of
+ * the owner's OWN window (his logged-in session — same cookies), draws a live
+ * on-page status banner + highlight so the owner can watch every step, and
+ * posts the result + a screenshot back.
  *
- * Why a dedicated window (v0.2.0):
- *   • The agent NEVER hijacks the tab the owner is working in. It opens/keeps
- *     one separate ALMA window and drives that, so the owner can keep browsing
- *     (and keep chatting with the agent) in his other windows/tabs.
- *   • Screenshots use captureVisibleTab on that window, which works even when
- *     it's not focused — so the owner watches without being interrupted.
+ * Why grouped tabs in the owner's window (v0.8.0, owner ask 2026-07-12):
+ *   • Claude-in-Chrome parity: the agent works in tabs inside the CURRENT
+ *     window, collected in a labeled tab group — one tab after another as the
+ *     task needs, never a detached second window.
+ *   • The agent still never types over the tab the owner was using — it opens
+ *     its own tab(s); the owner can click away any time.
+ *   • Screenshots go through chrome.debugger (CDP), which captures the agent
+ *     tab even while it is in the BACKGROUND — captureVisibleTab remains only
+ *     as a fallback.
  *
  * Safety model:
  *   • Paired to ONE owner via a one-time code → a bearer `token` (kept in
@@ -59,8 +62,36 @@ async function getConfig() {
   }
 }
 
-// ---- dedicated ALMA work window --------------------------------------------
-// All page actions run here, never in the owner's active tab.
+// ---- ALMA tab group in the OWNER'S OWN window --------------------------------
+// v0.8.0 (owner ask 2026-07-12): no separate window. The agent works in TABS
+// inside the owner's current window, collected in a labeled "ALMA" tab group —
+// exactly the Claude-in-Chrome shape. New tabs the task needs join the same
+// group. Screenshots use the chrome.debugger CDP path so a BACKGROUND tab
+// captures fine and the agent never has to steal the owner's active tab.
+
+async function groupAgentTab(tabId) {
+  try {
+    const { agentGroupId } = await chrome.storage.local.get('agentGroupId')
+    let groupId = null
+    if (agentGroupId != null) {
+      try {
+        await chrome.tabGroups.get(agentGroupId) // still alive?
+        groupId = await chrome.tabs.group({ tabIds: tabId, groupId: agentGroupId })
+      } catch {
+        groupId = null // group gone — create a fresh one below
+      }
+    }
+    if (groupId == null) {
+      groupId = await chrome.tabs.group({ tabIds: tabId })
+      try {
+        await chrome.tabGroups.update(groupId, { title: 'ALMA', color: 'yellow' })
+      } catch { /* cosmetic only */ }
+    }
+    await chrome.storage.local.set({ agentGroupId: groupId })
+  } catch {
+    /* grouping is cosmetic — the tab still works ungrouped */
+  }
+}
 
 async function getAgentTab(createIfMissing = true) {
   const { agentTabId } = await chrome.storage.local.get('agentTabId')
@@ -73,17 +104,12 @@ async function getAgentTab(createIfMissing = true) {
     }
   }
   if (!createIfMissing) return null
-  // First creation is focused=true so the owner SEES the ALMA window appear and
-  // knows where to watch; later navigations won't steal focus again.
-  const win = await chrome.windows.create({
-    url: 'about:blank',
-    focused: true,
-    width: 1200,
-    height: 860,
-  })
-  const tab = win && win.tabs && win.tabs[0]
+  // Create the work tab IN THE OWNER'S CURRENT WINDOW, active so he sees where
+  // the agent works; it immediately joins (or starts) the "ALMA" tab group.
+  const tab = await chrome.tabs.create({ url: 'about:blank', active: true })
   if (tab && tab.id) {
-    await chrome.storage.local.set({ agentTabId: tab.id, agentWindowId: win.id })
+    await chrome.storage.local.set({ agentTabId: tab.id, agentWindowId: tab.windowId })
+    await groupAgentTab(tab.id)
     return tab
   }
   return null
@@ -91,10 +117,13 @@ async function getAgentTab(createIfMissing = true) {
 
 // Persist which tab/window the agent currently drives (used when following a
 // popup or a newly-opened tab so subsequent commands act on the right page).
+// The followed tab is pulled into the ALMA group so the whole task stays one
+// visible strip of grouped tabs, Claude-style.
 async function setAgentTab(tabId, windowId) {
   const patch = { agentTabId: tabId }
   if (windowId != null) patch.agentWindowId = windowId
   await chrome.storage.local.set(patch)
+  await groupAgentTab(tabId)
 }
 
 // Find the tab the agent should follow to — a link/button often opens a new tab
@@ -127,13 +156,38 @@ function pageReadText() {
 
 function pageReadDom() {
   const out = []
+  // Heavy SPAs (Facebook Ads Manager / Business Suite) build everything from divs:
+  // options, radios, switches and grid cells are ARIA roles, and many clickables are
+  // bare [tabindex] divs. Cover those too, and read the elements IN THE VIEWPORT
+  // first — on a huge page the old first-250-in-DOM-order sample was mostly nav
+  // chrome while the actual target (a dropdown option, a table row) never made the
+  // list. That was the root cause of the 2026-07-12 Ads Manager failure.
   const sel =
-    'a,button,input,textarea,select,[role=button],[role=link],[role=combobox],[role=menuitem],[role=tab],[role=checkbox],[role=radio],[contenteditable=true]'
-  const els = Array.from(document.querySelectorAll(sel)).slice(0, 250)
-  let n = 0
-  for (const el of els) {
+    'a,button,input,textarea,select,[role=button],[role=link],[role=combobox],[role=menuitem],' +
+    '[role=menuitemradio],[role=menuitemcheckbox],[role=tab],[role=checkbox],[role=radio],' +
+    '[role=option],[role=switch],[role=treeitem],[role=gridcell],[contenteditable=true],[tabindex]'
+  const all = []
+  const seen = new Set()
+  for (const el of Array.from(document.querySelectorAll(sel))) {
+    if (seen.has(el)) continue
+    seen.add(el)
+    if (el.getAttribute && el.getAttribute('tabindex') === '-1' && !el.getAttribute('role')) continue
+    all.push(el)
+  }
+  const vh = window.innerHeight
+  const vw = window.innerWidth
+  const inViewport = (r) => r.bottom > 0 && r.top < vh && r.right > 0 && r.left < vw
+  const visible = []
+  for (const el of all) {
     const r = el.getBoundingClientRect()
     if (r.width === 0 && r.height === 0) continue
+    visible.push({ el, vp: inViewport(r) })
+  }
+  // In-viewport elements first, DOM order preserved within each group.
+  visible.sort((a, b) => (a.vp === b.vp ? 0 : a.vp ? -1 : 1))
+  const els = visible.slice(0, 300)
+  let n = 0
+  for (const { el, vp } of els) {
     // Stamp a STABLE ref onto the real DOM node. It survives across executeScript
     // injections (same page), so click/type/select can target `ref` for a precise
     // hit on crowded pages instead of re-matching fuzzy text.
@@ -147,6 +201,7 @@ function pageReadDom() {
       ref,
       tag: el.tagName.toLowerCase(),
       type: el.getAttribute('type') || (el.tagName === 'SELECT' ? 'select' : null),
+      role: el.getAttribute('role') || null,
       name: el.getAttribute('name') || el.getAttribute('aria-label') || null,
       text: (el.innerText || el.value || el.placeholder || '').trim().slice(0, 80),
       // For a <select>, surface its options so the model can pick one by exact text.
@@ -157,6 +212,8 @@ function pageReadDom() {
               .map((o) => (o.text || '').trim())
           : undefined,
       id: el.id || null,
+      // vp=false → below/above the fold; scroll_to its ref before clicking.
+      vp,
     })
   }
   return { url: location.href, title: document.title, elements: out }
@@ -296,9 +353,15 @@ async function pageClick(arg) {
   }
   if (!el && text) {
     const needle = String(text).trim().toLowerCase()
+    // Facebook-class SPAs render "buttons" as divs with ARIA roles (option/radio/
+    // checkbox/switch/gridcell) or bare [tabindex] — the old anchor/button-only list
+    // returned "element not found" on exactly those (Ads Manager incident 2026-07-12).
     const cand = Array.from(
       document.querySelectorAll(
-        'a,button,[role=button],[role=link],[role=menuitem],[role=tab],input[type=submit],input[type=button],label,summary,[onclick]',
+        'a,button,[role=button],[role=link],[role=menuitem],[role=menuitemradio],[role=menuitemcheckbox],' +
+          '[role=tab],[role=option],[role=radio],[role=checkbox],[role=switch],[role=combobox],' +
+          '[role=treeitem],[role=gridcell],input[type=submit],input[type=button],input[type=radio],' +
+          'input[type=checkbox],label,summary,[onclick],[tabindex]',
       ),
     ).filter(visible)
     const hay = (e) =>
@@ -312,7 +375,39 @@ async function pageClick(arg) {
         .trim()
         .toLowerCase()
     // Prefer an exact match, then a substring match — steadier than "first contains".
-    el = cand.find((e) => hay(e) === needle) || cand.find((e) => hay(e).includes(needle)) || null
+    // Among substring matches prefer the SHORTEST haystack (the tightest element),
+    // not the first in DOM order — big wrapper divs often contain the text too.
+    el = cand.find((e) => hay(e) === needle) || null
+    if (!el) {
+      const subs = cand.filter((e) => {
+        const h = hay(e)
+        return h && h.includes(needle) && h.length <= needle.length + 220
+      })
+      subs.sort((a, b) => hay(a).length - hay(b).length)
+      el = subs[0] || null
+    }
+    // Last resort: find the deepest visible node containing the text, then climb to
+    // the nearest clickable ancestor. Catches text inside spans whose clickable
+    // wrapper carries no matching label/aria of its own.
+    if (!el) {
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+      let leaf = null
+      while (walker.nextNode()) {
+        const node = walker.currentNode
+        if (!node.textContent || !node.textContent.toLowerCase().includes(needle)) continue
+        const p = node.parentElement
+        if (!p || !visible(p)) continue
+        leaf = p
+        break
+      }
+      if (leaf) {
+        el =
+          leaf.closest(
+            'a,button,[role=button],[role=link],[role=menuitem],[role=menuitemradio],[role=tab],' +
+              '[role=option],[role=radio],[role=checkbox],[role=switch],[role=combobox],label,[onclick],[tabindex]',
+          ) || leaf
+      }
+    }
   }
   if (!el) return { ok: false, error: 'element not found' }
   // FINAL-SUBMIT BAN (enforced in code — mirrors src/agent/lib/browser/final-submit.ts;
@@ -383,15 +478,31 @@ async function pageClick(arg) {
     document.documentElement.appendChild(rip)
     setTimeout(() => rip.remove(), 650)
   } catch { /* visual only */ }
-  // Fire a real mouse-event sequence — many sites (React/SPA) ignore a bare
-  // .click() but respond to pointer/mouse events. Then call .click() as backstop.
+  // Fire a real pointer+mouse event sequence — many sites (React/SPA, and Facebook
+  // in particular) listen on POINTER events and ignore a bare .click(). Then call
+  // .click() as backstop.
   const mo = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy }
+  try {
+    el.dispatchEvent(new PointerEvent('pointerover', mo))
+    el.dispatchEvent(new PointerEvent('pointerdown', mo))
+  } catch {
+    /* engines without PointerEvent — mouse sequence below still fires */
+  }
   try {
     el.dispatchEvent(new MouseEvent('mouseover', mo))
     el.dispatchEvent(new MouseEvent('mousedown', mo))
-    el.dispatchEvent(new MouseEvent('mouseup', mo))
   } catch {
     /* older engines — ignore */
+  }
+  try {
+    el.dispatchEvent(new PointerEvent('pointerup', mo))
+  } catch {
+    /* ignore */
+  }
+  try {
+    el.dispatchEvent(new MouseEvent('mouseup', mo))
+  } catch {
+    /* ignore */
   }
   el.click()
   setTimeout(() => {
@@ -709,7 +820,12 @@ function pageScrollTo(arg) {
   if (!el && text) {
     const needle = String(text).toLowerCase()
     el =
-      Array.from(document.querySelectorAll('a,button,h1,h2,h3,h4,li,td,th,span,p,label,[role=button],[role=link]'))
+      Array.from(
+        document.querySelectorAll(
+          'a,button,h1,h2,h3,h4,li,td,th,span,p,label,[role=button],[role=link],[role=option],' +
+            '[role=radio],[role=checkbox],[role=menuitem],[role=tab],[role=gridcell],[tabindex]',
+        ),
+      )
         .filter(visible)
         .find((e) => (e.innerText || e.getAttribute('aria-label') || '').trim().toLowerCase().includes(needle)) ||
       null
@@ -752,7 +868,12 @@ function pageHover(arg) {
   if (!el && text) {
     const needle = String(text).toLowerCase()
     el =
-      Array.from(document.querySelectorAll('a,button,li,span,div,[role=button],[role=link],[role=menuitem]'))
+      Array.from(
+        document.querySelectorAll(
+          'a,button,li,span,div,[role=button],[role=link],[role=menuitem],[role=option],[role=tab],' +
+            '[role=gridcell],[role=combobox],[tabindex]',
+        ),
+      )
         .filter(visible)
         .find((e) => (e.innerText || e.getAttribute('aria-label') || '').trim().toLowerCase().includes(needle)) ||
       null
@@ -878,6 +999,66 @@ function lockdownMatch(url, domains) {
 
 const WRITE_VERBS = new Set(['click', 'type', 'press', 'select_option'])
 
+// ---- CDP screenshots (chrome.debugger) ---------------------------------------
+// captureVisibleTab only shoots the ACTIVE tab of a window; now that the agent
+// works in a grouped tab of the owner's own window, the tab is often in the
+// background. The debugger path captures the agent tab regardless of focus —
+// the same mechanism Claude-in-Chrome uses (Chrome shows its standard
+// "…is debugging this browser" bar while attached; it clears on detach).
+
+async function ensureDebugger(tabId) {
+  const { cdpTabId } = await chrome.storage.local.get('cdpTabId')
+  if (cdpTabId != null && cdpTabId !== tabId) {
+    try {
+      await chrome.debugger.detach({ tabId: cdpTabId })
+    } catch { /* old tab gone */ }
+    await chrome.storage.local.remove('cdpTabId')
+  }
+  try {
+    await chrome.debugger.attach({ tabId }, '1.3')
+    await chrome.storage.local.set({ cdpTabId: tabId })
+    return true
+  } catch (err) {
+    if (/already attached/i.test(String(err && err.message))) {
+      await chrome.storage.local.set({ cdpTabId: tabId })
+      return true
+    }
+    return false
+  }
+}
+
+async function captureAgentTab(tab) {
+  // 1) CDP — works even when the agent tab is in the background.
+  if (await ensureDebugger(tab.id)) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const shot = await chrome.debugger.sendCommand({ tabId: tab.id }, 'Page.captureScreenshot', {
+          format: 'jpeg',
+          quality: 80,
+        })
+        if (shot && shot.data) return 'data:image/jpeg;base64,' + shot.data
+        break
+      } catch {
+        // Stale attachment (worker restarted, Chrome dropped it) → re-attach once.
+        await chrome.storage.local.remove('cdpTabId')
+        if (!(await ensureDebugger(tab.id))) break
+      }
+    }
+  }
+  // 2) Fallback — visible-tab capture; only right when the agent tab is active
+  //    (e.g. the owner revoked the debugger permission or DevTools is attached).
+  try {
+    return await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 80 })
+  } catch {
+    return null
+  }
+}
+
+chrome.debugger?.onDetach?.addListener(async (source) => {
+  const { cdpTabId } = await chrome.storage.local.get('cdpTabId')
+  if (source && source.tabId === cdpTabId) await chrome.storage.local.remove('cdpTabId')
+})
+
 async function executeCommand(cmd) {
   const action = String(cmd.action || '')
   if (!ALLOWED_ACTIONS.has(action)) return { ok: false, error: `unsupported action: ${action}` }
@@ -904,7 +1085,7 @@ async function executeCommand(cmd) {
           'site_lockdown: ' +
           locked +
           ' — এই সাইটটা read-only (lockdown) তালিকায়; এখানে ক্লিক/টাইপ কোড-লেভেলে বন্ধ। ' +
-          'Sir চাইলে trust tier বদলে খুলে দিতে পারেন।',
+          'Boss চাইলে trust tier বদলে খুলে দিতে পারেন।',
       }
     }
   }
@@ -912,13 +1093,13 @@ async function executeCommand(cmd) {
   if (action === 'navigate') {
     if (!/^https?:\/\//i.test(cmd.url || '')) return { ok: false, error: 'navigate needs http(s) url' }
     await chrome.tabs.update(tab.id, { url: cmd.url })
-    // Bring the ALMA window to the front so the owner SEES each page as it loads.
-    // (This is the "watch live" moment; between tasks he can click back to his
-    // own window, or hit Pause in the popup to stop entirely.)
+    // Front the ALMA tab (inside the owner's own window) so he SEES each page as
+    // it loads — Claude-in-Chrome behaviour. Screenshots don't need this (CDP
+    // captures background tabs); it's purely the "watch live" moment.
     try {
-      await chrome.windows.update(tab.windowId, { focused: true, drawAttention: true })
+      await chrome.tabs.update(tab.id, { active: true })
     } catch {
-      /* window gone — ignore, next getAgentTab recreates */
+      /* tab gone — next getAgentTab recreates */
     }
     await waitForTabLoad(tab.id, 15000)
     await showOverlay(tab.id, 'পেজ খুলছে: ' + cmd.url.replace(/^https?:\/\//, '').slice(0, 48))
@@ -935,7 +1116,8 @@ async function executeCommand(cmd) {
     return { ok: true, data: { back: true } }
   }
   if (action === 'screenshot') {
-    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 80 })
+    const dataUrl = await captureAgentTab(tab)
+    if (!dataUrl) return { ok: false, error: 'could not capture screenshot' }
     return { ok: true, screenshot: dataUrl }
   }
   if (action === 'read_text') {
@@ -990,10 +1172,10 @@ async function executeCommand(cmd) {
     if (!picked) return { ok: false, error: 'no other tab to switch to' }
     try {
       await chrome.tabs.update(picked.id, { active: true })
-      await chrome.windows.update(picked.windowId, { focused: true, drawAttention: true })
     } catch {
       return { ok: false, error: 'could not switch tab' }
     }
+    // setAgentTab also pulls the followed tab into the ALMA tab group.
     await setAgentTab(picked.id, picked.windowId)
     await waitForTabLoad(picked.id, 12000)
     await showOverlay(picked.id, 'নতুন ট্যাবে গেছে')
@@ -1099,9 +1281,60 @@ async function setBadge(state) {
   }
 }
 
+// ── Self-update (multi-Mac) ─────────────────────────────────────────────────
+// Production republishes the extension on every main merge
+// (<site>/companion-version.json + /companion/…); a tiny per-machine updater
+// (companion-updater.sh via launchd) syncs those files into this unpacked
+// folder. Here: (a) the moment the DISK copy is newer than the running one,
+// reload ourselves — the update applies with zero clicks; (b) if production
+// has a newer version the updater hasn't fetched yet, tell the owner once.
+function versionNewer(a, b) {
+  const pa = String(a).split('.').map(Number)
+  const pb = String(b).split('.').map(Number)
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0)
+    if (d !== 0) return d > 0
+  }
+  return false
+}
+
+async function checkForUpdate() {
+  const running = chrome.runtime.getManifest().version
+  try {
+    // Unpacked extensions serve files from disk — a bumped manifest on disk
+    // means the updater already delivered a new build. Apply it now.
+    const disk = await fetch(chrome.runtime.getURL('manifest.json'), { cache: 'no-store' }).then((r) => r.json())
+    if (disk?.version && disk.version !== running) {
+      chrome.runtime.reload()
+      return
+    }
+  } catch { /* disk read failed — fall through to the remote check */ }
+  try {
+    const { baseUrl } = await getConfig()
+    const res = await fetch(`${baseUrl || DEFAULT_BASE}/companion-version.json`, { cache: 'no-store' })
+    if (!res.ok) return
+    const remote = (await res.json())?.version
+    if (!remote || !versionNewer(remote, running)) return
+    const { updNotifiedFor } = await chrome.storage.local.get('updNotifiedFor')
+    if (updNotifiedFor === remote) return
+    await chrome.storage.local.set({ updNotifiedFor: remote })
+    chrome.notifications?.create('alma-companion-update', {
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: 'ALMA Companion আপডেট আছে',
+      message: `নতুন ভার্সন v${remote} তৈরি (এখন v${running})। updater চালু থাকলে ৩০ মিনিটের মধ্যে নিজে থেকেই বসে যাবে।`,
+    })
+  } catch { /* offline — try again next alarm */ }
+}
+
 // Re-arm the loop periodically (MV3 workers sleep when idle).
 chrome.alarms.create('alma-poll', { periodInMinutes: 1 })
+chrome.alarms.create('alma-update-check', { periodInMinutes: 10 })
 chrome.alarms.onAlarm.addListener(async (a) => {
+  if (a.name === 'alma-update-check') {
+    checkForUpdate()
+    return
+  }
   if (a.name !== 'alma-poll') return
   const { token, paused } = await getConfig()
   await setBadge(token && !paused ? 'on' : 'off')
@@ -1110,19 +1343,21 @@ chrome.alarms.onAlarm.addListener(async (a) => {
 
 chrome.runtime.onStartup.addListener(() => loop())
 chrome.runtime.onInstalled.addListener(async () => {
-  // Forget any window from a previous load so the next task opens a fresh,
-  // visible ALMA window (avoids reusing one buried behind other windows).
-  await chrome.storage.local.remove(['agentTabId', 'agentWindowId'])
+  // Forget any tab/group/debugger state from a previous load so the next task
+  // starts a fresh grouped tab (a reload also drops CDP attachments).
+  await chrome.storage.local.remove(['agentTabId', 'agentWindowId', 'agentGroupId', 'cdpTabId'])
   loop()
 })
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.token || changes.paused) loop()
 })
 
-// If the owner closes the ALMA window, forget it so the next command opens a fresh one.
+// If the owner closes the ALMA tab, forget it (and its debugger attachment) so
+// the next command opens a fresh grouped tab.
 chrome.tabs.onRemoved.addListener(async (tabId) => {
-  const { agentTabId } = await chrome.storage.local.get('agentTabId')
+  const { agentTabId, cdpTabId } = await chrome.storage.local.get(['agentTabId', 'cdpTabId'])
   if (agentTabId === tabId) await chrome.storage.local.remove(['agentTabId', 'agentWindowId'])
+  if (cdpTabId === tabId) await chrome.storage.local.remove('cdpTabId')
 })
 
 // Popup ↔ background messaging (pairing / status / kill switch).

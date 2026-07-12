@@ -212,11 +212,12 @@ function finalizeTool(
   id: string,
   ok: boolean,
   result?: string,
+  shot?: string,
 ): TimelineEntry[] | undefined {
   if (!tl) return tl
   return tl.map((e) =>
     e.t === 'tool' && e.id === id
-      ? { ...e, ok, live: false, result: result ?? e.result }
+      ? { ...e, ok, live: false, result: result ?? e.result, shot: shot ?? e.shot }
       : e,
   )
 }
@@ -954,6 +955,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                           done: true,
                           success: evt.success as boolean,
                           result: typeof evt.resultPreview === 'string' ? evt.resultPreview : t.result,
+                          screenshot: typeof evt.screenshot === 'string' ? evt.screenshot : t.screenshot,
                         }
                       : t
                   ),
@@ -962,6 +964,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                     evt.id as string,
                     evt.success as boolean,
                     typeof evt.resultPreview === 'string' ? evt.resultPreview : undefined,
+                    typeof evt.screenshot === 'string' ? evt.screenshot : undefined,
                   ),
                 }
               : m
