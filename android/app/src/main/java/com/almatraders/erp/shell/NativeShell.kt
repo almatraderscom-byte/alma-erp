@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -50,6 +51,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -137,6 +141,11 @@ object NativeShell {
 
         // Edge-to-edge: the aurora paints under the system bars; bar icon tint follows theme.
         WindowCompat.setDecorFitsSystemWindows(activity.window, false)
+        // Keyboard: ADJUST_NOTHING so the window does NOT also resize — otherwise the
+        // native chat gets pushed up by BOTH the window resize and Compose imePadding,
+        // leaving a big empty gap between the keyboard and the input box. imePadding()
+        // on the native screens now positions the input exactly above the keyboard.
+        activity.window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
 
         val composeView = ComposeView(activity).apply {
             setContent { ShellRoot(activity, capacitorRoot) }
@@ -170,6 +179,22 @@ private val ALL_TABS = listOf(
     TabSpec(4, "More", Icons.Outlined.MoreHoriz, nativeHeader = true, gatePath = null),
 )
 
+/** Pending approvals count for the tab badge: business PENDING + agent pending. */
+private suspend fun fetchApprovalsCount(): Int {
+    var n = 0
+    try {
+        val r = AlmaApi.getObject("/api/approvals")
+        val d = r.optJSONObject("data") ?: r
+        n += d.flexInt("totalPending") ?: 0
+    } catch (_: Exception) { }
+    try {
+        val a = AlmaApi.getObject("/api/assistant/actions", mapOf("status" to "pending", "limit" to "50"))
+        val d = a.optJSONObject("data") ?: a
+        n += (d.optJSONArray("actions") ?: a.optJSONArray("actions"))?.length() ?: 0
+    } catch (_: Exception) { }
+    return n
+}
+
 // ── Root composable ───────────────────────────────────────────────────────────────
 
 @SuppressLint("MutableCollectionMutableState")
@@ -195,6 +220,15 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
     // effectiveRole here makes the bar recompose the moment the real role arrives.
     LaunchedEffect(Unit) { AlmaSession.load() }
     val role = AlmaSession.effectiveRole
+
+    // Pending-approvals badge count on the Approvals tab (polled; iOS parity).
+    var approvalsCount by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            approvalsCount = fetchApprovalsCount()
+            kotlinx.coroutines.delay(60_000L)
+        }
+    }
     val visibleTabs = remember(role) {
         ALL_TABS.filter { it.gatePath == null || AlmaSession.canSee(it.gatePath) }
     }
@@ -260,20 +294,21 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
                     }
                 }
                 // ── Pushed screen (top of stack) covers the tab, keeps its own header ──
+                // Paint the AURORA (not a flat near-black) so every sub-page matches the
+                // tab roots + iOS — the aurora gradient is opaque so it fully hides the
+                // tab content behind it. Web pushes are opaque WebViews anyway.
                 stack.lastOrNull()?.let { top ->
-                    Column(
-                        Modifier
-                            .fillMaxSize()
-                            .background(AlmaTheme.rootBg(dark)),
-                    ) {
-                        ShellHeader(title = top.title, dark = dark, onBack = pushCtx.pop)
-                        Box(Modifier.weight(1f)) {
-                            when (top) {
-                                is StackEntry.Web -> AndroidView(
-                                    factory = { top.webView.also { wv -> (wv.parent as? ViewGroup)?.removeView(wv) } },
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                                is StackEntry.Native -> top.content(pushCtx)
+                    AuroraBackground(dark) {
+                        Column(Modifier.fillMaxSize()) {
+                            ShellHeader(title = top.title, dark = dark, onBack = pushCtx.pop)
+                            Box(Modifier.weight(1f)) {
+                                when (top) {
+                                    is StackEntry.Web -> AndroidView(
+                                        factory = { top.webView.also { wv -> (wv.parent as? ViewGroup)?.removeView(wv) } },
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                    is StackEntry.Native -> top.content(pushCtx)
+                                }
                             }
                         }
                     }
@@ -283,6 +318,7 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
                 tabs = visibleTabs,
                 selected = selectedTab.intValue,
                 dark = dark,
+                approvalsCount = approvalsCount,
                 onSelect = { i ->
                     if (i == selectedTab.intValue) {
                         // Re-tap: pop to the tab root (iOS tab-bar behaviour).
@@ -342,7 +378,7 @@ fun ShellHeader(title: String, dark: Boolean, onBack: (() -> Unit)?) {
 /** Transparent tab bar: violet selected / muted unselected (AlmaTheme.tabBarAppearance
  *  twin). Renders only the role-visible tabs; each keys off its stable TabSpec.index. */
 @Composable
-private fun ShellTabBar(tabs: List<TabSpec>, selected: Int, dark: Boolean, onSelect: (Int) -> Unit) {
+private fun ShellTabBar(tabs: List<TabSpec>, selected: Int, dark: Boolean, approvalsCount: Int, onSelect: (Int) -> Unit) {
     val mutedTint = if (dark) Color.White.copy(alpha = 0.45f) else Color.Black.copy(alpha = 0.42f)
     Row(
         Modifier
@@ -357,6 +393,7 @@ private fun ShellTabBar(tabs: List<TabSpec>, selected: Int, dark: Boolean, onSel
                 active = tab.index == selected,
                 activeTint = AlmaTheme.violet,
                 mutedTint = mutedTint,
+                badge = if (tab.index == 3) approvalsCount else 0,
                 onClick = { onSelect(tab.index) },
             )
         }
@@ -369,6 +406,7 @@ private fun RowScope.TabItem(
     active: Boolean,
     activeTint: Color,
     mutedTint: Color,
+    badge: Int = 0,
     onClick: () -> Unit,
 ) {
     val tint = if (active) activeTint else mutedTint
@@ -381,7 +419,23 @@ private fun RowScope.TabItem(
     ) {
         Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(tab.icon, contentDescription = tab.title, tint = tint, modifier = Modifier.size(24.dp))
+                Box {
+                    Icon(tab.icon, contentDescription = tab.title, tint = tint, modifier = Modifier.size(24.dp))
+                    if (badge > 0) {
+                        Box(
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 9.dp, y = (-5).dp)
+                                .background(AlmaTheme.coral, androidx.compose.foundation.shape.CircleShape)
+                                .padding(horizontal = 5.dp, vertical = 1.dp),
+                        ) {
+                            Text(
+                                if (badge > 99) "99+" else badge.toString(),
+                                color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
+                }
                 Text(tab.title, color = tint, fontSize = 10.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal)
             }
         }
