@@ -120,11 +120,22 @@ Trading / CDIT: out of scope for this program (owner asked Lifestyle first).
   NOT in git. Build release: set `ALMA_ANDROID_KEYSTORE_PATH/PASSWORD`, `ALMA_ANDROID_KEY_ALIAS=alma`,
   `ALMA_ANDROID_KEY_PASSWORD` then `./gradlew assembleRelease`. Signer DN `CN=ALMA Traders…`.
   Release signature ≠ debug → uninstall the debug build before installing release.
-- **Role gating:** `shell/AlmaSession.kt` (GET /api/users/me → role + isOwner/businessAccess),
-  `isAdmin`/`canManageBusiness`. MoreMenu fail-closed; Trading + Digital write UI hidden for non-admins.
-- **OPEN — needs SERVER-side action before broad rollout (do NOT mass-distribute until fixed):**
-  1. `/api/digital/*` POST routes have NO server role check (web gates /digital only via route
-     middleware that native bypasses). Add `requireCditAdmin` on those routes — protects web too.
-  2. `/api/trading/dashboard` returns unfiltered business-wide financials (totalCapital/perf/rankings);
-     filter server-side by role, or the client gate is the only guard.
+- **Role gating (nav):** `shell/AlmaAccess.kt` — 1:1 Kotlin port of the web authority
+  `isPathAllowedForRole` (src/lib/roles.ts). `AlmaSession.effectiveRole` (owner=SUPER_ADMIN,
+  unknown/not-loaded=STAFF fail-closed) + `canSee(path)`. `NativeShell` filters the tab bar
+  (Dashboard/More always; Orders/Assistant/Approvals gated); `MoreMenu` filters items and drops
+  empty groups. Verified on-device for SUPER_ADMIN / ADMIN / HR / STAFF (force-role screenshots
+  reproduced the web precedence exactly, incl. Employees-hidden-for-ADMIN, Agent-super-only,
+  Audit/Branding hidden). Fresh install with no session → STAFF nav (fail-closed).
+- **The two "server gaps" from the prior note were VERIFIED NON-ISSUES (2026-07-12):**
+  1. `/api/digital/*` — `apiRoleDenied` in `src/middleware.ts:98` blocks ALL `/api/digital`
+     (every method, every role except SUPER_ADMIN/ADMIN) at the edge. Next.js middleware runs
+     server-side on EVERY request — native OkHttp does NOT bypass it. No route change needed.
+  2. `/api/trading/dashboard` — `tradingAccountWhereForContext` (`src/lib/trading.ts:103`) scopes
+     accounts to `assignedUserId === userId` for non-admins, and `getTradingContext` denies users
+     without trading access. A trading staffer sees only their OWN accounts' totals, not
+     business-wide. No leak.
+  The "login" text staff saw on admin sections was the SERVER correctly refusing; the real defect
+  was the client OFFERING those sections, fixed by the nav gate above. No live ERP server code
+  was modified.
 - **Distribution:** owner-triggered only. No mass force-download performed.
