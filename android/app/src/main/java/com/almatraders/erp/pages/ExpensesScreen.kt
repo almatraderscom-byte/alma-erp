@@ -30,6 +30,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import android.webkit.CookieManager
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -887,25 +892,34 @@ private fun ExpDetailSheet(row: ExpLedgerRow, dark: Boolean, openWeb: (String, S
             if (row.expId.isNotEmpty()) ExpInfoRow("Entry ID", row.expId, AlmaTheme.ink(dark), dark)
         }
         if (!row.receiptRef.isNullOrEmpty()) {
+            var showReceipt by remember { mutableStateOf(false) }
+            val context = LocalContext.current
             Text(
-                "রিসিট দেখুন (Attachment)",
+                if (showReceipt) "রিসিট লুকান" else "রিসিট দেখুন (Attachment)",
                 color = ExpensePalette.green400, fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
                     .background(ExpensePalette.green400.copy(alpha = 0.10f), CircleShape)
                     .border(1.dp, ExpensePalette.green400.copy(alpha = 0.30f), CircleShape)
-                    .plainClick {
-                        val ref = row.receiptRef
-                        openWeb(if (ref.startsWith("/")) ref else "/expenses", "Receipt")
-                    }
+                    .plainClick { showReceipt = !showReceipt }
                     .padding(vertical = 10.dp),
             )
+            if (showReceipt) {
+                val ref = row.receiptRef!!
+                val url = if (ref.startsWith("http")) ref else AlmaTheme.BASE_URL + (if (ref.startsWith("/")) ref else "/$ref")
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(url)
+                        .apply { CookieManager.getInstance().getCookie(AlmaTheme.BASE_URL)?.let { setHeader("Cookie", it) } }
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = "Receipt",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().height(320.dp)
+                        .background(AlmaTheme.cardBg(dark), RoundedCornerShape(AlmaTheme.R_CONTROL.dp)),
+                )
+            }
         }
-        Text(
-            "🌐 সব অপশন — ওয়েবে খুলুন",
-            color = AlmaTheme.inkSecondary(dark), fontSize = 13.sp, textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().plainClick { openWeb("/expenses", "Expenses") }.padding(vertical = 4.dp),
-        )
     }
 }
 

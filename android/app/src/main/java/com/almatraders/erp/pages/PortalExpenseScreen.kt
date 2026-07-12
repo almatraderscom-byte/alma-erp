@@ -165,8 +165,24 @@ private class PortalExpenseState {
         }
     }
 
+    /** Upload a receipt photo (multipart) → returns the attachment id to reference in
+     *  the claim. Native replacement for the web file picker. */
+    suspend fun uploadReceipt(picked: PickedImage): String? {
+        return try {
+            val resp = AlmaApi.uploadMultipart(
+                "/api/finance/receipts",
+                listOf(picked.toFilePart("file")),
+                mapOf("business_id" to EXPENSE_BUSINESS_ID),
+            )
+            val data = resp.optJSONObject("data") ?: resp
+            data.str("id") ?: resp.str("id")
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /** POST one claim — same body the web submit() sends. Returns true on success. */
-    suspend fun submit(amount: Int, category: String, vendor: String, note: String): Boolean {
+    suspend fun submit(amount: Int, category: String, vendor: String, note: String, receiptAttachmentId: String? = null): Boolean {
         if (submitting) return false
         submitting = true
         notice = null
@@ -177,6 +193,7 @@ private class PortalExpenseState {
                 .put("category", category)
             vendor.trim().takeIf { it.isNotEmpty() }?.let { body.put("vendor", it) }
             note.trim().takeIf { it.isNotEmpty() }?.let { body.put("note", it) }
+            receiptAttachmentId?.takeIf { it.isNotEmpty() }?.let { body.put("receipt_attachment_id", it) }
 
             val resp = AlmaApi.send("POST", "/api/finance/reimbursement", body)
             val data = resp.optJSONObject("data") ?: resp
@@ -237,25 +254,17 @@ fun PortalExpenseScreen(ctx: PushCtx) {
         item { ExpenseSummaryCards(vm, dark) { ctx.openWebForced("/portal", "My Desk") } }
         item { ExpenseNewClaimButton(dark) { showSubmit = true } }
         item { ExpenseHistoryCard(vm, dark) }
-        item {
-            Text(
-                "সব অপশন (রসিদ/ছবি সহ) — ওয়েবে খুলুন",
-                color = AlmaTheme.inkSecondary(dark), fontSize = 11.sp,
-                textDecoration = TextDecoration.Underline, textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .plainClick { ctx.openWebForced("/portal/expense", "Portal expense") }
-                    .padding(vertical = 6.dp),
-            )
-        }
         item { Spacer(Modifier.height(8.dp)) }
     }
 
     if (showSubmit) {
         ModalBottomSheet(onDismissRequest = { showSubmit = false }, containerColor = AlmaTheme.rootBg(dark)) {
-            PortalExpenseSubmitSheet(vm.submitting, dark) { amount, category, vendor, note ->
+            PortalExpenseSubmitSheet(
+                vm.submitting, dark,
+                onUploadReceipt = { picked -> vm.uploadReceipt(picked) },
+            ) { amount, category, vendor, note, receiptId ->
                 scope.launch {
-                    if (vm.submit(amount, category, vendor, note)) showSubmit = false
+                    if (vm.submit(amount, category, vendor, note, receiptId)) showSubmit = false
                 }
             }
         }
@@ -472,8 +481,22 @@ private fun ExpenseAuthCard(dark: Boolean, onLogin: () -> Unit) {
 private fun PortalExpenseSubmitSheet(
     submitting: Boolean,
     dark: Boolean,
-    onSubmit: (amount: Int, category: String, vendor: String, note: String) -> Unit,
+    onUploadReceipt: suspend (PickedImage) -> String?,
+    onSubmit: (amount: Int, category: String, vendor: String, note: String, receiptAttachmentId: String?) -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
+    var receiptId by remember { mutableStateOf<String?>(null) }
+    var uploadingReceipt by remember { mutableStateOf(false) }
+    fun onPicked(p: PickedImage?) {
+        if (p == null) return
+        scope.launch {
+            uploadingReceipt = true
+            receiptId = onUploadReceipt(p)
+            uploadingReceipt = false
+        }
+    }
+    val pickReceiptGallery = rememberGalleryPick(onResult = ::onPicked)
+    val pickReceiptCamera = rememberCameraPick(onResult = ::onPicked)
     // Web CATEGORY_OPTIONS, verbatim.
     val categories = listOf(
         "যাতায়াত / কুরিয়ার",
@@ -529,6 +552,31 @@ private fun PortalExpenseSubmitSheet(
             modifier = Modifier.fillMaxWidth(),
         )
 
+        // ── Native receipt / photo attach (camera or gallery → multipart upload) ──
+        ExpenseFieldLabel("রসিদ / ছবি (ঐচ্ছিক)", dark)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Text(
+                when {
+                    uploadingReceipt -> "আপলোড হচ্ছে…"
+                    receiptId != null -> "✓ রসিদ যুক্ত হয়েছে"
+                    else -> "📷 ক্যামেরা"
+                },
+                color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f)
+                    .background(if (receiptId != null) PortalExpensePalette.emerald600 else PortalExpensePalette.coral, RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+                    .plainClick { if (!uploadingReceipt) pickReceiptCamera() }
+                    .padding(vertical = 10.dp),
+            )
+            Text(
+                "🖼️ গ্যালারি",
+                color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
+                modifier = Modifier.weight(1f)
+                    .background(PortalExpensePalette.coral.copy(alpha = 0.85f), RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+                    .plainClick { if (!uploadingReceipt) pickReceiptGallery() }
+                    .padding(vertical = 10.dp),
+            )
+        }
+
         Text("মালিক অনুমোদন করলে টাকা আপনার ওয়ালেটে যোগ হবে।", color = AlmaTheme.inkSecondary(dark), fontSize = 10.sp)
 
         Row(
@@ -563,7 +611,7 @@ private fun PortalExpenseSubmitSheet(
             confirmButton = {
                 TextButton(onClick = {
                     confirm = false
-                    onSubmit(parsedAmount, category, vendor, note)
+                    onSubmit(parsedAmount, category, vendor, note, receiptId)
                 }) { Text("হ্যাঁ, আবেদন পাঠান") }
             },
             dismissButton = { TextButton(onClick = { confirm = false }) { Text("বাতিল") } },

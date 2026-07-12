@@ -1182,6 +1182,23 @@ private fun CsToggle(label: String, on: Boolean, dark: Boolean, onChange: (Boole
 
 @Composable
 private fun CsLibraryTab(vm: CreativeStudioState, dark: Boolean, scope: CoroutineScope, openWeb: (String, String) -> Unit) {
+    var logoUploading by remember { mutableStateOf(false) }
+    var logoMsg by remember { mutableStateOf<String?>(null) }
+    val pickLogo = rememberGalleryPick(maxSide = 600, quality = 90) { p ->
+        if (p == null) return@rememberGalleryPick
+        scope.launch {
+            logoUploading = true; logoMsg = null
+            logoMsg = try {
+                AlmaApi.uploadMultipart(
+                    "/api/assistant/creative-studio/branding",
+                    listOf(p.toFilePart("logo")),
+                )
+                "✓ লোগো আপলোড হয়েছে"
+            } catch (_: Exception) {
+                "আপলোড হয়নি — আবার চেষ্টা করুন"
+            } finally { logoUploading = false }
+        }
+    }
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 18.dp),
         contentPadding = PaddingValues(bottom = 96.dp),
@@ -1222,11 +1239,16 @@ private fun CsLibraryTab(vm: CreativeStudioState, dark: Boolean, scope: Coroutin
             }
         }
 
-        // Uploads, logo, finishing editor, settings → web (Android media picker deferred).
         item {
             Column(Modifier.fillMaxWidth().almaGlass(dark, AlmaTheme.R_CARD).padding(4.dp)) {
+                // Logo upload is NATIVE now (gallery → multipart). Model-add + studio
+                // settings forms remain web for now (separate batch).
+                CsToolRow(
+                    "🏷 লোগো আপলোড",
+                    logoMsg ?: if (logoUploading) "আপলোড হচ্ছে…" else "ব্র্যান্ড লোগো আপলোড (গ্যালারি)",
+                    dark,
+                ) { if (!logoUploading) pickLogo() }
                 CsToolRow("📷 ছবি থেকে মডেল যোগ", "নতুন মডেলের ছবি আপলোড করুন", dark) { openWeb(CS_WEB_PATH, "মডেল যোগ") }
-                CsToolRow("🏷 লোগো / ব্র্যান্ড ফ্রেম", "লোগো আপলোড ও থিম সেটিং", dark) { openWeb(CS_WEB_PATH, "ব্র্যান্ড সেটিং") }
                 CsToolRow("⚙ স্টুডিও সেটিংস", "QC লেভেল, নোটিফিকেশন, চাইল্ড গার্মেন্ট", dark) { openWeb(CS_WEB_PATH, "স্টুডিও সেটিংস") }
             }
         }
