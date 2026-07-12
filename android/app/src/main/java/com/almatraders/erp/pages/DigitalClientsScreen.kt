@@ -74,8 +74,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.almatraders.erp.shell.AlmaApi
 import com.almatraders.erp.shell.AlmaApiException
+import com.almatraders.erp.shell.AlmaSession
 import com.almatraders.erp.shell.AlmaTheme
 import com.almatraders.erp.shell.PushCtx
+import com.almatraders.erp.shell.RememberSession
 import com.almatraders.erp.shell.almaGlass
 import com.almatraders.erp.shell.flexBool
 import com.almatraders.erp.shell.flexDouble
@@ -373,6 +375,8 @@ private class DigitalClientsState {
 @Composable
 fun DigitalClientsScreen(ctx: PushCtx) {
     val dark = AlmaTheme.isDark
+    RememberSession()
+    val canManage = AlmaSession.canManageBusiness   // client-side role gate (fail-closed)
     val vm = remember { DigitalClientsState() }
     val scope = rememberCoroutineScope()
     var selected by remember { mutableStateOf<DigitalClient?>(null) }
@@ -398,25 +402,28 @@ fun DigitalClientsScreen(ctx: PushCtx) {
 
             item { ClientsHeroCard(vm.clients.size, vm.serviceCount) }
 
-            item {
-                // Web header "+ Add Client" — native form sheet (owner 2026-07-11).
-                Text(
-                    "+ Add Client",
-                    color = DigitalClientsPalette.accent(dark),
-                    fontSize = 12.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            DigitalClientsPalette.cditBlue.copy(alpha = 0.10f),
-                            RoundedCornerShape(AlmaTheme.R_CONTROL.dp),
-                        )
-                        .border(
-                            1.dp, DigitalClientsPalette.cditBlue.copy(alpha = 0.3f),
-                            RoundedCornerShape(AlmaTheme.R_CONTROL.dp),
-                        )
-                        .plainClick { showCreate = true }
-                        .padding(vertical = 11.dp),
-                )
+            if (canManage) {
+                item {
+                    // Web header "+ Add Client" — native form sheet (owner 2026-07-11).
+                    // Admin-only write: hidden for non-admins (defense-in-depth).
+                    Text(
+                        "+ Add Client",
+                        color = DigitalClientsPalette.accent(dark),
+                        fontSize = 12.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                DigitalClientsPalette.cditBlue.copy(alpha = 0.10f),
+                                RoundedCornerShape(AlmaTheme.R_CONTROL.dp),
+                            )
+                            .border(
+                                1.dp, DigitalClientsPalette.cditBlue.copy(alpha = 0.3f),
+                                RoundedCornerShape(AlmaTheme.R_CONTROL.dp),
+                            )
+                            .plainClick { showCreate = true }
+                            .padding(vertical = 11.dp),
+                    )
+                }
             }
 
             item {
@@ -494,7 +501,7 @@ fun DigitalClientsScreen(ctx: PushCtx) {
         }
     }
 
-    if (showCreate) {
+    if (showCreate && canManage) {
         ModalBottomSheet(onDismissRequest = { showCreate = false }, containerColor = AlmaTheme.rootBg(dark)) {
             DigitalClientCreateSheet(vm, dark) { showCreate = false }
         }
@@ -668,6 +675,7 @@ private fun DigitalClientDetailSheet(
     dark: Boolean,
     openWeb: (String, String) -> Unit,
 ) {
+    val canManage = AlmaSession.canManageBusiness   // client-side role gate (fail-closed)
     var detail by remember { mutableStateOf<DigitalClientsDetail?>(null) }
     var loading by remember { mutableStateOf(true) }
     var showPayment by remember { mutableStateOf(false) }
@@ -709,21 +717,24 @@ private fun DigitalClientDetailSheet(
         } else {
             ClientsBillingCard(detail?.summary, dark)
 
-            // Web client-detail "Record payment" — native sheet (owner 2026-07-11).
-            Text(
-                "🏦 Record payment",
-                color = if (dark) DigitalClientsPalette.emerald400 else DigitalClientsPalette.emerald600,
-                fontSize = 12.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(
-                        DigitalClientsPalette.emerald600.copy(alpha = 0.10f),
-                        RoundedCornerShape(AlmaTheme.R_CONTROL.dp),
-                    )
-                    .border(1.dp, DigitalClientsPalette.emerald600.copy(alpha = 0.3f), RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
-                    .plainClick { showPayment = true }
-                    .padding(vertical = 11.dp),
-            )
+            if (canManage) {
+                // Web client-detail "Record payment" — native sheet (owner 2026-07-11).
+                // Admin-only money write: hidden for non-admins (defense-in-depth).
+                Text(
+                    "🏦 Record payment",
+                    color = if (dark) DigitalClientsPalette.emerald400 else DigitalClientsPalette.emerald600,
+                    fontSize = 12.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            DigitalClientsPalette.emerald600.copy(alpha = 0.10f),
+                            RoundedCornerShape(AlmaTheme.R_CONTROL.dp),
+                        )
+                        .border(1.dp, DigitalClientsPalette.emerald600.copy(alpha = 0.3f), RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+                        .plainClick { showPayment = true }
+                        .padding(vertical = 11.dp),
+                )
+            }
 
             ClientsContactCard(live, dark)
             ClientsProjectsCard(detail?.projects ?: emptyList(), dark)
@@ -738,7 +749,7 @@ private fun DigitalClientDetailSheet(
         )
     }
 
-    if (showPayment) {
+    if (showPayment && canManage) {
         ModalBottomSheetSimple(dark, onDismiss = { showPayment = false }) {
             DigitalClientPaymentSheet(
                 clientId = client.id, clientName = client.name, vm = vm, dark = dark,

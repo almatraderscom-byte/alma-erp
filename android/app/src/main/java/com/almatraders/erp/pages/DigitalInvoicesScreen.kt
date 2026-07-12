@@ -82,8 +82,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.almatraders.erp.shell.AlmaApi
 import com.almatraders.erp.shell.AlmaApiException
+import com.almatraders.erp.shell.AlmaSession
 import com.almatraders.erp.shell.AlmaTheme
 import com.almatraders.erp.shell.PushCtx
+import com.almatraders.erp.shell.RememberSession
 import com.almatraders.erp.shell.almaGlass
 import com.almatraders.erp.shell.flexBool
 import com.almatraders.erp.shell.flexInt
@@ -373,6 +375,8 @@ private class DigitalInvoicesState {
 @Composable
 fun DigitalInvoicesScreen(ctx: PushCtx) {
     val dark = AlmaTheme.isDark
+    RememberSession()
+    val canManage = AlmaSession.canManageBusiness   // client-side role gate (fail-closed)
     val vm = remember { DigitalInvoicesState() }
     val scope = rememberCoroutineScope()
     var showCreate by remember { mutableStateOf(false) }
@@ -400,27 +404,30 @@ fun DigitalInvoicesScreen(ctx: PushCtx) {
 
             item { InvoicesHeroBoard(vm, dark) }
 
-            item {
-                // Web header "+ New Invoice" — native form sheet (owner 2026-07-11).
-                Text(
-                    "+ New Invoice",
-                    color = DigitalInvoicesPalette.accentText(dark),
-                    fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            DigitalInvoicesPalette.cditBlue.copy(alpha = 0.10f),
-                            RoundedCornerShape(AlmaTheme.R_CONTROL.dp),
-                        )
-                        .border(
-                            1.dp,
-                            DigitalInvoicesPalette.cditBlue.copy(alpha = 0.3f),
-                            RoundedCornerShape(AlmaTheme.R_CONTROL.dp),
-                        )
-                        .plainClick { showCreate = true }
-                        .padding(vertical = 11.dp),
-                )
+            if (canManage) {
+                item {
+                    // Web header "+ New Invoice" — native form sheet (owner 2026-07-11).
+                    // Admin-only write: hidden for non-admins (defense-in-depth).
+                    Text(
+                        "+ New Invoice",
+                        color = DigitalInvoicesPalette.accentText(dark),
+                        fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                DigitalInvoicesPalette.cditBlue.copy(alpha = 0.10f),
+                                RoundedCornerShape(AlmaTheme.R_CONTROL.dp),
+                            )
+                            .border(
+                                1.dp,
+                                DigitalInvoicesPalette.cditBlue.copy(alpha = 0.3f),
+                                RoundedCornerShape(AlmaTheme.R_CONTROL.dp),
+                            )
+                            .plainClick { showCreate = true }
+                            .padding(vertical = 11.dp),
+                    )
+                }
             }
 
             item {
@@ -524,7 +531,7 @@ fun DigitalInvoicesScreen(ctx: PushCtx) {
         }
     }
 
-    if (showCreate) {
+    if (showCreate && canManage) {
         ModalBottomSheet(onDismissRequest = { showCreate = false }, containerColor = AlmaTheme.rootBg(dark)) {
             DigitalInvoiceCreateSheet(vm, dark) { showCreate = false }
         }
@@ -796,6 +803,7 @@ private fun DigitalInvoiceActionsSheet(
     onDone: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val canManage = AlmaSession.canManageBusiness   // client-side role gate (fail-closed)
     var payAmount by remember { mutableStateOf("") }
     var payMethod by remember { mutableStateOf("Bank Transfer") }
     var methodMenu by remember { mutableStateOf(false) }
@@ -826,62 +834,65 @@ private fun DigitalInvoiceActionsSheet(
         }
 
         // Record payment (web handlePartialPay parity — POST /api/digital/payments).
-        Column(
-            Modifier.fillMaxWidth().almaGlass(dark, AlmaTheme.R_CARD).padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text(
-                "RECORD PAYMENT",
-                color = AlmaTheme.inkSecondary(dark), fontSize = 9.sp,
-                fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
-            )
-            OutlinedTextField(
-                value = payAmount,
-                onValueChange = { payAmount = it },
-                placeholder = { Text("Amount (BDT)") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Box {
-                Row(
-                    Modifier.fillMaxWidth().almaGlass(dark, AlmaTheme.R_CONTROL)
-                        .plainClick { methodMenu = true }
-                        .padding(horizontal = 12.dp, vertical = 11.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(payMethod, color = AlmaTheme.ink(dark), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.weight(1f))
-                    Text("▾", color = AlmaTheme.inkSecondary(dark), fontSize = 12.sp)
-                }
-                DropdownMenu(expanded = methodMenu, onDismissRequest = { methodMenu = false }) {
-                    INVOICE_PAY_METHODS.forEach { m ->
-                        DropdownMenuItem(text = { Text(m) }, onClick = { payMethod = m; methodMenu = false })
+        // Admin-only money write: hidden for non-admins (defense-in-depth).
+        if (canManage) {
+            Column(
+                Modifier.fillMaxWidth().almaGlass(dark, AlmaTheme.R_CARD).padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    "RECORD PAYMENT",
+                    color = AlmaTheme.inkSecondary(dark), fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
+                )
+                OutlinedTextField(
+                    value = payAmount,
+                    onValueChange = { payAmount = it },
+                    placeholder = { Text("Amount (BDT)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Box {
+                    Row(
+                        Modifier.fillMaxWidth().almaGlass(dark, AlmaTheme.R_CONTROL)
+                            .plainClick { methodMenu = true }
+                            .padding(horizontal = 12.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(payMethod, color = AlmaTheme.ink(dark), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.weight(1f))
+                        Text("▾", color = AlmaTheme.inkSecondary(dark), fontSize = 12.sp)
+                    }
+                    DropdownMenu(expanded = methodMenu, onDismissRequest = { methodMenu = false }) {
+                        INVOICE_PAY_METHODS.forEach { m ->
+                            DropdownMenuItem(text = { Text(m) }, onClick = { payMethod = m; methodMenu = false })
+                        }
                     }
                 }
-            }
-            if (paying) {
-                Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(
-                        Modifier.size(18.dp),
-                        color = DigitalInvoicesPalette.emerald600, strokeWidth = 2.dp,
+                if (paying) {
+                    Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(
+                            Modifier.size(18.dp),
+                            color = DigitalInvoicesPalette.emerald600, strokeWidth = 2.dp,
+                        )
+                    }
+                } else {
+                    Text(
+                        "Record payment",
+                        color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                if (taka > 0) DigitalInvoicesPalette.emerald600
+                                else DigitalInvoicesPalette.emerald600.copy(alpha = 0.4f),
+                                RoundedCornerShape(AlmaTheme.R_CONTROL.dp),
+                            )
+                            .plainClick { if (taka > 0) confirmingPay = true }
+                            .padding(vertical = 12.dp),
                     )
                 }
-            } else {
-                Text(
-                    "Record payment",
-                    color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            if (taka > 0) DigitalInvoicesPalette.emerald600
-                            else DigitalInvoicesPalette.emerald600.copy(alpha = 0.4f),
-                            RoundedCornerShape(AlmaTheme.R_CONTROL.dp),
-                        )
-                        .plainClick { if (taka > 0) confirmingPay = true }
-                        .padding(vertical = 12.dp),
-                )
             }
         }
 

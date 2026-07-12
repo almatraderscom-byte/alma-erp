@@ -86,8 +86,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.almatraders.erp.shell.AlmaApi
 import com.almatraders.erp.shell.AlmaApiException
+import com.almatraders.erp.shell.AlmaSession
 import com.almatraders.erp.shell.AlmaTheme
 import com.almatraders.erp.shell.PushCtx
+import com.almatraders.erp.shell.RememberSession
 import com.almatraders.erp.shell.almaGlass
 import com.almatraders.erp.shell.flexBool
 import com.almatraders.erp.shell.flexDouble
@@ -472,6 +474,10 @@ private val tradingAccStatusOptions = listOf(
 @Composable
 fun TradingAccountsScreen(ctx: PushCtx) {
     val dark = AlmaTheme.isDark
+    // Role gating (defense-in-depth) — create/edit/archive are admin-only writes. Server
+    // still 403s non-admins; this just stops the app from offering the controls.
+    RememberSession()
+    val canManage = AlmaSession.isAdmin
     val vm = remember { TradingAccountsState() }
     val scope = rememberCoroutineScope()
     var selected by remember { mutableStateOf<TradingAccRow?>(null) }
@@ -503,19 +509,21 @@ fun TradingAccountsScreen(ctx: PushCtx) {
                     )
                 }
             }
-            item {
-                // Web header "Create trading account" button — native form sheet.
-                Text(
-                    "＋ নতুন trading account",
-                    color = TradingAccPalette.accentText(dark), fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(TradingAccPalette.coral.copy(alpha = 0.10f), RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
-                        .border(1.dp, TradingAccPalette.coral.copy(alpha = 0.3f), RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
-                        .plainClick { showCreate = true }
-                        .padding(vertical = 11.dp),
-                )
+            // Web header "Create trading account" button — admin-only write.
+            if (canManage) {
+                item {
+                    Text(
+                        "＋ নতুন trading account",
+                        color = TradingAccPalette.accentText(dark), fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(TradingAccPalette.coral.copy(alpha = 0.10f), RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+                            .border(1.dp, TradingAccPalette.coral.copy(alpha = 0.3f), RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+                            .plainClick { showCreate = true }
+                            .padding(vertical = 11.dp),
+                    )
+                }
             }
             item {
                 // Search (web SearchInput: title / UID / staff, server-side, debounced).
@@ -583,6 +591,7 @@ fun TradingAccountsScreen(ctx: PushCtx) {
             items(vm.accounts, key = { it.id }) { a ->
                 TradingAccRowCard(
                     a, dark,
+                    canManage = canManage,
                     onTap = { selected = a },
                     onEdit = { editing = a },
                     onArchive = { archiving = a },
@@ -844,6 +853,7 @@ private fun TradingAccProgressBar(pct: Double, tint: Color, dark: Boolean, heigh
 private fun TradingAccRowCard(
     a: TradingAccRow,
     dark: Boolean,
+    canManage: Boolean,
     onTap: () -> Unit,
     onEdit: () -> Unit,
     onArchive: () -> Unit,
@@ -858,7 +868,8 @@ private fun TradingAccRowCard(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
                     onClick = onTap,
-                    onLongClick = { menuOpen = true },   // iOS contextMenu twin
+                    // Edit/Archive are admin-only — only arm the long-press for admins.
+                    onLongClick = if (canManage) ({ menuOpen = true }) else null,   // iOS contextMenu twin
                 )
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -923,12 +934,14 @@ private fun TradingAccRowCard(
                 )
             }
         }
-        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            DropdownMenuItem(text = { Text("✏️ সম্পাদনা") }, onClick = { menuOpen = false; onEdit() })
-            DropdownMenuItem(
-                text = { Text("🗄 Archive", color = TradingAccPalette.red500) },
-                onClick = { menuOpen = false; onArchive() },
-            )
+        if (canManage) {
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(text = { Text("✏️ সম্পাদনা") }, onClick = { menuOpen = false; onEdit() })
+                DropdownMenuItem(
+                    text = { Text("🗄 Archive", color = TradingAccPalette.red500) },
+                    onClick = { menuOpen = false; onArchive() },
+                )
+            }
         }
     }
 }

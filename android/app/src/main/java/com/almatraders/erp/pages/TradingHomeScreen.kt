@@ -97,8 +97,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.almatraders.erp.shell.AlmaApi
 import com.almatraders.erp.shell.AlmaApiException
+import com.almatraders.erp.shell.AlmaSession
 import com.almatraders.erp.shell.AlmaTheme
 import com.almatraders.erp.shell.PushCtx
+import com.almatraders.erp.shell.RememberSession
 import com.almatraders.erp.shell.almaGlass
 import com.almatraders.erp.shell.flexBool
 import com.almatraders.erp.shell.flexDouble
@@ -516,6 +518,10 @@ private class TradingHomeState {
 @Composable
 fun TradingHomeScreen(ctx: PushCtx) {
     val dark = AlmaTheme.isDark
+    // Role gating (defense-in-depth) — hide business-wide financials + admin writes from
+    // non-admins, matching the web /trading page's `isAdmin` gates. Server stays authority.
+    RememberSession()
+    val canManage = AlmaSession.isAdmin
     val vm = remember { TradingHomeState() }
     val scope = rememberCoroutineScope()
     var showTrade by remember { mutableStateOf(false) }
@@ -557,10 +563,15 @@ fun TradingHomeScreen(ctx: PushCtx) {
                 items(4) { Box(Modifier.fillMaxWidth().height(72.dp).almaGlass(dark, AlmaTheme.R_CARD).shimmering()) }
             } else {
                 item { THHeroCard(vm.kpis, dark) }
-                item { THBentoGrid(vm.kpis, vm.summaryKpis, dark) }
+                // Business-wide KPI tiles (total capital, trade/USDT volume, fees, expenses)
+                // are admin-only on web — hide the whole bento for non-admins.
+                if (canManage) {
+                    item { THBentoGrid(vm.kpis, vm.summaryKpis, dark) }
+                }
                 item {
                     THWorkflowRow(
                         enabled = vm.accounts.isNotEmpty(),
+                        canManage = canManage,
                         dark = dark,
                         onTrade = { showTrade = true },
                         onExpense = { showExpense = true },
@@ -608,16 +619,19 @@ fun TradingHomeScreen(ctx: PushCtx) {
                         }
                     }
                 }
-                item {
-                    THSectionCard(
-                        title = "Period snapshots", sub = "নেট রেজাল্ট",
-                        trailing = null, trailingIsButton = false, dark = dark, onTrailing = null,
-                    ) {
-                        THSnapshotRow("Today", vm.todayNet, dark)
-                        THRowDivider(dark)
-                        THSnapshotRow("Yesterday", vm.yesterdayNet, dark)
-                        THRowDivider(dark)
-                        THSnapshotRow("Last 7 days", vm.last7Net, dark)
+                // Period snapshots are business-wide net results → admin-only on web.
+                if (canManage) {
+                    item {
+                        THSectionCard(
+                            title = "Period snapshots", sub = "নেট রেজাল্ট",
+                            trailing = null, trailingIsButton = false, dark = dark, onTrailing = null,
+                        ) {
+                            THSnapshotRow("Today", vm.todayNet, dark)
+                            THRowDivider(dark)
+                            THSnapshotRow("Yesterday", vm.yesterdayNet, dark)
+                            THRowDivider(dark)
+                            THSnapshotRow("Last 7 days", vm.last7Net, dark)
+                        }
                     }
                 }
                 item {
@@ -973,6 +987,7 @@ private fun THBentoTile(
 @Composable
 private fun THWorkflowRow(
     enabled: Boolean,
+    canManage: Boolean,
     dark: Boolean,
     onTrade: () -> Unit,
     onExpense: () -> Unit,
@@ -980,9 +995,13 @@ private fun THWorkflowRow(
     onScreenshot: () -> Unit,
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Trade + Screenshot are staff workflow (web quick actions). Expense + Capital are
+        // admin-only money writes on web — hide them from non-admins.
         THWorkflowButton(Icons.Outlined.AddCircle, "Add Trade", THPalette.gold(dark), enabled, Modifier.weight(1f), onTrade)
-        THWorkflowButton(Icons.Outlined.Payments, "Expense", THPalette.signed(-1, dark), enabled, Modifier.weight(1f), onExpense)
-        THWorkflowButton(Icons.Outlined.SwapVert, "Capital", AlmaTheme.sage, enabled, Modifier.weight(1f), onCapital)
+        if (canManage) {
+            THWorkflowButton(Icons.Outlined.Payments, "Expense", THPalette.signed(-1, dark), enabled, Modifier.weight(1f), onExpense)
+            THWorkflowButton(Icons.Outlined.SwapVert, "Capital", AlmaTheme.sage, enabled, Modifier.weight(1f), onCapital)
+        }
         THWorkflowButton(Icons.Outlined.PhotoCamera, "Screenshot", AlmaTheme.violet, enabled, Modifier.weight(1f), onScreenshot)
     }
 }

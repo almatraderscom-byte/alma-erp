@@ -72,8 +72,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.almatraders.erp.shell.AlmaApi
 import com.almatraders.erp.shell.AlmaApiException
+import com.almatraders.erp.shell.AlmaSession
 import com.almatraders.erp.shell.AlmaTheme
 import com.almatraders.erp.shell.PushCtx
+import com.almatraders.erp.shell.RememberSession
 import com.almatraders.erp.shell.almaGlass
 import com.almatraders.erp.shell.flexBool
 import com.almatraders.erp.shell.flexDouble
@@ -501,6 +503,11 @@ private class TradingTelegramState {
 @Composable
 fun TradingTelegramScreen(ctx: PushCtx) {
     val dark = AlmaTheme.isDark
+    // Role gating (defense-in-depth) — on web only admins see Monitor / Live Feed / Groups /
+    // Mapping (users+aliases) / Webhook-setup; staff see just their own Drafts tab (and
+    // confirm their own drafts — the quick entry that stays). Server remains authority.
+    RememberSession()
+    val canManage = AlmaSession.isAdmin
     val vm = remember { TradingTelegramState() }
     val scope = rememberCoroutineScope()
 
@@ -537,7 +544,7 @@ fun TradingTelegramScreen(ctx: PushCtx) {
                     deletes = vm.monitor?.pendingDeleteApprovals ?: 0,
                 )
             }
-            item { TtTabChips(vm, dark, scope) }
+            item { TtTabChips(vm, canManage, dark, scope) }
             if (vm.authExpired) {
                 item { TtAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
             }
@@ -562,10 +569,12 @@ fun TradingTelegramScreen(ctx: PushCtx) {
                             }
                         }
                     }
-                    "monitor" -> ttMonitorSection(vm, dark)
-                    "live" -> ttLiveSection(vm, dark)
-                    "groups" -> ttGroupsSection(vm, dark)
-                    "mapping" -> ttMappingSection(vm, dark)
+                    // Admin-only tabs — guarded so a non-admin can never render them even
+                    // if `tab` were somehow set to one (fail-closed defense-in-depth).
+                    "monitor" -> if (canManage) ttMonitorSection(vm, dark)
+                    "live" -> if (canManage) ttLiveSection(vm, dark)
+                    "groups" -> if (canManage) ttGroupsSection(vm, dark)
+                    "mapping" -> if (canManage) ttMappingSection(vm, dark)
                 }
             }
 
@@ -688,12 +697,14 @@ private fun TtCountUp(target: Int, color: Color, fontSize: TextUnit) {
 // ── Tab + status chips ──────────────────────────────────────────────────────────────
 
 @Composable
-private fun TtTabChips(vm: TradingTelegramState, dark: Boolean, scope: kotlinx.coroutines.CoroutineScope) {
+private fun TtTabChips(vm: TradingTelegramState, canManage: Boolean, dark: Boolean, scope: kotlinx.coroutines.CoroutineScope) {
+    // Non-admins get only the Drafts tab (their own quick entry); the rest are admin-only.
+    val visibleTabs = if (canManage) ttTabs else ttTabs.filter { it.first == "drafts" }
     Row(
         Modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        ttTabs.forEach { (key, label) ->
+        visibleTabs.forEach { (key, label) ->
             val active = vm.tab == key
             val badge = if (key == "drafts") vm.pendingCount else 0
             Row(

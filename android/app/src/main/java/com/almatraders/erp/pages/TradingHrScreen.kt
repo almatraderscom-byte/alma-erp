@@ -83,8 +83,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.almatraders.erp.shell.AlmaApi
 import com.almatraders.erp.shell.AlmaApiException
+import com.almatraders.erp.shell.AlmaSession
 import com.almatraders.erp.shell.AlmaTheme
 import com.almatraders.erp.shell.PushCtx
+import com.almatraders.erp.shell.RememberSession
 import com.almatraders.erp.shell.almaGlass
 import com.almatraders.erp.shell.flexBool
 import com.almatraders.erp.shell.flexDouble
@@ -415,6 +417,10 @@ private class TradingHrState {
 @Composable
 fun TradingHrScreen(ctx: PushCtx) {
     val dark = AlmaTheme.isDark
+    // Role gating (defense-in-depth) — HR profile-edit + daily-report are admin-only writes
+    // (web /trading/hr is an admin route). Read content stays; only the write buttons hide.
+    RememberSession()
+    val canManage = AlmaSession.isAdmin
     val vm = remember { TradingHrState() }
     val scope = rememberCoroutineScope()
     var selectedId by remember { mutableStateOf<String?>(null) }
@@ -497,7 +503,7 @@ fun TradingHrScreen(ctx: PushCtx) {
     val selected = vm.employees.firstOrNull { it.id == selectedId }
     if (selected != null) {
         ModalBottomSheet(onDismissRequest = { selectedId = null }, containerColor = AlmaTheme.rootBg(dark)) {
-            HRDetailSheet(selected, vm, scope, dark, onWeb = { ctx.openWebForced("/trading/hr", "Trading HR") })
+            HRDetailSheet(selected, vm, scope, dark, canManage = canManage, onWeb = { ctx.openWebForced("/trading/hr", "Trading HR") })
         }
     }
 }
@@ -759,7 +765,7 @@ private fun HRReportRow(report: HRDailyReport, showName: Boolean, dark: Boolean)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HRDetailSheet(em: HREmployeeItem, vm: TradingHrState, scope: kotlinx.coroutines.CoroutineScope, dark: Boolean, onWeb: () -> Unit) {
+private fun HRDetailSheet(em: HREmployeeItem, vm: TradingHrState, scope: kotlinx.coroutines.CoroutineScope, dark: Boolean, canManage: Boolean, onWeb: () -> Unit) {
     var reports by remember { mutableStateOf<List<HRDailyReport>?>(null) }
     var editingProfile by remember { mutableStateOf(false) }
     var addingReport by remember { mutableStateOf(false) }
@@ -787,10 +793,13 @@ private fun HRDetailSheet(em: HREmployeeItem, vm: TradingHrState, scope: kotlinx
                 modifier = Modifier.clip(CircleShape).background(statusTint.copy(alpha = 0.12f)).border(0.8.dp, statusTint.copy(alpha = 0.35f), CircleShape).padding(horizontal = 8.dp, vertical = 3.dp))
         }
 
-        // Native write buttons.
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            HROutlineButton("Profile সম্পাদনা", HRPalette.sage, dark, Modifier.weight(1f)) { editingProfile = true }
-            HROutlineButton("Daily report", HRPalette.blue500, dark, Modifier.weight(1f)) { addingReport = true }
+        // Native write buttons — admin-only (profile-edit + daily-report). Read content below
+        // stays visible for everyone; only these writes are hidden from non-admins.
+        if (canManage) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                HROutlineButton("Profile সম্পাদনা", HRPalette.sage, dark, Modifier.weight(1f)) { editingProfile = true }
+                HROutlineButton("Daily report", HRPalette.blue500, dark, Modifier.weight(1f)) { addingReport = true }
+            }
         }
 
         // HR profile.

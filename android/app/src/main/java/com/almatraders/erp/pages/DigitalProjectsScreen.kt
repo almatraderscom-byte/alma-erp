@@ -82,8 +82,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.almatraders.erp.shell.AlmaApi
 import com.almatraders.erp.shell.AlmaApiException
+import com.almatraders.erp.shell.AlmaSession
 import com.almatraders.erp.shell.AlmaTheme
 import com.almatraders.erp.shell.PushCtx
+import com.almatraders.erp.shell.RememberSession
 import com.almatraders.erp.shell.almaGlass
 import com.almatraders.erp.shell.flexBool
 import com.almatraders.erp.shell.flexDouble
@@ -302,6 +304,8 @@ private class DigitalProjectsState {
 @Composable
 fun DigitalProjectsScreen(ctx: PushCtx) {
     val dark = AlmaTheme.isDark
+    RememberSession()
+    val canManage = AlmaSession.canManageBusiness   // client-side role gate (fail-closed)
     val vm = remember { DigitalProjectsState() }
     val scope = rememberCoroutineScope()
     var selected by remember { mutableStateOf<DigitalProject?>(null) }
@@ -332,27 +336,30 @@ fun DigitalProjectsScreen(ctx: PushCtx) {
                 )
             }
 
-            item {
-                // Web header "+ New Project" — native form sheet (owner 2026-07-11).
-                Text(
-                    "+ New Project",
-                    color = DigitalProjectsPalette.goldText(dark),
-                    fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            DigitalProjectsPalette.accentBlue.copy(alpha = 0.10f),
-                            RoundedCornerShape(AlmaTheme.R_CONTROL.dp),
-                        )
-                        .border(
-                            1.dp,
-                            DigitalProjectsPalette.accentBlue.copy(alpha = 0.3f),
-                            RoundedCornerShape(AlmaTheme.R_CONTROL.dp),
-                        )
-                        .plainClick { showCreate = true }
-                        .padding(vertical = 11.dp),
-                )
+            if (canManage) {
+                item {
+                    // Web header "+ New Project" — native form sheet (owner 2026-07-11).
+                    // Admin-only write: hidden for non-admins (defense-in-depth).
+                    Text(
+                        "+ New Project",
+                        color = DigitalProjectsPalette.goldText(dark),
+                        fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(
+                                DigitalProjectsPalette.accentBlue.copy(alpha = 0.10f),
+                                RoundedCornerShape(AlmaTheme.R_CONTROL.dp),
+                            )
+                            .border(
+                                1.dp,
+                                DigitalProjectsPalette.accentBlue.copy(alpha = 0.3f),
+                                RoundedCornerShape(AlmaTheme.R_CONTROL.dp),
+                            )
+                            .plainClick { showCreate = true }
+                            .padding(vertical = 11.dp),
+                    )
+                }
             }
 
             item {
@@ -487,7 +494,7 @@ fun DigitalProjectsScreen(ctx: PushCtx) {
         }
     }
 
-    if (showCreate) {
+    if (showCreate && canManage) {
         ModalBottomSheet(onDismissRequest = { showCreate = false }, containerColor = AlmaTheme.rootBg(dark)) {
             DigitalProjectCreateSheet(vm, dark) { showCreate = false }
         }
