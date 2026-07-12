@@ -111,3 +111,20 @@ Trading / CDIT: out of scope for this program (owner asked Lifestyle first).
 - Biometric app-lock row (More) — needs androidx.biometric, deferred.
 - Push-open deep links land on the Capacitor webview (1dp) — route notification taps
   into the native shell in a later pass.
+
+## 5. RELEASE + SECURITY (2026-07-12)
+
+- **Status:** all 56 build-66 pages ported, compile clean (0 err), debug + RELEASE APKs build.
+- **Release keystore (KEEP FOREVER — losing it = can't update the app):**
+  `~/.alma-android/alma-release.jks` (alias `alma`), password in `~/.alma-android/alma-release.pw`.
+  NOT in git. Build release: set `ALMA_ANDROID_KEYSTORE_PATH/PASSWORD`, `ALMA_ANDROID_KEY_ALIAS=alma`,
+  `ALMA_ANDROID_KEY_PASSWORD` then `./gradlew assembleRelease`. Signer DN `CN=ALMA Traders…`.
+  Release signature ≠ debug → uninstall the debug build before installing release.
+- **Role gating:** `shell/AlmaSession.kt` (GET /api/users/me → role + isOwner/businessAccess),
+  `isAdmin`/`canManageBusiness`. MoreMenu fail-closed; Trading + Digital write UI hidden for non-admins.
+- **OPEN — needs SERVER-side action before broad rollout (do NOT mass-distribute until fixed):**
+  1. `/api/digital/*` POST routes have NO server role check (web gates /digital only via route
+     middleware that native bypasses). Add `requireCditAdmin` on those routes — protects web too.
+  2. `/api/trading/dashboard` returns unfiltered business-wide financials (totalCapital/perf/rankings);
+     filter server-side by role, or the client gate is the only guard.
+- **Distribution:** owner-triggered only. No mass force-download performed.
