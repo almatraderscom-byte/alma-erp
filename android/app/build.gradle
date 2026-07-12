@@ -46,6 +46,15 @@ android {
     }
     kotlinOptions {
         jvmTarget = '21'
+        // Native Compose screens use Material3/Foundation experimental APIs (ModalBottomSheet,
+        // FlowRow, etc.) throughout — opt in module-wide instead of per-composable annotations.
+        freeCompilerArgs += [
+            '-opt-in=androidx.compose.material3.ExperimentalMaterial3Api',
+            '-opt-in=androidx.compose.foundation.layout.ExperimentalLayoutApi',
+            '-opt-in=androidx.compose.foundation.ExperimentalFoundationApi',
+            '-opt-in=androidx.compose.animation.ExperimentalAnimationApi',
+            '-opt-in=androidx.compose.ui.ExperimentalComposeUiApi',
+        ]
     }
 }
 

@@ -275,10 +275,7 @@ private fun TabContent(tabIndex: Int, pushCtx: PushCtx) {
     when (tabIndex) {
         0 -> com.almatraders.erp.pages.DashboardScreen(pushCtx)
         1 -> com.almatraders.erp.pages.OrdersScreen(pushCtx)
-        2 -> WebTabScreen(
-            path = "/agent", hideWebHeader = false,
-            register = NativeShell::registerWebView,
-        )
+        2 -> com.almatraders.erp.pages.AssistantScreen(pushCtx)
         3 -> com.almatraders.erp.pages.ApprovalsScreen(pushCtx)
         4 -> com.almatraders.erp.pages.MoreMenuScreen(pushCtx)
     }

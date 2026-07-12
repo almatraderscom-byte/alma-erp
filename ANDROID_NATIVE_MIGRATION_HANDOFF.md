@@ -1,10 +1,11 @@
 # ANDROID NATIVE MIGRATION — HANDOFF (single source of truth)
 
-> Android twin of the iOS native program (`NATIVE_MIGRATION_HANDOFF.md`). Goal: the ALMA
-> Lifestyle module looks and works EXACTLY like the native iOS app — same design, same
-> colours, same blocks — implemented in Kotlin + Jetpack Compose. The iOS SwiftUI page
-> files are the **design source of truth**: port each `ios/App/App/<Name>SwiftUI.swift`
-> 1:1 to `android/app/src/main/java/com/almatraders/erp/pages/<Name>Screen.kt`.
+> Android twin of the iOS native program (`NATIVE_MIGRATION_HANDOFF.md`). Goal: the WHOLE
+> ALMA ERP app looks and works EXACTLY like native iOS **BUILD 66** — same design, same
+> colours, same blocks — in Kotlin + Jetpack Compose. The worktree's `ios/App/App/*.swift`
+> files ARE build 66 (checked out from `native/build-67-batch`, owner directive 2026-07-11:
+> base everything on the LATEST build, never an older one). Port each
+> `<Name>SwiftUI.swift` 1:1 to `android/.../pages/<Name>Screen.kt`.
 
 ## 0. Architecture (locked — mirrors iOS)
 
