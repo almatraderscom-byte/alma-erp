@@ -112,7 +112,12 @@ export class GoogleAdapter implements ProviderAdapter {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         tools: (functionDeclarations ? [{ functionDeclarations }] : undefined) as any,
       })
-      return genModel.generateContentStream({ contents: toGeminiContents(args.messages) })
+      // Signal must reach the fetch itself — a stalled stream otherwise hangs
+      // past the 280s turn abort until the 300s serverless kill (no salvage).
+      return genModel.generateContentStream(
+        { contents: toGeminiContents(args.messages) },
+        args.signal ? { signal: args.signal } : undefined,
+      )
     }
 
     // SAFETY: `includeThoughts` is untyped in the pinned SDK and these are

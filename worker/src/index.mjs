@@ -583,8 +583,18 @@ async function processImageGen(job) {
   const { logCost, calcGeminiImageCostUsd } = await import('./cost-log.mjs')
 
   async function logImageCost(storagePath, modelName, resolvedAspectRatio, resolvedImageSize, qcAttempt) {
+    // Attribute spend to the ACTUAL engine (2026-07-12: everything was logged as
+    // 'gemini', so GPT/Seedream renders polluted the owner's Gemini spend report).
+    const engine = modelName.startsWith('gpt-image') ? 'openai'
+      : modelName.startsWith('seedream') ? 'fal'
+      : 'gemini'
+    const engineCostUsd = engine === 'openai'
+      ? (quality === 'standard' ? 0.05 : 0.19)     // gpt-image-2 medium / high (approx list)
+      : engine === 'fal'
+        ? (quality === 'standard' ? 0.0675 : 0.135) // Seedream 5.0 Pro ≤1536px / 2K (fal list)
+        : calcGeminiImageCostUsd(quality === 'standard' ? 'standard' : 'pro', resolvedImageSize)
     void logCost({
-      provider: 'gemini',
+      provider: engine,
       kind: 'image',
       units: {
         quality,
@@ -594,7 +604,7 @@ async function processImageGen(job) {
         pendingActionId,
         qcAttempt,
       },
-      costUsd: calcGeminiImageCostUsd(quality === 'standard' ? 'standard' : 'pro', resolvedImageSize),
+      costUsd: engineCostUsd,
       conversationId: conversationId ?? undefined,
       jobId: pendingActionId,
       dedupKey: `image:${pendingActionId}:${qcAttempt ?? 1}`,

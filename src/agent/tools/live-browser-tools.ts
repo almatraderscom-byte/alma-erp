@@ -35,6 +35,32 @@ import {
   type SiteTier,
 } from '@/agent/lib/live-browser/trust'
 
+// ── Oscillation guard (2026-07-12 carousel run: open popup → close → open …) ──
+// Best-effort, per-serverless-instance: the 3rd identical write action on the
+// same target within the window still runs, but its result carries a loud nudge
+// so the model changes approach exactly at the moment it starts looping.
+const OSC_WINDOW_MS = 10 * 60_000
+const oscCounts = new Map<string, { n: number; at: number }>()
+function conversationIdOf(input: Record<string, unknown>): string {
+  return typeof input.conversationId === 'string' ? input.conversationId : 'na'
+}
+function bumpOscillation(key: string): string | null {
+  const now = Date.now()
+  if (oscCounts.size > 500) {
+    for (const [k, v] of oscCounts) if (now - v.at > OSC_WINDOW_MS) oscCounts.delete(k)
+  }
+  const cur = oscCounts.get(key)
+  const n = cur && now - cur.at < OSC_WINDOW_MS ? cur.n + 1 : 1
+  oscCounts.set(key, { n, at: now })
+  if (n >= 3) {
+    return (
+      `⚠️ একই ধাপ ${n} বার হয়ে গেল — এই পথটা কাজ করছে না। থামো, live_browser_look দিয়ে পেজটা আবার দেখো, ` +
+      'তারপর ভিন্ন উপায়ে এগোও (অন্য element/text, আগে scroll_to, বা dropdown না হলে সরাসরি click)। একই কাজ আবার কোরো না।'
+    )
+  }
+  return null
+}
+
 /** Split a companion screenshot dataURL into raw base64 + media type for a vision block. */
 function splitDataUrl(
   dataUrl: string | null | undefined,
@@ -254,7 +280,8 @@ const live_browser_look: AgentTool = {
     '• If something is not visible, scroll and look again; never assume a URL exists.\n' +
     'Params: `url` (optional http(s) to open first — use the real HOME, not a guessed path), ' +
     '`scrollBy` (optional pixels), `want` ("text" | "dom" | "both", default "both"), ' +
-    '`screenshot` (default true — keep it on so you can SEE the page).',
+    '`screenshot` (default true — keep it on so you can SEE the page), ' +
+    '`find` (optional text — big/crowded page হলে দাও: elements list শুধু ম্যাচ করা elementগুলোতে ছোট হয়ে আসবে, টোকেন বাঁচে ও টার্গেট নিখুঁত হয়).',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -262,6 +289,10 @@ const live_browser_look: AgentTool = {
       scrollBy: { type: 'number', description: 'Optional pixels to scroll down before reading.' },
       want: { type: 'string', enum: ['text', 'dom', 'both'], description: 'What to read back.' },
       screenshot: { type: 'boolean', description: 'Capture a screenshot (default true).' },
+      find: {
+        type: 'string',
+        description: 'Optional: filter the returned elements to those whose text/label contains this (case-insensitive). Screenshot/text unaffected.',
+      },
       device: {
         type: 'string',
         description:
@@ -348,7 +379,24 @@ const live_browser_look: AgentTool = {
               out.lockedDomain = await flagLockdownForUrl(flagUrl, `injection tripwire: ${scan.hits[0] ?? ''}`)
             }
           }
-          out.elements = elements
+          // `find` filter: on crowded pages (Ads Manager ships 300 elements) the
+          // model drowns in tokens and mis-targets. Keep only matching elements;
+          // zero matches falls back to the full list so nothing is ever hidden.
+          const needle = typeof input.find === 'string' ? input.find.trim().toLowerCase() : ''
+          if (needle && Array.isArray(elements)) {
+            const hits = elements.filter((el) => {
+              try { return JSON.stringify(el).toLowerCase().includes(needle) } catch { return false }
+            })
+            if (hits.length > 0) {
+              out.elements = hits
+              out.findNote = `find:"${input.find}" — ${hits.length}/${elements.length} elements matched (বাকিগুলো বাদ)`
+            } else {
+              out.elements = elements
+              out.findNote = `find:"${input.find}" — কোনো element মেলেনি; পুরো list দেওয়া হলো`
+            }
+          } else {
+            out.elements = elements
+          }
         } else out.domError = r.error ?? r.status
       }
       // Orientation anchor: the URL top-level and FIRST, not buried inside page
@@ -415,6 +463,12 @@ const live_browser_act: AgentTool = {
     'TABS/POPUPS: if a click opens a new tab or popup window, action="switch_tab" moves control to the ' +
     'newest tab so your next commands act there; action="close_tab" closes that popup and returns to ' +
     'the main tab. Acting also works inside iframes automatically (embedded forms / checkout widgets).\n' +
+    'FILE UPLOAD: action="upload_file" attaches a real file into the page\'s file input — pass `url` ' +
+    '(a public https link to the image/video/pdf, e.g. a Supabase/product-image link from your own ' +
+    'tools) + optionally `filename` and `selector`/`text`/`ref` to pick a specific input; omit the ' +
+    'target and it uses the page\'s (usually single, hidden) file input. multiple-inputs keep earlier ' +
+    'files, so attach a 10-image carousel by calling it 10 times. If it reports "file input not found", ' +
+    'click the Add photos/Upload button first to mount the picker UI, then retry.\n' +
     'SAFETY: never use this to press a final Send / Post / Pay / Buy / Transfer / Confirm / Delete — ' +
     'fill the form and navigate, but leave that last irreversible click to the owner and ask him. ' +
     '(A plain Enter to run a Google/search query or move to the next field is fine; the ban is on ' +
@@ -446,6 +500,7 @@ const live_browser_act: AgentTool = {
           'press',
           'select_option',
           'pick_option',
+          'upload_file',
           'hover',
           'scroll',
           'scroll_to',
@@ -480,7 +535,8 @@ const live_browser_act: AgentTool = {
         description:
           'For action=press: the key to send, e.g. "Enter", "Tab", "Escape", "ArrowDown", "Backspace".',
       },
-      url: { type: 'string', description: 'http(s) URL (for action=navigate).' },
+      url: { type: 'string', description: 'http(s) URL (for action=navigate, or the public https file link for action=upload_file).' },
+      filename: { type: 'string', description: 'For action=upload_file: optional file name shown to the site (e.g. "carousel-1.jpg").' },
       by: { type: 'number', description: 'Pixels to scroll (for action=scroll; negative = up).' },
       ms: { type: 'number', description: 'Milliseconds to wait (for action=wait).' },
       device: {
@@ -499,6 +555,7 @@ const live_browser_act: AgentTool = {
       'press',
       'select_option',
       'pick_option',
+      'upload_file',
       'hover',
       'scroll',
       'scroll_to',
@@ -535,7 +592,7 @@ const live_browser_act: AgentTool = {
       // list; the extension checks the ACTIVE tab's real hostname against it and
       // refuses (covers redirects/tab switches this server never saw). Navigate to
       // a lockdown domain stays allowed — lockdown means read-only, not no-entry.
-      const isWriteVerb = ['click', 'type', 'press', 'select_option', 'pick_option'].includes(action)
+      const isWriteVerb = ['click', 'type', 'press', 'select_option', 'pick_option', 'upload_file'].includes(action)
       if (isWriteVerb) {
         try {
           const locked = await lockdownDomains()
@@ -550,15 +607,23 @@ const live_browser_act: AgentTool = {
       if (input.submit !== undefined) params.submit = Boolean(input.submit)
       if (input.key) params.key = input.key
       if (input.url) params.url = input.url
+      if (input.filename) params.filename = input.filename
       if (input.by !== undefined) params.by = input.by
       if (input.ms !== undefined) params.ms = input.ms
+
+      // Oscillation guard: the model sometimes ping-pongs the SAME action on the
+      // SAME target (open popup → close → open …, 2026-07-12 carousel run). The
+      // 3rd identical write within 10 min still runs, but the result carries a
+      // loud nudge to change approach — the model sees it exactly when it loops.
+      const oscKey = `${conversationIdOf(input)}:${action}:${String(input.text ?? input.ref ?? input.selector ?? input.url ?? '')}`
+      const oscNote = isWriteVerb ? bumpOscillation(oscKey) : null
 
       // SYSTEM-LEVEL RETRY (owner rule 2026-07-12: এক চেষ্টায় fail মানেই হাল ছাড়া না) —
       // transient misses (element/option not rendered yet, section still animating)
       // get two silent re-runs ~1.6s apart BEFORE the model ever sees a failure.
       // Real failures (lockdown, final-submit block, bad params) don't match and
       // surface immediately.
-      const TRANSIENT_RE = /element not found|option not found|field not found|trigger not found|select not found/i
+      const TRANSIENT_RE = /element not found|option not found|field not found|trigger not found|select not found|step_timeout|page script timed out/i
       let res = await runCommand(dev.deviceId, action, params)
       for (let attempt = 0; attempt < 2 && !res.ok && TRANSIENT_RE.test(String(res.error ?? '')); attempt++) {
         await runCommand(dev.deviceId, 'wait', { ms: 1600 })
@@ -572,6 +637,7 @@ const live_browser_act: AgentTool = {
       }
       if (!res.ok) out.error = res.error ?? res.status
       if (res.data) out.result = res.data
+      if (oscNote) out.loopWarning = oscNote
 
       // Follow-up screenshot so BOTH the owner (link) and the head model (vision
       // image) see the effect of the action (skip for plain waits).

@@ -41,6 +41,7 @@ const ALLOWED_ACTIONS = new Set([
   'press',
   'select_option',
   'pick_option',
+  'upload_file',
   'hover',
   'scroll',
   'scroll_to',
@@ -941,6 +942,21 @@ async function pagePickOption(arg) {
   if (!trigger) return { ok: false, error: 'dropdown trigger not found' }
   const want = String(option == null ? '' : option).trim()
   if (!want) return { ok: false, error: 'pick_option needs `option` (visible option text)' }
+  // Fast-fail on non-dropdowns: after self-healing, if the best match still has
+  // no dropdown semantics, firing it opens panels/popups instead of a menu and
+  // the option search burns seconds before a confusing miss (2026-07-12 "Use
+  // existing posts" mode-switch). Tell the model the right tool immediately.
+  const trigRole = (trigger.getAttribute('role') || '') + ' ' + trigger.tagName
+  const trigHaspopup = trigger.getAttribute('aria-haspopup')
+  const byTextOnly = Boolean(text && !selector && !ref)
+  if (byTextOnly && !/combobox|select|listbox/i.test(trigRole) && !(trigHaspopup && trigHaspopup !== 'false')) {
+    return {
+      ok: false,
+      error:
+        'not_a_dropdown: "' + String(text || selector || ref || '').slice(0, 50) +
+        '" কোনো dropdown নয় — pick_option নয়, action:"click" দিয়ে সরাসরি ক্লিক করো (দরকারে option-টার নিজের টেক্সটে click করো)।',
+    }
+  }
   // Native <select> → set value directly (React-safe).
   if (trigger.tagName === 'SELECT') return pageSelect({ selector, text, ref, option })
   trigger.scrollIntoView({ block: 'center' })
@@ -982,6 +998,58 @@ async function pagePickOption(arg) {
   fire(target)
   await sleep(400)
   return { ok: true, picked: (target.innerText || '').trim().slice(0, 80) }
+}
+
+// Put a real File into a page's <input type="file"> — the DataTransfer trick.
+// The service worker fetches the bytes (page CSP can't); this injected half
+// rebuilds the File and fires the change events frameworks listen for. This is
+// what lets the agent attach its own generated images (e.g. carousel creatives)
+// instead of stopping to ask the owner to drag files in.
+async function pageUploadFile(arg) {
+  const { selector, text, ref, b64, filename, mime } = arg
+  const visible = (e) => {
+    const r = e.getBoundingClientRect()
+    return r.width > 0 || r.height > 0 || e.type === 'file' // file inputs are often hidden
+  }
+  let input = null
+  if (ref) {
+    try { input = document.querySelector('[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]') } catch { input = null }
+  }
+  if (!input && selector) {
+    try { input = document.querySelector(selector) } catch { input = null }
+  }
+  if (input && input.type !== 'file') input = input.querySelector ? input.querySelector('input[type=file]') : null
+  if (!input && text) {
+    const needle = String(text).toLowerCase()
+    input = Array.from(document.querySelectorAll('input[type=file]')).find((e) => {
+      const label = (
+        (e.getAttribute('aria-label') || '') + ' ' + (e.name || '') + ' ' + (e.id || '') + ' ' +
+        ((e.labels && e.labels[0] && e.labels[0].innerText) || '') + ' ' +
+        ((e.closest('label') && e.closest('label').innerText) || '')
+      ).toLowerCase()
+      return label.includes(needle)
+    }) || null
+  }
+  if (!input) {
+    // Most upload UIs have exactly ONE (hidden) file input behind the pretty button.
+    const all = Array.from(document.querySelectorAll('input[type=file]'))
+    input = all.length === 1 ? all[0] : all.filter(visible)[0] || all[0] || null
+  }
+  if (!input) return { ok: false, error: 'file input not found — আগে upload বাটনে click করে file-picker UI টা আনো, তারপর আবার চেষ্টা করো' }
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  const file = new File([bytes], filename || 'upload.jpg', { type: mime || 'application/octet-stream' })
+  const dt = new DataTransfer()
+  // multiple-select inputs keep already-attached files so the agent can add 10 images one by one
+  if (input.multiple && input.files && input.files.length) {
+    for (const f of Array.from(input.files)) dt.items.add(f)
+  }
+  dt.items.add(file)
+  input.files = dt.files
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  input.dispatchEvent(new Event('change', { bubbles: true }))
+  return { ok: true, attached: file.name, totalFiles: input.files.length, multiple: Boolean(input.multiple) }
 }
 
 // Bring a specific element into view (center) so the next click/read is precise
@@ -1086,9 +1154,26 @@ function pageHover(arg) {
 
 // ---- command execution ------------------------------------------------------
 
+// Hard timeout for any promise. chrome.scripting.executeScript NEVER resolves if
+// the page navigates away mid-script (the injected context is destroyed) — that
+// hung executeCommand forever, which hung the ENTIRE poll loop: every following
+// command timed out server-side as companion_offline_or_busy until the service
+// worker restarted (2026-07-12 pick_option incident). Everything long-running is
+// now raced against a deadline so one bad step can never jam the companion.
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) =>
+      setTimeout(() => resolve({ ok: false, error: 'step_timeout: ' + label + ' (' + ms + 'ms) — পেজ সম্ভবত navigate/re-render করেছে; আবার চেষ্টা করো' }), ms),
+    ),
+  ])
+}
+
 async function runInPage(tabId, func, arg) {
-  const [res] = await chrome.scripting.executeScript({ target: { tabId }, func, args: arg ? [arg] : [] })
-  return res ? res.result : null
+  const run = chrome.scripting
+    .executeScript({ target: { tabId }, func, args: arg ? [arg] : [] })
+    .then(([res]) => (res ? res.result : null))
+  return withTimeout(run, 15000, 'page script')
 }
 
 // Run the same page function in EVERY frame of the tab (main doc + all iframes).
@@ -1187,7 +1272,7 @@ function lockdownMatch(url, domains) {
   return null
 }
 
-const WRITE_VERBS = new Set(['click', 'type', 'press', 'select_option', 'pick_option'])
+const WRITE_VERBS = new Set(['click', 'type', 'press', 'select_option', 'pick_option', 'upload_file'])
 
 // ---- CDP screenshots (chrome.debugger) ---------------------------------------
 // captureVisibleTab only shoots the ACTIVE tab of a window; now that the agent
@@ -1371,6 +1456,43 @@ async function executeCommand(cmd) {
       option: cmd.option,
     })
   }
+  if (action === 'upload_file') {
+    const src = String(cmd.url || '')
+    if (!/^https:\/\//i.test(src) || /^(https:\/\/)(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(src)) {
+      return { ok: false, error: 'upload_file needs a public https url' }
+    }
+    await showOverlay(tab.id, 'ফাইল বসাচ্ছে: ' + (cmd.filename || src.split('/').pop() || '').slice(0, 40))
+    let resp
+    try {
+      resp = await withTimeout(fetch(src), 20000, 'file download')
+      if (resp && resp.ok === false && resp.error) return resp // withTimeout shape
+    } catch (err) {
+      return { ok: false, error: 'file download failed: ' + (err && err.message ? err.message : String(err)) }
+    }
+    if (!resp.ok) return { ok: false, error: 'file download failed: HTTP ' + resp.status }
+    const mime = (resp.headers.get('content-type') || 'application/octet-stream').split(';')[0]
+    if (!/^(image|video)\/|^application\/pdf$/.test(mime)) {
+      return { ok: false, error: 'unsupported file type: ' + mime + ' (image/video/pdf only)' }
+    }
+    const buf = await resp.arrayBuffer()
+    if (buf.byteLength > 15 * 1024 * 1024) return { ok: false, error: 'file too large (>15MB)' }
+    // ArrayBuffer → base64 (executeScript args must be JSON-serializable)
+    let bin = ''
+    const bytes = new Uint8Array(buf)
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000))
+    }
+    const b64 = btoa(bin)
+    const fname = cmd.filename || decodeURIComponent((src.split('/').pop() || 'upload').split('?')[0]) || 'upload'
+    return await actWithRetry(tab.id, pageUploadFile, {
+      selector: cmd.selector,
+      text: cmd.text,
+      ref: cmd.ref,
+      b64,
+      filename: fname,
+      mime,
+    })
+  }
   if (action === 'hover') {
     await showOverlay(tab.id, 'হোভার করছে: ' + String(cmd.text || cmd.selector || '').slice(0, 40))
     return await actWithRetry(tab.id, pageHover, { selector: cmd.selector, text: cmd.text, ref: cmd.ref })
@@ -1457,7 +1579,10 @@ async function pollOnce() {
   await setBadge('run')
   let result
   try {
-    result = await executeCommand(cmd)
+    // Whole-command ceiling: even if some await inside executeCommand wedges
+    // (destroyed page context, stuck dialog), the loop must move on and report —
+    // one bad step must never take the companion "offline" for everything after.
+    result = await withTimeout(executeCommand(cmd), 35000, cmd.action || 'command')
   } catch (err) {
     result = { ok: false, error: err && err.message ? err.message : String(err) }
   }

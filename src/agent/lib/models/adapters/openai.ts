@@ -129,12 +129,17 @@ export class OpenAiAdapter implements ProviderAdapter {
     }
     // Cast to the streaming params type so the `reasoning` extension is accepted
     // and the create() overload still resolves to a Stream (not a single reply).
+    // The abort signal must reach the underlying fetch — checking it only
+    // between chunks means a STALLED provider (no chunks at all) hangs past the
+    // 280s turn abort until Vercel hard-kills the function at 300s: no salvage,
+    // a forever-'running' turn row and a blank reply (2026-07-12 carousel run).
+    const reqOptions = args.signal ? { signal: args.signal } : undefined
     let stream
     try {
       stream = await this.client.chat.completions.create({
         ...baseParams,
         ...reasoningParam,
-      } as ChatCompletionCreateParamsStreaming)
+      } as ChatCompletionCreateParamsStreaming, reqOptions)
     } catch (err) {
       if (!wantReasoning) throw err
       console.warn(
@@ -143,6 +148,7 @@ export class OpenAiAdapter implements ProviderAdapter {
       )
       stream = await this.client.chat.completions.create(
         baseParams as ChatCompletionCreateParamsStreaming,
+        reqOptions,
       )
     }
 
