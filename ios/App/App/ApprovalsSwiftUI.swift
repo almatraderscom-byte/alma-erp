@@ -333,6 +333,7 @@ final class ApprovalsVM {
     var busyIds: Set<String> = []         // per-row spinners, never a global one
     var error: String? = nil
     var notice: String? = nil             // success/warning line (the web's toast)
+    var resultFx: ApprovalResultFx? = nil // approve/reject WOW medallion toast (owner design)
     var authExpired = false
 
     // Integrity monitor (web parity)
@@ -395,10 +396,20 @@ final class ApprovalsVM {
             let resp: ApprovalActionResponse = try await AlmaAPI.shared.send(
                 "PATCH", "/api/approvals/\(approval.id)", body: body)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
+            // Result feedback = the owner-approved WOW medallion toast (green medal +
+            // self-drawing check + glint + confetti / red cross), replacing the old
+            // plain "Approval committed" strip (owner report 2026-07-12).
+            let approved = action == "APPROVE"
             if resp.reconciled == true {
-                notice = resp.warning ?? "Approval synced with existing decision"
+                resultFx = ApprovalResultFx(
+                    approved: approved,
+                    title: approved ? "অনুমোদন সম্পন্ন" : "বাতিল করা হয়েছে",
+                    detail: resp.warning ?? "আগের সিদ্ধান্তের সাথে মিলিয়ে নেওয়া হয়েছে")
             } else {
-                notice = resp.warning ?? (action == "APPROVE" ? "Approval committed" : "Rejection committed")
+                resultFx = ApprovalResultFx(
+                    approved: approved,
+                    title: approved ? "অনুমোদন সম্পন্ন" : "বাতিল করা হয়েছে",
+                    detail: resp.warning)
             }
             withAnimation(.snappy) { approvals.removeAll { $0.id == approval.id } }
             totalPending = max(0, totalPending - 1)
@@ -546,6 +557,15 @@ struct ApprovalsScreen: View {
         }
         .background(ApprovalsAurora())
         .claudeTopFade()
+        // Approve/reject result → WOW medallion toast drops over the list (owner
+        // design: green medal + self-drawing check + glint + confetti; red cross
+        // on reject). `.id(fx.id)` restarts the animation for back-to-back acts.
+        .overlay(alignment: .top) {
+            if let fx = vm.resultFx {
+                ApprovalResultToast(fx: fx) { vm.resultFx = nil }
+                    .id(fx.id)
+            }
+        }
         .refreshable {
             if view == "business" { await vm.load() } else { await vm.loadAgent() }
         }
@@ -1950,4 +1970,198 @@ private struct ApvBentoHeroCard: View {
 @available(iOS 17.0, *)
 #Preview("Approvals — Light") {
     ApprovalsScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - Approve/Reject result toast (owner-approved WOW design, 2026-07-12)
+//
+// Native twin of the web notification medallions (notif-bell.tsx): a dark pill
+// drops over the list with a tone medallion — APPROVE = green medal (gradient +
+// glow) whose check DRAWS itself, then a light glint sweeps across, plus a brand
+// confetti burst; REJECT = red medallion with a self-drawing cross. Springs in,
+// auto-folds after ~3.4s.
+
+struct ApprovalResultFx: Equatable {
+    let approved: Bool
+    let title: String
+    let detail: String?
+    let id = UUID()   // fresh identity per act() so back-to-back results re-animate
+}
+
+/// Checkmark in a 24×24 design space (same path as the web `.onx-ck`).
+@available(iOS 17.0, *)
+private struct ApprovalCheckShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width / 24, h = rect.height / 24
+        var p = Path()
+        p.move(to: CGPoint(x: 5 * w, y: 12.5 * h))
+        p.addLine(to: CGPoint(x: 10 * w, y: 17.5 * h))
+        p.addLine(to: CGPoint(x: 19 * w, y: 7 * h))
+        return p
+    }
+}
+
+/// Cross in the same 24×24 space — reject's medallion glyph.
+@available(iOS 17.0, *)
+private struct ApprovalCrossShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width / 24, h = rect.height / 24
+        var p = Path()
+        p.move(to: CGPoint(x: 7 * w, y: 7 * h))
+        p.addLine(to: CGPoint(x: 17 * w, y: 17 * h))
+        p.move(to: CGPoint(x: 17 * w, y: 7 * h))
+        p.addLine(to: CGPoint(x: 7 * w, y: 17 * h))
+        return p
+    }
+}
+
+@available(iOS 17.0, *)
+struct ApprovalResultToast: View {
+    let fx: ApprovalResultFx
+    let onDone: () -> Void
+
+    @State private var shown = false
+    @State private var drawn = false
+    @State private var glint = false
+    @State private var confetti = false
+
+    private var tone: Color {
+        fx.approved ? Color(red: 0.13, green: 0.77, blue: 0.37)   // #22c55e
+                    : Color(red: 0.94, green: 0.27, blue: 0.27)   // #ef4444
+    }
+    private var stroke: Color {
+        fx.approved ? Color(red: 0.29, green: 0.87, blue: 0.5)    // #4ade80
+                    : Color(red: 0.99, green: 0.44, blue: 0.44)
+    }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            if confetti { ApprovalConfettiBurst().allowsHitTesting(false) }
+            HStack(spacing: 12) {
+                medallion
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(fx.title)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    if let d = fx.detail, !d.isEmpty {
+                        Text(d)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.white.opacity(0.62))
+                            .lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Color(red: 0.05, green: 0.05, blue: 0.07).opacity(0.94),
+                        in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(tone.opacity(0.35)))
+            .shadow(color: tone.opacity(0.28), radius: 18, y: 8)
+            .padding(.horizontal, 16)
+            .padding(.top, 6)
+            .offset(y: shown ? 0 : -22)
+            .scaleEffect(shown ? 1 : 0.9, anchor: .top)
+            .opacity(shown ? 1 : 0)
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.68)) { shown = true }
+            withAnimation(.easeOut(duration: 0.5).delay(0.35)) { drawn = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.85) {
+                withAnimation(.easeOut(duration: 1.0)) { glint = true }
+            }
+            if fx.approved {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { confetti = true }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.4) {
+                withAnimation(.easeIn(duration: 0.3)) { shown = false }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.75) { onDone() }
+        }
+    }
+
+    /// Green medal / red cross — gradient fill, tone border+glow, self-drawing
+    /// glyph (path trim) and a light glint that sweeps once (web `.onx-glint`).
+    private var medallion: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(LinearGradient(colors: [tone.opacity(0.28), tone.opacity(0.10)],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(tone.opacity(0.45))
+            Group {
+                if fx.approved {
+                    ApprovalCheckShape()
+                        .trim(from: 0, to: drawn ? 1 : 0)
+                        .stroke(stroke, style: StrokeStyle(lineWidth: 2.8, lineCap: .round, lineJoin: .round))
+                } else {
+                    ApprovalCrossShape()
+                        .trim(from: 0, to: drawn ? 1 : 0)
+                        .stroke(stroke, style: StrokeStyle(lineWidth: 2.8, lineCap: .round, lineJoin: .round))
+                }
+            }
+            .frame(width: 22, height: 22)
+            GeometryReader { g in
+                LinearGradient(colors: [.clear, .white.opacity(0.5), .clear],
+                               startPoint: .leading, endPoint: .trailing)
+                    .frame(width: g.size.width * 0.7)
+                    .rotationEffect(.degrees(18))
+                    .offset(x: glint ? g.size.width * 1.2 : -g.size.width * 0.9)
+            }
+            .allowsHitTesting(false)
+        }
+        .frame(width: 44, height: 44)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .shadow(color: tone.opacity(0.35), radius: 10, y: 4)
+    }
+}
+
+/// Compact one-shot confetti for the approve toast — brand palette Canvas burst
+/// (same recipe as the ALMA Island's, scoped to the toast area).
+@available(iOS 17.0, *)
+private struct ApprovalConfettiBurst: View {
+    private struct Bit {
+        let x0: CGFloat, vx: CGFloat, vy: CGFloat, size: CGFloat, spin: Double, hue: Color
+    }
+    private let bits: [Bit]
+    private let born = Date()
+
+    init() {
+        let palette: [Color] = [
+            Color(red: 0.88, green: 0.48, blue: 0.37), Color(red: 0.96, green: 0.64, blue: 0.55),
+            Color(red: 0.95, green: 0.77, blue: 0.55), Color(red: 0.29, green: 0.87, blue: 0.5),
+            Color(red: 0.55, green: 0.36, blue: 0.96), .white,
+        ]
+        bits = (0..<64).map { _ in
+            Bit(x0: CGFloat.random(in: 0.25...0.75),
+                vx: CGFloat.random(in: -80...80),
+                vy: CGFloat.random(in: 50...190),
+                size: CGFloat.random(in: 4...7),
+                spin: Double.random(in: -4...4),
+                hue: palette.randomElement()!)
+        }
+    }
+
+    var body: some View {
+        TimelineView(.animation) { tl in
+            Canvas { ctx, size in
+                let t = tl.date.timeIntervalSince(born)
+                guard t < 2.2 else { return }
+                for b in bits {
+                    let x = b.x0 * size.width + b.vx * t
+                    let y = 42 + b.vy * t + 130 * t * t
+                    guard y < size.height else { continue }
+                    let alpha = max(0, 1 - t / 2.0)
+                    var bit = ctx
+                    bit.translateBy(x: x, y: y)
+                    bit.rotate(by: .radians(b.spin * t))
+                    bit.opacity = alpha
+                    bit.fill(Path(CGRect(x: -b.size / 2, y: -b.size / 4, width: b.size, height: b.size / 2)),
+                             with: .color(b.hue))
+                }
+            }
+        }
+        .frame(maxHeight: 340, alignment: .top)
+    }
 }

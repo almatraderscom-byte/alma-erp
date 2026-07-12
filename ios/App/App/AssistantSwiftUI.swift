@@ -3216,10 +3216,15 @@ struct AgentCompactActivityRow: View {
             onTap()
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: failed ? "xmark.circle" : icon)
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundStyle(failed ? Color.red.opacity(0.8) : iconColor)
-                    .frame(width: 18, alignment: .center)
+                // Running step: the icon shimmers together with the title (Claude Code
+                // active-step headline — owner ask 2026-07-12).
+                Group {
+                    let img = Image(systemName: failed ? "xmark.circle" : icon)
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundStyle(failed ? Color.red.opacity(0.8) : iconColor)
+                        .frame(width: 18, alignment: .center)
+                    if shimmer { img.modifier(AgentShimmerModifier()) } else { img }
+                }
                 // Claude: chevron hugs the text; long labels truncate well before the
                 // screen edge (trailing gap keeps the row ending ~mid-right, never edge).
                 if shimmer {
@@ -3325,9 +3330,13 @@ struct AgentTurnBlocksView: View {
                 onActivitySheet(.summary)
             }
         case .tool:
+            // A step still RUNNING (no result yet) shimmers its icon+title while it
+            // is the live tail — Claude Code's active-step headline (owner ask
+            // 2026-07-12); the shimmer drops the moment tool_end lands (ok != nil).
             AgentCompactActivityRow(icon: "wrench.and.screwdriver", label: a.label,
                                     labelColor: pal.mutedHi, iconColor: pal.muted,
-                                    failed: a.ok == false) {
+                                    failed: a.ok == false,
+                                    shimmer: isTail && a.ok == nil) {
                 if let t = message.tools.first(where: { $0.id == a.toolId }) {
                     onToolTap(t)
                 } else {

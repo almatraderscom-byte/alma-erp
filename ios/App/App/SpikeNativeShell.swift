@@ -1806,126 +1806,217 @@ final class AgentAssistiveNav: UIView {
     deinit { idleTimer?.invalidate() }
 }
 
-/// A premium branded first-paint / page-transition loader — replaces the plain
-/// UIActivityIndicator on a flat light slab the owner found "too normal / white".
-///
-/// It paints a soft themed gradient backdrop and, centred on it, a BREATHING violet
-/// gradient orb (radial glow that pulses in scale + opacity) over three staggered
-/// morphing dots. Two styles: `.light` for the ERP web views (a pale lavender wash so
-/// the light pages fade in with no dark→light flash) and `.dark` for the Assistant
-/// (deep violet-black to match its dark glass). Pure CoreAnimation, GPU-cheap, and it
-/// stops when hidden so it costs nothing at rest.
+/// The WOW page-transition loader (owner-approved design, 2026-07-12) — the same
+/// visual language as the app-open bootstrap (mobile/www): a glowing ALMA "A"
+/// monogram with twinkling brand particles, under a big Bangla percent counter
+/// that eases toward ৯০ while the page loads, a rotating status line
+/// (চালু হচ্ছে… → ডেটা আনা হচ্ছে… → প্রায় শেষ…) and a warm gradient hairline bar.
+/// Shown on every web page first paint / transition. Two styles: `.light` keeps a
+/// pale wash for the light ERP pages; `.dark` matches the boot loader exactly.
+/// CoreAnimation + one 0.15s timer while visible; costs nothing at rest.
 final class AlmaPremiumLoader: UIView {
     enum Style { case light, dark }
 
     private let style: Style
     private let backdrop = CAGradientLayer()
-    private let orb = UIView()
-    private let orbGradient = CAGradientLayer()
-    private var dots: [CALayer] = []
-    private let orbSize: CGFloat = 78
+    private let monogram = UILabel()
+    private let twinkle = CAEmitterLayer()
+    private let pctLabel = UILabel()
+    private let msgLabel = UILabel()
+    private let hairTrack = UIView()
+    private let hairFill = UIView()
+    private let hairGradient = CAGradientLayer()
+    private var pctTimer: Timer?
+    private var startedAt: Date?
+    private var msgIndex = -1
+
+    private static let messages = ["চালু হচ্ছে…", "ডেটা আনা হচ্ছে…", "প্রায় শেষ…"]
+    private static let bnDigits: [Character] = Array("০১২৩৪৫৬৭৮৯")
+    private static func bn(_ n: Int) -> String {
+        String(String(n).map { c in c.isNumber ? bnDigits[Int(String(c))!] : c })
+    }
+
+    // Brand palette (mobile/www tokens): coral #E07A5F, light coral #F4A28C, gold #F2C48D.
+    private static let coral = UIColor(red: 0.878, green: 0.478, blue: 0.373, alpha: 1)
+    private static let coralLt = UIColor(red: 0.957, green: 0.635, blue: 0.549, alpha: 1)
+    private static let gold = UIColor(red: 0.949, green: 0.769, blue: 0.553, alpha: 1)
 
     init(style: Style) {
         self.style = style
         super.init(frame: .zero)
         isUserInteractionEnabled = false
 
-        // Themed backdrop wash (vertical gradient) — never a flat white.
+        // Backdrop: the boot loader's deep charcoal with a violet crown and a warm
+        // base; light style keeps the old pale wash so light pages don't flash dark.
         switch style {
         case .light:
             backdrop.colors = [
-                UIColor(red: 0.957, green: 0.949, blue: 0.980, alpha: 1).cgColor, // #F4F2FA
-                UIColor(red: 0.910, green: 0.898, blue: 0.964, alpha: 1).cgColor, // pale lavender
+                UIColor(red: 0.957, green: 0.949, blue: 0.980, alpha: 1).cgColor,
+                UIColor(red: 0.910, green: 0.898, blue: 0.964, alpha: 1).cgColor,
             ]
         case .dark:
             backdrop.colors = [
-                UIColor(red: 0.055, green: 0.047, blue: 0.086, alpha: 1).cgColor, // #0e0c16
-                UIColor(red: 0.086, green: 0.063, blue: 0.145, alpha: 1).cgColor, // deep violet
+                UIColor(red: 0.145, green: 0.114, blue: 0.208, alpha: 1).cgColor, // violet crown
+                UIColor(red: 0.047, green: 0.047, blue: 0.071, alpha: 1).cgColor, // #0c0c12
+                UIColor(red: 0.180, green: 0.090, blue: 0.102, alpha: 1).cgColor, // warm base
             ]
         }
         backdrop.startPoint = CGPoint(x: 0.5, y: 0)
         backdrop.endPoint = CGPoint(x: 0.5, y: 1)
         layer.addSublayer(backdrop)
 
-        // Breathing orb — a radial violet glow.
-        orb.isUserInteractionEnabled = false
-        orbGradient.type = .radial
-        orbGradient.colors = [
-            UIColor(red: 0.68, green: 0.55, blue: 1.0, alpha: 0.98).cgColor,
-            UIColor(red: 0.47, green: 0.35, blue: 0.86, alpha: 0.80).cgColor,
-            UIColor(red: 0.36, green: 0.26, blue: 0.70, alpha: 0.0).cgColor,
-        ]
-        orbGradient.locations = [0, 0.55, 1]
-        orbGradient.startPoint = CGPoint(x: 0.5, y: 0.5)
-        orbGradient.endPoint = CGPoint(x: 1, y: 1)
-        orb.layer.addSublayer(orbGradient)
-        orb.layer.shadowColor = UIColor(red: 0.55, green: 0.42, blue: 0.98, alpha: 1).cgColor
-        orb.layer.shadowOpacity = 0.55
-        orb.layer.shadowRadius = 26
-        orb.layer.shadowOffset = .zero
-        addSubview(orb)
+        let inkStrong: UIColor = style == .dark ? UIColor(red: 0.973, green: 0.980, blue: 0.988, alpha: 1)
+                                                : UIColor(red: 0.16, green: 0.13, blue: 0.24, alpha: 1)
+        let inkSoft: UIColor = style == .dark ? UIColor(white: 1, alpha: 0.6)
+                                              : UIColor(red: 0.16, green: 0.13, blue: 0.24, alpha: 0.55)
 
-        // Three staggered morphing dots below the orb.
-        for _ in 0..<3 {
-            let d = CALayer()
-            d.backgroundColor = UIColor(red: 0.60, green: 0.48, blue: 0.96, alpha: 1).cgColor
-            layer.addSublayer(d)
-            dots.append(d)
+        // Glowing "A" monogram (the particle-assembled glyph's settled state) +
+        // a slow twinkle emitter around it for the living-particle feel.
+        monogram.text = "A"
+        monogram.font = .systemFont(ofSize: 92, weight: .heavy)
+        monogram.textColor = style == .dark ? UIColor(white: 1, alpha: 0.92) : inkStrong
+        monogram.textAlignment = .center
+        monogram.layer.shadowColor = Self.coralLt.cgColor
+        monogram.layer.shadowOpacity = 0.55
+        monogram.layer.shadowRadius = 22
+        monogram.layer.shadowOffset = .zero
+        addSubview(monogram)
+
+        twinkle.emitterShape = .circle
+        twinkle.renderMode = .additive
+        twinkle.birthRate = 0
+        twinkle.emitterCells = [Self.coralLt, Self.gold, UIColor.white].map { tint in
+            let cell = CAEmitterCell()
+            cell.contents = Self.dotImage(color: tint)
+            cell.birthRate = 5
+            cell.lifetime = 2.6
+            cell.velocity = 9
+            cell.velocityRange = 7
+            cell.scale = 0.16
+            cell.scaleRange = 0.10
+            cell.alphaSpeed = -0.45
+            cell.emissionRange = .pi * 2
+            return cell
         }
+        layer.addSublayer(twinkle)
+
+        // Big Bangla percent — 46pt/800, tabular feel, warm text glow (boot .pct).
+        pctLabel.font = .monospacedDigitSystemFont(ofSize: 46, weight: .heavy)
+        pctLabel.textColor = inkStrong
+        pctLabel.textAlignment = .center
+        pctLabel.layer.shadowColor = Self.coralLt.cgColor
+        pctLabel.layer.shadowOpacity = style == .dark ? 0.35 : 0.2
+        pctLabel.layer.shadowRadius = 15
+        pctLabel.layer.shadowOffset = .zero
+        addSubview(pctLabel)
+
+        // Status line (boot .msg) — swaps by progress with a soft fade.
+        msgLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        msgLabel.textColor = inkSoft
+        msgLabel.textAlignment = .center
+        addSubview(msgLabel)
+
+        // Hairline progress (boot .hair): 132×2.5 track, coral→gold glowing fill.
+        hairTrack.backgroundColor = style == .dark ? UIColor(white: 1, alpha: 0.12)
+                                                   : UIColor(red: 0.16, green: 0.13, blue: 0.24, alpha: 0.14)
+        hairTrack.layer.cornerRadius = 1.25
+        hairTrack.clipsToBounds = true
+        addSubview(hairTrack)
+        hairGradient.colors = [Self.coralLt.cgColor, Self.gold.cgColor]
+        hairGradient.startPoint = CGPoint(x: 0, y: 0.5)
+        hairGradient.endPoint = CGPoint(x: 1, y: 0.5)
+        hairFill.layer.addSublayer(hairGradient)
+        hairFill.layer.cornerRadius = 1.25
+        hairFill.clipsToBounds = true
+        hairFill.layer.shadowColor = Self.coralLt.cgColor
+        hairFill.layer.shadowOpacity = 0.8
+        hairFill.layer.shadowRadius = 6
+        hairFill.layer.shadowOffset = .zero
+        hairTrack.addSubview(hairFill)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
+
+    private static func dotImage(color: UIColor) -> CGImage? {
+        let s: CGFloat = 12
+        let r = UIGraphicsImageRenderer(size: CGSize(width: s, height: s))
+        return r.image { ctx in
+            color.setFill()
+            ctx.cgContext.fillEllipse(in: CGRect(x: 0, y: 0, width: s, height: s))
+        }.cgImage
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         CATransaction.begin(); CATransaction.setDisableActions(true)
         backdrop.frame = bounds
-        let cx = bounds.midX, cy = bounds.midY
-        orb.frame = CGRect(x: cx - orbSize / 2, y: cy - orbSize / 2 - 12, width: orbSize, height: orbSize)
-        orbGradient.frame = orb.bounds
-        orb.layer.shadowPath = UIBezierPath(ovalIn: orb.bounds).cgPath
-        let dotSize: CGFloat = 9, gap: CGFloat = 17
-        let dotY = orb.frame.maxY + 20
-        for (i, d) in dots.enumerated() {
-            d.frame = CGRect(x: cx + CGFloat(i - 1) * gap - dotSize / 2, y: dotY, width: dotSize, height: dotSize)
-            d.cornerRadius = dotSize / 2
-        }
+        let cx = bounds.midX
+        // Boot layout: monogram at ~34% height, percent block starting at 56%.
+        monogram.frame = CGRect(x: cx - 70, y: bounds.height * 0.34 - 62, width: 140, height: 124)
+        twinkle.emitterPosition = CGPoint(x: cx, y: bounds.height * 0.34)
+        twinkle.emitterSize = CGSize(width: 150, height: 150)
+        pctLabel.frame = CGRect(x: cx - 100, y: bounds.height * 0.56, width: 200, height: 48)
+        msgLabel.frame = CGRect(x: cx - 130, y: pctLabel.frame.maxY + 8, width: 260, height: 20)
+        hairTrack.frame = CGRect(x: cx - 66, y: msgLabel.frame.maxY + 14, width: 132, height: 2.5)
+        let pct = currentPct()
+        hairFill.frame = CGRect(x: 0, y: 0, width: hairTrack.bounds.width * CGFloat(pct) / 100, height: 2.5)
+        hairGradient.frame = hairFill.bounds
         CATransaction.commit()
     }
 
-    /// Begin the breathing + dot animations and reveal the loader.
-    func start() {
-        isHidden = false
-        // Orb: breathe (scale + opacity), gently forever.
-        let scale = CABasicAnimation(keyPath: "transform.scale")
-        scale.fromValue = 0.84; scale.toValue = 1.12
-        scale.duration = 1.3; scale.autoreverses = true; scale.repeatCount = .infinity
-        scale.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        orb.layer.add(scale, forKey: "breathe")
-        let glow = CABasicAnimation(keyPath: "opacity")
-        glow.fromValue = 0.7; glow.toValue = 1.0
-        glow.duration = 1.3; glow.autoreverses = true; glow.repeatCount = .infinity
-        glow.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        orb.layer.add(glow, forKey: "glow")
-        // Dots: staggered rise (scale + opacity), phase-shifted via timeOffset.
-        for (i, d) in dots.enumerated() {
-            let a = CAKeyframeAnimation(keyPath: "transform.scale")
-            a.values = [0.5, 1.15, 0.5]; a.keyTimes = [0, 0.5, 1]
-            a.duration = 1.05; a.repeatCount = .infinity
-            a.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            a.timeOffset = Double(i) * 0.18
-            d.add(a, forKey: "morph")
-            let o = CAKeyframeAnimation(keyPath: "opacity")
-            o.values = [0.35, 1.0, 0.35]; o.keyTimes = [0, 0.5, 1]
-            o.duration = 1.05; o.repeatCount = .infinity
-            o.timeOffset = Double(i) * 0.18
-            d.add(o, forKey: "fade")
-        }
+    private func currentPct() -> Int {
+        guard let t0 = startedAt else { return 0 }
+        let s = Date().timeIntervalSince(t0)
+        return min(90, Int((90 * (1 - exp(-s / 3.2))).rounded()))
     }
 
-    /// Stop the animations (call when hiding, so it costs nothing at rest).
+    /// Reveal the loader: percent starts easing toward ৯০, monogram breathes,
+    /// particles twinkle, status line rotates.
+    func start() {
+        isHidden = false
+        startedAt = Date()
+        msgIndex = -1
+        tick()
+        pctTimer?.invalidate()
+        pctTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in self?.tick() }
+        twinkle.birthRate = 1
+        let breathe = CABasicAnimation(keyPath: "transform.scale")
+        breathe.fromValue = 0.97; breathe.toValue = 1.04
+        breathe.duration = 1.4; breathe.autoreverses = true; breathe.repeatCount = .infinity
+        breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        monogram.layer.add(breathe, forKey: "breathe")
+        let glow = CABasicAnimation(keyPath: "shadowOpacity")
+        glow.fromValue = 0.35; glow.toValue = 0.65
+        glow.duration = 1.4; glow.autoreverses = true; glow.repeatCount = .infinity
+        glow.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        monogram.layer.add(glow, forKey: "glow")
+    }
+
+    private func tick() {
+        let pct = currentPct()
+        pctLabel.text = Self.bn(pct) + "%"
+        let idx = pct > 70 ? 2 : pct > 30 ? 1 : 0
+        if idx != msgIndex {
+            msgIndex = idx
+            UIView.transition(with: msgLabel, duration: 0.25, options: .transitionCrossDissolve) {
+                self.msgLabel.text = Self.messages[idx]
+            }
+        }
+        UIView.animate(withDuration: 0.15, delay: 0, options: [.curveLinear]) {
+            self.hairFill.frame = CGRect(x: 0, y: 0,
+                                         width: self.hairTrack.bounds.width * CGFloat(pct) / 100, height: 2.5)
+        }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        hairGradient.frame = hairFill.bounds
+        CATransaction.commit()
+    }
+
+    /// Stop everything (call when hiding, so it costs nothing at rest).
     func stop() {
-        orb.layer.removeAllAnimations()
-        dots.forEach { $0.removeAllAnimations() }
+        pctTimer?.invalidate()
+        pctTimer = nil
+        startedAt = nil
+        twinkle.birthRate = 0
+        monogram.layer.removeAllAnimations()
         isHidden = true
     }
 }
