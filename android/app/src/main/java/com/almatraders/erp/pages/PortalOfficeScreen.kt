@@ -571,6 +571,33 @@ private class OfficeState {
         }
     }
 
+    /** 📎 Native proof submission (web escape removed): upload each photo to
+     *  office/upload, then POST staff-action 'proof' with the resulting urls + text. */
+    suspend fun submitProof(taskId: String, images: List<PickedImage>, text: String): Boolean {
+        if (actionBusyTaskId != null) return false
+        actionBusyTaskId = taskId
+        try {
+            val urls = ArrayList<String>()
+            for (img in images) {
+                val resp = AlmaApi.uploadMultipart("/api/assistant/office/upload", listOf(img.toFilePart("file")))
+                val d = resp.optJSONObject("data") ?: resp
+                (d.str("url") ?: resp.str("url"))?.let { urls.add(it) }
+            }
+            val payload = JSONObject().put("action", "proof").put("taskId", taskId)
+            if (urls.isNotEmpty()) payload.put("imageUrls", org.json.JSONArray(urls))
+            if (text.isNotEmpty()) payload.put("text", text)
+            AlmaApi.send("POST", "/api/assistant/office/staff-action", payload)
+            notice = "📎 প্রমাণ পাঠানো হয়েছে — Boss যাচাই করবেন।"
+            load()
+            return true
+        } catch (e: Exception) {
+            error = e.message
+            return false
+        } finally {
+            actionBusyTaskId = null
+        }
+    }
+
     suspend fun createSelfInitiated(title: String, detail: String): Boolean {
         if (creatingSelf) return false
         creatingSelf = true
@@ -1560,11 +1587,36 @@ private fun OfficeTaskDetailSheet(task: OfficeTask, vm: OfficeState, dark: Boole
                 if (!busy) scope.launch { if (vm.taskAction(task.id, "done")) onDone() }
             }
         }
-        // Photo proof stays web (camera / file upload).
-        Text(
-            "📷 ছবি জমা দিতে ওয়েবে খুলুন", color = AlmaTheme.inkSecondary(dark), fontSize = 11.sp, textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth().plainClick { onWeb("/portal/office", "Office") }.padding(vertical = 2.dp),
-        )
+        // ── NATIVE photo proof: pick/shoot up to 5 → upload → staff-action 'proof' ──
+        var proofImages by remember { mutableStateOf(listOf<PickedImage>()) }
+        fun addProof(p: PickedImage?) { if (p != null && proofImages.size < 5) proofImages = proofImages + p }
+        val proofGallery = rememberGalleryPick(onResult = ::addProof)
+        val proofCamera = rememberCameraPick(onResult = ::addProof)
+        Column(Modifier.fillMaxWidth().almaGlass(dark, AlmaTheme.R_CONTROL).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                "📎 ছবি প্রমাণ" + if (proofImages.isNotEmpty()) " · ${proofImages.size}টি যোগ হয়েছে" else "",
+                color = AlmaTheme.ink(dark), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.weight(1f)) {
+                    OfficeChipWide("📷 ক্যামেরা", OfficePalette.coral, OfficePalette.accentText(dark)) {
+                        if (proofImages.size < 5) proofCamera()
+                    }
+                }
+                Box(Modifier.weight(1f)) {
+                    OfficeChipWide("🖼️ গ্যালারি", OfficePalette.coral, OfficePalette.accentText(dark)) {
+                        if (proofImages.size < 5) proofGallery()
+                    }
+                }
+            }
+            if (proofImages.isNotEmpty()) {
+                OfficeChipWide(if (busy) "পাঠানো হচ্ছে…" else "📎 প্রমাণ জমা দিন", OfficePalette.emerald600, OfficePalette.emerald600) {
+                    if (!busy) scope.launch {
+                        if (vm.submitProof(task.id, proofImages, draft.trim())) { proofImages = emptyList(); draft = ""; onDone() }
+                    }
+                }
+            }
+        }
         Text("Boss অনুমোদন দিলে কাজটি সম্পন্ন হবে। নোটিফিকেশন এই অ্যাপে ও টেলিগ্রামে পাবেন।", color = AlmaTheme.inkSecondary(dark), fontSize = 10.sp)
     }
 }
