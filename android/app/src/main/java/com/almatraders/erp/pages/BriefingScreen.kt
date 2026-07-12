@@ -348,7 +348,7 @@ fun BriefingScreen(ctx: PushCtx) {
                         Icons.Filled.Inventory2, "রিঅর্ডার দরকার", dark,
                         count = data.reorderSuggestions.size,
                         linkTitle = "দেখুন →",
-                    ) { ctx.openWebForced("/inventory", "Inventory") }
+                    ) { ctx.openSmart("/inventory", "Inventory") }
                 }
                 val reorders = data.reorderSuggestions.take(6)
                 items(reorders.size) { i -> BfReorderCard(reorders[i], dark) }
@@ -498,17 +498,6 @@ fun BriefingScreen(ctx: PushCtx) {
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 )
             }
-        }
-        item {
-            Text(
-                "🌐 সম্পূর্ণ ব্রিফিং — ওয়েবে খুলুন",
-                color = AlmaTheme.inkSecondary(dark).copy(alpha = 0.7f), fontSize = 11.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .plainClick { ctx.openWebForced("/briefing", "Briefing") }
-                    .padding(vertical = 6.dp),
-            )
         }
         item { Spacer(Modifier.height(8.dp)) }
     }

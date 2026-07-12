@@ -346,17 +346,6 @@ fun ActivityScreen(ctx: PushCtx) {
                 )
             }
         }
-        item {
-            Text(
-                "🌐 পুরো টাইমলাইন — ওয়েবে খুলুন",
-                color = AlmaTheme.inkSecondary(dark).copy(alpha = 0.7f), fontSize = 12.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .plainClick { ctx.openWebForced("/activity", "Activity") }
-                    .padding(vertical = 6.dp),
-            )
-        }
     }
 }
 
