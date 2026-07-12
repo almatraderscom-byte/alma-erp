@@ -2359,6 +2359,17 @@ private struct CSVideoTab: View {
         .padding(14).csGlass(scheme, corner: 18)
     }
 
+    /// Extracted from the jobs row — the inline nested ternary+flatMap chain made
+    /// the Release type-checker time out ("unable to type-check in reasonable time").
+    private static func jobSubtitle(_ j: (id: String, label: String, status: CSVideoJobStatus?), done: Bool, failed: Bool) -> String {
+        if failed { return j.status?.error ?? "ব্যর্থ হয়েছে" }
+        if done { return "রেডি — Gallery-তে দেখুন" }
+        if let p = j.status?.videoProgress, let st = p.step, let total = p.total {
+            return "ধাপ \(almaBn(st))/\(almaBn(total)): \(p.labelBn ?? "")"
+        }
+        return "অপেক্ষায়…"
+    }
+
     // ── Running / finished jobs ────────────────────────────────────────────
     @ViewBuilder private var jobsSection: some View {
         if !vm.videoJobs.isEmpty {
@@ -2372,11 +2383,7 @@ private struct CSVideoTab: View {
                         else { ProgressView().tint(AgentPalette.coral).controlSize(.small) }
                         VStack(alignment: .leading, spacing: 1) {
                             Text(j.label).font(.system(size: 12, weight: .semibold)).foregroundStyle(AgentPalette(scheme).ink).lineLimit(1)
-                            Text(failed ? (j.status?.error ?? "ব্যর্থ হয়েছে")
-                                 : done ? "রেডি — Gallery-তে দেখুন"
-                                 : j.status?.videoProgress.flatMap { p in
-                                       p.step.flatMap { st in p.total.map { "ধাপ \(almaBn(st))/\(almaBn($0)): \(p.labelBn ?? "")" } }
-                                   } ?? "অপেক্ষায়…")
+                            Text(Self.jobSubtitle(j, done: done, failed: failed))
                                 .font(.system(size: 10.5)).foregroundStyle(AgentPalette(scheme).muted).lineLimit(1)
                         }
                         Spacer()

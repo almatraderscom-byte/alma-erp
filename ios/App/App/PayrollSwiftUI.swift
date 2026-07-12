@@ -1486,16 +1486,25 @@ struct PayrollScreen: View {
                       "Salary Earned", "Commission", "Bonuses", "Overtime", "Reimbursements",
                       "Meal Deductions", "Penalties", "Lifetime Earned", "Lifetime Withdrawn",
                       "Current Balance", "Company Liability"]
-        let lines = vm.wallets.map { w -> String in
+        // Built with explicit appends — the one-shot 16-element literal made the
+        // Release type-checker time out ("unable to type-check in reasonable time").
+        var lines: [String] = []
+        for w in vm.wallets {
             let s = w.summary
-            return [w.businessId, w.employeeId, w.name, "",
-                    String(w.monthlySalary ?? 0),
-                    String(s?.totalAccrued ?? 0), String(s?.totalCommissions ?? 0),
-                    String(s?.totalBonuses ?? 0), String(s?.totalOvertime ?? 0),
-                    String(s?.totalReimbursements ?? 0), String(s?.totalMealDeductions ?? 0),
-                    String(s?.totalPenalties ?? 0), String(s?.lifetimeEarned ?? 0),
-                    String(s?.lifetimeWithdrawn ?? 0), String(s?.currentBalance ?? 0),
-                    String(s?.companyLiability ?? 0)].map(esc).joined(separator: ",")
+            var cols: [String] = [w.businessId, w.employeeId, w.name, ""]
+            cols.append(String(w.monthlySalary ?? 0))
+            cols.append(String(s?.totalAccrued ?? 0))
+            cols.append(String(s?.totalCommissions ?? 0))
+            cols.append(String(s?.totalBonuses ?? 0))
+            cols.append(String(s?.totalOvertime ?? 0))
+            cols.append(String(s?.totalReimbursements ?? 0))
+            cols.append(String(s?.totalMealDeductions ?? 0))
+            cols.append(String(s?.totalPenalties ?? 0))
+            cols.append(String(s?.lifetimeEarned ?? 0))
+            cols.append(String(s?.lifetimeWithdrawn ?? 0))
+            cols.append(String(s?.currentBalance ?? 0))
+            cols.append(String(s?.companyLiability ?? 0))
+            lines.append(cols.map(esc).joined(separator: ","))
         }
         let csv = "\u{FEFF}" + header.joined(separator: ",") + "\n" + lines.joined(separator: "\n")
         let url = FileManager.default.temporaryDirectory
