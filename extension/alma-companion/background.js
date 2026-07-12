@@ -852,13 +852,35 @@ async function pagePickOption(arg) {
     // dropdown-like roles FIRST so we never click a chip that merely toggles a
     // section; fall back to generic clickables only when no dropdown matches.
     const pools = ['[role=combobox]', '[aria-haspopup]', 'select', '[role=button],button,[tabindex]']
-    for (const sel of pools) {
-      const match = Array.from(document.querySelectorAll(sel))
+    const findTrigger = () => {
+      for (const sel of pools) {
+        const match = Array.from(document.querySelectorAll(sel))
+          .filter(visible)
+          .find((e) => hay(e).includes(needle))
+        if (match) return match
+      }
+      return null
+    }
+    trigger = findTrigger()
+    // SELF-HEALING: Ads-Manager-style sections start COLLAPSED — the text shows
+    // on a summary chip but the real combobox isn't rendered yet. If no dropdown-
+    // role trigger exists, click the chip once to expand the section, then re-scan.
+    if (!trigger || !/combobox|select/i.test(trigger.getAttribute('role') || trigger.tagName)) {
+      const chip = Array.from(document.querySelectorAll('[role=button],[tabindex],button,div'))
         .filter(visible)
-        .find((e) => hay(e).includes(needle))
-      if (match) {
-        trigger = match
-        break
+        .filter((e) => e.childElementCount <= 6 && hay(e).includes(needle))
+        .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0]
+      if (chip && (!trigger || chip !== trigger)) {
+        fire(chip)
+        for (let i = 0; i < 8; i++) {
+          await sleep(300)
+          const t = findTrigger()
+          if (t && /combobox|select/i.test(t.getAttribute('role') || t.tagName)) {
+            trigger = t
+            break
+          }
+        }
+        if (!trigger) trigger = findTrigger()
       }
     }
   }

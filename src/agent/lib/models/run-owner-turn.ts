@@ -539,7 +539,7 @@ async function* runAlternateProviderTurn(
           !signal?.aborted
           && intentNudges < 2
           && iterationText.trim()
-          && INTENT_TAIL_RE.test(iterationText.trim().slice(-260))
+          && INTENT_TAIL_RE.test(iterationText.trim().slice(-600))
         ) {
           intentNudges++
           messages = [
