@@ -351,6 +351,10 @@ const live_browser_look: AgentTool = {
           out.elements = elements
         } else out.domError = r.error ?? r.status
       }
+      // Orientation anchor: the URL top-level and FIRST, not buried inside page
+      // data — weak heads lose track of where they are on long tasks and start
+      // re-navigating from the main view (2026-07-12 carousel wandering).
+      if (pageUrl) out.currentUrl = pageUrl
       // §5.4 — tell the model which trust tier this page sits in, so it knows
       // lockdown pages are extraction-only BEFORE it tries to act.
       if (pageUrl) {

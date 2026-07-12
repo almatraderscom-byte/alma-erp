@@ -86,7 +86,10 @@ export type AgentEvent =
       categories: string[]
       snippets: string[]
     }
-  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; cacheCreation: number; cacheRead: number; costUsd: number }
+  // needContinue: the turn hit the serverless deadline mid-task (browser work
+  // unfinished) — the web client auto-sends a bounded "continue" so a long task
+  // finishes end-to-end without the owner typing it every ~4.5 minutes.
+  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; cacheCreation: number; cacheRead: number; costUsd: number; needContinue?: boolean }
   | { type: 'error'; message: string }
 
 // ── Mutating tools (conservative: unknown = treat as mutating) ──────────────
@@ -1258,6 +1261,17 @@ export async function* runAgentTurn(
       }
 
       const execOneTool = async (tb: ToolBlock): Promise<ToolExecResult> => {
+        // Deadline check PER CALL: one round can queue several slow calls that
+        // straddle the 45s wrap-up window, so the wrap-up round never happens and
+        // the 280s abort kills the turn silently. Skipped calls still return a
+        // tool_result (API contract) marking the step deferred.
+        if (typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000) {
+          return {
+            tb,
+            result: { success: false, error: 'সময়সীমা শেষ — এই ধাপটা এখন হয়নি; পরের টার্নে ঠিক এখান থেকে করবে।' },
+            durationMs: 0,
+          }
+        }
         const started = Date.now()
         const result = personalMode
           ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId })
@@ -1508,10 +1522,24 @@ export async function* runAgentTurn(
 
     // Persist assistant message.
     const textContent = assistantTurns.flat().filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-    const joinedText = textContent.map((b) => b.text).join('\n')
-    const storedContent: StoredContentBlock[] = joinedText
-      ? [{ type: 'text', text: joinedText }]
-      : [{ type: 'text', text: '' }]
+    let joinedText = textContent.map((b) => b.text).join('\n')
+    // Deadline/abort salvage — mirrors run-owner-turn.ts: never persist an EMPTY
+    // reply (strands the owner mid-task AND leaves a context hole in replayed
+    // history so the next turn restarts the task from scratch).
+    const coreBrowserTurn = toolRecords.some((r: ToolRecord) => r.toolName.startsWith('live_browser_'))
+    const coreDeadlineHit = Boolean(signal?.aborted) || deadlineNudgeSent
+    const coreTaskUnfinished = coreBrowserTurn && coreDeadlineHit && emittedAskCards.length === 0
+    if (!joinedText.trim()) {
+      const okSteps = toolRecords.filter((r: ToolRecord) => r.status === 'success').length
+      joinedText = [
+        okSteps > 0
+          ? `এই টার্নে ${okSteps}টা ধাপ সম্পন্ন হয়েছে, তারপর সার্ভারের সময়সীমায় টার্ন শেষ হয়েছে।`
+          : 'সার্ভারের সময়সীমায় টার্ন শেষ হয়েছে।',
+        coreTaskUnfinished ? 'Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।' : '',
+      ].filter(Boolean).join('\n\n')
+      yield { type: 'text_delta', delta: joinedText }
+    }
+    const storedContent: StoredContentBlock[] = [{ type: 'text', text: joinedText }]
     // Append confirm-card breadcrumbs so the approval card (and its eventual
     // approved/rejected outcome) survives a page reload — issue: cards vanished
     // on refresh because only text blocks were persisted.
@@ -1577,6 +1605,7 @@ export async function* runAgentTurn(
       cacheCreation: totalCacheCreationTokens,
       cacheRead: totalCacheReadTokens,
       costUsd,
+      needContinue: coreTaskUnfinished,
     }
   } catch (err) {
     if (signal?.aborted) return

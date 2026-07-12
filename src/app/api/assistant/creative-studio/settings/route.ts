@@ -40,10 +40,11 @@ export async function GET(req: NextRequest) {
 
   // Image engine — which model family the worker's Gemini-path renders use.
   // 'gpt' when the kv points the pro tier at a gpt-image model, else 'gemini'.
-  let imageEngine: 'gemini' | 'gpt' = 'gemini'
+  let imageEngine: 'gemini' | 'gpt' | 'seedream' = 'gemini'
   try {
     const cfg = imageModels ? (JSON.parse(imageModels) as { pro?: string }) : null
     if (cfg?.pro?.startsWith('gpt-image')) imageEngine = 'gpt'
+    else if (cfg?.pro?.startsWith('seedream')) imageEngine = 'seedream'
   } catch { /* malformed kv → default */ }
 
   const garments = (garmentRows as Array<{ key: string; value: string }>).map((r) => {
@@ -83,6 +84,9 @@ export async function POST(req: NextRequest) {
   // FASHN try-on renders are engine-independent and unaffected.
   if (body.imageEngine === 'gpt') {
     await writeKv('cs_image_models', JSON.stringify({ standard: 'gpt-image-2', pro: 'gpt-image-2' }))
+  } else if (body.imageEngine === 'seedream') {
+    // Seedream 5.0 Pro via fal.ai (worker maps standard→≤1536px band, pro→2K).
+    await writeKv('cs_image_models', JSON.stringify({ standard: 'seedream-5.0-pro', pro: 'seedream-5.0-pro' }))
   } else if (body.imageEngine === 'gemini') {
     await db.agentKvSetting.deleteMany({ where: { key: 'cs_image_models' } })
   }

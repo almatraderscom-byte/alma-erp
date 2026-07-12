@@ -5,7 +5,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { isSystemOwner } from '@/lib/roles'
 import { requireAgentEnabled } from '@/agent/lib/guards'
-import { addKnownPersonPhotos, deleteKnownPerson, updateKnownPerson } from '@/agent/lib/known-people'
+import { addKnownPersonPhotos, deleteKnownPerson, replaceKnownPersonPhotos, updateKnownPerson } from '@/agent/lib/known-people'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -24,6 +24,8 @@ interface PatchBody {
   active?: boolean
   note?: string
   addPhotos?: Array<{ base64?: string; mimeType?: string }>
+  /** Swap ALL reference photos (native photo-change). */
+  replacePhotos?: Array<{ base64?: string; mimeType?: string }>
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -48,6 +50,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       .map((p) => ({ base64: p.base64!, mimeType: p.mimeType || 'image/jpeg' }))
     if (addPhotos.length > 0) {
       person = await addKnownPersonPhotos(params.id, addPhotos)
+    }
+    const replacePhotos = (body.replacePhotos ?? [])
+      .filter((p) => typeof p.base64 === 'string' && p.base64.length > 0)
+      .map((p) => ({ base64: p.base64!, mimeType: p.mimeType || 'image/jpeg' }))
+    if (replacePhotos.length > 0) {
+      person = await replaceKnownPersonPhotos(params.id, replacePhotos)
     }
     return NextResponse.json({ ok: true, person })
   } catch (err) {

@@ -2618,6 +2618,7 @@ function StudioSettingsCard() {
         >
           <option value="gemini">Nano Banana (ফটোরিয়াল · মুখ/মডেল সেরা)</option>
           <option value="gpt">GPT Image 2 (লেখা/পোস্টার সেরা · দ্রুত)</option>
+          <option value="seedream">Seedream 5.0 Pro (2K ডিটেইল · নতুন)</option>
         </select>
       </label>
       <label className="flex items-center justify-between gap-2">

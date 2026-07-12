@@ -25,6 +25,12 @@ interface AgentAppProps {
 let _msgCounter = 0
 function nextId(prefix = 'msg') { return `${prefix}-${++_msgCounter}` }
 
+// Auto-continue after a serverless-deadline turn (see needContinue on the done
+// event). The text doubles as the marker that a send was machine-initiated —
+// any OTHER text resets the consecutive counter.
+const AUTO_CONTINUE_TEXT = 'continue — ঠিক যেখানে ছিলে সেখান থেকে কাজ চালিয়ে যাও'
+const MAX_AUTO_CONTINUES = 8
+
 async function readAssistantError(res: Response, fallback: string): Promise<string> {
   try {
     const data = await res.json() as { error?: string; message?: string }
@@ -327,6 +333,13 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   // Durable server-side turn id (from the chat stream) — used by the Stop button to
   // issue a real cross-instance cancel, and to poll a backgrounded turn to completion.
   const activeTurnIdRef = useRef<string | null>(null)
+  // Auto-continue: a long browser task dies at the ~280s serverless cap; the server
+  // marks the turn `needContinue` and the client re-sends "continue" itself so the
+  // task finishes end-to-end without the owner typing it every 4-5 minutes. Bounded
+  // (consecutive cap) and reset by any manual message; a Stop click cancels it too.
+  const pendingAutoContinueRef = useRef(false)
+  const autoContinueCountRef = useRef(0)
+  const handleSendRef = useRef<((text: string, files: PendingFile[]) => Promise<void>) | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const dayShiftPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -693,6 +706,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     resumeOpts?: { approve: boolean; rememberChoice?: boolean; fallbackModelId?: string },
   ) => {
     if (streaming) return
+    // A human message resets the auto-continue budget; only the machine-sent
+    // continuation text keeps the consecutive counter running.
+    if (text !== AUTO_CONTINUE_TEXT) autoContinueCountRef.current = 0
+    pendingAutoContinueRef.current = false
     abortRef.current = new AbortController()
     setStreaming(true)
     setStreamStatus('প্রসেস করা হচ্ছে…')
@@ -1065,6 +1082,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           ))
         } else if (evt.type === 'done') {
           gotStreamDone = true
+          // Serverless deadline cut the task mid-flight → queue a machine "continue"
+          // (fires in the finally block, after this stream fully closes).
+          if (evt.needContinue === true) pendingAutoContinueRef.current = true
           setStreamStatus(null)
           setStreamMode('writing')
           flushThinkingBuffer()
@@ -1302,8 +1322,26 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
         setArtifacts([])
         setCompacting(false)
       }
+
+      // Auto-continue: the turn ended at the serverless deadline with the browser
+      // task unfinished — re-send "continue" so the agent finishes end-to-end.
+      // Bounded to MAX_AUTO_CONTINUES consecutive machine sends; any manual
+      // message resets the budget (see handleSend entry).
+      if (pendingAutoContinueRef.current && autoContinueCountRef.current < MAX_AUTO_CONTINUES) {
+        pendingAutoContinueRef.current = false
+        autoContinueCountRef.current += 1
+        setStreamStatus(`⏩ কাজ অসমাপ্ত — নিজে থেকেই চালিয়ে যাচ্ছি (${autoContinueCountRef.current}/${MAX_AUTO_CONTINUES})…`)
+        setTimeout(() => { void handleSendRef.current?.(AUTO_CONTINUE_TEXT, []) }, 1200)
+      } else if (pendingAutoContinueRef.current) {
+        pendingAutoContinueRef.current = false
+        toast.error('কাজটা লম্বা — অটো-continue সীমা শেষ। "continue" লিখলে বাকিটা এগোবে।')
+      }
     }
   }, [streaming, activeConvId, activeModelId, resyncActiveConversation])
+
+  // Keep a stable ref so the auto-continue timer always calls the LATEST
+  // handleSend (the useCallback identity changes with its deps).
+  useEffect(() => { handleSendRef.current = (t, f) => handleSend(t, f) }, [handleSend])
 
   const handleVoiceMessage = useCallback(async (
     text: string,

@@ -17,7 +17,7 @@ import { isSystemOwner } from '@/lib/roles'
 
 export const runtime = 'nodejs'
 
-const SYNCABLE_KEYS = new Set(['OPENAI_API_KEY'])
+const SYNCABLE_KEYS = new Set(['OPENAI_API_KEY', 'FAL_KEY'])
 
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
