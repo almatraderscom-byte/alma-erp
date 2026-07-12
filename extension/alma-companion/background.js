@@ -72,6 +72,19 @@ async function getConfig() {
 
 async function groupAgentTab(tabId) {
   try {
+    // Already sitting in an ALMA group? Keep it — record that group instead of
+    // moving the tab into an older stored group (cross-window moves + failed
+    // moves were one source of duplicate yellow groups).
+    try {
+      const tab = await chrome.tabs.get(tabId)
+      if (tab.groupId && tab.groupId !== -1) {
+        const g = await chrome.tabGroups.get(tab.groupId)
+        if (g && g.title === 'ALMA') {
+          await chrome.storage.local.set({ agentGroupId: g.id })
+          return
+        }
+      }
+    } catch { /* fall through to normal grouping */ }
     const { agentGroupId } = await chrome.storage.local.get('agentGroupId')
     let groupId = null
     if (agentGroupId != null) {
@@ -94,6 +107,39 @@ async function groupAgentTab(tabId) {
   }
 }
 
+// When the stored agentTabId is stale (extension reload / Chrome restart /
+// storage hiccup), ADOPT an existing "ALMA"-group tab instead of opening yet
+// another tab+group — the old tab still holds the task's page state, and the
+// owner ended up with 5+ stale yellow ALMA groups from repeated recreation
+// (owner report 2026-07-12). Prefers a real page over about:blank, most
+// recently used first. Also sweeps leftover about:blank strays from old groups.
+async function adoptExistingAlmaTab() {
+  try {
+    const groups = await chrome.tabGroups.query({ title: 'ALMA' })
+    if (!groups.length) return null
+    const gids = new Set(groups.map((g) => g.id))
+    const tabs = (await chrome.tabs.query({})).filter((t) => t.id && gids.has(t.groupId))
+    if (!tabs.length) return null
+    tabs.sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))
+    const adopted = tabs.find((t) => t.url && !t.url.startsWith('about:')) || tabs[0]
+    // Sweep the other ALMA-group about:blank strays (agent-created, no content)
+    // so dead groups dissolve instead of piling up in the owner's tab strip.
+    for (const t of tabs) {
+      if (t.id !== adopted.id && (!t.url || t.url.startsWith('about:'))) {
+        try { await chrome.tabs.remove(t.id) } catch { /* already gone */ }
+      }
+    }
+    await chrome.storage.local.set({
+      agentTabId: adopted.id,
+      agentWindowId: adopted.windowId,
+      agentGroupId: adopted.groupId,
+    })
+    return adopted
+  } catch {
+    return null
+  }
+}
+
 async function getAgentTab(createIfMissing = true) {
   const { agentTabId } = await chrome.storage.local.get('agentTabId')
   if (agentTabId) {
@@ -101,9 +147,13 @@ async function getAgentTab(createIfMissing = true) {
       const tab = await chrome.tabs.get(agentTabId)
       if (tab && tab.id) return tab
     } catch {
-      /* tab was closed — fall through and recreate */
+      /* tab was closed — fall through and adopt/recreate */
     }
   }
+  // Stored id dead → reuse the existing ALMA-group tab (page state intact — the
+  // task resumes with a look/refresh instead of a from-scratch walk).
+  const adopted = await adoptExistingAlmaTab()
+  if (adopted) return adopted
   if (!createIfMissing) return null
   // Create the work tab IN THE OWNER'S CURRENT WINDOW, active so he sees where
   // the agent works; it immediately joins (or starts) the "ALMA" tab group.
