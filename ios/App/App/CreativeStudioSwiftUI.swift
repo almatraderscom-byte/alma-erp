@@ -59,6 +59,8 @@ struct CSGalleryItem: Decodable, Identifiable, Equatable {
     let modelCreator: String?
     let coverOptions: [CSCoverOption]?
     let error: String?
+    /// Last finishing inputs (hook/code/theme/layout…) — editor reopens pre-filled.
+    let finishParams: CSFinishParams?
 
     var imageURL: URL? { CS.url(thumbUrl ?? previewUrl ?? brandedUrl) }
     var previewURL: URL? { CS.url(previewUrl) }
@@ -129,6 +131,8 @@ struct CSFinishPayload: Encodable {
     var footer: Bool?
     var fit: String?           // cover | contain
     var pendingActionId: String?
+    /// Editor geometry overrides (lifestyle only) — see CSLifestyleEditorSwiftUI.
+    var layout: CSLayoutOverridesData? = nil
 }
 struct CSFinishResponse: Decodable { let framedPath: String?; let framedUrl: String? }
 
@@ -560,6 +564,20 @@ final class CreativeStudioVM {
         return nil
     }
 
+    /// Delete a gallery creative for good (server removes files + row).
+    func deleteItem(_ item: CSGalleryItem) async -> Bool {
+        guard !item.id.hasPrefix("sample-") else { toast = "এটা স্যাম্পল ছবি — মোছার কিছু নেই"; return false }
+        do {
+            let _: CSOK = try await AlmaAPI.shared.send("DELETE", "/api/assistant/creative-studio/jobs/\(item.id)")
+            gallery.removeAll { $0.id == item.id }
+            if gallery.isEmpty { gallery = CS.sampleGallery }
+            toast = "মুছে ফেলা হলো 🗑️"
+            return true
+        } catch let AlmaAPIError.http(_, body) { toast = CS.serverMessage(body) ?? "মুছতে পারলাম না" }
+        catch { toast = "মুছতে পারলাম না" }
+        return false
+    }
+
     func setReelCover(_ item: CSGalleryItem, coverPath: String) async {
         struct Body: Encodable { let pendingActionId: String; let coverPath: String }
         do {
@@ -924,8 +942,8 @@ struct CreativeStudioScreen: View {
                 switch tab {
                 case .home:    CSHomeTab(vm: vm, go: { tab = $0 }, exit: { popNav?() })
                 case .create:  CSCreateTab(vm: vm, back: { tab = .home })
-                case .gallery: CSGalleryTab(vm: vm, openWeb: openWeb)
-                case .video:   CSVideoTab(vm: vm, openWeb: openWeb)
+                case .gallery: CSGalleryTab(vm: vm)
+                case .video:   CSVideoTab(vm: vm)
                 case .audio:   CSAudioTab(vm: vm)
                 case .library: CSLibraryTab(vm: vm, openWeb: openWeb)
                 }
@@ -1934,9 +1952,9 @@ private struct CSInlineToggle: View {
 @available(iOS 17.0, *)
 private struct CSGalleryTab: View {
     let vm: CreativeStudioVM
-    let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.colorScheme) private var scheme
     @State private var detail: CSGalleryItem?
+    @State private var deleteTarget: CSGalleryItem?
 
     private let filterMap: [(bn: String, key: String)] =
         [("সব", "all"), ("ছবি", "image"), ("ভিডিও", "video"), ("পোস্ট হয়েছে", "executed"), ("পেন্ডিং", "pending")]
@@ -1978,6 +1996,14 @@ private struct CSGalleryTab: View {
                                 .onTapGesture {
                                     if item.previewUrl != nil { detail = item; CSHaptic.tap() }
                                 }
+                                // Build-67: long-press → delete, right from the grid
+                                .contextMenu {
+                                    if !item.id.hasPrefix("sample-") {
+                                        Button(role: .destructive) { deleteTarget = item } label: {
+                                            Label("মুছে ফেলুন", systemImage: "trash")
+                                        }
+                                    }
+                                }
                         }
                     }.padding(18)
                 }
@@ -1995,9 +2021,16 @@ private struct CSGalleryTab: View {
             }
         }
         .sheet(item: $detail) { item in
-            CSDetailSheet(item: item, vm: vm, openWeb: openWeb)
+            CSDetailSheet(item: item, vm: vm)
                 .presentationDetents([.large]).presentationDragIndicator(.visible)
         }
+        .alert("ছবিটা একেবারে মুছে যাবে — নিশ্চিত?",
+               isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } })) {
+            Button("বাতিল", role: .cancel) {}
+            Button("মুছে ফেলুন", role: .destructive) {
+                if let t = deleteTarget { Task { _ = await vm.deleteItem(t) } }
+            }
+        } message: { Text("ফাইলটাও স্টোরেজ থেকে মুছে যাবে, ফেরত আনা যাবে না।") }
     }
 }
 
@@ -2070,7 +2103,6 @@ struct CSMovieFile: Transferable {
 @available(iOS 17.0, *)
 private struct CSVideoTab: View {
     let vm: CreativeStudioVM
-    let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.colorScheme) private var scheme
 
     @State private var pickedVideo: PhotosPickerItem?
@@ -2651,8 +2683,8 @@ private struct CSLibraryTab: View {
 
                 CSSectionHeader(title: "আরও", trailing: nil, action: nil).padding(.horizontal, 18)
                 VStack(spacing: 10) {
+                    // ড্র্যাগ-এডিটর এখন পুরো নেটিভ — Gallery-তে যেকোনো ছবির "এডিটর" বাটনে।
                     toolRow("☁️ Google Drive", "ছবি/ভিডিও অটো-ব্যাকআপ (ওয়েবে connect)", "arrow.up.doc")
-                    toolRow("🎚️ ড্র্যাগ-এডিটর", "পোস্টার লেআউট টেনে সাজানো (ওয়েবে)", "slider.horizontal.below.rectangle")
                 }.padding(.horizontal, 18)
                 Color.clear.frame(height: 110)
             }
@@ -2763,11 +2795,19 @@ private struct CSLibraryTab: View {
                 CSPhoto(url: url, ratio: 1)
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                 HStack(spacing: 10) {
-                    ShareLink(item: url) {
+                    Button {
+                        CSHaptic.tap()
+                        Task {
+                            guard let data = try? await CSMediaSaver.fetch(url) else { vm.flash("ডাউনলোড হয়নি"); return }
+                            let ok = await CSMediaSaver.saveToPhotos(
+                                data, ext: CSMediaSaver.ext(url, isVideo: false), isVideo: false)
+                            vm.flash(ok ? "ছবি ফটো অ্যাপে সেভ হয়েছে ✅" : "Photos-এ সেভের অনুমতি দেওয়া নেই")
+                        }
+                    } label: {
                         Text("ডাউনলোড").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
                             .frame(maxWidth: .infinity).padding(12)
                             .background(AgentPalette.coral, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    }
+                    }.buttonStyle(.plain)
                     Button { self.finishedUrl = nil } label: {
                         Text("আবার ফিনিশিং").font(.system(size: 13, weight: .semibold)).foregroundStyle(AgentPalette(scheme).muted)
                             .padding(12).csGlass(scheme, corner: 14)
@@ -3158,25 +3198,35 @@ private struct CSToggleRow: View {
 private struct CSDetailSheet: View {
     @State var item: CSGalleryItem
     let vm: CreativeStudioVM
-    let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.colorScheme) private var scheme
     @Environment(\.dismiss) private var dismiss
     @State private var rating: String?
     @State private var showBranded = true
     @State private var showFinish = false
     @State private var player: AVPlayer?
+    // Build-67: native editor + real download/share + delete + in-sheet feedback
+    @State private var showEditor = false
+    @State private var framedOverride: URL?      // freshest render, straight from the finish response
+    @State private var downloading = false
+    @State private var sharing = false
+    @State private var confirmDelete = false
+    @State private var deleting = false
+
+    /// Finishing exists (server copy or the one just rendered in this sheet)?
+    private var hasFinishing: Bool { item.brandedUrl != nil || framedOverride != nil }
 
     private var displayURL: URL? {
-        (showBranded ? (item.brandedURL ?? item.previewURL) : item.previewURL) ?? item.imageURL
+        (showBranded ? (framedOverride ?? item.brandedURL ?? item.previewURL) : item.previewURL) ?? item.imageURL
     }
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                media.padding(.horizontal, 18).padding(.top, 16)
+                media.padding(.horizontal, 18).padding(.top, 16).id("cs-detail-top")
 
                 // Original ↔ Branded toggle (only when a branded variant exists)
-                if item.brandedUrl != nil {
+                if hasFinishing {
                     HStack(spacing: 0) {
                         brandedBtn(item.isVideo ? "টেমপ্লেট সহ" : "Logo সহ", true)
                         brandedBtn("আসল", false)
@@ -3259,37 +3309,90 @@ private struct CSDetailSheet: View {
                     }.padding(.horizontal, 18).padding(.top, 14)
                 }
 
-                // Native finishing (image: brand frame; video: motion templates)
+                // Native finishing (image: brand frame; video: motion templates).
+                // Build-67 rule: an image that ALREADY has finishing is edit-only —
+                // the button opens the editor (text + layout) instead of re-finishing.
                 if item.storagePath != nil && !item.isAudio && (item.isExecuted || !item.isVideo) {
-                    Button { withAnimation { showFinish.toggle() }; CSHaptic.tap() } label: {
-                        Label(showFinish ? "ফিনিশিং বন্ধ করুন"
-                                          : item.isVideo ? "টেমপ্লেট ফিনিশিং" : "ফিনিশিং (logo + code + hook)",
-                              systemImage: "wand.and.rays")
-                            .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
-                            .frame(maxWidth: .infinity).padding(14)
-                            .background(CS.cta, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    }.buttonStyle(.plain).padding(.horizontal, 18).padding(.top, 14)
+                    if !item.isVideo && hasFinishing {
+                        Button { showEditor = true; CSHaptic.tap() } label: {
+                            Label("এডিট করুন (লেখা + লেআউট)", systemImage: "slider.horizontal.below.rectangle")
+                                .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
+                                .frame(maxWidth: .infinity).padding(14)
+                                .background(CS.cta, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        }.buttonStyle(.plain).padding(.horizontal, 18).padding(.top, 14)
+                    } else {
+                        Button { withAnimation { showFinish.toggle() }; CSHaptic.tap() } label: {
+                            Label(showFinish ? "ফিনিশিং বন্ধ করুন"
+                                              : item.isVideo ? "টেমপ্লেট ফিনিশিং" : "ফিনিশিং (logo + code + hook)",
+                                  systemImage: "wand.and.rays")
+                                .font(.system(size: 14, weight: .bold)).foregroundStyle(.white)
+                                .frame(maxWidth: .infinity).padding(14)
+                                .background(CS.cta, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        }.buttonStyle(.plain).padding(.horizontal, 18).padding(.top, 14)
+                    }
                     if showFinish {
                         Group {
                             if item.isVideo {
                                 CSVideoFinishPanel(item: item, vm: vm) { showFinish = false }
                             } else {
                                 CSFinishPanel(item: item, vm: vm) { framedUrl in
-                                    showFinish = false
-                                    showBranded = true
+                                    // The owner must SEE the result instantly: show the
+                                    // fresh render at the top of the sheet, no refresh race.
+                                    withAnimation {
+                                        showFinish = false
+                                        showBranded = true
+                                        framedOverride = CS.url(framedUrl)
+                                    }
                                     if let fresh = vm.gallery.first(where: { $0.id == item.id }) { item = fresh }
-                                    _ = framedUrl
+                                    proxy.scrollTo("cs-detail-top", anchor: .top)
                                 }
                             }
                         }
                         .padding(.horizontal, 18).padding(.top, 12)
                     }
                 }
+
+                // Delete (real gallery rows only — samples can't be deleted)
+                if !item.id.hasPrefix("sample-") {
+                    Button { confirmDelete = true; CSHaptic.tap() } label: {
+                        Label(deleting ? "মুছে ফেলা হচ্ছে…" : "মুছে ফেলুন", systemImage: "trash")
+                            .font(.system(size: 13.5, weight: .bold)).foregroundStyle(Color(red: 1, green: 0.42, blue: 0.42))
+                            .frame(maxWidth: .infinity).padding(13)
+                            .background(Color(red: 1, green: 0.3, blue: 0.3).opacity(0.12),
+                                        in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .strokeBorder(Color(red: 1, green: 0.3, blue: 0.3).opacity(0.3), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain).disabled(deleting)
+                    .padding(.horizontal, 18).padding(.top, 14)
+                }
                 Color.clear.frame(height: 40)
             }
         }
+        }
         .presentationBackground { AgentAuroraBackground() }
         .onDisappear { player?.pause() }
+        // The main screen's toast floats UNDER this sheet — show it in-sheet too,
+        // otherwise finishing/reel/rate feedback is invisible (owner report, build 66).
+        .overlay(alignment: .top) { CSToastView(message: vm.toast) }
+        .alert("ছবিটা একেবারে মুছে যাবে — নিশ্চিত?", isPresented: $confirmDelete) {
+            Button("বাতিল", role: .cancel) {}
+            Button("মুছে ফেলুন", role: .destructive) {
+                Task {
+                    deleting = true
+                    let ok = await vm.deleteItem(item)
+                    deleting = false
+                    if ok { dismiss() }
+                }
+            }
+        } message: { Text("ফাইলটাও স্টোরেজ থেকে মুছে যাবে, ফেরত আনা যাবে না।") }
+        .fullScreenCover(isPresented: $showEditor) {
+            CSFinishEditorSheet(item: item, vm: vm) { framedUrl in
+                showBranded = true
+                framedOverride = CS.url(framedUrl)
+                if let fresh = vm.gallery.first(where: { $0.id == item.id }) { item = fresh }
+            }
+        }
     }
 
     @ViewBuilder private var media: some View {
@@ -3328,13 +3431,39 @@ private struct CSDetailSheet: View {
         }.buttonStyle(.plain)
     }
 
+    /// Build-67: download saves the REAL file into Photos, share hands the REAL
+    /// file to the share sheet (the old ShareLink only shared a supabase link),
+    /// and the editor is fully native (no more invisible web push under the sheet).
     private var actionsRow: some View {
         HStack(spacing: 10) {
-            if let url = displayURL {
-                ShareLink(item: url) { actionLabel("ডাউনলোড", "arrow.down.to.line", primary: true) }
-                ShareLink(item: url) { actionLabel("শেয়ার", "square.and.arrow.up", primary: false) }
+            if displayURL != nil {
+                actionButton(downloading ? "সেভ হচ্ছে…" : "ডাউনলোড",
+                             downloading ? "arrow.triangle.2.circlepath" : "arrow.down.to.line", primary: true) {
+                    guard !downloading, let url = displayURL else { return }
+                    Task {
+                        downloading = true
+                        defer { downloading = false }
+                        guard let data = try? await CSMediaSaver.fetch(url) else { vm.flash("ডাউনলোড হয়নি — নেট চেক করুন"); return }
+                        let ok = await CSMediaSaver.saveToPhotos(
+                            data, ext: CSMediaSaver.ext(url, isVideo: item.isVideo), isVideo: item.isVideo)
+                        vm.flash(ok ? (item.isVideo ? "ভিডিও ফটো অ্যাপে সেভ হয়েছে ✅" : "ছবি ফটো অ্যাপে সেভ হয়েছে ✅")
+                                    : "Photos-এ সেভের অনুমতি দেওয়া নেই — Settings → ALMA ERP → Photos")
+                    }
+                }
+                actionButton(sharing ? "আনা হচ্ছে…" : "শেয়ার", "square.and.arrow.up", primary: false) {
+                    guard !sharing, let url = displayURL else { return }
+                    Task {
+                        sharing = true
+                        defer { sharing = false }
+                        guard let data = try? await CSMediaSaver.fetch(url) else { vm.flash("ডাউনলোড হয়নি — নেট চেক করুন"); return }
+                        let ext = CSMediaSaver.ext(url, isVideo: item.isVideo)
+                        await MainActor.run { CSMediaSaver.share(data, filename: "alma-creative.\(ext)") }
+                    }
+                }
             }
-            actionButton("এডিটর", "slider.horizontal.3", primary: false) { openWeb(CS_WEB_PATH, "ফিনিশিং এডিটর") }
+            if !item.isVideo && !item.isAudio && item.storagePath != nil {
+                actionButton("এডিটর", "slider.horizontal.3", primary: false) { showEditor = true }
+            }
         }
     }
     private func metaTag(_ t: String) -> some View {
@@ -3597,7 +3726,7 @@ private struct CSEmpty: View {
 }
 
 @available(iOS 17.0, *)
-private struct CSToastView: View {
+struct CSToastView: View {
     let message: String?
     var body: some View {
         Group {

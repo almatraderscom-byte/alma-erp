@@ -97,12 +97,18 @@ struct PayrollWalletTotalsModel: Decodable, Equatable {
     let availableWithdrawable: Int
     let thisMonthSalaryAdded: Int
     let entryCount: Int
+    /// Salary credited for the current cycle (prior calendar month's periodYm).
+    let currentCycleSalaryAdded: Int
+    let cyclePeriodYm: String?
+    /// periodYms with no salary accrual (owner rule: show WHO is due, WHICH month).
+    let salaryDueMonths: [String]
 
     private enum Keys: String, CodingKey {
         case lifetimeEarned, lifetimeWithdrawn, totalAccrued, totalBonuses, totalCommissions
         case totalOvertime, totalReimbursements, totalMealDeductions, totalPenalties
         case outstandingAdvance, currentBalance, companyLiability, availableWithdrawable
-        case thisMonthSalaryAdded, entryCount
+        case thisMonthSalaryAdded, entryCount, salaryDueMonths
+        case currentCycleSalaryAdded, cyclePeriodYm
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -121,6 +127,9 @@ struct PayrollWalletTotalsModel: Decodable, Equatable {
         availableWithdrawable = payrollFlexInt(c, .availableWithdrawable) ?? 0
         thisMonthSalaryAdded = payrollFlexInt(c, .thisMonthSalaryAdded) ?? 0
         entryCount = payrollFlexInt(c, .entryCount) ?? 0
+        salaryDueMonths = (try? c.decodeIfPresent([String].self, forKey: .salaryDueMonths)) ?? []
+        currentCycleSalaryAdded = payrollFlexInt(c, .currentCycleSalaryAdded) ?? 0
+        cyclePeriodYm = try? c.decodeIfPresent(String.self, forKey: .cyclePeriodYm)
     }
 }
 
@@ -695,7 +704,7 @@ final class PayrollVM {
     /// PATCH /api/payroll/wallet/requests/{id}
     /// { action, approvedAmount (APPROVE only), note: '', transactionId }.
     func reviewRequest(_ request: PayrollPendingRequest, action: String,
-                       approvedAmount: Int?, transactionId: String) async {
+                       approvedAmount: Int?, transactionId: String, paidVia: String? = nil) async {
         guard !busyRequestIds.contains(request.id) else { return }
         busyRequestIds.insert(request.id)
         notice = nil
@@ -709,6 +718,9 @@ final class PayrollVM {
             ]
             if action == "APPROVE", let amount = approvedAmount {
                 body["approvedAmount"] = AnyEncodable(amount)
+            }
+            if let paidVia, !paidVia.isEmpty {
+                body["paid_via"] = AnyEncodable(paidVia)
             }
             let _: PayrollOkResponse = try await AlmaAPI.shared.send(
                 "PATCH", "/api/payroll/wallet/requests/\(request.id)", body: body)
@@ -1051,8 +1063,8 @@ struct PayrollScreen: View {
             .padding(14)
             .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
             .sheet(item: $approveTarget) { req in
-                PayrollReviewSheet(request: req, employeeName: vm.employeeName(req.employeeId)) { amount, txn in
-                    Task { await vm.reviewRequest(req, action: "APPROVE", approvedAmount: amount, transactionId: txn) }
+                PayrollReviewSheet(request: req, employeeName: vm.employeeName(req.employeeId)) { amount, txn, paidVia in
+                    Task { await vm.reviewRequest(req, action: "APPROVE", approvedAmount: amount, transactionId: txn, paidVia: paidVia) }
                 }
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
@@ -1638,15 +1650,20 @@ private struct PayrollPendingRequestCard: View {
 private struct PayrollReviewSheet: View {
     let request: PayrollPendingRequest
     let employeeName: String
-    let onConfirm: (_ approvedAmount: Int, _ transactionId: String) -> Void
+    let onConfirm: (_ approvedAmount: Int, _ transactionId: String, _ paidVia: String) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @State private var amountText: String
     @State private var txn = ""
+    @State private var paidVia = ""
     @FocusState private var focused: Bool
 
+    private static let paidViaOptions: [(String, String)] = [
+        ("CASH", "ক্যাশ"), ("BKASH", "বিকাশ"), ("NAGAD", "নগদ"), ("BANK", "ব্যাংক"),
+    ]
+
     init(request: PayrollPendingRequest, employeeName: String,
-         onConfirm: @escaping (_ approvedAmount: Int, _ transactionId: String) -> Void) {
+         onConfirm: @escaping (_ approvedAmount: Int, _ transactionId: String, _ paidVia: String) -> Void) {
         self.request = request
         self.employeeName = employeeName
         self.onConfirm = onConfirm
@@ -1654,10 +1671,12 @@ private struct PayrollReviewSheet: View {
     }
 
     private var amount: Int? { Int(amountText.trimmingCharacters(in: .whitespaces)) }
-    private var needsTxn: Bool { request.type == "WITHDRAWAL" }
+    // Cash handovers have no transaction reference; every other channel keeps one.
+    private var needsTxn: Bool { request.type == "WITHDRAWAL" && paidVia != "CASH" }
     private var txnTrimmed: String { txn.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var valid: Bool {
         guard let a = amount, a > 0, a <= request.requestedAmount else { return false }
+        guard !paidVia.isEmpty else { return false }
         return !needsTxn || !txnTrimmed.isEmpty
     }
 
@@ -1679,6 +1698,27 @@ private struct PayrollReviewSheet: View {
                     Text("চাওয়া পরিমাণের (৳ \(request.requestedAmount.formatted())) বেশি অনুমোদন করা যাবে না")
                         .font(.caption2).foregroundStyle(PayrollPalette.amber600)
                 }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("কীভাবে টাকা দিলেন").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        ForEach(Self.paidViaOptions, id: \.0) { value, label in
+                            Button {
+                                paidVia = value
+                            } label: {
+                                Text(label)
+                                    .font(.caption.weight(.bold))
+                                    .padding(.horizontal, 13).padding(.vertical, 7)
+                                    .background(paidVia == value ? PayrollPalette.coral : Color.clear, in: Capsule())
+                                    .foregroundStyle(paidVia == value ? .white : .secondary)
+                                    .overlay(Capsule().strokeBorder(paidVia == value ? PayrollPalette.coral : Color.secondary.opacity(0.35), lineWidth: 1))
+                            }
+                        }
+                    }
+                    if paidVia.isEmpty {
+                        Text("ক্যাশ/বিকাশ/নগদ/ব্যাংক — একটা বাছাই আবশ্যক; লেনদেনের খাতায় লেখা থাকবে।")
+                            .font(.caption2).foregroundStyle(PayrollPalette.amber600)
+                    }
+                }
                 if needsTxn {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("TRANSACTION ID").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
@@ -1695,7 +1735,7 @@ private struct PayrollReviewSheet: View {
                 Button {
                     guard let a = amount else { return }
                     dismiss()
-                    onConfirm(a, txnTrimmed)
+                    onConfirm(a, txnTrimmed, paidVia)
                 } label: {
                     Text("অনুমোদন করুন — ৳ \((amount ?? 0).formatted())")
                         .font(.subheadline.weight(.semibold))
@@ -2071,6 +2111,14 @@ private struct PayrollWalletCard: View {
                     .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
             }
             if let s = wallet.summary {
+                // Owner rule 2026-07-11: super admin must see WHO is unpaid and WHICH month.
+                if !s.salaryDueMonths.isEmpty, (wallet.monthlySalary ?? 0) > 0 {
+                    Text("বেতন বাকি — " + s.salaryDueMonths.map { PayrollFormat.periodBn($0) }.joined(separator: ", "))
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(PayrollPalette.amber600)
+                        .padding(.horizontal, 9).padding(.vertical, 3)
+                        .background(PayrollPalette.amber600.opacity(0.14), in: Capsule())
+                }
                 HStack(spacing: 0) {
                     walletStat("Earned", s.lifetimeEarned, .primary)
                     walletStat("Held", s.companyLiability, PayrollPalette.pos(colorScheme))
@@ -2117,6 +2165,15 @@ private struct PayrollEmployeeDetailSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
+                if let s = wallet.summary, !s.salaryDueMonths.isEmpty, (wallet.monthlySalary ?? 0) > 0 {
+                    Text("বেতন বাকি — " + s.salaryDueMonths.map { PayrollFormat.periodBn($0) }.joined(separator: ", ")
+                         + " · ৳ \((s.salaryDueMonths.count * (wallet.monthlySalary ?? 0)).formatted())")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(PayrollPalette.amber600)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(PayrollPalette.amber600.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                }
                 statementButton
                 summaryCard
                 entriesCard
@@ -2126,7 +2183,7 @@ private struct PayrollEmployeeDetailSheet: View {
         }
         .presentationBackground { PayrollAurora() }
         .fullScreenCover(isPresented: $statementOpen) {
-            WalletStatementScreen(employeeId: wallet.employeeId, businessId: wallet.businessId)
+            WalletStatementScreen(employeeId: wallet.employeeId, businessId: wallet.businessId, allowAppeal: false)
         }
     }
 
@@ -2187,7 +2244,11 @@ private struct PayrollEmployeeDetailSheet: View {
                 Divider().overlay(AlmaSwiftTheme.separator(colorScheme))
                 moneyRow("Held balance (liability)", s.companyLiability, PayrollPalette.pos(colorScheme), bold: true)
                 moneyRow("Withdrawable now", s.availableWithdrawable, PayrollPalette.pos(colorScheme))
-                moneyRow("This month salary added", s.thisMonthSalaryAdded, .primary)
+                moneyRow(
+                    "এই চক্রের বেতন" + (s.cyclePeriodYm.map { " (\(PayrollFormat.periodBn($0)))" } ?? ""),
+                    s.currentCycleSalaryAdded,
+                    s.currentCycleSalaryAdded > 0 ? PayrollPalette.pos(colorScheme) : .primary
+                )
                 Text("\(s.entryCount) ledger \(s.entryCount == 1 ? "entry" : "entries")")
                     .font(.caption2).foregroundStyle(.secondary)
             }
@@ -2272,6 +2333,21 @@ private enum PayrollFormat {
         let parts = name.split(separator: " ").prefix(2)
         let letters = parts.compactMap { $0.first.map(String.init) }
         return letters.isEmpty ? "?" : letters.joined().uppercased()
+    }
+
+    private static let bnDigits: [Character: Character] = [
+        "0": "০", "1": "১", "2": "২", "3": "৩", "4": "৪",
+        "5": "৫", "6": "৬", "7": "৭", "8": "৮", "9": "৯",
+    ]
+    private static let bnMonths = ["জানুয়ারি", "ফেব্রুয়ারি", "মার্চ", "এপ্রিল", "মে", "জুন",
+                                   "জুলাই", "আগস্ট", "সেপ্টেম্বর", "অক্টোবর", "নভেম্বর", "ডিসেম্বর"]
+
+    /// "2026-06" → "জুন ২০২৬"
+    static func periodBn(_ ym: String) -> String {
+        let parts = ym.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 2, (1...12).contains(parts[1]) else { return ym }
+        let year = String(String(parts[0]).map { bnDigits[$0] ?? $0 })
+        return "\(bnMonths[parts[1] - 1]) \(year)"
     }
 }
 

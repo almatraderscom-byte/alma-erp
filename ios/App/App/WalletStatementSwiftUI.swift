@@ -93,13 +93,14 @@ private struct WSEntry: Decodable, Identifiable {
     let source: String?
     let note: String?
     let date: String?
+    let createdAt: String?
     let labelBn: String?
     let signedAmount: Double
     let runningBalance: Double
     let appeal: WSAppealInfo?
 
     private enum K: String, CodingKey {
-        case id, type, source, note, date, labelBn, signedAmount, runningBalance, appeal
+        case id, type, source, note, date, createdAt, labelBn, signedAmount, runningBalance, appeal
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: K.self)
@@ -108,11 +109,15 @@ private struct WSEntry: Decodable, Identifiable {
         source = try? c.decodeIfPresent(String.self, forKey: .source)
         note = try? c.decodeIfPresent(String.self, forKey: .note)
         date = try? c.decodeIfPresent(String.self, forKey: .date)
+        createdAt = try? c.decodeIfPresent(String.self, forKey: .createdAt)
         labelBn = try? c.decodeIfPresent(String.self, forKey: .labelBn)
         signedAmount = (try? c.decodeIfPresent(Double.self, forKey: .signedAmount)) ?? 0
         runningBalance = (try? c.decodeIfPresent(Double.self, forKey: .runningBalance)) ?? 0
         appeal = try? c.decodeIfPresent(WSAppealInfo.self, forKey: .appeal)
     }
+
+    /// Booking date — when it actually happened (salary rows are DATED by period).
+    var bookingDate: String? { createdAt ?? date }
 
     var isFineRefund: Bool {
         type == "ADJUSTMENT" && ["attendance_late_penalty_reversal",
@@ -261,9 +266,13 @@ struct WalletStatementScreen: View {
     @Environment(\.dismiss) private var dismiss
     @State private var vm: WalletStatementVM
     @State private var appealTarget: WSEntry? = nil
+    /// Appeals belong to the wallet's OWNER. Admin/boss views pass false and see
+    /// status chips only (owner rule 2026-07-11).
+    let allowAppeal: Bool
 
-    init(employeeId: String, businessId: String) {
+    init(employeeId: String, businessId: String, allowAppeal: Bool = true) {
         _vm = State(initialValue: WalletStatementVM(employeeId: employeeId, businessId: businessId))
+        self.allowAppeal = allowAppeal
     }
 
     /// Newest-first, paginated FIRST (visibleCount rows), then month-bucketed —
@@ -273,7 +282,7 @@ struct WalletStatementScreen: View {
         var order: [String] = []
         var map: [String: [WSEntry]] = [:]
         for e in limited {
-            let ym = String((e.date ?? "").prefix(7))
+            let ym = String((e.bookingDate ?? "").prefix(7))
             if map[ym] == nil { order.append(ym); map[ym] = [] }
             map[ym]?.append(e)
         }
@@ -494,7 +503,7 @@ struct WalletStatementScreen: View {
                         Text(note).font(.system(size: 11)).foregroundStyle(.secondary)
                             .lineLimit(2)
                     }
-                    Text(WSFormat.dateBn(e.date))
+                    Text(WSFormat.dateBn(e.bookingDate))
                         .font(.system(size: 10)).foregroundStyle(.tertiary)
                 }
                 Spacer(minLength: 8)
@@ -502,8 +511,8 @@ struct WalletStatementScreen: View {
                     Text("\(e.signedAmount >= 0 ? "+" : "−")\(WSFormat.moneyBn(abs(e.signedAmount)))")
                         .font(.system(size: 13, weight: .bold)).monospacedDigit()
                         .foregroundStyle(e.signedAmount >= 0 ? WSPalette.green400 : WSPalette.red500)
-                    Text(WSFormat.moneyBn(e.runningBalance))
-                        .font(.system(size: 10)).monospacedDigit()
+                    Text("ব্যালেন্স \(WSFormat.moneyBn(e.runningBalance))")
+                        .font(.system(size: 10, weight: .semibold)).monospacedDigit()
                         .foregroundStyle(WSPalette.goldLt)
                 }
             }
@@ -547,15 +556,19 @@ struct WalletStatementScreen: View {
                 chip("আপিলের সময় শেষ — \(WSFormat.bnDigits(String(vm.appealWindowDays))) দিন পেরিয়েছে", .secondary)
             default:
                 if a.appealable && a.attendanceRecordId != nil {
-                    Button {
-                        appealTarget = e
-                    } label: {
-                        Text("আপিল করুন — আর \(WSFormat.bnDigits(String(a.daysLeft))) দিন")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(WSPalette.coral)
-                            .padding(.horizontal, 10).padding(.vertical, 4)
-                            .background(WSPalette.coral.opacity(0.12), in: Capsule())
-                            .overlay(Capsule().strokeBorder(WSPalette.coral.opacity(0.5), lineWidth: 1))
+                    if allowAppeal {
+                        Button {
+                            appealTarget = e
+                        } label: {
+                            Text("আপিল করুন — আর \(WSFormat.bnDigits(String(a.daysLeft))) দিন")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(WSPalette.coral)
+                                .padding(.horizontal, 10).padding(.vertical, 4)
+                                .background(WSPalette.coral.opacity(0.12), in: Capsule())
+                                .overlay(Capsule().strokeBorder(WSPalette.coral.opacity(0.5), lineWidth: 1))
+                        }
+                    } else {
+                        chip("আপিল হয়নি — স্টাফ চাইলে আর \(WSFormat.bnDigits(String(a.daysLeft))) দিন করতে পারবে", .secondary)
                     }
                 }
             }
