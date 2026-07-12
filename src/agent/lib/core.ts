@@ -517,7 +517,21 @@ export interface RunAgentTurnOptions {
   modelId?: string | null
   /** AgentTurn row id — polled each iteration for an owner-requested server-side cancel. */
   turnId?: string | null
+  /**
+   * Epoch ms when the hosting serverless function will hard-abort (Vercel 300s
+   * cap → route sets ~280s). Near this deadline the loop stops offering tools
+   * and forces a Bangla progress wrap-up + checkpoint instead of dying silently
+   * mid-task with a blank reply (2026-07-12 long browser-task incident).
+   * Absent/null = no deadline (VPS worker turns are uncapped).
+   */
+  deadlineAt?: number | null
 }
+
+/** One-time nudge injected when the serverless deadline is close. */
+const DEADLINE_WRAPUP_NUDGE =
+  'এই টার্নের সময়সীমা প্রায় শেষ (সার্ভার লিমিট) — এখন আর টুল চালানো যাবে না। ' +
+  'এ পর্যন্ত কী কী করেছ আর ঠিক কোথায় আছ তা বসকে বাংলায় সংক্ষেপে জানাও, ' +
+  'আর কাজ অসমাপ্ত থাকলে শেষে লেখো: "Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।" — চুপচাপ থেমো না।'
 
 // ── Main agent turn ────────────────────────────────────────────────────────
 
@@ -526,7 +540,7 @@ export async function* runAgentTurn(
   options: RunAgentTurnOptions = {},
 ): AsyncGenerator<AgentEvent> {
   const client = getClient()
-  const { projectSystemInstructions, signal, turnId, telegramFastPath = false } = options
+  const { projectSystemInstructions, signal, turnId, telegramFastPath = false, deadlineAt = null } = options
   let personalMode = options.personalMode ?? false
   const chatModel = getModel(options.modelId)
   const apiModel = chatModel.provider === 'anthropic' ? chatModel.apiModel : AGENT_MODEL
@@ -939,6 +953,7 @@ export async function* runAgentTurn(
   const headCanDelegate = delegateOnlyTools.length > 0
   let headToolRounds = 0
   let budgetNudgeSent = false
+  let deadlineNudgeSent = false
   let canceled = false
   // Accumulate the extended-thinking trace so it persists (in usage.reasoning) as a
   // "Thought for Ns" block instead of vanishing when the live stream ends. Stored in
@@ -979,12 +994,23 @@ export async function* runAgentTurn(
       // already set the terminal status.
       if (await isTurnCancelRequested(turnId)) { canceled = true; break }
 
+      // Serverless deadline close → no more tools; force a Bangla progress
+      // wrap-up instead of the function dying mid-task with a blank reply.
+      const nearDeadline = typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000
+      if (nearDeadline && !deadlineNudgeSent) {
+        deadlineNudgeSent = true
+        messages = [
+          ...messages,
+          { role: 'user', content: [{ type: 'text', text: DEADLINE_WRAPUP_NUDGE }] },
+        ]
+      }
+
       // Once over budget, restrict this turn's tools to delegate-only so the
       // expensive head physically cannot call another read/write tool — it must
       // either answer now or hand off to the cheap worker.
       const overBudget = headCanDelegate && headToolRounds >= HEAD_TOOL_BUDGET
-      const iterationTools = overBudget ? delegateOnlyTools : toolsForModel
-      if (overBudget && !budgetNudgeSent) {
+      const iterationTools = nearDeadline ? [] : overBudget ? delegateOnlyTools : toolsForModel
+      if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [
           ...messages,

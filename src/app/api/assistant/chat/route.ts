@@ -472,6 +472,9 @@ export async function POST(req: NextRequest) {
       : (resumeModelId ?? conversationModelId),
     signal: turnAbort.signal,
     turnId,
+    // Near this moment the turn loop stops offering tools and forces a Bangla
+    // progress wrap-up (+ "continue" hint) instead of dying silently at the cap.
+    deadlineAt: Date.now() + TURN_HARD_CAP_MS,
     approveModelSwitch: resume?.approve === true,
   }
 

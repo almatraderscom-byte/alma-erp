@@ -177,7 +177,7 @@ async function* runAlternateProviderTurn(
   headTier?: HeadTier,
 ): AsyncGenerator<AgentEvent> {
   const model = getModel(modelId)
-  const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false } = options
+  const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false, deadlineAt = null } = options
   const businessId: AgentBusinessId = personalMode
     ? 'ALMA_LIFESTYLE'
     : normalizeBusinessId(options.businessId)
@@ -400,6 +400,7 @@ async function* runAlternateProviderTurn(
   const isMarketingHead = headTier === 'marketing'
   let headToolRounds = 0
   let budgetNudgeSent = false
+  let deadlineNudgeSent = false
   let canceled = false
   // Live-browser turns raise this cap (see BROWSER_TURN_MAX_ITERATIONS) — a real
   // UI task is 15–30 look→act rounds and must not die silently at the default cap.
@@ -418,15 +419,35 @@ async function* runAlternateProviderTurn(
       // round's tool calls, keeping cross-round order faithful.
       let iterThinking = ''
 
+      // Serverless deadline close → no more tools; force a Bangla progress
+      // wrap-up instead of the function dying mid-task with a blank reply.
+      const nearDeadline = typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000
+      if (nearDeadline && !deadlineNudgeSent) {
+        deadlineNudgeSent = true
+        messages = [
+          ...messages,
+          {
+            role: 'user',
+            content:
+              'এই টার্নের সময়সীমা প্রায় শেষ (সার্ভার লিমিট) — এখন আর টুল চালানো যাবে না। ' +
+              'এ পর্যন্ত কী কী করেছ আর ঠিক কোথায় আছ তা বসকে বাংলায় সংক্ষেপে জানাও, ' +
+              'আর কাজ অসমাপ্ত থাকলে শেষে লেখো: "Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।" — চুপচাপ থেমো না।',
+          },
+        ]
+      }
+
       // Over budget → strip ALL tools so the marketing head physically cannot
       // spree more; it must finish the marketing job itself and answer now.
       // No delegate hand-off: marketing quality stays on Qwen, not DeepSeek.
+      // Second empty-round retry also goes text-only: Gemini sometimes wedges
+      // trying to emit another tool call — with no tools it must speak.
       const overBudget = isMarketingHead && headToolRounds >= MARKETING_HEAD_TOOL_BUDGET
       // Models whose provider offers no tool-calling (e.g. Qwen 2.5 VL 72B on
       // OpenRouter) get a chat/vision-only turn — sending tool defs would 4xx
       // the request and bounce the owner to the cheap-head fallback.
-      const iterationTools = overBudget || !model.supportsTools ? [] : neutralTools
-      if (overBudget && !budgetNudgeSent) {
+      const iterationTools =
+        nearDeadline || overBudget || emptyRoundRetries >= 2 || !model.supportsTools ? [] : neutralTools
+      if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
       }
