@@ -336,6 +336,9 @@ struct MoreMenuScreen: View {
         var agentItems: [MenuItem] = [
             MenuItem(title: "Phone Companion", icon: "iphone.radiowaves.left.and.right", path: "native:companion"),
             MenuItem(title: "Live Watch",      icon: "eye",                              path: "/agent/live-watch"),
+            // Office-camera face registry: upload reference photos so entrance-watch
+            // recognizes people (owner request 2026-07-12 — was web-only, now native).
+            MenuItem(title: "Known People",    icon: "person.crop.rectangle.badge.plus", path: "/agent/known-people"),
             MenuItem(title: "Credit Usage",    icon: "chart.bar.xaxis",                  path: "/agent/credit-usage"),
             MenuItem(title: "Subscriptions",   icon: "repeat.circle",                    path: "/agent/subscriptions"),
         ]
@@ -1700,3 +1703,4 @@ private struct MoreRowButtonStyle: ButtonStyle {
     }
     .preferredColorScheme(.dark)
 }
+
