@@ -119,6 +119,9 @@ private struct SubPayload: Encodable {
 @Observable
 final class SubscriptionsVM {
     var subs: [Subscription] = []
+    /// Live API credit balances (owner 2026-07-12: fal.ai balance must be visible
+    /// here too, not only on Credit Usage). Same cache the costs page reads.
+    var apiBalances: [SubApiBalance] = []
     var loading = false
     var saving = false
     var error: String? = nil
@@ -131,6 +134,9 @@ final class SubscriptionsVM {
             let all: [Subscription] = try await AlmaAPI.shared.get("/api/assistant/costs/subscriptions")
             subs = all.filter { $0.active }
             authExpired = false
+            if let b: SubBalancesResponse = try? await AlmaAPI.shared.get("/api/assistant/costs/balances") {
+                apiBalances = b.rows.filter { $0.balanceUsd != nil }
+            }
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
         } catch {
@@ -167,6 +173,36 @@ final class SubscriptionsVM {
     func count(_ s: SubStatus) -> Int { subs.filter { $0.status == s }.count }
 }
 
+/// One provider row from the balance cache (lenient decode, flat or {cache:{…}}).
+struct SubApiBalance: Decodable, Identifiable, Equatable {
+    let id: String
+    let label: String
+    let balanceUsd: Double?
+    private enum K: String, CodingKey { case id, label, balanceUsd }
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: K.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        label = (try? c.decode(String.self, forKey: .label)) ?? id
+        balanceUsd = try? c.decodeIfPresent(Double.self, forKey: .balanceUsd)
+    }
+}
+
+struct SubBalancesResponse: Decodable {
+    let rows: [SubApiBalance]
+    private enum K: String, CodingKey { case providers, cache }
+    init(from d: Decoder) throws {
+        let root = try d.container(keyedBy: K.self)
+        if let direct = try? root.decode([SubApiBalance].self, forKey: .providers) {
+            rows = direct
+        } else if let nested = try? root.nestedContainer(keyedBy: K.self, forKey: .cache),
+                  let inner = try? nested.decode([SubApiBalance].self, forKey: .providers) {
+            rows = inner
+        } else {
+            rows = []
+        }
+    }
+}
+
 // MARK: - Screen
 
 @available(iOS 17.0, *)
@@ -185,6 +221,7 @@ struct SubscriptionsScreen: View {
                 if vm.loading && vm.subs.isEmpty { loadingRows }
                 if !vm.subs.isEmpty || (!vm.loading && !vm.authExpired) {
                     heroGrid.subAppear(0)
+                    if !vm.apiBalances.isEmpty { apiBalanceStrip.subAppear(1) }
                     if !vm.upcoming.isEmpty { upcomingStrip.subAppear(1) }
                     assistantHint.subAppear(2)
                     statTrio.subAppear(3)
@@ -205,6 +242,40 @@ struct SubscriptionsScreen: View {
         .sheet(isPresented: $showEditor) { SubEditor(existing: editing, vm: vm) }
         .sensoryFeedback(.success, trigger: vm.changeTick)
         .sensoryFeedback(.impact(weight: .light), trigger: showEditor)
+    }
+
+    /// Live API credit balances (fal.ai highlighted) — horizontal chips, synced
+    /// from the same cache the Credit Usage page shows.
+    private var apiBalanceStrip: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("API ব্যালেন্স (লাইভ)").font(.system(size: 10, weight: .bold))
+                .textCase(.uppercase).kerning(0.5).foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(vm.apiBalances) { b in
+                        HStack(spacing: 6) {
+                            Text(b.label).font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Text(String(format: "$%.2f", b.balanceUsd ?? 0))
+                                .font(.system(size: 12.5, weight: .bold, design: .rounded).monospacedDigit())
+                                .foregroundStyle((b.balanceUsd ?? 0) < 3
+                                                 ? Color(red: 0.94, green: 0.35, blue: 0.35)
+                                                 : SubPalette.accentText(scheme))
+                        }
+                        .padding(.horizontal, 11).padding(.vertical, 8)
+                        .background(Color.primary.opacity(0.05),
+                                    in: Capsule())
+                        .overlay(Capsule().strokeBorder(
+                            b.id == "fal" ? SubPalette.accentText(scheme).opacity(0.45) : Color.primary.opacity(0.08),
+                            lineWidth: 1))
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(13)
+        .background(Color.primary.opacity(0.03),
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private var heroGrid: some View {
