@@ -549,7 +549,17 @@ const live_browser_act: AgentTool = {
       if (input.by !== undefined) params.by = input.by
       if (input.ms !== undefined) params.ms = input.ms
 
-      const res = await runCommand(dev.deviceId, action, params)
+      // SYSTEM-LEVEL RETRY (owner rule 2026-07-12: এক চেষ্টায় fail মানেই হাল ছাড়া না) —
+      // transient misses (element/option not rendered yet, section still animating)
+      // get two silent re-runs ~1.6s apart BEFORE the model ever sees a failure.
+      // Real failures (lockdown, final-submit block, bad params) don't match and
+      // surface immediately.
+      const TRANSIENT_RE = /element not found|option not found|field not found|trigger not found|select not found/i
+      let res = await runCommand(dev.deviceId, action, params)
+      for (let attempt = 0; attempt < 2 && !res.ok && TRANSIENT_RE.test(String(res.error ?? '')); attempt++) {
+        await runCommand(dev.deviceId, 'wait', { ms: 1600 })
+        res = await runCommand(dev.deviceId, action, params)
+      }
       const out: Record<string, unknown> = {
         device: dev.name,
         action,
