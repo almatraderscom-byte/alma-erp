@@ -159,6 +159,7 @@ const get_salah_status: AgentTool = {
           requiresAccountability: accountableWaqts.length > 0,
           guidance:
             'উত্তরে অবশ্যই answerBangla ও প্রতি ওয়াক্তের line ব্যবহার করুন। সব সময় Asia/Dhaka-র (…Dhaka ফিল্ড) — নিজে টাইমজোন কনভার্ট করবেন না। ' +
+            'আজান/ওয়াক্তের সময় বলতে হলে windowStartDhaka/windowEndDhaka হুবহু উদ্ধৃত করুন — কখনো স্মৃতি থেকে অনুমান করবেন না; বিস্তারিত সূচি লাগলে get_prayer_times কল করুন। ' +
             'notYetDueToday = সময় হয়নি — "আদায় হয়েছে" বলবেন না। allDone=false হলে কখনো "সব ৫ ওয়াক্ত শেষ" বলবেন না।',
         },
       }
