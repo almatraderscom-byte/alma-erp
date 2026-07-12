@@ -865,6 +865,80 @@ async function runApprove(
     })
   }
 
+  // Staff auto-message (checkin greeting / morale / nudge). The VPS worker creates
+  // this card and Telegram's ✅ button has its own worker-side handler — but the
+  // app/web Approvals tab lands HERE, which used to fall through to
+  // unknown_action_type (the owner saw "অনুমোদন ব্যর্থ হয়েছে"). Mirror the Telegram
+  // path: claim the row, then hand the actual SEND to the worker's /staff-send
+  // (logged send + ack buttons live worker-side); if the worker is unreachable,
+  // fall back to a direct Telegram send so the approval never dead-ends.
+  if (action.type === 'staff_auto_message') {
+    const claimed = await db.agentPendingAction.updateMany({
+      where: { id: actionId, status: { in: ['pending', 'waiting_list'] } },
+      data: { status: 'approved', resolvedAt: new Date() },
+    })
+    if (claimed.count === 0) {
+      const current = await db.agentPendingAction.findUnique({
+        where: { id: actionId },
+        select: { status: true },
+      })
+      return Response.json({ error: 'already_resolved', status: current?.status }, { status: 409 })
+    }
+
+    const p = payload as { chatId?: string; content?: string; staffName?: string; type?: string }
+    let sent = false
+    let sendError = ''
+
+    const workerUrl = process.env.AGENT_WORKER_DIAGNOSTIC_URL?.replace(/\/$/, '')
+    const internalToken = process.env.AGENT_INTERNAL_TOKEN
+    if (workerUrl && internalToken) {
+      try {
+        const res = await fetch(`${workerUrl}/staff-send`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${internalToken}`,
+          },
+          body: JSON.stringify({ actionId, payload }),
+          signal: AbortSignal.timeout(15_000),
+        })
+        sent = res.ok
+        if (!res.ok) sendError = `worker_staff_send_${res.status}`
+      } catch (err) {
+        sendError = err instanceof Error ? err.message : String(err)
+      }
+    }
+
+    if (!sent && p.chatId && p.content && process.env.ASSISTANT_BOT_TOKEN) {
+      try {
+        const tg = await fetch(`https://api.telegram.org/bot${process.env.ASSISTANT_BOT_TOKEN}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: p.chatId, text: p.content }),
+          signal: AbortSignal.timeout(10_000),
+        })
+        sent = tg.ok
+        if (!tg.ok) sendError = `telegram_${tg.status}`
+      } catch (err) {
+        sendError = err instanceof Error ? err.message : String(err)
+      }
+    }
+
+    await db.agentPendingAction.update({
+      where: { id: actionId },
+      data: sent
+        ? { status: 'executed', result: { sent: true, staffName: p.staffName ?? null } }
+        : { status: 'failed', result: { error: sendError || 'send_failed' } },
+    })
+    if (!sent) {
+      return Response.json({ error: sendError || 'send_failed' }, { status: 502 })
+    }
+    return Response.json({
+      success: true,
+      message: `স্টাফ মেসেজ পাঠানো হয়েছে${p.staffName ? ` (${p.staffName})` : ''}।`,
+    })
+  }
+
   if (action.type === 'send_customer_message') {
     try {
       const claimed = await db.agentPendingAction.updateMany({
