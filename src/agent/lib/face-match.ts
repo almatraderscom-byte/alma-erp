@@ -4,8 +4,9 @@
  * Sends the registered reference photos (known-people.ts) + one CCTV frame in a
  * single multi-image request and asks the model to name each visible person or
  * mark them unknown. Same Flash-scan → Pro-confirm pattern as idle-detection:
- * Flash reads every frame; Pro re-checks only when a stranger is suspected, so
- * a false "অপরিচিত" alarm is rare while cost stays near Flash.
+ * Flash reads every frame; Pro re-checks when a stranger is suspected OR when a
+ * named match is shaky (<0.85), so neither a false "অপরিচিত" alarm nor a
+ * wrong-name announcement survives while cost stays near Flash.
  *
  * This matches ONLY against photos the owner registered for his own office
  * security — it never tries to identify arbitrary people.
@@ -85,7 +86,13 @@ Return ONLY this JSON (no prose):
 
 Rules:
 - NEVER guess a name that is not on the roster. If unsure between roster/no-roster, set known=false and lower confidence.
-- Faces may be partially visible; use overall appearance too, but stay conservative.
+- Naming the WRONG person is far worse than saying unknown (owner incident: a visitor
+  was announced as the owner). Mark known=true ONLY when the FACE clearly matches a
+  reference photo — clothing colour, build or hairstyle alone is NEVER enough.
+- If the face is not clearly visible (turned away, too small, blurred, blocked),
+  set known=false even if the silhouette resembles someone.
+- Check apparent gender and age band FIRST: if they contradict the reference person,
+  it is NOT them, no matter how similar the clothing looks.
 - Empty frame: people_count 0, people [].
 - One entry per visible person, in any order.`
 }
@@ -156,7 +163,10 @@ function normalize(raw: RawMatch, refs: KnownPersonWithImages[], model: 'flash' 
   const rosterNames = new Set(refs.map((r) => r.name))
   const people: IdentifiedPerson[] = (raw.people ?? []).map((p) => {
     const name = p.name && rosterNames.has(p.name) ? p.name : null
-    const known = p.known === true && !!name
+    // Hard confidence floor: a low-confidence "known" is treated as unknown so a
+    // borderline lookalike can never be announced by name (2026-07-12 incident).
+    const confident = typeof p.confidence !== 'number' || p.confidence >= 0.65
+    const known = p.known === true && !!name && confident
     return {
       known,
       name: known ? name : null,
@@ -192,7 +202,12 @@ export async function identifyPeopleInFrame(frame: {
   }
 
   const flash = normalize(await callGemini(FLASH_MODEL, refs, frame, 'vision_face_match'), refs, 'flash')
-  if (!flash.strangerPresent) return flash
+  // Pro re-checks BOTH actionable claims: a suspected stranger (false alarm is
+  // costly) AND a shaky named match (announcing the wrong person is worse —
+  // 2026-07-12: Flash kept naming visitors as the owner). Confident matches
+  // (>=0.85) skip the second call so the normal case stays at Flash cost.
+  const shakyKnown = flash.people.some((p) => p.known && p.confidence < 0.85)
+  if (!flash.strangerPresent && !shakyKnown) return flash
   try {
     return normalize(await callGemini(PRO_MODEL, refs, frame, 'vision_face_match_confirm'), refs, 'pro')
   } catch {
