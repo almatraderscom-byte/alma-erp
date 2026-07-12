@@ -485,6 +485,13 @@ final class AlmaWebTabViewController: UIViewController, WKNavigationDelegate, WK
         // a More-tab light switch). Idempotent, so the common case is a no-op.
         webView?.evaluateJavaScript(AlmaTheme.applyJS(), completionHandler: nil)
         setWebInsetVars()
+        // Build-67 safety net: a web view PUSHED above a native full-takeover screen
+        // (those hide the UIKit nav bar) must always get the bar back — without it
+        // there is no back chevron and the only escape is killing the app
+        // (owner report: Creative Studio dropped him into the web with no way out).
+        if let nav = navigationController, nav.viewControllers.first !== self, nav.isNavigationBarHidden {
+            nav.setNavigationBarHidden(false, animated: animated)
+        }
     }
 
     /// Agent = the Claude surface: fixed "ALMA AI" title + Claude-exact bar buttons — LEFT a
