@@ -220,9 +220,9 @@ fun CatalogImagesScreen(ctx: PushCtx) {
         }
         item {
             Text(
-                "🌐 আপলোড/এডিট — ওয়েবে খুলুন",
+                "যেকোনো প্রোডাক্টে ট্যাপ করে ছবি আপলোড / দেখুন",
                 color = AlmaTheme.inkSecondary(dark).copy(alpha = 0.7f), fontSize = 12.sp, textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().plainClick { ctx.openWebForced("/agent/catalog-images", "Product images") }.padding(vertical = 6.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
             )
         }
         item { Spacer(Modifier.height(8.dp)) }
