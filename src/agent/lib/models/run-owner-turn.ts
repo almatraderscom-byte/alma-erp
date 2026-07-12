@@ -344,6 +344,30 @@ async function* runAlternateProviderTurn(
     const note = buildCheckpointSystemNote(cps)
     if (note) volatileText = volatileText ? `${volatileText}\n\n${note}` : note
   } catch { /* fail-open — never block the turn */ }
+  // Ask-card answer framing: when the owner just tapped an option, the raw option
+  // text arrives as a bare user message with zero context — heads treated it as a
+  // brand-new request and RESTARTED the task from scratch (2026-07-12 carousel
+  // incident). Anchor it: this is the ANSWER to your own question — resume, don't
+  // re-derive. Fail-open.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const card = await (prisma as any).agentAskCard.findFirst({
+      where: {
+        conversationId,
+        status: 'answered',
+        updatedAt: { gt: new Date(Date.now() - 5 * 60_000) },
+      },
+      orderBy: { updatedAt: 'desc' },
+      select: { question: true, selectedOption: true },
+    })
+    if (card?.selectedOption && lastUserText && lastUserText.startsWith(String(card.selectedOption).slice(0, 40))) {
+      const answerNote =
+        `[ASK-CARD উত্তর] Boss-এর এই বার্তাটা তোমারই প্রশ্নের উত্তর — প্রশ্ন ছিল: "${card.question}"। ` +
+        'এটা নতুন কাজ নয়: আগের চলমান কাজটা ঠিক যেখানে ছিলে সেখান থেকে চালিয়ে যাও (চেকপয়েন্ট নোট দেখো)। ' +
+        'আগে live_browser_look দিয়ে এখনকার পেজ দেখো — গোড়া থেকে navigate করা বা main view-এ ফেরত যাওয়া নিষেধ।'
+      volatileText = volatileText ? `${volatileText}\n\n${answerNote}` : answerNote
+    }
+  } catch { /* fail-open */ }
   if (volatileText) {
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i]
@@ -537,8 +561,12 @@ async function* runAlternateProviderTurn(
         }
         // The model signed off by PROMISING the next step instead of doing it —
         // push it to act now, in this same turn (flash-tier heads do this a lot).
+        // NOT near the deadline: the wrap-up is SUPPOSED to promise future work
+        // ("continue বললে চালিয়ে যাব") — firing here wiped finalText right before
+        // the 280s abort and saved an EMPTY message (2026-07-12 carousel incident).
         if (
           !signal?.aborted
+          && !deadlineNudgeSent
           && intentNudges < 2
           && iterationText.trim()
           && INTENT_TAIL_RE.test(iterationText.trim().slice(-600))
@@ -552,7 +580,10 @@ async function* runAlternateProviderTurn(
           finalText = ''
           continue
         }
-        if (!signal?.aborted && verifyRetries < MAX_VERIFY_RETRIES && iterationText.trim()) {
+        // Verify-retry also skips near the deadline: a rewrite round costs 20-60s
+        // the turn no longer has, and its finalText reset is what strands an empty
+        // message when the abort lands mid-rewrite.
+        if (!signal?.aborted && !deadlineNudgeSent && verifyRetries < MAX_VERIFY_RETRIES && iterationText.trim()) {
           // Build a ledger that carries each tool's success/error — not just its
           // name — so the verifier catches "done!" claims made after a tool that
           // actually FAILED (audit #6). The cheap-head path previously passed only
@@ -606,6 +637,20 @@ async function* runAlternateProviderTurn(
 
       const toolResults: Array<{ id: string; name: string; result: unknown }> = []
       for (const call of calls) {
+        // Deadline check PER CALL, not just per round: one DeepSeek round can queue
+        // 5-6 browser calls (~90s) that straddle the 45s wrap-up window, so the
+        // wrap-up nudge never got a round to run in and the 280s abort killed the
+        // turn silently (2026-07-12 carousel incident). Skip the remaining calls —
+        // each still gets a tool_result (API contract) marking it deferred.
+        if (typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000) {
+          const skipped = { success: false, error: 'সময়সীমা শেষ — এই ধাপটা এখন হয়নি; পরের টার্নে ঠিক এখান থেকে করবে।' }
+          toolRecords.push({
+            id: call.id, toolName: call.name, input: call.input,
+            output: null, status: 'error', durationMs: 0, error: skipped.error,
+          })
+          toolResults.push({ id: call.id, name: call.name, result: skipped })
+          continue
+        }
         // Re-emit tool_start with the parsed input so the UI shows the real target.
         yield { type: 'tool_start', id: call.id, name: call.name, input: call.input }
         const started = Date.now()
@@ -737,6 +782,68 @@ async function* runAlternateProviderTurn(
       throw new Error(`empty_head_turn: ${model.id} produced no text, tools or cards`)
     }
 
+    // ── Deadline/abort salvage (2026-07-12 carousel incident) ────────────────
+    // A long browser task dies at the 280s serverless cap. Three linked fixes:
+    // never save an EMPTY message (context hole → next turn restarts the task),
+    // persist a compact progress footer into replayed history, and auto-write a
+    // resume checkpoint + signal the client to auto-continue.
+    const browserTurn = toolRecords.some((r) => r.toolName.startsWith('live_browser_'))
+    const deadlineHit = Boolean(signal?.aborted) || deadlineNudgeSent
+    const taskUnfinished = browserTurn && deadlineHit && emittedAskCards.length === 0
+    const browserSteps = toolRecords
+      .filter((r) => r.toolName.startsWith('live_browser_') && r.status === 'success')
+      .map((r) => {
+        const action = typeof r.input?.action === 'string' ? r.input.action : r.toolName.replace('live_browser_', '')
+        const target = [r.input?.text, r.input?.option, r.input?.url]
+          .filter((v): v is string => typeof v === 'string' && Boolean(v.trim()))
+          .map((v) => v.slice(0, 60))
+          .join(' → ')
+        return target ? `${action} "${target}"` : action
+      })
+    if (!finalText.trim()) {
+      const lastTexts = timeline.filter((e) => e.t === 'text').map((e) => (e as { text: string }).text)
+      finalText = [
+        lastTexts.length ? lastTexts[lastTexts.length - 1].slice(0, 600) : '',
+        browserSteps.length
+          ? `এই টার্নে ${browserSteps.length}টা ব্রাউজার ধাপ হয়েছে, তারপর সার্ভারের সময়সীমায় টার্ন শেষ হয়েছে।`
+          : 'সার্ভারের সময়সীমায় টার্ন শেষ হয়েছে।',
+        taskUnfinished ? 'Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।' : '',
+      ].filter(Boolean).join('\n\n')
+      yield { type: 'text_delta', delta: finalText }
+    }
+    if (taskUnfinished && browserSteps.length > 0) {
+      const footer =
+        `\n\n📌 কাজের অগ্রগতি (এই টার্নে): ${browserSteps.slice(-8).join(' · ')}` +
+        ' — পরের টার্নে এগুলো আবার কোরো না, ঠিক পরের ধাপ থেকে ধরো।'
+      finalText += footer
+      yield { type: 'text_delta', delta: footer }
+    }
+    if (taskUnfinished && !toolRecords.some((r) => r.toolName === 'save_task_checkpoint')) {
+      try {
+        const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
+        await writeCheckpoint({
+          taskRef: `chat-${conversationId}-auto`,
+          taskType: 'browser',
+          state: 'waiting_for_owner',
+          goal: (lastUserText || 'চলমান ব্রাউজার কাজ').slice(0, 120),
+          summaryBn: `টার্নটা সার্ভার-সময়সীমায় থেমেছে — ${browserSteps.length}টা ধাপ হয়ে গেছে; continue পেলেই বাকিটা এগোবে।`,
+          doneSteps: browserSteps.slice(-8),
+          currentStep: 'ব্রাউজারের সর্বশেষ পেজ — resume-এ আগে live_browser_look দিয়ে নিজের চোখে দেখো',
+          artifacts: [],
+          nextActions: [
+            'live_browser_look দিয়ে এখনকার পেজ দেখো',
+            'doneSteps-এ যা আছে তা আবার কোরো না — ঠিক পরের ধাপ থেকে চালাও',
+            'main view / campaign list-এ ফেরত যেও না',
+          ],
+          resumeHint:
+            `মূল কাজ: ${(lastUserText || '').slice(0, 300)}। ` +
+            `শেষ ধাপগুলো: ${browserSteps.slice(-5).join('; ') || '—'}। একই ট্যাবে state আগের মতোই আছে।`,
+          question: 'কাজ চলমান — continue বললে (বা অটো-continue হলে) ঠিক এখান থেকে শেষ করব।',
+          conversationId,
+        })
+      } catch { /* best-effort — the saved reply already carries the progress */ }
+    }
+
     const costUsd = calcModelTurnCostUsd(model, {
       inputTokens: totalInputTokens,
       outputTokens: totalOutputTokens,
@@ -822,9 +929,38 @@ async function* runAlternateProviderTurn(
       dedupKey: `chat:msg:${savedMsg.id}`,
     })
 
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd }
+    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished }
   } catch (err) {
-    if (signal?.aborted) return
+    if (signal?.aborted) {
+      // The 280s cap aborted mid-round (the adapter stream throws). Salvage what
+      // the turn achieved instead of vanishing: persist the progress so the reply
+      // isn't blank, history keeps the context, and the client can auto-continue.
+      // Vercel gives ~20s after the abort before killing the function.
+      if (!canceled && (finalText.trim() || toolRecords.length > 0)) {
+        try {
+          const okSteps = toolRecords.filter((r) => r.status === 'success').length
+          const salvageSuffix = [
+            `⏱️ সার্ভারের সময়সীমায় টার্ন থেমেছে${okSteps > 0 ? ` — ${okSteps}টা ধাপ হয়ে গেছে` : ''}।`,
+            'Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।',
+          ].join('\n')
+          const salvageText = [finalText.trim(), salvageSuffix].filter(Boolean).join('\n\n')
+          yield { type: 'text_delta', delta: finalText.trim() ? `\n\n${salvageSuffix}` : salvageSuffix }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const savedMsg = await (prisma as any).agentMessage.create({
+            data: {
+              conversationId, role: 'assistant',
+              content: [{ type: 'text', text: salvageText }, ...emittedAskCards],
+              tokensIn: totalInputTokens, tokensOut: totalOutputTokens,
+              costUsd: calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens }),
+              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+            },
+          })
+          const abortedBrowserTurn = toolRecords.some((r) => r.toolName.startsWith('live_browser_'))
+          yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: 0, needContinue: abortedBrowserTurn && emittedAskCards.length === 0 }
+        } catch { /* best-effort — worst case matches the old silent return */ }
+      }
+      return
+    }
     // Rule 3 — head fallback: if a non-cheap head (e.g. Qwen) crashes BEFORE
     // producing any answer text, retry once on the cheap head (DeepSeek) instead of
     // surfacing an error — a surfaced error makes the owner's NEXT message triage UP
