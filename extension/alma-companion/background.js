@@ -845,12 +845,22 @@ async function pagePickOption(arg) {
   }
   if (!trigger && text) {
     const needle = String(text).trim().toLowerCase()
-    const cand = Array.from(
-      document.querySelectorAll('[role=combobox],[role=button],[aria-haspopup],select,[tabindex],button'),
-    ).filter(visible)
     const hay = (e) =>
       ((e.innerText || e.value || '') + ' ' + (e.getAttribute('aria-label') || '')).trim().toLowerCase()
-    trigger = cand.find((e) => hay(e).includes(needle)) || null
+    // The SAME text often appears on several elements (a summary chip AND the
+    // real combobox — the Ads Manager WhatsApp row does exactly this). Search
+    // dropdown-like roles FIRST so we never click a chip that merely toggles a
+    // section; fall back to generic clickables only when no dropdown matches.
+    const pools = ['[role=combobox]', '[aria-haspopup]', 'select', '[role=button],button,[tabindex]']
+    for (const sel of pools) {
+      const match = Array.from(document.querySelectorAll(sel))
+        .filter(visible)
+        .find((e) => hay(e).includes(needle))
+      if (match) {
+        trigger = match
+        break
+      }
+    }
   }
   if (!trigger) return { ok: false, error: 'dropdown trigger not found' }
   const want = String(option == null ? '' : option).trim()
