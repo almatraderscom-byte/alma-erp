@@ -183,7 +183,7 @@ export function useAgoraIntercom(): UseAgoraIntercom {
         const mic = (
           externalTrack
             ? AgoraRTC.createCustomAudioTrack({ mediaStreamTrack: externalTrack })
-            : await AgoraRTC.createMicrophoneAudioTrack()
+            : await AgoraRTC.createMicrophoneAudioTrack({ encoderConfig: 'music_standard', AEC: true, ANS: true, AGC: true })
         ) as unknown as AnyLocalAudioTrack
         micRef.current = mic
         await client.publish(mic)

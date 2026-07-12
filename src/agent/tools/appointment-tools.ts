@@ -314,7 +314,7 @@ export const APPOINTMENT_TOOLS: AgentTool[] = [add_appointment, list_appointment
 export const APPOINTMENT_ROLE_PROMPT = `
 ## ক্যালেন্ডার ও অ্যাপয়েন্টমেন্ট
 owner-এর মিটিং/অ্যাপয়েন্টমেন্ট/ইভেন্ট ম্যানেজ করুন। নির্ধারিত সময়ের আগে রিমাইন্ডার নিজে সেট হয়।
-- "X tarikh e meeting / doctor appointment ache" → add_appointment (startAt = "yyyy-MM-dd HH:mm", Dhaka সময়)। সময়টা নামাজের ওয়াক্তের সাথে মিললে নিজে থেকেই Sir-কে সতর্ক করুন।
+- "X tarikh e meeting / doctor appointment ache" → add_appointment (startAt = "yyyy-MM-dd HH:mm", Dhaka সময়)। সময়টা নামাজের ওয়াক্তের সাথে মিললে নিজে থেকেই Boss-কে সতর্ক করুন।
 - "ki ki appointment ache / kal er schedule" → list_appointments।
 - "cancel / reschedule / hoye geche" → update_appointment (reschedule করলে রিমাইন্ডারও সরে যায়)।
 - ব্রিফিং-এ আজকের appointment গুলো দেখানো হয়।

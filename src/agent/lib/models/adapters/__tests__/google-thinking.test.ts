@@ -63,7 +63,7 @@ describe('GoogleAdapter — thinking stream', () => {
   it('requests includeThoughts and routes thought parts to thinking_delta, text to text_delta', async () => {
     nextStream = async function* () {
       yield chunk([{ text: 'let me check the numbers', thought: true }])
-      yield chunk([{ text: 'স্যার, আজকের সেল ৳০', thought: false }])
+      yield chunk([{ text: 'বস, আজকের সেল ৳০', thought: false }])
     }
     const adapter = new GoogleAdapter('key')
     const events = await collect(
@@ -74,7 +74,7 @@ describe('GoogleAdapter — thinking stream', () => {
     expect(capture.generationConfig).toEqual({ thinkingConfig: { includeThoughts: true } })
     // thought part → thinking_delta (NOT mixed into the answer)
     expect(events).toContainEqual({ type: 'thinking_delta', text: 'let me check the numbers' })
-    expect(events).toContainEqual({ type: 'text_delta', text: 'স্যার, আজকের সেল ৳০' })
+    expect(events).toContainEqual({ type: 'text_delta', text: 'বস, আজকের সেল ৳০' })
     expect(events.at(-1)).toEqual({ type: 'done' })
   })
 

@@ -78,6 +78,6 @@ export async function POST(req: NextRequest) {
     grantedMin: res.grantedMin,
     resumeAt: res.resumeAt,
     resumeAtLabel: res.resumeAtLabel,
-    reply: `ঠিক আছে Sir — ${res.grantedMin} মিনিট নামাজের কল ও রিমাইন্ডার বন্ধ রাখলাম (${res.resumeAtLabel}-এ আবার মনে করিয়ে দেব)। সময় শেষের আগে পড়ে নেবেন।`,
+    reply: `ঠিক আছে Boss — ${res.grantedMin} মিনিট নামাজের কল ও রিমাইন্ডার বন্ধ রাখলাম (${res.resumeAtLabel}-এ আবার মনে করিয়ে দেব)। সময় শেষের আগে পড়ে নেবেন।`,
   })
 }

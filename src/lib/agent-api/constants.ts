@@ -1,7 +1,7 @@
 /** Default business for agent API (matches orders.service.ts). */
 export const DEFAULT_AGENT_BUSINESS_ID = 'ALMA_LIFESTYLE'
 
-/** Actor stamped on all Hermes-initiated writes after Sir Telegram confirm. */
+/** Actor stamped on all Hermes-initiated writes after Boss Telegram confirm. */
 export const AGENT_ACTOR = 'agent_via_sir'
 
 /** Hermes VPS — only IP allowed on /api/agent/* when AGENT_IP_ALLOWLIST enabled. */

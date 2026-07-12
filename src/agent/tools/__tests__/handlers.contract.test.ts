@@ -347,7 +347,7 @@ describe('outbound_phone_call', () => {
     mockPrisma.agentPendingAction.findMany.mockResolvedValue([])
     mockPrisma.agentPendingAction.create.mockResolvedValue({ id: 'pa-new' })
 
-    const result = await handler({ phone: '+8801711111111', message: 'স্যার সালাম' })
+    const result = await handler({ phone: '+8801711111111', message: 'বস সালাম' })
     expect(result.success).toBe(true)
     const data = result.data as Record<string, unknown>
     expect(data.pendingActionId).toBe('pa-new')

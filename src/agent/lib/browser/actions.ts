@@ -263,7 +263,7 @@ export function summarizeBrowserTask(payload: BrowserTaskPayload): string {
   if (payload.steps.length > 12) lines.push(`… আরও ${payload.steps.length - 12}টি ধাপ`)
   if (isCriticalBrowserTask(payload)) {
     lines.push('')
-    lines.push('⚠️ এই টাস্কে টাকা/অপরিবর্তনীয় কিছু থাকতে পারে — অনুমতি দেওয়ার আগে ভালো করে দেখুন, Sir।')
+    lines.push('⚠️ এই টাস্কে টাকা/অপরিবর্তনীয় কিছু থাকতে পারে — অনুমতি দেওয়ার আগে ভালো করে দেখুন, Boss।')
   }
   return lines.join('\n')
 }

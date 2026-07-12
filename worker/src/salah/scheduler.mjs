@@ -215,7 +215,7 @@ async function sendAzanNotification(bot, ownerChatId, waqt, prevPendingWaqt, set
     const prevName = WAQT_NAMES[prevPendingWaqt] || prevPendingWaqt
     await bot.telegram.sendMessage(
       ownerChatId,
-      `Sir, আগে বলুন — *${prevName}*-এর নামাজ কি পড়েছেন?`,
+      `Boss, আগে বলুন — *${prevName}*-এর নামাজ কি পড়েছেন?`,
       {
         parse_mode: 'Markdown',
         reply_markup: qazaButtons(prevPendingWaqt),
@@ -375,7 +375,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
           await sendTelegramSafe(
             bot,
             ownerChatId,
-            `Sir, গতকাল *${prevName}*-এর নামাজ পড়েছেন কি?`,
+            `Boss, গতকাল *${prevName}*-এর নামাজ পড়েছেন কি?`,
             { parse_mode: 'Markdown', reply_markup: qazaButtons(y.waqt, yesterday) },
           )
         }
@@ -520,7 +520,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
             await sendTelegramSafe(
               bot,
               ownerChatId,
-              `Sir, আগে বলুন — *${WAQT_NAMES[prevWaqt]}*-এর নামাজ পড়েছেন কি?`,
+              `Boss, আগে বলুন — *${WAQT_NAMES[prevWaqt]}*-এর নামাজ পড়েছেন কি?`,
               { parse_mode: 'Markdown', reply_markup: qazaButtons(prevWaqt) },
             )
           }
@@ -575,7 +575,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         dateYmd: today,
         remindersSent,
       })
-      msgs.telegram = `Sir, জুম্মার সময় পার — *${name}* পড়েছেন কি?\n\n${msgs.telegram}`
+      msgs.telegram = `Boss, জুম্মার সময় পার — *${name}* পড়েছেন কি?\n\n${msgs.telegram}`
       await deliverSalahAlert({
         tier: escalationLevel >= 2 ? 2 : 1,
         title: `${name} — জুম্মা follow-up`,
@@ -607,7 +607,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         dateYmd: today,
         remindersSent,
       })
-      msgs.telegram = `Sir, ${name} — এখনো confirm করেননি। "পড়েছি" বলুন বা বাটন চাপুন।\n\n${msgs.telegram}`
+      msgs.telegram = `Boss, ${name} — এখনো confirm করেননি। "পড়েছি" বলুন বা বাটন চাপুন।\n\n${msgs.telegram}`
       await deliverSalahAlert({
         tier: 2,
         title: `${name} — এখনো পড়েননি?`,
@@ -636,10 +636,10 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         remindersSent,
         griefContext,
       })
-      msgs.telegram = `🚨 *${name} — Sir, উঠুন*\n\n${msgs.telegram}`
+      msgs.telegram = `🚨 *${name} — Boss, উঠুন*\n\n${msgs.telegram}`
       await deliverSalahAlert({
         tier: 3,
-        title: `${name} — Sir, উঠুন`,
+        title: `${name} — Boss, উঠুন`,
         msgs,
         bot,
         ownerChatId,
@@ -664,7 +664,7 @@ export async function checkAndEscalateSalah({ supabase, bot }) {
         remindersSent,
         griefContext,
       })
-      msgs.telegram = `⚰️ *${name} — Sir, শুনুন*\n\n${msgs.telegram}`
+      msgs.telegram = `⚰️ *${name} — Boss, শুনুন*\n\n${msgs.telegram}`
       await deliverSalahAlert({
         tier: 3,
         title: `${name} — কবরের কথা`,
@@ -896,8 +896,8 @@ export async function handleSalahCallback(ctx, action, waqt, status, dateYmd = n
     await upsertSalahRecord({ date: recordDate, waqt, status: resolved })
     console.log(`[salah] owner confirmed ${waqt} on ${recordDate} → ${resolved}`)
     const messages = {
-      prayed_on_time: `✅ আলহামদুলিল্লাহ, ${WAQT_NAMES[waqt]} পড়েছেন। আল্লাহ কবুল করুন।\n\nএকটু বলুন তো Sir — জামাতে পড়লেন, নাকি একা? 🤲 (আল্লাহ সব দেখছেন, তাই সত্যিটাই বলবেন)`,
-      prayed_late:    `✅ আলহামদুলিল্লাহ, পড়ে নিয়েছেন। আল্লাহ কবুল করুন।\n\nজামাতে নাকি একা পড়লেন Sir? 🤲 পরের ওয়াক্ত একটু সময়মতো ধরার চেষ্টা করি।`,
+      prayed_on_time: `✅ আলহামদুলিল্লাহ, ${WAQT_NAMES[waqt]} পড়েছেন। আল্লাহ কবুল করুন।\n\nএকটু বলুন তো Boss — জামাতে পড়লেন, নাকি একা? 🤲 (আল্লাহ সব দেখছেন, তাই সত্যিটাই বলবেন)`,
+      prayed_late:    `✅ আলহামদুলিল্লাহ, পড়ে নিয়েছেন। আল্লাহ কবুল করুন।\n\nজামাতে নাকি একা পড়লেন Boss? 🤲 পরের ওয়াক্ত একটু সময়মতো ধরার চেষ্টা করি।`,
       qaza:           `✅ কাযা পড়ে নিয়েছেন — আলহামদুলিল্লাহ, আল্লাহ কবুল করুন। সত্যি বলার জন্য জাযাকাল্লাহ।`,
       missed:         `😔 আল্লাহ মাফ করুন। মিস হয়েছে স্বীকার করেছেন — এটাই সততা। তাওবা করে নিন, পরের ওয়াক্ত ইনশাআল্লাহ ধরবো।`,
     }
@@ -932,8 +932,8 @@ export async function handleSalahCallback(ctx, action, waqt, status, dateYmd = n
     }
     await ctx.answerCbQuery('ঠিক আছে।')
     const note = thirtyUsed
-      ? `${WAQT_NAMES[waqt]} — ৩০ মিনিট এই ওয়াক্তে একবার নিয়ে ফেলেছেন। এখন কতক্ষণ পিছাবো Sir? 👇`
-      : `${WAQT_NAMES[waqt]} — কতক্ষণ পিছাবো Sir? নিচ থেকে বেছে নিন 👇`
+      ? `${WAQT_NAMES[waqt]} — ৩০ মিনিট এই ওয়াক্তে একবার নিয়ে ফেলেছেন। এখন কতক্ষণ পিছাবো Boss? 👇`
+      : `${WAQT_NAMES[waqt]} — কতক্ষণ পিছাবো Boss? নিচ থেকে বেছে নিন 👇`
     await ctx.reply(note, {
       reply_markup: salahSnoozeChoiceButtons(waqt, recordDate, thirtyUsed),
     })
@@ -988,7 +988,7 @@ export async function handleSalahSnoozeCallback(ctx, waqt, minutes, dateYmd = nu
   await ctx.reply(
     body?.reply
     // Truthful fallback: if the web lock could not be confirmed, do NOT claim it's off.
-    || `একটু সমস্যা হলো Sir — এই মুহূর্তে কল বন্ধ করা নিশ্চিত করতে পারিনি। ${WAQT_NAMES[waqt]} সময় শেষের আগে পড়ে নিলে ভালো হয়। 🤲`,
+    || `একটু সমস্যা হলো Boss — এই মুহূর্তে কল বন্ধ করা নিশ্চিত করতে পারিনি। ${WAQT_NAMES[waqt]} সময় শেষের আগে পড়ে নিলে ভালো হয়। 🤲`,
   )
 }
 
@@ -1028,8 +1028,8 @@ export async function handleSalahJamaatCallback(ctx, answer, waqt = null, dateYm
   if (!reply) {
     const waqtName = WAQT_NAMES[waqt] || 'নামাজ'
     reply = answer === 'jamaat'
-      ? `আলহামদুলিল্লাহ, Sir! ${waqtName} জামাতে পড়েছেন — আল্লাহ কবুল করুন। 🤲`
-      : `ঠিক আছে, Sir। আল্লাহ ${waqtName} কবুল করুন। পরের ওয়াক্তটা ইনশাআল্লাহ জামাতে পড়ার চেষ্টা করবেন — কোনো চাপ নেই। 🤲`
+      ? `আলহামদুলিল্লাহ, Boss! ${waqtName} জামাতে পড়েছেন — আল্লাহ কবুল করুন। 🤲`
+      : `ঠিক আছে, Boss। আল্লাহ ${waqtName} কবুল করুন। পরের ওয়াক্তটা ইনশাআল্লাহ জামাতে পড়ার চেষ্টা করবেন — কোনো চাপ নেই। 🤲`
   }
   await ctx.answerCbQuery('সংরক্ষণ হয়েছে ✓').catch(() => {})
   await ctx.reply(reply)

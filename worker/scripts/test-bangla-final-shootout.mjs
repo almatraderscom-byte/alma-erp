@@ -15,7 +15,7 @@ installTelegramProxy()
 
 const ADAM = 'pNInz6obpgDQGcFmaJgB'
 const CLONE = 'Z0rjYjGcQoE8iaTf7Gm6'
-const TEXT = 'স্যার, আসসালামু আলাইকুম। আমি আপনার ব্যবসার সহকারী। আজ অফিসে তিনটি জরুরি কাজ আছে। সময়মতো শেষ করলে ভালো হবে।'
+const TEXT = 'বস, আসসালামু আলাইকুম। আমি আপনার ব্যবসার সহকারী। আজ অফিসে তিনটি জরুরি কাজ আছে। সময়মতো শেষ করলে ভালো হবে।'
 
 async function el(apiKey, { model_id, voiceId, label }) {
   const res = await fetch(

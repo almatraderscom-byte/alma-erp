@@ -36,6 +36,6 @@ export function sortTodosForDisplay<T extends { source: string; priority: string
 export function todoSourceLabel(source: string): string | null {
   if (source === 'day_shift' || source === 'scheduler') return 'Office'
   if (source === 'agent') return 'Agent'
-  if (source === 'owner') return 'Sir'
+  if (source === 'owner') return 'Boss'
   return null
 }

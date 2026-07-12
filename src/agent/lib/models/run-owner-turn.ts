@@ -233,14 +233,14 @@ async function* runAlternateProviderTurn(
         intakeContextBlock =
           `[SALAH CONFIRMED — CONSCIENCE NUDGE]\n` +
           `Boss just told you he prayed ${fresh.waqt} (${fresh.date}); it is ALREADY saved — do NOT call mark_salah for it. ` +
-          `Reply in warm Bangla, addressing him ONLY as Boss (never Sir/স্যার — owner rule 2026-07-07): (1) a short Alhamdulillah / du'a that Allah accepts it, ` +
+          `Reply in warm Bangla, addressing him ONLY as Boss (never Boss/বস — owner rule 2026-07-07): (1) a short Alhamdulillah / du'a that Allah accepts it, ` +
           `(2) then ONE gentle conscience question — ask softly whether he prayed in jamaat or alone ("জামাতে পড়লেন নাকি একা, Boss?"), ` +
           `framed with love and trust, never accusing. Keep it to 2 lines. This gentle question is intentional and owner-requested.`
       } else if (fresh.status === 'qaza' || fresh.status === 'missed') {
         intakeContextBlock =
           `[SALAH ${fresh.status.toUpperCase()} — HONESTY HONOURED]\n` +
-          `Sir honestly told you ${fresh.waqt} (${fresh.date}) was ${fresh.status === 'qaza' ? 'prayed as qaza (made up late)' : 'missed'}; it is ALREADY saved — do NOT call mark_salah for it. ` +
-          `Reply in warm Bangla as Sir: (1) sincerely thank/encourage him for telling the truth instead of a false "porechi", ` +
+          `Boss honestly told you ${fresh.waqt} (${fresh.date}) was ${fresh.status === 'qaza' ? 'prayed as qaza (made up late)' : 'missed'}; it is ALREADY saved — do NOT call mark_salah for it. ` +
+          `Reply in warm Bangla as Boss: (1) sincerely thank/encourage him for telling the truth instead of a false "porechi", ` +
           `(2) absolutely NO blame, (3) gently encourage tawba and catching the next waqt on time in jamaat. Keep it to 2-3 lines.`
       }
     }
@@ -375,7 +375,9 @@ async function* runAlternateProviderTurn(
   // in usage.timeline; never replayed to the model, so it adds zero token cost.
   type TimelineEntry =
     | { t: 'think'; text: string }
+    | { t: 'text'; text: string }
     | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string }
+    | { t: 'file'; id: string; name: string; kind?: string }
   const timeline: TimelineEntry[] = []
   const compactTimelineInput = (input: unknown): unknown => {
     try {
@@ -456,6 +458,9 @@ async function* runAlternateProviderTurn(
 
       // Record this round's reasoning as a timeline segment BEFORE its tool calls.
       if (iterThinking.trim()) timeline.push({ t: 'think', text: iterThinking.trim().slice(0, 4000) })
+      // Round's visible text joins the timeline too, so the persisted stream keeps
+      // the true text↔step order after reload (ChronoFlow) — same as core.ts.
+      if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
 
       if (calls.length === 0 || signal?.aborted) {
         if (!signal?.aborted && verifyRetries < MAX_VERIFY_RETRIES && iterationText.trim()) {
@@ -545,6 +550,17 @@ async function* runAlternateProviderTurn(
           success: result.success,
           error: result.error,
           resultPreview: toolResultPreview(result),
+        }
+
+        // A tool filed a document as a conversation artifact (save_artifact, SEO
+        // report…) → surface it as a FILE CARD in the reply flow, Claude-style.
+        const cardRaw = result.success ? (result.data as Record<string, unknown> | undefined)?.artifactCard : undefined
+        if (cardRaw && typeof cardRaw === 'object') {
+          const card = cardRaw as { id?: unknown; title?: unknown; type?: unknown }
+          if (typeof card.id === 'string' && typeof card.title === 'string') {
+            timeline.push({ t: 'file', id: card.id, name: card.title, kind: typeof card.type === 'string' ? card.type : 'markdown' })
+            yield { type: 'artifact_saved', id: card.id, title: card.title, artifactType: typeof card.type === 'string' ? card.type : 'markdown' }
+          }
         }
 
         if (result.success && !personalMode) {
@@ -804,7 +820,7 @@ export async function* runOwnerTurn(
     if (fallbackId) {
       const offModel = getModel(decision.modelId)
       const onModel = getModel(fallbackId)
-      disabledSwitchNote = `⚙️ Sir, **${offModel.label}** Monitor-এ OFF করা আছে — এই মেসেজটা **${onModel.label}** দিয়ে চালাচ্ছি।\n\n`
+      disabledSwitchNote = `⚙️ Boss, **${offModel.label}** Monitor-এ OFF করা আছে — এই মেসেজটা **${onModel.label}** দিয়ে চালাচ্ছি।\n\n`
       decision.modelId = fallbackId
       decision.via = `${decision.via}+disabled_fallback`
     }

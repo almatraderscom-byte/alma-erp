@@ -42,10 +42,10 @@ const SUGGESTIONS_BY_PART: Record<DayPart, Suggestion[]> = {
 }
 
 const GREETING_SUBTITLE: Record<DayPart, string> = {
-  morning: 'শুভ সকাল, Sir — দিনটা শুরু করি',
-  afternoon: 'শুভ দুপুর, Sir — কীভাবে সাহায্য করতে পারি',
-  evening: 'শুভ সন্ধ্যা, Sir — দিনটা গুছিয়ে নিই',
-  night: 'শুভ রাত্রি, Sir — কী দেখে নেবো',
+  morning: 'শুভ সকাল, Boss — দিনটা শুরু করি',
+  afternoon: 'শুভ দুপুর, Boss — কীভাবে সাহায্য করতে পারি',
+  evening: 'শুভ সন্ধ্যা, Boss — দিনটা গুছিয়ে নিই',
+  night: 'শুভ রাত্রি, Boss — কী দেখে নেবো',
 }
 
 /** Current Dhaka hour → day-part. */

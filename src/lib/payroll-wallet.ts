@@ -42,6 +42,11 @@ export type WalletSummary = {
   companyLiability: number
   availableWithdrawable: number
   thisMonthSalaryAdded: number
+  /** Salary credited for the CURRENT cycle (prior calendar month's periodYm). */
+  currentCycleSalaryAdded: number
+  cyclePeriodYm: string
+  /** periodYms with NO salary accrual, first salary month → current cycle. */
+  salaryDueMonths: string[]
   entryCount: number
 }
 
@@ -109,6 +114,32 @@ export function payrollAccrualPeriodYm(runDate = new Date()): string {
   return shiftPeriodYm(periodFromDate(runDate), -1)
 }
 
+/**
+ * Months this employee's salary is DUE (owner rule 2026-07-11: super admin must
+ * see exactly WHO is unpaid and for WHICH month — e.g. "Mustahid · জুন").
+ *
+ * Expected coverage: from the employee's first salary month (their earliest
+ * SALARY_ACCRUAL periodYm — before that we can't know they were employed) up to
+ * the current cycle (prior calendar month). Every expected month with no
+ * SALARY_ACCRUAL is due. No salary history at all → the current cycle is due.
+ */
+export function salaryDueMonths(entries: WalletEntryLike[], now = new Date()): string[] {
+  const cycle = payrollAccrualPeriodYm(now)
+  const paid = new Set(
+    entries.filter(e => e.type === 'SALARY_ACCRUAL' && e.periodYm).map(e => e.periodYm as string),
+  )
+  if (!paid.size) return [cycle]
+  const first = [...paid].sort()[0]
+  const due: string[] = []
+  let ym = first
+  // walk first..cycle inclusive; hard cap guards a bad periodYm from looping forever
+  for (let i = 0; i < 240 && ym <= cycle; i++) {
+    if (!paid.has(ym)) due.push(ym)
+    ym = shiftPeriodYm(ym, 1)
+  }
+  return due
+}
+
 export function signedAmount(type: EmployeeLedgerEntryType, amount: unknown): number {
   const n = Number(amount || 0)
   if (WALLET_CREDIT_TYPES.includes(type)) return n
@@ -120,8 +151,12 @@ export function runningTransactions(entries: WalletEntryLike[]): WalletTransacti
   let balance = 0
   return [...entries]
     .sort((a, b) => {
-      const d = new Date(a.date).getTime() - new Date(b.date).getTime()
-      if (d !== 0) return d
+      // Booking order: `date` is the VALUE date (a June salary posted July 10
+      // is dated June 1), so sorting by it buried fresh salary/recovery rows a
+      // month back. Order by when the entry actually happened.
+      const at = new Date((a.createdAt ?? a.date) as Date | string).getTime()
+      const bt = new Date((b.createdAt ?? b.date) as Date | string).getTime()
+      if (at !== bt) return at - bt
       return String(a.id || '').localeCompare(String(b.id || ''))
     })
     .map(entry => {
@@ -137,6 +172,9 @@ export function computeWalletSummary(
   now = new Date(),
 ): WalletSummary {
   const currentPeriod = periodFromDate(now)
+  // Current salary CYCLE: on the 10th we credit the PREVIOUS calendar month,
+  // so "paid this cycle" means a SALARY_ACCRUAL for last month's periodYm.
+  const cyclePeriod = payrollAccrualPeriodYm(now)
   let totalAccrued = 0
   let totalBonuses = 0
   let totalCommissions = 0
@@ -152,12 +190,14 @@ export function computeWalletSummary(
   let totalAdvanceDisbursed = 0
   let totalAdvanceRecovered = 0
   let thisMonthSalaryAdded = 0
+  let currentCycleSalaryAdded = 0
 
   for (const e of entries) {
     const amount = Number(e.amount || 0)
     if (e.type === 'SALARY_ACCRUAL') {
       totalAccrued += amount
       if (e.periodYm === currentPeriod) thisMonthSalaryAdded += amount
+      if (e.periodYm === cyclePeriod) currentCycleSalaryAdded += amount
     } else if (e.type === 'COMMISSION') totalCommissions += amount
     else if (e.type === 'EID_BONUS') totalEidBonuses += amount
     else if (e.type === 'PERFORMANCE_BONUS') totalPerformanceBonuses += amount
@@ -207,6 +247,9 @@ export function computeWalletSummary(
     companyLiability: Math.max(0, currentBalance),
     availableWithdrawable: Math.max(0, currentBalance),
     thisMonthSalaryAdded,
+    currentCycleSalaryAdded,
+    cyclePeriodYm: cyclePeriod,
+    salaryDueMonths: salaryDueMonths(entries, now),
     entryCount: entries.length,
   }
 }

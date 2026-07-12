@@ -226,8 +226,8 @@ async function reconcileDutyTodosFromLog(date: string): Promise<number> {
       const detail = (log.detail ?? '').trim()
       const doneLine =
         log.status === 'done'
-          ? `✅ Sir, "${todo.title}" শেষ হয়ে গেছে${detail ? ` — ${detail}` : ''}।`
-          : `✅ Sir, "${todo.title}" সম্পন্ন${detail ? ` — ${detail}` : ' — করার কিছু ছিল না'}।`
+          ? `✅ Boss, "${todo.title}" শেষ হয়ে গেছে${detail ? ` — ${detail}` : ''}।`
+          : `✅ Boss, "${todo.title}" সম্পন্ন${detail ? ` — ${detail}` : ' — করার কিছু ছিল না'}।`
       await patchTodoByDutyKey(dutyKey, date, {
         status: 'completed',
         description: doneLine,
@@ -254,7 +254,7 @@ function stripMarkdown(line: string): string {
 function composeFeedback(label: string, result: string, opinion: string): string {
   const r = result.trim() || `${label} চেক সম্পন্ন হয়েছে।`
   const o = opinion.trim() || 'আজকের জন্য আর তাত্ক্ষণিক action দরকার নেই।'
-  return `✅ Sir, "${label}" শেষ — ${r} আমার মত: ${o}`
+  return `✅ Boss, "${label}" শেষ — ${r} আমার মত: ${o}`
 }
 
 /** Prefer cost_events sum; retry once if sub-agent logged async; fall back to sub-agent accrued. */
@@ -335,7 +335,7 @@ async function runDutyWork(
     parts.push(ops.text)
     subagentCostUsd += ops.costUsd
   } else if (dutyKey === 'owner_task_intake') {
-    parts.push('✓ Sir-কাজ সংগ্রহ — scheduler ২০:৩০-এ chat + Telegram-এ জিজ্ঞেস করবে; reply থেকে owner todo যোগ হবে।')
+    parts.push('✓ Boss-কাজ সংগ্রহ — scheduler ২০:৩০-এ chat + Telegram-এ জিজ্ঞেস করবে; reply থেকে owner todo যোগ হবে।')
   } else if (CONTENT_DUTIES.has(dutyKey)) {
     parts.push('✓ কন্টেন্ট প্ল্যানিং — owner request এ draft করব (অটো office-এ LLM খরচ এড়ানো)।')
   } else if (MARKETER_DUTIES.has(dutyKey) && briefing) {
@@ -527,7 +527,7 @@ export async function startDayShift(): Promise<{ ok: boolean; conversationId?: s
     await appendShiftNarrative(
       conversationId,
       `🏢 **অফিস সাইকেল শুরু** (সকাল ৮:০৫ — অফিস সময় ৮:০০–২২:০০)\n\n` +
-        `আসসালামু আলাইকুম Sir। আজকের duty roster (${duties.length}টি) panel-এ ready। ` +
+        `আসসালামু আলাইকুম Boss। আজকের duty roster (${duties.length}টি) panel-এ ready। ` +
         `অফিস সময়ে প্রতি ১২ মিনিটে core duty, শেষে ঘণ্টায় একবার প্যাট্রোল।\n\n` +
         `প্রথমে briefing data টানছি...`,
     )
@@ -764,7 +764,7 @@ export async function tickDayShift(): Promise<{ ok: boolean; detail: string; con
   const dutyStartAt = new Date()
 
   // STEP 1 — announce + in_progress
-  await appendShiftNarrative(conversationId, `🏢 Sir, এখন করছি: ${duty.label}`)
+  await appendShiftNarrative(conversationId, `🏢 Boss, এখন করছি: ${duty.label}`)
   await patchTodoByDutyKey(duty.duty, date, { status: 'in_progress', completedAt: null })
 
   let briefing: OwnerBriefingData | null = null

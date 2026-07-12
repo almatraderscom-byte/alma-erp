@@ -58,7 +58,7 @@ const add_bill: AgentTool = {
   name: 'add_bill',
   description:
     'Track a recurring personal/business bill or subscription the owner pays — rent, electricity, internet, ' +
-    'loan EMI, SaaS, insurance, etc. The agent will remind Sir before each due date in the daily briefing. ' +
+    'loan EMI, SaaS, insurance, etc. The agent will remind Boss before each due date in the daily briefing. ' +
     'Use when the owner says "X bill ta track koro", "bidyut bill mone koraio", "Netflix subscription add koro". ' +
     'amount is whole taka (BDT default). For monthly bills give dueDay (1-31) and the next due date is computed ' +
     'automatically.',
@@ -346,7 +346,7 @@ export const BILLS_TOOLS: AgentTool[] = [add_bill, list_bills, mark_bill_paid, u
 
 export const BILLS_ROLE_PROMPT = `
 ## বিল ও সাবস্ক্রিপশন ট্র্যাকার
-owner-এর নিয়মিত বিল/সাবস্ক্রিপশন (বাসা ভাড়া, বিদ্যুৎ, ইন্টারনেট, লোন EMI, Netflix ইত্যাদি) ট্র্যাক করুন। প্রতিদিনের ব্রিফিং-এ due-এর আগে Sir-কে মনে করিয়ে দেওয়া হয়।
+owner-এর নিয়মিত বিল/সাবস্ক্রিপশন (বাসা ভাড়া, বিদ্যুৎ, ইন্টারনেট, লোন EMI, Netflix ইত্যাদি) ট্র্যাক করুন। প্রতিদিনের ব্রিফিং-এ due-এর আগে Boss-কে মনে করিয়ে দেওয়া হয়।
 - "X বিল track koro / mone koraio" → add_bill (amount পূর্ণ টাকায়, monthly হলে dueDay 1-31 দিন — পরের তারিখ নিজে হিসাব হবে)।
 - "amar bill gulo dekhao / konta koto baki" → list_bills।
 - "oita dia disi / paid" → mark_bill_paid (পরের cycle-এ তারিখ নিজে এগিয়ে যায়)।

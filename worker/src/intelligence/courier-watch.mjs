@@ -61,7 +61,7 @@ export async function runCourierWatch(context) {
     L.push(`  • ${ref} — ${who}${city} — ${fmtTk(o.totalAmount)} (${o.ageDays} দিন, ${o.status})`)
   })
   if (orders.length > 12) L.push(`  …আরও ${orders.length - 12}টি।`)
-  L.push('', 'Sir, কুরিয়ারে খোঁজ নেওয়া বা গ্রাহককে আপডেট দেওয়া দরকার হতে পারে।')
+  L.push('', 'Boss, কুরিয়ারে খোঁজ নেওয়া বা গ্রাহককে আপডেট দেওয়া দরকার হতে পারে।')
 
   await sendMarkdownSafe(bot.telegram, OWNER_CHAT_ID(), L.join('\n'))
   return { dutyStatus: 'done', dutyDetail: `${orders.length} breaches reported` }

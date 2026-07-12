@@ -45,8 +45,8 @@ export function buildVisionNoteBlock(visionText: string | null): { type: 'text';
   return {
     type: 'text',
     text: visionText
-      ? `${VISION_NOTE_PREFIX} Gemini Vision দিয়ে পড়া হয়েছে — নিচের বিবরণ ব্যবহার করে স্যারকে উত্তর দাও:\n${visionText}]`
-      : `${VISION_NOTE_PREFIX}টি পড়া যায়নি (vision সার্ভিস সাড়া দেয়নি)। স্যারকে স্পষ্ট জানাও যে ছবিটা পড়া যায়নি এবং আবার পাঠাতে বলো — দেখেছ এমন ভান কোরো না।]`,
+      ? `${VISION_NOTE_PREFIX} Gemini Vision দিয়ে পড়া হয়েছে — নিচের বিবরণ ব্যবহার করে বসকে উত্তর দাও:\n${visionText}]`
+      : `${VISION_NOTE_PREFIX}টি পড়া যায়নি (vision সার্ভিস সাড়া দেয়নি)। বসকে স্পষ্ট জানাও যে ছবিটা পড়া যায়নি এবং আবার পাঠাতে বলো — দেখেছ এমন ভান কোরো না।]`,
   }
 }
 

@@ -88,8 +88,8 @@ import {
 async function handleDownload(url: string | undefined | null, filename?: string) {
   if (!url) return
   const result = await saveImageToDevice(url, filename)
-  if (result === 'downloaded') toast.success('ডাউনলোড হয়েছে, স্যার')
-  else if (result === 'opened') toast('ছবি নতুন ট্যাবে খোলা হলো, স্যার')
+  if (result === 'downloaded') toast.success('ডাউনলোড হয়েছে, বস')
+  else if (result === 'opened') toast('ছবি নতুন ট্যাবে খোলা হলো, বস')
 }
 
 type MainView = 'studio' | 'gallery' | 'video' | 'audio' | 'library'
@@ -1625,7 +1625,7 @@ function GalleryView() {
         <div className="mb-3 flex items-center gap-2.5 rounded-xl border border-[#E07A5F]/25 bg-[#E07A5F]/[0.07] px-3 py-2.5">
           <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#E07A5F]/30 border-t-[#E07A5F]" />
           <span className="text-[12px] font-semibold text-[#E07A5F]">
-            {pendingCount}টি ছবি/ভিডিও তৈরি হচ্ছে… একটু পর নিচে দেখা যাবে স্যার
+            {pendingCount}টি ছবি/ভিডিও তৈরি হচ্ছে… একটু পর নিচে দেখা যাবে বস
           </span>
         </div>
       )}
@@ -1691,7 +1691,7 @@ function GalleryView() {
                             onClick={(e) => {
                               e.stopPropagation()
                               void retryStudioJob(item.id)
-                                .then(() => { toast.success('আবার চালানো হচ্ছে, স্যার'); void load() })
+                                .then(() => { toast.success('আবার চালানো হচ্ছে, বস'); void load() })
                                 .catch((err) => toast.error(err instanceof Error ? err.message : 'হয়নি'))
                             }}
                             className="rounded-full bg-[#E07A5F] px-2.5 py-1 text-[10px] font-bold text-white"
@@ -1862,7 +1862,7 @@ function GalleryView() {
                         imagePath: selected.storagePath!,
                         role: selected.modelCreator!,
                       })
-                        .then(() => toast.success('মডেল লাইব্রেরিতে সেভ হয়েছে, স্যার'))
+                        .then(() => toast.success('মডেল লাইব্রেরিতে সেভ হয়েছে, বস'))
                         .catch((err) => toast.error(err instanceof Error ? err.message : 'সেভ হয়নি'))
                     }}
                     className="rounded-full bg-[#81B29A] px-5 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25"
@@ -1883,7 +1883,7 @@ function GalleryView() {
                           type="button"
                           onClick={() => {
                             void runStudioJob({ mode: 'image_to_video', sourceImagePath: selected.storagePath ?? undefined, durationSec: d })
-                              .then(() => toast.success(`${d}s রিল তৈরি হচ্ছে (~৳${cost}) — Gallery-তে আসবে, স্যার`))
+                              .then(() => toast.success(`${d}s রিল তৈরি হচ্ছে (~৳${cost}) — Gallery-তে আসবে, বস`))
                               .catch((e) => toast.error(e instanceof Error ? e.message : 'শুরু করা যায়নি'))
                           }}
                           className="rounded-full bg-[#E07A5F] px-2.5 py-1 text-[11px] font-bold text-white"
@@ -1911,7 +1911,7 @@ function GalleryView() {
                         type="button"
                         onClick={() => {
                           void setReelCover(selected.id, c.path)
-                            .then(() => toast.success('কভার সেট হয়েছে, স্যার'))
+                            .then(() => toast.success('কভার সেট হয়েছে, বস'))
                             .catch(() => toast.error('কভার সেট করা যায়নি'))
                         }}
                         className="h-12 w-8 overflow-hidden rounded-md ring-1 ring-white/20"
@@ -1972,7 +1972,7 @@ function GalleryView() {
                             setShowBranded(Boolean(fresh.brandedUrl))
                           }
                         })
-                        toast.success('টেমপ্লেট বসে গেছে — "টেমপ্লেট সহ" ভার্সন দেখুন, স্যার')
+                        toast.success('টেমপ্লেট বসে গেছে — "টেমপ্লেট সহ" ভার্সন দেখুন, বস')
                       }}
                     />
                   </div>
@@ -2047,7 +2047,7 @@ function FinishPanel({
 
   const run = async (layout?: LifestyleLayoutOverrides | null) => {
     if (!hook.trim()) {
-      toast.error(isLifestyle ? 'মূল লেখাটা (headline) দিন স্যার' : 'একটা hook লেখা লাগবে স্যার')
+      toast.error(isLifestyle ? 'মূল লেখাটা (headline) দিন বস' : 'একটা hook লেখা লাগবে বস')
       return
     }
     setBusy(true)
@@ -2065,7 +2065,7 @@ function FinishPanel({
         fit: isLifestyle ? fit : undefined,
         layout: isLifestyle ? layout ?? undefined : undefined,
       })
-      toast.success('ফিনিশিং হয়ে গেছে স্যার ✅')
+      toast.success('ফিনিশিং হয়ে গেছে বস ✅')
       setEditorOpen(false)
       onDone(framedUrl, framedPath)
     } catch (e) {
@@ -2079,7 +2079,7 @@ function FinishPanel({
   // and the brand logo (fetched lazily, best-effort).
   const openEditor = async () => {
     if (!hook.trim()) {
-      toast.error('মূল লেখাটা (headline) দিন স্যার')
+      toast.error('মূল লেখাটা (headline) দিন বস')
       return
     }
     if (!imageUrl) {
@@ -2682,7 +2682,7 @@ function FinishingView() {
     try {
       const s = await saveBrandLogo(file)
       setStatus(s)
-      toast.success('লোগো সেভ হয়েছে স্যার ✅ — পরের ফিনিশিং-এ এটাই বসবে।')
+      toast.success('লোগো সেভ হয়েছে বস ✅ — পরের ফিনিশিং-এ এটাই বসবে।')
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'লোগো সেভ ব্যর্থ')
     } finally {
@@ -2713,7 +2713,7 @@ function FinishingView() {
 
       {status && !status.hasLogo && (
         <div className="mb-4 rounded-xl border border-[#C89B3C]/40 bg-[#C89B3C]/10 px-3 py-2.5 text-[11px] leading-snug text-[#C89B3C]">
-          ⚠️ এখনো কোনো লোগো আপলোড করা হয়নি, স্যার। লোগো ছাড়া ফিনিশিং করলে ছবিতে শুধু লেখা আর রং বসবে, লোগো বসবে না। নিচে একবার আপনার লোগো আপলোড করে নিন — এরপর প্রতিটা ফিনিশিং-এ এটাই বসবে।
+          ⚠️ এখনো কোনো লোগো আপলোড করা হয়নি, বস। লোগো ছাড়া ফিনিশিং করলে ছবিতে শুধু লেখা আর রং বসবে, লোগো বসবে না। নিচে একবার আপনার লোগো আপলোড করে নিন — এরপর প্রতিটা ফিনিশিং-এ এটাই বসবে।
         </div>
       )}
 
@@ -2898,7 +2898,7 @@ function VideoStudioView({ onOpenGallery }: { onOpenGallery: () => void }) {
       const up = await uploadStudioVideo(file, setUploadPct)
       setUploads((prev) => [up, ...prev])
       setSelected(up)
-      toast.success('ভিডিও আপলোড হয়েছে, স্যার')
+      toast.success('ভিডিও আপলোড হয়েছে, বস')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'আপলোড ব্যর্থ হয়েছে')
     } finally {
@@ -3335,7 +3335,7 @@ function MusicLibrary({
     try {
       const track = await uploadMusicTrack(file, vibe, setPct)
       onChanged([track, ...tracks])
-      toast.success('ট্র্যাক যোগ হয়েছে, স্যার')
+      toast.success('ট্র্যাক যোগ হয়েছে, বস')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'আপলোড ব্যর্থ')
     } finally {
@@ -3439,7 +3439,7 @@ function AudioLabView() {
   const run = useCallback((label: string, body: Record<string, unknown>) => {
     setBusy(label)
     void queueAudioJob(body)
-      .then((r) => toast.success(`${label} তৈরি হচ্ছে (~৳${r.costBdt}) — Gallery-তে আসবে, স্যার`))
+      .then((r) => toast.success(`${label} তৈরি হচ্ছে (~৳${r.costBdt}) — Gallery-তে আসবে, বস`))
       .catch((e) => toast.error(e instanceof Error ? e.message : 'হয়নি'))
       .finally(() => setBusy(null))
   }, [])

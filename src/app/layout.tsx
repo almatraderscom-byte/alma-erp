@@ -13,6 +13,7 @@ import { AppToaster } from '@/components/ui/AppToaster'
 import { ConfirmDialogHost } from '@/components/ui/confirm-dialog'
 import { PromptDialogHost } from '@/components/ui/prompt-dialog'
 import { GlobalPlatformChrome } from '@/components/layout/GlobalPlatformChrome'
+import { ConnectionGuard } from '@/components/providers/ConnectionGuard'
 import TopScrollFade from '@/components/layout/TopScrollFade'
 import { AmbientBackground } from '@/components/ambient/AmbientBackground'
 import { GlobalKeyboardManager } from '@/components/ui-mobile/GlobalKeyboardManager'
@@ -100,9 +101,19 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       </head>
       <body className="text-cream antialiased font-sans">
         <div id="alma-boot-splash" aria-hidden="true">
-          <div className="alma-boot-mark"><span>A</span></div>
-          <p className="alma-boot-title">Alma ERP</p>
-          <div className="alma-boot-spinner" />
+          <div className="alma-boot-orb">
+            <span className="alma-boot-halo" />
+            <span className="alma-boot-ring1" />
+            <span className="alma-boot-ring2" />
+            <span className="alma-boot-core">A</span>
+          </div>
+          <p className="alma-boot-word">
+            <span>A</span>
+            <span>L</span>
+            <span>M</span>
+            <span>A</span>
+          </p>
+          <div className="alma-boot-line"><i /></div>
         </div>
         <ThemeProvider initialMode={themeMode} initialAccent={themeAccent}>
           <AmbientBackground />
@@ -119,6 +130,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <AppToaster />
         <ConfirmDialogHost />
         <PromptDialogHost />
+        {/* App-wide offline takeover + reconnect flood (owner-approved WOW design). */}
+        <ConnectionGuard />
       </body>
     </html>
   )

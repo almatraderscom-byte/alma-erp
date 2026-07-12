@@ -3,231 +3,251 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0c0b12" />
+    <meta name="theme-color" content="#0c0c12" />
     <title>Alma ERP</title>
 
-    <!-- Warm the connection to production while the aura plays, so the
+    <!-- Warm the connection to production while the show plays, so the
          hand-off (login) lands as fast as possible. -->
     <link rel="preconnect" href="https://alma-erp-six.vercel.app" crossorigin />
     <link rel="dns-prefetch" href="https://alma-erp-six.vercel.app" />
 
     <style>
+      /* Owner-approved WOW boot (2026-07): hundreds of terracotta-gold light
+         particles swirl in from the edges and assemble the ALMA "A" monogram,
+         under a big Bangla percent counter. The percent eases toward ~৯০ while
+         we wait for production to paint — the browser keeps this page on screen
+         until then, so the show covers the whole network wait. */
       :root {
-        --neon-blue: #7cc4f5;
-        --neon-violet: #8b7cf6;
-        --neon-magenta: #d36ad8;
-        --neon-pink: #f06595;
-        --neon-white: #f8fafc;
-        --bg: #0c0b12;
+        --brand: #e07a5f;
+        --brand-lt: #f4a28c;
+        --gold: #f2c48d;
+        --bg: #0c0c12;
       }
       * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
       html, body { height: 100%; margin: 0; }
       body {
-        display: grid;
-        place-items: center;
         overflow: hidden;
         background:
-          radial-gradient(120% 80% at 30% 22%, rgba(139, 124, 246, 0.16), transparent 56%),
-          radial-gradient(120% 80% at 72% 82%, rgba(211, 106, 216, 0.14), transparent 58%),
-          radial-gradient(130% 90% at 50% 50%, rgba(124, 196, 245, 0.08), transparent 62%),
+          radial-gradient(80% 55% at 50% 0%, rgba(58, 44, 84, 0.55), transparent 60%),
+          radial-gradient(85% 60% at 50% 115%, rgba(120, 52, 60, 0.5), transparent 62%),
           var(--bg);
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+        font-family: 'Hind Siliguri', 'Noto Sans Bengali', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         -webkit-font-smoothing: antialiased;
+        color: #f8fafc;
       }
-
-      .stage {
-        position: relative;
-        display: grid;
-        place-items: center;
-        width: 340px; height: 340px;
+      #cv { position: fixed; inset: 0; width: 100%; height: 100%; }
+      .ui {
+        position: fixed;
+        left: 0; right: 0;
+        top: 56%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        pointer-events: none;
       }
-
-      /* Layer 1 — breathing core glow. */
-      .glow {
-        position: absolute;
-        width: 280px; height: 280px;
-        border-radius: 50%;
-        background: radial-gradient(circle, rgba(139, 124, 246, 0.32), transparent 62%);
-        animation: breathe 3.8s ease-in-out infinite;
+      .pct {
+        font-size: 46px;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+        text-shadow: 0 0 30px rgba(244, 162, 140, 0.35);
       }
-      @keyframes breathe {
-        0%, 100% { opacity: 0.55; transform: scale(0.9); }
-        50%      { opacity: 1;    transform: scale(1.08); }
+      .pct small { font-size: 20px; font-weight: 700; color: rgba(255, 255, 255, 0.55); margin-left: 2px; }
+      .msg {
+        margin-top: 10px;
+        font-size: 13px;
+        font-weight: 600;
+        color: rgba(255, 255, 255, 0.6);
+        min-height: 19px;
+        transition: opacity 0.25s;
       }
-
-      /* Layer 2 — slowly rotating conic aura, blurred into a living gold ring. */
-      .aura {
-        position: absolute;
-        width: 300px; height: 300px;
-        border-radius: 50%;
-        background: conic-gradient(
-          from 0deg,
-          rgba(124, 196, 245, 0) 0%,
-          rgba(124, 196, 245, 0.55) 18%,
-          rgba(139, 124, 246, 0) 38%,
-          rgba(211, 106, 216, 0.5) 58%,
-          rgba(240, 101, 149, 0) 80%,
-          rgba(240, 101, 149, 0.45) 92%,
-          rgba(124, 196, 245, 0) 100%
-        );
-        filter: blur(26px);
-        opacity: 0.85;
-        animation: spin 7.5s linear infinite;
+      .msg.swap { opacity: 0; }
+      .hair {
+        margin-top: 16px;
+        width: 132px;
+        height: 2.5px;
+        border-radius: 99px;
+        background: rgba(255, 255, 255, 0.12);
+        overflow: hidden;
       }
-      @keyframes spin { to { transform: rotate(360deg); } }
-
-      /* Layer 3 — emanating pulse rings (the "aura" radiating outward). */
-      .ring {
-        position: absolute;
-        width: 150px; height: 150px;
-        border-radius: 50%;
-        border: 1.5px solid rgba(139, 124, 246, 0.5);
-        animation: emanate 3.6s ease-out infinite;
-      }
-      .ring.r2 { animation-delay: 1.2s; }
-      .ring.r3 { animation-delay: 2.4s; }
-      @keyframes emanate {
-        0%   { transform: scale(0.55); opacity: 0; }
-        14%  { opacity: 0.7; }
-        100% { transform: scale(2.1); opacity: 0; }
-      }
-
-      /* The hero wordmark — gold gradient + shimmer + a glow that pulses. */
-      .mark {
-        position: relative;
-        z-index: 2;
-        margin: 0;
-        font-size: clamp(54px, 19vw, 104px);
-        font-weight: 400;
-        letter-spacing: 0.32em;
-        padding-left: 0.32em; /* re-centre the trailing tracking space */
-        background: linear-gradient(
-          100deg,
-          var(--neon-white) 0%,
-          var(--neon-blue) 26%,
-          var(--neon-violet) 46%,
-          var(--neon-magenta) 62%,
-          var(--neon-pink) 76%,
-          var(--neon-white) 100%
-        );
-        background-size: 250% 100%;
-        -webkit-background-clip: text;
-        background-clip: text;
-        -webkit-text-fill-color: transparent;
-        color: transparent;
-        animation:
-          shimmer 6s linear infinite,
-          glowpulse 3.8s ease-in-out infinite,
-          markin 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both;
-      }
-      @keyframes shimmer { to { background-position: -250% 0; } }
-      @keyframes glowpulse {
-        0%, 100% { filter: drop-shadow(0 2px 12px rgba(139, 124, 246, 0.4)); }
-        50%      { filter: drop-shadow(0 3px 26px rgba(211, 106, 216, 0.6)); }
-      }
-      @keyframes markin {
-        from { opacity: 0; transform: scale(0.86); letter-spacing: 0.5em; }
-        to   { opacity: 1; transform: scale(1); }
-      }
-
-      /* Quiet fallbacks — only appear if the network is offline or slow. */
-      .hint {
-        position: absolute;
-        bottom: -54px; left: 50%;
-        transform: translateX(-50%);
-        margin: 0;
-        white-space: nowrap;
-        font-size: 12.5px;
-        color: #9a93b8;
+      .hair i {
+        display: block;
+        height: 100%;
+        border-radius: 99px;
+        width: 0%;
+        background: linear-gradient(90deg, var(--brand-lt), var(--gold));
+        box-shadow: 0 0 12px rgba(244, 162, 140, 0.8);
+        transition: width 0.15s linear;
       }
       .retry {
-        position: absolute;
-        bottom: -104px; left: 50%;
-        transform: translateX(-50%);
-        border: 1px solid rgba(139, 124, 246, 0.5);
-        background: rgba(139, 124, 246, 0.14);
-        color: #c4b8ff;
-        border-radius: 12px;
-        padding: 11px 20px;
+        margin-top: 26px;
+        pointer-events: auto;
+        border: 1px solid rgba(244, 162, 140, 0.5);
+        background: rgba(224, 122, 95, 0.16);
+        color: #ffd9cb;
+        border-radius: 999px;
+        padding: 12px 24px;
+        font-family: inherit;
         font-weight: 700;
-        font-size: 13px;
+        font-size: 13.5px;
         cursor: pointer;
       }
-      .retry:active { transform: translateX(-50%) scale(0.97); }
+      .retry:active { transform: scale(0.97); }
       [hidden] { display: none !important; }
-
       @media (prefers-reduced-motion: reduce) {
-        .glow, .aura, .ring { animation: none; }
-        .mark { animation: none; background-position: 0 0; }
+        #cv { display: none; }
       }
     </style>
   </head>
   <body>
-    <div class="stage">
-      <div class="glow"></div>
-      <div class="aura"></div>
-      <div class="ring r1"></div>
-      <div class="ring r2"></div>
-      <div class="ring r3"></div>
-      <h1 class="mark">ALMA</h1>
-      <p class="hint" id="hint" hidden></p>
+    <canvas id="cv"></canvas>
+    <div class="ui">
+      <div class="pct"><span id="pct">০</span><small>%</small></div>
+      <p class="msg" id="msg">চালু হচ্ছে…</p>
+      <div class="hair"><i id="hair"></i></div>
       <button class="retry" type="button" id="retry" hidden>রিফ্রেশ করুন</button>
     </div>
 
     <script>
       var PROD = 'https://alma-erp-six.vercel.app';
-      var hint = document.getElementById('hint');
-      var retry = document.getElementById('retry');
-      var waitTimer = null;
-      var slowTimer = null;
+      var BN = '০১২৩৪৫৬৭৮৯';
+      function bn(n) { return String(n).replace(/\d/g, function (d) { return BN[+d]; }); }
 
-      function clearTimers() {
-        if (waitTimer) { clearTimeout(waitTimer); waitTimer = null; }
-        if (slowTimer) { clearTimeout(slowTimer); slowTimer = null; }
+      var msgEl = document.getElementById('msg');
+      var pctEl = document.getElementById('pct');
+      var hairEl = document.getElementById('hair');
+      var retry = document.getElementById('retry');
+      var offline = navigator.onLine === false;
+
+      /* ── the particle monogram ── */
+      var reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      var cv = document.getElementById('cv');
+      if (!reduced) {
+        var dpr = Math.min(2, window.devicePixelRatio || 1);
+        cv.width = innerWidth * dpr;
+        cv.height = innerHeight * dpr;
+        var ctx = cv.getContext('2d');
+        var w = cv.width, h = cv.height;
+
+        // Sample the glyph into target points.
+        var off = document.createElement('canvas');
+        off.width = w; off.height = h;
+        var oc = off.getContext('2d');
+        var size = Math.min(w, h * 0.5) * 0.6;
+        oc.font = '800 ' + size + "px 'Hind Siliguri', system-ui, sans-serif";
+        oc.textAlign = 'center';
+        oc.textBaseline = 'middle';
+        oc.fillStyle = '#fff';
+        oc.fillText('A', w / 2, h * 0.34);
+        var img = oc.getImageData(0, 0, w, h).data;
+        var targets = [];
+        var step = Math.max(3, Math.round(4 * dpr));
+        for (var y = 0; y < h; y += step)
+          for (var x = 0; x < w; x += step)
+            if (img[(y * w + x) * 4 + 3] > 140) targets.push({ x: x, y: y });
+
+        var COLORS = ['244,162,140', '224,122,95', '242,196,141', '255,255,255', '196,90,60'];
+        var N = Math.min(260, targets.length);
+        var cx = w / 2, cy = h * 0.34;
+        var ps = [];
+        for (var i = 0; i < N; i++) {
+          var t = targets[Math.floor((i * targets.length) / N)];
+          var ang = Math.random() * Math.PI * 2;
+          var rad = Math.max(w, h) * (0.55 + Math.random() * 0.4);
+          ps.push({
+            x: cx + Math.cos(ang) * rad, y: cy + Math.sin(ang) * rad,
+            tx: t.x, ty: t.y,
+            r: (Math.random() * 1.7 + 0.9) * dpr,
+            c: COLORS[Math.floor(Math.random() * COLORS.length)],
+            delay: Math.random() * 0.35,
+          });
+        }
+        var T_FORM = 2400;
+        var t0 = null;
+        function frame(ts) {
+          if (!t0) t0 = ts;
+          var el = ts - t0;
+          var prog = Math.min(1, el / T_FORM);
+          ctx.clearRect(0, 0, w, h);
+          for (var j = 0; j < ps.length; j++) {
+            var p = ps[j];
+            var lp = Math.max(0, Math.min(1, (prog - p.delay) / (1 - p.delay)));
+            var k = 1 - Math.pow(1 - lp, 3);
+            var px = p.x + (p.tx - p.x) * k;
+            var py = p.y + (p.ty - p.y) * k;
+            var tw = 0.55 + 0.45 * Math.sin(ts / 300 + p.tx);
+            ctx.beginPath();
+            ctx.arc(px, py, p.r, 0, 7);
+            ctx.fillStyle = 'rgba(' + p.c + ',' + (0.35 + 0.65 * lp) * tw + ')';
+            ctx.shadowColor = 'rgba(244,162,140,.8)';
+            ctx.shadowBlur = 6 * dpr * lp;
+            ctx.fill();
+            ctx.shadowBlur = 0;
+          }
+          // After forming, keep the monogram alive with a soft twinkle.
+          requestAnimationFrame(frame);
+        }
+        requestAnimationFrame(frame);
       }
+
+      /* ── percent + status: eases toward ৯০ while production loads ── */
+      var MSGS = ['চালু হচ্ছে…', 'ডেটা আনা হচ্ছে…', 'প্রায় শেষ…'];
+      var msgi = 0;
+      var startAt = Date.now();
+      var pctTimer = setInterval(function () {
+        if (offline) return;
+        var s = (Date.now() - startAt) / 1000;
+        var pc = Math.min(90, Math.round(90 * (1 - Math.exp(-s / 3.2))));
+        pctEl.textContent = bn(pc);
+        hairEl.style.width = pc + '%';
+        var mi = pc > 70 ? 2 : pc > 30 ? 1 : 0;
+        if (mi !== msgi) {
+          msgi = mi;
+          msgEl.classList.add('swap');
+          setTimeout(function () {
+            msgEl.textContent = MSGS[msgi];
+            msgEl.classList.remove('swap');
+          }, 200);
+        }
+      }, 250);
+
+      /* ── hand-off to production (unchanged boot model) ── */
+      var slowTimer = null;
 
       function go() {
         // Navigate ASAP for the fastest login. The browser keeps this animated
-        // page on screen until production paints, so the ALMA aura covers the
-        // whole network wait — no white page.
-        clearTimers();
-        hint.hidden = true;
+        // page on screen until production paints, so the particle show covers
+        // the whole network wait — no white page.
+        offline = false;
         retry.hidden = true;
+        if (slowTimer) clearTimeout(slowTimer);
+        slowTimer = setTimeout(showSlow, 10000);
         location.replace(PROD);
       }
 
-      // Stage 1 (~5s): reassure that we're working, so the wait makes sense.
-      function showWait() {
-        hint.textContent = 'প্রস্তুত হচ্ছে, একটু অপেক্ষা করুন…';
-        hint.hidden = false;
-      }
-
-      // Stage 2 (~10s): offer a manual refresh so it never feels stuck.
+      // ~10s: offer a manual refresh so it never feels stuck.
       function showSlow() {
-        hint.textContent = 'সংযোগ একটু ধীর হচ্ছে';
-        hint.hidden = false;
+        msgEl.textContent = 'সংযোগ একটু ধীর হচ্ছে…';
         retry.hidden = false;
       }
 
       function showOffline() {
-        hint.textContent = 'ইন্টারনেট সংযোগ নেই — সংযোগ চালু করুন';
-        hint.hidden = false;
+        offline = true;
+        msgEl.textContent = 'ইন্টারনেট সংযোগ নেই — সংযোগ চালু করুন';
+        pctEl.textContent = bn(0);
+        hairEl.style.width = '0%';
         retry.hidden = false;
       }
 
-      // The refresh button re-attempts the hand-off to production.
       retry.onclick = go;
       window.addEventListener('online', function () {
-        if (!retry.hidden) go();
+        if (!retry.hidden || offline) go();
       });
 
-      if (navigator.onLine === false) {
-        showOffline();
-      } else {
-        go();
-        waitTimer = setTimeout(showWait, 5000);
-        slowTimer = setTimeout(showSlow, 10000);
-      }
+      if (offline) showOffline();
+      else go();
     </script>
   </body>
 </html>

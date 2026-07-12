@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 
 export const DUTY_PENDING_APPROVAL_DESCRIPTION =
-  '⏳ Sir, এটা হয়নি — আপনার approval লাগবে। approve দিলে শেষ করবো।'
+  '⏳ Boss, এটা হয়নি — আপনার approval লাগবে। approve দিলে শেষ করবো।'
 
 export interface DutyApprovalBlock {
   dutyKey: string
@@ -188,7 +188,7 @@ export async function notifyDutyApprovalBlocked(
   label: string,
   appendNarrative: (text: string) => Promise<void>,
 ): Promise<void> {
-  const msg = `⏳ Sir, "${label}" আপনার approval ছাড়া আটকে আছে।`
+  const msg = `⏳ Boss, "${label}" আপনার approval ছাড়া আটকে আছে।`
   await appendNarrative(msg)
   void sendOwnerText(msg).catch(() => {})
 }

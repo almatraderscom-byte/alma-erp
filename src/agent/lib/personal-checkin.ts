@@ -39,7 +39,7 @@ async function loadFamilyContactsSummary(): Promise<string> {
   return rows.map((c: { relation: string; name: string }) => `${c.relation} (${c.name})`).join(', ')
 }
 
-// Owner rule 2026-07-07: address is "Boss" ONLY — "Sir"/"স্যার" is banned (TTS accent).
+// Owner rule 2026-07-07: address is "Boss" ONLY — "Boss"/"বস" is banned (TTS accent).
 const FALLBACK: Record<PersonalCheckinKind, string> = {
   midday:
     'Boss, দিনটা কেমন যাচ্ছে? সব ঠিক আছে তো? কিছু দরকার হলে বা মন খারাপ থাকলে বলবেন — আমি আছি। 🤲',
@@ -59,14 +59,14 @@ export async function composePersonalCheckin(kind: PersonalCheckinKind = 'evenin
 
   const userPrompt = kind === 'midday'
     ? (
-      `Compose ONE brief midday personal check-in in Bangla for the owner (address as "Boss" — never "স্যার"/"Sir").\n` +
+      `Compose ONE brief midday personal check-in in Bangla for the owner (address as "Boss" — never "বস"/"Boss").\n` +
       `Kind: midday (short খোঁজখবর during work hours)\n` +
       `Open worries from memory:\n${worryLines}\n` +
       `Rules: MAX 1-2 short lines only; warm, light, Islamic-gentle; if an open worry exists, reference it lightly ("সকালে যে বিষয়টা বলেছিলেন, ঠিক আছে তো?"); otherwise simple caring check. ` +
       `Do NOT write a long emotional session. Vary wording from day to day. No fake Quran/hadith.`
     )
     : (
-      `Compose ONE short evening personal check-in message in Bangla for the owner (address as "Boss" — never "স্যার"/"Sir").\n` +
+      `Compose ONE short evening personal check-in message in Bangla for the owner (address as "Boss" — never "বস"/"Boss").\n` +
       `Kind: evening (deeper reflection)\n` +
       `Open worries from memory:\n${worryLines}\n` +
       `Saved family contacts: ${familySummary}\n` +
@@ -78,7 +78,7 @@ export async function composePersonalCheckin(kind: PersonalCheckinKind = 'evenin
     // Anthropic when it has credits, otherwise Gemini — the direct Claude call
     // 400'd while ANTHROPIC_HEAD_DOWN is on, so check-ins always fell to FALLBACK.
     const text = await agentSmartText({
-      system: 'Brief Bangla personal check-in only. Warm, Islamic-gentle. Address the owner as "Boss" only — never "স্যার"/"Sir". No fake Quran/hadith. Max 4 sentences evening / 2 lines midday.',
+      system: 'Brief Bangla personal check-in only. Warm, Islamic-gentle. Address the owner as "Boss" only — never "বস"/"Boss". No fake Quran/hadith. Max 4 sentences evening / 2 lines midday.',
       prompt: userPrompt,
       maxTokens: kind === 'midday' ? 150 : 200,
       costLabel: 'personal_checkin',

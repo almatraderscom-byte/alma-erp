@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import {
   attendanceReversalSourceRef,
   LATE_PENALTY_REVERSAL_SOURCE,
+  penaltyRefundNoteBn,
 } from '@/lib/attendance'
 import { APPROVAL_TYPES } from '@/lib/approval-types'
 import {
@@ -34,6 +35,16 @@ export const PENALTY_REVIEW_ROLES: AlmaRole[] = ['SUPER_ADMIN', 'ADMIN']
 export const PENALTY_APPEAL_MODULE = 'PAYROLL' as const
 export const PENALTY_APPEAL_TYPE = APPROVAL_TYPES.PENALTY_APPEAL
 export const MAX_APPEAL_ATTACHMENT_BYTES = 600_000
+/** Owner rule (2026-07-11): staff may appeal a fine within 30 days of the fine date. */
+export const APPEAL_WINDOW_DAYS = 30
+
+export function appealDeadline(fineDate: Date): Date {
+  return new Date(fineDate.getTime() + APPEAL_WINDOW_DAYS * 24 * 60 * 60 * 1000)
+}
+
+export function isWithinAppealWindow(fineDate: Date, now = new Date()): boolean {
+  return now.getTime() <= appealDeadline(fineDate).getTime()
+}
 
 export function canReviewPenaltyAppeals(role: string): boolean {
   return PENALTY_REVIEW_ROLES.includes(role as AlmaRole)
@@ -216,6 +227,19 @@ export type SubmitPenaltyAppealResult =
 /** Atomic penalty appeal submit with orphan repair on duplicate waiver rows. */
 export async function submitPenaltyAppeal(input: SubmitPenaltyAppealInput): Promise<SubmitPenaltyAppealResult> {
   const ctx = { employeeId: input.employeeId, userId: input.userId, userName: input.userName }
+
+  const attendanceRecord = await prisma.attendanceRecord.findUnique({
+    where: { id: input.attendanceRecordId },
+    select: { attendanceDate: true, penaltyLedgerEntryId: true },
+  })
+  if (attendanceRecord && !isWithinAppealWindow(attendanceRecord.attendanceDate)) {
+    return {
+      error: `আপিলের সময়সীমা শেষ — জরিমানার দিন থেকে ${APPEAL_WINDOW_DAYS} দিনের মধ্যে আপিল করা যায়।`,
+      status: 400,
+    }
+  }
+  const penaltyLedgerEntryId = attendanceRecord?.penaltyLedgerEntryId ?? null
+
   const existing = await findPenaltyAppealByRecord(input.attendanceRecordId, input.userId)
 
   if (existing) {
@@ -248,6 +272,7 @@ export async function submitPenaltyAppeal(input: SubmitPenaltyAppealInput): Prom
             reviewedById: null,
             reviewedAt: null,
             reversalLedgerEntryId: null,
+            penaltyLedgerEntryId,
           },
           include: { requester: { select: { name: true } } },
         })
@@ -290,6 +315,7 @@ export async function submitPenaltyAppeal(input: SubmitPenaltyAppealInput): Prom
           requestedReductionAmount: new Prisma.Decimal(input.requestedReduction.toFixed(2)),
           reason: input.reason.slice(0, 1200),
           attachmentDataUrl: input.attachmentDataUrl,
+          penaltyLedgerEntryId,
         },
         include: { requester: { select: { name: true } } },
       })
@@ -331,13 +357,20 @@ export async function submitPenaltyAppeal(input: SubmitPenaltyAppealInput): Prom
 
 async function applyPenaltyReversalInTx(
   tx: ApprovalTx,
-  waiver: Pick<AttendanceWaiverRequest, 'id' | 'businessId' | 'employeeId' | 'userId' | 'reversalLedgerEntryId'>,
+  waiver: Pick<AttendanceWaiverRequest, 'id' | 'businessId' | 'employeeId' | 'userId' | 'reversalLedgerEntryId'> & { penaltyLedgerEntryId?: string | null },
   approvedReduction: number,
   actorUserId: string,
 ) {
   if (waiver.reversalLedgerEntryId) return null
   const amount = Number(approvedReduction || 0)
   if (!Number.isFinite(amount) || amount <= 0) return null
+
+  const fineEntry = waiver.penaltyLedgerEntryId
+    ? await tx.employeeLedgerEntry.findUnique({
+        where: { id: waiver.penaltyLedgerEntryId },
+        select: { id: true, date: true },
+      })
+    : null
 
   const sourceRef = attendanceReversalSourceRef(waiver.id)
   try {
@@ -348,11 +381,12 @@ async function applyPenaltyReversalInTx(
         date: new Date(),
         type: 'ADJUSTMENT',
         amount: moneyDecimal(amount),
-        note: `Late attendance waiver reversal · ${waiver.id}`,
+        note: penaltyRefundNoteBn(fineEntry?.date),
         createdById: actorUserId,
         approvedById: actorUserId,
         source: LATE_PENALTY_REVERSAL_SOURCE,
         sourceRef,
+        relatedEntryId: fineEntry?.id || waiver.penaltyLedgerEntryId || null,
       },
     })
     await tx.attendanceWaiverRequest.update({

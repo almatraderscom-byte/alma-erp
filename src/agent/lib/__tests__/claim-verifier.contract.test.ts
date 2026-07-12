@@ -29,7 +29,7 @@ describe('detectClaimViolations (Layer 1 — regex)', () => {
 
   it('memory save claim with no tool → violation', () => {
     const v = detectClaimViolations(
-      'ঠিক আছে স্যার, মনে রাখলাম।',
+      'ঠিক আছে বস, মনে রাখলাম।',
       [],
     )
     expect(v.length).toBeGreaterThan(0)
@@ -94,7 +94,7 @@ describe('detectLedgerViolations (Layer 2 — general)', () => {
       { toolName: 'get_sales_summary', success: true },
     ]
     const v = detectLedgerViolations(
-      'save করেছি স্যার, মেমোরিতে সেভ হয়ে গেছে।',
+      'save করেছি বস, মেমোরিতে সেভ হয়ে গেছে।',
       ledger,
     )
     expect(v.length).toBeGreaterThan(0)
@@ -125,7 +125,7 @@ describe('detectLedgerViolations (Layer 2 — general)', () => {
   // rewrite — that re-ran the whole turn for nothing and wasted tokens.
   it('benign "চেক করেছি" read reply with read tool → no violation', () => {
     const v = detectLedgerViolations(
-      'চেক করেছি স্যার — এখন ৩টা pending order আছে, কোনোটাই এখনো confirm হয়নি।',
+      'চেক করেছি বস — এখন ৩টা pending order আছে, কোনোটাই এখনো confirm হয়নি।',
       [{ toolName: 'get_orders', success: true }],
     )
     expect(v).toHaveLength(0)
@@ -163,7 +163,7 @@ describe('verifyClaimsAgainstLedger (combined)', () => {
 
   it('general claim caught when no regex matches', () => {
     const v = verifyClaimsAgainstLedger(
-      'ঠিক আছে স্যার, সব update করে দিয়েছি settings e।',
+      'ঠিক আছে বস, সব update করে দিয়েছি settings e।',
       [],
     )
     expect(v.length).toBeGreaterThan(0)

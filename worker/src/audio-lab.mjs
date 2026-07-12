@@ -58,7 +58,7 @@ export async function processAudioGen(job, { supabase, callJobResult }) {
   if (kind === 'voice_clone') {
     // one-time: consented samples → ElevenLabs voice → id saved in kv
     const form = new FormData()
-    form.append('name', 'ALMA Sir')
+    form.append('name', 'ALMA Boss')
     form.append('description', 'Owner voice — studio use only')
     const paths = Array.isArray(payload.samplePaths) ? payload.samplePaths.slice(0, 5) : []
     if (paths.length === 0) throw new Error('no voice samples')

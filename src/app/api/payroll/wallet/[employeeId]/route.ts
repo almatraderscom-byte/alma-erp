@@ -3,13 +3,29 @@ import { prisma } from '@/lib/prisma'
 import { getWalletContext, forbidden, resolveWalletScopeBusinessId } from '@/lib/payroll-wallet-access'
 import { computeWalletSummary, runningTransactions } from '@/lib/payroll-wallet'
 import { todayYmdDhaka } from '@/lib/agent-api/dhaka-date'
+import { walletEntryLabelBn } from '@/lib/wallet-labels'
+import { buildFineSummaries, mapFineAppeals } from '@/lib/wallet-transparency'
+
+function parseDateParam(raw: string | null, endOfDay = false): Date | null {
+  if (!raw) return null
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw.trim())
+  if (!m) return null
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0))
+  return Number.isNaN(d.getTime()) ? null : d
+}
 
 export async function GET(
   req: NextRequest,
   { params }: { params: { employeeId: string } },
 ) {
   const employeeId = decodeURIComponent(params.employeeId)
-  const businessId = new URL(req.url).searchParams.get('business_id')
+  const url = new URL(req.url)
+  const businessId = url.searchParams.get('business_id')
+  // Optional custom window (YYYY-MM-DD): filters the returned transaction list
+  // and adds a matching customRange block to fineSummaries. Totals/balances are
+  // always computed over the FULL history so the running balance stays true.
+  const from = parseDateParam(url.searchParams.get('from'))
+  const to = parseDateParam(url.searchParams.get('to'), true)
   const ctx = await getWalletContext(req, businessId)
   if ('error' in ctx) return ctx.error
 
@@ -25,7 +41,9 @@ export async function GET(
       businessId: scopedBusinessId,
       isArchived: false,
     },
-    orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
+    // Booking order (createdAt): a June-salary posted in July shows on the July
+    // date it happened; the row label still names the month (মাসিক বেতন — জুন).
+    orderBy: { createdAt: 'asc' },
   })
   const requests = await prisma.walletRequest.findMany({
     where: {
@@ -42,6 +60,8 @@ export async function GET(
   })
 
   const summary = computeWalletSummary(employeeId, scopedBusinessId, entries)
+  const appeals = await mapFineAppeals(entries)
+  const fineSummaries = buildFineSummaries(entries, appeals, { from, to })
 
   // Daily "outstanding advance" notice: shown once per Asia/Dhaka day until acknowledged.
   // Re-appears each day (and stays) until the advance is fully recovered from salary.
@@ -60,6 +80,23 @@ export async function GET(
     advanceNoticeAckedToday = Boolean(ack)
   }
 
+  // Running balance over full history, then window-filter for display.
+  const allTransactions = runningTransactions(entries).map(tx => ({
+    ...tx,
+    labelBn: walletEntryLabelBn(tx as { type: string; source?: string | null; periodYm?: string | null }),
+    appeal: tx.type === 'PENALTY' ? appeals[String(tx.id)] ?? null : null,
+  }))
+  const windowed = from || to
+    ? allTransactions.filter(tx => {
+        // Filter on the booking date so the custom range matches what the
+        // statement displays (a June salary posted in July belongs to July).
+        const t = new Date((tx.createdAt ?? tx.date) as string | Date).getTime()
+        if (from && t < from.getTime()) return false
+        if (to && t > to.getTime()) return false
+        return true
+      })
+    : allTransactions
+
   return NextResponse.json({
     employeeId,
     businessId: scopedBusinessId,
@@ -67,8 +104,11 @@ export async function GET(
       ? { id: linkedUser.id, profileImageUrl: linkedUser.profileImageUrl, updatedAt: linkedUser.updatedAt }
       : null,
     summary,
+    fineSummaries,
+    range: { from: from?.toISOString() || null, to: to?.toISOString() || null },
     advanceNoticeAckedToday,
-    entries: runningTransactions(entries),
+    entries: windowed,
+    totalEntryCount: allTransactions.length,
     requests,
   })
 }

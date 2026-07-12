@@ -16,7 +16,7 @@ installTelegramProxy()
 
 /** Pure Bangla — playground-style Adam test */
 const TEST_SAMPLES = [
-  'আপনার বাংলা টেক্সট এখানে লিখুন। স্যার, আসসালামু আলাইকুম। এটি অ্যাডাম ভয়েসের পরীক্ষা।',
+  'আপনার বাংলা টেক্সট এখানে লিখুন। বস, আসসালামু আলাইকুম। এটি অ্যাডাম ভয়েসের পরীক্ষা।',
 ]
 
 async function main() {

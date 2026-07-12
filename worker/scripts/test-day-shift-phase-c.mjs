@@ -93,7 +93,7 @@ async function main() {
     console.error('FAIL: duty_approval_block not recorded')
     process.exit(1)
   }
-  if (!reminder.includes('🔔 Sir')) {
+  if (!reminder.includes('🔔 Boss')) {
     console.error('FAIL: reminder prefix missing')
     process.exit(1)
   }

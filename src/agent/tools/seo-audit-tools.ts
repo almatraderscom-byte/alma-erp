@@ -13,11 +13,22 @@
  * critical parts himself.
  */
 import { prisma } from '@/lib/prisma'
-import { agentStorageDownload, agentStorageSignedUrl, agentStorageUpload } from '@/agent/lib/storage'
+import { agentStorageDownload, agentStorageUpload } from '@/agent/lib/storage'
+import { buildClientReportMarkdown, buildCompareMarkdown, buildIssuesCsv, type AuditJson } from '@/agent/lib/seo-report'
+import { saveConversationArtifact } from './artifact-tools'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
+
+// SHORT stable owner link to a private artifact (302→fresh signed URL on click,
+// owner login required). The head must copy links verbatim into its reply — a
+// 300-char signed JWT once got corrupted in transit (one mistyped char = dead
+// link), so we never hand it long URLs.
+const ownerFileUrl = (path: string) => {
+  const base = (process.env.APP_URL || process.env.NEXTAUTH_URL || process.env.NEXT_PUBLIC_APP_URL || 'https://alma-erp-six.vercel.app').replace(/\/$/, '')
+  return `${base}/api/assistant/files?path=${encodeURIComponent(path)}&redirect=1`
+}
 
 const run_website_seo_audit: AgentTool = {
   name: 'run_website_seo_audit',
@@ -31,7 +42,11 @@ const run_website_seo_audit: AgentTool = {
     'USE for "ei website ta SEO er jonno fully audit koro" / competitor or client site research. Pass the ' +
     'site `url` (https homepage) and optional `maxPages` (default 40, max 80). Then poll check_website_seo_audit.\n' +
     'This is READ-ONLY and safe — no owner approval needed to AUDIT. Applying fixes is a separate, ' +
-    'owner-gated step.',
+    'owner-gated step.\n' +
+    'If the site\'s content concerns you (e.g. haram/adult elements), you may NOT refuse or cancel on ' +
+    'your own — many kinds of clients come to this business and that decision belongs to the OWNER: ' +
+    'state what you saw and ask him (ask_user); if he approves — or he already asked for/approved this ' +
+    'audit — do the full job professionally and deliver the complete report.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -84,14 +99,20 @@ const check_website_seo_audit: AgentTool = {
     'Check a website SEO audit started with run_website_seo_audit: status (approved=crawling, ' +
     'executed=done, failed), the 0-100 score, issue counts by severity, pages crawled, and the storage ' +
     'paths of the report (report.md) + full findings (audit.json).\n' +
-    'To READ the FULL report, call this tool again with read:"report" — it returns the whole Bangla ' +
-    'report.md text (this is the ONLY way; the storage paths are private — a workbench curl/cat can ' +
-    'NEVER fetch them, do not try). Call with read:"links" to get 24h DOWNLOAD LINKS the owner can ' +
-    'open: the report (.md), the raw findings (.json) and an Excel-openable issues CSV — include these ' +
-    'as markdown links in your reply. After status=executed you MUST put the report content (score, ' +
-    'every critical/high issue, prioritized fixes) AND the download links INTO THE SAME REPLY — ' +
-    'saying "রিপোর্ট উপরে দিয়েছি" or "done" WITHOUT the content in that reply is forbidden. Never ' +
-    'claim the audit is done before status=executed.',
+    'To READ the FULL report, call this tool again with read:"report" — it returns the whole ' +
+    'CLIENT-GRADE Bangla report (executive summary, scorecard, every issue WITH evidence + fix, page ' +
+    'inventory, action plan). This is the ONLY way; the storage paths are private — a workbench ' +
+    'curl/cat can NEVER fetch them, do not try. Call with read:"links" to get STABLE download links the ' +
+    'owner can hand a client: the report (.md), the raw findings (.json) and an Excel-openable issues ' +
+    'CSV (with evidence + fix columns) — include these as markdown links in your reply.\n' +
+    'read:"compare" builds the BEFORE/AFTER proof report: it diffs this audit against the PREVIOUS ' +
+    'audit of the SAME site (score change, resolved issues with evidence, new issues, remaining) and ' +
+    'returns the markdown + a stable download link. Use it after client fixes are done and a fresh ' +
+    're-audit has executed — this is the proof file the owner sends the client.\n' +
+    'After status=executed you MUST put the report content (score, every critical/high issue, ' +
+    'prioritized fixes) AND the download links INTO THE SAME REPLY — saying "রিপোর্ট উপরে দিয়েছি" or ' +
+    '"done" WITHOUT the content in that reply is forbidden. Never claim the audit is done before ' +
+    'status=executed.',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -103,11 +124,12 @@ const check_website_seo_audit: AgentTool = {
       },
       read: {
         type: 'string',
-        enum: ['report', 'json', 'links'],
+        enum: ['report', 'json', 'links', 'compare'],
         description:
-          'Optional: "report" = return the FULL Bangla report.md text; "json" = the raw audit.json ' +
-          'findings; "links" = 24h signed DOWNLOAD links (report.md + audit.json + issues.csv for ' +
-          'Excel) to hand the owner. Use "report" then "links" once status=executed, before replying.',
+          'Optional: "report" = the FULL client-grade Bangla report text; "json" = the raw audit.json ' +
+          'findings; "links" = stable download links (report.md + audit.json + issues.csv for ' +
+          'Excel) to hand the owner; "compare" = before/after proof report vs the previous audit of ' +
+          'the same site. Use "report" then "links" once status=executed, before replying.',
       },
     },
     required: [],
@@ -121,11 +143,9 @@ const check_website_seo_audit: AgentTool = {
       // without perfectly remembering the id across a yield.
       const looksLikeId = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(rawId)
 
+      const actionSelect = { id: true, type: true, status: true, summary: true, result: true, payload: true, createdAt: true }
       let action = looksLikeId
-        ? await db.agentPendingAction.findUnique({
-            where: { id: rawId },
-            select: { id: true, type: true, status: true, summary: true, result: true },
-          })
+        ? await db.agentPendingAction.findUnique({ where: { id: rawId }, select: actionSelect })
         : null
 
       // Fallback: the most recent seo_audit (scoped to this conversation when known).
@@ -133,7 +153,7 @@ const check_website_seo_audit: AgentTool = {
         action = await db.agentPendingAction.findFirst({
           where: { type: 'seo_audit', ...(conversationId ? { conversationId } : {}) },
           orderBy: { createdAt: 'desc' },
-          select: { id: true, type: true, status: true, summary: true, result: true },
+          select: actionSelect,
         })
       }
 
@@ -141,64 +161,120 @@ const check_website_seo_audit: AgentTool = {
         return { success: false, error: 'কোনো SEO audit পাওয়া যায়নি — আগে run_website_seo_audit চালাও।' }
       }
 
-      // read:"report"|"json" → fetch the full artifact from private storage so the
-      // head can deliver the WHOLE report (the 1500-char preview in result is not
-      // enough, and nothing else — workbench included — can reach the bucket).
+      // read:"report"|"json"|"links"|"compare" → the artifacts live in PRIVATE
+      // storage; only this tool can reach them (workbench included cannot).
+      // report/links REGENERATE the client-grade document from audit.json here on
+      // Vercel — report quality no longer depends on what the VPS worker wrote.
       let artifactText: string | null = null
       let links: Record<string, string> | null = null
-      const read = input.read === 'report' || input.read === 'json' || input.read === 'links' ? input.read : null
-      if (read === 'links') {
-        if (action.status !== 'executed') {
-          return { success: false, error: `Audit এখনো ${action.status} — executed হলে লিংক পাবে।` }
-        }
-        const artifacts = ((action.result as Record<string, unknown> | null)?.artifacts ?? []) as string[]
-        const reportPath = artifacts.find((a) => a.endsWith('report.md'))
-        const jsonPath = artifacts.find((a) => a.endsWith('audit.json'))
-        if (!reportPath || !jsonPath) return { success: false, error: 'Artifact paths পাওয়া যায়নি result-এ।' }
+      let compare: Record<string, string> | null = null
+      const read = ['report', 'json', 'links', 'compare'].includes(String(input.read)) ? String(input.read) : null
+
+      const artifactsOf = (a: { result: unknown }) => (((a.result as Record<string, unknown> | null)?.artifacts ?? []) as string[])
+      const loadAuditJson = async (a: { result: unknown }): Promise<{ path: string; audit: AuditJson } | null> => {
+        const p = artifactsOf(a).find((x) => x.endsWith('audit.json'))
+        if (!p) return null
+        return { path: p, audit: JSON.parse((await agentStorageDownload(p)).toString('utf8')) as AuditJson }
+      }
+      const keywordsNote = ((action.payload as Record<string, unknown> | null)?.keywordsNote ?? null) as string | null
+      const cap = (text: string, n: number) => (text.length > n ? `${text.slice(0, n)}\n…[truncated ${text.length - n} chars]` : text)
+      // The report is a deliverable — file it as a chat artifact so the owner
+      // gets a clickable FILE card (Claude-app style), not just links/pasted text.
+      let artifactCard: { id: string; title: string; type: string; version: number } | null = null
+      const fileReport = async (title: string, content: string) => {
         try {
-          // Excel-openable CSV (built once, then reused): every issue as a row.
+          artifactCard = await saveConversationArtifact({ conversationId, title, content, type: 'markdown' })
+        } catch { /* no conversation context (e.g. internal call) — links/text still deliver */ }
+      }
+
+      if (read && action.status !== 'executed') {
+        return { success: false, error: `Audit এখনো ${action.status} — status "executed" হওয়ার পর read:"${read}" দিয়ে ডাকো।` }
+      }
+
+      if (read === 'links') {
+        try {
+          const loaded = await loadAuditJson(action)
+          if (!loaded) return { success: false, error: 'Artifact paths পাওয়া যায়নি result-এ।' }
+          const reportPath = artifactsOf(action).find((a) => a.endsWith('report.md')) ?? loaded.path.replace(/audit\.json$/, 'report.md')
           const csvPath = reportPath.replace(/report\.md$/, 'issues.csv')
-          try {
-            await agentStorageDownload(csvPath)
-          } catch {
-            const raw = JSON.parse((await agentStorageDownload(jsonPath)).toString('utf8')) as {
-              siteChecks?: { issues?: Array<{ severity: string; code: string; detail: string }> }
-              pages?: Array<{ url: string; issues?: Array<{ severity: string; code: string; detail: string }> }>
-            }
-            const esc = (v: string) => `"${String(v ?? '').replace(/"/g, '""')}"`
-            const rows = [['scope', 'severity', 'code', 'detail'].join(',')]
-            for (const i of raw.siteChecks?.issues ?? []) rows.push([esc('site'), esc(i.severity), esc(i.code), esc(i.detail)].join(','))
-            for (const pg of raw.pages ?? []) for (const i of pg.issues ?? []) rows.push([esc(pg.url), esc(i.severity), esc(i.code), esc(i.detail)].join(','))
-            // UTF-8 BOM so Excel renders the Bangla detail column correctly.
-            await agentStorageUpload(csvPath, Buffer.from('\ufeff' + rows.join('\n'), 'utf8'), 'text/csv', { upsert: true })
-          }
-          const DAY = 86_400
+          // Regenerate the client-grade report + evidence CSV from the raw findings
+          // (upsert: replaces the worker's bare version and any stale copy).
+          const reportMd = buildClientReportMarkdown(loaded.audit, { keywordsNote })
+          await agentStorageUpload(reportPath, Buffer.from(reportMd, 'utf8'), 'text/markdown', { upsert: true })
+          await agentStorageUpload(csvPath, Buffer.from(buildIssuesCsv(loaded.audit), 'utf8'), 'text/csv', { upsert: true })
+          await fileReport(`SEO অডিট রিপোর্ট — ${new URL(loaded.audit.url).hostname.replace(/^www\./, '')}`, reportMd)
           links = {
-            reportUrl: await agentStorageSignedUrl(reportPath, DAY),
-            auditJsonUrl: await agentStorageSignedUrl(jsonPath, DAY),
-            issuesCsvUrl: await agentStorageSignedUrl(csvPath, DAY),
-            note: 'লিংকগুলো ২৪ ঘণ্টা কাজ করবে — reply-তে markdown link হিসেবে দাও: [পুরো রিপোর্ট (md)](…), [সব issue Excel/CSV](…), [raw findings (json)](…)',
+            reportUrl: ownerFileUrl(reportPath),
+            auditJsonUrl: ownerFileUrl(loaded.path),
+            issuesCsvUrl: ownerFileUrl(csvPath),
+            note: 'লিংকগুলো স্থায়ী — বস তার লগইন-করা ব্রাউজারে ক্লিক করলেই ফাইল নামবে। URL গুলো অক্ষরে-অক্ষরে হুবহু কপি করে reply-তে markdown link হিসেবে দাও: [পুরো রিপোর্ট (md)](…), [সব issue Excel/CSV](…), [raw findings (json)](…)',
           }
         } catch (err) {
           return { success: false, error: `লিংক বানানো গেল না: ${String(err)}` }
         }
-      } else if (read) {
-        if (action.status !== 'executed') {
-          return {
-            success: false,
-            error: `Audit এখনো ${action.status} — status "executed" হওয়ার পর read:"${read}" দিয়ে ডাকো।`,
-          }
-        }
-        const artifacts = ((action.result as Record<string, unknown> | null)?.artifacts ?? []) as string[]
-        const wanted = artifacts.find((a) => (read === 'report' ? a.endsWith('report.md') : a.endsWith('audit.json')))
-        if (!wanted) return { success: false, error: 'Artifact path পাওয়া যায়নি result-এ।' }
+      } else if (read === 'compare') {
         try {
-          const buf = await agentStorageDownload(wanted)
-          // report.md is small (tens of KB); audit.json can be bigger — cap both
-          // hard so a huge crawl can't blow the context.
-          const cap = read === 'report' ? 60_000 : 40_000
-          const text = buf.toString('utf8')
-          artifactText = text.length > cap ? `${text.slice(0, cap)}\n…[truncated ${text.length - cap} chars]` : text
+          const loaded = await loadAuditJson(action)
+          if (!loaded) return { success: false, error: 'Artifact paths পাওয়া যায়নি result-এ।' }
+          const host = new URL(loaded.audit.url).hostname.replace(/^www\./, '')
+          // The previous EXECUTED audit of the same site (any conversation) = "before".
+          const candidates = await db.agentPendingAction.findMany({
+            where: { type: 'seo_audit', status: 'executed', id: { not: action.id }, createdAt: { lt: action.createdAt } },
+            orderBy: { createdAt: 'desc' },
+            take: 25,
+            select: { id: true, result: true, payload: true, createdAt: true },
+          })
+          let beforeAudit: AuditJson | null = null
+          for (const cand of candidates) {
+            const candUrl = String((cand.payload as Record<string, unknown> | null)?.url ?? '')
+            try {
+              if (new URL(candUrl).hostname.replace(/^www\./, '') !== host) continue
+            } catch {
+              continue
+            }
+            const candLoaded = await loadAuditJson(cand)
+            if (candLoaded) {
+              beforeAudit = candLoaded.audit
+              break
+            }
+          }
+          if (!beforeAudit) {
+            return { success: false, error: `এই সাইটের (${host}) আগের কোনো executed audit পাওয়া যায়নি — আগে-পরে তুলনা করতে দুটো audit লাগে।` }
+          }
+          const md = buildCompareMarkdown(beforeAudit, loaded.audit)
+          const comparePath = loaded.path.replace(/audit\.json$/, 'before-after.md')
+          await agentStorageUpload(comparePath, Buffer.from(md, 'utf8'), 'text/markdown', { upsert: true })
+          await fileReport(`SEO আগে-পরে রিপোর্ট — ${host}`, md)
+          compare = {
+            compareMarkdown: cap(md, 30_000),
+            compareUrl: ownerFileUrl(comparePath),
+            note: 'এটাই client-কে দেওয়ার আগে-পরে প্রমাণ ফাইল — reply-তে সারাংশ + [আগে-পরে রিপোর্ট](লিংক) দাও (লিংক হুবহু কপি)।',
+          }
+        } catch (err) {
+          return { success: false, error: `তুলনা রিপোর্ট বানানো গেল না: ${String(err)}` }
+        }
+      } else if (read === 'report') {
+        try {
+          const loaded = await loadAuditJson(action)
+          if (loaded) {
+            const reportMd = buildClientReportMarkdown(loaded.audit, { keywordsNote })
+            artifactText = cap(reportMd, 60_000)
+            await fileReport(`SEO অডিট রিপোর্ট — ${new URL(loaded.audit.url).hostname.replace(/^www\./, '')}`, reportMd)
+          } else {
+            // Very old audits without audit.json: fall back to the stored report.md.
+            const stored = artifactsOf(action).find((a) => a.endsWith('report.md'))
+            if (!stored) return { success: false, error: 'Artifact path পাওয়া যায়নি result-এ।' }
+            artifactText = cap((await agentStorageDownload(stored)).toString('utf8'), 60_000)
+          }
+        } catch (err) {
+          return { success: false, error: `Artifact পড়া গেল না: ${String(err)}` }
+        }
+      } else if (read === 'json') {
+        try {
+          const wanted = artifactsOf(action).find((a) => a.endsWith('audit.json'))
+          if (!wanted) return { success: false, error: 'Artifact path পাওয়া যায়নি result-এ।' }
+          // audit.json can be big — cap hard so a huge crawl can't blow the context.
+          artifactText = cap((await agentStorageDownload(wanted)).toString('utf8'), 40_000)
         } catch (err) {
           return { success: false, error: `Artifact পড়া গেল না: ${String(err)}` }
         }
@@ -213,6 +289,8 @@ const check_website_seo_audit: AgentTool = {
           result: action.result ?? null,
           ...(artifactText != null ? { [read === 'report' ? 'reportMarkdown' : 'auditJson']: artifactText } : {}),
           ...(links ? { downloadLinks: links } : {}),
+          ...(compare ? compare : {}),
+          ...(artifactCard ? { artifactCard, artifactNote: 'রিপোর্টটা চ্যাটে FILE হয়ে গেছে (file card) — reply-তে সারাংশ দাও, পুরো রিপোর্ট পেস্ট করার দরকার নেই।' } : {}),
         },
       }
     } catch (err) {

@@ -137,7 +137,7 @@ async function escalate(
       artifacts: [],
       error: reason,
       question: 'কাজটা কি চালিয়ে যাবো, নাকি অন্যভাবে করবো?',
-      nextActions: ['Sir-এর সিদ্ধান্ত নাও, তারপর plan-টা ঠিক এই step থেকে resume করো'],
+      nextActions: ['Boss-এর সিদ্ধান্ত নাও, তারপর plan-টা ঠিক এই step থেকে resume করো'],
       resumeHint: `Plan ${plan.id} escalated (${outcome}): ${reason}. Done: ${done.length}/${plan.steps.length} steps. Resume at step "${stuck?.action ?? '?'}".`,
       conversationId: plan.conversationId ?? null,
     })

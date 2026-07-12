@@ -82,7 +82,7 @@ async function main() {
   await runOwnerTaskIntakeSend()
   const no = await processOwnerIntakeReply('kichu korbo na kal', 'test-conv')
   console.log('No-task reply:', no?.autoReply)
-  if (no?.autoReply !== 'ঠিক আছে Sir, কালকের জন্য কিছু রাখছি না।') {
+  if (no?.autoReply !== 'ঠিক আছে Boss, কালকের জন্য কিছু রাখছি না।') {
     console.error('FAIL: wrong no-task accept')
     process.exit(1)
   }

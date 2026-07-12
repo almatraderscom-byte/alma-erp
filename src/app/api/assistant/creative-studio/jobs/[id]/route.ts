@@ -3,9 +3,53 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { agentStorageSignedUrl } from '@/agent/lib/storage'
+import { agentStorageDelete, agentStorageSignedUrl } from '@/agent/lib/storage'
 
 export const runtime = 'nodejs'
+
+/**
+ * DELETE /api/assistant/creative-studio/jobs/[id]
+ * Owner deletes a gallery creative for good: the DB row goes away and the
+ * stored files (original / branded / thumbs) are cleaned up best-effort.
+ * Guarded to creative-studio rows only — this endpoint can never delete an
+ * approval or any other pending action.
+ */
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  const disabled = requireAgentEnabled()
+  if (disabled) return disabled
+
+  const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+  if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
+  if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = prisma as any
+  const row = await db.agentPendingAction.findUnique({ where: { id: params.id } })
+  if (!row) return Response.json({ error: 'not_found' }, { status: 404 })
+
+  const payload = (row.payload ?? {}) as Record<string, unknown>
+  if (payload.creativeStudio !== true) {
+    return Response.json({ error: 'not_a_studio_item' }, { status: 400 })
+  }
+
+  const result = (row.result ?? {}) as Record<string, unknown>
+  const objectPaths = [
+    result.storagePath,
+    result.videoPath,
+    result.brandedPath,
+    result.thumbPath,
+    result.brandedThumbPath,
+  ].filter((p): p is string => typeof p === 'string' && p.length > 0)
+  try {
+    await agentStorageDelete(objectPaths)
+  } catch (err) {
+    console.warn('[studio-jobs] storage cleanup failed (row still deleted):',
+      err instanceof Error ? err.message : err)
+  }
+
+  await db.agentPendingAction.delete({ where: { id: params.id } })
+  return Response.json({ ok: true })
+}
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const disabled = requireAgentEnabled()

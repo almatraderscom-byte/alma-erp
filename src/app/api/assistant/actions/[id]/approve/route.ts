@@ -2004,7 +2004,7 @@ async function runApprove(
 /**
  * Public route handler. Runs the approval (runApprove) UNCHANGED, then — only on a
  * successful approval — resumes the agent so it continues its task on its own
- * instead of going silent until Sir messages again (owner request, issue #3).
+ * instead of going silent until Boss messages again (owner request, issue #3).
  *
  * Why a wrapper: the approval body has many per-action-type branches (incl. sensitive
  * finance), each returning its own response — there is no single tail to hook. The
@@ -2012,7 +2012,7 @@ async function runApprove(
  * It is fully isolated: a failure here never affects the approval response, and it
  * no-ops gracefully when the worker queue (Redis) isn't configured or the owner has
  * flipped the kill switch off. The continuation runs through the SAME headless turn
- * path the VPS worker / Telegram already use, so it works whether Sir approved from
+ * path the VPS worker / Telegram already use, so it works whether Boss approved from
  * the app OR Telegram.
  */
 export async function POST(
@@ -2062,9 +2062,9 @@ async function enqueueApprovalContinuation(actionId: string): Promise<void> {
 
   const summary = (action.summary ?? '').toString().slice(0, 200)
   const message =
-    '[সিস্টেম নোট — Sir approve করেছেন] একটা pending কাজ Sir approve করেছেন এবং সেটা সম্পন্ন হয়েছে' +
+    '[সিস্টেম নোট — Boss approve করেছেন] একটা pending কাজ Boss approve করেছেন এবং সেটা সম্পন্ন হয়েছে' +
     (summary ? `: "${summary}"` : '') +
-    '। এখন থেমে যেও না — তোমার চলমান কাজের পরের ধাপে নিজে থেকে এগোও, অথবা সব শেষ হলে সংক্ষেপে Sir-কে জানাও। ' +
+    '। এখন থেমে যেও না — তোমার চলমান কাজের পরের ধাপে নিজে থেকে এগোও, অথবা সব শেষ হলে সংক্ষেপে Boss-কে জানাও। ' +
     'যে কাজটা এইমাত্র approve হয়ে সম্পন্ন হয়েছে সেটা আর নতুন করে কোরো না।'
 
   await enqueueAgentContinuation({ conversationId, message })

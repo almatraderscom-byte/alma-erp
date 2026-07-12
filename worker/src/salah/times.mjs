@@ -1,5 +1,5 @@
 /**
- * Prayer times for Dhaka — Sir's local mosque schedule.
+ * Prayer times for Dhaka — Boss's local mosque schedule.
  */
 
 import { dhakaTodayYmd } from './dhaka-date.mjs'

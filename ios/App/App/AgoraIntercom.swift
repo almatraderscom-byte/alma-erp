@@ -174,20 +174,6 @@ final class AgoraIntercom: NSObject {
         }
     }
 
-    /// Staff side: the most recent still-ringing call addressed to me → its channel, else nil.
-    func pendingCallChannel() async -> String? {
-        struct B: Decodable { let id: String; let kind: String; let createdAt: String }
-        struct Feed: Decodable { let broadcasts: [B] }
-        guard let feed: Feed = try? await AlmaAPI.shared.get("/api/assistant/office/intercom") else { return nil }
-        let iso = ISO8601DateFormatter()
-        for b in feed.broadcasts where b.kind == "call" {
-            if let t = iso.date(from: b.createdAt), Date().timeIntervalSince(t) < 45 {
-                return "itc_\(b.id)"
-            }
-        }
-        return nil
-    }
-
     func toggleMute() {
         micMuted.toggle()
         engine?.muteLocalAudioStream(micMuted)
@@ -220,13 +206,13 @@ final class AgoraIntercom: NSObject {
         guard mode == .idle || mode == .listening,
               let feed: Feed = try? await AlmaAPI.shared.get("/api/assistant/office/intercom")
         else { return nil }
-        let iso = ISO8601DateFormatter()
         // Newest first — ring only the most recent live call. `mine != nil` means the
         // call is addressed to THIS staff (owner feeds have no `mine`, so the boss who
-        // placed the call never rings himself).
+        // placed the call never rings himself). A call already confirmed (answered or
+        // declined on another device, e.g. the web office) must not re-ring here.
         for b in feed.broadcasts.reversed() where b.kind == "call" && b.mine != nil {
-            guard !handledCallIds.contains(b.id) else { continue }
-            if let t = iso.date(from: b.createdAt), Date().timeIntervalSince(t) < 45 {
+            guard !handledCallIds.contains(b.id), b.mine?.confirmedAt == nil else { continue }
+            if let t = Self.parseISO(b.createdAt), Date().timeIntervalSince(t) < 45 {
                 return IncomingCall(broadcastId: b.id, channel: "itc_\(b.id)", caller: "বস — মারুফ")
             }
         }
@@ -235,6 +221,31 @@ final class AgoraIntercom: NSObject {
 
     /// Mark a call surfaced (answered or declined) so we don't re-ring it every poll.
     @MainActor func markCallHandled(_ broadcastId: String) { handledCallIds.insert(broadcastId) }
+
+    /// Confirm the call receipt server-side (stops the ring on the staff's OTHER
+    /// devices — the web office rings the same call — and flips the owner's chat
+    /// log line from "মিসড কল" to "ধরা হয়েছে"). Fire-and-forget.
+    func confirmCallReceipt(_ broadcastId: String) {
+        struct Body: Encodable { let broadcastId: String; let action = "confirmed" }
+        struct Ok: Decodable { let ok: Bool? }
+        Task {
+            let _: Ok? = try? await AlmaAPI.shared.send(
+                "POST", "/api/assistant/office/intercom/receipt", body: Body(broadcastId: broadcastId))
+        }
+    }
+
+    /// Server timestamps come from Prisma's toISOString() — always fractional
+    /// seconds, which the bare ISO8601DateFormatter rejects. Parse both forms.
+    /// (This is why incoming calls used to never ring: every date failed to parse.)
+    private static let isoFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private static let isoPlain = ISO8601DateFormatter()
+    private static func parseISO(_ s: String) -> Date? {
+        isoFractional.date(from: s) ?? isoPlain.date(from: s)
+    }
 
     /// Start the loud incoming ring (callee side). Stopped by answering/declining/leave.
     @MainActor func ringIncoming() { ringtone.play(.incoming) }
@@ -352,6 +363,9 @@ final class AgoraIntercom: NSObject {
         let e = AgoraRtcEngineKit.sharedEngine(with: cfg, delegate: self)
         e.setChannelProfile(.communication)
         e.enableAudio()
+        // HD voice — 48 kHz mono, high bitrate. Matches the web side's
+        // `high_quality` mic track so both directions sound WhatsApp-clear.
+        e.setAudioProfile(.musicHighQuality)
         e.enableAudioVolumeIndication(350, smooth: 3, reportVad: true)
         engine = e
         appId = newId
