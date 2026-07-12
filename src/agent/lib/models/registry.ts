@@ -208,6 +208,65 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     // Same live-thinking request as the Qwen head (see note above).
     thinking: 'level',
   },
+  // ── Owner-picked additions 2026-07-12 (slugs/pricing/tool-support verified
+  // against openrouter.ai /api/v1/models + Google docs the same day) ─────────
+  {
+    // Direct Google API like the other Gemini heads (owner: no OpenRouter
+    // detour — same GEMINI_API_KEY billing as 3.x). Full multimodal input.
+    id: 'gemini-2.5-flash',
+    label: 'Gemini 2.5 Flash',
+    provider: 'google',
+    apiModel: 'gemini-2.5-flash',
+    supportsTools: true,
+    supportsCaching: false,
+    contextWindow: 1_000_000,
+    inPerM: 0.3,
+    outPerM: 2.5,
+    thinking: 'level',
+  },
+  {
+    id: 'or-grok-4.20',
+    label: 'Grok 4.20 (OpenRouter)',
+    provider: 'openrouter',
+    apiModel: 'x-ai/grok-4.20',
+    supportsTools: true,
+    // OpenRouter lists input_cache_read pricing ($0.20/M) — prompt caching works.
+    supportsCaching: true,
+    // The registry's biggest window — 2M tokens (long documents / huge context).
+    contextWindow: 2_000_000,
+    inPerM: 1.25,
+    outPerM: 2.5,
+    thinking: 'level',
+  },
+  {
+    id: 'or-deepseek-v4-pro',
+    label: 'DeepSeek V4 Pro (OpenRouter)',
+    provider: 'openrouter',
+    apiModel: 'deepseek/deepseek-v4-pro',
+    supportsTools: true,
+    // Same family as V4 Flash — the adapter's cache_control breakpoint on the
+    // system prefix works here too (verified pricing lists cached-input rates).
+    supportsCaching: true,
+    contextWindow: 1_000_000,
+    inPerM: 0.435,
+    outPerM: 0.87,
+    thinking: 'level',
+  },
+  {
+    id: 'or-qwen2.5-vl-72b',
+    label: 'Qwen 2.5 VL 72B (OpenRouter)',
+    provider: 'openrouter',
+    apiModel: 'qwen/qwen2.5-vl-72b-instruct',
+    // OpenRouter offers NO tool-calling for this model (supported_parameters
+    // lacks "tools") — run-owner-turn strips tools when supportsTools=false, so
+    // picking it gives a chat/vision-only head instead of a crash+fallback.
+    supportsTools: false,
+    supportsCaching: false,
+    contextWindow: 131_072,
+    inPerM: 0.25,
+    outPerM: 0.75,
+    thinking: 'none',
+  },
 ]
 
 export function getModel(id?: string | null): ModelEntry {

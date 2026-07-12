@@ -422,7 +422,10 @@ async function* runAlternateProviderTurn(
       // spree more; it must finish the marketing job itself and answer now.
       // No delegate hand-off: marketing quality stays on Qwen, not DeepSeek.
       const overBudget = isMarketingHead && headToolRounds >= MARKETING_HEAD_TOOL_BUDGET
-      const iterationTools = overBudget ? [] : neutralTools
+      // Models whose provider offers no tool-calling (e.g. Qwen 2.5 VL 72B on
+      // OpenRouter) get a chat/vision-only turn — sending tool defs would 4xx
+      // the request and bounce the owner to the cheap-head fallback.
+      const iterationTools = overBudget || !model.supportsTools ? [] : neutralTools
       if (overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
