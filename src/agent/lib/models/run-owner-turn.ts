@@ -117,7 +117,7 @@ const MARKETING_HEAD_WRAPUP_NUDGE =
 // NOTE: no \b after Bangla letters — JS ASCII \b never matches next to them
 // (the first version silently never fired on "সিলেক্ট করব।").
 const INTENT_TAIL_RE =
-  /(করা\s*হবে|করব(ো)?(?![ঀ-ৼ])|করে\s*দিচ্ছি|করে\s*দেব|নির্বাচন\s*কর|সিলেক্ট\s*কর(ব|ছি|া\s*হবে)|ক্লিক\s*কর(ব|ছি|া\s*হবে)|পরের\s*ধাপে|খুলছি|খুলব(?![ঀ-ৼ])|খুলে\s*দিচ্ছ|যাচ্ছি|চালাচ্ছি|শুরু\s*কর(ছি|ব)(?![ঀ-ৼ])|চেষ্টা\s*কর(ছি|ব)(?![ঀ-ৼ])|নেভিগেট\s*কর|ওপেন\s*কর|opening\s|navigating\s|let me\s|i('|’)?ll\s|now i (will|am)|going to\s)/i
+  /(করা\s*হবে|করব(ো)?(?![ঀ-ৼ])|করে\s*দিচ্ছি|করে\s*দেব|নির্বাচন\s*কর|সিলেক্ট\s*কর(ব|ছি|া\s*হবে)|ক্লিক\s*কর(ব|ছি|া\s*হবে)|পরের\s*ধাপে|খুলছি|খুলব(?![ঀ-ৼ])|খুলে\s*দিচ্ছ|যাচ্ছি|চালাচ্ছি|শুরু\s*কর(ছি|ব)(?![ঀ-ৼ])|চেষ্টা\s*কর(ছি|ব)(?![ঀ-ৼ])|নেভিগেট\s*কর|ওপেন\s*কর|দেখি(?![ঀ-ৼ])|দেখছি|দেখে\s*নিচ্ছি|দেখব(?![ঀ-ৼ])|স্ক্র(ো|)ল\s*কর|খুঁজ(ছি|ব)|opening\s|navigating\s|scrolling\s|let me\s|i('|’)?ll\s|now i (will|am)|going to\s)/i
 const ADAPTER_ACT_NOW_NUDGE =
   'তুমি বললে পরের ধাপটা করবে, কিন্তু না করেই টার্ন শেষ করে দিয়েছ। ঘোষণা নয় — কাজ। ' +
   'এখনই, এই একই টার্নে, যে ধাপটার কথা বললে সেটা live_browser_act/দরকারি টুল দিয়ে আসলে করো, ' +
@@ -928,7 +928,13 @@ async function* runAlternateProviderTurn(
       dedupKey: `chat:msg:${savedMsg.id}`,
     })
 
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished }
+    // A browser turn that ENDS on an announced next step (the intent guard is
+    // bounded 2× and stubborn flash heads outlast it) also signals the client
+    // to auto-continue — otherwise the task stalls until the owner pokes it
+    // ("স্ক্রোল করে Format সেকশনটা পুরো দেখি।" then silence, 2026-07-12).
+    const endedWithPromise =
+      browserTurn && emittedAskCards.length === 0 && INTENT_TAIL_RE.test(finalText.trim().slice(-600))
+    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished || endedWithPromise }
   } catch (err) {
     if (signal?.aborted) {
       // The 280s cap aborted mid-round (the adapter stream throws). Salvage what
