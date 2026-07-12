@@ -402,8 +402,12 @@ const live_browser_act: AgentTool = {
     'pass `submit: true` on the type action (presses Enter after typing) OR do a separate ' +
     'action="press" with key="Enter". Use press for Enter / Tab / Escape / ArrowDown etc.\n' +
     'DROPDOWNS: for a native HTML <select>, use action="select_option" with `option` = the visible ' +
-    'option text (find the select by `ref`/`selector`/`text`). For a custom/ARIA dropdown (a div that ' +
-    'opens a menu), do NOT use select_option — click the trigger, then click the option by its text.\n' +
+    'option text (find the select by `ref`/`selector`/`text`). For a CUSTOM/ARIA dropdown (a div/' +
+    'combobox that opens a menu — Facebook Ads Manager etc.), use action="pick_option": it opens the ' +
+    'trigger AND clicks the matching option in ONE atomic step (`selector`/`text`/`ref` to find the ' +
+    'trigger + `option` = the visible option text; phone numbers match on digits, so formatting ' +
+    'differences are fine). NEVER split a custom dropdown into click-then-click — the menu closes ' +
+    'between commands and the option click fails.\n' +
     'TABS/POPUPS: if a click opens a new tab or popup window, action="switch_tab" moves control to the ' +
     'newest tab so your next commands act there; action="close_tab" closes that popup and returns to ' +
     'the main tab. Acting also works inside iframes automatically (embedded forms / checkout widgets).\n' +
@@ -437,6 +441,7 @@ const live_browser_act: AgentTool = {
           'type',
           'press',
           'select_option',
+          'pick_option',
           'hover',
           'scroll',
           'scroll_to',
@@ -458,7 +463,9 @@ const live_browser_act: AgentTool = {
       value: { type: 'string', description: 'Text to type (for action=type).' },
       option: {
         type: 'string',
-        description: 'For action=select_option: the visible option text to choose in a native <select>.',
+        description:
+          'For action=select_option (native <select>) or action=pick_option (custom/ARIA dropdown): ' +
+          'the visible option text to choose.',
       },
       submit: {
         type: 'boolean',
@@ -487,6 +494,7 @@ const live_browser_act: AgentTool = {
       'type',
       'press',
       'select_option',
+      'pick_option',
       'hover',
       'scroll',
       'scroll_to',
@@ -523,7 +531,7 @@ const live_browser_act: AgentTool = {
       // list; the extension checks the ACTIVE tab's real hostname against it and
       // refuses (covers redirects/tab switches this server never saw). Navigate to
       // a lockdown domain stays allowed — lockdown means read-only, not no-entry.
-      const isWriteVerb = ['click', 'type', 'press', 'select_option'].includes(action)
+      const isWriteVerb = ['click', 'type', 'press', 'select_option', 'pick_option'].includes(action)
       if (isWriteVerb) {
         try {
           const locked = await lockdownDomains()
@@ -541,7 +549,17 @@ const live_browser_act: AgentTool = {
       if (input.by !== undefined) params.by = input.by
       if (input.ms !== undefined) params.ms = input.ms
 
-      const res = await runCommand(dev.deviceId, action, params)
+      // SYSTEM-LEVEL RETRY (owner rule 2026-07-12: এক চেষ্টায় fail মানেই হাল ছাড়া না) —
+      // transient misses (element/option not rendered yet, section still animating)
+      // get two silent re-runs ~1.6s apart BEFORE the model ever sees a failure.
+      // Real failures (lockdown, final-submit block, bad params) don't match and
+      // surface immediately.
+      const TRANSIENT_RE = /element not found|option not found|field not found|trigger not found|select not found/i
+      let res = await runCommand(dev.deviceId, action, params)
+      for (let attempt = 0; attempt < 2 && !res.ok && TRANSIENT_RE.test(String(res.error ?? '')); attempt++) {
+        await runCommand(dev.deviceId, 'wait', { ms: 1600 })
+        res = await runCommand(dev.deviceId, action, params)
+      }
       const out: Record<string, unknown> = {
         device: dev.name,
         action,

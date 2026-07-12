@@ -115,65 +115,78 @@ export class GoogleAdapter implements ProviderAdapter {
       return genModel.generateContentStream({ contents: toGeminiContents(args.messages) })
     }
 
-    // SAFETY: `includeThoughts` is untyped in the pinned SDK and this is a preview
-    // model — if the API 400s on it, retrying WITHOUT it must still answer, so the
-    // thinking-stream upgrade can never take the live head down. We only retry when
-    // nothing has been emitted yet (a mid-stream failure can't be safely restarted).
-    let result: Awaited<ReturnType<typeof open>>
-    try {
-      result = await open(wantThoughts)
-    } catch (err) {
-      if (!wantThoughts) throw err
-      console.warn('[google] includeThoughts rejected at open → retrying without it:', err instanceof Error ? err.message : err)
-      result = await open(false)
-    }
-
+    // SAFETY: `includeThoughts` is untyped in the pinned SDK and these are
+    // preview-era models — if the API 400s on it, OR the stream completes having
+    // emitted NOTHING (2026-07-12: gemini-2.5-flash returned a 60k-input /
+    // 0-output turn — no text, no tools, no thoughts — which the turn loop then
+    // saved as a BLANK owner reply), retry once WITHOUT thoughts. If the clean
+    // attempt is empty too, throw a diagnostic error so the turn loop's cheap-head
+    // fallback answers instead of persisting an empty message.
+    let result: Awaited<ReturnType<typeof open>> | null = null
     let emittedAny = false
-    try {
-      for await (const chunk of result.stream) {
-        if (args.signal?.aborted) break
-        const parts = chunk.candidates?.[0]?.content?.parts ?? []
-        for (const part of parts) {
-          if (part.text) {
-            // Thought-summary parts carry `thought: true` (untyped in SDK 0.24.x).
-            // Route them to the live thinking stream so they DON'T pollute the
-            // final answer text, and the UI shows them as "ভাবছি…" progress.
-            const isThought = (part as { thought?: boolean }).thought === true
-            emittedAny = true
-            yield isThought
-              ? { type: 'thinking_delta', text: part.text }
-              : { type: 'text_delta', text: part.text }
-          }
-          if (part.functionCall?.name) {
-            const id = `gemini_${part.functionCall.name}_${Date.now()}`
-            const input = (part.functionCall.args ?? {}) as Record<string, unknown>
-            const thoughtSignature = (part as { thoughtSignature?: string }).thoughtSignature
-            emittedAny = true
-            yield { type: 'tool_start', id, name: part.functionCall.name }
-            yield { type: 'tool_input', id, input, thoughtSignature }
+    const attempts = wantThoughts ? [true, false] : [false]
+    for (let attempt = 0; attempt < attempts.length; attempt++) {
+      const withThoughts = attempts[attempt]
+      const lastAttempt = attempt === attempts.length - 1
+      try {
+        result = await open(withThoughts)
+      } catch (err) {
+        if (lastAttempt) throw err
+        console.warn('[google] includeThoughts rejected at open → retrying without it:', err instanceof Error ? err.message : err)
+        continue
+      }
+      try {
+        for await (const chunk of result.stream) {
+          if (args.signal?.aborted) break
+          const parts = chunk.candidates?.[0]?.content?.parts ?? []
+          for (const part of parts) {
+            if (part.text) {
+              // Thought-summary parts carry `thought: true` (untyped in SDK 0.24.x).
+              // Route them to the live thinking stream so they DON'T pollute the
+              // final answer text, and the UI shows them as "ভাবছি…" progress.
+              const isThought = (part as { thought?: boolean }).thought === true
+              emittedAny = true
+              yield isThought
+                ? { type: 'thinking_delta', text: part.text }
+                : { type: 'text_delta', text: part.text }
+            }
+            if (part.functionCall?.name) {
+              const id = `gemini_${part.functionCall.name}_${Date.now()}`
+              const input = (part.functionCall.args ?? {}) as Record<string, unknown>
+              const thoughtSignature = (part as { thoughtSignature?: string }).thoughtSignature
+              emittedAny = true
+              yield { type: 'tool_start', id, name: part.functionCall.name }
+              yield { type: 'tool_input', id, input, thoughtSignature }
+            }
           }
         }
+      } catch (err) {
+        // Mid-stream failure and nothing emitted yet: retry clean (a failure after
+        // output can't be safely restarted — the caller already saw partial text).
+        if (emittedAny || lastAttempt) throw err
+        console.warn('[google] stream failed with includeThoughts before output → retrying without it:', err instanceof Error ? err.message : err)
+        continue
       }
-    } catch (err) {
-      // Mid-stream failure with thoughts on and nothing emitted yet: retry clean.
-      if (!wantThoughts || emittedAny) throw err
-      console.warn('[google] stream failed with includeThoughts before output → retrying without it:', err instanceof Error ? err.message : err)
-      result = await open(false)
-      for await (const chunk of result.stream) {
-        if (args.signal?.aborted) break
-        const parts = chunk.candidates?.[0]?.content?.parts ?? []
-        for (const part of parts) {
-          if (part.text) yield { type: 'text_delta', text: part.text }
-          if (part.functionCall?.name) {
-            const id = `gemini_${part.functionCall.name}_${Date.now()}`
-            const input = (part.functionCall.args ?? {}) as Record<string, unknown>
-            const thoughtSignature = (part as { thoughtSignature?: string }).thoughtSignature
-            yield { type: 'tool_start', id, name: part.functionCall.name }
-            yield { type: 'tool_input', id, input, thoughtSignature }
-          }
-        }
+      if (emittedAny || args.signal?.aborted) break
+      if (!lastAttempt) {
+        console.warn(`[google] ${args.apiModel} stream completed EMPTY with includeThoughts → retrying without it`)
+        continue
       }
+      // Both attempts empty → surface WHY (finishReason / safety block) and throw
+      // so the head fallback answers; never let a blank reply reach the owner.
+      let finish = ''
+      let block = ''
+      try {
+        const r = await result.response
+        finish = r.candidates?.[0]?.finishReason ?? ''
+        block = (r as { promptFeedback?: { blockReason?: string } }).promptFeedback?.blockReason ?? ''
+      } catch { /* metadata unavailable — throw the generic marker below */ }
+      throw new Error(
+        `gemini_empty_response: ${args.apiModel} returned no text/tools/thoughts` +
+        (finish ? ` finishReason=${finish}` : '') + (block ? ` blockReason=${block}` : ''),
+      )
     }
+    if (!result) throw new Error('gemini_empty_response: no attempt opened')
 
     const response = await result.response
     const meta = response.usageMetadata

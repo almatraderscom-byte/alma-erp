@@ -40,6 +40,7 @@ const ALLOWED_ACTIONS = new Set([
   'type',
   'press',
   'select_option',
+  'pick_option',
   'hover',
   'scroll',
   'scroll_to',
@@ -794,6 +795,141 @@ function pageSelect(arg) {
   return { ok: true, selected: (opt.text || '').trim(), value: opt.value }
 }
 
+// ATOMIC custom-dropdown selection: open the trigger AND click the option in ONE
+// page-script execution. Splitting them across two commands kept failing on
+// Facebook-class UIs — the portal menu closes the instant the tab blurs or focus
+// shifts between commands (2026-07-12 Ads Manager WhatsApp-number incident).
+async function pagePickOption(arg) {
+  const { selector, text, ref, option } = arg
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+  const visible = (e) => {
+    const r = e.getBoundingClientRect()
+    return r.width > 0 && r.height > 0
+  }
+  const fire = (el) => {
+    const r = el.getBoundingClientRect()
+    const mo = {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: r.left + r.width / 2,
+      clientY: r.top + r.height / 2,
+    }
+    try {
+      el.dispatchEvent(new PointerEvent('pointerover', mo))
+      el.dispatchEvent(new PointerEvent('pointerdown', mo))
+    } catch { /* no PointerEvent */ }
+    try {
+      el.dispatchEvent(new MouseEvent('mouseover', mo))
+      el.dispatchEvent(new MouseEvent('mousedown', mo))
+    } catch { /* ignore */ }
+    try {
+      el.dispatchEvent(new PointerEvent('pointerup', mo))
+    } catch { /* ignore */ }
+    try {
+      el.dispatchEvent(new MouseEvent('mouseup', mo))
+    } catch { /* ignore */ }
+    el.click()
+  }
+  // 1) locate the dropdown trigger (ref → selector → visible text/label)
+  let trigger = null
+  if (ref) {
+    try {
+      trigger = document.querySelector('[data-alma-ref="' + String(ref).replace(/"/g, '') + '"]')
+    } catch { trigger = null }
+  }
+  if (!trigger && selector) {
+    try {
+      trigger = document.querySelector(selector)
+    } catch { trigger = null }
+  }
+  if (!trigger && text) {
+    const needle = String(text).trim().toLowerCase()
+    const hay = (e) =>
+      ((e.innerText || e.value || '') + ' ' + (e.getAttribute('aria-label') || '')).trim().toLowerCase()
+    // The SAME text often appears on several elements (a summary chip AND the
+    // real combobox — the Ads Manager WhatsApp row does exactly this). Search
+    // dropdown-like roles FIRST so we never click a chip that merely toggles a
+    // section; fall back to generic clickables only when no dropdown matches.
+    const pools = ['[role=combobox]', '[aria-haspopup]', 'select', '[role=button],button,[tabindex]']
+    const findTrigger = () => {
+      for (const sel of pools) {
+        const match = Array.from(document.querySelectorAll(sel))
+          .filter(visible)
+          .find((e) => hay(e).includes(needle))
+        if (match) return match
+      }
+      return null
+    }
+    trigger = findTrigger()
+    // SELF-HEALING: Ads-Manager-style sections start COLLAPSED — the text shows
+    // on a summary chip but the real combobox isn't rendered yet. If no dropdown-
+    // role trigger exists, click the chip once to expand the section, then re-scan.
+    if (!trigger || !/combobox|select/i.test(trigger.getAttribute('role') || trigger.tagName)) {
+      const chip = Array.from(document.querySelectorAll('[role=button],[tabindex],button,div'))
+        .filter(visible)
+        .filter((e) => e.childElementCount <= 6 && hay(e).includes(needle))
+        .sort((a, b) => (a.innerText || '').length - (b.innerText || '').length)[0]
+      if (chip && (!trigger || chip !== trigger)) {
+        fire(chip)
+        for (let i = 0; i < 8; i++) {
+          await sleep(300)
+          const t = findTrigger()
+          if (t && /combobox|select/i.test(t.getAttribute('role') || t.tagName)) {
+            trigger = t
+            break
+          }
+        }
+        if (!trigger) trigger = findTrigger()
+      }
+    }
+  }
+  if (!trigger) return { ok: false, error: 'dropdown trigger not found' }
+  const want = String(option == null ? '' : option).trim()
+  if (!want) return { ok: false, error: 'pick_option needs `option` (visible option text)' }
+  // Native <select> → set value directly (React-safe).
+  if (trigger.tagName === 'SELECT') return pageSelect({ selector, text, ref, option })
+  trigger.scrollIntoView({ block: 'center' })
+  await sleep(200)
+  fire(trigger)
+  // 2) wait for the portal menu to render, then click the matching option —
+  //    all within this single injected script, so nothing can blur in between.
+  const lowWant = want.toLowerCase()
+  const digits = want.replace(/\D/g, '')
+  const findOption = () => {
+    const opts = Array.from(
+      document.querySelectorAll('[role=option],[role=menuitem],[role=menuitemradio],li,[role=listbox] *'),
+    ).filter(visible)
+    return (
+      opts.find((e) => (e.innerText || '').trim().toLowerCase() === lowWant) ||
+      opts.find((e) => (e.innerText || '').toLowerCase().includes(lowWant)) ||
+      // phone numbers etc: match on digits so formatting differences don't matter
+      (digits.length >= 6
+        ? opts.find((e) => (e.innerText || '').replace(/\D/g, '').includes(digits))
+        : null) ||
+      null
+    )
+  }
+  let target = null
+  for (let i = 0; i < 12 && !target; i++) {
+    await sleep(250)
+    target = findOption()
+  }
+  if (!target) {
+    // leave the menu as we found it (Escape) and report what WAS visible
+    const seen = Array.from(document.querySelectorAll('[role=option],[role=menuitem]'))
+      .filter(visible)
+      .slice(0, 12)
+      .map((e) => (e.innerText || '').trim().slice(0, 60))
+    return { ok: false, error: 'option not found: ' + want, optionsSeen: seen }
+  }
+  target.scrollIntoView({ block: 'center' })
+  await sleep(150)
+  fire(target)
+  await sleep(400)
+  return { ok: true, picked: (target.innerText || '').trim().slice(0, 80) }
+}
+
 // Bring a specific element into view (center) so the next click/read is precise
 // on a long page. Targets by ref → selector → visible text.
 function pageScrollTo(arg) {
@@ -997,7 +1133,7 @@ function lockdownMatch(url, domains) {
   return null
 }
 
-const WRITE_VERBS = new Set(['click', 'type', 'press', 'select_option'])
+const WRITE_VERBS = new Set(['click', 'type', 'press', 'select_option', 'pick_option'])
 
 // ---- CDP screenshots (chrome.debugger) ---------------------------------------
 // captureVisibleTab only shoots the ACTIVE tab of a window; now that the agent
@@ -1071,6 +1207,17 @@ async function executeCommand(cmd) {
 
   const tab = await getAgentTab(true)
   if (!tab || !tab.id) return { ok: false, error: 'could not open ALMA window' }
+
+  // Write verbs need the agent tab FOCUSED: since v0.8.0 it lives in the owner's
+  // own window, and sites like Facebook close open dropdowns/menus the moment the
+  // tab blurs — a click sequence spanning two commands (open dropdown → click
+  // option) kept failing with element-not-found because the list vanished
+  // between rounds. Fronting the tab for interactions mirrors a human session.
+  if (WRITE_VERBS.has(action)) {
+    try {
+      if (!tab.active) await chrome.tabs.update(tab.id, { active: true })
+    } catch { /* tab gone — the command itself will surface the error */ }
+  }
 
   // READ-ONLY lockdown: refuse writes on a lockdown-tier site. Reading, scrolling,
   // screenshots and navigation stay allowed — lockdown means extraction-only.
@@ -1157,6 +1304,17 @@ async function executeCommand(cmd) {
       ref: cmd.ref,
       option: cmd.option,
       value: cmd.value,
+    })
+  }
+  if (action === 'pick_option') {
+    await showOverlay(tab.id, 'ড্রপডাউন থেকে বাছছে: ' + String(cmd.option || '').slice(0, 40))
+    // Atomic open+choose — one injected script, so the menu can't blur-close
+    // between the trigger click and the option click.
+    return await actWithRetry(tab.id, pagePickOption, {
+      selector: cmd.selector,
+      text: cmd.text,
+      ref: cmd.ref,
+      option: cmd.option,
     })
   }
   if (action === 'hover') {

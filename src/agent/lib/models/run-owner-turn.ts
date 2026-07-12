@@ -107,6 +107,22 @@ const MARKETING_HEAD_WRAPUP_NUDGE =
   'হাতে যা তথ্য আছে তা দিয়েই মার্কেটিং কাজটা নিজে শেষ করো এবং সংক্ষেপে চূড়ান্ত উত্তর দাও। ' +
   'মার্কেটিং তোমার নিজের বিশেষত্ব — এটা অন্য কাউকে দিয়ো না।'
 
+// ── Announced-intent-but-no-action (adapter heads) ───────────────────────────
+// Flash-tier heads (Gemini Flash, DeepSeek…) constantly END a turn mid-task by
+// ANNOUNCING the next step ("এখন Manual destination সিলেক্ট করা হবে…") without
+// doing it — the owner had to say "continue" after every round (2026-07-12
+// Ads Manager incident). core.ts has this net only for zero-tool Claude turns;
+// here we check the TAIL of the final text so a turn that already ran tools but
+// signs off with a future promise gets pushed to actually act. Bounded 2×.
+// NOTE: no \b after Bangla letters — JS ASCII \b never matches next to them
+// (the first version silently never fired on "সিলেক্ট করব।").
+const INTENT_TAIL_RE =
+  /(করা\s*হবে|করব(ো)?(?![ঀ-ৼ])|করে\s*দিচ্ছি|করে\s*দেব|নির্বাচন\s*কর|সিলেক্ট\s*কর(ব|ছি|া\s*হবে)|ক্লিক\s*কর(ব|ছি|া\s*হবে)|পরের\s*ধাপে|let me\s|i('|’)?ll\s|now i (will|am)|going to\s)/i
+const ADAPTER_ACT_NOW_NUDGE =
+  'তুমি বললে পরের ধাপটা করবে, কিন্তু না করেই টার্ন শেষ করে দিয়েছ। ঘোষণা নয় — কাজ। ' +
+  'এখনই, এই একই টার্নে, যে ধাপটার কথা বললে সেটা live_browser_act/দরকারি টুল দিয়ে আসলে করো, ' +
+  'তারপর ফলাফল নিজের চোখে দেখে Boss-কে জানাও। Boss-কে যেন আবার তাগাদা দিতে না হয়।'
+
 async function loadPinnedMemories(
   personalMode: boolean,
   businessId: AgentBusinessId,
@@ -177,7 +193,7 @@ async function* runAlternateProviderTurn(
   headTier?: HeadTier,
 ): AsyncGenerator<AgentEvent> {
   const model = getModel(modelId)
-  const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false } = options
+  const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false, deadlineAt = null } = options
   const businessId: AgentBusinessId = personalMode
     ? 'ALMA_LIFESTYLE'
     : normalizeBusinessId(options.businessId)
@@ -360,6 +376,8 @@ async function* runAlternateProviderTurn(
   // Gemini does this occasionally and ending the turn there strands the owner
   // with a blank reply (2026-07-12: WhatsApp-fix turn died after one navigate).
   let emptyRoundRetries = 0
+  // Announced-intent guard (see INTENT_TAIL_RE above).
+  let intentNudges = 0
   let memoryNudgeSent = false
   let finalText = ''
   let delegationAwaiting = false
@@ -400,6 +418,7 @@ async function* runAlternateProviderTurn(
   const isMarketingHead = headTier === 'marketing'
   let headToolRounds = 0
   let budgetNudgeSent = false
+  let deadlineNudgeSent = false
   let canceled = false
   // Live-browser turns raise this cap (see BROWSER_TURN_MAX_ITERATIONS) — a real
   // UI task is 15–30 look→act rounds and must not die silently at the default cap.
@@ -418,15 +437,35 @@ async function* runAlternateProviderTurn(
       // round's tool calls, keeping cross-round order faithful.
       let iterThinking = ''
 
+      // Serverless deadline close → no more tools; force a Bangla progress
+      // wrap-up instead of the function dying mid-task with a blank reply.
+      const nearDeadline = typeof deadlineAt === 'number' && Date.now() > deadlineAt - 45_000
+      if (nearDeadline && !deadlineNudgeSent) {
+        deadlineNudgeSent = true
+        messages = [
+          ...messages,
+          {
+            role: 'user',
+            content:
+              'এই টার্নের সময়সীমা প্রায় শেষ (সার্ভার লিমিট) — এখন আর টুল চালানো যাবে না। ' +
+              'এ পর্যন্ত কী কী করেছ আর ঠিক কোথায় আছ তা বসকে বাংলায় সংক্ষেপে জানাও, ' +
+              'আর কাজ অসমাপ্ত থাকলে শেষে লেখো: "Boss, “continue” বললে ঠিক এখান থেকে কাজ চালিয়ে যাব।" — চুপচাপ থেমো না।',
+          },
+        ]
+      }
+
       // Over budget → strip ALL tools so the marketing head physically cannot
       // spree more; it must finish the marketing job itself and answer now.
       // No delegate hand-off: marketing quality stays on Qwen, not DeepSeek.
+      // Second empty-round retry also goes text-only: Gemini sometimes wedges
+      // trying to emit another tool call — with no tools it must speak.
       const overBudget = isMarketingHead && headToolRounds >= MARKETING_HEAD_TOOL_BUDGET
       // Models whose provider offers no tool-calling (e.g. Qwen 2.5 VL 72B on
       // OpenRouter) get a chat/vision-only turn — sending tool defs would 4xx
       // the request and bounce the owner to the cheap-head fallback.
-      const iterationTools = overBudget || !model.supportsTools ? [] : neutralTools
-      if (overBudget && !budgetNudgeSent) {
+      const iterationTools =
+        nearDeadline || overBudget || emptyRoundRetries >= 2 || !model.supportsTools ? [] : neutralTools
+      if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
       }
@@ -473,13 +512,15 @@ async function* runAlternateProviderTurn(
       if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
 
       if (calls.length === 0 || signal?.aborted) {
-        // Fully empty round mid-task → nudge the model to continue instead of
-        // silently ending the turn with a blank message. Bounded to 2 retries.
+        // Fully empty round → nudge the model to continue instead of silently
+        // ending the turn with a blank message. Bounded to 2 retries. Applies to
+        // the FIRST round too (2026-07-12: gemini-2.5-flash answered the very
+        // first round with 0 output tokens — no prior tools existed, so the old
+        // `toolRecords.length > 0` guard let a blank reply through).
         if (
           !signal?.aborted
           && !iterationText.trim()
           && !finalText.trim()
-          && toolRecords.length > 0
           && emptyRoundRetries < 2
         ) {
           emptyRoundRetries++
@@ -492,6 +533,23 @@ async function* runAlternateProviderTurn(
                 'হয় পরের টুল স্টেপটা চালাও, নয়তো এ পর্যন্ত কী হলো বসকে বাংলায় জানাও। চুপ করে থেমো না।',
             },
           ]
+          continue
+        }
+        // The model signed off by PROMISING the next step instead of doing it —
+        // push it to act now, in this same turn (flash-tier heads do this a lot).
+        if (
+          !signal?.aborted
+          && intentNudges < 2
+          && iterationText.trim()
+          && INTENT_TAIL_RE.test(iterationText.trim().slice(-600))
+        ) {
+          intentNudges++
+          messages = [
+            ...messages,
+            { role: 'assistant', content: iterationText },
+            { role: 'user', content: ADAPTER_ACT_NOW_NUDGE },
+          ]
+          finalText = ''
           continue
         }
         if (!signal?.aborted && verifyRetries < MAX_VERIFY_RETRIES && iterationText.trim()) {
@@ -672,6 +730,13 @@ async function* runAlternateProviderTurn(
     // Owner canceled mid-turn: do not persist a partial reply or emit 'done'.
     if (canceled) return
 
+    // A turn that produced NOTHING (no text, no tool calls, no cards) must never
+    // be saved as a blank owner reply — throw so the cheap-head fallback below
+    // answers instead (2026-07-12: gemini-2.5-flash 60k-in/0-out empty turn).
+    if (!finalText.trim() && toolRecords.length === 0 && emittedAskCards.length === 0) {
+      throw new Error(`empty_head_turn: ${model.id} produced no text, tools or cards`)
+    }
+
     const costUsd = calcModelTurnCostUsd(model, {
       inputTokens: totalInputTokens,
       outputTokens: totalOutputTokens,
@@ -847,11 +912,26 @@ export async function* runOwnerTurn(
     conversationId,
   })
 
+  // Worker-only guard (2026-07-12 salah incident): a conversation still PINNED to
+  // a headPickable:false model (e.g. Gemini 2.5 Flash LITE, picked from the old
+  // picker) must not keep running a head that ignores tools and invents answers.
+  // Swap to the heavy head with a visible one-line note — never a silent switch.
+  let disabledSwitchNote: string | null = null
+  if (getModel(decision.modelId).headPickable === false) {
+    const off = getModel(decision.modelId)
+    const { heavyHeadModelId } = await import('@/agent/lib/models/head-router')
+    const on = getModel(heavyHeadModelId())
+    disabledSwitchNote =
+      `⚙️ Boss, **${off.label}** এখন শুধু ভেতরের ছোট কাজের worker মডেল — head হিসেবে ` +
+      `আর চলে না (টুল ব্যবহার না করে ভুল উত্তর দিত)। এই চ্যাটটা **${on.label}** দিয়ে চালাচ্ছি।\n\n`
+    decision.modelId = on.id
+    decision.via = `${decision.via}+worker_only_redirect`
+  }
+
   // Owner's Monitor kill-switch per model: a model toggled OFF is unusable even
   // when this chat has it pinned — swap to the enabled fallback IN this same
   // session and tell the owner why in one visible line (never a silent switch,
   // never a manual re-pick).
-  let disabledSwitchNote: string | null = null
   try {
     const { resolveEnabledFallback } = await import('@/agent/lib/models/model-enabled')
     const fallbackId = await resolveEnabledFallback(decision.modelId)

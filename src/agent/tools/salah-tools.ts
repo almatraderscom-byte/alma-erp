@@ -7,8 +7,9 @@ import {
   WAQTS,
   summarizeWaqts,
   pickAccountableWaqts,
+  type WaqtSummary,
 } from '@/agent/lib/salah-context'
-import { buildSalahStatusAnswer } from '@/agent/lib/salah-status-answer'
+import { buildSalahStatusAnswer, waqtStatusLineBangla } from '@/agent/lib/salah-status-answer'
 import { getDhakaPrayerTimes } from '@/agent/lib/salah-times'
 import { isPhantomSalahConfirmation } from '@/agent/lib/salah-resolve'
 import { MAX_DELAY_MIN } from '@/lib/salah/duty-window'
@@ -58,6 +59,38 @@ const get_prayer_times: AgentTool = {
       return { success: false, error: String(err) }
     }
   },
+}
+
+// Model-facing waqt view — NO raw UTC timestamps. 2026-07-12 incident: Grok
+// read maghrib's windowStart "…T12:55:00Z" as ১২:৫৫ PM LOCAL and told Boss the
+// waqt was already qaza while its window (৬:৫৫–৮:১৩ PM Dhaka) was RUNNING.
+// Times leave this tool ONLY as pre-formatted Asia/Dhaka strings, and each waqt
+// carries its server-built Bangla line — there is nothing left to misconvert.
+function bnTimeDhaka(d: Date | string | null | undefined): string | null {
+  if (!d) return null
+  return new Date(d).toLocaleTimeString('bn-BD', {
+    timeZone: 'Asia/Dhaka',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+}
+
+function toModelWaqt(s: WaqtSummary) {
+  return {
+    waqt: s.waqt,
+    status: s.status,
+    // The authoritative one-line truth for this waqt — quote it as-is.
+    line: waqtStatusLineBangla(s),
+    windowStartDhaka: bnTimeDhaka(s.windowStart),
+    windowEndDhaka: bnTimeDhaka(s.windowEnd),
+    confirmedAtDhaka: bnTimeDhaka(s.confirmedAt),
+    notYetDue: s.notYetDue,
+    isOverdue: s.isOverdue,
+    isMissed: s.isMissed,
+    isPhantom: s.isPhantom,
+    effectivelyDone: s.effectivelyDone,
+  }
 }
 
 // ── get_salah_status ──────────────────────────────────────────────────────────
@@ -114,18 +147,19 @@ const get_salah_status: AgentTool = {
         data: {
           date: todayYmd,
           yesterday: yesterdayYmd,
-          todayWaqts: todaySummary,
-          yesterdayWaqts: yesterdaySummary,
-          accountableWaqts,
-          notYetDueToday,
+          todayWaqts: todaySummary.map(toModelWaqt),
+          yesterdayWaqts: yesterdaySummary.map(toModelWaqt),
+          accountableWaqts: accountableWaqts.map(toModelWaqt),
+          notYetDueToday: notYetDueToday.map(toModelWaqt),
           doneToday: todaySummary.filter((s) => s.effectivelyDone).map((s) => s.waqt),
           upcomingToday: notYetDueToday.map((s) => s.waqt),
           ...statusAnswer,
-          waqts: todaySummary,
-          pendingOrMissed: accountableWaqts,
+          waqts: todaySummary.map(toModelWaqt),
+          pendingOrMissed: accountableWaqts.map(toModelWaqt),
           requiresAccountability: accountableWaqts.length > 0,
           guidance:
-            'উত্তরে অবশ্যই answerBangla ব্যবহার করুন। notYetDueToday = সময় হয়নি — "আদায় হয়েছে" বলবেন না। allDone=false হলে কখনো "সব ৫ ওয়াক্ত শেষ" বলবেন না।',
+            'উত্তরে অবশ্যই answerBangla ও প্রতি ওয়াক্তের line ব্যবহার করুন। সব সময় Asia/Dhaka-র (…Dhaka ফিল্ড) — নিজে টাইমজোন কনভার্ট করবেন না। ' +
+            'notYetDueToday = সময় হয়নি — "আদায় হয়েছে" বলবেন না। allDone=false হলে কখনো "সব ৫ ওয়াক্ত শেষ" বলবেন না।',
         },
       }
     } catch (err) {
