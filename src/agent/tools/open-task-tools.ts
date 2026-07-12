@@ -85,8 +85,16 @@ const resolve_open_task: AgentTool = {
     try {
       if (!id && conversationId) {
         const open = await listOpenTasks(conversationId, businessId)
-        const followups = open.filter((t) => t.kind === 'chat_followup')
-        if (followups.length === 0) return { success: false, error: 'no open chat task to resolve' }
+        // Checkpoint chips (auto-saved at the serverless deadline or via
+        // save_task_checkpoint) resolve through the same call — otherwise a
+        // finished task left a stale ⏸️ chip the model had no way to clear.
+        const followups = open.filter((t) => ['chat_followup', 'checkpoint_failed', 'checkpoint_waiting'].includes(t.kind))
+        if (followups.length === 0) {
+          // Idempotent no-op: nothing open is the DESIRED end state. Returning an
+          // error here confused weak heads into retry loops / apology spirals
+          // (2026-07-12 handler_error in the WhatsApp-fix run).
+          return { success: true, data: { message: 'কোনো খোলা কাজ নেই — সব আগেই resolved। এগিয়ে যাও।' } }
+        }
         // A task the owner clicked "Continue" on is uniquely marked 'running' — that
         // is the one being actively worked on, so prefer it when no id is supplied.
         const running = followups.filter((t) => t.status === 'running')
