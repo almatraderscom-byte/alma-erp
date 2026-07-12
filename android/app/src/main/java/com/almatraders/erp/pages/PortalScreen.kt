@@ -771,7 +771,7 @@ fun PortalScreen(ctx: PushCtx) {
                     item {
                         Row(
                             Modifier.fillMaxWidth().almaGlass(dark, AlmaTheme.R_CONTROL)
-                                .plainClick { ctx.openWebForced("/portal/wallet", "Wallet statement") }
+                                .plainClick { ctx.openSmart("/portal/wallet", "Wallet statement") }
                                 .padding(14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -850,7 +850,7 @@ fun PortalScreen(ctx: PushCtx) {
                     item { TasksCard(vm, dark) { ctx.openWebForced("/portal", "My Desk") } }
                 }
                 item { LeaveCard(vm, dark) { leaveSheet = true } }
-                item { WalletHistoryCard(vm, dark) { ctx.openWebForced("/portal/wallet", "Wallet statement") } }
+                item { WalletHistoryCard(vm, dark) { ctx.openSmart("/portal/wallet", "Wallet statement") } }
                 item { PendingRequestsCard(vm, dark) }
             }
         }
