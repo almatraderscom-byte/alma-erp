@@ -21,6 +21,7 @@ import android.webkit.CookieManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -52,6 +53,56 @@ object AlmaApi {
         .build()
 
     private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+
+    /** Uploads can be large + slow; give them a roomier timeout than the JSON client. */
+    private val uploadClient = OkHttpClient.Builder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(90, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
+        .build()
+
+    /** One file part of a multipart upload. */
+    class FilePart(val field: String, val fileName: String, val contentType: String, val bytes: ByteArray)
+
+    /** multipart/form-data POST (receipts, office media — routes that call req.formData()).
+     *  Same cookie/auth semantics as request(). Returns the parsed JSON body. */
+    suspend fun uploadMultipart(
+        path: String,
+        files: List<FilePart>,
+        fields: Map<String, String> = emptyMap(),
+    ): JSONObject = withContext(Dispatchers.IO) {
+        val form = MultipartBody.Builder().setType(MultipartBody.FORM)
+        fields.forEach { (k, v) -> form.addFormDataPart(k, v) }
+        files.forEach { p ->
+            form.addFormDataPart(p.field, p.fileName, p.bytes.toRequestBody(p.contentType.toMediaType()))
+        }
+        val builder = Request.Builder()
+            .url(AlmaTheme.BASE_URL + path)
+            .header("Accept", "application/json")
+            .header("X-Requested-With", "XMLHttpRequest")
+        CookieManager.getInstance().getCookie(AlmaTheme.BASE_URL)?.let { builder.header("Cookie", it) }
+        builder.post(form.build())
+        try {
+            uploadClient.newCall(builder.build()).execute().use { resp ->
+                val status = resp.code
+                val body = resp.body?.string() ?: ""
+                val location = resp.header("Location") ?: ""
+                if (status == 401 || status == 403 || (status in 300..399 && location.contains("/login"))) {
+                    onAuthExpired?.invoke()
+                    throw AlmaApiException.NotAuthenticated()
+                }
+                if (status !in 200..299) throw AlmaApiException.Http(status, body)
+                if (body.trimStart().startsWith("[")) JSONObject().put("data", JSONArray(body))
+                else JSONObject(body.ifBlank { "{}" })
+            }
+        } catch (e: AlmaApiException) {
+            throw e
+        } catch (e: Exception) {
+            throw AlmaApiException.Transport(e)
+        }
+    }
 
     suspend fun get(path: String, query: Map<String, String?> = emptyMap()): String =
         request("GET", path, query, null)

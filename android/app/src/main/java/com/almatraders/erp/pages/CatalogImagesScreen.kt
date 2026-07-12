@@ -411,12 +411,36 @@ private fun ImageSquare(url: String?, dark: Boolean, shape: androidx.compose.ui.
     }
 }
 
-// ── Detail sheet (read-only gallery; upload/delete stay on the web) ─────────────────
+// ── Detail sheet (gallery + NATIVE image upload — camera / photo picker) ────────────
 
 @Composable
 private fun DetailSheet(g: CatalogGroup, vm: CatalogImagesState, dark: Boolean, openWeb: (String, String) -> Unit) {
     var images by remember { mutableStateOf<List<CatalogImage>?>(null) }
     var failed by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    var uploading by remember { mutableStateOf(false) }
+    var uploadError by remember { mutableStateOf<String?>(null) }
+
+    fun uploadPicked(picked: PickedImage?) {
+        if (picked == null) return
+        scope.launch {
+            uploading = true; uploadError = null
+            try {
+                AlmaApi.uploadMultipart(
+                    "/api/assistant/catalog/images/${g.code}",
+                    listOf(picked.toFilePart("file")),
+                    mapOf("business" to "ALMA_LIFESTYLE", "allowNew" to "1", "uploadedByChatId" to "native-app"),
+                )
+                images = vm.loadImages(g.code)
+            } catch (_: Exception) {
+                uploadError = "আপলোড হয়নি — আবার চেষ্টা করুন"
+            } finally {
+                uploading = false
+            }
+        }
+    }
+    val pickGallery = rememberGalleryPick(onResult = ::uploadPicked)
+    val pickCamera = rememberCameraPick(onResult = ::uploadPicked)
 
     LaunchedEffect(g.code) {
         failed = false
@@ -451,16 +475,31 @@ private fun DetailSheet(g: CatalogGroup, vm: CatalogImagesState, dark: Boolean, 
             }
         }
 
-        // Upload note → web escape (multipart + picker not native).
-        Text(
-            "📤 ছবি আপলোড / মুছে ফেলা — ওয়েবে খুলুন",
-            color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(CatPalette.blue, RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
-                .plainClick { openWeb("/agent/catalog-images", "Product images") }
-                .padding(vertical = 12.dp),
-        )
+        // Native image upload — camera capture or gallery pick (multipart to the
+        // catalog images route). Replaces the former web escape.
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                if (uploading) "আপলোড হচ্ছে…" else "📷 ক্যামেরা",
+                color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .background(CatPalette.sage, RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+                    .plainClick { if (!uploading) pickCamera() }
+                    .padding(vertical = 12.dp),
+            )
+            Text(
+                if (uploading) "…" else "🖼️ গ্যালারি",
+                color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .background(CatPalette.blue, RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+                    .plainClick { if (!uploading) pickGallery() }
+                    .padding(vertical = 12.dp),
+            )
+        }
+        uploadError?.let {
+            Text(it, color = CatPalette.red500, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        }
 
         Text("বর্তমান ছবি", color = AlmaTheme.inkSecondary(dark), fontSize = 12.sp, fontWeight = FontWeight.Medium)
 
