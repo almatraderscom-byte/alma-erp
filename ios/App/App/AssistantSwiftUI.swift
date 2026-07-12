@@ -470,14 +470,65 @@ struct AgentChatMessage: Identifiable, Equatable {
 
     // MARK: Interleaved TurnBlock builders (Claude composition — v3 demo parity)
 
-    /// First line of a think burst, cleaned + truncated, as the row label.
+    /// Claude-app parity (owner 2026-07-12): the row label is the headline of the
+    /// LATEST thought step — never the frozen first line. While the model thinks,
+    /// the label keeps advancing with the newest paragraph (which reasons about the
+    /// PREVIOUS step's result), so every step shows a fresh, distinct headline
+    /// exactly like Claude iOS. Mirrors web AgentThread.parseThoughtSteps (last step).
     static func thinkLabel(_ full: String) -> String {
-        let firstLine = String(full.split(separator: "\n").first ?? "")
-            .replacingOccurrences(of: "**", with: "")
-            .replacingOccurrences(of: "##", with: "")
-            .trimmingCharacters(in: .whitespaces)
-        if firstLine.isEmpty { return "Thinking" }
-        return firstLine.count > 64 ? String(firstLine.prefix(64)) + "…" : firstLine
+        let text = full.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return "Thinking" }
+        // Latest blank-line paragraph; a single unbroken blob falls back to lines.
+        var blocks = text.components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if blocks.count <= 1 {
+            let byLine = text.components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            if byLine.count > 1 { blocks = byLine }
+        }
+        return thoughtHeadline(blocks.last ?? text)
+    }
+
+    /// One thought block → one clean headline: markdown-header / bold lead wins,
+    /// else the block's first sentence (Bangla danda ।, or . ! ? followed by space).
+    /// Mirrors web AgentThread.stripThoughtMd + parseThoughtSteps block handling.
+    static func thoughtHeadline(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty else { return "Thinking" }
+        if s.hasPrefix("**"),
+           let close = s.range(of: "**", range: s.index(s.startIndex, offsetBy: 2)..<s.endIndex) {
+            // Bold lead "**Title** rest" → Title
+            s = String(s[s.index(s.startIndex, offsetBy: 2)..<close.lowerBound])
+        } else if !s.hasPrefix("#") {
+            // First sentence: terminator must be followed by whitespace / end so
+            // decimals ("1.5k") and dotted names never cut the headline short.
+            let terms: Set<Character> = ["।", ".", "!", "?"]
+            var idx = s.startIndex
+            while idx < s.endIndex {
+                if terms.contains(s[idx]) {
+                    let next = s.index(after: idx)
+                    if next == s.endIndex || s[next].isWhitespace || s[next].isNewline {
+                        s = String(s[..<next])
+                        break
+                    }
+                }
+                idx = s.index(after: idx)
+            }
+        }
+        s = s.replacingOccurrences(of: "**", with: "")
+            .replacingOccurrences(of: "__", with: "")
+            .replacingOccurrences(of: "`", with: "")
+        while s.hasPrefix("#") || s.hasPrefix("-") || s.hasPrefix("*") || s.hasPrefix("•") {
+            s = String(s.dropFirst()).trimmingCharacters(in: .whitespaces)
+        }
+        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty else { return "Thinking" }
+        if s.count > 96 {
+            return String(s.prefix(94)).trimmingCharacters(in: .whitespaces) + "…"
+        }
+        return s
     }
 
     /// text_delta → extend the last prose block, or open a new one after activity.
@@ -564,11 +615,9 @@ struct AgentChatMessage: Identifiable, Equatable {
             case .think(let fullRaw):
                 let full = fullRaw.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !full.isEmpty else { continue }
-                let headlineRaw = String(full.split(separator: "\n").first ?? Substring(full))
-                    .replacingOccurrences(of: "**", with: "")
-                    .replacingOccurrences(of: "##", with: "")
-                    .trimmingCharacters(in: .whitespaces)
-                let headline = headlineRaw.count > 120 ? String(headlineRaw.prefix(120)) + "…" : headlineRaw
+                // Same latest-step headline as the live rows (Claude parity) — the
+                // settled phase title reflects where that step ENDED, not its opener.
+                let headline = thinkLabel(full)
                 let detail = full == headline ? nil : full
                 if let c = cur, !c.tools.isEmpty { phases.append(c); cur = nil }
                 if var c = cur {
@@ -1893,6 +1942,15 @@ struct AgentMessageRow: View {
                                                        bottomTrailingRadius: 6, topTrailingRadius: 20,
                                                        style: .continuous))
                         .shadow(color: AgentPalette.coral.opacity(0.20), radius: 4, y: 1)
+                        // Owner issue #6 (build 69): long-press → copy + haptic.
+                        .contextMenu {
+                            Button {
+                                UIPasteboard.general.string = message.text
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            } label: {
+                                Label("কপি করুন", systemImage: "doc.on.doc")
+                            }
+                        }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -1904,6 +1962,11 @@ struct AgentMessageRow: View {
                 let hasSettledMeta = !message.phases.isEmpty || !(message.thinking ?? "").isEmpty
                     || !message.tools.isEmpty
                 // LOCKED SPEC §1: NO glass card — plain on the aurora (Claude iOS).
+                    // Live pinned summary — running token estimate + step count
+                    // while the turn works (web parity; owner issue #3 build 69).
+                    if message.isStreaming {
+                        AgentLiveWorkSummaryRow(message: message, pal: pal)
+                    }
                     if !message.blocks.isEmpty {
                         // Claude composition — chronological prose ↔ compact rows;
                         // rows persist after settle (tap → sheets), prose never moves.
@@ -1936,6 +1999,16 @@ struct AgentMessageRow: View {
                                                    .init(color: .clear, location: 1)]
                                                 : [.init(color: .black, location: 0), .init(color: .black, location: 1)],
                                                 startPoint: .top, endPoint: .bottom))
+                                        .contentShape(Rectangle())
+                                        // Owner issue #6 (build 69): long-press → copy + haptic.
+                                        .contextMenu {
+                                            Button {
+                                                UIPasteboard.general.string = message.text
+                                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                            } label: {
+                                                Label("কপি করুন", systemImage: "doc.on.doc")
+                                            }
+                                        }
                                 }
                                 if long {
                                     Button {
@@ -1997,7 +2070,13 @@ struct AgentMessageRow: View {
 @available(iOS 17.0, *)
 struct AgentShimmerModifier: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var sweep = false
+
+    private static let period: Double = 1.6
+
+    // TimelineView-driven (2026-07-12): the old repeatForever @State sweep froze
+    // whenever the streaming content re-rendered (every text_delta), leaving the
+    // highlight stuck mid-sweep. Visual spec unchanged — same dim base, same
+    // white band, same 1.6s left→right loop.
     func body(content: Content) -> some View {
         if reduceMotion {
             content
@@ -2005,20 +2084,23 @@ struct AgentShimmerModifier: ViewModifier {
             content
                 .opacity(0.28)
                 .overlay(
+                    // Only the gradient band re-evaluates per frame; the content and
+                    // its mask stay put (cheap even on a long streaming reply).
                     GeometryReader { g in
-                        LinearGradient(colors: [.clear, .white, .clear],
-                                       startPoint: .leading, endPoint: .trailing)
-                            .frame(width: max(70, g.size.width * 0.5))
-                            .offset(x: sweep ? g.size.width : -g.size.width * 0.5)
+                        TimelineView(.animation) { context in
+                            let phase = context.date.timeIntervalSinceReferenceDate
+                                .truncatingRemainder(dividingBy: Self.period) / Self.period
+                            let band = max(70, g.size.width * 0.5)
+                            let travel = g.size.width + band * 2
+                            LinearGradient(colors: [.clear, .white, .clear],
+                                           startPoint: .leading, endPoint: .trailing)
+                                .frame(width: band)
+                                .offset(x: -band + travel * phase)
+                        }
                     }
                     .mask(content)
                     .allowsHitTesting(false)
                 )
-                .onAppear {
-                    withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
-                        sweep = true
-                    }
-                }
         }
     }
 }
@@ -2080,29 +2162,49 @@ struct AlmaSparklePulse: View {
     }
 }
 
-/// Coral shimmer sweeping across a label (web alma-thinking-shimmer / alma-run-shimmer).
+/// Claude-app text shimmer for the LIVE process headline (owner spec 2026-07-12:
+/// "fully highlight shimmering effect, continuous, like Claude"). The text sits
+/// dimmed (0.35) and a bright highlight band sweeps across the glyphs on a steady
+/// 1.8s loop. Driven by TimelineView — a state-driven repeatForever animation
+/// froze whenever the streaming label text changed mid-sweep, which is exactly
+/// why the old effect read as unclear/unprofessional.
 @available(iOS 17.0, *)
 struct AlmaShimmerText: View {
     let text: String
     var font: Font = .system(size: 12.5, weight: .semibold)
     var base: Color
-    @State private var sweep = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var scheme
+
+    private static let period: Double = 1.8
+
     var body: some View {
-        Text(text)
-            .font(font)
-            .foregroundStyle(base)
-            .overlay(
-                GeometryReader { g in
-                    LinearGradient(colors: [.clear, AgentPalette.coral.opacity(0.9), .clear],
-                                   startPoint: .leading, endPoint: .trailing)
-                        .frame(width: max(40, g.size.width * 0.55))
-                        .offset(x: sweep ? g.size.width : -g.size.width * 0.55)
-                }
-                .mask(Text(text).font(font))
-            )
-            .onAppear {
-                withAnimation(.linear(duration: 2).repeatForever(autoreverses: false)) { sweep = true }
-            }
+        if reduceMotion {
+            Text(text).font(font).foregroundStyle(base)
+        } else {
+            Text(text)
+                .font(font)
+                .foregroundStyle(base.opacity(0.35))
+                .overlay(
+                    GeometryReader { g in
+                        TimelineView(.animation) { context in
+                            let phase = context.date.timeIntervalSinceReferenceDate
+                                .truncatingRemainder(dividingBy: Self.period) / Self.period
+                            let band = max(56, g.size.width * 0.5)
+                            let travel = g.size.width + band * 2
+                            LinearGradient(
+                                colors: [.clear,
+                                         scheme == .dark ? .white : Color.black.opacity(0.9),
+                                         .clear],
+                                startPoint: .leading, endPoint: .trailing)
+                                .frame(width: band)
+                                .offset(x: -band + travel * phase)
+                        }
+                    }
+                    .mask(Text(text).font(font))
+                    .allowsHitTesting(false)
+                )
+        }
     }
 }
 
@@ -3107,6 +3209,26 @@ struct AgentTurnBlocksView: View {
             } else {
                 AgentMarkdownText(text: text, pal: pal)
                     .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                    // Owner issue #6 (build 69): tap-and-hold anywhere on agent
+                    // prose → Copy with haptic, Claude-app style.
+                    .contextMenu {
+                        Button {
+                            UIPasteboard.general.string = text
+                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        } label: {
+                            Label("কপি করুন", systemImage: "doc.on.doc")
+                        }
+                        if message.text.trimmingCharacters(in: .whitespacesAndNewlines) != text
+                            .trimmingCharacters(in: .whitespacesAndNewlines), !message.text.isEmpty {
+                            Button {
+                                UIPasteboard.general.string = message.text
+                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                            } label: {
+                                Label("পুরো উত্তর কপি করুন", systemImage: "doc.on.doc.fill")
+                            }
+                        }
+                    }
             }
         }
     }
@@ -3137,6 +3259,62 @@ struct AgentTurnBlocksView: View {
             }
         }
     }
+}
+
+/// Live pinned work summary while the turn streams (web ActivityTimeline parity,
+/// restored for iOS 2026-07-12): "কাজ করছি… · ~N টোকেন · N ধাপ" with the token
+/// estimate advancing live (thinking+text chars / 4), settling into the real
+/// ↑in ↓out counts on the message actions row once the turn finishes.
+@available(iOS 17.0, *)
+struct AgentLiveWorkSummaryRow: View {
+    let message: AgentChatMessage
+    let pal: AgentPalette
+
+    private static let gold = Color(red: 0.831, green: 0.659, blue: 0.294)
+
+    var body: some View {
+        HStack(spacing: 6) {
+            // Slim rotating arc (web: border-gold spinner), time-driven.
+            TimelineView(.animation) { context in
+                let angle = context.date.timeIntervalSinceReferenceDate
+                    .truncatingRemainder(dividingBy: 0.8) / 0.8 * 360
+                Circle()
+                    .trim(from: 0, to: 0.72)
+                    .stroke(Self.gold.opacity(0.85), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                    .frame(width: 11, height: 11)
+                    .rotationEffect(.degrees(angle))
+            }
+            .frame(width: 12, height: 12)
+            Text(liveSummary)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(pal.muted)
+                .lineLimit(1)
+                .contentTransition(.numericText())
+            Spacer(minLength: 0)
+        }
+        .padding(.bottom, 2)
+    }
+
+    private var liveSummary: String {
+        let chars = (message.thinking ?? "").count + message.text.count
+        let tok = max(0, chars / 4)
+        let steps = message.blocks.reduce(into: 0) { n, b in
+            if case .activity = b { n += 1 }
+        }
+        var s = "কাজ করছি…"
+        if tok > 0 { s += " · ~\(almaBnCompact(tok)) টোকেন" }
+        if steps > 0 { s += " · \(almaBn(steps)) ধাপ" }
+        return s
+    }
+}
+
+/// Compact Bangla token figure — web fmtTok parity: 36100 → "৩৬.১k", 681 → "৬৮১".
+func almaBnCompact(_ n: Int) -> String {
+    guard n >= 1000 else { return almaBn(n) }
+    let whole = n / 1000
+    let tenth = (n % 1000) / 100
+    let head = tenth > 0 ? "\(almaBn(whole)).\(almaBn(tenth))" : almaBn(whole)
+    return "\(head)k"
 }
 
 /// One-line settled summary when timeline metadata exists but rows are collapsed.
@@ -4424,6 +4602,7 @@ struct AssistantScreen: View {
     @State private var vm = AssistantVM()
     @Environment(\.colorScheme) private var scheme
     @State private var nearBottom = true
+    @State private var scrollViewportH: CGFloat = 0
     @State private var toolSheet: AgentChatMessage.Tool?
     @State private var activitySheet: AgentActivitySheetRequest?
     @State private var bottomScrollGeneration: UInt = 0
@@ -4480,8 +4659,20 @@ struct AssistantScreen: View {
                     UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
                                                     to: nil, from: nil, for: nil)
                 }
-                .onPreferenceChange(AgentScrollBottomKey.self) { distance in
-                    let next = distance < 160
+                // Real viewport height (owner issue #2 build 69): the old check
+                // compared content maxY against UIScreen height, but the scroll
+                // viewport is ~200pt shorter (composer + tab bar + header), so the
+                // arrow only appeared after a long scroll-up — it read as missing.
+                .background(GeometryReader { g in
+                    Color.clear.preference(key: AgentScrollViewportKey.self, value: g.size.height)
+                })
+                .onPreferenceChange(AgentScrollViewportKey.self) { h in
+                    if h > 0, abs(h - scrollViewportH) > 0.5 { scrollViewportH = h }
+                }
+                .onPreferenceChange(AgentScrollBottomKey.self) { contentMaxY in
+                    let viewport = scrollViewportH > 0 ? scrollViewportH : UIScreen.main.bounds.height
+                    let distance = contentMaxY - viewport
+                    let next = distance < 120
                     if next != nearBottom { nearBottom = next }
                 }
                 .onChange(of: vm.messages.last?.text) { _, _ in
@@ -4596,9 +4787,11 @@ struct AssistantScreen: View {
 
     private var scrollOffsetReader: some View {
         GeometryReader { g in
+            // Raw content maxY in the scroll view's own space; the reader above
+            // subtracts the MEASURED viewport height (never UIScreen).
             Color.clear.preference(
                 key: AgentScrollBottomKey.self,
-                value: g.frame(in: .named("agentscroll")).maxY - UIScreen.main.bounds.height)
+                value: g.frame(in: .named("agentscroll")).maxY)
         }
     }
 
@@ -4636,6 +4829,12 @@ struct AssistantScreen: View {
 }
 
 struct AgentScrollBottomKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+/// Measured height of the assistant scroll viewport (issue #2 build 69).
+struct AgentScrollViewportKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
 }

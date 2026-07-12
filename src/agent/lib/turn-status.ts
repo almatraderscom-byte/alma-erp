@@ -47,6 +47,27 @@ export async function finalizeTurnIfRunning(
   }
 }
 
+/**
+ * Cancel every still-running turn of a conversation (idempotent, fail-open).
+ * Used by the A2 enqueue route so a conversation can only ever have ONE live
+ * turn: the client's first-event watchdog re-runs a "hung" send through the VPS
+ * worker, but the direct serverless run is deliberately NOT tied to the client
+ * connection — without this supersede the same message could execute twice in
+ * parallel (owner bug 2026-07-12: research re-ran inside the same thread).
+ */
+export async function cancelRunningTurnsForConversation(conversationId: string): Promise<number> {
+  try {
+    const res = await db().agentTurn.updateMany({
+      where: { conversationId, status: 'running' },
+      data: { cancelRequested: true, status: 'canceled', finishedAt: new Date() },
+    })
+    return (res.count as number) ?? 0
+  } catch (err) {
+    console.warn('[turn-status] cancelRunningTurnsForConversation failed:', err instanceof Error ? err.message : err)
+    return 0
+  }
+}
+
 /** Flip the cancel flag and mark the turn canceled (idempotent). */
 export async function requestTurnCancel(turnId: string): Promise<boolean> {
   try {
@@ -114,6 +135,15 @@ export async function getTurnStatus(turnId: string): Promise<TurnStatus | null> 
   }
 }
 
+/**
+ * A turn that has been 'running' longer than this is a ghost: Vercel froze the
+ * disconnected function before its finally block could finalize the row (nothing
+ * legitimate outlives the 25-min worker cap). Ghosts must self-heal — a stuck
+ * 'running' row keeps the app's resume spinner alive forever AND stays eligible
+ * for a stale worker-job re-run of the whole turn.
+ */
+const GHOST_RUNNING_MS = 30 * 60 * 1000
+
 /** Latest turn for a conversation — drives the client's re-open polling. */
 export async function getLatestTurn(
   conversationId: string,
@@ -124,7 +154,12 @@ export async function getLatestTurn(
       orderBy: { startedAt: 'desc' },
       select: { id: true, status: true, startedAt: true },
     })
-    return row ?? null
+    if (!row) return null
+    if (row.status === 'running' && Date.now() - new Date(row.startedAt).getTime() > GHOST_RUNNING_MS) {
+      await finalizeTurnIfRunning(row.id as string, 'error')
+      return { ...row, status: 'error' as TurnStatus }
+    }
+    return row
   } catch (err) {
     console.warn('[turn-status] getLatestTurn failed:', err instanceof Error ? err.message : err)
     return null

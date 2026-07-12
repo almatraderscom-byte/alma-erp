@@ -599,16 +599,29 @@ export async function POST(req: NextRequest) {
   let replyPreview = ''
 
   const encoder = new TextEncoder()
+  let streamClosed = false
   const stream = new ReadableStream({
     async start(controller) {
-      const enqueue = (evt: unknown) =>
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`))
+      // CRITICAL (owner bug 2026-07-12, "app close = kaj theme jay"): once the
+      // client disconnects the stream is canceled, and controller.enqueue() on a
+      // canceled stream THROWS — that exception used to escape the event loop
+      // below and kill the running turn generator, so closing the app killed the
+      // work mid-turn despite the design note above. Events after disconnect are
+      // simply dropped; the turn keeps running and persists its reply, and the
+      // client re-syncs from the conversation on re-open (A1).
+      const enqueue = (evt: unknown) => {
+        if (streamClosed || !clientConnected) return
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(evt)}\n\n`))
+        } catch {
+          clientConnected = false
+        }
+      }
 
       // SSE keepalive — a long tool/sub-agent step can run 30–60s without yielding
       // any event; without traffic an idle proxy/CDN may drop the stream and the
       // client sees "Failed to fetch". Comment frames (": ping") keep it warm and
       // are ignored by the client parser (only "data:" lines are consumed).
-      let streamClosed = false
       const keepAlive = setInterval(() => {
         if (streamClosed) return
         try { controller.enqueue(encoder.encode(`: ping\n\n`)) } catch { /* stream closed — expected */ }
@@ -708,11 +721,12 @@ export async function POST(req: NextRequest) {
             actionUrl: '/agent',
           }).catch(() => {})
         }
-        controller.close()
+        try { controller.close() } catch { /* already canceled by the client — fine */ }
       }
     },
     cancel() {
       // Consumer (the app) disconnected mid-stream — e.g. iPhone backgrounded.
+      // The turn itself keeps running (see enqueue guard above).
       clientConnected = false
     },
   })

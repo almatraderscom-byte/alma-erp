@@ -99,7 +99,12 @@ export async function enqueueTurnJob(data: TurnJobData): Promise<string | null> 
       connection: { url },
       defaultJobOptions: { attempts: 2, backoff: { type: 'exponential', delay: 10_000 } },
     })
-    const job = await queue.add('turn', data, { jobId: `turn-${data.turnId}` })
+    // attempts: 1 — a turn is NOT idempotent. A BullMQ retry (failure OR stall)
+    // re-runs the ENTIRE agent turn from the original message: the owner sees the
+    // whole research restart inside the same thread right after (or while) the
+    // first run's work lands (owner bug 2026-07-12). If a turn dies, the durable
+    // turn row goes 'error' and the owner re-asks — never a silent double-run.
+    const job = await queue.add('turn', data, { jobId: `turn-${data.turnId}`, attempts: 1 })
     await queue.close()
     return job.id ?? null
   } catch (err) {
