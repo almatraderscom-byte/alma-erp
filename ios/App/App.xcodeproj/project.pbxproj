@@ -148,6 +148,8 @@
 		F2AA7702000000000000B0FE /* AgoraIntercom.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7702000000000000A0FE /* AgoraIntercom.swift */; };
 		F2AA7703000000000000B0FE /* IntercomUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7703000000000000A0FE /* IntercomUI.swift */; };
 		F2AA7704000000000000B0FE /* PortalStaffOfficeSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */; };
+		F2AA7705000000000000B0FE /* ConnectivityBeacon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7705000000000000A0FE /* ConnectivityBeacon.swift */; };
+		F2AA7706000000000000B0FE /* AlmaIslandBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7706000000000000A0FE /* AlmaIslandBanner.swift */; };
 		FA247230A1101F22D6C32AFC /* cs_sample_9.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 5FD2695A4271A525AE295F31 /* cs_sample_9.jpg */; };
 /* End PBXBuildFile section */
 
@@ -363,6 +365,8 @@
 		F2AA7702000000000000A0FE /* AgoraIntercom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgoraIntercom.swift; sourceTree = "<group>"; };
 		F2AA7703000000000000A0FE /* IntercomUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntercomUI.swift; sourceTree = "<group>"; };
 		F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalStaffOfficeSwiftUI.swift; sourceTree = "<group>"; };
+		F2AA7705000000000000A0FE /* ConnectivityBeacon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectivityBeacon.swift; sourceTree = "<group>"; };
+		F2AA7706000000000000A0FE /* AlmaIslandBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaIslandBanner.swift; sourceTree = "<group>"; };
 		FC68EB0AF532CFC21C3344DD /* Pods-App.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-App.debug.xcconfig"; path = "Pods/Target Support Files/Pods-App/Pods-App.debug.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -450,6 +454,8 @@
 				F2AA7702000000000000A0FE /* AgoraIntercom.swift */,
 				F2AA7703000000000000A0FE /* IntercomUI.swift */,
 				F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */,
+				F2AA7705000000000000A0FE /* ConnectivityBeacon.swift */,
+				F2AA7706000000000000A0FE /* AlmaIslandBanner.swift */,
 				F2AA7700000000000000A05F /* AgentWhatsappSwiftUI.swift */,
 				F2AA7700000000000000A05E /* AgentCostsSwiftUI.swift */,
 				F2AA7700000000000000A101 /* CreditUsageSwiftUI.swift */,
@@ -739,6 +745,8 @@
 				F2AA7702000000000000B0FE /* AgoraIntercom.swift in Sources */,
 				F2AA7703000000000000B0FE /* IntercomUI.swift in Sources */,
 				F2AA7704000000000000B0FE /* PortalStaffOfficeSwiftUI.swift in Sources */,
+				F2AA7705000000000000B0FE /* ConnectivityBeacon.swift in Sources */,
+				F2AA7706000000000000B0FE /* AlmaIslandBanner.swift in Sources */,
 				F2AA7700000000000000B05F /* AgentWhatsappSwiftUI.swift in Sources */,
 				F2AA7700000000000000B05E /* AgentCostsSwiftUI.swift in Sources */,
 				F2AA7700000000000000B101 /* CreditUsageSwiftUI.swift in Sources */,
