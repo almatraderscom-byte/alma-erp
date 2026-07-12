@@ -198,6 +198,14 @@ private suspend fun fetchApprovalsCount(): Int {
 // ── Root composable ───────────────────────────────────────────────────────────────
 
 @SuppressLint("MutableCollectionMutableState")
+private fun agentTitle(path: String): String = when (path) {
+    "/agent/creative-studio" -> "Studio"
+    "/agent/whatsapp" -> "WhatsApp"
+    "/agent/staff-monitor" -> "Monitor"
+    "/agent/costs" -> "Costs"
+    else -> "Assistant"
+}
+
 @Composable
 private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
     val dark = AlmaTheme.isDark
@@ -310,6 +318,17 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
                                     is StackEntry.Native -> top.content(pushCtx)
                                 }
                             }
+                        }
+                    }
+                }
+
+                // ── Floating assistive-touch dock (iOS parity) ──
+                // Only at a tab root (no pushed screen) on Dashboard + Assistant.
+                if (stack.isEmpty()) {
+                    when (tabIndex) {
+                        0 -> DashboardAssistiveDock(dark = dark) { p, t -> pushSmart(p, t) }
+                        2 -> AgentAssistiveDock(dark = dark, activeIndex = 0) { p ->
+                            if (p == "/agent") stacks[2].clear() else pushSmart(p, agentTitle(p))
                         }
                     }
                 }
