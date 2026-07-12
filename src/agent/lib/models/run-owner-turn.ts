@@ -356,6 +356,10 @@ async function* runAlternateProviderTurn(
   }
   const toolRecords: ToolRecord[] = []
   let verifyRetries = 0
+  // Guard against a fully EMPTY model round (no text, no tool calls) mid-task —
+  // Gemini does this occasionally and ending the turn there strands the owner
+  // with a blank reply (2026-07-12: WhatsApp-fix turn died after one navigate).
+  let emptyRoundRetries = 0
   let memoryNudgeSent = false
   let finalText = ''
   let delegationAwaiting = false
@@ -466,6 +470,27 @@ async function* runAlternateProviderTurn(
       if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
 
       if (calls.length === 0 || signal?.aborted) {
+        // Fully empty round mid-task → nudge the model to continue instead of
+        // silently ending the turn with a blank message. Bounded to 2 retries.
+        if (
+          !signal?.aborted
+          && !iterationText.trim()
+          && !finalText.trim()
+          && toolRecords.length > 0
+          && emptyRoundRetries < 2
+        ) {
+          emptyRoundRetries++
+          messages = [
+            ...messages,
+            {
+              role: 'user',
+              content:
+                'তোমার আগের রাউন্ডটা ফাঁকা ছিল — কোনো টেক্সট বা টুল কল আসেনি। কাজটা এখনো শেষ হয়নি: ' +
+                'হয় পরের টুল স্টেপটা চালাও, নয়তো এ পর্যন্ত কী হলো বসকে বাংলায় জানাও। চুপ করে থেমো না।',
+            },
+          ]
+          continue
+        }
         if (!signal?.aborted && verifyRetries < MAX_VERIFY_RETRIES && iterationText.trim()) {
           // Build a ledger that carries each tool's success/error — not just its
           // name — so the verifier catches "done!" claims made after a tool that
