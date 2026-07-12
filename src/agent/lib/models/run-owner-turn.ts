@@ -512,13 +512,15 @@ async function* runAlternateProviderTurn(
       if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
 
       if (calls.length === 0 || signal?.aborted) {
-        // Fully empty round mid-task → nudge the model to continue instead of
-        // silently ending the turn with a blank message. Bounded to 2 retries.
+        // Fully empty round → nudge the model to continue instead of silently
+        // ending the turn with a blank message. Bounded to 2 retries. Applies to
+        // the FIRST round too (2026-07-12: gemini-2.5-flash answered the very
+        // first round with 0 output tokens — no prior tools existed, so the old
+        // `toolRecords.length > 0` guard let a blank reply through).
         if (
           !signal?.aborted
           && !iterationText.trim()
           && !finalText.trim()
-          && toolRecords.length > 0
           && emptyRoundRetries < 2
         ) {
           emptyRoundRetries++
@@ -728,6 +730,13 @@ async function* runAlternateProviderTurn(
     // Owner canceled mid-turn: do not persist a partial reply or emit 'done'.
     if (canceled) return
 
+    // A turn that produced NOTHING (no text, no tool calls, no cards) must never
+    // be saved as a blank owner reply — throw so the cheap-head fallback below
+    // answers instead (2026-07-12: gemini-2.5-flash 60k-in/0-out empty turn).
+    if (!finalText.trim() && toolRecords.length === 0 && emittedAskCards.length === 0) {
+      throw new Error(`empty_head_turn: ${model.id} produced no text, tools or cards`)
+    }
+
     const costUsd = calcModelTurnCostUsd(model, {
       inputTokens: totalInputTokens,
       outputTokens: totalOutputTokens,
@@ -903,11 +912,26 @@ export async function* runOwnerTurn(
     conversationId,
   })
 
+  // Worker-only guard (2026-07-12 salah incident): a conversation still PINNED to
+  // a headPickable:false model (e.g. Gemini 2.5 Flash LITE, picked from the old
+  // picker) must not keep running a head that ignores tools and invents answers.
+  // Swap to the heavy head with a visible one-line note — never a silent switch.
+  let disabledSwitchNote: string | null = null
+  if (getModel(decision.modelId).headPickable === false) {
+    const off = getModel(decision.modelId)
+    const { heavyHeadModelId } = await import('@/agent/lib/models/head-router')
+    const on = getModel(heavyHeadModelId())
+    disabledSwitchNote =
+      `⚙️ Boss, **${off.label}** এখন শুধু ভেতরের ছোট কাজের worker মডেল — head হিসেবে ` +
+      `আর চলে না (টুল ব্যবহার না করে ভুল উত্তর দিত)। এই চ্যাটটা **${on.label}** দিয়ে চালাচ্ছি।\n\n`
+    decision.modelId = on.id
+    decision.via = `${decision.via}+worker_only_redirect`
+  }
+
   // Owner's Monitor kill-switch per model: a model toggled OFF is unusable even
   // when this chat has it pinned — swap to the enabled fallback IN this same
   // session and tell the owner why in one visible line (never a silent switch,
   // never a manual re-pick).
-  let disabledSwitchNote: string | null = null
   try {
     const { resolveEnabledFallback } = await import('@/agent/lib/models/model-enabled')
     const fallbackId = await resolveEnabledFallback(decision.modelId)
