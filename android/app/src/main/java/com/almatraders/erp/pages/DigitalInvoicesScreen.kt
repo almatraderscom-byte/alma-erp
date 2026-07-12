@@ -809,6 +809,7 @@ private fun DigitalInvoiceActionsSheet(
     var methodMenu by remember { mutableStateOf(false) }
     var paying by remember { mutableStateOf(false) }
     var confirmingPay by remember { mutableStateOf(false) }
+    var showPdf by remember { mutableStateOf(false) }
     val taka = DigitalInvoicesFormat.parseTaka(payAmount)
 
     Column(
@@ -896,20 +897,21 @@ private fun DigitalInvoiceActionsSheet(
             }
         }
 
-        // Premium PDF — WEB ESCAPE on Android (generate/share flow stays on the web page).
+        // Premium PDF — NATIVE now: server generates → downloaded → rendered in-app
+        // (PdfRenderer) with a native share sheet. No web page.
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
-                "📄 Premium PDF — ওয়েবে খুলুন",
-                color = AlmaTheme.ink(dark), fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                "📄 Premium PDF দেখুন / শেয়ার",
+                color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .almaGlass(dark, AlmaTheme.R_CONTROL)
-                    .plainClick { openWeb("/digital/invoices", "CDIT Invoices") }
+                    .background(AlmaTheme.violet, RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+                    .plainClick { showPdf = true }
                     .padding(vertical = 11.dp),
             )
             Text(
-                "PDF তৈরি ও শেয়ার ওয়েব পেজে হয়।",
+                "PDF অ্যাপেই তৈরি হয়, দেখা ও শেয়ার হয়।",
                 color = AlmaTheme.inkSecondary(dark), fontSize = 10.sp, textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -922,6 +924,19 @@ private fun DigitalInvoiceActionsSheet(
                 .fillMaxWidth()
                 .plainClick { openWeb("/digital/invoices", "CDIT Invoices") }
                 .padding(vertical = 4.dp),
+        )
+    }
+
+    if (showPdf) {
+        AlmaPdfViewerSheet(
+            title = "Invoice ${inv.id}",
+            dark = dark,
+            onDismiss = { showPdf = false },
+            generate = {
+                val resp = AlmaApi.send("POST", "/api/digital/invoices/pdf", JSONObject().put("invoice_id", inv.id))
+                val data = resp.optJSONObject("data") ?: resp
+                data.str("pdf_url") ?: resp.str("pdf_url")
+            },
         )
     }
 

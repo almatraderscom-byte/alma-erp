@@ -384,6 +384,7 @@ fun InvoicesScreen(ctx: PushCtx) {
     val vm = remember { InvoicesState() }
     val scope = rememberCoroutineScope()
     var selected by remember { mutableStateOf<InvoiceRecord?>(null) }
+    var pdfInvoice by remember { mutableStateOf<InvoiceRecord?>(null) }
 
     LaunchedEffect(Unit) { vm.load() }
 
@@ -439,7 +440,7 @@ fun InvoicesScreen(ctx: PushCtx) {
                 invoice = inv,
                 busy = vm.busyIds.contains(inv.id) || vm.busyOrderIds.contains(inv.orderId),
                 dark = dark,
-                onOpenPdf = { ctx.openWebForced(inv.sharePath, inv.invoiceNumber) },
+                onOpenPdf = { pdfInvoice = inv },
                 onTap = { selected = inv },
             )
         }
@@ -462,6 +463,22 @@ fun InvoicesScreen(ctx: PushCtx) {
         ModalBottomSheet(onDismissRequest = { selected = null }, containerColor = AlmaTheme.rootBg(dark)) {
             InvDetailSheet(inv, vm, dark, openWeb = { p, t -> selected = null; ctx.openWebForced(p, t) })
         }
+    }
+
+    pdfInvoice?.let { inv ->
+        AlmaPdfViewerSheet(
+            title = inv.invoiceNumber,
+            dark = dark,
+            onDismiss = { pdfInvoice = null },
+            generateBase64 = {
+                val resp = AlmaApi.send(
+                    "POST", "/api/invoice",
+                    JSONObject().put("id", inv.orderId).put("business_id", "ALMA_LIFESTYLE"),
+                )
+                val data = resp.optJSONObject("data") ?: resp
+                data.str("pdfBase64") ?: resp.str("pdfBase64")
+            },
+        )
     }
 }
 
