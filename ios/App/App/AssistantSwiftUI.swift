@@ -772,15 +772,35 @@ final class AssistantVM {
     var thinkingLive = false        // spinner row before the first text token
     var currentTurnId: String?
     private var streamTask: Task<Void, Never>?
+    private var understandingTask: Task<Void, Never>?
+    private var requestedLiveMode = "thinking"
+    private var visualLiveMode = "idle"
 
-    /// Spinner mode for the live indicator (web AlmaSpinner parity): a live tool =
-    /// "searching", visible text streaming = "writing", otherwise "thinking".
-    var liveMode: String {
-        if let i = messages.lastIndex(where: { $0.isStreaming }) {
-            if messages[i].tools.contains(where: { $0.live }) { return "searching" }
-            if !messages[i].text.isEmpty { return "writing" }
+    /// Stable visual state, including a minimum 2.08s understanding intake.
+    /// Later SSE states are queued during that intake, then handed off smoothly.
+    var liveMode: String { visualLiveMode }
+
+    private func beginUnderstanding() {
+        understandingTask?.cancel()
+        requestedLiveMode = "thinking"
+        visualLiveMode = "understanding"
+        understandingTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_080_000_000)
+            guard let self, !Task.isCancelled, self.isStreaming else { return }
+            self.visualLiveMode = self.requestedLiveMode
         }
-        return "thinking"
+    }
+
+    private func requestLiveMode(_ mode: String) {
+        requestedLiveMode = mode
+        if visualLiveMode != "understanding" { visualLiveMode = mode }
+    }
+
+    private func settleLiveMode() {
+        understandingTask?.cancel()
+        understandingTask = nil
+        requestedLiveMode = "thinking"
+        visualLiveMode = "idle"
     }
 
     // Sidebar / conversations (web AgentSidebar parity)
@@ -993,6 +1013,7 @@ final class AssistantVM {
         if let i = messages.lastIndex(where: { $0.isStreaming }) { messages[i].isStreaming = false }
         isStreaming = false
         thinkingLive = false
+        settleLiveMode()
         justSettledId = messages.last(where: { $0.role == .assistant })?.id
         guard let cid = conversationId else { return }
         if let wire: [AgentMessageWire] = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/messages") {
@@ -1033,17 +1054,19 @@ final class AssistantVM {
               st.status == "running" else { return }
         isStreaming = true
         thinkingLive = true
+        requestLiveMode("thinking")
         currentTurnId = st.turnId
         streamTask = Task { [weak self] in
             for _ in 0..<100 {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
-                guard let self, !Task.isCancelled else { return }
+                guard !Task.isCancelled else { return }
                 let s: TurnStatusResponse? = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/turn-status")
                 if s?.status != "running" { break }
             }
             guard let self, !Task.isCancelled else { return }
             self.isStreaming = false
             self.thinkingLive = false
+            self.settleLiveMode()
             await self.loadMessages()
         }
     }
@@ -1315,6 +1338,7 @@ final class AssistantVM {
         pendingFiles = []
         isStreaming = true
         thinkingLive = true
+        beginUnderstanding()
         currentTurnId = nil
         ensureStreamingTail()
 
@@ -1329,6 +1353,7 @@ final class AssistantVM {
         defer {
             isStreaming = false
             thinkingLive = false
+            settleLiveMode()
             if let i = messages.lastIndex(where: { $0.isStreaming }) { messages[i].isStreaming = false }
         }
         do {
@@ -1424,6 +1449,7 @@ final class AssistantVM {
         case "model_info":
             if let l = ev.label { modelLabel = l }
         case "thinking_delta":
+            requestLiveMode("thinking")
             ensureStreamingTail()
             if let i = messages.lastIndex(where: { $0.isStreaming }) {
                 let chunk = ev.delta ?? ""
@@ -1435,6 +1461,7 @@ final class AssistantVM {
                 AgentChatMessage.refreshPhases(on: &messages[i], live: live)
             }
         case "text_delta":
+            requestLiveMode("writing")
             ensureStreamingTail()
             if let i = messages.lastIndex(where: { $0.isStreaming }) {
                 if messages[i].text.isEmpty {
@@ -1448,6 +1475,7 @@ final class AssistantVM {
                     messages[i].blocks, chunk: ev.delta ?? "", messageId: messages[i].id)
             }
         case "tool_start":
+            requestLiveMode("searching")
             ensureStreamingTail()
             if let i = messages.lastIndex(where: { $0.isStreaming }) {
                 let tid = ev.id ?? UUID().uuidString
@@ -1460,6 +1488,7 @@ final class AssistantVM {
                 AgentChatMessage.refreshPhases(on: &messages[i], live: messages[i].text.isEmpty)
             }
         case "tool_end":
+            requestLiveMode("writing")
             if let i = messages.lastIndex(where: { $0.isStreaming }),
                let tid = ev.id {
                 messages[i].timeline = AgentChatMessage.finalizeTool(
@@ -1494,9 +1523,11 @@ final class AssistantVM {
             }
         case "done":
             thinkingLive = false
+            settleLiveMode()
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         case "error":
             thinkingLive = false
+            settleLiveMode()
             errorToast = ev.message ?? ev.error ?? "সমস্যা হয়েছে — আবার চেষ্টা করুন"
         default:
             break
@@ -1522,6 +1553,7 @@ final class AssistantVM {
         }
         isStreaming = false
         thinkingLive = false
+        settleLiveMode()
         if let i = messages.lastIndex(where: { $0.isStreaming }) { messages[i].isStreaming = false }
     }
 
@@ -3349,15 +3381,16 @@ struct AgentSettledSummaryRow: View {
     }
 }
 
-/// Live indicator — starburst only, left-aligned (Claude: no label beside spinner).
+/// Live indicator — approved multi-colour burst with the existing ALMA wordmark.
 @available(iOS 17.0, *)
 struct AgentThinkingRow: View {
     let mode: String
     let pal: AgentPalette
 
     var body: some View {
-        HStack {
+        HStack(spacing: 8) {
             AlmaSpinnerView(mode: mode, size: 28, showVerb: false, haptics: true)
+            AlmaShimmerWordmark(size: 12.5, weight: .semibold, tracking: 2.1)
             Spacer()
         }
         .padding(.leading, 0)

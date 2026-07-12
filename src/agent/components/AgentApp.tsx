@@ -260,7 +260,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   // streamStatus is still computed (telemetry / future use) but the live
   // indicator now shows the Claude-style rotating verb + model name instead.
   const [, setStreamStatus] = useState<string | null>(null)
-  const [streamMode, setStreamMode] = useState<'thinking' | 'searching' | 'writing' | 'settled'>('thinking')
+  const [streamMode, setStreamMode] = useState<'understanding' | 'thinking' | 'searching' | 'writing' | 'settled'>('thinking')
   // Which model is answering the live turn → drives the loading animation identity.
   const [streamVariant, setStreamVariant] = useState<'claude' | 'qwen' | 'deepseek' | 'default'>('claude')
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
@@ -696,7 +696,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     abortRef.current = new AbortController()
     setStreaming(true)
     setStreamStatus('প্রসেস করা হচ্ছে…')
-    setStreamMode('thinking') // start in the thinking state until tools/text arrive
+    setStreamMode('understanding') // one smooth intake before thinking/tool/writing takes over
     setStreamVariant('claude') // reset until model_info arrives (fail-safe = head)
 
     let convIdForUpload = activeConvId
@@ -1448,7 +1448,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     // obvious the agent picked the task back up. The continuation runs server-side
     // (on the worker), so there's no client stream to drive the usual indicator —
     // we pin a streaming placeholder at the bottom and keep it until the turn ends.
-    setStreamMode('thinking')
+    setStreamMode('understanding')
     setStreamVariant('claude')
     setMessages((prev) => [...prev.filter((m) => !m.streaming), loader])
 
