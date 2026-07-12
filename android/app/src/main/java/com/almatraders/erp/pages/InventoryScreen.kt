@@ -401,6 +401,7 @@ private class InventoryState {
 @Composable
 fun InventoryScreen(ctx: PushCtx) {
     val dark = AlmaTheme.isDark
+    val context = androidx.compose.ui.platform.LocalContext.current
     val vm = remember { InventoryState() }
     var selectedSku by remember { mutableStateOf<String?>(null) }
     var showAdd by remember { mutableStateOf(false) }
@@ -508,6 +509,31 @@ fun InventoryScreen(ctx: PushCtx) {
                         color = InvPalette.coral, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.plainClick { ctx.openSmart("/inventory/supplier-import", "Supplier import") },
                     )
+                    if (vm.items.isNotEmpty()) {
+                        Text(
+                            "⬇ CSV এক্সপোর্ট / শেয়ার",
+                            color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(AlmaTheme.violet, RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+                                .plainClick {
+                                    shareCsv(
+                                        context,
+                                        "inventory",
+                                        headers = listOf("SKU", "Product", "Category", "Color", "Size", "Current Stock", "Available", "Reorder Level", "Stock Value"),
+                                        rows = vm.items.map { it2 ->
+                                            listOf(
+                                                it2.sku, it2.product, it2.category ?: "", it2.color ?: "", it2.size ?: "",
+                                                it2.currentStock.toString(), it2.available.toString(),
+                                                it2.reorderLevel.toString(), it2.stockValue.toString(),
+                                            )
+                                        },
+                                    )
+                                }
+                                .padding(vertical = 10.dp),
+                        )
+                    }
                     Text(
                         "🌐 ওয়েব ভার্সন",
                         color = AlmaTheme.inkSecondary(dark).copy(alpha = 0.7f), fontSize = 11.sp,

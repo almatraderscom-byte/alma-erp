@@ -805,6 +805,7 @@ private class PayrollState {
 @Composable
 fun PayrollScreen(ctx: PushCtx) {
     val dark = AlmaTheme.isDark
+    val context = androidx.compose.ui.platform.LocalContext.current
     val vm = remember { PayrollState() }
     val scope = rememberCoroutineScope()
     var selected by remember { mutableStateOf<PayEmployeeWallet?>(null) }
@@ -904,17 +905,36 @@ fun PayrollScreen(ctx: PushCtx) {
                 item { PayTimelineCard(vm, dark) }
             }
             item {
-                // Native PDF/CSV exports (iOS build 66) deferred on Android — needs
-                // FileProvider/share plumbing; the web page keeps all exports.
-                Text(
-                    "🌐 ওয়েব ভার্সন (PDF/CSV/Excel export)",
-                    color = AlmaTheme.inkSecondary(dark).copy(alpha = 0.7f), fontSize = 11.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .plainClick { ctx.openWebForced("/payroll", "Payroll") }
-                        .padding(vertical = 4.dp),
-                )
+                // Native CSV export → Android share sheet (opens in Excel/Sheets/email).
+                val roster = if (vm.compWallets.isEmpty()) vm.wallets else vm.compWallets
+                if (roster.isNotEmpty()) {
+                    Text(
+                        "⬇ CSV এক্সপোর্ট / শেয়ার",
+                        color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(AlmaTheme.violet, RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+                            .plainClick {
+                                shareCsv(
+                                    context,
+                                    "payroll-wallets",
+                                    headers = listOf("Employee ID", "Name", "Monthly Salary", "Current Balance", "Due Months", "Outstanding Advance"),
+                                    rows = roster.map { w ->
+                                        listOf(
+                                            w.employeeId,
+                                            w.name,
+                                            (w.monthlySalary ?: 0).toString(),
+                                            (w.summary?.currentBalance ?: 0).toString(),
+                                            (w.summary?.salaryDueMonths?.size ?: 0).toString(),
+                                            (w.summary?.outstandingAdvance ?: 0).toString(),
+                                        )
+                                    },
+                                )
+                            }
+                            .padding(vertical = 11.dp),
+                    )
+                }
             }
         }
         item { Spacer(Modifier.height(8.dp)) }
