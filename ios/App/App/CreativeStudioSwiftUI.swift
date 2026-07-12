@@ -1231,12 +1231,39 @@ private struct CSCreateTab: View {
                 CSSegment(items: ["✦ Auto — এক ট্যাপ", "⚙ Advanced"], index: Binding(
                     get: { isAdvanced ? 1 : 0 }, set: { isAdvanced = ($0 == 1) }))
                     .padding(.horizontal, 18).padding(.top, 14)
+                engineRow
                 if isAdvanced { CSAdvancedPanel(vm: vm) } else { CSAutoPanel(vm: vm) }
                 Color.clear.frame(height: 130)
             }
         }
         .claudeTopFade(useNativeEdgeEffect: false)
         .scrollDismissesKeyboard(.interactively)
+        // The engine chips need the saved settings even when the Library tab was
+        // never opened this session.
+        .task { if vm.settings == nil { await vm.loadLibraryExtras() } }
+    }
+
+    /// Engine quick-switch ON the work screen (owner 2026-07-12: "কাজ করার সময়
+    /// এখান থেকেই বদলাতে চাই") — same settings API as the Library card, applies
+    /// from the NEXT render; FASHN try-on is engine-independent.
+    private var engineRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("ইমেজ ইঞ্জিন")
+                .font(.system(size: 11, weight: .bold)).tracking(0.6)
+                .foregroundStyle(AgentPalette(scheme).muted)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 148), spacing: 6)], alignment: .leading, spacing: 6) {
+                CSChip(text: "Nano Banana (ফটোরিয়াল)", on: (vm.settings?.imageEngine ?? "gemini") == "gemini") {
+                    Task { await vm.saveSettings(imageEngine: "gemini") }
+                }
+                CSChip(text: "GPT Image 2 (লেখা/পোস্টার)", on: vm.settings?.imageEngine == "gpt") {
+                    Task { await vm.saveSettings(imageEngine: "gpt") }
+                }
+                CSChip(text: "Seedream 5.0 Pro (2K · নতুন)", on: vm.settings?.imageEngine == "seedream") {
+                    Task { await vm.saveSettings(imageEngine: "seedream") }
+                }
+            }
+        }
+        .padding(.horizontal, 18).padding(.top, 12)
     }
 
     private var header: some View {
