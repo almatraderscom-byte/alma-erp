@@ -431,7 +431,21 @@ async function* runAlternateProviderTurn(
     toolSelection.tools,
     agentControls,
   )
-  const neutralTools = anthropicToolsToNeutral(selectedTools)
+  // xAI hard-caps tool definitions at 200 per request — the owner head carries 201,
+  // so EVERY Grok-4.20 turn 400'd ("Maximum tools limit reached") and silently fell
+  // back to DeepSeek (2026-07-13 outage, diagnosed via error.metadata.raw). Keep the
+  // earliest tools (core ERP + confirm/ask flows sit at the front of the registry)
+  // and drop the tail with a visible note.
+  const toolCap = model.apiModel.startsWith('x-ai/') ? 200 : Infinity
+  let cappedTools = selectedTools
+  if (selectedTools.length > toolCap) {
+    const dropped = selectedTools.slice(toolCap).map((t) => t.name)
+    console.warn(
+      `[run-owner-turn] ${model.apiModel} caps tools at ${toolCap} — dropping ${dropped.length}: ${dropped.join(', ')}`,
+    )
+    cappedTools = selectedTools.slice(0, toolCap)
+  }
+  const neutralTools = anthropicToolsToNeutral(cappedTools)
   const adapter = adapterFor(model.provider)
 
   type ToolRecord = {
