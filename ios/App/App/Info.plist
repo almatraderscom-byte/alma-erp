@@ -2,6 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>ALMAGitCommit</key>
+	<string>build70-c5b74562a6</string>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.almatraders.erp.refresh</string>
+	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
@@ -16,6 +22,8 @@
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -27,22 +35,16 @@
 			</array>
 		</dict>
 	</array>
-	<key>CFBundleShortVersionString</key>
-	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>NSFaceIDUsageDescription</key>
-	<string>ALMA ERP uses Face ID to unlock the app and protect your business data.</string>
-	<key>NSSupportsLiveActivities</key>
-	<true/>
-	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
-	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>ALMA ERP uses the camera to capture and upload product photos and attachments.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>ALMA ERP uses Face ID to unlock the app and protect your business data.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>ALMA ERP needs your location to verify office attendance and staff geo-fencing during work hours.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
@@ -55,15 +57,15 @@
 	<string>ALMA ERP needs photo library access to attach images to the assistant and product records.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>ALMA ERP transcribes your voice on-device so you can talk to the AI assistant without sending audio to a server.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
+	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>
 		<string>fetch</string>
 		<string>audio</string>
-	</array>
-	<key>BGTaskSchedulerPermittedIdentifiers</key>
-	<array>
-		<string>com.almatraders.erp.refresh</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
