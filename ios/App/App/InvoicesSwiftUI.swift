@@ -460,31 +460,30 @@ struct InvoicesScreen: View {
         }
     }
 
-    // ── KPI cards (web: Delivered orders / Invoiced / Pending) ──
+    // ── KPI board — bento language (owner spec 2026-07-08): dark hero anchor from the
+    //    registry totals (amount count-up + paid/unpaid split + paid-share mini bar),
+    //    then the web's three counts (Delivered/Invoiced/Pending) as glass tiles.
+    //    Same numbers, same tints — presentation only. ──
 
     private var kpiStrip: some View {
-        HStack(spacing: 10) {
-            kpiCard("Delivered orders", vm.deliveredOrders.count, .primary)
-            kpiCard("Invoiced", vm.totals.count, InvoicePalette.emerald600)
-            kpiCard("Pending", vm.pendingOrders.count, InvoicePalette.amber600)
+        VStack(spacing: 10) {
+            InvBentoHeroCard(amount: vm.totals.amount,
+                             count: vm.totals.count,
+                             paid: vm.totals.paid,
+                             unpaid: vm.totals.unpaid)
+            HStack(spacing: 10) {
+                InvBentoStatTile(label: "Delivered", value: vm.deliveredOrders.count,
+                                 sub: "ডেলিভারড অর্ডার",
+                                 tint: .primary, accent: AlmaSwiftTheme.sage)
+                InvBentoStatTile(label: "Invoiced", value: vm.totals.count,
+                                 sub: "রেজিস্ট্রিতে আছে",
+                                 tint: InvoicePalette.emerald600, accent: InvoicePalette.green400)
+                InvBentoStatTile(label: "Pending", value: vm.pendingOrders.count,
+                                 sub: "ইনভয়েস বাকি",
+                                 tint: InvoicePalette.amber600, accent: InvoicePalette.amber500)
+            }
         }
         .padding(.top, 4)
-    }
-
-    private func kpiCard(_ label: String, _ value: Int, _ tint: Color) -> some View {
-        VStack(spacing: 3) {
-            Text("\(value)")
-                .font(.title3.weight(.bold).monospacedDigit())
-                .foregroundStyle(tint)
-            Text(label)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-        .invoicesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Search (web SearchInput parity — server-side search param) ──
@@ -727,7 +726,11 @@ private struct InvoiceCard: View {
             }
         }
         .padding(14)
-        .invoicesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        // Payment-tone wash: the row's glass carries a soft diagonal tint of its own
+        // payment status (PAID green / PARTIAL amber / VOID red / UNPAID neutral).
+        .background { invBentoWash(InvoicePalette.payment(invoice.paymentStatus), scheme: colorScheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.45), lineWidth: 1))
         .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture {
             UIImpactFeedbackGenerator(style: .soft).impactOccurred()
@@ -1113,34 +1116,76 @@ private enum InvoiceFormat {
 @available(iOS 17.0, *)
 private struct InvoicesAurora: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
 
     var body: some View {
-        ZStack {
-            if scheme == .dark {
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.075, green: 0.063, blue: 0.196), location: 0.0),  // deep indigo
-                    .init(color: Color(red: 0.216, green: 0.125, blue: 0.439), location: 0.32), // violet
-                    .init(color: Color(red: 0.478, green: 0.176, blue: 0.494), location: 0.62), // purple-magenta
-                    .init(color: Color(red: 0.706, green: 0.255, blue: 0.404), location: 1.0),  // pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.35), .clear],
-                               center: .init(x: 0.15, y: 0.18), startRadius: 10, endRadius: 420)
-                RadialGradient(colors: [Color(red: 0.93, green: 0.42, blue: 0.55).opacity(0.30), .clear],
-                               center: .init(x: 0.9, y: 0.85), startRadius: 20, endRadius: 480)
-            } else {
-                AlmaSwiftTheme.rootBg(.light)
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.902, green: 0.882, blue: 0.973), location: 0.0),  // pale violet
-                    .init(color: Color(red: 0.949, green: 0.941, blue: 0.972), location: 0.45), // cream
-                    .init(color: Color(red: 0.988, green: 0.918, blue: 0.925), location: 1.0),  // pale pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.14), .clear],
-                               center: .init(x: 0.12, y: 0.15), startRadius: 10, endRadius: 380)
-                RadialGradient(colors: [AlmaSwiftTheme.coral.opacity(0.12), .clear],
-                               center: .init(x: 0.9, y: 0.9), startRadius: 20, endRadius: 420)
+        let dark = scheme == .dark
+        // Agent-parity living aurora (web --aurora-blob-1…5): five blurred colour blobs
+        // drifting corner-to-corner over the page canvas. Owner directive 2026-07-08:
+        // every native page shares the Assistant tab's moving aurora.
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
             }
+            .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Battery guard: drift only when the owner allows motion — Reduce Motion and
+    /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
     }
 }
 
@@ -1176,6 +1221,205 @@ private struct InvoicesShimmer: ViewModifier {
 @available(iOS 17.0, *)
 private extension View {
     func invoicesShimmer() -> some View { modifier(InvoicesShimmer()) }
+}
+
+// MARK: - Bento components (Invoices-owned copies of the Dashboard board language —
+// per-file copies are this repo's parallel-session convention, no cross-file imports)
+
+/// Central motion gate — count-ups and bar sweeps freeze under Reduce Motion / Low Power.
+@available(iOS 17.0, *)
+private func invMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number (0 → target on appear, old → new on refresh) — one Animatable
+/// interpolation, no timers; snaps straight to the value when motion is limited.
+@available(iOS 17.0, *)
+private struct InvCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    let format: (Int) -> String
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        InvCountUpText(value: shown, format: format)
+            .animation(invMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if invMotionOK(reduceMotion) {
+                    appeared = true
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct InvCountUpText: View, Animatable {
+    var value: Double
+    var format: (Int) -> String
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text(format(Int(value.rounded())))
+    }
+}
+
+/// Shared tile/row backdrop: frosted glass + a soft diagonal accent wash.
+@available(iOS 17.0, *)
+private func invBentoWash(_ accent: Color, scheme: ColorScheme) -> some View {
+    ZStack {
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+        LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.14 : 0.10), .clear],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+}
+
+/// Small glass stat tile — count-up value + sub line over a soft accent wash.
+@available(iOS 17.0, *)
+private struct InvBentoStatTile: View {
+    @Environment(\.colorScheme) private var scheme
+    let label: String
+    let value: Int
+    let sub: String
+    let tint: Color
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
+            InvCountUp(target: value, format: { "\($0)" })
+                .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.55)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 13).padding(.vertical, 12)
+        .background { invBentoWash(accent, scheme: scheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+    }
+}
+
+/// Paid-share mini bar — sweeps to its fraction on appear, frozen when motion is limited.
+@available(iOS 17.0, *)
+private struct InvMiniBar: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let fraction: CGFloat
+    let color: Color
+    var height: CGFloat = 7
+    @State private var grow = false
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.12))
+                Capsule()
+                    .fill(LinearGradient(colors: [color.opacity(0.55), color],
+                                         startPoint: .leading, endPoint: .trailing))
+                    .frame(width: max(geo.size.width * min(max(fraction, 0), 1), height) * (grow ? 1 : 0.001))
+            }
+        }
+        .frame(height: height)
+        .onAppear {
+            if invMotionOK(reduceMotion) {
+                withAnimation(.spring(duration: 0.6, bounce: 0.18)) { grow = true }
+            } else {
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { grow = true }
+            }
+        }
+    }
+}
+
+/// The dark hero anchor — deliberately dark in BOTH schemes (Dashboard hero recipe:
+/// deep indigo base + violet/coral washes + a sage hint). Registry totals: invoiced
+/// amount count-up + Paid/Unpaid split + a paid-share mini bar. Money via the file's
+/// own InvoiceFormat.taka — the exact strings the old cards would show.
+@available(iOS 17.0, *)
+private struct InvBentoHeroCard: View {
+    let amount: Int
+    let count: Int
+    let paid: Int
+    let unpaid: Int
+
+    // paid/unpaid are invoice COUNTS from the registry (route counts .length),
+    // amount alone is money — share must be count/count, S8 audit fix.
+    private var paidShare: CGFloat {
+        count > 0 ? CGFloat(paid) / CGFloat(count) : 0
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("মোট ইনভয়েস · INVOICED").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                .foregroundStyle(InvoicePalette.goldLt)
+            InvCountUp(target: amount, format: { InvoiceFormat.taka($0) })
+                .font(.system(size: 40, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(.white)
+                .lineLimit(1).minimumScaleFactor(0.5)
+                .padding(.top, 8)
+            Text("\(count)টি ইনভয়েস রেজিস্ট্রিতে")
+                .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.top, 5)
+
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "Paid", value: paid,
+                         tint: InvoicePalette.green400, sub: "পরিশোধিত")
+                Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+                    .padding(.vertical, 2).padding(.horizontal, 14)
+                heroStat(label: "Unpaid", value: unpaid,
+                         tint: unpaid > 0 ? InvoicePalette.amber500 : .white, sub: "বাকি")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+
+            InvMiniBar(fraction: paidShare, color: InvoicePalette.green400)
+                .padding(.top, 12)
+            Text("পেইড শেয়ার \(Int((paidShare * 100).rounded()))%")
+                .font(.system(size: 9)).foregroundStyle(.white.opacity(0.5)).padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [AlmaSwiftTheme.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Always the board's dark anchor — force dark traits inside the card.
+        .environment(\.colorScheme, .dark)
+    }
+
+    private func heroStat(label: String, value: Int, tint: Color, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.5)
+                .foregroundStyle(.white.opacity(0.55))
+            InvCountUp(target: value, format: { "\($0)টি" })
+                .font(.system(size: 20, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint)
+                .lineLimit(1).minimumScaleFactor(0.55)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+        }
+    }
 }
 
 // MARK: - Preview (stubbed — live data needs the app session)

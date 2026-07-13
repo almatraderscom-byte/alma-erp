@@ -6,8 +6,9 @@
  * Wraps agora-rtc-sdk-ng (dynamically imported so the ~heavy SDK never runs on
  * the server nor bloats first load) behind a tiny, self-contained hook. Both the
  * owner and staff use the SAME hook: one side `join(channel)`s to start a call,
- * the other `join(channel)`s the same channel to answer. Whoever hears the other
- * flips `remoteJoined` and the `callSeconds` timer begins.
+ * the other `join(channel)`s the same channel to answer. When the peer joins the
+ * channel, `remoteJoined` flips and the `callSeconds` timer begins (presence is
+ * channel membership, not publish state — so muting never reads as a hang-up).
  *
  * The token + appId come from POST /api/assistant/office/intercom/call-token, so
  * this hook needs no NEXT_PUBLIC_AGORA_APP_ID at runtime.
@@ -32,6 +33,7 @@ type AnyClient = {
 }
 type AnyLocalAudioTrack = {
   setEnabled: (enabled: boolean) => Promise<void>
+  setMuted: (muted: boolean) => Promise<void>
   stop: () => void
   close: () => void
 }
@@ -160,7 +162,20 @@ export function useAgoraCall(): UseAgoraCall {
         const client = AgoraRTC.createClient({ mode: 'rtc', codec: 'vp8' }) as unknown as AnyClient
         clientRef.current = client
 
-        // 3) Remote audio → subscribe + play.
+        // 3) Presence = channel membership (user-joined / user-left), NEVER the
+        // publish state: muting on either side (web setMuted / native
+        // muteLocalAudioStream) fires user-unpublished on the peer, and treating
+        // that as "left" used to hang up the whole call the moment anyone muted.
+        client.on('user-joined', () => {
+          if (mountedRef.current) {
+            setRemoteJoined(true)
+            setState('in-call')
+          }
+        })
+        client.on('user-left', () => {
+          safeSet(setRemoteJoined, false)
+        })
+        // Remote audio → subscribe + play (re-fires after an unmute too).
         client.on('user-published', async (...args: unknown[]) => {
           const user = args[0] as AnyRemoteUser
           const mediaType = args[1] as string
@@ -176,19 +191,18 @@ export function useAgoraCall(): UseAgoraCall {
             /* subscribe race — remote may have left; ignore */
           }
         })
-        client.on('user-unpublished', (...args: unknown[]) => {
-          const mediaType = args[1] as string
-          if (mediaType === 'audio') safeSet(setRemoteJoined, false)
-        })
-        client.on('user-left', () => {
-          safeSet(setRemoteJoined, false)
-        })
 
         // 4) Join the channel (uid 0 → Agora assigns one).
         await client.join(appId, ch, token, uid ?? null)
 
-        // 5) Publish our microphone.
-        const micTrack = (await AgoraRTC.createMicrophoneAudioTrack()) as unknown as AnyLocalAudioTrack
+        // 5) Publish our microphone — HD voice (48 kHz mono, high bitrate) with
+        // echo cancellation / noise suppression / auto gain all explicitly on.
+        const micTrack = (await AgoraRTC.createMicrophoneAudioTrack({
+          encoderConfig: 'high_quality',
+          AEC: true,
+          ANS: true,
+          AGC: true,
+        })) as unknown as AnyLocalAudioTrack
         localTrackRef.current = micTrack
         await client.publish(micTrack)
 
@@ -214,7 +228,9 @@ export function useAgoraCall(): UseAgoraCall {
     if (!track) return
     const next = !muted
     try {
-      await track.setEnabled(!next) // enabled = NOT muted
+      // setMuted keeps the track published (silent frames) — instant toggle, no
+      // mic re-acquisition, and the peer never sees a "left"-like transition.
+      await track.setMuted(next)
       safeSet(setMuted, next)
     } catch {
       /* toggling failed — leave state unchanged */

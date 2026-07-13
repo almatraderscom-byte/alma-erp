@@ -29,6 +29,11 @@ private enum AnalyticsPalette {
     static let emerald600 = Color(red: 0.020, green: 0.588, blue: 0.412)     // #059669
     static let green400 = Color(red: 0.290, green: 0.871, blue: 0.502)       // #4ADE80
 
+    /// Web buildReturnsByTypePie slice colours (order-analytics.ts).
+    static let pieDelivered = Color(red: 0.180, green: 0.800, blue: 0.443)      // #2ECC71
+    static let pieReturnPaid = Color(red: 0.961, green: 0.651, blue: 0.137)     // #F5A623
+    static let pieReturnRefused = Color(red: 0.906, green: 0.298, blue: 0.235)  // #E74C3C
+
     /// Web category PALETTE ['#E07A5F','#C45A3C','#F4A28C','#D4956A','#8B5E3C','#A0644A'].
     static let series: [Color] = [
         coral, goldDim, goldLt,
@@ -301,12 +306,53 @@ enum AnalyticsDatePreset: String, CaseIterable {
     }
 }
 
+// MARK: - Return math (faithful port of src/lib/order-analytics.ts builders —
+// buildReturnsByTypePie / buildReturnLossTrend — over the same /api/orders/orders rows
+// the native Orders tab already fetches)
+
+private enum AnalyticsReturnMath {
+    /// Web normalizeOrderStatusKey: trim · uppercase · whitespace→underscore,
+    /// legacy FAILED_DELIVERY folds into RETURNED_UNPAID.
+    static func statusKey(_ status: String) -> String {
+        let key = status.trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+            .replacingOccurrences(of: "\\s+", with: "_", options: .regularExpression)
+        return key == "FAILED_DELIVERY" ? "RETURNED_UNPAID" : key
+    }
+
+    /// Web isTerminalReturnOrderStatus (post-normalization key).
+    static func isTerminalReturn(_ key: String) -> Bool {
+        key == "RETURNED" || key == "RETURNED_PAID" || key == "RETURNED_UNPAID"
+    }
+
+    /// Web calculateOrderAccounting returnNetProfit fallback when the row carries no
+    /// return_net_profit: paid return → shippingFee − 2×courier; refused/legacy
+    /// return → −2×courier (inputs floored at 0, whole-taka ints throughout).
+    static func fallbackReturnNet(_ key: String, _ o: AlmaOrder) -> Int {
+        let shipping = max(o.shippingFee ?? 0, 0)
+        let courier = max(o.courierCharge ?? 0, 0)
+        return key == "RETURNED_PAID" ? shipping - 2 * courier : -2 * courier
+    }
+}
+
+/// One day of the web buildReturnLossTrend output ({date, return_loss, returns}).
+private struct AnalyticsReturnLossDay: Identifiable, Equatable {
+    let date: String     // yyyy-MM-dd
+    let loss: Int        // BDT courier loss that day
+    let returns: Int     // return orders that day
+    var id: String { date }
+}
+
 // MARK: - View model
 
 @available(iOS 17.0, *)
 @Observable
 final class AnalyticsVM {
     var data: AnalyticsResponse? = nil
+    /// Raw order rows for the selected range (same /api/orders/orders call the native
+    /// Orders tab makes) — feeds the two client-computed return charts, exactly like the
+    /// web's OrdersDataContext. nil = fetch unavailable/failed → those cards hide silently.
+    fileprivate var orders: [AlmaOrder]? = nil
     var preset: AnalyticsDatePreset = .last30    // web default (DateRangeContext 'last30')
     var loading = false
     var error: String? = nil
@@ -335,6 +381,29 @@ final class AnalyticsVM {
         } catch {
             if Self.isCancellation(error) { return }   // pull-to-refresh let go early
             self.error = error.localizedDescription
+        }
+        guard !authExpired else { return }
+        await loadOrders(range: range)
+    }
+
+    /// Second fetch: raw order rows for the range (the exact call the native Orders tab
+    /// makes — no status filter, whole window, limit 500). Best-effort by design: any
+    /// failure just nils the rows so the two return charts hide without touching the
+    /// rest of the screen (web parity — the page renders fine when orders are off).
+    private func loadOrders(range: (start: String, end: String)) async {
+        do {
+            let resp: OrdersListResponse = try await AlmaAPI.shared.get(
+                "/api/orders/orders",
+                query: [
+                    "business_id": Self.businessId,
+                    "startDate": range.start,
+                    "endDate": range.end,
+                    "limit": "500",
+                ])
+            withAnimation(.spring(duration: 0.4, bounce: 0.15)) { orders = resp.orders }
+        } catch {
+            if Self.isCancellation(error) { return }
+            orders = nil   // silent — cards hide, no error banner
         }
     }
 
@@ -374,6 +443,46 @@ final class AnalyticsVM {
                         : 0) }
             .sorted { $0.stat.revenue > $1.stat.revenue }
     }
+
+    /// Web buildReturnsByTypePie: delivered vs paid return vs refused return counts
+    /// (legacy RETURNED → refused), zero-count slices dropped, same slice colours.
+    fileprivate var returnsPie: [(name: String, value: Int, color: Color)] {
+        guard let orders else { return [] }
+        var delivered = 0, paid = 0, refused = 0
+        for o in orders {
+            let key = AnalyticsReturnMath.statusKey(o.status)
+            if key == "DELIVERED" { delivered += 1 }
+            else if key == "RETURNED_PAID" { paid += 1 }
+            else if key == "RETURNED_UNPAID" || key == "RETURNED" { refused += 1 }
+        }
+        return [
+            (name: "Delivered", value: delivered, color: AnalyticsPalette.pieDelivered),
+            (name: "Returned (paid)", value: paid, color: AnalyticsPalette.pieReturnPaid),
+            (name: "Returned (refused)", value: refused, color: AnalyticsPalette.pieReturnRefused),
+        ].filter { $0.value > 0 }
+    }
+
+    /// Web buildReturnLossTrend: per-day courier loss (negative return_net_profit,
+    /// abs'd) + return count over terminal-return orders, sorted by day.
+    fileprivate var returnLossTrend: [AnalyticsReturnLossDay] {
+        guard let orders else { return [] }
+        var daily: [String: (loss: Int, returns: Int)] = [:]
+        for o in orders {
+            let key = AnalyticsReturnMath.statusKey(o.status)
+            guard AnalyticsReturnMath.isTerminalReturn(key) else { continue }
+            guard let raw = o.date, !raw.isEmpty else { continue }
+            let d = String(raw.prefix(10))
+            let net = o.returnNetProfit ?? AnalyticsReturnMath.fallbackReturnNet(key, o)
+            let loss = net < 0 ? abs(net) : 0
+            var entry = daily[d] ?? (loss: 0, returns: 0)
+            entry.loss += loss
+            entry.returns += 1
+            daily[d] = entry
+        }
+        return daily
+            .sorted { $0.key < $1.key }
+            .map { AnalyticsReturnLossDay(date: $0.key, loss: $0.value.loss, returns: $0.value.returns) }
+    }
 }
 
 // MARK: - Screen
@@ -396,6 +505,8 @@ struct AnalyticsScreen: View {
                 } else {
                     kpiGrid
                     returnKpiStrip
+                    returnsByTypeCard
+                    returnLossTrendCard
                     trendCard
                     statusCard
                     channelCard
@@ -437,41 +548,53 @@ struct AnalyticsScreen: View {
         .padding(.top, 4)
     }
 
-    // ── KPI grid (web's 4 KpiCards + operational extras, 2-column on phone) ──
+    // ── KPI board (web's 4 KpiCards + operational extras) — bento language (owner
+    //    spec 2026-07-08): revenue = the dark hero anchor with net-profit/margin/orders
+    //    split, avg-order + delivery-rate = glass tiles. Same numbers, same nil "—"
+    //    fallbacks, same tint rules — presentation only. ──
 
     private var kpiGrid: some View {
         let k = vm.data?.kpis
         let netProfit = k?.netBusinessProfit ?? k?.totalProfit
-        return LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())],
-                         spacing: 10) {
-            kpiCard("Total Revenue", money(k?.totalRevenue), AnalyticsPalette.goldLt)
-            kpiCard("Net Profit (MTD)", money(netProfit),
-                    AnalyticsPalette.signed(netProfit ?? 0, colorScheme))
-            kpiCard("Gross Margin", percent(k?.grossMargin),
-                    AnalyticsPalette.accentText(colorScheme))
-            kpiCard("Avg Order Value", money(k?.avgOrderValue), .primary)
-            kpiCard("Total Orders", k.map { "\($0.totalOrders.formatted())" } ?? "—", .primary)
-            kpiCard("Delivery Rate", percent(k?.deliveryRate), .primary)
+        return VStack(spacing: 10) {
+            AnBentoHeroCard(revenue: k?.totalRevenue,
+                            netProfit: netProfit,
+                            marginPct: k.map { Int($0.grossMargin.rounded()) },
+                            orders: k?.totalOrders)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())],
+                      spacing: 10) {
+                AnBentoStatTile(label: "Avg Order Value", target: k?.avgOrderValue,
+                                format: { AlmaSwiftTheme.takaShort($0) },
+                                sub: "গড় অর্ডার", tint: .primary,
+                                accent: AlmaSwiftTheme.violet)
+                AnBentoStatTile(label: "Delivery Rate",
+                                target: k.map { Int($0.deliveryRate.rounded()) },
+                                format: { "\($0)%" },
+                                sub: "ডেলিভারি সফল", tint: .primary,
+                                accent: AlmaSwiftTheme.sage)
+            }
         }
     }
 
-    /// Web's second KPI row (Return Loss / Return Rate / Refused Returns).
+    /// Web's second KPI row (Return Loss / Return Rate / Refused Returns) — same
+    /// numbers/tints, now as accent tiles.
     @ViewBuilder private var returnKpiStrip: some View {
         if let k = vm.data?.kpis {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
-                    kpiCard("Return Loss", money(k.totalReturnsLoss ?? 0),
-                            (k.totalReturnsLoss ?? 0) > 0 ? AnalyticsPalette.red500 : .primary,
-                            fixedWidth: true)
-                    kpiCard("Return Rate", percent(k.returnRate), .primary,
-                            sub: "\(Int((k.returnRatePaid ?? 0).rounded()))% paid · \(Int((k.returnRateRefused ?? 0).rounded()))% refused",
-                            fixedWidth: true)
-                    kpiCard("Refused Returns", "\((k.returnedUnpaidCount ?? 0).formatted())",
-                            (k.returnedUnpaidCount ?? 0) > 0 ? AnalyticsPalette.red500 : .primary,
-                            fixedWidth: true)
-                }
-                .padding(.horizontal, 2)
-                .padding(.vertical, 1)
+            HStack(spacing: 10) {
+                AnBentoStatTile(label: "Return Loss", target: k.totalReturnsLoss ?? 0,
+                                format: { AlmaSwiftTheme.takaShort($0) },
+                                sub: "রিটার্নে ক্ষতি",
+                                tint: (k.totalReturnsLoss ?? 0) > 0 ? AnalyticsPalette.red500 : .primary,
+                                accent: AnalyticsPalette.red500)
+                AnBentoStatTile(label: "Return Rate", target: Int(k.returnRate.rounded()),
+                                format: { "\($0)%" },
+                                sub: "\(Int((k.returnRatePaid ?? 0).rounded()))% paid · \(Int((k.returnRateRefused ?? 0).rounded()))% refused",
+                                tint: .primary, accent: AnalyticsPalette.amber500)
+                AnBentoStatTile(label: "Refused", target: k.returnedUnpaidCount ?? 0,
+                                format: { "\($0)" },
+                                sub: "ফেরত + আনপেইড",
+                                tint: (k.returnedUnpaidCount ?? 0) > 0 ? AnalyticsPalette.red500 : .primary,
+                                accent: AnalyticsPalette.red500)
             }
         }
     }
@@ -481,29 +604,70 @@ struct AnalyticsScreen: View {
         return AlmaSwiftTheme.takaShort(amount)
     }
 
-    private func percent(_ value: Double?) -> String {
-        guard let value else { return "—" }
-        return "\(Int(value.rounded()))%"
+    // ── Returns by Type (web DonutChart card — client-computed from order rows) ──
+    // Both return cards hide silently when the orders fetch is unavailable (web parity:
+    // the page renders without them when OrdersDataContext is off).
+
+    @ViewBuilder private var returnsByTypeCard: some View {
+        if vm.orders != nil {
+            let slices = vm.returnsPie
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Returns by Type").font(.subheadline.weight(.bold))
+                Text("Delivered vs paid vs refused").font(.caption2).foregroundStyle(.secondary)
+                if slices.isEmpty {
+                    emptyBlock("◫", "No returns in period", "Pie chart appears when return orders exist")
+                } else {
+                    AnalyticsDonut(slices: slices.map { ($0.name, $0.value, $0.color) })
+                        .padding(.top, 12)
+                    // Web legend rows: swatch · name · count.
+                    VStack(spacing: 7) {
+                        ForEach(slices, id: \.name) { s in
+                            HStack(spacing: 6) {
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(s.color)
+                                    .frame(width: 8, height: 8)
+                                Text(s.name).font(.caption2).foregroundStyle(.secondary)
+                                Spacer()
+                                Text("\(s.value)")
+                                    .font(.caption2.weight(.bold).monospacedDigit())
+                            }
+                        }
+                    }
+                    .padding(.top, 12)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        }
     }
 
-    private func kpiCard(_ label: String, _ value: String, _ tint: Color,
-                         sub: String? = nil, fixedWidth: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(1).minimumScaleFactor(0.8)
-            Text(value)
-                .font(.headline.weight(.bold).monospacedDigit())
-                .foregroundStyle(tint)
-            if let sub {
-                Text(sub).font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(1)
+    // ── Return Loss Trend (web ReturnLossTrendChart — daily courier loss, red) ──
+
+    @ViewBuilder private var returnLossTrendCard: some View {
+        if vm.orders != nil {
+            let days = vm.returnLossTrend
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Return Loss Trend").font(.subheadline.weight(.bold))
+                Text("Daily courier loss from returns").font(.caption2).foregroundStyle(.secondary)
+                if days.isEmpty {
+                    emptyBlock("◈", "No return loss yet", "Trend builds as returns are recorded")
+                } else {
+                    AnalyticsLossBars(days: days)
+                        .padding(.top, 10)
+                    HStack(spacing: 14) {
+                        legendDot(AnalyticsPalette.red500, "Return loss")
+                        Spacer()
+                        Text("\(days.reduce(0) { $0 + $1.returns }) returns")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 8)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
         }
-        .frame(minWidth: fixedWidth ? 120 : nil,
-               maxWidth: fixedWidth ? nil : .infinity, alignment: .leading)
-        .padding(12)
-        .analyticsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Revenue vs Profit trend (native gradient bars; tap a month → detail sheet) ──
@@ -875,6 +1039,100 @@ private struct AnalyticsTrendBars: View {
     }
 }
 
+// MARK: - Returns donut (native re-set of the web DonutChart — the Dashboard
+// order-status donut recipe: trimmed stroke ring, clockwise sweep-in from 12 o'clock,
+// frozen under Reduce Motion / Low Power Mode)
+
+@available(iOS 17.0, *)
+private struct AnalyticsDonut: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let slices: [(String, Int, Color)]
+    var size: CGFloat = 132
+    var lineWidth: CGFloat = 18
+    @State private var sweep: CGFloat = 0
+    private var total: Int { max(slices.reduce(0) { $0 + $1.1 }, 1) }
+
+    var body: some View {
+        ZStack {
+            ForEach(Array(segments.enumerated()), id: \.offset) { _, seg in
+                Circle()
+                    .trim(from: seg.start * sweep, to: seg.end * sweep)
+                    .stroke(seg.color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
+                    .rotationEffect(.degrees(-90))
+            }
+            VStack(spacing: 0) {
+                Text("\(total)")
+                    .font(.system(size: 18, weight: .bold)).monospacedDigit()
+                Text("মোট").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .padding(lineWidth / 2)
+        .frame(width: size + lineWidth, height: size + lineWidth)
+        .frame(maxWidth: .infinity)
+        .animation(.spring(duration: 0.6, bounce: 0.1), value: slices.map { $0.1 })
+        .onAppear {
+            if anMotionOK(reduceMotion) {
+                withAnimation(.spring(duration: 0.8, bounce: 0)) { sweep = 1 }
+            } else {
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { sweep = 1 }
+            }
+        }
+    }
+
+    private var segments: [(start: CGFloat, end: CGFloat, color: Color)] {
+        var acc: CGFloat = 0
+        return slices.map { s in
+            let frac = CGFloat(s.1) / CGFloat(total)
+            let seg = (start: acc, end: acc + frac, color: s.2)
+            acc += frac
+            return seg
+        }
+    }
+}
+
+// MARK: - Return-loss bars (native re-set of the web ReturnLossTrendChart — the same
+// red daily series, as this file's gradient-bar chart language)
+
+@available(iOS 17.0, *)
+private struct AnalyticsLossBars: View {
+    let days: [AnalyticsReturnLossDay]
+
+    private var maxLoss: Int { max(days.map(\.loss).max() ?? 1, 1) }
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .bottom, spacing: 10) {
+                ForEach(days) { d in
+                    bar(d)
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+        .animation(.spring(duration: 0.45, bounce: 0.2), value: days)
+    }
+
+    private func bar(_ d: AnalyticsReturnLossDay) -> some View {
+        let h = max(CGFloat(d.loss) / CGFloat(maxLoss) * 96, 3)
+        return VStack(spacing: 4) {
+            Text(AlmaSwiftTheme.takaShort(d.loss))
+                .font(.system(size: 8, weight: .semibold).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .lineLimit(1).fixedSize()
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(LinearGradient(
+                    colors: [AnalyticsPalette.red500.opacity(0.55), AnalyticsPalette.red500],
+                    startPoint: .top, endPoint: .bottom))
+                .frame(width: 26, height: h)
+                .frame(height: 100, alignment: .bottom)
+            // Web x-axis tickFormatter: yyyy-MM-dd → "MM-dd".
+            Text(String(d.date.suffix(5)))
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
 // MARK: - Month detail sheet (tap a trend bar — view-only breakdown)
 
 @available(iOS 17.0, *)
@@ -968,34 +1226,76 @@ private enum AnalyticsFormat {
 @available(iOS 17.0, *)
 private struct AnalyticsAurora: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
 
     var body: some View {
-        ZStack {
-            if scheme == .dark {
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.075, green: 0.063, blue: 0.196), location: 0.0),  // deep indigo
-                    .init(color: Color(red: 0.216, green: 0.125, blue: 0.439), location: 0.32), // violet
-                    .init(color: Color(red: 0.478, green: 0.176, blue: 0.494), location: 0.62), // purple-magenta
-                    .init(color: Color(red: 0.706, green: 0.255, blue: 0.404), location: 1.0),  // pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.35), .clear],
-                               center: .init(x: 0.15, y: 0.18), startRadius: 10, endRadius: 420)
-                RadialGradient(colors: [Color(red: 0.93, green: 0.42, blue: 0.55).opacity(0.30), .clear],
-                               center: .init(x: 0.9, y: 0.85), startRadius: 20, endRadius: 480)
-            } else {
-                AlmaSwiftTheme.rootBg(.light)
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.902, green: 0.882, blue: 0.973), location: 0.0),  // pale violet
-                    .init(color: Color(red: 0.949, green: 0.941, blue: 0.972), location: 0.45), // cream
-                    .init(color: Color(red: 0.988, green: 0.918, blue: 0.925), location: 1.0),  // pale pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.14), .clear],
-                               center: .init(x: 0.12, y: 0.15), startRadius: 10, endRadius: 380)
-                RadialGradient(colors: [AlmaSwiftTheme.coral.opacity(0.12), .clear],
-                               center: .init(x: 0.9, y: 0.9), startRadius: 20, endRadius: 420)
+        let dark = scheme == .dark
+        // Agent-parity living aurora (web --aurora-blob-1…5): five blurred colour blobs
+        // drifting corner-to-corner over the page canvas. Owner directive 2026-07-08:
+        // every native page shares the Assistant tab's moving aurora.
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
             }
+            .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Battery guard: drift only when the owner allows motion — Reduce Motion and
+    /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
     }
 }
 
@@ -1031,6 +1331,192 @@ private struct AnalyticsShimmer: ViewModifier {
 @available(iOS 17.0, *)
 private extension View {
     func analyticsShimmer() -> some View { modifier(AnalyticsShimmer()) }
+}
+
+// MARK: - Bento components (Analytics-owned copies of the Dashboard board language —
+// per-file copies are this repo's parallel-session convention, no cross-file imports)
+
+/// Central motion gate — count-ups freeze under Reduce Motion / Low Power.
+@available(iOS 17.0, *)
+private func anMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number (0 → target on appear, old → new on refresh) — one Animatable
+/// interpolation, no timers; snaps straight to the value when motion is limited.
+@available(iOS 17.0, *)
+private struct AnCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    let format: (Int) -> String
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        AnCountUpText(value: shown, format: format)
+            .animation(anMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if anMotionOK(reduceMotion) {
+                    appeared = true
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AnCountUpText: View, Animatable {
+    var value: Double
+    var format: (Int) -> String
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text(format(Int(value.rounded())))
+    }
+}
+
+/// Shared tile backdrop: frosted glass + a soft diagonal accent wash.
+@available(iOS 17.0, *)
+private func anBentoWash(_ accent: Color, scheme: ColorScheme) -> some View {
+    ZStack {
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+        LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.14 : 0.10), .clear],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+}
+
+/// Small glass stat tile — count-up value + sub line over a soft accent wash.
+/// `target == nil` renders the old "—" placeholder.
+@available(iOS 17.0, *)
+private struct AnBentoStatTile: View {
+    @Environment(\.colorScheme) private var scheme
+    let label: String
+    let target: Int?
+    let format: (Int) -> String
+    let sub: String
+    let tint: Color
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
+            if let target {
+                AnCountUp(target: target, format: format)
+                    .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                    .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.55)
+            } else {
+                Text("—").font(.system(size: 17, weight: .heavy)).foregroundStyle(tint)
+            }
+            Text(sub).font(.system(size: 9)).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 13).padding(.vertical, 12)
+        .background { anBentoWash(accent, scheme: scheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+    }
+}
+
+/// The dark hero anchor — deliberately dark in BOTH schemes (Dashboard hero recipe:
+/// deep indigo base + violet/coral washes + a sage hint). Range revenue count-up plus
+/// the Net-profit / Margin / Orders split — same numbers, same "—" fallbacks, same
+/// signed tint on net profit.
+@available(iOS 17.0, *)
+private struct AnBentoHeroCard: View {
+    let revenue: Int?
+    let netProfit: Int?
+    let marginPct: Int?
+    let orders: Int?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("মোট আয় · TOTAL REVENUE").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                .foregroundStyle(AnalyticsPalette.goldLt)
+            Group {
+                if let revenue {
+                    AnCountUp(target: revenue, format: { AlmaSwiftTheme.takaShort($0) })
+                } else {
+                    Text("—")
+                }
+            }
+            .font(.system(size: 40, weight: .heavy)).monospacedDigit()
+            .foregroundStyle(.white)
+            .lineLimit(1).minimumScaleFactor(0.6)
+            .padding(.top, 8)
+            Text("এই রেঞ্জের বিক্রি")
+                .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.top, 5)
+
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "Net profit", target: netProfit,
+                         format: { AlmaSwiftTheme.takaShort($0) },
+                         tint: (netProfit ?? 0) < 0 ? AnalyticsPalette.red500
+                                                    : AnalyticsPalette.green400,
+                         sub: "MTD")
+                heroDivider
+                heroStat(label: "Margin", target: marginPct, format: { "\($0)%" },
+                         tint: .white, sub: "গ্রস মার্জিন")
+                heroDivider
+                heroStat(label: "Orders", target: orders, format: { "\($0)" },
+                         tint: .white, sub: "এই রেঞ্জে")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [AlmaSwiftTheme.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Always the board's dark anchor — force dark traits inside the card.
+        .environment(\.colorScheme, .dark)
+    }
+
+    private var heroDivider: some View {
+        Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+            .padding(.vertical, 2).padding(.horizontal, 12)
+    }
+
+    private func heroStat(label: String, target: Int?, format: @escaping (Int) -> String,
+                          tint: Color, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.5)
+                .foregroundStyle(.white.opacity(0.55))
+            Group {
+                if let target {
+                    AnCountUp(target: target, format: format)
+                } else {
+                    Text("—")
+                }
+            }
+            .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+            .foregroundStyle(tint)
+            .lineLimit(1).minimumScaleFactor(0.55)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+        }
+    }
 }
 
 // MARK: - Preview (stubbed — live data needs the app session)

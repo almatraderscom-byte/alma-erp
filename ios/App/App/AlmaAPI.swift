@@ -175,6 +175,18 @@ final class AlmaAPI: NSObject {
         try await send(method, path, body: Optional<AnyEncodable>.none)
     }
 
+    /// POST/PATCH with query params (some routes read searchParams on writes —
+    /// e.g. POST /api/settings/telegram-ops/health?business_id=…). Additive, S9.
+    func send<T: Decodable, B: Encodable>(_ method: String, _ path: String,
+                                          query: [String: String?], body: B?) async throws -> T {
+        var bodyData: Data?
+        if let body {
+            do { bodyData = try encoder.encode(body) } catch { throw AlmaAPIError.decoding(error) }
+        }
+        let data = try await perform(request: makeRequest(method: method, path: path, query: query, bodyData: bodyData))
+        return try decode(data)
+    }
+
     /// Raw bytes for debugging (`String(data:encoding:)` it to eyeball a payload).
     func getRaw(_ path: String) async throws -> Data {
         try await perform(request: makeRequest(method: "GET", path: path, query: [:], bodyData: nil))

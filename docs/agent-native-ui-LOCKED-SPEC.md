@@ -1,6 +1,6 @@
-# ALMA Native Agent Chat — LOCKED SPEC (Sir-approved 2026-07-07)
+# ALMA Native Agent Chat — LOCKED SPEC (Sir-approved 2026-07-07; loader revised 2026-07-12)
 
-> **Source of truth:** `docs/agent-claude-composition-FINAL-LOCKED.html` (open with `python3 -m http.server`).
+> **Source of truth:** composition remains `docs/agent-claude-composition-FINAL-LOCKED.html`; the revised loader source of truth is `src/agent/components/AlmaSpinner.tsx` + `ios/App/App/AlmaStarburstSpinner.swift`.
 > Sir: *"lock the demo very hard… ekta single kichu jeno bad na jay."*
 > Any future change to the native agent chat MUST match this file. Do not re-litigate.
 
@@ -14,14 +14,15 @@
 - **Rows PERSIST after settle** (tap → sheets). History (no blocks) = one collapsed summary row above prose.
 - Zero emoji anywhere in activity UI. Bangla digits everywhere.
 
-## 2. Starburst loader (organic burst #d97757)
-- **Two layers, never mixed:** OUTER rotation = time-based, buttery 60fps linear —
-  thinking **4s/rev**, writing **2.5s/rev**, tool/processing (dot-ring) **1.5s/rev**, idle **no rotation**.
-- INNER line-boil = **4 distinct vertex-jittered path variants @ ~11fps** (steps), zero-mean sin noise,
-  displacement ≤3% (boilAmp: thinking 2.0 · writing 2.4 · processing 0.6 · idle 1.1 units /100).
-- Breathe amp: thinking .20, writing .24, processing .06, idle 0.
-- Canvas box = 46/28 × visual size → breathe/boil never clips the shape.
-- Placement: ONLY bottom-left inside the running turn. Never on rows. Never page-center.
+## 2. Starburst loader (12 organic rays · ALMA aurora palette)
+- **Understanding:** every send begins with one smooth ~2.08s inward intake; later SSE states queue during it. Rotation phase and velocity carry into the next mode, so there is no angle/speed jump.
+- **Thinking:** the whole burst never globally scales. Adjacent groups of 2–3 rays retract toward the centre and reopen, then the next group continues. Rotation **2.1s/rev**, cluster cycle **270ms**.
+- **Writing:** same clustered-ray language, slightly different cadence: rotation **2.2s/rev**, cluster cycle **290ms**.
+- **Research + tool:** both use the Claude-style starburst ↔ 12-dot ring morph at **1.5s/rev**.
+- **Idle:** no rotation; only a quiet four-frame angular boil beside the ALMA wordmark.
+- Rays keep intentionally uneven lengths/widths and rounded caps. Four deterministic angular-boil frames run at ~10–11fps; there is no radial jitter and no global breathing pulse.
+- Colour is a stable blue → violet → magenta → pink → coral sweep taken from the existing ALMA aurora theme; glow stays subtle at native size.
+- Placement: bottom-left inside the running turn, with the existing small `ALMA` wordmark beside it. Never page-centre in production chat.
 
 ## 3. Text shimmer (streaming prose)
 - Base text opacity **0.35**; white highlight gradient sweeps left→right, loop **1.8s** linear
@@ -37,11 +38,12 @@
   → the working starburst takes over for the new turn.
 - Footer right side: token count `↑in ↓out · $cost`, one line, never wraps. Copy + TTS buttons.
 
-## 5. Haptics (Core Haptics, Claude-app smooth)
-- Turn start: medium tick (~0.72 intensity).
-- Rotation-synced: ONE soft tick per revolution (4s thinking / 2.5s writing / 1.5s tool) —
-  speed up ⇒ haptic naturally speeds up.
-- Mode change: light tick. Reply settle + wordmark reveal: soft "thud" (success-ish double).
+## 5. Haptics (shape-event synced, Claude-app smooth)
+- Mode/understanding start: restrained medium tick (~0.52 intensity).
+- Understanding: soft confirmation at the deepest inward intake (~940ms).
+- Thinking/writing: low-intensity micro-tick at each adjacent cluster's maximum retraction (halfway through the 270/290ms cluster cycle), not at an unrelated rotation boundary.
+- Research/tool: two accents per 1.5s morph—dot ring settled at 510ms, star fully reopened at 1.35s.
+- Reply settle + wordmark reveal: soft success-like double thud. Idle has no recurring haptic.
 
 ## 6. Fonts
 - Prose, ask-card question, thought text, copy-box body: **serif** (Claude feel) —

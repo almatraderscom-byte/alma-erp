@@ -231,6 +231,71 @@ final class SettingsSmsVM {
         if case AlmaAPIError.transport(let t) = error, (t as? URLError)?.code == .cancelled { return true }
         return (error as? URLError)?.code == .cancelled
     }
+
+    // ── Native writes (owner 2026-07-11) — web patchSetting/test/retry/report. ──
+
+    var toast: String? = nil
+    var pendingTypes: Set<String> = []     // draft enabled_types before "Save types"
+    var typesDirty = false
+
+    private struct PatchBody: Encodable {
+        let business_id: String
+        var enabled: Bool? = nil
+        var enabled_types: [String]? = nil
+    }
+    private struct IdBody: Encodable { let id: String }
+    private struct TestBody: Encodable { let business_id: String, phone: String }
+    private struct WriteResponse: Decodable { let ok: Bool?, error: String? }
+
+    func setEnabled(_ enabled: Bool) async -> Bool {
+        await write(success: enabled ? "SMS enabled for this business" : "SMS disabled") {
+            try await AlmaAPI.shared.send("PATCH", "/api/sms/logs",
+                body: PatchBody(business_id: businessId, enabled: enabled))
+        }
+    }
+    func saveTypes() async -> Bool {
+        let ok = await write(success: "SMS types saved") {
+            try await AlmaAPI.shared.send("PATCH", "/api/sms/logs",
+                body: PatchBody(business_id: businessId, enabled_types: Array(pendingTypes)))
+        }
+        if ok { typesDirty = false }
+        return ok
+    }
+    func sendTest(phone: String) async -> Bool {
+        await write(success: "Test SMS queued") {
+            try await AlmaAPI.shared.send("POST", "/api/sms/test",
+                body: TestBody(business_id: businessId, phone: phone))
+        }
+    }
+    func retry(_ id: String) async -> Bool {
+        await write(success: "Retry queued") {
+            try await AlmaAPI.shared.send("POST", "/api/sms/retry", body: IdBody(id: id))
+        }
+    }
+    func report(_ id: String) async -> Bool {
+        await write(success: "Report refreshed") {
+            try await AlmaAPI.shared.send("POST", "/api/sms/report", body: IdBody(id: id))
+        }
+    }
+    private func write(success: String, _ op: () async throws -> WriteResponse) async -> Bool {
+        do {
+            let res = try await op()
+            if let err = res.error {
+                toast = err
+                return false
+            }
+            toast = success
+            await load()
+            return true
+        } catch AlmaAPIError.notAuthenticated {
+            authExpired = true
+            return false
+        } catch {
+            if Self.isCancellation(error) { return false }
+            toast = "Network সমস্যা — আবার চেষ্টা করুন"
+            return false
+        }
+    }
 }
 
 // MARK: - Screen
@@ -239,6 +304,8 @@ final class SettingsSmsVM {
 struct SettingsSmsScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = SettingsSmsVM()
+    @State private var confirmingMaster = false
+    @State private var testPhone = ""
     let openWeb: (_ path: String, _ title: String) -> Void
 
     /// BUSINESS_LIST names, same order as the web select.
@@ -261,7 +328,7 @@ struct SettingsSmsScreen: View {
                 logsHeader
                 if vm.loading && vm.logs.isEmpty { loadingRows }
                 ForEach(vm.logs) { row in
-                    SettingsSmsLogCard(row: row)
+                    SettingsSmsLogCard(row: row, vm: vm)
                 }
                 if !vm.loading && vm.logs.isEmpty && vm.error == nil && !vm.authExpired {
                     emptyState
@@ -276,6 +343,21 @@ struct SettingsSmsScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task { await vm.load() }
+        .overlay(alignment: .bottom) {
+            if let t = vm.toast {
+                Text(t)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task {
+                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+                        withAnimation { vm.toast = nil }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: vm.toast != nil)
     }
 
     // ── Business chips (the web's business select) ──
@@ -337,10 +419,17 @@ struct SettingsSmsScreen: View {
         .settingsSmsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
-    /// Master switch state — read-only pill (toggling stays on the web).
+    /// Master switch — native toggle (owner 2026-07-11), web saveEnabled parity.
     private var masterSwitchPill: some View {
         let on = vm.setting?.enabled == true
-        return Text(on ? "SMS চালু" : "SMS বন্ধ")
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            confirmingMaster = true
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: on ? "power.circle.fill" : "power.circle")
+                Text(on ? "SMS চালু" : "SMS বন্ধ")
+            }
             .font(.caption2.weight(.bold))
             .foregroundStyle(on ? SettingsSmsPalette.emerald600 : SettingsSmsPalette.red500)
             .padding(.horizontal, 9).padding(.vertical, 4)
@@ -349,6 +438,17 @@ struct SettingsSmsScreen: View {
             .overlay(Capsule().strokeBorder(
                 (on ? SettingsSmsPalette.emerald600 : SettingsSmsPalette.red500).opacity(0.35),
                 lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .confirmationDialog(
+            on ? "এই business-এর SMS বন্ধ করবেন?" : "এই business-এর SMS চালু করবেন?",
+            isPresented: $confirmingMaster, titleVisibility: .visible
+        ) {
+            Button(on ? "হ্যাঁ, বন্ধ করুন" : "হ্যাঁ, চালু করুন") {
+                Task { _ = await vm.setEnabled(!on) }
+            }
+            Button("বাতিল", role: .cancel) {}
+        }
     }
 
     // ── KPI strip (web's 5 KpiCards: Total/Delivered/Failed/Queued/Success) ──
@@ -367,17 +467,26 @@ struct SettingsSmsScreen: View {
         }
     }
 
+    /// Light bento pass (owner spec 2026-07-08): tile skin with a soft accent wash
+    /// of the KPI's own tint — same values, presentation only.
     private func kpiCard(_ label: String, _ value: String, _ tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            Text(value).font(.headline.weight(.bold)).foregroundStyle(tint)
+            Text(label).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary)
+            Text(value).font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint)
         }
         .frame(minWidth: 84, alignment: .leading)
-        .padding(12)
+        .padding(.horizontal, 13).padding(.vertical, 12)
+        .background {
+            LinearGradient(colors: [tint.opacity(colorScheme == .dark ? 0.14 : 0.10), .clear],
+                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        }
         .settingsSmsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
-    // ── Templates (web "কোন SMS চালু থাকবে" card — read-only on iOS) ──
+    // ── Templates (web "কোন SMS চালু থাকবে" — native toggles, owner 2026-07-11) ──
 
     private var templatesCard: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -385,20 +494,66 @@ struct SettingsSmsScreen: View {
                 Text("কোন SMS চালু থাকবে")
                     .font(.subheadline.weight(.bold))
                 Spacer()
-                Text("Read-only")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                if vm.typesDirty {
+                    Button {
+                        Task { _ = await vm.saveTypes() }
+                    } label: {
+                        Text("Save types").font(.caption2.weight(.bold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.mini)
+                    .tint(SettingsSmsPalette.emerald600)
+                }
             }
             if vm.catalog.isEmpty {
                 Text(vm.loading ? "Loading…" : "—")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
                 ForEach(vm.catalog) { item in
-                    SettingsSmsTemplateRow(
-                        item: item,
-                        enabled: vm.setting?.enabledTypes.contains(item.type) == true)
+                    Toggle(isOn: Binding(
+                        get: {
+                            vm.typesDirty
+                                ? vm.pendingTypes.contains(item.type)
+                                : vm.setting?.enabledTypes.contains(item.type) == true
+                        },
+                        set: { on in
+                            if !vm.typesDirty {
+                                vm.pendingTypes = Set(vm.setting?.enabledTypes ?? [])
+                                vm.typesDirty = true
+                            }
+                            if on { vm.pendingTypes.insert(item.type) }
+                            else { vm.pendingTypes.remove(item.type) }
+                        })) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.labelBn ?? item.label ?? item.type)
+                                .font(.footnote.weight(.semibold))
+                            if let d = item.description, !d.isEmpty {
+                                Text(d).font(.caption2).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .tint(SettingsSmsPalette.emerald600)
+                    .font(.footnote)
                 }
             }
+            // Native test-SMS (web sendTestSms parity).
+            HStack(spacing: 8) {
+                TextField("Test phone (01XXXXXXXXX)", text: $testPhone)
+                    .keyboardType(.phonePad)
+                    .font(.caption)
+                    .padding(.horizontal, 10).padding(.vertical, 8)
+                    .background(Color.primary.opacity(0.06),
+                                in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                Button {
+                    let p = testPhone.trimmingCharacters(in: .whitespaces)
+                    guard !p.isEmpty else { vm.toast = "Test phone number দিন"; return }
+                    Task { _ = await vm.sendTest(phone: p) }
+                } label: {
+                    Text("Test SMS").font(.caption2.weight(.bold))
+                }
+                .buttonStyle(.bordered)
+            }
+            .padding(.top, 4)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
@@ -540,7 +695,9 @@ private struct SettingsSmsTemplateRow: View {
 @available(iOS 17.0, *)
 private struct SettingsSmsLogCard: View {
     let row: SettingsSmsLogRow
+    var vm: SettingsSmsVM? = nil
     @Environment(\.colorScheme) private var colorScheme
+    @State private var acting = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -570,10 +727,51 @@ private struct SettingsSmsLogCard: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
             }
+            actionsRow
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .settingsSmsGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+    }
+
+    /// Native per-row Retry (FAILED, errorCode≠CANCELLED) + Report (requestId) —
+    /// web page.tsx:334-337 parity (owner 2026-07-11).
+    @ViewBuilder private var actionsRow: some View {
+        if let vm {
+            let canRetry = row.status.uppercased() == "FAILED" && row.errorCode != "CANCELLED"
+            let canReport = !(row.requestId ?? "").isEmpty
+            if canRetry || canReport {
+                HStack(spacing: 8) {
+                    if canRetry {
+                        actionChip("Retry", SettingsSmsPalette.amber600) {
+                            Task { acting = true; _ = await vm.retry(row.id); acting = false }
+                        }
+                    }
+                    if canReport {
+                        actionChip("Report", SettingsSmsPalette.emerald600) {
+                            Task { acting = true; _ = await vm.report(row.id); acting = false }
+                        }
+                    }
+                    if acting { ProgressView().controlSize(.mini) }
+                }
+            }
+        }
+    }
+
+    private func actionChip(_ label: String, _ tint: Color,
+                            action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            Text(label).font(.system(size: 10, weight: .bold))
+                .foregroundStyle(tint)
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(tint.opacity(0.12), in: Capsule())
+                .overlay(Capsule().strokeBorder(tint.opacity(0.3), lineWidth: 0.8))
+        }
+        .buttonStyle(.plain)
+        .disabled(acting)
     }
 
     private var metaLine: String {
@@ -623,34 +821,76 @@ private enum SettingsSmsFormat {
 @available(iOS 17.0, *)
 private struct SettingsSmsAurora: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
 
     var body: some View {
-        ZStack {
-            if scheme == .dark {
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.075, green: 0.063, blue: 0.196), location: 0.0),  // deep indigo
-                    .init(color: Color(red: 0.216, green: 0.125, blue: 0.439), location: 0.32), // violet
-                    .init(color: Color(red: 0.478, green: 0.176, blue: 0.494), location: 0.62), // purple-magenta
-                    .init(color: Color(red: 0.706, green: 0.255, blue: 0.404), location: 1.0),  // pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.35), .clear],
-                               center: .init(x: 0.15, y: 0.18), startRadius: 10, endRadius: 420)
-                RadialGradient(colors: [Color(red: 0.93, green: 0.42, blue: 0.55).opacity(0.30), .clear],
-                               center: .init(x: 0.9, y: 0.85), startRadius: 20, endRadius: 480)
-            } else {
-                AlmaSwiftTheme.rootBg(.light)
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.902, green: 0.882, blue: 0.973), location: 0.0),  // pale violet
-                    .init(color: Color(red: 0.949, green: 0.941, blue: 0.972), location: 0.45), // cream
-                    .init(color: Color(red: 0.988, green: 0.918, blue: 0.925), location: 1.0),  // pale pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.14), .clear],
-                               center: .init(x: 0.12, y: 0.15), startRadius: 10, endRadius: 380)
-                RadialGradient(colors: [AlmaSwiftTheme.coral.opacity(0.12), .clear],
-                               center: .init(x: 0.9, y: 0.9), startRadius: 20, endRadius: 420)
+        let dark = scheme == .dark
+        // Agent-parity living aurora (web --aurora-blob-1…5): five blurred colour blobs
+        // drifting corner-to-corner over the page canvas. Owner directive 2026-07-08:
+        // every native page shares the Assistant tab's moving aurora.
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
             }
+            .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Battery guard: drift only when the owner allows motion — Reduce Motion and
+    /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
     }
 }
 

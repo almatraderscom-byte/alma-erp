@@ -97,12 +97,18 @@ struct PayrollWalletTotalsModel: Decodable, Equatable {
     let availableWithdrawable: Int
     let thisMonthSalaryAdded: Int
     let entryCount: Int
+    /// Salary credited for the current cycle (prior calendar month's periodYm).
+    let currentCycleSalaryAdded: Int
+    let cyclePeriodYm: String?
+    /// periodYms with no salary accrual (owner rule: show WHO is due, WHICH month).
+    let salaryDueMonths: [String]
 
     private enum Keys: String, CodingKey {
         case lifetimeEarned, lifetimeWithdrawn, totalAccrued, totalBonuses, totalCommissions
         case totalOvertime, totalReimbursements, totalMealDeductions, totalPenalties
         case outstandingAdvance, currentBalance, companyLiability, availableWithdrawable
-        case thisMonthSalaryAdded, entryCount
+        case thisMonthSalaryAdded, entryCount, salaryDueMonths
+        case currentCycleSalaryAdded, cyclePeriodYm
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -121,6 +127,9 @@ struct PayrollWalletTotalsModel: Decodable, Equatable {
         availableWithdrawable = payrollFlexInt(c, .availableWithdrawable) ?? 0
         thisMonthSalaryAdded = payrollFlexInt(c, .thisMonthSalaryAdded) ?? 0
         entryCount = payrollFlexInt(c, .entryCount) ?? 0
+        salaryDueMonths = (try? c.decodeIfPresent([String].self, forKey: .salaryDueMonths)) ?? []
+        currentCycleSalaryAdded = payrollFlexInt(c, .currentCycleSalaryAdded) ?? 0
+        cyclePeriodYm = try? c.decodeIfPresent(String.self, forKey: .cyclePeriodYm)
     }
 }
 
@@ -695,7 +704,7 @@ final class PayrollVM {
     /// PATCH /api/payroll/wallet/requests/{id}
     /// { action, approvedAmount (APPROVE only), note: '', transactionId }.
     func reviewRequest(_ request: PayrollPendingRequest, action: String,
-                       approvedAmount: Int?, transactionId: String) async {
+                       approvedAmount: Int?, transactionId: String, paidVia: String? = nil) async {
         guard !busyRequestIds.contains(request.id) else { return }
         busyRequestIds.insert(request.id)
         notice = nil
@@ -709,6 +718,9 @@ final class PayrollVM {
             ]
             if action == "APPROVE", let amount = approvedAmount {
                 body["approvedAmount"] = AnyEncodable(amount)
+            }
+            if let paidVia, !paidVia.isEmpty {
+                body["paid_via"] = AnyEncodable(paidVia)
             }
             let _: PayrollOkResponse = try await AlmaAPI.shared.send(
                 "PATCH", "/api/payroll/wallet/requests/\(request.id)", body: body)
@@ -934,6 +946,7 @@ struct PayrollScreen: View {
     @State private var rejectTarget: PayrollPendingRequest? = nil
     @State private var automationTarget: Bool? = nil
     @State private var showAccrualConfirm = false
+    @State private var exportShare: PayrollExportFile? = nil
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -996,33 +1009,33 @@ struct PayrollScreen: View {
         .padding(.top, 4)
     }
 
-    // ── KPI strip (web's 6 KpiCards, exact labels + value colours) ──
+    // ── KPI strip (same 6 web KpiCard totals, recomposed as the bento board:
+    //    dark hero anchor + 2-col glass stat tiles — values/labels/tints unchanged) ──
 
     private var kpiStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                kpiCard("MONTHLY SALARY BUDGET", vm.monthlySalaryBudget, .primary)
-                kpiCard("COMPANY LIABILITY", vm.totals?.companyLiability ?? 0, PayrollPalette.pos(colorScheme))
-                kpiCard("COMMISSION TOTALS", vm.totals?.totalCommissions ?? 0, PayrollPalette.pos(colorScheme))
-                kpiCard("BONUS TOTALS", vm.totals?.totalBonuses ?? 0, PayrollPalette.accentText(colorScheme))
-                kpiCard("MEAL DEDUCTIONS", vm.totals?.totalMealDeductions ?? 0, PayrollPalette.red400)
-                kpiCard("UNPAID BALANCE", vm.totals?.currentBalance ?? 0, .primary)
+        VStack(spacing: 10) {
+            // The board's one DARK anchor widget — dark in BOTH schemes. Shows the
+            // three headline totals the VM already loads; count-up is display only.
+            PayrollHeroCard(budget: vm.monthlySalaryBudget,
+                            liability: vm.totals?.companyLiability ?? 0,
+                            unpaid: vm.totals?.currentBalance ?? 0)
+            // Remaining KPI totals as frosted bento stat tiles.
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                      spacing: 10) {
+                PayrollStatTile(label: "COMMISSION TOTALS",
+                                target: vm.totals?.totalCommissions ?? 0,
+                                tint: PayrollPalette.pos(colorScheme),
+                                accent: AlmaSwiftTheme.sage)
+                PayrollStatTile(label: "BONUS TOTALS",
+                                target: vm.totals?.totalBonuses ?? 0,
+                                tint: PayrollPalette.accentText(colorScheme),
+                                accent: PayrollPalette.coral)
+                PayrollStatTile(label: "MEAL DEDUCTIONS",
+                                target: vm.totals?.totalMealDeductions ?? 0,
+                                tint: PayrollPalette.red400,
+                                accent: PayrollPalette.red500)
             }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 1)
         }
-    }
-
-    private func kpiCard(_ label: String, _ value: Int, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            Text(AlmaSwiftTheme.takaShort(value))
-                .font(.headline.weight(.bold).monospacedDigit())
-                .foregroundStyle(tint)
-        }
-        .frame(minWidth: 96, alignment: .leading)
-        .padding(12)
-        .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Pending wallet requests (native approve/reject — web submitReview parity) ──
@@ -1050,8 +1063,8 @@ struct PayrollScreen: View {
             .padding(14)
             .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
             .sheet(item: $approveTarget) { req in
-                PayrollReviewSheet(request: req, employeeName: vm.employeeName(req.employeeId)) { amount, txn in
-                    Task { await vm.reviewRequest(req, action: "APPROVE", approvedAmount: amount, transactionId: txn) }
+                PayrollReviewSheet(request: req, employeeName: vm.employeeName(req.employeeId)) { amount, txn, paidVia in
+                    Task { await vm.reviewRequest(req, action: "APPROVE", approvedAmount: amount, transactionId: txn, paidVia: paidVia) }
                 }
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
@@ -1264,6 +1277,13 @@ struct PayrollScreen: View {
                             rollStat("Advance", max(0, row.advanceBalance), PayrollPalette.amber600)
                             rollStat("Due", max(0, row.currentDue), PayrollPalette.accentText(colorScheme))
                         }
+                        // Paid-of-salary mini bar — pure visual of the two numbers already
+                        // shown above (amber while due remains, green when cleared).
+                        if row.monthlySalary > 0 {
+                            PayrollMiniBar(fraction: CGFloat(row.salaryPaid) / CGFloat(row.monthlySalary),
+                                           color: row.currentDue > 0 ? PayrollPalette.amber500
+                                                                     : PayrollPalette.emerald600)
+                        }
                     }
                     .padding(.vertical, 4)
                     if row.id != vm.roll.last?.id { Divider().overlay(AlmaSwiftTheme.separator(colorScheme)) }
@@ -1419,23 +1439,145 @@ struct PayrollScreen: View {
         }
     }
 
-    /// Small secondary link — actions are native now; only the PDF/CSV/Excel
-    /// exports remain browser-side downloads.
+    /// Native exports (owner 2026-07-11): payroll-wallet PDF + CSV built on-device
+    /// ON TAP and shared via the iOS sheet; Excel stays web (CSV opens in Excel).
     private var webEscape: some View {
-        VStack(spacing: 2) {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                exportButton("PDF", icon: "doc.richtext") { payrollPdfFile() }
+                exportButton("CSV", icon: "tablecells") { payrollCsvFile() }
+            }
             Button {
                 openWeb("/payroll", "Payroll")
             } label: {
-                Label("ওয়েব ভার্সন", systemImage: "safari").font(.caption)
+                Label("ওয়েব ভার্সন (Excel export)", systemImage: "safari").font(.caption)
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            Text("এক্সপোর্ট (PDF · CSV · Excel) ওয়েবে পাওয়া যাবে")
-                .font(.caption2).foregroundStyle(.secondary.opacity(0.7))
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
+        .sheet(item: $exportShare) { wrap in
+            PayrollShareSheet(url: wrap.url)
+                .presentationDetents([.medium])
+        }
     }
+
+    private func exportButton(_ label: String, icon: String,
+                              make: @escaping () -> URL?) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            if let url = make() { exportShare = PayrollExportFile(url: url) }
+        } label: {
+            Label(label, systemImage: icon)
+                .font(.caption.weight(.bold))
+                .frame(maxWidth: .infinity).padding(.vertical, 9)
+        }
+        .buttonStyle(.bordered)
+        .disabled(vm.wallets.isEmpty)
+    }
+
+    /// payrollWalletsToCsv() column parity (email is not in the native payload → blank).
+    private func payrollCsvFile() -> URL? {
+        func esc(_ s: String) -> String {
+            s.contains(where: { ",\"\n".contains($0) }) ? "\"\(s.replacingOccurrences(of: "\"", with: "\"\""))\"" : s
+        }
+        let header = ["Business", "Employee ID", "Name", "Email", "Monthly Salary",
+                      "Salary Earned", "Commission", "Bonuses", "Overtime", "Reimbursements",
+                      "Meal Deductions", "Penalties", "Lifetime Earned", "Lifetime Withdrawn",
+                      "Current Balance", "Company Liability"]
+        // Built with explicit appends — the one-shot 16-element literal made the
+        // Release type-checker time out ("unable to type-check in reasonable time").
+        var lines: [String] = []
+        for w in vm.wallets {
+            let s = w.summary
+            var cols: [String] = [w.businessId, w.employeeId, w.name, ""]
+            cols.append(String(w.monthlySalary ?? 0))
+            cols.append(String(s?.totalAccrued ?? 0))
+            cols.append(String(s?.totalCommissions ?? 0))
+            cols.append(String(s?.totalBonuses ?? 0))
+            cols.append(String(s?.totalOvertime ?? 0))
+            cols.append(String(s?.totalReimbursements ?? 0))
+            cols.append(String(s?.totalMealDeductions ?? 0))
+            cols.append(String(s?.totalPenalties ?? 0))
+            cols.append(String(s?.lifetimeEarned ?? 0))
+            cols.append(String(s?.lifetimeWithdrawn ?? 0))
+            cols.append(String(s?.currentBalance ?? 0))
+            cols.append(String(s?.companyLiability ?? 0))
+            lines.append(cols.map(esc).joined(separator: ","))
+        }
+        let csv = "\u{FEFF}" + header.joined(separator: ",") + "\n" + lines.joined(separator: "\n")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("payroll-wallet-\(vm.businessId).csv")
+        try? csv.data(using: .utf8)?.write(to: url)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Native wallet-ledger PDF — same data story as the web PDF (per-employee rows
+    /// with earned/withdrawn/balance/liability, business total footer).
+    private func payrollPdfFile() -> URL? {
+        let rows = vm.wallets
+        let pageRect = CGRect(x: 0, y: 0, width: 595, height: 842)   // A4 @72dpi
+        let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
+        let margin: CGFloat = 36
+        let colX: [CGFloat] = [36, 170, 260, 340, 420, 500]   // name/salary/earned/withdrawn/balance/liability
+        let data = renderer.pdfData { ctx in
+            var y: CGFloat = 0
+            func newPage() {
+                ctx.beginPage()
+                y = margin
+                "Payroll wallet ledger".draw(at: CGPoint(x: margin, y: y),
+                    withAttributes: [.font: UIFont.boldSystemFont(ofSize: 16)])
+                y += 22
+                vm.businessId.draw(at: CGPoint(x: margin, y: y),
+                    withAttributes: [.font: UIFont.systemFont(ofSize: 9), .foregroundColor: UIColor.darkGray])
+                y += 20
+                let headers = ["Employee", "Salary", "Earned", "Withdrawn", "Balance", "Liability"]
+                for (i, h) in headers.enumerated() {
+                    h.draw(at: CGPoint(x: colX[i], y: y),
+                           withAttributes: [.font: UIFont.boldSystemFont(ofSize: 8)])
+                }
+                y += 14
+            }
+            newPage()
+            let cell: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 8)]
+            for w in rows {
+                if y > pageRect.height - margin - 30 { newPage() }
+                String(w.name.prefix(26)).draw(at: CGPoint(x: colX[0], y: y), withAttributes: cell)
+                "৳\((w.monthlySalary ?? 0).formatted())".draw(at: CGPoint(x: colX[1], y: y), withAttributes: cell)
+                "৳\((w.summary?.lifetimeEarned ?? 0).formatted())".draw(at: CGPoint(x: colX[2], y: y), withAttributes: cell)
+                "৳\((w.summary?.lifetimeWithdrawn ?? 0).formatted())".draw(at: CGPoint(x: colX[3], y: y), withAttributes: cell)
+                "৳\((w.summary?.currentBalance ?? 0).formatted())".draw(at: CGPoint(x: colX[4], y: y), withAttributes: cell)
+                "৳\((w.summary?.companyLiability ?? 0).formatted())".draw(at: CGPoint(x: colX[5], y: y), withAttributes: cell)
+                y += 12
+            }
+            y += 8
+            let liability = rows.reduce(0) { $0 + ($1.summary?.companyLiability ?? 0) }
+            "Total company liability: ৳\(liability.formatted())".draw(
+                at: CGPoint(x: colX[3], y: y),
+                withAttributes: [.font: UIFont.boldSystemFont(ofSize: 10)])
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("payroll-wallet-\(vm.businessId).pdf")
+        try? data.write(to: url)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+}
+
+/// Identifiable wrapper so a freshly generated export can drive a .sheet(item:).
+private struct PayrollExportFile: Identifiable {
+    let url: URL
+    var id: String { url.absoluteString }
+}
+
+/// UIActivityViewController bridge — share the generated ledger file.
+@available(iOS 17.0, *)
+private struct PayrollShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
 }
 
 // MARK: - Pending request card (web request row + native Approve/Reject buttons)
@@ -1517,15 +1659,20 @@ private struct PayrollPendingRequestCard: View {
 private struct PayrollReviewSheet: View {
     let request: PayrollPendingRequest
     let employeeName: String
-    let onConfirm: (_ approvedAmount: Int, _ transactionId: String) -> Void
+    let onConfirm: (_ approvedAmount: Int, _ transactionId: String, _ paidVia: String) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @State private var amountText: String
     @State private var txn = ""
+    @State private var paidVia = ""
     @FocusState private var focused: Bool
 
+    private static let paidViaOptions: [(String, String)] = [
+        ("CASH", "ক্যাশ"), ("BKASH", "বিকাশ"), ("NAGAD", "নগদ"), ("BANK", "ব্যাংক"),
+    ]
+
     init(request: PayrollPendingRequest, employeeName: String,
-         onConfirm: @escaping (_ approvedAmount: Int, _ transactionId: String) -> Void) {
+         onConfirm: @escaping (_ approvedAmount: Int, _ transactionId: String, _ paidVia: String) -> Void) {
         self.request = request
         self.employeeName = employeeName
         self.onConfirm = onConfirm
@@ -1533,10 +1680,12 @@ private struct PayrollReviewSheet: View {
     }
 
     private var amount: Int? { Int(amountText.trimmingCharacters(in: .whitespaces)) }
-    private var needsTxn: Bool { request.type == "WITHDRAWAL" }
+    // Cash handovers have no transaction reference; every other channel keeps one.
+    private var needsTxn: Bool { request.type == "WITHDRAWAL" && paidVia != "CASH" }
     private var txnTrimmed: String { txn.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var valid: Bool {
         guard let a = amount, a > 0, a <= request.requestedAmount else { return false }
+        guard !paidVia.isEmpty else { return false }
         return !needsTxn || !txnTrimmed.isEmpty
     }
 
@@ -1558,6 +1707,27 @@ private struct PayrollReviewSheet: View {
                     Text("চাওয়া পরিমাণের (৳ \(request.requestedAmount.formatted())) বেশি অনুমোদন করা যাবে না")
                         .font(.caption2).foregroundStyle(PayrollPalette.amber600)
                 }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("কীভাবে টাকা দিলেন").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        ForEach(Self.paidViaOptions, id: \.0) { value, label in
+                            Button {
+                                paidVia = value
+                            } label: {
+                                Text(label)
+                                    .font(.caption.weight(.bold))
+                                    .padding(.horizontal, 13).padding(.vertical, 7)
+                                    .background(paidVia == value ? PayrollPalette.coral : Color.clear, in: Capsule())
+                                    .foregroundStyle(paidVia == value ? .white : .secondary)
+                                    .overlay(Capsule().strokeBorder(paidVia == value ? PayrollPalette.coral : Color.secondary.opacity(0.35), lineWidth: 1))
+                            }
+                        }
+                    }
+                    if paidVia.isEmpty {
+                        Text("ক্যাশ/বিকাশ/নগদ/ব্যাংক — একটা বাছাই আবশ্যক; লেনদেনের খাতায় লেখা থাকবে।")
+                            .font(.caption2).foregroundStyle(PayrollPalette.amber600)
+                    }
+                }
                 if needsTxn {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("TRANSACTION ID").font(.caption2.weight(.heavy)).foregroundStyle(.secondary)
@@ -1574,7 +1744,7 @@ private struct PayrollReviewSheet: View {
                 Button {
                     guard let a = amount else { return }
                     dismiss()
-                    onConfirm(a, txnTrimmed)
+                    onConfirm(a, txnTrimmed, paidVia)
                 } label: {
                     Text("অনুমোদন করুন — ৳ \((amount ?? 0).formatted())")
                         .font(.subheadline.weight(.semibold))
@@ -1950,6 +2120,14 @@ private struct PayrollWalletCard: View {
                     .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
             }
             if let s = wallet.summary {
+                // Owner rule 2026-07-11: super admin must see WHO is unpaid and WHICH month.
+                if !s.salaryDueMonths.isEmpty, (wallet.monthlySalary ?? 0) > 0 {
+                    Text("বেতন বাকি — " + s.salaryDueMonths.map { PayrollFormat.periodBn($0) }.joined(separator: ", "))
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(PayrollPalette.amber600)
+                        .padding(.horizontal, 9).padding(.vertical, 3)
+                        .background(PayrollPalette.amber600.opacity(0.14), in: Capsule())
+                }
                 HStack(spacing: 0) {
                     walletStat("Earned", s.lifetimeEarned, .primary)
                     walletStat("Held", s.companyLiability, PayrollPalette.pos(colorScheme))
@@ -1959,9 +2137,16 @@ private struct PayrollWalletCard: View {
             }
         }
         .padding(12)
-        .payrollGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        .background { payrollBentoWash(accentTint, scheme: colorScheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.45), lineWidth: 1))
         .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         .onTapGesture(perform: onTap)
+    }
+
+    /// Soft severity wash — outstanding advance reads amber, otherwise brand violet.
+    private var accentTint: Color {
+        (wallet.summary?.outstandingAdvance ?? 0) > 0 ? PayrollPalette.amber500 : AlmaSwiftTheme.violet
     }
 
     private func walletStat(_ label: String, _ value: Int, _ tint: Color) -> some View {
@@ -1983,11 +2168,22 @@ private struct PayrollEmployeeDetailSheet: View {
     let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @State private var statementOpen = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 header
+                if let s = wallet.summary, !s.salaryDueMonths.isEmpty, (wallet.monthlySalary ?? 0) > 0 {
+                    Text("বেতন বাকি — " + s.salaryDueMonths.map { PayrollFormat.periodBn($0) }.joined(separator: ", ")
+                         + " · ৳ \((s.salaryDueMonths.count * (wallet.monthlySalary ?? 0)).formatted())")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(PayrollPalette.amber600)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(PayrollPalette.amber600.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                }
+                statementButton
                 summaryCard
                 entriesCard
                 webLink
@@ -1995,6 +2191,27 @@ private struct PayrollEmployeeDetailSheet: View {
             .padding(18)
         }
         .presentationBackground { PayrollAurora() }
+        .fullScreenCover(isPresented: $statementOpen) {
+            WalletStatementScreen(employeeId: wallet.employeeId, businessId: wallet.businessId, allowAppeal: false)
+        }
+    }
+
+    /// Boss opens the employee's FULL transparency statement (fines + appeal
+    /// history + period totals) — owner spec 2026-07-11.
+    private var statementButton: some View {
+        Button {
+            statementOpen = true
+        } label: {
+            HStack {
+                Text("সম্পূর্ণ হিসাব — জরিমানা ও আপিলসহ")
+                    .font(.caption.weight(.bold))
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption2.weight(.bold))
+            }
+            .foregroundStyle(PayrollPalette.coral)
+            .padding(13)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 13))
+        }
     }
 
     private var header: some View {
@@ -2036,7 +2253,11 @@ private struct PayrollEmployeeDetailSheet: View {
                 Divider().overlay(AlmaSwiftTheme.separator(colorScheme))
                 moneyRow("Held balance (liability)", s.companyLiability, PayrollPalette.pos(colorScheme), bold: true)
                 moneyRow("Withdrawable now", s.availableWithdrawable, PayrollPalette.pos(colorScheme))
-                moneyRow("This month salary added", s.thisMonthSalaryAdded, .primary)
+                moneyRow(
+                    "এই চক্রের বেতন" + (s.cyclePeriodYm.map { " (\(PayrollFormat.periodBn($0)))" } ?? ""),
+                    s.currentCycleSalaryAdded,
+                    s.currentCycleSalaryAdded > 0 ? PayrollPalette.pos(colorScheme) : .primary
+                )
                 Text("\(s.entryCount) ledger \(s.entryCount == 1 ? "entry" : "entries")")
                     .font(.caption2).foregroundStyle(.secondary)
             }
@@ -2122,6 +2343,210 @@ private enum PayrollFormat {
         let letters = parts.compactMap { $0.first.map(String.init) }
         return letters.isEmpty ? "?" : letters.joined().uppercased()
     }
+
+    private static let bnDigits: [Character: Character] = [
+        "0": "০", "1": "১", "2": "২", "3": "৩", "4": "৪",
+        "5": "৫", "6": "৬", "7": "৭", "8": "৮", "9": "৯",
+    ]
+    private static let bnMonths = ["জানুয়ারি", "ফেব্রুয়ারি", "মার্চ", "এপ্রিল", "মে", "জুন",
+                                   "জুলাই", "আগস্ট", "সেপ্টেম্বর", "অক্টোবর", "নভেম্বর", "ডিসেম্বর"]
+
+    /// "2026-06" → "জুন ২০২৬"
+    static func periodBn(_ ym: String) -> String {
+        let parts = ym.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 2, (1...12).contains(parts[1]) else { return ym }
+        let year = String(String(parts[0]).map { bnDigits[$0] ?? $0 })
+        return "\(bnMonths[parts[1] - 1]) \(year)"
+    }
+}
+
+// MARK: - Bento presentation (Payroll-owned copies of the Dashboard bento language —
+// per-file copies by repo convention, no cross-file imports. Hero shimmer deliberately
+// OMITTED (it needs blur + repeatForever); the hero here is a static gradient.)
+
+/// Central motion gate for the bento animations — count-ups and bar sweeps freeze to
+/// their final state under Reduce Motion or Low Power Mode (dashMotionOK pattern).
+@available(iOS 17.0, *)
+private func payrollMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number: animates 0 → target on first appear via a single Animatable
+/// interpolation — no timers. Snaps straight to the final value when motion is gated.
+/// PRESENTATION ONLY: `format` must be one of the file's existing money/number
+/// formatters — never re-derives or reformats amounts.
+@available(iOS 17.0, *)
+private struct PayrollCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    let format: (Int) -> String
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        PayrollCountUpText(value: shown, format: format)
+            .animation(payrollMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if payrollMotionOK(reduceMotion) {
+                    appeared = true          // the implicit spring above interpolates the digits
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+/// Animatable text body for PayrollCountUp — SwiftUI interpolates `value` frame-to-frame.
+@available(iOS 17.0, *)
+private struct PayrollCountUpText: View, Animatable {
+    var value: Double
+    var format: (Int) -> String
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text(format(Int(value.rounded())))
+    }
+}
+
+/// Soft gradient mini progress bar — sweeps to its fraction on appear, frozen when
+/// motion is gated. Used only where a row already displays both numbers of a fraction.
+@available(iOS 17.0, *)
+private struct PayrollMiniBar: View {
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let fraction: CGFloat
+    let color: Color
+    var height: CGFloat = 6
+    @State private var grow = false
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(scheme == .dark ? 0.10 : 0.06))
+                Capsule()
+                    .fill(LinearGradient(colors: [color.opacity(0.55), color],
+                                         startPoint: .leading, endPoint: .trailing))
+                    .frame(width: max(geo.size.width * min(max(fraction, 0), 1), height) * (grow ? 1 : 0.001))
+            }
+        }
+        .frame(height: height)
+        .onAppear {
+            if payrollMotionOK(reduceMotion) {
+                withAnimation(.spring(duration: 0.6, bounce: 0.18)) { grow = true }
+            } else {
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { grow = true }
+            }
+        }
+    }
+}
+
+/// Shared bento tile backdrop: frosted glass + a soft diagonal accent wash.
+@available(iOS 17.0, *)
+private func payrollBentoWash(_ accent: Color, scheme: ColorScheme) -> some View {
+    ZStack {
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+        LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.14 : 0.10), .clear],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+}
+
+/// Small glass stat tile — count-up value over a soft accent wash (BentoStatTile style).
+@available(iOS 17.0, *)
+private struct PayrollStatTile: View {
+    @Environment(\.colorScheme) private var scheme
+    let label: String
+    let target: Int
+    var format: (Int) -> String = AlmaSwiftTheme.takaShort   // the strip's existing formatter
+    let tint: Color
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
+            PayrollCountUp(target: target, format: format)
+                .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.55)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 13).padding(.vertical, 12)
+        .background { payrollBentoWash(accent, scheme: scheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+    }
+}
+
+/// The dark hero KPI card — deliberately dark in BOTH schemes (the board's anchor tile):
+/// salary-budget count-up plus the liability / unpaid secondary numbers the old KPI strip
+/// showed, same takaShort formatting. Static gradient only — no shimmer sweep.
+@available(iOS 17.0, *)
+private struct PayrollHeroCard: View {
+    let budget: Int
+    let liability: Int
+    let unpaid: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("বেতন বাজেট · MONTHLY SALARY BUDGET")
+                .font(.system(size: 10, weight: .bold)).tracking(0.8)
+                .foregroundStyle(PayrollPalette.goldLt)
+            PayrollCountUp(target: budget, format: AlmaSwiftTheme.takaShort)
+                .font(.system(size: 38, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(.white)
+                .lineLimit(1).minimumScaleFactor(0.6)
+                .padding(.top, 8)
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "COMPANY LIABILITY", target: liability,
+                         tint: PayrollPalette.green400)   // pos() reads green400 on dark
+                Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+                    .padding(.vertical, 2).padding(.horizontal, 14)
+                heroStat(label: "UNPAID BALANCE", target: unpaid, tint: .white)
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                // Deep indigo base + brand washes: violet from the top, coral from the
+                // bottom, a sage hint top-right — ALMA palette only.
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [PayrollPalette.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Force dark inside the card so .primary/materials read the dark palette
+        // regardless of the system scheme — this tile is always the board's dark anchor.
+        .environment(\.colorScheme, .dark)
+    }
+
+    private func heroStat(label: String, target: Int, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.white.opacity(0.55))
+            PayrollCountUp(target: target, format: AlmaSwiftTheme.takaShort)
+                .font(.system(size: 19, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.6)
+        }
+    }
 }
 
 // MARK: - Aurora background + glass (Payroll-owned copies — parallel-session rule:
@@ -2131,34 +2556,76 @@ private enum PayrollFormat {
 @available(iOS 17.0, *)
 private struct PayrollAurora: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
 
     var body: some View {
-        ZStack {
-            if scheme == .dark {
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.075, green: 0.063, blue: 0.196), location: 0.0),  // deep indigo
-                    .init(color: Color(red: 0.216, green: 0.125, blue: 0.439), location: 0.32), // violet
-                    .init(color: Color(red: 0.478, green: 0.176, blue: 0.494), location: 0.62), // purple-magenta
-                    .init(color: Color(red: 0.706, green: 0.255, blue: 0.404), location: 1.0),  // pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.35), .clear],
-                               center: .init(x: 0.15, y: 0.18), startRadius: 10, endRadius: 420)
-                RadialGradient(colors: [Color(red: 0.93, green: 0.42, blue: 0.55).opacity(0.30), .clear],
-                               center: .init(x: 0.9, y: 0.85), startRadius: 20, endRadius: 480)
-            } else {
-                AlmaSwiftTheme.rootBg(.light)
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.902, green: 0.882, blue: 0.973), location: 0.0),  // pale violet
-                    .init(color: Color(red: 0.949, green: 0.941, blue: 0.972), location: 0.45), // cream
-                    .init(color: Color(red: 0.988, green: 0.918, blue: 0.925), location: 1.0),  // pale pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.14), .clear],
-                               center: .init(x: 0.12, y: 0.15), startRadius: 10, endRadius: 380)
-                RadialGradient(colors: [AlmaSwiftTheme.coral.opacity(0.12), .clear],
-                               center: .init(x: 0.9, y: 0.9), startRadius: 20, endRadius: 420)
+        let dark = scheme == .dark
+        // Agent-parity living aurora (web --aurora-blob-1…5): five blurred colour blobs
+        // drifting corner-to-corner over the page canvas. Owner directive 2026-07-08:
+        // every native page shares the Assistant tab's moving aurora.
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
             }
+            .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Battery guard: drift only when the owner allows motion — Reduce Motion and
+    /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
     }
 }
 

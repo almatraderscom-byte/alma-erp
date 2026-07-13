@@ -119,6 +119,9 @@ private struct SubPayload: Encodable {
 @Observable
 final class SubscriptionsVM {
     var subs: [Subscription] = []
+    /// Live API credit balances (owner 2026-07-12: fal.ai balance must be visible
+    /// here too, not only on Credit Usage). Same cache the costs page reads.
+    var apiBalances: [SubApiBalance] = []
     var loading = false
     var saving = false
     var error: String? = nil
@@ -131,6 +134,9 @@ final class SubscriptionsVM {
             let all: [Subscription] = try await AlmaAPI.shared.get("/api/assistant/costs/subscriptions")
             subs = all.filter { $0.active }
             authExpired = false
+            if let b: SubBalancesResponse = try? await AlmaAPI.shared.get("/api/assistant/costs/balances") {
+                apiBalances = b.rows.filter { $0.balanceUsd != nil }
+            }
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
         } catch {
@@ -167,6 +173,36 @@ final class SubscriptionsVM {
     func count(_ s: SubStatus) -> Int { subs.filter { $0.status == s }.count }
 }
 
+/// One provider row from the balance cache (lenient decode, flat or {cache:{…}}).
+struct SubApiBalance: Decodable, Identifiable, Equatable {
+    let id: String
+    let label: String
+    let balanceUsd: Double?
+    private enum K: String, CodingKey { case id, label, balanceUsd }
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: K.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        label = (try? c.decode(String.self, forKey: .label)) ?? id
+        balanceUsd = try? c.decodeIfPresent(Double.self, forKey: .balanceUsd)
+    }
+}
+
+struct SubBalancesResponse: Decodable {
+    let rows: [SubApiBalance]
+    private enum K: String, CodingKey { case providers, cache }
+    init(from d: Decoder) throws {
+        let root = try d.container(keyedBy: K.self)
+        if let direct = try? root.decode([SubApiBalance].self, forKey: .providers) {
+            rows = direct
+        } else if let nested = try? root.nestedContainer(keyedBy: K.self, forKey: .cache),
+                  let inner = try? nested.decode([SubApiBalance].self, forKey: .providers) {
+            rows = inner
+        } else {
+            rows = []
+        }
+    }
+}
+
 // MARK: - Screen
 
 @available(iOS 17.0, *)
@@ -185,6 +221,7 @@ struct SubscriptionsScreen: View {
                 if vm.loading && vm.subs.isEmpty { loadingRows }
                 if !vm.subs.isEmpty || (!vm.loading && !vm.authExpired) {
                     heroGrid.subAppear(0)
+                    if !vm.apiBalances.isEmpty { apiBalanceStrip.subAppear(1) }
                     if !vm.upcoming.isEmpty { upcomingStrip.subAppear(1) }
                     assistantHint.subAppear(2)
                     statTrio.subAppear(3)
@@ -205,6 +242,40 @@ struct SubscriptionsScreen: View {
         .sheet(isPresented: $showEditor) { SubEditor(existing: editing, vm: vm) }
         .sensoryFeedback(.success, trigger: vm.changeTick)
         .sensoryFeedback(.impact(weight: .light), trigger: showEditor)
+    }
+
+    /// Live API credit balances (fal.ai highlighted) — horizontal chips, synced
+    /// from the same cache the Credit Usage page shows.
+    private var apiBalanceStrip: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("API ব্যালেন্স (লাইভ)").font(.system(size: 10, weight: .bold))
+                .textCase(.uppercase).kerning(0.5).foregroundStyle(.secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(vm.apiBalances) { b in
+                        HStack(spacing: 6) {
+                            Text(b.label).font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                            Text(String(format: "$%.2f", b.balanceUsd ?? 0))
+                                .font(.system(size: 12.5, weight: .bold, design: .rounded).monospacedDigit())
+                                .foregroundStyle((b.balanceUsd ?? 0) < 3
+                                                 ? Color(red: 0.94, green: 0.35, blue: 0.35)
+                                                 : SubPalette.accentText(scheme))
+                        }
+                        .padding(.horizontal, 11).padding(.vertical, 8)
+                        .background(Color.primary.opacity(0.05),
+                                    in: Capsule())
+                        .overlay(Capsule().strokeBorder(
+                            b.id == "fal" ? SubPalette.accentText(scheme).opacity(0.45) : Color.primary.opacity(0.08),
+                            lineWidth: 1))
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(13)
+        .background(Color.primary.opacity(0.03),
+                    in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private var heroGrid: some View {
@@ -453,26 +524,76 @@ private enum SubFormat {
 @available(iOS 17.0, *)
 private struct SubAurora: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
+
     var body: some View {
-        ZStack {
-            if scheme == .dark {
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.055, green: 0.051, blue: 0.133), location: 0.0),
-                    .init(color: Color(red: 0.114, green: 0.086, blue: 0.251), location: 0.30),
-                    .init(color: Color(red: 0.200, green: 0.114, blue: 0.278), location: 0.58),
-                    .init(color: Color(red: 0.318, green: 0.157, blue: 0.235), location: 1.0),
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [SubPalette.violet.opacity(0.24), .clear], center: .init(x: 0.5, y: -0.04), startRadius: 10, endRadius: 440)
-                RadialGradient(colors: [SubPalette.coral.opacity(0.16), .clear], center: .init(x: 0.9, y: 0.92), startRadius: 20, endRadius: 460)
-            } else {
-                Color(red: 0.933, green: 0.925, blue: 0.957)
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.906, green: 0.890, blue: 0.953), location: 0.0),
-                    .init(color: Color(red: 0.933, green: 0.925, blue: 0.957), location: 0.48),
-                    .init(color: Color(red: 0.961, green: 0.921, blue: 0.933), location: 1.0),
-                ], startPoint: .top, endPoint: .bottom)
+        let dark = scheme == .dark
+        // Agent-parity living aurora (web --aurora-blob-1…5): five blurred colour blobs
+        // drifting corner-to-corner over the page canvas. Owner directive 2026-07-08:
+        // every native page shares the Assistant tab's moving aurora.
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
             }
-        }.ignoresSafeArea()
+            .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Battery guard: drift only when the owner allows motion — Reduce Motion and
+    /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
     }
 }
 

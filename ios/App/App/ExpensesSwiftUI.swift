@@ -18,6 +18,7 @@
 //
 
 import SwiftUI
+import PhotosUI
 
 // MARK: - Web palette (exact hexes from globals.css / tailwind tokens)
 
@@ -205,16 +206,21 @@ struct ExpenseCreateBody: Encodable {
     let recurring: Bool
     let date: String
     let businessId: String
+    // Owner 2026-07-11: receipt upload goes native — web payload keys verbatim.
+    let receiptRef: String
+    let receiptAttachmentId: String?
 
     private enum CodingKeys: String, CodingKey {
         case title, category, amount, notes, recurring, date
         case paymentStatus = "payment_status"
         case paymentMethod = "payment_method"
         case businessId = "business_id"
+        case receiptRef = "receipt_ref"
+        case receiptAttachmentId = "receipt_attachment_id"
     }
 }
 
-/// Native add-expense form state (web modal fields, minus the receipt drop zone).
+/// Native add-expense form state (web modal fields, receipt included since S9).
 struct ExpenseDraft {
     var title = ""
     var category = ""
@@ -224,6 +230,8 @@ struct ExpenseDraft {
     var paymentMethod = ""
     var notes = ""
     var recurring = false
+    var receiptUrl: String? = nil    // POST /api/finance/receipts result
+    var receiptId: String? = nil
 
     var amount: Int? {
         let trimmed = amountText.trimmingCharacters(in: .whitespaces)
@@ -355,7 +363,9 @@ final class ExpensesVM {
                 notes: draft.notes.trimmingCharacters(in: .whitespacesAndNewlines),
                 recurring: draft.recurring,
                 date: fmt.string(from: draft.date),
-                businessId: "ALMA_LIFESTYLE")
+                businessId: "ALMA_LIFESTYLE",
+                receiptRef: draft.receiptUrl ?? "",
+                receiptAttachmentId: draft.receiptId)
             let resp: ExpenseAddResponse = try await AlmaAPI.shared.send("POST", "/api/finance", body: body)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             if resp.pendingApproval == true {
@@ -374,6 +384,106 @@ final class ExpensesVM {
             return false
         }
     }
+
+    // ── Receipt upload (owner 2026-07-11: native — web POST /api/finance/receipts). ──
+
+    struct ReceiptUpload: Decodable {
+        struct Attachment: Decodable { let id: String?, url: String? }
+        let attachment: Attachment?
+        let error: String?
+    }
+    func uploadReceipt(data: Data, filename: String, mime: String) async -> (id: String?, url: String)? {
+        // Web guard: image/PDF only, ≤10 MB.
+        guard data.count <= 10 * 1024 * 1024 else {
+            error = "Receipt must be 10 MB or smaller"
+            return nil
+        }
+        do {
+            let res: ReceiptUpload = try await AlmaAPI.shared.uploadMultipart(
+                "/api/finance/receipts", fileField: "file", filename: filename,
+                mime: mime, data: data, fields: ["business_id": "ALMA_LIFESTYLE"])
+            guard let url = res.attachment?.url else {
+                error = res.error ?? "Receipt upload failed"
+                return nil
+            }
+            return (res.attachment?.id, url)
+        } catch {
+            self.error = "Receipt upload failed"
+            return nil
+        }
+    }
+
+    // ── Exports (owner 2026-07-11: native PDF + CSV — web export-expenses.ts parity;
+    //    XLSX stays web-only, CSV opens in Excel/Numbers anyway). ──
+
+    /// expensesToCsv() verbatim: BOM + same header + same columns.
+    func csvFile(rangeLabel: String) -> URL? {
+        func esc(_ s: String) -> String {
+            s.contains(where: { ",\"\n".contains($0) }) ? "\"\(s.replacingOccurrences(of: "\"", with: "\"\""))\"" : s
+        }
+        let header = ["date", "title", "category", "amount", "payment_status",
+                      "payment_method", "recurring", "notes", "receipt"]
+        let lines = filtered.map { r in
+            [r.date, r.title, r.category, String(r.amount),
+             r.paymentStatus ?? "", r.paymentMethod ?? "",
+             (r.recurring ?? false) ? "yes" : "no",
+             (r.notes ?? "").replacingOccurrences(of: "\n", with: " "),
+             r.receiptRef ?? ""].map(esc).joined(separator: ",")
+        }
+        let csv = "\u{FEFF}" + header.joined(separator: ",") + "\n" + lines.joined(separator: "\n")
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("expenses-\(rangeLabel.replacingOccurrences(of: " ", with: "-")).csv")
+        try? csv.data(using: .utf8)?.write(to: url)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Native ledger PDF (UIGraphicsPDFRenderer) — same data story as the web's
+    /// ExpenseLedgerDocument: title, business, range, row table, total.
+    func pdfFile(rangeLabel: String) -> URL? {
+        let rows = filtered
+        let pageRect = CGRect(x: 0, y: 0, width: 595, height: 842)   // A4 @72dpi
+        let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
+        let margin: CGFloat = 36
+        let colX: [CGFloat] = [36, 110, 300, 400, 480]               // date/title/category/status/amount
+        let data = renderer.pdfData { ctx in
+            var y: CGFloat = 0
+            func newPage() {
+                ctx.beginPage()
+                y = margin
+                "Expense ledger".draw(at: CGPoint(x: margin, y: y),
+                    withAttributes: [.font: UIFont.boldSystemFont(ofSize: 16)])
+                y += 22
+                "Alma Lifestyle · \(rangeLabel)".draw(at: CGPoint(x: margin, y: y),
+                    withAttributes: [.font: UIFont.systemFont(ofSize: 9), .foregroundColor: UIColor.darkGray])
+                y += 20
+                let headers = ["Date", "Title", "Category", "Status", "Amount"]
+                for (i, h) in headers.enumerated() {
+                    h.draw(at: CGPoint(x: colX[i], y: y),
+                           withAttributes: [.font: UIFont.boldSystemFont(ofSize: 8)])
+                }
+                y += 14
+            }
+            newPage()
+            let cell: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 8)]
+            for r in rows {
+                if y > pageRect.height - margin - 30 { newPage() }
+                String(r.date.prefix(10)).draw(at: CGPoint(x: colX[0], y: y), withAttributes: cell)
+                String(r.title.prefix(38)).draw(at: CGPoint(x: colX[1], y: y), withAttributes: cell)
+                String(r.category.prefix(18)).draw(at: CGPoint(x: colX[2], y: y), withAttributes: cell)
+                (r.paymentStatus ?? "—").draw(at: CGPoint(x: colX[3], y: y), withAttributes: cell)
+                "৳\(r.amount.formatted())".draw(at: CGPoint(x: colX[4], y: y), withAttributes: cell)
+                y += 12
+            }
+            y += 8
+            "Total: ৳\(rows.reduce(0) { $0 + $1.amount }.formatted())".draw(
+                at: CGPoint(x: colX[3], y: y),
+                withAttributes: [.font: UIFont.boldSystemFont(ofSize: 10)])
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("expenses-\(rangeLabel.replacingOccurrences(of: " ", with: "-")).pdf")
+        try? data.write(to: url)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
 }
 
 // MARK: - Screen
@@ -384,6 +494,7 @@ struct ExpensesScreen: View {
     @State private var vm = ExpensesVM()
     @State private var selected: ExpenseLedgerRow? = nil
     @State private var adding = false
+    @State private var exportShare: ExpensesExportFile? = nil
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -404,8 +515,10 @@ struct ExpensesScreen: View {
                     }
                     ledgerHeader
                     categoryChips
+                    let maxRowAmount = max(1, vm.filtered.map(\.amount).max() ?? 1)
                     ForEach(vm.filtered) { row in
-                        ExpenseRowCard(row: row) {
+                        ExpenseRowCard(row: row,
+                                       fraction: CGFloat(row.amount) / CGFloat(maxRowAmount)) {
                             selected = row
                         }
                     }
@@ -479,33 +592,24 @@ struct ExpensesScreen: View {
         }
     }
 
-    // ── KPI strip (web's 4 KpiCards, exact labels) ──
+    // ── KPI strip (web's 4 KpiCards, exact labels — bento board: dark hero +
+    //    2-col glass stat tiles; same four metrics, same strings) ──
 
-    private var kpiStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                kpiCard("TOTAL EXPENSES (RANGE)",
-                        vm.loading && vm.expenses.isEmpty ? "—" : AlmaSwiftTheme.takaShort(vm.totalExpenses),
-                        ExpensePalette.goldLt)
-                kpiCard("LEDGER CASH READOUT",
-                        vm.loading && vm.expenses.isEmpty ? "—" : AlmaSwiftTheme.takaShort(vm.cashBalance),
-                        .primary)
-                kpiCard("LINE ITEMS", "\(vm.expenses.count)", .primary)
-                kpiCard("ACTIVE CATEGORIES", "\(vm.byCategory.count)", .primary)
-            }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 1)
+    @ViewBuilder private var kpiStrip: some View {
+        let placeholders = vm.loading && vm.expenses.isEmpty
+        ExpensesBentoHero(totalExpenses: vm.totalExpenses,
+                          cashBalance: vm.cashBalance,
+                          placeholders: placeholders,
+                          rangeLabel: vm.dateFilter.label)
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)],
+                  spacing: 10) {
+            ExpensesStatTile(label: "LINE ITEMS", target: vm.expenses.count,
+                             format: { "\($0)" }, sub: "Ledger rows in range",
+                             tint: .primary, accent: AlmaSwiftTheme.violet)
+            ExpensesStatTile(label: "ACTIVE CATEGORIES", target: vm.byCategory.count,
+                             format: { "\($0)" }, sub: "With spend in range",
+                             tint: .primary, accent: AlmaSwiftTheme.sage)
         }
-    }
-
-    private func kpiCard(_ label: String, _ value: String, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            Text(value).font(.headline.weight(.bold).monospacedDigit()).foregroundStyle(tint)
-        }
-        .frame(minWidth: 96, alignment: .leading)
-        .padding(12)
-        .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Expense mix (web donut card, same palette) ──
@@ -520,20 +624,28 @@ struct ExpensesScreen: View {
         .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
     }
 
-    /// Web "Highest categories": top 12, category left, ৳ amount right (gold mono).
+    /// Web "Highest categories": top 12, category left, ৳ amount right (gold mono) —
+    /// bento touch: a gradient mini bar per row (share of the top category's amount).
     private var highestCategoriesCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let top = Array(vm.byCategory.prefix(12))
+        let maxAmt = max(1, top.map(\.amount).max() ?? 1)
+        return VStack(alignment: .leading, spacing: 8) {
             Text("Highest categories").font(.footnote.weight(.bold))
-            ForEach(Array(vm.byCategory.prefix(12).enumerated()), id: \.element.id) { i, cat in
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(ExpensePalette.donut[i % ExpensePalette.donut.count])
-                        .frame(width: 8, height: 8)
-                    Text(cat.name).font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Text("৳ \(cat.amount.formatted())")
-                        .font(.caption.monospaced().weight(.semibold))
-                        .foregroundStyle(ExpensePalette.accentText(colorScheme))
+            ForEach(Array(top.enumerated()), id: \.element.id) { i, cat in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(ExpensePalette.donut[i % ExpensePalette.donut.count])
+                            .frame(width: 8, height: 8)
+                        Text(cat.name).font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Text("৳ \(cat.amount.formatted())")
+                            .font(.caption.monospaced().weight(.semibold))
+                            .foregroundStyle(ExpensePalette.accentText(colorScheme))
+                    }
+                    ExpensesMiniBar(fraction: CGFloat(cat.amount) / CGFloat(maxAmt),
+                                    color: ExpensePalette.donut[i % ExpensePalette.donut.count],
+                                    delay: Double(i) * 0.04, height: 5)
                 }
                 .padding(.bottom, 2)
             }
@@ -639,18 +751,61 @@ struct ExpensesScreen: View {
         }
     }
 
+    /// Native exports (owner 2026-07-11): PDF + CSV built on-device ON TAP (never in
+    /// body — temp-file writes must not ride every render) and handed to the iOS
+    /// share sheet. Excel stays web-only (CSV opens in Excel/Numbers anyway).
     private var webEscape: some View {
-        Button {
-            openWeb("/expenses", "Expenses")
-        } label: {
-            Label("সব অপশন (PDF/CSV/রিসিট আপলোড সহ) — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                exportButton("PDF", icon: "doc.richtext") { vm.pdfFile(rangeLabel: vm.dateFilter.label) }
+                exportButton("CSV", icon: "tablecells") { vm.csvFile(rangeLabel: vm.dateFilter.label) }
+            }
+            Button {
+                openWeb("/expenses", "Expenses")
+            } label: {
+                Label("ওয়েব ভার্সন (Excel export)", systemImage: "safari")
+                    .font(.footnote)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
         .padding(.vertical, 6)
+        .sheet(item: $exportShare) { wrap in
+            ExpensesShareSheet(url: wrap.url)
+                .presentationDetents([.medium])
+        }
     }
+
+    private func exportButton(_ label: String, icon: String,
+                              make: @escaping () -> URL?) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            if let url = make() { exportShare = ExpensesExportFile(url: url) }
+        } label: {
+            Label(label, systemImage: icon)
+                .font(.caption.weight(.bold))
+                .frame(maxWidth: .infinity).padding(.vertical, 9)
+        }
+        .buttonStyle(.bordered)
+        .disabled(vm.filtered.isEmpty)
+    }
+}
+
+/// Identifiable wrapper so a freshly generated export can drive a .sheet(item:).
+private struct ExpensesExportFile: Identifiable {
+    let url: URL
+    var id: String { url.absoluteString }
+}
+
+/// UIActivityViewController bridge — share the generated ledger file.
+@available(iOS 17.0, *)
+private struct ExpensesShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
 }
 
 // MARK: - Donut (web DonutChart parity, drawn natively with trimmed circles)
@@ -729,10 +884,13 @@ private struct ExpensesDonut: View {
 @available(iOS 17.0, *)
 private struct ExpenseRowCard: View {
     let row: ExpenseLedgerRow
+    /// Share of the largest visible ledger amount — drives the bento mini bar.
+    let fraction: CGFloat
     let onTap: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
         HStack(alignment: .center, spacing: 10) {
             iconBadge
             VStack(alignment: .leading, spacing: 2) {
@@ -770,6 +928,14 @@ private struct ExpenseRowCard: View {
             Text("৳\(row.amount.formatted())")
                 .font(.footnote.weight(.bold).monospacedDigit())
                 .foregroundStyle(ExpensePalette.goldLt)
+        }
+        // Bento mini bar: this line's share of the biggest visible amount —
+        // amber-tinted while payment is still open (same severity read as the
+        // status caption above), coral otherwise.
+        let paymentOpen = (row.paymentStatus?.isEmpty == false) && row.paymentStatus != "Paid"
+        ExpensesMiniBar(fraction: fraction,
+                        color: paymentOpen ? ExpensePalette.amber500 : ExpensePalette.coral,
+                        height: 4)
         }
         .padding(12)
         .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
@@ -918,6 +1084,8 @@ private struct ExpenseAddSheet: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var draft = ExpenseDraft()
     @State private var confirming = false
+    @State private var pickedReceipt: PhotosPickerItem? = nil
+    @State private var uploadingReceipt = false
     @FocusState private var focusedField: Field?
 
     private enum Field { case title, amount, method, notes }
@@ -1039,17 +1207,49 @@ private struct ExpenseAddSheet: View {
         }
     }
 
+    /// Native receipt uploader (owner 2026-07-11) — PhotosPicker → POST
+    /// /api/finance/receipts; the resulting URL/id rides the create payload.
     private var receiptHint: some View {
-        Button {
-            dismiss()
-            openWeb("/expenses", "Expenses")
-        } label: {
-            Label("রিসিট/ছবি যুক্ত করতে হলে — ওয়েবে খুলুন", systemImage: "paperclip")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+            PhotosPicker(selection: $pickedReceipt, matching: .images) {
+                HStack(spacing: 8) {
+                    Image(systemName: draft.receiptUrl != nil ? "checkmark.circle.fill" : "paperclip")
+                    Text(uploadingReceipt ? "রিসিট আপলোড হচ্ছে…"
+                         : draft.receiptUrl != nil ? "রিসিট যুক্ত হয়েছে"
+                         : "রিসিট/ছবি যুক্ত করুন (ঐচ্ছিক)")
+                        .font(.caption.weight(.semibold))
+                    if uploadingReceipt { ProgressView().controlSize(.mini) }
+                    Spacer()
+                    if draft.receiptUrl != nil {
+                        Button {
+                            draft.receiptUrl = nil; draft.receiptId = nil; pickedReceipt = nil
+                        } label: {
+                            Image(systemName: "xmark.circle.fill").font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .foregroundStyle(draft.receiptUrl != nil
+                                 ? (colorScheme == .dark ? ExpensePalette.green400 : ExpensePalette.emerald600)
+                                 : .secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(11)
+                .expensesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+            }
+            .onChange(of: pickedReceipt) { _, item in
+                guard let item else { return }
+                uploadingReceipt = true
+                Task {
+                    defer { uploadingReceipt = false }
+                    if let data = try? await item.loadTransferable(type: Data.self),
+                       let up = await vm.uploadReceipt(data: data, filename: "receipt.jpg", mime: "image/jpeg") {
+                        draft.receiptUrl = up.url
+                        draft.receiptId = up.id
+                    }
+                }
+            }
         }
-        .buttonStyle(.plain)
     }
 
     private var saveRow: some View {
@@ -1087,6 +1287,219 @@ private struct ExpenseAddSheet: View {
     }
 }
 
+// MARK: - Bento components (Expenses-owned copies of the Dashboard bento language —
+// parallel-session rule: page files never import another page's helpers. Dark hero,
+// count-up numbers, glass stat tiles, gradient mini bars. NOTE: the Dashboard hero's
+// shimmer sweep (blur + repeatForever) is deliberately OMITTED — static gradient only.)
+
+/// Central motion gate for the bento animations — count-ups and bar sweeps freeze to
+/// their final state when the owner limits motion: Reduce Motion or Low Power Mode
+/// (the same guard pattern ExpensesAurora.updateDrift uses).
+@available(iOS 17.0, *)
+private func expensesMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number: animates 0 → target on first appear (and old → new on refresh).
+/// A single Animatable interpolation drives the digits — no timers. Snaps straight
+/// to the final value under Reduce Motion / Low Power Mode.
+@available(iOS 17.0, *)
+private struct ExpensesCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    let format: (Int) -> String
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        ExpensesCountUpText(value: shown, format: format)
+            .animation(expensesMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if expensesMotionOK(reduceMotion) {
+                    appeared = true          // the implicit spring above interpolates the digits
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+/// Animatable text body for ExpensesCountUp — SwiftUI interpolates `value` frame-to-frame.
+@available(iOS 17.0, *)
+private struct ExpensesCountUpText: View, Animatable {
+    var value: Double
+    var format: (Int) -> String
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text(format(Int(value.rounded())))
+    }
+}
+
+/// Soft gradient mini progress bar (comparison lists) — sweeps to its fraction on appear,
+/// frozen under Reduce Motion / Low Power Mode.
+@available(iOS 17.0, *)
+private struct ExpensesMiniBar: View {
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let fraction: CGFloat
+    let color: Color
+    var delay: Double = 0
+    var height: CGFloat = 7
+    @State private var grow = false
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(scheme == .dark ? 0.10 : 0.06))
+                Capsule()
+                    .fill(LinearGradient(colors: [color.opacity(0.55), color],
+                                         startPoint: .leading, endPoint: .trailing))
+                    .frame(width: max(geo.size.width * min(max(fraction, 0), 1), height) * (grow ? 1 : 0.001))
+            }
+        }
+        .frame(height: height)
+        .onAppear {
+            if expensesMotionOK(reduceMotion) {
+                withAnimation(.spring(duration: 0.6, bounce: 0.18).delay(delay)) { grow = true }
+            } else {
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { grow = true }
+            }
+        }
+    }
+}
+
+/// Small glass stat tile — count-up value + sub line, soft accent wash. `target == nil`
+/// renders the "—" placeholder.
+@available(iOS 17.0, *)
+private struct ExpensesStatTile: View {
+    @Environment(\.colorScheme) private var scheme
+    let label: String
+    let target: Int?
+    let format: (Int) -> String
+    let sub: String
+    let tint: Color
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
+            if let target {
+                ExpensesCountUp(target: target, format: format)
+                    .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                    .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.55)
+            } else {
+                Text("—").font(.system(size: 17, weight: .heavy)).foregroundStyle(tint)
+            }
+            Text(sub).font(.system(size: 9)).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 13).padding(.vertical, 12)
+        .background { expensesBentoWash(accent, scheme: scheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+    }
+}
+
+/// Shared bento tile backdrop: frosted glass + a soft diagonal accent wash.
+@available(iOS 17.0, *)
+private func expensesBentoWash(_ accent: Color, scheme: ColorScheme) -> some View {
+    ZStack {
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+        LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.14 : 0.10), .clear],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+}
+
+/// The dark hero KPI card — deliberately dark in BOTH schemes (the board's anchor tile):
+/// total-expenses count-up headline + ledger-cash secondary number. Same two money
+/// strings as before (AlmaSwiftTheme.takaShort), same "—" first-load placeholders.
+/// Static gradient only — the Dashboard shimmer sweep is intentionally left out.
+@available(iOS 17.0, *)
+private struct ExpensesBentoHero: View {
+    let totalExpenses: Int
+    let cashBalance: Int
+    let placeholders: Bool
+    let rangeLabel: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("TOTAL EXPENSES (RANGE)").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                    .foregroundStyle(ExpensePalette.goldLt)
+                Spacer()
+                Text(rangeLabel).font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+            Group {
+                if placeholders {
+                    Text("—")
+                } else {
+                    ExpensesCountUp(target: totalExpenses,
+                                    format: { AlmaSwiftTheme.takaShort($0) })
+                }
+            }
+            .font(.system(size: 36, weight: .heavy)).monospacedDigit()
+            .foregroundStyle(.white)
+            .lineLimit(1).minimumScaleFactor(0.6)
+            .padding(.top, 8)
+
+            HStack(alignment: .top, spacing: 0) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("LEDGER CASH READOUT").font(.system(size: 9, weight: .bold)).tracking(0.4)
+                        .foregroundStyle(.white.opacity(0.55))
+                    Group {
+                        if placeholders {
+                            Text("—")
+                        } else {
+                            ExpensesCountUp(target: cashBalance,
+                                            format: { AlmaSwiftTheme.takaShort($0) })
+                        }
+                    }
+                    .font(.system(size: 19, weight: .heavy)).monospacedDigit()
+                    .foregroundStyle(cashBalance < 0 ? ExpensePalette.red500 : ExpensePalette.green400)
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                // Deep indigo base + brand washes: violet from the top, coral from the
+                // bottom, a sage hint top-right — ALMA palette only.
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [ExpensePalette.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Force dark inside the card so .primary/materials read the dark palette
+        // regardless of the system scheme — this tile is always the board's dark anchor.
+        .environment(\.colorScheme, .dark)
+    }
+}
+
 // MARK: - Formatting helpers
 
 private enum ExpensesFormat {
@@ -1103,34 +1516,76 @@ private enum ExpensesFormat {
 @available(iOS 17.0, *)
 private struct ExpensesAurora: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
 
     var body: some View {
-        ZStack {
-            if scheme == .dark {
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.075, green: 0.063, blue: 0.196), location: 0.0),  // deep indigo
-                    .init(color: Color(red: 0.216, green: 0.125, blue: 0.439), location: 0.32), // violet
-                    .init(color: Color(red: 0.478, green: 0.176, blue: 0.494), location: 0.62), // purple-magenta
-                    .init(color: Color(red: 0.706, green: 0.255, blue: 0.404), location: 1.0),  // pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.35), .clear],
-                               center: .init(x: 0.15, y: 0.18), startRadius: 10, endRadius: 420)
-                RadialGradient(colors: [Color(red: 0.93, green: 0.42, blue: 0.55).opacity(0.30), .clear],
-                               center: .init(x: 0.9, y: 0.85), startRadius: 20, endRadius: 480)
-            } else {
-                AlmaSwiftTheme.rootBg(.light)
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.902, green: 0.882, blue: 0.973), location: 0.0),  // pale violet
-                    .init(color: Color(red: 0.949, green: 0.941, blue: 0.972), location: 0.45), // cream
-                    .init(color: Color(red: 0.988, green: 0.918, blue: 0.925), location: 1.0),  // pale pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.14), .clear],
-                               center: .init(x: 0.12, y: 0.15), startRadius: 10, endRadius: 380)
-                RadialGradient(colors: [AlmaSwiftTheme.coral.opacity(0.12), .clear],
-                               center: .init(x: 0.9, y: 0.9), startRadius: 20, endRadius: 420)
+        let dark = scheme == .dark
+        // Agent-parity living aurora (web --aurora-blob-1…5): five blurred colour blobs
+        // drifting corner-to-corner over the page canvas. Owner directive 2026-07-08:
+        // every native page shares the Assistant tab's moving aurora.
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
             }
+            .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Battery guard: drift only when the owner allows motion — Reduce Motion and
+    /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
     }
 }
 

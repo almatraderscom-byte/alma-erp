@@ -257,6 +257,15 @@ struct AlmaAgentAction: Decodable, Identifiable, Equatable {
         default: return (type ?? "—").replacingOccurrences(of: "_", with: " ")
         }
     }
+
+    /// Card types where "আমার মত" hands the owner's opinion to the head, which
+    /// re-edits THIS card in place (POST .../revise). Mirrors the server-side
+    /// REVISABLE_ACTION_TYPES (src/agent/lib/revise-pending.ts).
+    static let revisableTypes: Set<String> = [
+        "dispatch_staff_tasks", "delegation", "send_customer_message", "staff_announcement",
+        "fb_post", "instagram_post", "marketing_plan", "content_gate1", "content_gate2", "ad_creative_gate",
+    ]
+    var isRevisable: Bool { type.map { Self.revisableTypes.contains($0) } ?? false }
 }
 
 struct AgentActionsResponse: Decodable {
@@ -267,6 +276,13 @@ struct AgentActionsResponse: Decodable {
         let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .data)) ?? root
         actions = (try? c.decode([AlmaAgentAction].self, forKey: .actions)) ?? []
     }
+}
+
+/// Response of POST /api/assistant/actions/[id]/revise — the head's one-line Bangla
+/// confirmation of what it changed, plus the re-read (still-pending) card.
+struct AgentReviseResponse: Decodable {
+    let reply: String?
+    let action: AlmaAgentAction?
 }
 
 // MARK: - Integrity (web Integrity Monitor parity)
@@ -317,6 +333,7 @@ final class ApprovalsVM {
     var busyIds: Set<String> = []         // per-row spinners, never a global one
     var error: String? = nil
     var notice: String? = nil             // success/warning line (the web's toast)
+    var resultFx: ApprovalResultFx? = nil // approve/reject WOW medallion toast (owner design)
     var authExpired = false
 
     // Integrity monitor (web parity)
@@ -379,10 +396,20 @@ final class ApprovalsVM {
             let resp: ApprovalActionResponse = try await AlmaAPI.shared.send(
                 "PATCH", "/api/approvals/\(approval.id)", body: body)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
+            // Result feedback = the owner-approved WOW medallion toast (green medal +
+            // self-drawing check + glint + confetti / red cross), replacing the old
+            // plain "Approval committed" strip (owner report 2026-07-12).
+            let approved = action == "APPROVE"
             if resp.reconciled == true {
-                notice = resp.warning ?? "Approval synced with existing decision"
+                resultFx = ApprovalResultFx(
+                    approved: approved,
+                    title: approved ? "অনুমোদন সম্পন্ন" : "বাতিল করা হয়েছে",
+                    detail: resp.warning ?? "আগের সিদ্ধান্তের সাথে মিলিয়ে নেওয়া হয়েছে")
             } else {
-                notice = resp.warning ?? (action == "APPROVE" ? "Approval committed" : "Rejection committed")
+                resultFx = ApprovalResultFx(
+                    approved: approved,
+                    title: approved ? "অনুমোদন সম্পন্ন" : "বাতিল করা হয়েছে",
+                    detail: resp.warning)
             }
             withAnimation(.snappy) { approvals.removeAll { $0.id == approval.id } }
             totalPending = max(0, totalPending - 1)
@@ -473,6 +500,33 @@ final class ApprovalsVM {
         NotificationCenter.default.post(name: .almaApprovalsChanged, object: nil)
         await loadAgent()
     }
+
+    /// The third option: the owner typed his opinion on a pending card. Hand it to
+    /// the head, which re-edits THIS card in place and replies with a one-line
+    /// confirmation — the card stays pending for a final Approve. No chat restart.
+    func agentRevise(_ action: AlmaAgentAction, feedback: String) async {
+        let note = feedback.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard note.count >= 2 else { return }
+        agentBusyId = action.id
+        agentNotice = nil
+        defer { agentBusyId = nil }
+        do {
+            let resp: AgentReviseResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/actions/\(action.id)/revise", body: ["feedback": note])
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            agentNotice = resp.reply?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                ? resp.reply! : "✓ মত অনুযায়ী কার্ডটা আপডেট করা হয়েছে।"
+        } catch AlmaAPIError.http(let status, _) {
+            if status == 410 { agentNotice = "অনুমোদনের সময় শেষ — কার্ডটি মেয়াদোত্তীর্ণ।" }
+            else if status == 409 { agentNotice = "এই অ্যাকশনটি ইতিমধ্যে সম্পন্ন হয়েছে।" }
+            else if status == 400 { agentNotice = "এই কার্ডে মতামত দিয়ে রিভাইজ করা যায় না — Approve বা Reject করুন।" }
+            else { agentNotice = "রিভাইজ ব্যর্থ হয়েছে — আবার চেষ্টা করুন।" }
+        } catch {
+            agentNotice = "নেটওয়ার্ক সমস্যা — আবার চেষ্টা করুন।"
+        }
+        NotificationCenter.default.post(name: .almaApprovalsChanged, object: nil)
+        await loadAgent()
+    }
 }
 
 // MARK: - Screen
@@ -485,6 +539,7 @@ struct ApprovalsScreen: View {
     @State private var selected: AlmaApproval? = nil
     @State private var rejecting: AlmaApproval? = nil
     @State private var withdrawing: AlmaApproval? = nil  // WALLET_WITHDRAWAL → txn id first
+    @State private var revising: AlmaAgentAction? = nil  // agent card → "আমার মত" opinion
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -502,6 +557,15 @@ struct ApprovalsScreen: View {
         }
         .background(ApprovalsAurora())
         .claudeTopFade()
+        // Approve/reject result → WOW medallion toast drops over the list (owner
+        // design: green medal + self-drawing check + glint + confetti; red cross
+        // on reject). `.id(fx.id)` restarts the animation for back-to-back acts.
+        .overlay(alignment: .top) {
+            if let fx = vm.resultFx {
+                ApprovalResultToast(fx: fx) { vm.resultFx = nil }
+                    .id(fx.id)
+            }
+        }
         .refreshable {
             if view == "business" { await vm.load() } else { await vm.loadAgent() }
         }
@@ -526,6 +590,12 @@ struct ApprovalsScreen: View {
                 Task { await vm.act(ap, action: "APPROVE", transactionId: txn) }
             }
             .presentationDetents([.height(320)])
+        }
+        .sheet(item: $revising) { ac in
+            ReviseNoteSheet(action: ac) { feedback in
+                Task { await vm.agentRevise(ac, feedback: feedback) }
+            }
+            .presentationDetents([.height(340)])
         }
     }
 
@@ -570,7 +640,7 @@ struct ApprovalsScreen: View {
     @ViewBuilder private var businessBody: some View {
         statusChips
         if vm.showIntegrity { integrityCard }
-        kpiStrip
+        bentoBoard
         if vm.loading && vm.approvals.isEmpty { loadingRows }
         ForEach(vm.approvals) { ap in
             ApprovalCard(
@@ -579,7 +649,8 @@ struct ApprovalsScreen: View {
                 showStatusLine: vm.statusFilter != "PENDING",
                 onTap: { selected = ap },
                 onApprove: { requestApprove(ap) },
-                onReject: { rejecting = ap })
+                onReject: { rejecting = ap },
+                openWeb: openWeb)
         }
         if !vm.loading && vm.approvals.isEmpty && vm.error == nil && !vm.authExpired {
             emptyState
@@ -688,30 +759,13 @@ struct ApprovalsScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// KPI strip — the web's 5 KpiCards (Pending/Critical/High/Normal/Low) with the
-    /// exact web value colours, as a horizontal scroll strip on phone.
-    private var kpiStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                kpiCard("PENDING", vm.totalPending, ApprovalPalette.goldLt)
-                kpiCard("CRITICAL", vm.priorityCounts["CRITICAL"] ?? 0, ApprovalPalette.red500)
-                kpiCard("HIGH", vm.priorityCounts["HIGH"] ?? 0, ApprovalPalette.amber600)
-                kpiCard("NORMAL", vm.priorityCounts["NORMAL"] ?? 0, .primary)
-                kpiCard("LOW", vm.priorityCounts["LOW"] ?? 0, .primary)
-            }
-            .padding(.horizontal, 2)
-            .padding(.vertical, 1)
-        }
-    }
-
-    private func kpiCard(_ label: String, _ value: Int, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            Text("\(value)").font(.headline.weight(.bold)).foregroundStyle(tint)
-        }
-        .frame(minWidth: 84, alignment: .leading)
-        .padding(12)
-        .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+    /// Bento board — the Dashboard's glass-board language on Approvals. Owner cut
+    /// 2026-07-09: the 2×2 priority-tile grid duplicated the hero's counts, so the
+    /// hero card is the whole board now (pending total + critical/high split).
+    private var bentoBoard: some View {
+        ApvBentoHeroCard(pending: vm.totalPending,
+                         critical: vm.priorityCounts["CRITICAL"] ?? 0,
+                         high: vm.priorityCounts["HIGH"] ?? 0)
     }
 
     /// "Pending by module" — the web's side card, after the list on phone.
@@ -779,7 +833,8 @@ struct ApprovalsScreen: View {
                 action: action,
                 busy: vm.agentBusyId == action.id,
                 onApprove: { Task { await vm.agentAct(action, kind: "approve") } },
-                onReject: { Task { await vm.agentAct(action, kind: "reject") } })
+                onReject: { Task { await vm.agentAct(action, kind: "reject") } },
+                onOpinion: { revising = action })
         }
         if !vm.agentLoading && vm.agentActions.isEmpty && vm.agentError == nil {
             VStack(spacing: 6) {
@@ -871,6 +926,7 @@ private struct ApprovalCard: View {
     let onTap: () -> Void
     let onApprove: () -> Void
     let onReject: () -> Void
+    let openWeb: (_ path: String, _ title: String) -> Void
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -948,7 +1004,22 @@ private struct ApprovalCard: View {
         return bits.joined(separator: " · ")
     }
 
-    private var requesterLine: some View {
+    /// Web parity: the requester links to /employees/{employeeIdGas} when linked.
+    @ViewBuilder private var requesterLine: some View {
+        let gasId = approval.requester?.employeeIdGas ?? ""
+        if gasId.isEmpty {
+            requesterRow(linked: false)
+        } else {
+            requesterRow(linked: true)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+                    openWeb("/employees/\(gasId)", "Employee")
+                }
+        }
+    }
+
+    private func requesterRow(linked: Bool) -> some View {
         let name = approval.requester?.name ?? approval.requestedBy ?? "—"
         let role = (approval.requester?.role ?? "Requester").replacingOccurrences(of: "_", with: " ")
         return HStack(spacing: 8) {
@@ -961,6 +1032,11 @@ private struct ApprovalCard: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(name).font(.footnote.weight(.semibold))
                 Text(role).font(.caption2).foregroundStyle(.secondary)
+            }
+            if linked {
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary.opacity(0.7))
             }
         }
     }
@@ -1154,6 +1230,7 @@ private struct AgentActionCard: View {
     let busy: Bool
     let onApprove: () -> Void
     let onReject: () -> Void
+    let onOpinion: () -> Void
     @Environment(\.colorScheme) private var colorScheme
     @State private var expanded = false
 
@@ -1201,16 +1278,26 @@ private struct AgentActionCard: View {
             summaryBlock
 
             if isPending {
-                HStack(spacing: 8) {
-                    if busy {
-                        ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 7)
-                    } else if action.expired == true {
-                        // Expired: only "সরান" (clear) — hits reject, server marks expired.
+                if busy {
+                    ProgressView().controlSize(.small).frame(maxWidth: .infinity).padding(.vertical, 7)
+                } else if action.expired == true {
+                    // Expired: only "সরান" (clear) — hits reject, server marks expired.
+                    HStack(spacing: 8) {
                         chipButton("সরান", icon: "trash", tint: .secondary, action: onReject)
-                    } else {
-                        chipButton("Approve", icon: "checkmark", tint: ApprovalPalette.coral,
-                                   text: ApprovalPalette.accentText(colorScheme), action: onApprove)
-                        chipButton("Reject", icon: "xmark", tint: ApprovalPalette.red500, action: onReject)
+                    }
+                } else {
+                    VStack(spacing: 8) {
+                        HStack(spacing: 8) {
+                            chipButton("Approve", icon: "checkmark", tint: ApprovalPalette.coral,
+                                       text: ApprovalPalette.accentText(colorScheme), action: onApprove)
+                            chipButton("Reject", icon: "xmark", tint: ApprovalPalette.red500, action: onReject)
+                        }
+                        // The third option: type an opinion → the head re-edits this card
+                        // in place and confirms. Only where an in-place revise is safe.
+                        if action.isRevisable {
+                            chipButton("আমার মত দিন", icon: "bubble.left.and.text.bubble.right",
+                                       tint: AlmaSwiftTheme.violet, action: onOpinion)
+                        }
                     }
                 }
             }
@@ -1335,9 +1422,11 @@ private struct ApprovalDetailSheet: View {
         }
     }
 
+    /// Web parity: the requester links to /employees/{employeeIdGas} when linked.
     private var requesterCard: some View {
         let name = approval.requester?.name ?? approval.requestedBy ?? "—"
         let role = (approval.requester?.role ?? "Requester").replacingOccurrences(of: "_", with: " ")
+        let gasId = approval.requester?.employeeIdGas ?? ""
         return HStack(spacing: 10) {
             Text(ApprovalFormat.initials(name))
                 .font(.subheadline.weight(.bold))
@@ -1349,10 +1438,23 @@ private struct ApprovalDetailSheet: View {
                 Text(name).font(.subheadline.weight(.bold))
                 Text(role).font(.caption).foregroundStyle(.secondary)
             }
+            if !gasId.isEmpty {
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary.opacity(0.7))
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        .contentShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .onTapGesture {
+            guard !gasId.isEmpty else { return }
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            dismiss()
+            openWeb("/employees/\(gasId)", "Employee")
+        }
     }
 
     private var infoRows: some View {
@@ -1543,6 +1645,53 @@ private struct WithdrawTxnSheet: View {
     }
 }
 
+// MARK: - Revise sheet ("আমার মত" — opinion feeds the head, card revised in place)
+
+@available(iOS 17.0, *)
+private struct ReviseNoteSheet: View {
+    let action: AlmaAgentAction
+    let onConfirm: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var note = ""
+    @FocusState private var focused: Bool
+
+    private var trimmed: String { note.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("আপনার মত দিন").font(.headline)
+            Text("\(action.typeLabel) · এজেন্ট আপনার মত অনুযায়ী কার্ডটা ঠিক করে দেবে, তারপর আপনি Approve করবেন।")
+                .font(.caption).foregroundStyle(.secondary)
+            TextField("যেমন: দুইজনকে না, শুধু রাকিবকে দিন…", text: $note, axis: .vertical)
+                .lineLimit(3...6)
+                .focused($focused)
+                .padding(12)
+                .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+            Text(trimmed.count < 2
+                 ? "আপনার মতামত লিখুন…"
+                 : "এজেন্ট এই কার্ডটাই আপনার কথামতো রিভাইজ করবে।")
+                .font(.caption2)
+                .foregroundStyle(trimmed.count < 2 ? ApprovalPalette.amber600 : Color.secondary)
+            Button {
+                dismiss()
+                onConfirm(trimmed)
+            } label: {
+                Label("এজেন্টকে পাঠান", systemImage: "paperplane.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 4)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AlmaSwiftTheme.violet)
+            .disabled(trimmed.count < 2)
+            Spacer(minLength: 0)
+        }
+        .padding(18)
+        .presentationBackground { ApprovalsAurora() }
+        .onAppear { focused = true }
+    }
+}
+
 // MARK: - Formatting helpers (web util parity)
 
 private enum ApprovalFormat {
@@ -1598,34 +1747,76 @@ private enum ApprovalFormat {
 @available(iOS 17.0, *)
 private struct ApprovalsAurora: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
 
     var body: some View {
-        ZStack {
-            if scheme == .dark {
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.075, green: 0.063, blue: 0.196), location: 0.0),  // deep indigo
-                    .init(color: Color(red: 0.216, green: 0.125, blue: 0.439), location: 0.32), // violet
-                    .init(color: Color(red: 0.478, green: 0.176, blue: 0.494), location: 0.62), // purple-magenta
-                    .init(color: Color(red: 0.706, green: 0.255, blue: 0.404), location: 1.0),  // pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.35), .clear],
-                               center: .init(x: 0.15, y: 0.18), startRadius: 10, endRadius: 420)
-                RadialGradient(colors: [Color(red: 0.93, green: 0.42, blue: 0.55).opacity(0.30), .clear],
-                               center: .init(x: 0.9, y: 0.85), startRadius: 20, endRadius: 480)
-            } else {
-                AlmaSwiftTheme.rootBg(.light)
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.902, green: 0.882, blue: 0.973), location: 0.0),  // pale violet
-                    .init(color: Color(red: 0.949, green: 0.941, blue: 0.972), location: 0.45), // cream
-                    .init(color: Color(red: 0.988, green: 0.918, blue: 0.925), location: 1.0),  // pale pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.14), .clear],
-                               center: .init(x: 0.12, y: 0.15), startRadius: 10, endRadius: 380)
-                RadialGradient(colors: [AlmaSwiftTheme.coral.opacity(0.12), .clear],
-                               center: .init(x: 0.9, y: 0.9), startRadius: 20, endRadius: 420)
+        let dark = scheme == .dark
+        // Agent-parity living aurora (web --aurora-blob-1…5): five blurred colour blobs
+        // drifting corner-to-corner over the page canvas. Owner directive 2026-07-08:
+        // every native page shares the Assistant tab's moving aurora.
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
             }
+            .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Battery guard: drift only when the owner allows motion — Reduce Motion and
+    /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
     }
 }
 
@@ -1663,9 +1854,314 @@ private extension View {
     func approvalsShimmer() -> some View { modifier(ApprovalsShimmer()) }
 }
 
+// MARK: - Bento components (Approvals-owned copies of the Dashboard board language —
+// per-file copies are this repo's parallel-session convention, no cross-file imports)
+
+/// Central motion gate — count-ups and washes freeze under Reduce Motion / Low Power.
+@available(iOS 17.0, *)
+private func apvMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number (0 → target on appear, old → new on refresh) — one Animatable
+/// interpolation, no timers; snaps straight to the value when motion is limited.
+@available(iOS 17.0, *)
+private struct ApvCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        ApvCountUpText(value: shown)
+            .animation(apvMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if apvMotionOK(reduceMotion) {
+                    appeared = true
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct ApvCountUpText: View, Animatable {
+    var value: Double
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text("\(Int(value.rounded()))")
+    }
+}
+
+/// The dark hero anchor — deliberately dark in BOTH schemes (Dashboard hero recipe:
+/// deep indigo base + violet/coral washes + a sage hint). Pending total count-up plus
+/// the critical/high split; no shimmer, no chart — approvals is a queue, keep it calm.
+@available(iOS 17.0, *)
+private struct ApvBentoHeroCard: View {
+    let pending: Int
+    let critical: Int
+    let high: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("অনুমোদন বাকি · PENDING").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                .foregroundStyle(ApprovalPalette.goldLt)
+            ApvCountUp(target: pending)
+                .font(.system(size: 40, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(.white)
+                .lineLimit(1).minimumScaleFactor(0.6)
+                .padding(.top, 8)
+            Text(pending == 0 ? "সব অনুমোদন শেষ — সারি খালি" : "আপনার সিদ্ধান্তের অপেক্ষায়")
+                .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.top, 5)
+
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "Critical", value: critical,
+                         tint: critical > 0 ? ApprovalPalette.red400 : .white, sub: "জরুরি")
+                Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+                    .padding(.vertical, 2).padding(.horizontal, 14)
+                heroStat(label: "High", value: high,
+                         tint: high > 0 ? ApprovalPalette.amber500 : .white, sub: "উচ্চ অগ্রাধিকার")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [AlmaSwiftTheme.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Always the board's dark anchor — force dark traits inside the card.
+        .environment(\.colorScheme, .dark)
+    }
+
+    private func heroStat(label: String, value: Int, tint: Color, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.5)
+                .foregroundStyle(.white.opacity(0.55))
+            ApvCountUp(target: value)
+                .font(.system(size: 20, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+        }
+    }
+}
+
 // MARK: - Preview (stubbed — live data needs the app session)
 
 @available(iOS 17.0, *)
 #Preview("Approvals — Light") {
     ApprovalsScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - Approve/Reject result toast (owner-approved WOW design, 2026-07-12)
+//
+// Native twin of the web notification medallions (notif-bell.tsx): a dark pill
+// drops over the list with a tone medallion — APPROVE = green medal (gradient +
+// glow) whose check DRAWS itself, then a light glint sweeps across, plus a brand
+// confetti burst; REJECT = red medallion with a self-drawing cross. Springs in,
+// auto-folds after ~3.4s.
+
+struct ApprovalResultFx: Equatable {
+    let approved: Bool
+    let title: String
+    let detail: String?
+    let id = UUID()   // fresh identity per act() so back-to-back results re-animate
+}
+
+/// Checkmark in a 24×24 design space (same path as the web `.onx-ck`).
+@available(iOS 17.0, *)
+private struct ApprovalCheckShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width / 24, h = rect.height / 24
+        var p = Path()
+        p.move(to: CGPoint(x: 5 * w, y: 12.5 * h))
+        p.addLine(to: CGPoint(x: 10 * w, y: 17.5 * h))
+        p.addLine(to: CGPoint(x: 19 * w, y: 7 * h))
+        return p
+    }
+}
+
+/// Cross in the same 24×24 space — reject's medallion glyph.
+@available(iOS 17.0, *)
+private struct ApprovalCrossShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width / 24, h = rect.height / 24
+        var p = Path()
+        p.move(to: CGPoint(x: 7 * w, y: 7 * h))
+        p.addLine(to: CGPoint(x: 17 * w, y: 17 * h))
+        p.move(to: CGPoint(x: 17 * w, y: 7 * h))
+        p.addLine(to: CGPoint(x: 7 * w, y: 17 * h))
+        return p
+    }
+}
+
+@available(iOS 17.0, *)
+struct ApprovalResultToast: View {
+    let fx: ApprovalResultFx
+    let onDone: () -> Void
+
+    @State private var shown = false
+    @State private var drawn = false
+    @State private var glint = false
+    @State private var confetti = false
+
+    private var tone: Color {
+        fx.approved ? Color(red: 0.13, green: 0.77, blue: 0.37)   // #22c55e
+                    : Color(red: 0.94, green: 0.27, blue: 0.27)   // #ef4444
+    }
+    private var stroke: Color {
+        fx.approved ? Color(red: 0.29, green: 0.87, blue: 0.5)    // #4ade80
+                    : Color(red: 0.99, green: 0.44, blue: 0.44)
+    }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            if confetti { ApprovalConfettiBurst().allowsHitTesting(false) }
+            HStack(spacing: 12) {
+                medallion
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(fx.title)
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    if let d = fx.detail, !d.isEmpty {
+                        Text(d)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.white.opacity(0.62))
+                            .lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Color(red: 0.05, green: 0.05, blue: 0.07).opacity(0.94),
+                        in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(tone.opacity(0.35)))
+            .shadow(color: tone.opacity(0.28), radius: 18, y: 8)
+            .padding(.horizontal, 16)
+            .padding(.top, 6)
+            .offset(y: shown ? 0 : -22)
+            .scaleEffect(shown ? 1 : 0.9, anchor: .top)
+            .opacity(shown ? 1 : 0)
+        }
+        .onAppear {
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.68)) { shown = true }
+            withAnimation(.easeOut(duration: 0.5).delay(0.35)) { drawn = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.85) {
+                withAnimation(.easeOut(duration: 1.0)) { glint = true }
+            }
+            if fx.approved {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { confetti = true }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.4) {
+                withAnimation(.easeIn(duration: 0.3)) { shown = false }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.75) { onDone() }
+        }
+    }
+
+    /// Green medal / red cross — gradient fill, tone border+glow, self-drawing
+    /// glyph (path trim) and a light glint that sweeps once (web `.onx-glint`).
+    private var medallion: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(LinearGradient(colors: [tone.opacity(0.28), tone.opacity(0.10)],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(tone.opacity(0.45))
+            Group {
+                if fx.approved {
+                    ApprovalCheckShape()
+                        .trim(from: 0, to: drawn ? 1 : 0)
+                        .stroke(stroke, style: StrokeStyle(lineWidth: 2.8, lineCap: .round, lineJoin: .round))
+                } else {
+                    ApprovalCrossShape()
+                        .trim(from: 0, to: drawn ? 1 : 0)
+                        .stroke(stroke, style: StrokeStyle(lineWidth: 2.8, lineCap: .round, lineJoin: .round))
+                }
+            }
+            .frame(width: 22, height: 22)
+            GeometryReader { g in
+                LinearGradient(colors: [.clear, .white.opacity(0.5), .clear],
+                               startPoint: .leading, endPoint: .trailing)
+                    .frame(width: g.size.width * 0.7)
+                    .rotationEffect(.degrees(18))
+                    .offset(x: glint ? g.size.width * 1.2 : -g.size.width * 0.9)
+            }
+            .allowsHitTesting(false)
+        }
+        .frame(width: 44, height: 44)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .shadow(color: tone.opacity(0.35), radius: 10, y: 4)
+    }
+}
+
+/// Compact one-shot confetti for the approve toast — brand palette Canvas burst
+/// (same recipe as the ALMA Island's, scoped to the toast area).
+@available(iOS 17.0, *)
+private struct ApprovalConfettiBurst: View {
+    private struct Bit {
+        let x0: CGFloat, vx: CGFloat, vy: CGFloat, size: CGFloat, spin: Double, hue: Color
+    }
+    private let bits: [Bit]
+    private let born = Date()
+
+    init() {
+        let palette: [Color] = [
+            Color(red: 0.88, green: 0.48, blue: 0.37), Color(red: 0.96, green: 0.64, blue: 0.55),
+            Color(red: 0.95, green: 0.77, blue: 0.55), Color(red: 0.29, green: 0.87, blue: 0.5),
+            Color(red: 0.55, green: 0.36, blue: 0.96), .white,
+        ]
+        bits = (0..<64).map { _ in
+            Bit(x0: CGFloat.random(in: 0.25...0.75),
+                vx: CGFloat.random(in: -80...80),
+                vy: CGFloat.random(in: 50...190),
+                size: CGFloat.random(in: 4...7),
+                spin: Double.random(in: -4...4),
+                hue: palette.randomElement()!)
+        }
+    }
+
+    var body: some View {
+        TimelineView(.animation) { tl in
+            Canvas { ctx, size in
+                let t = tl.date.timeIntervalSince(born)
+                guard t < 2.2 else { return }
+                for b in bits {
+                    let x = b.x0 * size.width + b.vx * t
+                    let y = 42 + b.vy * t + 130 * t * t
+                    guard y < size.height else { continue }
+                    let alpha = max(0, 1 - t / 2.0)
+                    var bit = ctx
+                    bit.translateBy(x: x, y: y)
+                    bit.rotate(by: .radians(b.spin * t))
+                    bit.opacity = alpha
+                    bit.fill(Path(CGRect(x: -b.size / 2, y: -b.size / 4, width: b.size, height: b.size / 2)),
+                             with: .color(b.hue))
+                }
+            }
+        }
+        .frame(maxHeight: 340, alignment: .top)
+    }
 }

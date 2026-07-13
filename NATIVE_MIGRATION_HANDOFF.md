@@ -86,21 +86,21 @@ are pre-assigned here so two sessions can never pick the same name.
 ### Trading business
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
-| Trading home | `/trading` | `ios/App/App/TradingHomeSwiftUI.swift` | web | NOT_STARTED | — |
-| Trading accounts | `/trading/accounts` + `[id]` | `ios/App/App/TradingAccountsSwiftUI.swift` | web | NOT_STARTED | — |
-| Trading analytics | `/trading/analytics` | `ios/App/App/TradingAnalyticsSwiftUI.swift` | web | NOT_STARTED | — |
-| Trading HR | `/trading/hr` | `ios/App/App/TradingHrSwiftUI.swift` | web | NOT_STARTED | — |
-| Target control | `/trading/target-control` | `ios/App/App/TargetControlSwiftUI.swift` | web | NOT_STARTED | — |
-| Trading telegram | `/trading/telegram` | `ios/App/App/TradingTelegramSwiftUI.swift` | web | NOT_STARTED | — |
+| Trading home | `/trading` | `ios/App/App/TradingHomeSwiftUI.swift` | native | IN_REVIEW (S7 batch 2026-07-10: 10 pages native in one parallel run, read-only + web escape for mutations; sim-verified light; TestFlight pending) | S7 batch session |
+| Trading accounts | `/trading/accounts` + `[id]` | `ios/App/App/TradingAccountsSwiftUI.swift` | native | IN_REVIEW (S7 batch 2026-07-10: 10 pages native in one parallel run, read-only + web escape for mutations; sim-verified light; TestFlight pending) | S7 batch session |
+| Trading analytics | `/trading/analytics` | `ios/App/App/TradingAnalyticsSwiftUI.swift` | native | IN_REVIEW (S7 batch 2026-07-10: 10 pages native in one parallel run, read-only + web escape for mutations; sim-verified light; TestFlight pending) | S7 batch session |
+| Trading HR | `/trading/hr` | `ios/App/App/TradingHrSwiftUI.swift` | native | IN_REVIEW (S7 batch 2026-07-10: 10 pages native in one parallel run, read-only + web escape for mutations; sim-verified light; TestFlight pending) | S7 batch session |
+| Target control | `/trading/target-control` | `ios/App/App/TargetControlSwiftUI.swift` | native | IN_REVIEW (S7 batch 2026-07-10: 10 pages native in one parallel run, read-only + web escape for mutations; sim-verified light; TestFlight pending) | S7 batch session |
+| Trading telegram | `/trading/telegram` | `ios/App/App/TradingTelegramSwiftUI.swift` | native | IN_REVIEW (S7 batch 2026-07-10: 10 pages native in one parallel run, read-only + web escape for mutations; sim-verified light; TestFlight pending) | S7 batch session |
 
 ### Digital (CDIT) business
 | Page | Route | Owning files | Surface | Status | Owner |
 |---|---|---|---|---|---|
-| Digital home | `/digital` | `ios/App/App/DigitalHomeSwiftUI.swift` | web | NOT_STARTED | — |
-| Digital clients | `/digital/clients` + `[id]` | `ios/App/App/DigitalClientsSwiftUI.swift` | web | NOT_STARTED | — |
-| Digital finance | `/digital/finance` | `ios/App/App/DigitalFinanceSwiftUI.swift` | web | NOT_STARTED | — |
-| Digital invoices | `/digital/invoices` | `ios/App/App/DigitalInvoicesSwiftUI.swift` | web | NOT_STARTED | — |
-| Digital projects | `/digital/projects` | `ios/App/App/DigitalProjectsSwiftUI.swift` | web | NOT_STARTED | — |
+| Digital home | `/digital` | `ios/App/App/DigitalHomeSwiftUI.swift` | native | IN_REVIEW (S7 batch 2026-07-10: 10 pages native in one parallel run, read-only + web escape for mutations; sim-verified light; TestFlight pending) | S7 batch session |
+| Digital clients | `/digital/clients` + `[id]` | `ios/App/App/DigitalClientsSwiftUI.swift` | native | IN_REVIEW (S7 batch 2026-07-10: 10 pages native in one parallel run, read-only + web escape for mutations; sim-verified light; TestFlight pending) | S7 batch session |
+| Digital finance | `/digital/finance` | — (server redirect to `/finance`; router serves native FinanceScreen) | native | DONE (S7 batch 2026-07-10 — one router case, no new file) | S7 batch session |
+| Digital invoices | `/digital/invoices` | `ios/App/App/DigitalInvoicesSwiftUI.swift` | native | IN_REVIEW (S7 batch 2026-07-10: 10 pages native in one parallel run, read-only + web escape for mutations; sim-verified light; TestFlight pending) | S7 batch session |
+| Digital projects | `/digital/projects` | `ios/App/App/DigitalProjectsSwiftUI.swift` | native | IN_REVIEW (S7 batch 2026-07-10: 10 pages native in one parallel run, read-only + web escape for mutations; sim-verified light; TestFlight pending) | S7 batch session |
 
 ### Agent sub-pages (inside the Assistant surface — migrate LAST, owner call per page)
 | Page | Route | Owning files | Surface | Status | Owner |

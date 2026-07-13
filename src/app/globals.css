@@ -592,6 +592,33 @@ a,
   }
 }
 
+/* Active ALMA wordmark: the loader's blue → violet → magenta → coral aura
+   passes through the letters with one restrained white specular highlight. */
+.alma-brand-shimmer {
+  background: linear-gradient(
+    100deg,
+    #3880ff 0%, #7c4dff 20%, #d633ff 39%, #ffffff 50%,
+    #ff2e86 62%, #ff6e50 82%, #3880ff 100%
+  );
+  background-size: 260% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  filter: drop-shadow(0 0 5px rgb(214 51 255 / 24%));
+  animation: alma-brand-shimmer 2.8s linear infinite;
+}
+@keyframes alma-brand-shimmer {
+  0%   { background-position: 130% 0; }
+  100% { background-position: -130% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .alma-brand-shimmer {
+    animation: none;
+    background-position: 50% 0;
+  }
+}
+
 /* ── Claude-Code "Running → Ran" status (owner spec) ───────────────────────
    Phase 1 (tool running): "Running ›" — a bright light-reflection sweeps
    left→right across the text (dark-gray → bright-white → dark-gray), clipped

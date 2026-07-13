@@ -390,6 +390,86 @@ final class SettingsTelegramVM {
     var queueStats7d: [String: Int] {
         Dictionary(uniqueKeysWithValues: (dashboard?.queue?.stats7d ?? []).map { ($0.status, $0.count) })
     }
+
+    // ── Native writes (owner 2026-07-11) — web processQueueNow/sendTest/retry/save. ──
+
+    var toast: String? = nil
+    var busy = false
+
+    private struct EmptyBody: Encodable {}
+    private struct RetryBody: Encodable {
+        var id: String? = nil
+        var retry_all: Bool? = nil
+        var business_id: String? = nil
+    }
+    private struct TestBody: Encodable { let business_id: String }
+    private struct SavePatch: Encodable {
+        let business_id: String
+        var enabled: Bool? = nil
+        var alert_toggles: [String: Bool]? = nil
+    }
+
+    func processQueueNow() async {
+        struct Resp: Decodable {
+            struct Inner: Decodable { let processed: Int? }
+            let reclaimed: Int?, processed: Inner?
+        }
+        busy = true; defer { busy = false }
+        do {
+            let res: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/settings/telegram-ops/health",
+                query: ["business_id": businessId], body: EmptyBody())
+            toast = "Reclaimed \(res.reclaimed ?? 0) stuck · processed \(res.processed?.processed ?? 0)"
+            await load()
+        } catch { toast = error.localizedDescription }
+    }
+
+    func sendTest() async {
+        struct Resp: Decodable {
+            struct Routing: Decodable { let source: String?, chatIds: [String]? }
+            let routing: Routing?
+        }
+        busy = true; defer { busy = false }
+        do {
+            let res: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/settings/telegram-ops/test", body: TestBody(business_id: businessId))
+            toast = "Test sent to \(res.routing?.chatIds?.count ?? 0) owner chat(s)"
+            await load()
+        } catch { toast = error.localizedDescription }
+    }
+
+    func retryAllFailed() async {
+        struct Resp: Decodable { let requeued: Int? }
+        busy = true; defer { busy = false }
+        do {
+            let res: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/settings/telegram-ops/retry",
+                body: RetryBody(retry_all: true, business_id: businessId))
+            toast = "Requeued \(res.requeued ?? 0) failed job(s)"
+            await load()
+        } catch { toast = error.localizedDescription }
+    }
+
+    func retryQueue(_ id: String) async {
+        struct Resp: Decodable { let ok: Bool? }
+        do {
+            let _: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/settings/telegram-ops/retry", body: RetryBody(id: id))
+            toast = "Retry queued"
+            await load()
+        } catch { toast = error.localizedDescription }
+    }
+
+    func setEnabled(_ enabled: Bool) async {
+        struct Resp: Decodable { let ok: Bool? }
+        do {
+            let _: Resp = try await AlmaAPI.shared.send(
+                "PATCH", "/api/settings/telegram-ops",
+                body: SavePatch(business_id: businessId, enabled: enabled))
+            toast = "Saved"
+            await load()
+        } catch { toast = error.localizedDescription }
+    }
 }
 
 // MARK: - Screen
@@ -410,6 +490,7 @@ struct SettingsTelegramScreen: View {
                     loadingRows
                 } else {
                     healthGrid
+                    actionsCard
                     routingCard
                     configCard
                     alertTogglesCard
@@ -425,6 +506,56 @@ struct SettingsTelegramScreen: View {
         .claudeTopFade()
         .refreshable { await vm.load() }
         .task { await vm.load() }
+        .overlay(alignment: .bottom) {
+            if let t = vm.toast {
+                Text(t)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task {
+                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+                        withAnimation { vm.toast = nil }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: vm.toast != nil)
+    }
+
+    /// Native ops actions (owner 2026-07-11): master toggle + process-now + test +
+    /// retry-all — web parity.
+    private var actionsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle("Telegram notifications", isOn: Binding(
+                get: { vm.setting?.enabled == true },
+                set: { on in Task { await vm.setEnabled(on) } }))
+                .font(.footnote.weight(.semibold))
+                .tint(SettingsTelegramPalette.emerald600)
+            HStack(spacing: 8) {
+                opChip("Process now", "play.circle") { Task { await vm.processQueueNow() } }
+                opChip("Send test", "paperplane") { Task { await vm.sendTest() } }
+                opChip("Retry failed", "arrow.clockwise") { Task { await vm.retryAllFailed() } }
+                if vm.busy { ProgressView().controlSize(.mini) }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .settingsTelegramGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+    }
+
+    private func opChip(_ label: String, _ icon: String, action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            Label(label, systemImage: icon)
+                .font(.system(size: 10, weight: .bold))
+                .padding(.horizontal, 9).padding(.vertical, 7)
+                .background(Color.primary.opacity(0.06), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(vm.busy)
     }
 
     // ── Business picker (web Select over BUSINESS_LIST) ──
@@ -721,6 +852,19 @@ struct SettingsTelegramScreen: View {
             if let err = row.errorMessage, !err.isEmpty {
                 Text(err).font(.caption2).foregroundStyle(SettingsTelegramPalette.red500).lineLimit(2)
             }
+            // Native per-row retry (owner 2026-07-11) — web shows it on FAILED/QUEUED/SENDING.
+            if ["FAILED", "QUEUED", "SENDING"].contains((row.status ?? "").uppercased()) {
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    Task { await vm.retryQueue(row.id) }
+                } label: {
+                    Text("Retry").font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(SettingsTelegramPalette.amber600)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(SettingsTelegramPalette.amber600.opacity(0.12), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background(Color.white.opacity(colorScheme == .dark ? 0.04 : 0.3),
@@ -835,34 +979,76 @@ private enum SettingsTelegramFormat {
 @available(iOS 17.0, *)
 private struct SettingsTelegramAurora: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
 
     var body: some View {
-        ZStack {
-            if scheme == .dark {
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.075, green: 0.063, blue: 0.196), location: 0.0),  // deep indigo
-                    .init(color: Color(red: 0.216, green: 0.125, blue: 0.439), location: 0.32), // violet
-                    .init(color: Color(red: 0.478, green: 0.176, blue: 0.494), location: 0.62), // purple-magenta
-                    .init(color: Color(red: 0.706, green: 0.255, blue: 0.404), location: 1.0),  // pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.35), .clear],
-                               center: .init(x: 0.15, y: 0.18), startRadius: 10, endRadius: 420)
-                RadialGradient(colors: [Color(red: 0.93, green: 0.42, blue: 0.55).opacity(0.30), .clear],
-                               center: .init(x: 0.9, y: 0.85), startRadius: 20, endRadius: 480)
-            } else {
-                AlmaSwiftTheme.rootBg(.light)
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.902, green: 0.882, blue: 0.973), location: 0.0),  // pale violet
-                    .init(color: Color(red: 0.949, green: 0.941, blue: 0.972), location: 0.45), // cream
-                    .init(color: Color(red: 0.988, green: 0.918, blue: 0.925), location: 1.0),  // pale pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.14), .clear],
-                               center: .init(x: 0.12, y: 0.15), startRadius: 10, endRadius: 380)
-                RadialGradient(colors: [AlmaSwiftTheme.coral.opacity(0.12), .clear],
-                               center: .init(x: 0.9, y: 0.9), startRadius: 20, endRadius: 420)
+        let dark = scheme == .dark
+        // Agent-parity living aurora (web --aurora-blob-1…5): five blurred colour blobs
+        // drifting corner-to-corner over the page canvas. Owner directive 2026-07-08:
+        // every native page shares the Assistant tab's moving aurora.
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
             }
+            .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Battery guard: drift only when the owner allows motion — Reduce Motion and
+    /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
     }
 }
 

@@ -1,4 +1,9 @@
-/* Instant boot — visible before React hydrates (native-app feel). */
+/* Instant boot — visible before React hydrates (native-app feel).
+   Owner-approved WOW design (2026-07): the ALMA orbit — a terracotta core with
+   two counter-rotating conic rings + a breathing halo, the wordmark rising
+   letter by letter, and a sliding progress hairline. Pure CSS so it paints
+   before any JS runs; the full particle-monogram show lives in the native
+   bootstrap (mobile/www/index.html) where JS is available. */
 #alma-boot-splash {
   position: fixed;
   inset: 0;
@@ -7,12 +12,11 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 0.75rem;
+  gap: 0;
   background:
-    radial-gradient(circle at 30% 20%, rgba(139, 124, 246, 0.14), transparent 42%),
-    radial-gradient(circle at 72% 80%, rgba(211, 106, 216, 0.12), transparent 46%),
-    radial-gradient(circle at 50% 50%, rgba(124, 196, 245, 0.08), transparent 60%),
-    #0c0b12;
+    radial-gradient(80% 55% at 50% 0%, rgba(58, 44, 84, 0.5), transparent 60%),
+    radial-gradient(85% 60% at 50% 115%, rgba(120, 52, 60, 0.45), transparent 62%),
+    #0c0c12;
   color: #f8fafc;
   font-family: system-ui, sans-serif;
   transition: opacity 0.35s ease;
@@ -22,96 +26,139 @@
 }
 
 /* Light theme: SSR sets data-theme on <html> before paint, so the splash renders
-   in the right theme immediately — no flash of dark before the cream UI. Rebranded
-   to the ALMA coral accent (the dark splash above is unchanged). */
+   in the right theme immediately — no flash of dark before the cream UI. */
 html[data-theme='light'] #alma-boot-splash {
   background:
     radial-gradient(circle at 30% 20%, rgba(224, 122, 95, 0.12), transparent 44%),
-    radial-gradient(circle at 72% 80%, rgba(129, 178, 154, 0.10), transparent 46%),
+    radial-gradient(circle at 72% 80%, rgba(129, 178, 154, 0.1), transparent 46%),
     #f6f4ef;
   color: #1a1a20;
 }
-html[data-theme='light'] #alma-boot-splash .alma-boot-mark {
-  border-color: rgba(224, 122, 95, 0.35);
-  background: rgba(224, 122, 95, 0.10);
-  box-shadow: 0 0 24px -6px rgba(224, 122, 95, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.5);
-}
-html[data-theme='light'] #alma-boot-splash .alma-boot-mark > span {
-  background-image: none;
-  -webkit-text-fill-color: #c45a3c;
+html[data-theme='light'] #alma-boot-splash .alma-boot-word {
   color: #c45a3c;
-  animation: none;
+  text-shadow: none;
 }
-html[data-theme='light'] #alma-boot-splash .alma-boot-title {
-  background-image: none;
-  -webkit-text-fill-color: #8a7d72;
-  color: #8a7d72;
-  animation: none;
-}
-html[data-theme='light'] #alma-boot-splash .alma-boot-spinner {
-  border-color: rgba(224, 122, 95, 0.2);
-  border-top-color: #e07a5f;
-  box-shadow: 0 0 12px -2px rgba(224, 122, 95, 0.45);
+html[data-theme='light'] #alma-boot-splash .alma-boot-line {
+  background: rgba(30, 28, 40, 0.12);
 }
 
-#alma-boot-splash .alma-boot-mark {
+/* ── the orbit ── */
+#alma-boot-splash .alma-boot-orb {
+  position: relative;
+  width: 104px;
+  height: 104px;
   display: grid;
-  height: 3rem;
-  width: 3rem;
   place-items: center;
-  border-radius: 1rem;
-  border: 1px solid rgba(139, 124, 246, 0.35);
-  background: rgba(139, 124, 246, 0.1);
-  box-shadow: 0 0 24px -6px rgba(139, 124, 246, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  font-size: 1rem;
-  font-weight: 900;
 }
-
-#alma-boot-splash .alma-boot-mark > span,
-#alma-boot-splash .alma-boot-title {
-  background-image: linear-gradient(
-    100deg,
-    #f8fafc 0%, #f8fafc 12%, #7cc4f5 30%, #8b7cf6 46%,
-    #d36ad8 60%, #f06595 72%, #f8fafc 88%, #f8fafc 100%
-  );
-  background-size: 250% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
-  animation: alma-boot-neon 6s linear infinite;
+#alma-boot-splash .alma-boot-halo {
+  position: absolute;
+  inset: -16px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(224, 122, 95, 0.28), transparent 70%);
+  animation: alma-boot-breathe 2.4s ease-in-out infinite;
 }
-
-#alma-boot-splash .alma-boot-title {
-  font-size: 0.6875rem;
+@keyframes alma-boot-breathe {
+  0%, 100% { transform: scale(0.92); opacity: 0.7; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+#alma-boot-splash .alma-boot-ring1 {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0 55%, #f4a28c 78%, #e07a5f 100%);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 7px), #000 calc(100% - 6px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 7px), #000 calc(100% - 6px));
+  animation: alma-boot-rot 1.15s linear infinite;
+}
+#alma-boot-splash .alma-boot-ring2 {
+  position: absolute;
+  inset: 11px;
+  border-radius: 50%;
+  background: conic-gradient(from 180deg, transparent 0 68%, #8b5cf6 92%, transparent 100%);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4.5px), #000 calc(100% - 3.5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 4.5px), #000 calc(100% - 3.5px));
+  animation: alma-boot-rot 1.9s linear infinite reverse;
+  opacity: 0.85;
+}
+@keyframes alma-boot-rot {
+  to { transform: rotate(360deg); }
+}
+#alma-boot-splash .alma-boot-core {
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  color: #fff;
   font-weight: 800;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
+  font-size: 23px;
+  letter-spacing: -0.02em;
+  background: linear-gradient(135deg, #e07a5f, #c45a3c);
+  box-shadow: 0 8px 22px rgba(224, 122, 95, 0.45);
+  animation: alma-boot-corepop 2.4s ease-in-out infinite;
+}
+@keyframes alma-boot-corepop {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); }
 }
 
-#alma-boot-splash .alma-boot-spinner {
-  margin-top: 0.5rem;
-  height: 1.25rem;
-  width: 1.25rem;
-  border-radius: 999px;
-  border: 2px solid rgba(139, 124, 246, 0.18);
-  border-top-color: #8b7cf6;
-  box-shadow: 0 0 12px -2px rgba(139, 124, 246, 0.5);
-  animation: alma-boot-spin 0.75s linear infinite;
+/* ── the wordmark ── */
+#alma-boot-splash .alma-boot-word {
+  margin: 22px 0 0;
+  font-weight: 800;
+  font-size: 17px;
+  letter-spacing: 0.28em;
+  padding-left: 0.28em; /* re-centre the trailing tracking space */
+  display: flex;
+  text-shadow: 0 0 24px rgba(244, 162, 140, 0.35);
+}
+#alma-boot-splash .alma-boot-word span {
+  opacity: 0;
+  animation: alma-boot-lrise 0.5s cubic-bezier(0.2, 0.9, 0.35, 1.2) forwards;
+}
+#alma-boot-splash .alma-boot-word span:nth-child(1) { animation-delay: 0.05s; }
+#alma-boot-splash .alma-boot-word span:nth-child(2) { animation-delay: 0.13s; }
+#alma-boot-splash .alma-boot-word span:nth-child(3) { animation-delay: 0.21s; }
+#alma-boot-splash .alma-boot-word span:nth-child(4) { animation-delay: 0.29s; }
+@keyframes alma-boot-lrise {
+  from { opacity: 0; transform: translateY(9px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes alma-boot-neon {
-  0% { background-position: 200% 50%; }
-  100% { background-position: -50% 50%; }
+/* ── the progress hairline ── */
+#alma-boot-splash .alma-boot-line {
+  margin-top: 16px;
+  width: 120px;
+  height: 3.5px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+#alma-boot-splash .alma-boot-line i {
+  display: block;
+  height: 100%;
+  width: 40%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #f4a28c, #e07a5f);
+  box-shadow: 0 0 12px rgba(244, 162, 140, 0.8);
+  animation: alma-boot-slide 1.15s ease-in-out infinite;
+}
+@keyframes alma-boot-slide {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(320%); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  #alma-boot-splash .alma-boot-mark > span,
-  #alma-boot-splash .alma-boot-title { animation: none; }
-}
-
-@keyframes alma-boot-spin {
-  to { transform: rotate(360deg); }
+  #alma-boot-splash .alma-boot-halo,
+  #alma-boot-splash .alma-boot-ring1,
+  #alma-boot-splash .alma-boot-ring2,
+  #alma-boot-splash .alma-boot-core,
+  #alma-boot-splash .alma-boot-line i {
+    animation: none;
+  }
+  #alma-boot-splash .alma-boot-word span {
+    animation-duration: 0.01ms;
+  }
 }
 
 @keyframes alma-boot-fallback-hide {
