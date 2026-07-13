@@ -190,6 +190,7 @@ object AgoraIntercom {
 
     fun leave() {
         engine?.leaveChannel()
+        appContext?.let { com.almatraders.erp.IntercomForegroundService.stop(it) }
         stopCallTicker()
         stopRingTimeout()
         ringtone.stop()
@@ -290,6 +291,9 @@ object AgoraIntercom {
         e.setEnableSpeakerphone(true)
         e.muteLocalAudioStream(!publishMic)
         e.joinChannel(tok, ch, uid, opts)
+        // Android 14+ blocks mic capture from a backgrounded app without a foreground
+        // service of type microphone — keep the call alive when the owner switches apps.
+        appContext?.let { com.almatraders.erp.IntercomForegroundService.start(it) }
     }
 
     private fun engineFor(newAppId: String): RtcEngine {

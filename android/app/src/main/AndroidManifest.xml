@@ -11,6 +11,8 @@
 
     <application
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:appCategory="productivity"
         android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
@@ -34,7 +36,23 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- almaerp:// custom-scheme deep links (notifications / shortcuts / future
+                 widgets). Capacitor's App plugin delivers these as appUrlOpen →
+                 DeepLinkManager routes them in-app (iOS registers the same scheme). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="almaerp" />
+            </intent-filter>
+
         </activity>
+
+        <!-- Office Live Intercom mic foreground service (Agora RTC). -->
+        <service
+            android:name=".IntercomForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="microphone" />
 
         <!-- Fires background reminders scheduled by ReminderRefresh (WorkManager). -->
         <receiver
@@ -69,6 +87,12 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Capacitor Haptics (agent/UI haptics from the WebView) drives the Vibrator. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Office Live Intercom (Agora) keeps the mic alive while backgrounded during a
+         call — Android 14+ requires a microphone-typed foreground service for that. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 </manifest>
