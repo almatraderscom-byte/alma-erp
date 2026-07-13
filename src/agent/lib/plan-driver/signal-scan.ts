@@ -131,15 +131,37 @@ export function selectDrivableSignals(briefing: OwnerBriefingData): DrivableSign
   return out.slice(0, MAX_SIGNALS_PER_SCAN)
 }
 
-/** Is the plan behind this id still being pursued (non-terminal autodrive state)? */
-async function planStillActive(planId: string): Promise<boolean> {
+/** Owner-abandoned signals stay suppressed this long before they may re-surface.
+ * "বাদ দাও" means STOP pursuing it — not "re-plan it on the next 30-min scan"
+ * (owner bug 2026-07-13: the same Mustahid/24h-window plans were re-created and
+ * re-dismissed 6 times since June 29). kv `signal_abandon_cooloff_days` overrides. */
+const ABANDON_COOLOFF_DAYS_DEFAULT = 7
+
+async function abandonCooloffMs(): Promise<number> {
+  try {
+    const row = await prisma.agentKvSetting.findUnique({ where: { key: 'signal_abandon_cooloff_days' } })
+    const d = Number(row?.value)
+    if (Number.isFinite(d) && d >= 0) return d * 24 * 60 * 60 * 1000
+  } catch { /* default below */ }
+  return ABANDON_COOLOFF_DAYS_DEFAULT * 24 * 60 * 60 * 1000
+}
+
+/** May a new plan be created for this signal, given its previous plan?
+ * false when the previous plan is still being pursued, OR the owner abandoned it
+ * within the cool-off window (his dismissal must stick, not bounce back). */
+async function signalReplannable(planId: string): Promise<boolean> {
   const row = await db.agentPlan.findUnique({
     where: { id: planId },
-    select: { autodriveState: true },
+    select: { autodriveState: true, updatedAt: true },
   })
-  if (!row) return false
+  if (!row) return true
   const state = (row.autodriveState ?? 'idle') as AutodriveState
-  return !TERMINAL_AUTODRIVE_STATES.has(state)
+  if (!TERMINAL_AUTODRIVE_STATES.has(state)) return false   // still active → no duplicate
+  if (state === 'abandoned') {
+    const age = Date.now() - new Date(row.updatedAt as unknown as string).getTime()
+    if (age < (await abandonCooloffMs())) return false       // owner said no — respect it
+  }
+  return true
 }
 
 /** Has the throttle window elapsed since the last full scan? */
@@ -204,8 +226,9 @@ export async function scanSignalsToPlanDrive(
     try {
       const key = activeKey(businessId, sig.signalKey)
       const existing = await prisma.agentKvSetting.findUnique({ where: { key } })
-      // Already pursuing this exact signal → skip (no duplicate plan).
-      if (existing?.value && (await planStillActive(existing.value))) continue
+      // Skip when this signal's previous plan is still active OR the owner
+      // abandoned it within the cool-off — his dismissal must stick.
+      if (existing?.value && !(await signalReplannable(existing.value))) continue
 
       const plan = await createPlan({
         goal: sig.goal,

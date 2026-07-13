@@ -134,6 +134,21 @@ export class OpenAiAdapter implements ProviderAdapter {
     // 280s turn abort until Vercel hard-kills the function at 300s: no salvage,
     // a forever-'running' turn row and a blank reply (2026-07-12 carousel run).
     const reqOptions = args.signal ? { signal: args.signal } : undefined
+    // Pull OpenRouter's upstream detail out of an APIError — `error.metadata.raw`
+    // carries the provider's real reason ("Provider returned error" alone is
+    // useless; the 2026-07-13 Grok-4.20 outage was undiagnosable without it).
+    const errDetail = (err: unknown): string => {
+      const base = err instanceof Error ? err.message : String(err)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const body = (err as any)?.error
+      const raw = body?.metadata?.raw ?? body?.error?.metadata?.raw
+      return raw ? `${base} | provider: ${String(raw).slice(0, 300)}` : base
+    }
+    // Retry ladder: full request → without the reasoning extension → BARE
+    // (no reasoning, no cache_control, no stream_options). A provider that 400s
+    // on ANY optional extension must degrade the head to plain OpenAI-spec, never
+    // knock it over to the fallback model (Grok-4.20 was silently DeepSeek all
+    // day, 2026-07-13, because both extension-bearing attempts 400'd).
     let stream
     try {
       stream = await this.client.chat.completions.create({
@@ -141,15 +156,33 @@ export class OpenAiAdapter implements ProviderAdapter {
         ...reasoningParam,
       } as ChatCompletionCreateParamsStreaming, reqOptions)
     } catch (err) {
-      if (!wantReasoning) throw err
+      if (args.signal?.aborted) throw err
       console.warn(
-        `[openai-adapter] ${args.apiModel} rejected the reasoning param — retrying without it:`,
-        err instanceof Error ? err.message : err,
+        `[openai-adapter] ${args.apiModel} rejected the full request — retrying without reasoning:`,
+        errDetail(err),
       )
-      stream = await this.client.chat.completions.create(
-        baseParams as ChatCompletionCreateParamsStreaming,
-        reqOptions,
-      )
+      try {
+        stream = await this.client.chat.completions.create(
+          baseParams as ChatCompletionCreateParamsStreaming,
+          reqOptions,
+        )
+      } catch (err2) {
+        if (args.signal?.aborted) throw err2
+        console.warn(
+          `[openai-adapter] ${args.apiModel} rejected the standard request too — final bare retry (no cache_control/stream_options):`,
+          errDetail(err2),
+        )
+        const bareParams = {
+          model: args.apiModel,
+          messages: toOpenAiMessages(args.system, args.messages, false),
+          tools: args.tools.length ? toOpenAiTools(args.tools) : undefined,
+          stream: true as const,
+        }
+        stream = await this.client.chat.completions.create(
+          bareParams as ChatCompletionCreateParamsStreaming,
+          reqOptions,
+        )
+      }
     }
 
     const toolBuffers = new Map<number, { id: string; name: string; args: string; started: boolean }>()
