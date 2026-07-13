@@ -73,6 +73,7 @@ export class OpenAiAdapter implements ProviderAdapter {
   private client: OpenAI
   private cachePrefix: boolean
   private streamReasoning: boolean
+  private includeCostUsage: boolean
 
   constructor(
     apiKey: string,
@@ -87,6 +88,15 @@ export class OpenAiAdapter implements ProviderAdapter {
        * thinking. Owner can disable via STREAM_OPENROUTER_REASONING=false.
        */
       reasoning?: boolean
+      /**
+       * Ask OpenRouter to attach the ACTUAL billed cost to the final usage chunk
+       * (`usage: { include: true }` → `usage.cost` in USD). Only OpenRouter honours
+       * this; raw OpenAI ignores/rejects the field, so it's opt-in per factory.
+       * When on, the turn's displayed cost is OpenRouter's real charge instead of
+       * a local token×rate estimate. Owner can disable via
+       * OPENROUTER_INCLUDE_COST=false to fall back to the estimate.
+       */
+      includeCostUsage?: boolean
     },
   ) {
     this.client = new OpenAI({
@@ -98,6 +108,7 @@ export class OpenAiAdapter implements ProviderAdapter {
     // ENABLE_OPENROUTER_CACHE=false if a provider ever rejects the extension field.
     this.cachePrefix = (opts?.cachePrefix ?? false) && process.env.ENABLE_OPENROUTER_CACHE !== 'false'
     this.streamReasoning = (opts?.reasoning ?? false) && process.env.STREAM_OPENROUTER_REASONING !== 'false'
+    this.includeCostUsage = (opts?.includeCostUsage ?? false) && process.env.OPENROUTER_INCLUDE_COST !== 'false'
   }
 
   async *streamTurn(args: {
@@ -126,6 +137,9 @@ export class OpenAiAdapter implements ProviderAdapter {
       tools: args.tools.length ? toOpenAiTools(args.tools) : undefined,
       stream: true as const,
       stream_options: { include_usage: true },
+      // OpenRouter extension: attach the actual billed cost (USD) to the final
+      // usage chunk. Ignored by raw OpenAI, so only set when the factory opted in.
+      ...(this.includeCostUsage ? { usage: { include: true } } : {}),
     }
     // Cast to the streaming params type so the `reasoning` extension is accepted
     // and the create() overload still resolves to a Stream (not a single reply).
@@ -256,11 +270,22 @@ export class OpenAiAdapter implements ProviderAdapter {
           (chunk.usage as { prompt_tokens_details?: { cached_tokens?: number } })
             .prompt_tokens_details?.cached_tokens ?? 0
         const promptTokens = chunk.usage.prompt_tokens ?? 0
+        // OpenRouter attaches the ACTUAL billed cost (USD, = credits deducted) here
+        // when we opt in with `usage: { include: true }`. This is authoritative —
+        // it already reflects the provider's real per-token + cache-discount rates,
+        // so the caller uses it verbatim instead of estimating from the registry
+        // table. Guard against 0/NaN so a provider that omits it falls back to the
+        // local estimate rather than persisting a bogus $0.00.
+        const rawCost = this.includeCostUsage ? (chunk.usage as { cost?: number }).cost : undefined
+        const costUsd = typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost > 0
+          ? rawCost
+          : undefined
         yield {
           type: 'usage',
           inputTokens: Math.max(0, promptTokens - cachedTokens),
           outputTokens: chunk.usage.completion_tokens ?? 0,
           cacheRead: cachedTokens,
+          costUsd,
         }
       }
     }

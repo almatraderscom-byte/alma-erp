@@ -7,6 +7,14 @@ import { todayYmdDhaka, dhakaDayBounds, dhakaMonthBounds, addDaysYmd } from '@/l
 
 export const API_BALANCE_CACHE_KEY = 'api_balance_cache'
 
+// OpenRouter live-balance micro-cache. The full balance snapshot only refreshes
+// on the 6-hourly cron (or a manual POST), so between refreshes the subscription
+// screen showed a stale OpenRouter balance while labelled "Live API" — the owner's
+// mismatch. We re-fetch /credits on read when this micro-cache is older than the
+// TTL, throttled to at most one call per TTL across all readers.
+const OPENROUTER_LIVE_KEY = 'api_balance:openrouter_live'
+const OPENROUTER_LIVE_TTL_MS = 180_000 // 3 min
+
 export type BalanceProviderId =
   | 'anthropic'
   | 'twilio'
@@ -331,6 +339,47 @@ async function fetchOpenRouterCreditsUsd(): Promise<number | null> {
 }
 
 /**
+ * OpenRouter live balance for the READ path, throttled by a 3-min KV micro-cache.
+ *
+ * The default balances GET returns the cached snapshot (last 6-hourly cron), and
+ * `overlayLiveLocalSpend` only recomputed today/month — never the balance itself —
+ * so the OpenRouter row could sit up to 6h stale behind a "Live API" label. This
+ * re-fetches /credits when the micro-cache is older than the TTL and reuses it
+ * otherwise, so a hot dashboard poll doesn't hammer OpenRouter. Returns null when
+ * no fresh value is available (call failed and nothing cached).
+ */
+async function getFreshOpenRouterBalanceUsd(): Promise<number | null> {
+  try {
+    const row = await prisma.agentKvSetting.findUnique({ where: { key: OPENROUTER_LIVE_KEY } })
+    if (row?.value) {
+      const parsed = JSON.parse(row.value) as { usd?: number; at?: string }
+      const at = parsed.at ? Date.parse(parsed.at) : NaN
+      if (Number.isFinite(parsed.usd) && Number.isFinite(at) && Date.now() - at < OPENROUTER_LIVE_TTL_MS) {
+        return parsed.usd as number
+      }
+    }
+    const live = await fetchOpenRouterCreditsUsd()
+    if (live != null) {
+      await prisma.agentKvSetting.upsert({
+        where: { key: OPENROUTER_LIVE_KEY },
+        update: { value: JSON.stringify({ usd: live, at: new Date().toISOString() }) },
+        create: { key: OPENROUTER_LIVE_KEY, value: JSON.stringify({ usd: live, at: new Date().toISOString() }) },
+      })
+      return live
+    }
+    // Live call failed — fall back to whatever we last stored, even if stale.
+    if (row?.value) {
+      const parsed = JSON.parse(row.value) as { usd?: number }
+      return Number.isFinite(parsed.usd) ? (parsed.usd as number) : null
+    }
+    return null
+  } catch (err) {
+    console.warn('[api-balances] getFreshOpenRouterBalanceUsd failed:', err instanceof Error ? err.message : err)
+    return null
+  }
+}
+
+/**
  * Authoritative month-to-date OpenRouter spend via the Activity API.
  *
  * Requires a *management* key — a normal inference key returns 403 on this endpoint.
@@ -645,9 +694,12 @@ export async function getApiBalances(opts?: { refresh?: boolean }): Promise<ApiB
 async function overlayLiveLocalSpend(cache: ApiBalanceCache): Promise<ApiBalanceCache> {
   try {
     const { dayStart, dayEnd, monthStart, monthEnd } = dhakaSpendBounds()
-    const [todayByProvider, monthByProvider] = await Promise.all([
+    // Refresh the OpenRouter live balance too (throttled) — the cached snapshot's
+    // balance could be up to 6h stale behind its "Live API" label.
+    const [todayByProvider, monthByProvider, freshOpenRouterBalance] = await Promise.all([
       querySpendByProviderBetween(dayStart, dayEnd),
       querySpendByProviderBetween(monthStart, monthEnd),
+      getFreshOpenRouterBalanceUsd(),
     ])
     const providers = cache.providers.map((row) => {
       if (row.free) return row
@@ -656,7 +708,10 @@ async function overlayLiveLocalSpend(cache: ApiBalanceCache): Promise<ApiBalance
       // Preserve any admin-API floor already baked into the cached month figure
       // (e.g. Anthropic's authoritative month-to-date), but let local spend grow it.
       const monthUsd = row.monthUsd != null ? roundUsd(Math.max(row.monthUsd, liveMonth)) : liveMonth
-      return { ...row, todayUsd: liveToday, monthUsd }
+      const balanceUsd = row.id === 'openrouter' && freshOpenRouterBalance != null
+        ? roundUsd(freshOpenRouterBalance)
+        : row.balanceUsd
+      return { ...row, todayUsd: liveToday, monthUsd, balanceUsd }
     })
     return { ...cache, providers }
   } catch (err) {

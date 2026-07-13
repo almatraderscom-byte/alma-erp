@@ -44,6 +44,7 @@ import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agen
 import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 import { adapterFor } from '@/agent/lib/models/adapters'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
+import { roundUsd } from '@/agent/lib/pricing'
 import {
   anthropicToolsToNeutral,
   appendToolExchange,
@@ -202,6 +203,12 @@ async function* runAlternateProviderTurn(
   let totalOutputTokens = 0
   let totalCacheCreationTokens = 0
   let totalCacheReadTokens = 0
+  // OpenRouter's ACTUAL billed cost, summed across every tool-loop turn. Stays
+  // null for providers that don't report it (native Gemini/Anthropic) — those
+  // keep the local token×rate estimate, which is accurate since we control the
+  // exact model+rate. When non-null it overrides the estimate so the per-message
+  // cost matches the OpenRouter dashboard.
+  let totalActualCostUsd: number | null = null
 
   const allRows = await prisma.agentMessage.findMany({
     where: { conversationId },
@@ -585,6 +592,7 @@ async function* runAlternateProviderTurn(
           totalOutputTokens += ev.outputTokens
           totalCacheCreationTokens += ev.cacheWrite ?? 0
           totalCacheReadTokens += ev.cacheRead ?? 0
+          if (ev.costUsd != null) totalActualCostUsd = (totalActualCostUsd ?? 0) + ev.costUsd
         }
       }
 
@@ -903,12 +911,16 @@ async function* runAlternateProviderTurn(
       } catch { /* best-effort — the saved reply already carries the progress */ }
     }
 
-    const costUsd = calcModelTurnCostUsd(model, {
-      inputTokens: totalInputTokens,
-      outputTokens: totalOutputTokens,
-      cacheRead: totalCacheReadTokens,
-      cacheWrite: totalCacheCreationTokens,
-    })
+    // Prefer OpenRouter's actual billed cost; fall back to the local estimate only
+    // when the provider didn't report one (native Gemini/Anthropic).
+    const costUsd = totalActualCostUsd != null
+      ? roundUsd(totalActualCostUsd)
+      : calcModelTurnCostUsd(model, {
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
+          cacheRead: totalCacheReadTokens,
+          cacheWrite: totalCacheCreationTokens,
+        })
 
     // Ask-card breadcrumbs are appended after the text block — same reload-survival
     // pattern as the confirm-card breadcrumbs on the native Claude path (core.ts).
@@ -981,6 +993,7 @@ async function* runAlternateProviderTurn(
         model: model.id,
         apiModel: model.apiModel,
         provider: model.provider,
+        cost_source: totalActualCostUsd != null ? 'openrouter_actual' : 'estimate',
       },
       costUsd,
       conversationId,
@@ -1016,7 +1029,9 @@ async function* runAlternateProviderTurn(
               conversationId, role: 'assistant',
               content: [{ type: 'text', text: salvageText }, ...emittedAskCards],
               tokensIn: totalInputTokens, tokensOut: totalOutputTokens,
-              costUsd: calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens }),
+              costUsd: totalActualCostUsd != null
+                ? roundUsd(totalActualCostUsd)
+                : calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens }),
               usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
             },
           })
