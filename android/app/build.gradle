@@ -30,6 +30,14 @@ android {
             }
         }
     }
+    // Uncompressed native libs so AGP 8.5+ can page-align the .so to 16 KB in the APK
+    // (Android 15 16 KB page-size requirement). Agora 4.5.1 + OneSignal ship 16 KB-ready
+    // ELF libs; this makes the packaging honour it.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
+    }
     buildTypes {
         release {
             // R8 full-mode: shrink + obfuscate code and strip unused resources. Keep
