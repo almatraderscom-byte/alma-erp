@@ -739,7 +739,7 @@ export type BuildSystemPromptArgs = {
    * marketing/FB/website work and must do it ITSELF (no delegate note). Other
    * tiers (or undefined) get the standard slim-router delegate guidance.
    */
-  headTier?: 'light' | 'heavy' | 'explicit' | 'marketing'
+  headTier?: 'light' | 'heavy' | 'explicit' | 'marketing' | 'personal'
   /**
    * B3 tail-compaction running summary of the oldest folded-out turns. Rides the
    * STABLE/cached block (byte-stable between folds) so it costs one cache-write
