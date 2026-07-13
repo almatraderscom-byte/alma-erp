@@ -1091,6 +1091,11 @@ final class AssistantVM {
                 try? await Task.sleep(nanoseconds: 12_000_000_000)
                 guard let self, !Task.isCancelled else { return }
                 if !self.isStreaming { await self.loadMessages() }
+                // Server-side work started outside this client (approval execution,
+                // continuation turns) shows the live spinner within one poll tick —
+                // not only on app-resume (owner ask 2026-07-13, Claude-Code parity:
+                // approve → "করছি বস" line + working animation until the reply lands).
+                if !self.isStreaming { await self.resumeRunningTurnIfAny() }
                 tick += 1
                 if tick % 2 == 0 {
                     let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/presence",

@@ -103,11 +103,22 @@ async function runContinuationInline(opts: { conversationId: string; message: st
  * continuation only ever fires from a human approval or a one-shot job completion,
  * and the turn is told not to redo the work.
  */
-export async function enqueueAgentContinuation(opts: { conversationId: string; message: string }): Promise<void> {
+export async function enqueueAgentContinuation(opts: {
+  conversationId: string
+  message: string
+  /** Reuse an already-visible progress turn (created at approve time so the app
+   * shows the working spinner IMMEDIATELY) instead of opening a second one —
+   * one coherent "active" span from the owner's tap to the final reply
+   * (owner ask 2026-07-13: Claude-Code-like live progress). */
+  turnId?: string | null
+}): Promise<void> {
   if (!opts.conversationId) return
-  if (!(await autoContinueEnabled())) return    // owner disabled it
+  if (!(await autoContinueEnabled())) {
+    if (opts.turnId) await finalizeTurnIfRunning(opts.turnId, 'done')
+    return
+  }
 
-  const turnId = await createTurn(opts.conversationId)
+  const turnId = opts.turnId ?? (await createTurn(opts.conversationId))
 
   if (isTurnHandoffConfigured() && (await workerTurnConsumerAlive())) {
     const jobData = buildTurnJobData(turnId ?? '', opts.conversationId, { message: opts.message })
