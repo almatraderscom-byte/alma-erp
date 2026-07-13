@@ -20,6 +20,15 @@ export type TurnEvent =
       outputTokens: number
       cacheRead?: number
       cacheWrite?: number
+      /**
+       * Provider-billed ACTUAL cost for this turn, in USD. OpenRouter returns it
+       * in `usage.cost` when the request opts in (`usage: { include: true }`).
+       * When present it is authoritative — callers use it instead of the local
+       * token×rate estimate (calcModelTurnCostUsd), so the displayed per-message
+       * cost matches the OpenRouter dashboard exactly. Absent for providers that
+       * don't report a cost (native Gemini/Anthropic), where the estimate stands.
+       */
+      costUsd?: number
     }
   | { type: 'done' }
 
