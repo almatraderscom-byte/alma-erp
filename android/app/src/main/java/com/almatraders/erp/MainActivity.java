@@ -2,7 +2,10 @@ package com.almatraders.erp;
 
 import android.Manifest;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
+import java.util.ArrayList;
+import java.util.List;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
@@ -22,17 +25,25 @@ public class MainActivity extends BridgeActivity {
         // "Native স্ক্রিন" flag (default ON); OFF = the plain Capacitor app as before.
         NativeShell.install(this);
 
-        // Voice input (the ALMA assistant orb) drives the WebView's getUserMedia.
-        // Capacitor's WebChromeClient only grants that audio-capture request when
-        // the app ALREADY holds the Android RECORD_AUDIO runtime permission. No
-        // other code path requests it, so on Android 6+ it stays denied and
-        // getUserMedia throws NotAllowedError — voice fails while typing still
-        // works (exactly the reported bug). Request it once on launch so the OS
-        // prompts the user; after Allow, voice works.
+        // Runtime permissions requested once on launch:
+        //  • RECORD_AUDIO — the ALMA voice orb + WebView getUserMedia. Capacitor's
+        //    WebChromeClient only grants the web audio-capture request when the app
+        //    ALREADY holds this, so without it voice fails with NotAllowedError.
+        //  • POST_NOTIFICATIONS (Android 13+) — WITHOUT it every notification (OneSignal
+        //    push AND the native reminder alarms) is silently dropped. This was missing,
+        //    so push/reminders never showed on Android 13+ devices. Request both together.
+        List<String> needed = new ArrayList<>();
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
                 != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(
-                this, new String[]{ Manifest.permission.RECORD_AUDIO }, 7321);
+            needed.add(Manifest.permission.RECORD_AUDIO);
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            needed.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
+        if (!needed.isEmpty()) {
+            ActivityCompat.requestPermissions(this, needed.toArray(new String[0]), 7321);
         }
     }
 }

@@ -112,14 +112,22 @@ fun Modifier.almaGlass(dark: Boolean, corner: Int = 16): Modifier {
         .border(1.dp, if (dark) Color.White.copy(alpha = 0.10f) else Color.White.copy(alpha = 0.45f), shape)
 }
 
-/** Click with no ripple (the iOS `.buttonStyle(.plain)` feel over glass). */
+/** Click with no ripple but a soft system haptic tick (the iOS `.buttonStyle(.plain)`
+ *  + Taptic feel over glass). CONTEXT_CLICK is the light, system-consistent tap tick and
+ *  respects the user's system haptic setting, so every native tap gets premium tactile
+ *  feedback without a visual ripple. */
 @Composable
-fun Modifier.plainClick(onClick: () -> Unit): Modifier =
-    clickable(
+fun Modifier.plainClick(onClick: () -> Unit): Modifier {
+    val view = androidx.compose.ui.platform.LocalView.current
+    return clickable(
         interactionSource = remember { MutableInteractionSource() },
         indication = null,
-        onClick = onClick,
+        onClick = {
+            view.performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
+            onClick()
+        },
     )
+}
 
 /** Loading skeleton shimmer (iOS Shimmer twin). */
 @Composable
