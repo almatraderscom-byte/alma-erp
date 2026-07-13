@@ -385,11 +385,19 @@ struct AgentChatMessage: Identifiable, Equatable {
         case prose(id: String, text: String)
         case activity(ActivityBlock)
         case file(id: String, artifactId: String, name: String)
+        // Cards keep their DATA in message.confirmCards/askCards (status updates flow
+        // there); these blocks only pin WHERE in the reply the card appeared, so a
+        // question asked mid-turn renders mid-turn — not dumped at the bottom
+        // (owner report build-70 round 4).
+        case confirmCard(id: String, pendingActionId: String)
+        case askCard(id: String, askCardId: String)
         var id: String {
             switch self {
             case .prose(let id, _): return id
             case .activity(let a): return a.id
             case .file(let id, _, _): return id
+            case .confirmCard(let id, _): return id
+            case .askCard(let id, _): return id
             }
         }
     }
@@ -1566,6 +1574,7 @@ final class AssistantVM {
                 messages[i].confirmCards.append(.init(id: pid, summary: ev.summary ?? "",
                                                       status: "pending", actionType: ev.actionType,
                                                       costEstimate: ev.costEstimate))
+                messages[i].blocks.append(.confirmCard(id: "bc-\(messages[i].id)-\(pid)", pendingActionId: pid))
             }
         case "ask_card":
             ensureStreamingTail()
@@ -1573,6 +1582,7 @@ final class AssistantVM {
                 messages[i].askCards.append(.init(id: aid, question: ev.question ?? "",
                                                   options: ev.options ?? [], status: "pending",
                                                   selectedOption: nil))
+                messages[i].blocks.append(.askCard(id: "bq-\(messages[i].id)-\(aid)", askCardId: aid))
             }
         case "done":
             thinkingLive = false
@@ -1877,10 +1887,69 @@ struct AgentAuroraBackground: View {
 
 // MARK: - Markdown-lite renderer (headers / lists / code / tables / inline)
 
+extension UIFont {
+    /// System serif at the given size — UIKit twin of `.font(.system(size:design:.serif))`.
+    static func almaSerif(_ size: CGFloat) -> UIFont {
+        let base = UIFont.systemFont(ofSize: size)
+        guard let d = base.fontDescriptor.withDesign(.serif) else { return base }
+        return UIFont(descriptor: d, size: size)
+    }
+}
+
+/// In-place selectable rich text (Claude-app parity, owner ask build-70 round 4):
+/// a non-scrolling UITextView so long-press/double-tap marks text DIRECTLY in the
+/// chat with native grabbers + the system Copy/Look Up/Translate menu — no separate
+/// sheet. SwiftUI Text on iOS can only copy a whole block, which the owner rejected.
+@available(iOS 17.0, *)
+struct AlmaSelectableRichText: UIViewRepresentable {
+    let attributed: NSAttributedString
+    var tint: UIColor = UIColor(AgentPalette.coral)   // selection handles/highlight
+
+    init(attributed: NSAttributedString) { self.attributed = attributed }
+
+    /// Plain single-style text (the owner's coral bubble — white handles there,
+    /// coral-on-coral would be invisible).
+    init(plain: String, font: UIFont, color: UIColor, lineSpacing: CGFloat = 0) {
+        let p = NSMutableParagraphStyle()
+        p.lineSpacing = lineSpacing
+        self.attributed = NSAttributedString(string: plain, attributes: [
+            .font: font, .foregroundColor: color, .paragraphStyle: p,
+        ])
+        self.tint = .white
+    }
+
+    func makeUIView(context: Context) -> UITextView {
+        let tv = UITextView()
+        tv.isEditable = false
+        tv.isSelectable = true
+        tv.isScrollEnabled = false
+        tv.backgroundColor = .clear
+        tv.textContainerInset = .zero
+        tv.textContainer.lineFragmentPadding = 0
+        tv.tintColor = tint
+        tv.attributedText = attributed
+        return tv
+    }
+
+    func updateUIView(_ tv: UITextView, context: Context) {
+        if !tv.attributedText.isEqual(to: attributed) { tv.attributedText = attributed }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        guard let width = proposal.width, width > 0, width.isFinite else { return nil }
+        let fit = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        // Hug the longest line (owner bubble must not stretch full-width for "Ok").
+        return CGSize(width: min(width, fit.width.rounded(.up)), height: fit.height)
+    }
+}
+
 @available(iOS 17.0, *)
 struct AgentMarkdownText: View {
     let text: String
     let pal: AgentPalette
+    /// Settled agent prose sets this — paragraphs render as in-place selectable
+    /// UITextViews. Streaming/shimmering prose keeps the SwiftUI Text path.
+    var selectable = false
 
     private enum Segment: Identifiable {
         case paragraph(String)
@@ -1934,6 +2003,77 @@ struct AgentMarkdownText: View {
     }
 
     @ViewBuilder private func paragraph(_ s: String) -> some View {
+        if selectable {
+            AlmaSelectableRichText(attributed: Self.attributedParagraph(s, pal: pal))
+        } else {
+            plainParagraph(s)
+        }
+    }
+
+    /// Mirror of `plainParagraph`'s per-line styling as ONE NSAttributedString so a
+    /// selection can span the whole paragraph: coral headers, • bullets, serif body,
+    /// resolved bold/italic/code (UITextView doesn't interpret markdown intents).
+    static func attributedParagraph(_ s: String, pal: AgentPalette) -> NSAttributedString {
+        let body = UIFont.almaSerif(15.5)
+        let ink = UIColor(pal.ink)
+        let out = NSMutableAttributedString()
+        let para = NSMutableParagraphStyle()
+        para.lineSpacing = 3
+        para.paragraphSpacing = 6
+        var first = true
+        for line in s.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { continue }
+            if !first { out.append(NSAttributedString(string: "\n")) }
+            first = false
+            if trimmed.hasPrefix("###") || trimmed.hasPrefix("##") || trimmed.hasPrefix("# ") {
+                let title = String(trimmed.drop(while: { $0 == "#" || $0 == " " }))
+                let size: CGFloat = trimmed.hasPrefix("# ") ? 18 : 16
+                out.append(NSAttributedString(string: title, attributes: [
+                    .font: UIFont.systemFont(ofSize: size, weight: .semibold),
+                    .foregroundColor: UIColor(AgentPalette.coral),
+                ]))
+            } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("• ") {
+                out.append(NSAttributedString(string: "•  ", attributes: [.font: body, .foregroundColor: UIColor(pal.muted)]))
+                out.append(inlineNS(String(trimmed.dropFirst(2)), baseFont: body, color: ink))
+            } else {
+                out.append(inlineNS(line, baseFont: body, color: ink))
+            }
+        }
+        out.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: out.length))
+        return out
+    }
+
+    /// Inline markdown line → NSAttributedString with **bold** / *italic* / `code`
+    /// resolved to real fonts (AttributedString keeps them as presentation intents,
+    /// which UIKit ignores).
+    private static func inlineNS(_ line: String, baseFont: UIFont, color: UIColor) -> NSAttributedString {
+        guard let md = try? AttributedString(markdown: line,
+                                             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) else {
+            return NSAttributedString(string: line, attributes: [.font: baseFont, .foregroundColor: color])
+        }
+        let out = NSMutableAttributedString()
+        for run in md.runs {
+            let sub = String(md[run.range].characters)
+            var font = baseFont
+            if let intent = run.inlinePresentationIntent {
+                if intent.contains(.code) {
+                    font = .monospacedSystemFont(ofSize: baseFont.pointSize - 1.5, weight: .regular)
+                } else {
+                    var traits = font.fontDescriptor.symbolicTraits
+                    if intent.contains(.stronglyEmphasized) { traits.insert(.traitBold) }
+                    if intent.contains(.emphasized) { traits.insert(.traitItalic) }
+                    if let d = font.fontDescriptor.withSymbolicTraits(traits) {
+                        font = UIFont(descriptor: d, size: baseFont.pointSize)
+                    }
+                }
+            }
+            out.append(NSAttributedString(string: sub, attributes: [.font: font, .foregroundColor: color]))
+        }
+        return out
+    }
+
+    @ViewBuilder private func plainParagraph(_ s: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(s.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -2114,11 +2254,11 @@ struct AgentMessageRow: View {
                     }
                 }
                 if !message.text.isEmpty {
-                    Text(message.text)
-                        .font(.system(size: 15))
-                        .lineSpacing(3.5)
-                        .foregroundStyle(.white)
-                        .textSelection(.enabled)
+                    // Owner ask build-70 round 4: bubble text is DIRECTLY selectable
+                    // in place (native grabbers + system Copy menu) — no context menu.
+                    AlmaSelectableRichText(plain: message.text,
+                                           font: .systemFont(ofSize: 15),
+                                           color: .white, lineSpacing: 3.5)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
                         .background(
@@ -2128,21 +2268,6 @@ struct AgentMessageRow: View {
                                                        bottomTrailingRadius: 6, topTrailingRadius: 20,
                                                        style: .continuous))
                         .shadow(color: AgentPalette.coral.opacity(0.20), radius: 4, y: 1)
-                        // Owner issue #6 (build 69): long-press → copy + haptic.
-                        .contextMenu {
-                            Button {
-                                UIPasteboard.general.string = message.text
-                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            } label: {
-                                Label("কপি করুন", systemImage: "doc.on.doc")
-                            }
-                            Button {
-                                UISelectionFeedbackGenerator().selectionChanged()
-                                onActivitySheet(.init(message: message, kind: .selectText, slice: message.text))
-                            } label: {
-                                Label("টেক্সট সিলেক্ট করুন", systemImage: "text.cursor")
-                            }
-                        }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -2240,13 +2365,22 @@ struct AgentMessageRow: View {
                     ForEach(message.imagePaths, id: \.self) { p in
                         AgentChatImage(path: p, vm: vm)
                     }
-                    ForEach(message.confirmCards) { card in
+                    // Cards already pinned in-flow by TurnBlocks render THERE; only
+                    // cards with no block (persisted history turns) fall back here.
+                    let inlineConfirmIds = Set(message.blocks.compactMap { b -> String? in
+                        if case .confirmCard(_, let pid) = b { return pid }; return nil
+                    })
+                    ForEach(message.confirmCards.filter { !inlineConfirmIds.contains($0.id) }) { card in
                         AgentConfirmCardView(card: card, pal: pal, vm: vm) { approve in
                             Task { await vm.approveAction(card.id, approve: approve) }
                         }
                     }
-                    if !message.askCards.isEmpty {
-                        AgentAskCardsPager(cards: message.askCards, pal: pal) { card, option in
+                    let inlineAskIds = Set(message.blocks.compactMap { b -> String? in
+                        if case .askCard(_, let aid) = b { return aid }; return nil
+                    })
+                    let bottomAskCards = message.askCards.filter { !inlineAskIds.contains($0.id) }
+                    if !bottomAskCards.isEmpty {
+                        AgentAskCardsPager(cards: bottomAskCards, pal: pal) { card, option in
                             Task { await vm.answerAskCard(card.id, option: option) }
                         }
                     }
@@ -3490,6 +3624,21 @@ struct AgentTurnBlocksView: View {
                     proseBlock(text, isTail: id == lastBlockId && message.isStreaming)
                 case .file(_, let artifactId, let name):
                     AgentArtifactFileCard(artifactId: artifactId, name: name, vm: vm, pal: pal)
+                case .confirmCard(_, let pid):
+                    // Rendered HERE, at the exact point of the reply where the head
+                    // staged it (owner report build-70 round 4 — cards used to pile
+                    // up at the bottom of the turn). Data/status live in the array.
+                    if let card = message.confirmCards.first(where: { $0.id == pid }) {
+                        AgentConfirmCardView(card: card, pal: pal, vm: vm) { approve in
+                            Task { await vm.approveAction(card.id, approve: approve) }
+                        }
+                    }
+                case .askCard(_, let aid):
+                    if let card = message.askCards.first(where: { $0.id == aid }) {
+                        AgentAskCardsPager(cards: [card], pal: pal) { card, option in
+                            Task { await vm.answerAskCard(card.id, option: option) }
+                        }
+                    }
                 case .activity(let a):
                     if hidden.contains(a.id) {
                         if a.id == activityIds[hiddenCount - 1] {
@@ -3517,36 +3666,12 @@ struct AgentTurnBlocksView: View {
                 }
                 .padding(.vertical, 2)
             } else {
-                AgentMarkdownText(text: text, pal: pal)
+                // Owner ask build-70 round 4 (Claude-app parity): settled prose is
+                // DIRECTLY selectable in the chat — long-press/double-tap marks with
+                // native grabbers and the system Copy menu. No context menu here (it
+                // would swallow the long-press); whole-reply copy lives in the footer.
+                AgentMarkdownText(text: text, pal: pal, selectable: true)
                     .padding(.vertical, 2)
-                    .contentShape(Rectangle())
-                    // Owner issue #6 (build 69): tap-and-hold anywhere on agent
-                    // prose → Copy with haptic, Claude-app style.
-                    .contextMenu {
-                        Button {
-                            UIPasteboard.general.string = text
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        } label: {
-                            Label("কপি করুন", systemImage: "doc.on.doc")
-                        }
-                        // Owner ask build-70 round 2: partial copy — opens the text
-                        // in a selectable sheet so any portion can be marked+copied.
-                        Button {
-                            UISelectionFeedbackGenerator().selectionChanged()
-                            onActivitySheet(.selectText, text)
-                        } label: {
-                            Label("টেক্সট সিলেক্ট করুন", systemImage: "text.cursor")
-                        }
-                        if message.text.trimmingCharacters(in: .whitespacesAndNewlines) != text
-                            .trimmingCharacters(in: .whitespacesAndNewlines), !message.text.isEmpty {
-                            Button {
-                                UIPasteboard.general.string = message.text
-                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            } label: {
-                                Label("পুরো উত্তর কপি করুন", systemImage: "doc.on.doc.fill")
-                            }
-                        }
-                    }
             }
         }
     }

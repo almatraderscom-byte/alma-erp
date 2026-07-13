@@ -9,11 +9,29 @@
 // approval, so firing the continuation at approval time runs the head BEFORE the image
 // exists — it can't chain to the next step (e.g. an Instagram post) and stalls. The
 // async path therefore owns the continuation for those types, firing only once the
-// generated media is in the conversation. Both paths funnel through this one tested
-// createTurn → buildTurnJobData → enqueueTurnJob handoff the VPS worker drains.
+// generated media is in the conversation.
+//
+// Delivery has TWO legs (2026-07-13, owner incident: image approved → agent went
+// silent forever). The preferred leg is the tested createTurn → buildTurnJobData →
+// enqueueTurnJob Redis handoff the VPS worker drains — but that consumer had been
+// dead since 2026-07-02 while everything else looked healthy, so every continuation
+// turn sat 'running' forever and the approve→next-step chain silently died. The
+// worker now writes a turn-consumer heartbeat (agent_kv_settings.worker_heartbeat_at,
+// every 60s, only while its BullMQ consumer is actually running); when that heartbeat
+// is missing/stale, the continuation runs INLINE in this serverless function instead
+// (the revise-route pattern: persist the directive as a user message → one
+// runOwnerTurn pass → finalize the turn row). Slower and capped at 90s, but the
+// chain never silently dies with the worker.
 import { prisma } from '@/lib/prisma'
-import { createTurn } from '@/agent/lib/turn-status'
+import { createTurn, finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { buildTurnJobData, enqueueTurnJob, isTurnHandoffConfigured } from '@/agent/lib/turn-queue'
+
+/** Hard cap for an INLINE (serverless) continuation turn — callers' maxDuration
+ * must leave headroom above this (approve and job-result both run at 120s). */
+const INLINE_CONTINUATION_MAX_MS = 90_000
+
+/** How fresh the worker's turn-consumer heartbeat must be to trust the Redis path. */
+const WORKER_HEARTBEAT_FRESH_MS = 3 * 60 * 1000
 
 /** Owner kill switch for auto-continue-after-approval. Default ON (owner asked for it);
  * set agent_kv_settings key `auto_continue_after_approval` = off to disable, no redeploy. */
@@ -28,21 +46,77 @@ export async function autoContinueEnabled(): Promise<boolean> {
   }
 }
 
+/** True when the VPS worker's TURN CONSUMER (not just the process) checked in within
+ * the last 3 minutes. The worker only writes this key while its BullMQ long-agent-task
+ * consumer is genuinely running, so a half-alive worker (HTTP poll loop up, Redis
+ * consumer dead — the 2026-07-13 incident) correctly reads as "down" here. */
+async function workerTurnConsumerAlive(): Promise<boolean> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row = await (prisma as any).agentKvSetting.findUnique({ where: { key: 'worker_heartbeat_at' } })
+    if (!row?.value) return false
+    const t = Date.parse(String(row.value))
+    return Number.isFinite(t) && Date.now() - t < WORKER_HEARTBEAT_FRESH_MS
+  } catch {
+    return false
+  }
+}
+
+/** Run the continuation turn in-process (revise-route pattern): persist the directive
+ * as a user message, drain one runOwnerTurn pass (it persists its own reply/cards),
+ * then finalize the turn row so the app's resume spinner settles. Best-effort. */
+async function runContinuationInline(opts: { conversationId: string; message: string }, turnId: string | null): Promise<void> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (prisma as any).agentMessage.create({
+      data: {
+        conversationId: opts.conversationId,
+        role: 'user',
+        content: [{ type: 'text', text: opts.message }],
+      },
+    })
+    const { runOwnerTurn } = await import('@/agent/lib/models/run-owner-turn')
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), INLINE_CONTINUATION_MAX_MS)
+    try {
+      for await (const ev of runOwnerTurn(opts.conversationId, { signal: controller.signal })) {
+        if (ev.type === 'error') {
+          console.warn('[approval-continuation] inline turn error event:', ev.message)
+        }
+      }
+    } finally {
+      clearTimeout(timer)
+    }
+    if (turnId) await finalizeTurnIfRunning(turnId, 'done')
+  } catch (err) {
+    console.warn('[approval-continuation] inline continuation failed:', err instanceof Error ? err.message : err)
+    if (turnId) await finalizeTurnIfRunning(turnId, 'error')
+  }
+}
+
 /**
- * Enqueue one continuation turn for a conversation. Reuses the tested
- * createTurn → buildTurnJobData → enqueueTurnJob path; the VPS worker drains it and
- * runs the turn through the chat route (which persists the reply for the app poll AND
- * notifies Telegram), so both surfaces resume. Fully best-effort: no-ops when the
- * worker queue (Redis) isn't configured or the owner flipped the kill switch off, and
- * never throws to the caller. No infinite loop: a continuation only ever fires from a
- * human approval or a one-shot job completion, and the turn is told not to redo the work.
+ * Resume the head with one continuation turn. Preferred path: the VPS worker's Redis
+ * turn queue (createTurn → buildTurnJobData → enqueueTurnJob; the worker runs it via
+ * the chat route so the app poll AND Telegram both resume). Fallback path: when the
+ * worker's turn consumer is down (stale heartbeat) or the enqueue itself fails, the
+ * turn runs INLINE in this function. Never throws to the caller. No infinite loop: a
+ * continuation only ever fires from a human approval or a one-shot job completion,
+ * and the turn is told not to redo the work.
  */
 export async function enqueueAgentContinuation(opts: { conversationId: string; message: string }): Promise<void> {
   if (!opts.conversationId) return
-  if (!isTurnHandoffConfigured()) return        // no worker queue → silently skip
   if (!(await autoContinueEnabled())) return    // owner disabled it
 
   const turnId = await createTurn(opts.conversationId)
-  const jobData = buildTurnJobData(turnId, opts.conversationId, { message: opts.message })
-  if (jobData) await enqueueTurnJob(jobData)
+
+  if (isTurnHandoffConfigured() && (await workerTurnConsumerAlive())) {
+    const jobData = buildTurnJobData(turnId ?? '', opts.conversationId, { message: opts.message })
+    if (jobData && turnId) {
+      const jobId = await enqueueTurnJob(jobData)
+      if (jobId) return                          // worker will drain it
+    }
+    console.warn('[approval-continuation] worker enqueue failed — falling back to inline turn')
+  }
+
+  await runContinuationInline(opts, turnId)
 }
