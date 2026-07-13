@@ -12,6 +12,9 @@ public class MainActivity extends BridgeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         AlmaPushChannels.ensureCreated(this);
+        // Background reminder refresh (iOS BackgroundRefresh parity): keep the owner's
+        // reminders fresh + scheduled even if the app isn't opened for days.
+        ReminderRefresh.INSTANCE.enqueue(this);
         super.onCreate(savedInstanceState);
 
         // ALMA native shell (Compose tab bar + native Lifestyle screens wrapping the
