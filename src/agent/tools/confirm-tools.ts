@@ -2,8 +2,53 @@
 import { prisma } from '@/lib/prisma'
 import { resolvePageId, getRecentPosts, getMessengerInbox, pageLabel, getUnansweredComments } from '@/agent/lib/meta'
 import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
+import { agentStorageListFolder } from '@/agent/lib/storage'
 import { formatDateTimeDhaka } from '@/lib/agent-api/dhaka-date'
 import type { AgentTool } from './registry'
+
+/** Owner-decision card types — one at a time per conversation (owner incident
+ * 2026-07-13: the marketing head staged an fb_post AND a fresh image_gen 0.3s
+ * apart in ONE turn, and 5 image cards for one request). The old per-type guard
+ * let a different-type card slip through; this blocks ANY second pending card. */
+const OWNER_DECISION_CARD_TYPES = ['image_gen', 'video_gen', 'fb_post', 'instagram_post']
+
+/** Returns an error result if ANY owner-decision card is already pending in this
+ * conversation (model-proof: no prompt rule can bypass a DB check). null = clear. */
+async function assertSingleOpenCard(
+  conversationId: string | null,
+  label: string,
+): Promise<{ success: false; error: string } | null> {
+  if (!conversationId) return null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const open = await (prisma as any).agentPendingAction.findFirst({
+    where: { conversationId, type: { in: OWNER_DECISION_CARD_TYPES }, status: 'pending' },
+    select: { id: true, type: true },
+  })
+  if (!open) return null
+  return {
+    success: false,
+    error:
+      `ONE_CARD_AT_A_TIME: এই চ্যাটে ইতিমধ্যে একটা "${open.type}" কার্ড (${open.id}) Boss-এর সিদ্ধান্তের অপেক্ষায় আছে। ` +
+      `${label} সহ নতুন কোনো card বানানো নিষেধ — Boss approve/reject করা পর্যন্ত থামো, প্রম্পট বদলে আবার call কোরো না।`,
+  }
+}
+
+/** A product/catalog storage path whose object is a real image (≥1 KB). Corrupt
+ * uploads (~4 bytes) fail Google's render AND make a dead FB post; block them at
+ * stage time (owner incident 2026-07-13: fb_post staged with 4-byte 720-ADULT/1.jpg). */
+async function storagePathIsHealthy(path: string | undefined): Promise<boolean> {
+  if (!path) return true // no image → caller handles (textOnly / warning)
+  if (!path.startsWith('product-images/')) return true // generated/uploads assumed fine
+  const cut = path.lastIndexOf('/')
+  if (cut <= 0) return true
+  try {
+    const entries = await agentStorageListFolder(path.slice(0, cut))
+    const size = entries.find((e) => e.name === path.slice(cut + 1))?.size
+    return size == null || size >= 1024 // unknown → fail-open; known-tiny → corrupt
+  } catch {
+    return true
+  }
+}
 
 // ── Image generation ───────────────────────────────────────────────────────
 
@@ -54,28 +99,17 @@ const generate_image: AgentTool = {
       const quality = (input.quality as string) === 'standard' ? 'standard' : 'pro'
       const costEstimate = quality === 'pro' ? 4.5 : 1.1 // BDT estimate
 
-      // ── Duplicate/spree guard (owner incident 2026-07-13: the head staged FIVE
-      // image cards for ONE request, re-calling with tweaked prompts because
-      // "pending" read as not-done). ONE image card per conversation at a time,
-      // and a 5-minute cool-off after a resolved render unless Boss explicitly
-      // asked for another (force:true).
+      // ── Spree guard (owner incident 2026-07-13): ONE owner-decision card per
+      // conversation at a time — cross-type, so a post + a fresh image can't be
+      // staged together, and 5 image cards can't queue for one request. Plus a
+      // 5-minute cool-off after a resolved render unless Boss explicitly asked
+      // for another (force:true).
       const convIdForGuard = input.conversationId ? String(input.conversationId) : null
       if (convIdForGuard && input.force !== true) {
+        const blocked = await assertSingleOpenCard(convIdForGuard, 'নতুন ছবি')
+        if (blocked) return blocked
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const dbAny = prisma as any
-        const pendingDup = await dbAny.agentPendingAction.findFirst({
-          where: { conversationId: convIdForGuard, type: 'image_gen', status: 'pending' },
-          select: { id: true },
-        })
-        if (pendingDup) {
-          return {
-            success: false,
-            error:
-              `DUPLICATE_BLOCKED: একটা ছবি-কার্ড (${pendingDup.id}) ইতিমধ্যে Boss-এর সিদ্ধান্তের অপেক্ষায় আছে। ` +
-              'নতুন card বানানো নিষেধ — প্রম্পট ঘষে আবার call কোরো না। Boss approve/reject করা পর্যন্ত এই কাজে থামো।',
-          }
-        }
-        const recentResolved = await dbAny.agentPendingAction.findFirst({
+        const recentResolved = await (prisma as any).agentPendingAction.findFirst({
           where: {
             conversationId: convIdForGuard,
             type: 'image_gen',
@@ -171,23 +205,11 @@ const post_to_facebook: AgentTool = {
       const conversationId = input.conversationId ? String(input.conversationId) : null
       const textOnly = input.textOnly === true
 
-      // ONE pending post card per conversation (same spree guard as generate_image,
-      // owner incident 2026-07-13) — a pending card means WAIT for Boss, not retry.
-      if (conversationId) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const dupe = await (prisma as any).agentPendingAction.findFirst({
-          where: { conversationId, type: 'fb_post', status: 'pending' },
-          select: { id: true },
-        })
-        if (dupe) {
-          return {
-            success: false,
-            error:
-              `DUPLICATE_BLOCKED: একটা Facebook post card (${dupe.id}) ইতিমধ্যে Boss-এর অপেক্ষায় আছে। ` +
-              'নতুন card বানানো নিষেধ — Boss approve/reject করা পর্যন্ত থামো।',
-          }
-        }
-      }
+      // ONE owner-decision card per conversation, cross-type (owner incident
+      // 2026-07-13: an fb_post + a fresh image_gen were staged 0.3s apart in ONE
+      // turn — a post must never be staged alongside/before an unconfirmed image).
+      const blockedPost = await assertSingleOpenCard(conversationId, 'নতুন পোস্ট')
+      if (blockedPost) return blockedPost
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { imageRef, hadRecentPostableImage } = await resolveFbPostImageRef(prisma as any, {
@@ -195,6 +217,17 @@ const post_to_facebook: AgentTool = {
         imageArtifactOrFileId: input.imageArtifactOrFileId,
         textOnly,
       })
+
+      // Reject a corrupt catalog reference before it becomes a dead post (owner
+      // incident 2026-07-13: the head passed the 4-byte 720-ADULT/1.jpg directly).
+      if (imageRef && !(await storagePathIsHealthy(imageRef))) {
+        return {
+          success: false,
+          error:
+            `CORRUPT_IMAGE: "${imageRef}" একটা ভাঙা/খালি ফাইল — এটা দিয়ে পোস্ট করা যাবে না। ` +
+            'get_product দিয়ে ওই প্রোডাক্টের সুস্থ ছবির storagePath নাও, অথবা generate_image দিয়ে studio শট বানিয়ে confirm করাও, তারপর পোস্ট।',
+        }
+      }
 
       const imageLine = imageRef
         ? `📷 ছবি: ${imageRef}\n\n`
@@ -280,6 +313,10 @@ const publish_to_instagram: AgentTool = {
       const pageId = resolvePageId(page)
       const conversationId = input.conversationId ? String(input.conversationId) : null
 
+      // One owner-decision card per conversation, cross-type (2026-07-13 incident).
+      const blockedIg = await assertSingleOpenCard(conversationId, 'নতুন Instagram পোস্ট')
+      if (blockedIg) return blockedIg
+
       // Instagram has no caption-only posts — an image is mandatory. Reuse the
       // exact FB image-resolution chain (explicit ref → conversation generated →
       // conversation upload). textOnly is always false here.
@@ -289,6 +326,14 @@ const publish_to_instagram: AgentTool = {
         imageArtifactOrFileId: input.imageArtifactOrFileId,
         textOnly: false,
       })
+
+      if (imageRef && !(await storagePathIsHealthy(imageRef))) {
+        return {
+          success: false,
+          error:
+            `CORRUPT_IMAGE: "${imageRef}" ভাঙা/খালি ফাইল — Instagram-এ দেওয়া যাবে না। সুস্থ ছবি নাও বা generate_image দিয়ে বানাও।`,
+        }
+      }
 
       if (!imageRef) {
         return {
