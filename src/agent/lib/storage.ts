@@ -154,6 +154,25 @@ export async function agentStorageDelete(objectPaths: string[]): Promise<void> {
   }
 }
 
+/** List one folder of agent-files with object sizes (storage REST list API —
+ * same service-key auth as every other call in this module, so it works under
+ * the app's runtime credentials; the raw-SQL storage.objects approach silently
+ * lacked privileges in prod, 2026-07-13). Names are relative to the prefix. */
+export async function agentStorageListFolder(prefix: string): Promise<Array<{ name: string; size: number }>> {
+  const { url, serviceKey } = getStorageBase()
+  const res = await fetch(`${url}/storage/v1/object/list/${AGENT_BUCKET}`, {
+    method: 'POST',
+    headers: { ...storageHeaders(serviceKey), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prefix, limit: 100, offset: 0 }),
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!res.ok) {
+    throw new Error(`Agent storage list failed (${res.status}): ${(await res.text()).slice(0, 200)}`)
+  }
+  const items = (await res.json()) as Array<{ name: string; metadata?: { size?: number } | null }>
+  return items.map((i) => ({ name: i.name, size: Number(i.metadata?.size ?? 0) }))
+}
+
 /** Signed URL for private agent-files objects (default 1 hour). */
 export async function agentStorageSignedUrl(objectPath: string, expiresIn = 3600): Promise<string> {
   const { url, serviceKey } = getStorageBase()
