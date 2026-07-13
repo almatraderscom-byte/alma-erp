@@ -117,6 +117,7 @@ object AlmaNativeRouter {
         "/agent/whatsapp" -> NativeDestination("WhatsApp inbox") { AgentWhatsappScreen(it) }
         "/agent/catalog-images" -> NativeDestination("Product Images") { CatalogImagesScreen(it) }
         "/agent/creative-studio" -> NativeDestination("Creative Studio") { CreativeStudioScreen(it) }
+        "/agent/voice" -> NativeDestination("ভয়েস") { com.almatraders.erp.pages.AssistantVoiceScreen(it) }
         "/agent/trading-staff" -> NativeDestination("Trading staff") { TradingStaffScreen(it) }
         "/agent/known-people" -> NativeDestination("Known people") { KnownPeopleScreen(it) }
         "/agent/growth" -> NativeDestination("Growth") { AgentGrowthScreen(it) }

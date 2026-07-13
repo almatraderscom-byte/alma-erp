@@ -1137,7 +1137,7 @@ fun AssistantScreen(ctx: PushCtx) {
                 onSend = { text -> vm.send(scope, text) },
                 onStop = { vm.stopStreaming() },
                 onModelPill = { showModelPicker = true },
-                onVoice = { ctx.openWebForced("/agent", "ALMA AI") },
+                onVoice = { ctx.openSmart("/agent/voice", "ভয়েস") },
             )
         }
 
