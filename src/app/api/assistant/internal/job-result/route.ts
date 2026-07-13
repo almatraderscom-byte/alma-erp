@@ -293,8 +293,10 @@ export async function POST(req: NextRequest) {
         conversationId: convId,
         message:
           '[সিস্টেম নোট — অনুমোদিত ছবি তৈরি হয়েছে] Boss-এর approve-করা ছবিটি এইমাত্র তৈরি হয়ে কনভারসেশনে যোগ হয়েছে। ' +
-          'এখন থেমে যেও না — তোমার চলমান কাজের পরের ধাপে নিজে থেকে এগোও (যেমন এই ছবিটা দিয়ে যে পোস্ট/কনটেন্ট বানানোর কথা ছিল সেটা তৈরি করো), ' +
-          'অথবা সব শেষ হলে সংক্ষেপে Boss-কে জানাও। ছবিটা আর নতুন করে generate কোরো না।',
+          '**আগে PREVIEW CONFIRM (বাধ্যতামূলক — Boss-এর নিয়ম 2026-07-13):** ছবিটা Boss এখনো নিজের চোখে দেখেননি — ' +
+          'reply-তে ছবিটা উল্লেখ করে ask_user card দাও: "ছবিটা ঠিক আছে?" (অপশন: "ঠিক আছে, পোস্ট রেডি করো" / "ছবি change চাই")। ' +
+          'Boss "ঠিক আছে" বললে তবেই post_to_facebook/publish_to_instagram card দেবে — ছবি confirm হওয়ার আগে পোস্টের card দেওয়া নিষেধ। ' +
+          'ছবিটা আর নতুন করে generate কোরো না।',
       })
     } catch (err) {
       console.warn('[job-result] agent continuation enqueue failed (result unaffected):', err instanceof Error ? err.message : err)
