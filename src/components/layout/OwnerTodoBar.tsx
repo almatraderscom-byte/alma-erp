@@ -86,10 +86,13 @@ export function OwnerTodoBar() {
 
   const refresh = useCallback(async () => {
     try {
-      const res = await fetch('/api/assistant/todos', { cache: 'no-store' })
+      // view=owner (owner rule 2026-07-12): server-scoped to the owner's own todos
+      // (persist until done) + agent-raised owner_action items (today only, reset
+      // at Dhaka day end). Agent self-tasks/duties never reach this widget.
+      const res = await fetch('/api/assistant/todos?view=owner', { cache: 'no-store' })
       if (!res.ok) return
       const data = (await res.json()) as { todos?: OwnerTodo[] }
-      setTodos((data.todos ?? []).filter((t) => t.source === 'owner'))
+      setTodos(data.todos ?? [])
     } catch {
       /* offline / transient — keep the last list */
     }

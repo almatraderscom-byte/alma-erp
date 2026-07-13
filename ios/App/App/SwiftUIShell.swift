@@ -307,6 +307,7 @@ extension AlmaTabBarController {
     func makeMoreTab() -> UINavigationController {
         if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *) {
             let navRef = WeakRef<UINavigationController>()
+            let avatarButton = Self.profileAvatarButton()
             let screen = MoreMenuScreen(
                 openPath: { [weak self] path, title in
                     self?.pushSmart(on: navRef.value, path: path, title: title, icon: "safari")
@@ -329,15 +330,150 @@ extension AlmaTabBarController {
                 nativeScreensOn: AlmaSwiftUIFlag.isOn,
                 toggleNativeScreens: { AlmaSwiftUIFlag.isOn.toggle() },
                 readBiometricLock: { [weak self] done in self?.readBiometricLock(done) },
-                setBiometricLock: { [weak self] on in self?.writeBiometricLock(on) })
+                setBiometricLock: { [weak self] on in self?.writeBiometricLock(on) },
+                // Watch-app layout: the large title becomes the logged-in user's
+                // name once identity loads ("Alex's Apple Watch" slot). The root
+                // host is addressed through the WEAK navRef — a closure captured
+                // by the rootView must not retain its own hosting controller.
+                onUserName: { name in
+                    navRef.value?.viewControllers.first?.title = name
+                },
+                // The round avatar bar button shows the user's real photo once the
+                // profile URL loads (and refreshes after an in-app photo change).
+                // The button holds no reference back to the host — no cycle.
+                onProfileImageUrl: { url in
+                    Self.loadAvatar(into: avatarButton, from: url)
+                },
+                // Group rows push their item list as a native Settings-style page
+                // (owner spec 2026-07-09) — same nav, tab bar stays visible.
+                pushNative: { title, view in
+                    let host = AlmaHostingController(rootView: view)
+                    host.title = title
+                    host.hidesBottomBarWhenPushed = false
+                    navRef.value?.pushViewController(host, animated: true)
+                })
             let host = AlmaHostingController(rootView: screen)
             host.title = "More"
+            // The fixed glossy "Business" pill, top-left like the Watch app's
+            // "All Watches" — a bar button so it stays anchored while the list
+            // scrolls. It only posts a notification; the SwiftUI screen presents
+            // the switcher sheet (single owner of presentation state).
+            host.navigationItem.leftBarButtonItem = Self.businessPillBarButton()
+            // Round PROFILE avatar, top-right (owner spec 2026-07-08): taps post a
+            // notification; the SwiftUI screen presents the profile sheet.
+            host.navigationItem.rightBarButtonItem = UIBarButtonItem(customView: avatarButton)
             let nav = Self.darkNav(root: host, tabTitle: "More", icon: "ellipsis.circle", largeTitles: true)
             navRef.value = nav
             return nav
         }
         return Self.darkNav(root: MoreMenuViewController(processPool: contentPool),
                             tabTitle: "More", icon: "ellipsis.circle", largeTitles: true)
+    }
+
+    /// The glossy "Business" switcher pill (Watch-app "All Watches" style): a frosted
+    /// capsule with a building glyph + label + tiny up/down chevron. Adaptive
+    /// materials/colours (.systemThinMaterial + .label) so theme flips restyle it for
+    /// free via the nav's overrideUserInterfaceStyle — no manual almaThemeChanged work.
+    private static func businessPillBarButton() -> UIBarButtonItem {
+        let container = UIButton(type: .custom, primaryAction: UIAction { _ in
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            NotificationCenter.default.post(name: .almaShowBusinessSwitch, object: nil)
+        })
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
+        blur.translatesAutoresizingMaskIntoConstraints = false
+        blur.layer.cornerRadius = 16
+        blur.clipsToBounds = true
+        blur.isUserInteractionEnabled = false
+        container.addSubview(blur)
+
+        let icon = UIImageView(image: UIImage(
+            systemName: "building.2.fill",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .semibold)))
+        icon.tintColor = .label
+        let label = UILabel()
+        label.text = "Business"
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = .label
+        let chevron = UIImageView(image: UIImage(
+            systemName: "chevron.up.chevron.down",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 9, weight: .bold)))
+        chevron.tintColor = .secondaryLabel
+
+        let stack = UIStackView(arrangedSubviews: [icon, label, chevron])
+        stack.axis = .horizontal
+        stack.alignment = .center
+        stack.spacing = 5
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.isUserInteractionEnabled = false
+        blur.contentView.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            container.heightAnchor.constraint(equalToConstant: 32),
+            blur.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            blur.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            blur.topAnchor.constraint(equalTo: container.topAnchor),
+            blur.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: blur.contentView.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: blur.contentView.trailingAnchor, constant: -12),
+            stack.centerYAnchor.constraint(equalTo: blur.contentView.centerYAnchor),
+        ])
+
+        // Hairline ring — visible enough to read as a control, quiet enough to stay
+        // glassy. .separator adapts to light/dark on its own.
+        container.layer.cornerRadius = 16
+        container.layer.borderWidth = 1
+        container.layer.borderColor = UIColor.separator.withAlphaComponent(0.35).cgColor
+        return UIBarButtonItem(customView: container)
+    }
+
+    /// The round profile avatar (top-right of More). Starts as a neutral person
+    /// glyph; loadAvatar() swaps in the user's real photo once the URL arrives.
+    /// Tapping posts almaShowBusinessSwitch's sibling notification — the SwiftUI
+    /// screen owns the sheet.
+    private static func profileAvatarButton() -> UIButton {
+        let size: CGFloat = 34
+        let button = UIButton(type: .custom, primaryAction: UIAction { _ in
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            NotificationCenter.default.post(name: .almaShowProfile, object: nil)
+        })
+        button.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: size),
+            button.heightAnchor.constraint(equalToConstant: size),
+        ])
+        button.layer.cornerRadius = size / 2
+        button.clipsToBounds = true
+        button.layer.borderWidth = 1.5
+        button.layer.borderColor = UIColor.separator.withAlphaComponent(0.5).cgColor
+        button.backgroundColor = .secondarySystemFill
+        button.setImage(UIImage(
+            systemName: "person.crop.circle.fill",
+            withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .regular))?
+            .withTintColor(.secondaryLabel, renderingMode: .alwaysOriginal), for: .normal)
+        return button
+    }
+
+    /// Best-effort avatar download (session cookies already synced into
+    /// HTTPCookieStorage.shared by AlmaAPI, so the profile-image proxy authorises).
+    /// Failure just leaves the neutral glyph in place.
+    private static func loadAvatar(into button: UIButton, from urlString: String?) {
+        guard let urlString, !urlString.isEmpty else { return }
+        let url: URL? = urlString.hasPrefix("http")
+            ? URL(string: urlString)
+            : URL(string: urlString, relativeTo: AlmaAPI.baseURL)
+        guard let url else { return }
+        URLSession.shared.dataTask(with: url) { data, _, _ in
+            guard let data, let image = UIImage(data: data) else { return }
+            DispatchQueue.main.async {
+                button.setImage(nil, for: .normal)
+                button.backgroundColor = .clear
+                // Fill the whole disc with the photo (aspect-fill via background layer).
+                button.layer.contents = image.cgImage
+                button.layer.contentsGravity = .resizeAspectFill
+            }
+        }.resume()
     }
 
     /// Swap Orders / Assistant / Approvals / More in place when the owner flips the

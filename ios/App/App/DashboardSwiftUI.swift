@@ -736,7 +736,11 @@ private final class OwnerTodoVM {
 
     func load() async {
         do {
-            let env: TodosEnvelope = try await AlmaAPI.shared.get("/api/assistant/todos")
+            // view=owner (owner rule 2026-07-12): only the owner's own todos
+            // (persist until he finishes) + agent-raised owner_action items
+            // (today only, reset at day end). Agent duties never show here.
+            let env: TodosEnvelope = try await AlmaAPI.shared.get(
+                "/api/assistant/todos", query: ["view": "owner"])
             let list = env.todos.filter { Self.open.contains($0.status) }
                 .sorted { a, b in
                     a.priorityRank != b.priorityRank ? a.priorityRank > b.priorityRank
@@ -993,23 +997,25 @@ struct DashboardScreen: View {
                     if vm.loading && vm.data == nil {
                         loadingRows
                     } else if let d = vm.data {
-                        // ── Command Deck (owner-confirmed 2026-07-07): commanding hero + integrated
-                        //    chart, an 8-KPI hairline spec-panel, a 2-col chart grid + wide charts,
-                        //    then hairline lists. Same content as the web page — only the layout is
-                        //    elevated. All figures pure Bangla; theme = the app aura tokens.
-                        commandHero(d.kpis, daily: d.dailyTrend, monthly: d.monthlyTrend)
-                        statBlock(d.kpis, monthly: d.monthlyTrend, byStatus: d.byStatus)
+                        // ── Bento Widget Board (owner spec 2026-07-08): premium glassy mixed-size
+                        //    tiles on a 2-column rhythm — one DARK hero KPI card (count-up numbers +
+                        //    delta badges + slow shimmer), square ring tiles, a wide gradient
+                        //    bar-chart card, donut breakdowns, compact sparkline trend rows and
+                        //    comparison lists with mini progress bars. Same content as the web page —
+                        //    only the composition is elevated. All figures pure Bangla; theme = the
+                        //    app aura tokens (coral / violet / sage over the aurora).
+                        bentoHero(d.kpis, daily: d.dailyTrend, monthly: d.monthlyTrend)
+                        ringTiles(d.kpis)
+                        statTiles(d.kpis, byStatus: d.byStatus)
                         sectionLabel("বিশ্লেষণ")
+                        monthlyRevenueCard(d.monthlyTrend).id("charts")
                         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
                                   spacing: 12) {
-                            dailySalesCompact(d.dailyTrend)
                             orderStatusCompact(d.byStatus)
                             categoryMixCompact(d.byCategory)
-                            channelCompact(d.bySource)
                         }
-                        .id("charts")
-                        monthlyRevenueCard(d.monthlyTrend)
-                        revenueTrendCard(d.monthlyTrend).id("charts2")
+                        trendRowsCard(daily: d.dailyTrend, monthly: d.monthlyTrend).id("charts2")
+                        channelCompareCard(d.bySource)
                         topProductsCard(d.topProducts).id("lists")
                         recentOrdersCard(d.recentOrders)
                         if !d.slaBreaches.isEmpty { slaDetailCard(d.slaBreaches) }
@@ -1109,44 +1115,69 @@ struct DashboardScreen: View {
         }
     }
 
-    // ── KPI bento: revenue hero + tiles + mini chips (the approved demo layout) ──
+    // ── Bento widget board: dark hero + ring tiles + stat tiles ──
 
+    /// The DARK hero KPI widget — revenue count-up + MoM delta badge, net-profit and
+    /// total-orders secondary numbers (own tints + badges), avg-order meta, and the
+    /// integrated daily area chart with a Bangla date axis.
     @ViewBuilder
-    private func kpiBento(_ k: DashKpis, daily: [DashDailyPoint], monthly: [DashMonthlyPoint]) -> some View {
-        VStack(spacing: 10) {
-            RevenueHeroCard(value: bnTk(k.totalRevenue),
-                            spark: daily.map(\.revenue),
-                            trend: Self.trend(monthly.map(\.revenue)))
+    private func bentoHero(_ k: DashKpis, daily: [DashDailyPoint], monthly: [DashMonthlyPoint]) -> some View {
+        let avg = k.totalOrders > 0 ? k.totalRevenue / k.totalOrders : 0
+        BentoHeroCard(kpis: k, avgOrder: avg, ordersMeta: ordersSub(k),
+                      spark: daily.map(\.revenue), dates: daily.map(\.date),
+                      revenueTrend: Self.trend(monthly.map(\.revenue)),
+                      profitTrend: Self.trend(monthly.map(\.profit)))
+            .dashPress()
+    }
 
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
-                KpiTile(label: "Net Profit",
-                        value: bnTk(k.netProfit),
-                        valueTint: DashPalette.signed(k.netProfit, scheme),
-                        accent: k.netProfit < 0 ? DashPalette.red500 : DashPalette.positive(scheme),
-                        trend: Self.trend(monthly.map(\.profit)))
-                KpiTile(label: "Delivered",
-                        value: bnN(k.deliveredCount),
-                        valueTint: DashPalette.violet, accent: DashPalette.violet,
-                        ring: DashRingSpec(percent: k.deliveryRate, total: k.totalOrders))
-                KpiTile(label: "Total Orders",
-                        value: bnN(k.totalOrders),
-                        valueTint: DashPalette.info, accent: DashPalette.info,
-                        sub: ordersSub(k))
-                KpiTile(label: "Realized Profit",
-                        value: bnTk(k.realizedProfit),
-                        valueTint: DashPalette.positive(scheme), accent: DashPalette.positive(scheme),
-                        sub: "ডেলিভারড অর্ডার")
-            }
+    /// Two square bento tiles with sweeping progress RINGS — delivery rate + return rate.
+    private func ringTiles(_ k: DashKpis) -> some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                  spacing: 12) {
+            BentoRingTile(label: "ডেলিভারড", target: k.deliveredCount, format: bnN,
+                          suffix: "/\(bnN(k.totalOrders))",
+                          sub: "\(bnPct(k.deliveryRate)) ডেলিভারি রেট",
+                          percent: k.deliveryRate,
+                          tint: DashPalette.violet, accent: DashPalette.violet)
+                .dashPress()
+            BentoRingTile(label: "রিটার্ন রেট", target: k.returnRate, format: bnPct,
+                          suffix: nil,
+                          sub: "রিফিউজড \(bnPct(k.returnRateRefused))",
+                          percent: k.returnRate,
+                          tint: returnTint(k.returnRate), accent: returnTint(k.returnRate))
+                .dashPress()
+        }
+    }
 
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3), spacing: 10) {
-                MiniChip(label: "Return Loss", value: bnTk(k.totalReturnsLoss),
-                         tint: DashPalette.red500)
-                MiniChip(label: "Return Rate", value: bnPct(k.returnRate),
-                         tint: k.returnRate > 20 ? DashPalette.red500
-                             : k.returnRate > 10 ? DashPalette.warning(scheme) : .primary)
-                MiniChip(label: "Pending", value: k.pendingCount.map { bnN($0) } ?? "—",
-                         tint: DashPalette.warning(scheme))
-            }
+    /// Return-rate severity tint (same thresholds the old spec panel used).
+    private func returnTint(_ rate: Int) -> Color {
+        rate > 20 ? DashPalette.red500 : rate > 10 ? DashPalette.warning(scheme) : DashPalette.sage
+    }
+
+    /// Four small glass stat tiles (2×2) — realized profit / return loss / pending / avg order.
+    private func statTiles(_ k: DashKpis, byStatus: [String: Int]) -> some View {
+        let avg = k.totalOrders > 0 ? k.totalRevenue / k.totalOrders : 0
+        // Pending: prefer the KPI field; fall back to the status breakdown so the tile shows a
+        // real number even before the additive `pending_count` server field is deployed.
+        let pending = k.pendingCount ?? byStatus.first { $0.key.lowercased() == "pending" }?.value
+        return LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+                         spacing: 12) {
+            BentoStatTile(label: "রিয়েলাইজড মুনাফা", target: k.realizedProfit, format: bnTk,
+                          sub: "ডেলিভারড অর্ডার",
+                          tint: DashPalette.positive(scheme), accent: DashPalette.positive(scheme))
+                .dashPress()
+            BentoStatTile(label: "রিটার্ন লস", target: k.totalReturnsLoss, format: bnTk,
+                          sub: "\(bnN(k.returnedUnpaidCount)) রিফিউজড",
+                          tint: DashPalette.red500, accent: DashPalette.red500)
+                .dashPress()
+            BentoStatTile(label: "পেন্ডিং", target: pending, format: bnN,
+                          sub: "অ্যাকশন বাকি",
+                          tint: DashPalette.warning(scheme), accent: DashPalette.amber500)
+                .dashPress()
+            BentoStatTile(label: "গড় অর্ডার", target: avg, format: bnTk,
+                          sub: "প্রতি অর্ডার",
+                          tint: DashPalette.accentText(scheme), accent: DashPalette.coral)
+                .dashPress()
         }
     }
 
@@ -1167,48 +1198,6 @@ struct DashboardScreen: View {
         return pct
     }
 
-    // ── Command Deck: hero + hairline stat panel + section labels + compact chart cells ──
-
-    /// The commanding revenue hero — big value, real trend pill, avg-order meta, and a large
-    /// integrated area chart with a Bangla date axis.
-    @ViewBuilder
-    private func commandHero(_ k: DashKpis, daily: [DashDailyPoint], monthly: [DashMonthlyPoint]) -> some View {
-        let avg = k.totalOrders > 0 ? k.totalRevenue / k.totalOrders : 0
-        CommandHeroCard(value: bnTk(k.totalRevenue),
-                        avgOrder: bnTk(avg),
-                        spark: daily.map(\.revenue),
-                        dates: daily.map(\.date),
-                        trend: Self.trend(monthly.map(\.revenue)))
-            .dashPress()
-    }
-
-    /// The 8-KPI spec panel (hairline grid) — every compact/return KPI from the web page.
-    @ViewBuilder
-    private func statBlock(_ k: DashKpis, monthly: [DashMonthlyPoint], byStatus: [String: Int]) -> some View {
-        let avg = k.totalOrders > 0 ? k.totalRevenue / k.totalOrders : 0
-        // Pending: prefer the KPI field; fall back to the status breakdown so the cell shows a
-        // real number even before the additive `pending_count` server field is deployed.
-        let pending = k.pendingCount ?? byStatus.first { $0.key.lowercased() == "pending" }?.value
-        StatBlock(items: [
-            StatItem(k: "নিট মুনাফা", v: bnTk(k.netProfit), tint: DashPalette.signed(k.netProfit, scheme),
-                     sub: "রিটার্ন লস বাদে"),
-            StatItem(k: "মোট অর্ডার", v: bnN(k.totalOrders), tint: DashPalette.info, sub: "এই রেঞ্জে"),
-            StatItem(k: "ডেলিভারড", v: bnN(k.deliveredCount), tint: DashPalette.violet,
-                     sub: "\(bnPct(k.deliveryRate)) রেট"),
-            StatItem(k: "রিটার্ন লস", v: bnTk(k.totalReturnsLoss), tint: DashPalette.red500,
-                     sub: "\(bnN(k.returnedUnpaidCount)) রিফিউজড"),
-            StatItem(k: "রিটার্ন রেট", v: bnPct(k.returnRate),
-                     tint: k.returnRate > 20 ? DashPalette.red500
-                         : k.returnRate > 10 ? DashPalette.warning(scheme) : .primary,
-                     sub: "রিফিউজড \(bnPct(k.returnRateRefused))"),
-            StatItem(k: "পেন্ডিং", v: pending.map { bnN($0) } ?? "—", tint: DashPalette.warning(scheme),
-                     sub: "অ্যাকশন বাকি"),
-            StatItem(k: "রিয়েলাইজড", v: bnTk(k.realizedProfit), tint: DashPalette.positive(scheme),
-                     sub: "ডেলিভারড"),
-            StatItem(k: "গড় অর্ডার", v: bnTk(avg), tint: .primary, sub: "প্রতি অর্ডার"),
-        ])
-    }
-
     private func sectionLabel(_ text: String, trailing: String? = nil) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(text.uppercased()).font(.system(size: 11, weight: .bold)).tracking(0.9)
@@ -1221,16 +1210,59 @@ struct DashboardScreen: View {
         .padding(.horizontal, 4).padding(.top, 2)
     }
 
-    // Compact 2-col chart cells (Command Deck grid).
+    // Compact sparkline / trend rows (bento) — the daily-sales series + the monthly revenue
+    // and profit trend series (the old wide dual-line card), recomposed as sparkline rows.
 
-    private func dailySalesCompact(_ points: [DashDailyPoint]) -> some View {
-        ChartCard(title: "দৈনিক বিক্রি", subtitle: nil) {
-            if points.isEmpty {
-                emptyChart("◈", "নেই", "অন্য রেঞ্জ দিন")
+    private func trendRowsCard(daily: [DashDailyPoint], monthly: [DashMonthlyPoint]) -> some View {
+        ListCard(title: "ট্রেন্ড", subtitle: "দৈনিক ও মাসিক") {
+            if daily.isEmpty && monthly.isEmpty {
+                emptyChart("◈", "নেই", "অর্ডার এলে ট্রেন্ড দেখাবে")
             } else {
-                DashLineChart(values: points.map(\.revenue), color: DashPalette.coral, height: 74).padding(.top, 4)
+                VStack(spacing: 0) {
+                    if !daily.isEmpty {
+                        trendRow(title: "দৈনিক বিক্রি", sub: vm.preset.label,
+                                 values: daily.map(\.revenue), color: DashPalette.coral,
+                                 value: bnTk(daily.last?.revenue ?? 0), valueSub: "শেষ দিন",
+                                 trend: nil)
+                    }
+                    if !monthly.isEmpty {
+                        if !daily.isEmpty { Divider().opacity(0.3) }
+                        trendRow(title: "মাসিক আয়", sub: "শেষ ৬ মাস",
+                                 values: monthly.map(\.revenue), color: DashPalette.coral,
+                                 value: bnTk(monthly.last?.revenue ?? 0), valueSub: nil,
+                                 trend: Self.trend(monthly.map(\.revenue)))
+                        Divider().opacity(0.3)
+                        trendRow(title: "মাসিক মুনাফা", sub: "শেষ ৬ মাস",
+                                 values: monthly.map(\.profit), color: DashPalette.positive(scheme),
+                                 value: bnTk(monthly.last?.profit ?? 0), valueSub: nil,
+                                 trend: Self.trend(monthly.map(\.profit)))
+                    }
+                }
             }
         }
+    }
+
+    private func trendRow(title: String, sub: String, values: [Int], color: Color,
+                          value: String, valueSub: String?, trend: Double?) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.caption.weight(.semibold))
+                Text(sub).font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 6)
+            DashLineChart(values: values, color: color, height: 30)
+                .frame(width: 92)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(value).font(.caption.weight(.bold).monospacedDigit())
+                if let trend {
+                    TrendChip(pct: trend)
+                } else if let valueSub {
+                    Text(valueSub).font(.system(size: 8.5)).foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 76, alignment: .trailing)
+        }
+        .padding(.vertical, 10)
         .dashPress()
     }
 
@@ -1273,34 +1305,35 @@ struct DashboardScreen: View {
         .dashPress()
     }
 
-    private func channelCompact(_ bySource: [String: DashSourceStat]) -> some View {
+    /// Channel comparison list — one row per source with a soft gradient mini progress bar
+    /// (sweeps in), the order count and the channel's revenue.
+    private func channelCompareCard(_ bySource: [String: DashSourceStat]) -> some View {
         let rows = bySource.sorted { $0.value.orders > $1.value.orders }
         let maxV = max(rows.map { $0.value.orders }.max() ?? 1, 1)
-        return ChartCard(title: "চ্যানেল", subtitle: nil) {
+        return ListCard(title: "চ্যানেল", subtitle: "অর্ডার তুলনা") {
             if rows.isEmpty {
                 emptyChart("◩", "নেই", "ফিল্টার বদলান")
             } else {
-                VStack(spacing: 9) {
+                VStack(spacing: 12) {
                     ForEach(Array(rows.enumerated()), id: \.offset) { i, r in
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 5) {
                             HStack(spacing: 6) {
-                                Text(r.key).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary).lineLimit(1)
-                                Spacer(minLength: 2)
-                                Text(bnN(r.value.orders)).font(.system(size: 10, weight: .bold))
+                                Text(r.key).font(.caption.weight(.semibold)).lineLimit(1)
+                                Spacer(minLength: 4)
+                                Text(bnTk(r.value.revenue)).font(.caption2.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                                Text(bnN(r.value.orders)).font(.caption.weight(.bold)).monospacedDigit()
                             }
-                            GeometryReader { geo in
-                                Capsule().fill(DashPalette.chart[i % DashPalette.chart.count])
-                                    .frame(width: max(geo.size.width * CGFloat(r.value.orders) / CGFloat(maxV), 5))
-                            }
-                            .frame(height: 6)
+                            DashMiniBar(fraction: CGFloat(r.value.orders) / CGFloat(maxV),
+                                        color: DashPalette.chart[i % DashPalette.chart.count],
+                                        delay: Double(i) * 0.05)
                         }
-                        .animation(.spring(duration: 0.5, bounce: 0.2).delay(Double(i) * 0.03), value: maxV)
+                        .dashPress()
                     }
                 }
-                .padding(.top, 2)
+                .padding(.top, 4)
             }
         }
-        .dashPress()
     }
 
     /// Two-column swatch legend under a compact donut (status / category breakdowns).
@@ -1318,19 +1351,6 @@ struct DashboardScreen: View {
         }
     }
 
-    // ── Daily Sales (web DailySalesChart — native area/line) ──
-
-    private func dailySalesCard(_ points: [DashDailyPoint]) -> some View {
-        ChartCard(title: "Daily Sales", subtitle: vm.preset.label) {
-            if points.isEmpty {
-                emptyChart("◈", "No data", "Pick another date range")
-            } else {
-                DashLineChart(values: points.map(\.revenue), color: DashPalette.coral, height: 150)
-                    .padding(.top, 8)
-            }
-        }
-    }
-
     // ── Monthly Revenue (web MonthlyRevenueChart — native bars + profit overlay) ──
 
     private func monthlyRevenueCard(_ points: [DashMonthlyPoint]) -> some View {
@@ -1344,121 +1364,11 @@ struct DashboardScreen: View {
         }
     }
 
-    // ── Revenue & Profit Trend (web RevenueChart — native dual line) ──
-
-    private func revenueTrendCard(_ points: [DashMonthlyPoint]) -> some View {
-        ChartCard(title: "আয় ও মুনাফা ট্রেন্ড", subtitle: "শেষ ৬ মাস",
-                  legend: [("আয়", DashPalette.coral), ("মুনাফা", DashPalette.positive(scheme))]) {
-            if points.isEmpty {
-                emptyChart("◈", "নেই", "অর্ডার এলে ট্রেন্ড দেখাবে")
-            } else {
-                ZStack {
-                    DashLineChart(values: points.map(\.revenue), color: DashPalette.coral, height: 160, fill: false)
-                    DashLineChart(values: points.map(\.profit), color: DashPalette.positive(scheme),
-                                  height: 160, fill: false, maxOverride: points.map(\.revenue).max())
-                }
-                .padding(.top, 8)
-            }
-        }
-    }
-
-    // ── Order Status (web StatusPieChart + value grid) ──
-
-    private func orderStatusCard(_ byStatus: [String: Int]) -> some View {
-        let slices = byStatus
-            .filter { !["Cancelled", "CANCELLED"].contains($0.key) }
-            .sorted { $0.value > $1.value }
-        return ChartCard(title: "Order Status", subtitle: nil) {
-            if slices.isEmpty {
-                emptyChart("◫", "No data", "Status breakdown updates with your filter")
-            } else {
-                VStack(spacing: 12) {
-                    DashDonut(slices: slices.enumerated().map {
-                        ($1.key, $1.value, DashPalette.chart[$0 % DashPalette.chart.count])
-                    })
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 6) {
-                        ForEach(Array(slices.enumerated()), id: \.offset) { _, s in
-                            VStack(spacing: 1) {
-                                Text(bnN(s.value)).font(.subheadline.weight(.bold))
-                                Text(s.key).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 6)
-                            .background(Color.primary.opacity(scheme == .dark ? 0.05 : 0.035),
-                                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
-                        }
-                    }
-                }
-                .padding(.top, 6)
-            }
-        }
-    }
-
-    // ── Category Mix (web DonutChart + legend) ──
-
-    private func categoryMixCard(_ byCategory: [String: DashCategoryStat]) -> some View {
-        let top = byCategory.sorted { $0.value.orders > $1.value.orders }.prefix(5)
-        let slices = top.enumerated().map {
-            ($1.key, $1.value.orders, DashPalette.chart[$0 % DashPalette.chart.count])
-        }
-        return ChartCard(title: "Category Mix", subtitle: nil) {
-            if slices.isEmpty {
-                emptyChart("◧", "No data", "Category mix appears once orders exist")
-            } else {
-                VStack(spacing: 12) {
-                    DashDonut(slices: slices)
-                    VStack(spacing: 8) {
-                        ForEach(Array(slices.enumerated()), id: \.offset) { _, s in
-                            HStack(spacing: 10) {
-                                RoundedRectangle(cornerRadius: 3).fill(s.2).frame(width: 10, height: 10)
-                                Text(s.0).font(.caption).foregroundStyle(.secondary)
-                                Spacer()
-                                Text(bnN(s.1)).font(.caption.weight(.bold))
-                            }
-                        }
-                    }
-                }
-                .padding(.top, 6)
-            }
-        }
-    }
-
-    // ── Orders by Channel (web BarSourceChart — native h-bars) ──
-
-    private func channelCard(_ bySource: [String: DashSourceStat]) -> some View {
-        let rows = bySource.sorted { $0.value.orders > $1.value.orders }
-        let maxV = max(rows.map { $0.value.orders }.max() ?? 1, 1)
-        return ChartCard(title: "Orders by Channel", subtitle: nil) {
-            if rows.isEmpty {
-                emptyChart("◩", "No data", "Channel breakdown updates with your filter")
-            } else {
-                VStack(spacing: 10) {
-                    ForEach(Array(rows.enumerated()), id: \.offset) { i, r in
-                        HStack(spacing: 10) {
-                            Text(r.key).font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                                .frame(width: 74, alignment: .leading).lineLimit(1)
-                            GeometryReader { geo in
-                                Capsule()
-                                    .fill(LinearGradient(colors: [DashPalette.goldLt, DashPalette.coral],
-                                                         startPoint: .leading, endPoint: .trailing))
-                                    .frame(width: max(geo.size.width * CGFloat(r.value.orders) / CGFloat(maxV), 6))
-                            }
-                            .frame(height: 14)
-                            Text(bnN(r.value.orders)).font(.caption.weight(.bold))
-                                .frame(width: 34, alignment: .trailing)
-                        }
-                        .animation(.spring(duration: 0.5, bounce: 0.2).delay(Double(i) * 0.03), value: maxV)
-                    }
-                }
-                .padding(.top, 8)
-            }
-        }
-    }
-
-    // ── Top Products (web list) ──
+    // ── Top Products (web list — bento comparison rows with mini revenue bars) ──
 
     private func topProductsCard(_ products: [DashTopProduct]) -> some View {
         let top = Array(products.prefix(5))
+        let maxRev = max(top.map(\.revenue).max() ?? 1, 1)
         return ListCard(title: "টপ প্রোডাক্ট", subtitle: nil) {
             if top.isEmpty {
                 emptyChart("◧", "নেই", "অর্ডার এলে টপ প্রোডাক্ট দেখাবে")
@@ -1466,14 +1376,18 @@ struct DashboardScreen: View {
                 VStack(spacing: 0) {
                     ForEach(Array(top.enumerated()), id: \.element.id) { i, p in
                         if i > 0 { Divider().opacity(0.3) }
-                        topProductRow(rank: i + 1, p).dashPress()
+                        topProductRow(rank: i + 1, p,
+                                      fraction: CGFloat(p.revenue) / CGFloat(maxRev),
+                                      delay: Double(i) * 0.05)
+                            .dashPress()
                     }
                 }
             }
         }
     }
 
-    private func topProductRow(rank: Int, _ p: DashTopProduct) -> some View {
+    private func topProductRow(rank: Int, _ p: DashTopProduct,
+                               fraction: CGFloat, delay: Double) -> some View {
         HStack(spacing: 12) {
             Text(bnN(rank))
                 .font(.caption.weight(.bold)).foregroundStyle(DashPalette.accentText(scheme))
@@ -1492,6 +1406,9 @@ struct DashboardScreen: View {
                     Text("টপ: \(ts.label) · \(bnN(ts.pieces)) পিস")
                         .font(.caption2).foregroundStyle(DashPalette.positive(scheme)).lineLimit(1)
                 }
+                // Revenue share vs the #1 product — the bento comparison bar.
+                DashMiniBar(fraction: fraction, color: DashPalette.coral, delay: delay, height: 4)
+                    .padding(.top, 4)
             }
             Spacer(minLength: 6)
             VStack(alignment: .trailing, spacing: 2) {
@@ -1640,9 +1557,90 @@ struct DashboardScreen: View {
     }
 }
 
-// MARK: - KPI bento components (revenue hero + tiles + mini chips + ring + trend)
+// MARK: - Bento components (dark hero + ring tiles + stat tiles + count-up + mini bars)
 
-private struct DashRingSpec { let percent: Int; let total: Int }
+/// Central motion gate for the bento animations — count-ups, ring/bar/donut sweeps and the
+/// hero shimmer ALL freeze to their final state when the owner limits motion: Reduce Motion
+/// or Low Power Mode (the same guard pattern DashAurora.updateDrift uses).
+@available(iOS 17.0, *)
+private func dashMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number: animates 0 → target on first appear (and old → new on refresh), in the
+/// owner's Bangla formatting. A single Animatable interpolation drives the digits — no
+/// timers. Snaps straight to the final value under Reduce Motion / Low Power Mode.
+@available(iOS 17.0, *)
+private struct DashCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    let format: (Int) -> String
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        DashCountUpText(value: shown, format: format)
+            .animation(dashMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if dashMotionOK(reduceMotion) {
+                    appeared = true          // the implicit spring above interpolates the digits
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+/// Animatable text body for DashCountUp — SwiftUI interpolates `value` frame-to-frame.
+@available(iOS 17.0, *)
+private struct DashCountUpText: View, Animatable {
+    var value: Double
+    var format: (Int) -> String
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text(format(Int(value.rounded())))
+    }
+}
+
+/// Soft gradient mini progress bar (comparison lists) — sweeps to its fraction on appear,
+/// frozen under Reduce Motion / Low Power Mode.
+@available(iOS 17.0, *)
+private struct DashMiniBar: View {
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let fraction: CGFloat
+    let color: Color
+    var delay: Double = 0
+    var height: CGFloat = 7
+    @State private var grow = false
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary.opacity(scheme == .dark ? 0.10 : 0.06))
+                Capsule()
+                    .fill(LinearGradient(colors: [color.opacity(0.55), color],
+                                         startPoint: .leading, endPoint: .trailing))
+                    .frame(width: max(geo.size.width * min(max(fraction, 0), 1), height) * (grow ? 1 : 0.001))
+            }
+        }
+        .frame(height: height)
+        .onAppear {
+            if dashMotionOK(reduceMotion) {
+                withAnimation(.spring(duration: 0.6, bounce: 0.18).delay(delay)) { grow = true }
+            } else {
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { grow = true }
+            }
+        }
+    }
+}
 
 /// ▲/▼ percent pill — green up, red down (real period-over-period from the monthly series).
 @available(iOS 17.0, *)
@@ -1662,105 +1660,187 @@ private struct TrendChip: View {
     }
 }
 
-/// Circular progress ring for the delivery rate (animated fill on appear).
+/// Circular progress ring (delivery / return rates) — sweeps in with a spring on appear,
+/// snaps to the final arc under Reduce Motion / Low Power Mode.
 @available(iOS 17.0, *)
 private struct DashRing: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let percent: Int
     let color: Color
+    var size: CGFloat = 50
+    var lineWidth: CGFloat = 5
     @State private var animate = false
     var body: some View {
         ZStack {
-            Circle().stroke(Color.primary.opacity(scheme == .dark ? 0.14 : 0.08), lineWidth: 5)
+            Circle().stroke(Color.primary.opacity(scheme == .dark ? 0.14 : 0.08), lineWidth: lineWidth)
             Circle().trim(from: 0, to: animate ? CGFloat(min(max(percent, 0), 100)) / 100 : 0)
-                .stroke(color, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                .stroke(LinearGradient(colors: [color.opacity(0.55), color],
+                                       startPoint: .top, endPoint: .bottom),
+                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-            Text(bnPct(percent)).font(.system(size: 12, weight: .heavy))
+            Text(bnPct(percent)).font(.system(size: max(size * 0.24, 11), weight: .heavy)).monospacedDigit()
         }
-        .frame(width: 50, height: 50)
-        .onAppear { withAnimation(.spring(duration: 0.7, bounce: 0.12)) { animate = true } }
+        .frame(width: size, height: size)
+        .onAppear {
+            if dashMotionOK(reduceMotion) {
+                withAnimation(.spring(duration: 0.8, bounce: 0.12)) { animate = true }
+            } else {
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { animate = true }
+            }
+        }
     }
 }
 
-/// Full-width Revenue hero: big value + real month-over-month trend + live sparkline.
+/// Square bento tile with a sweeping progress RING — count-up headline + severity tint,
+/// frosted glass with a soft accent wash.
 @available(iOS 17.0, *)
-private struct RevenueHeroCard: View {
+private struct BentoRingTile: View {
     @Environment(\.colorScheme) private var scheme
-    let value: String
-    let spark: [Int]
-    let trend: Double?
+    let label: String
+    let target: Int
+    let format: (Int) -> String
+    let suffix: String?
+    let sub: String
+    let percent: Int
+    let tint: Color
+    let accent: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("REVENUE").font(.system(size: 10, weight: .bold)).tracking(0.6).foregroundStyle(.secondary)
-                Spacer()
-                if let trend { TrendChip(pct: trend) }
-            }
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text("৳").font(.title2.weight(.bold)).foregroundStyle(.secondary)
-                Text(stripTaka(value)).font(.system(size: 34, weight: .heavy)).monospacedDigit()
-                    .minimumScaleFactor(0.6).lineLimit(1).contentTransition(.numericText())
-                if trend != nil {
-                    Text("vs last month").font(.caption2).foregroundStyle(.secondary).padding(.leading, 4)
+        VStack(alignment: .leading, spacing: 12) {
+            Text(label.uppercased()).font(.system(size: 9.5, weight: .bold)).tracking(0.5)
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(alignment: .firstTextBaseline, spacing: 1) {
+                        DashCountUp(target: target, format: format)
+                            .font(.system(size: 22, weight: .heavy)).monospacedDigit()
+                            .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.55)
+                        if let suffix {
+                            Text(suffix).font(.caption2).foregroundStyle(.secondary)
+                                .lineLimit(1).minimumScaleFactor(0.7)
+                        }
+                    }
+                    Text(sub).font(.system(size: 9)).foregroundStyle(.secondary)
+                        .lineLimit(1).minimumScaleFactor(0.7)
                 }
-            }
-            if !spark.isEmpty {
-                DashLineChart(values: spark, color: DashPalette.coral, height: 46).padding(.top, 2)
+                Spacer(minLength: 4)
+                DashRing(percent: percent, color: accent, size: 56, lineWidth: 6)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(15)
-        .background {
-            ZStack {
-                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
-                LinearGradient(colors: [DashPalette.coral.opacity(scheme == .dark ? 0.16 : 0.12), .clear],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-                HStack(spacing: 0) { Rectangle().fill(DashPalette.coral).frame(width: 3); Spacer(minLength: 0) }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
-        }
+        .padding(14)
+        .background { bentoWash(accent, scheme: scheme) }
         .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
             .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
     }
-    private func stripTaka(_ s: String) -> String { s.hasPrefix("৳") ? String(s.dropFirst()) : s }
 }
 
-// MARK: - Command Deck hero + spec panel
-
-/// The commanding revenue hero (Command Deck): big value + real trend pill + avg-order meta
-/// + a large integrated area chart with a Bangla date axis.
+/// Small glass stat tile — count-up value + sub line, soft accent wash. `target == nil`
+/// renders the "—" placeholder (pending before the server field ships).
 @available(iOS 17.0, *)
-private struct CommandHeroCard: View {
+private struct BentoStatTile: View {
     @Environment(\.colorScheme) private var scheme
-    let value: String
-    let avgOrder: String
+    let label: String
+    let target: Int?
+    let format: (Int) -> String
+    let sub: String
+    let tint: Color
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
+            if let target {
+                DashCountUp(target: target, format: format)
+                    .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                    .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.55)
+            } else {
+                Text("—").font(.system(size: 17, weight: .heavy)).foregroundStyle(tint)
+            }
+            Text(sub).font(.system(size: 9)).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 13).padding(.vertical, 12)
+        .background { bentoWash(accent, scheme: scheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+    }
+}
+
+/// Shared bento tile backdrop: frosted glass + a soft diagonal accent wash.
+@available(iOS 17.0, *)
+private func bentoWash(_ accent: Color, scheme: ColorScheme) -> some View {
+    ZStack {
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+        LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.14 : 0.10), .clear],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+}
+
+// MARK: - Bento hero (the one DARK anchoring widget of the board)
+
+/// The dark hero KPI card — deliberately dark in BOTH schemes (the board's anchor tile):
+/// revenue count-up + real MoM delta badge, net-profit and total-orders secondary numbers
+/// (own tints + badges), avg-order meta, and the integrated daily area chart with a Bangla
+/// date axis. A slow diagonal light sheen shimmers across the glass — frozen under Reduce
+/// Motion / Low Power Mode (same guard as DashAurora).
+@available(iOS 17.0, *)
+private struct BentoHeroCard: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let kpis: DashKpis
+    let avgOrder: Int
+    let ordersMeta: String
     let spark: [Int]
     let dates: [String]
-    let trend: Double?
+    let revenueTrend: Double?
+    let profitTrend: Double?
+    @State private var shimmer = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("মোট আয় · REVENUE").font(.system(size: 10, weight: .bold)).tracking(0.8)
-                    .foregroundStyle(DashPalette.accentText(scheme))
+                    .foregroundStyle(DashPalette.goldLt)
                 Spacer()
-                if let trend { TrendChip(pct: trend) }
+                if let revenueTrend { TrendChip(pct: revenueTrend) }
             }
             HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text("৳").font(.title.weight(.bold)).foregroundStyle(.secondary)
-                Text(stripTaka(value)).font(.system(size: 40, weight: .heavy)).monospacedDigit()
-                    .minimumScaleFactor(0.6).lineLimit(1).contentTransition(.numericText())
+                Text("৳").font(.title.weight(.bold)).foregroundStyle(.white.opacity(0.55))
+                DashCountUp(target: kpis.totalRevenue,
+                            format: { bnD(dashGrouped(abs($0))).prependingMinus($0 < 0) })
+                    .font(.system(size: 40, weight: .heavy)).monospacedDigit()
+                    .foregroundStyle(.white)
+                    .lineLimit(1).minimumScaleFactor(0.6)
             }
             .padding(.top, 8)
-            Text("গড় অর্ডার \(avgOrder)").font(.caption2).foregroundStyle(.secondary).padding(.top, 5)
+            Text("গড় অর্ডার \(bnTk(avgOrder)) · \(ordersMeta)")
+                .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.top, 5)
+
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "নিট মুনাফা", target: kpis.netProfit, format: bnTk,
+                         tint: kpis.netProfit < 0 ? DashPalette.red500 : DashPalette.green400,
+                         badge: profitTrend, sub: "রিটার্ন লস বাদে")
+                Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+                    .padding(.vertical, 2).padding(.horizontal, 14)
+                heroStat(label: "মোট অর্ডার", target: kpis.totalOrders, format: bnN,
+                         tint: .white, badge: nil, sub: "এই রেঞ্জে")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+
             if !spark.isEmpty {
-                DashLineChart(values: spark, color: DashPalette.coral, height: 112).padding(.top, 10)
+                DashLineChart(values: spark, color: DashPalette.coral, height: 96).padding(.top, 12)
                 if let axis = axisLabels {
                     HStack(spacing: 0) {
                         ForEach(Array(axis.enumerated()), id: \.offset) { i, t in
-                            Text(t).font(.system(size: 9)).foregroundStyle(.secondary)
+                            Text(t).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
                             if i < axis.count - 1 { Spacer(minLength: 0) }
                         }
                     }
@@ -1772,16 +1852,61 @@ private struct CommandHeroCard: View {
         .padding(16)
         .background {
             ZStack {
-                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
-                LinearGradient(colors: [DashPalette.coral.opacity(scheme == .dark ? 0.16 : 0.12), .clear],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-                HStack(spacing: 0) { Rectangle().fill(DashPalette.coral).frame(width: 3); Spacer(minLength: 0) }
+                // Deep indigo base + brand washes: violet from the top, coral from the
+                // bottom, a sage hint top-right — ALMA palette, never the ref's blue/teal.
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [DashPalette.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [DashPalette.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [DashPalette.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+                // Slow diagonal light sweep — the premium glass sheen (gated in updateShimmer).
+                LinearGradient(colors: [.clear, .white.opacity(0.09), .clear],
+                               startPoint: .leading, endPoint: .trailing)
+                    .frame(width: 140)
+                    .blur(radius: 6)
+                    .rotationEffect(.degrees(16))
+                    .scaleEffect(1.6)
+                    .offset(x: shimmer ? 340 : -340)
             }
             .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
         }
         .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
-            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Force dark inside the card so .primary/materials/TrendChip read the dark palette
+        // regardless of the system scheme — this tile is always the board's dark anchor.
+        .environment(\.colorScheme, .dark)
+        .onAppear { updateShimmer() }
+        .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+            .receive(on: DispatchQueue.main)) { _ in updateShimmer() }
+    }
+
+    private func heroStat(label: String, target: Int, format: @escaping (Int) -> String,
+                          tint: Color, badge: Double?, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 5) {
+                Text(label).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                    .foregroundStyle(.white.opacity(0.55))
+                if let badge { TrendChip(pct: badge) }
+            }
+            DashCountUp(target: target, format: format)
+                .font(.system(size: 19, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.6)
+            Text(sub).font(.system(size: 8.5)).foregroundStyle(.white.opacity(0.5))
+        }
+    }
+
+    /// Battery guard (DashAurora pattern): the sheen sweeps only when the owner allows
+    /// motion — Reduce Motion and Low Power Mode both freeze it off-card.
+    private func updateShimmer() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { shimmer = false }
+        } else if !shimmer {
+            withAnimation(.easeInOut(duration: 7.5).repeatForever(autoreverses: true)) { shimmer = true }
+        }
     }
 
     /// 4 evenly-spaced Bangla date ticks (last = "আজ"); nil when there are too few dates.
@@ -1793,134 +1918,6 @@ private struct CommandHeroCard: View {
         if out.contains(where: { $0.isEmpty }) { return nil }
         out[out.count - 1] = "আজ"
         return out
-    }
-
-    private func stripTaka(_ s: String) -> String { s.hasPrefix("৳") ? String(s.dropFirst()) : s }
-}
-
-/// One cell of the KPI spec panel.
-private struct StatItem: Identifiable {
-    let id = UUID()
-    let k: String
-    let v: String
-    let tint: Color
-    var pct: Double? = nil
-    var sub: String? = nil
-}
-
-/// The 8-KPI hairline spec panel (4×2) — the Command Deck's calm, data-dense stat block.
-@available(iOS 17.0, *)
-private struct StatBlock: View {
-    @Environment(\.colorScheme) private var scheme
-    let items: [StatItem]
-
-    var body: some View {
-        let hair = AlmaSwiftTheme.separator(scheme)
-        VStack(spacing: 0) {
-            row(0, hair: hair)
-            Rectangle().fill(hair).frame(height: 1)
-            row(4, hair: hair)
-        }
-        .dashGlass(scheme, corner: AlmaSwiftTheme.rCard)
-    }
-
-    private func row(_ start: Int, hair: Color) -> some View {
-        HStack(spacing: 0) {
-            ForEach(0..<4, id: \.self) { i in
-                if i > 0 { Rectangle().fill(hair).frame(width: 1) }
-                if start + i < items.count {
-                    cell(items[start + i])
-                } else {
-                    Color.clear.frame(maxWidth: .infinity)
-                }
-            }
-        }
-        .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func cell(_ it: StatItem) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(it.k.uppercased()).font(.system(size: 8.5, weight: .bold)).tracking(0.3)
-                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
-            Text(it.v).font(.system(size: 15, weight: .heavy)).monospacedDigit()
-                .foregroundStyle(it.tint).lineLimit(1).minimumScaleFactor(0.55)
-                .contentTransition(.numericText())
-            if let p = it.pct {
-                TrendChip(pct: p)
-            } else if let s = it.sub {
-                Text(s).font(.system(size: 8.5)).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.7)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10).padding(.vertical, 11)
-        .dashPress()
-    }
-}
-
-/// One KPI tile — optional trend pill, optional right-side ring (Delivered).
-@available(iOS 17.0, *)
-private struct KpiTile: View {
-    @Environment(\.colorScheme) private var scheme
-    let label: String
-    let value: String
-    let valueTint: Color
-    let accent: Color
-    var sub: String? = nil
-    var trend: Double? = nil
-    var ring: DashRingSpec? = nil
-
-    var body: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 5) {
-                    Text(label.uppercased()).font(.system(size: 10, weight: .bold)).tracking(0.5)
-                        .foregroundStyle(.secondary).lineLimit(1)
-                    if let trend { TrendChip(pct: trend) }
-                }
-                HStack(alignment: .firstTextBaseline, spacing: 1) {
-                    Text(value).font(.title3.weight(.bold)).monospacedDigit()
-                        .foregroundStyle(valueTint).lineLimit(1).minimumScaleFactor(0.6)
-                        .contentTransition(.numericText())
-                    if let ring { Text("/\(bnN(ring.total))").font(.caption2).foregroundStyle(.secondary) }
-                }
-                if let sub { Text(sub).font(.caption2).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8) }
-            }
-            if let ring { Spacer(minLength: 0); DashRing(percent: ring.percent, color: DashPalette.sage) }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(13)
-        .background {
-            ZStack {
-                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
-                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
-                LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.12 : 0.08), .clear],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-                HStack(spacing: 0) { Rectangle().fill(accent).frame(width: 3); Spacer(minLength: 0) }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
-        }
-        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
-            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
-    }
-}
-
-/// Compact 3-up chip (Return Loss / Return Rate / Pending).
-@available(iOS 17.0, *)
-private struct MiniChip: View {
-    @Environment(\.colorScheme) private var scheme
-    let label: String
-    let value: String
-    let tint: Color
-    var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.4)
-                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
-            Text(value).font(.subheadline.weight(.heavy)).monospacedDigit()
-                .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.7).contentTransition(.numericText())
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 11).padding(.vertical, 10)
-        .dashGlass(scheme, corner: AlmaSwiftTheme.rControl)
     }
 }
 
@@ -2099,23 +2096,35 @@ private struct DashLineChart: View {
     }
 }
 
-/// Monthly revenue bars + profit overlay (web MonthlyRevenueChart).
+/// Monthly revenue bars + profit overlay (web MonthlyRevenueChart) — soft gradient bars
+/// that sweep up from the baseline with a staggered spring on appear (frozen under Reduce
+/// Motion / Low Power Mode).
 @available(iOS 17.0, *)
 private struct DashMonthlyBars: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let points: [DashMonthlyPoint]
+    @State private var grow = false
     private var maxRevenue: Int { max(points.map(\.revenue).max() ?? 1, 1) }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .bottom, spacing: 12) {
-                ForEach(points) { p in bar(p) }
+                ForEach(Array(points.enumerated()), id: \.element.id) { i, p in bar(p, index: i) }
             }
             .padding(.horizontal, 2)
         }
         .animation(.spring(duration: 0.5, bounce: 0.2), value: points)
+        .onAppear {
+            if dashMotionOK(reduceMotion) {
+                grow = true            // each bar animates via its own staggered spring below
+            } else {
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { grow = true }
+            }
+        }
     }
 
-    private func bar(_ p: DashMonthlyPoint) -> some View {
+    private func bar(_ p: DashMonthlyPoint, index: Int) -> some View {
         let h = max(CGFloat(p.revenue) / CGFloat(maxRevenue) * 120, 3)
         let ph = p.revenue > 0
             ? max(CGFloat(max(p.profit, 0)) / CGFloat(maxRevenue) * 120, p.profit > 0 ? 3 : 0) : 0
@@ -2123,9 +2132,10 @@ private struct DashMonthlyBars: View {
             Text(bnTk(p.revenue))
                 .font(.system(size: 8, weight: .semibold).monospacedDigit())
                 .foregroundStyle(.secondary).fixedSize()
+                .opacity(grow ? 1 : 0)
             ZStack(alignment: .bottom) {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(LinearGradient(colors: [DashPalette.goldLt, DashPalette.coral],
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(LinearGradient(colors: [DashPalette.goldLt.opacity(0.85), DashPalette.coral],
                                          startPoint: .top, endPoint: .bottom))
                     .frame(width: 26, height: h)
                 if ph > 0 {
@@ -2134,30 +2144,36 @@ private struct DashMonthlyBars: View {
                         .frame(width: 10, height: ph)
                 }
             }
+            .scaleEffect(x: 1, y: grow ? 1 : 0.02, anchor: .bottom)
             .frame(height: 124, alignment: .bottom)
             Text(DashFormat.monthShort(p.month))
                 .font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
         }
+        .animation(.spring(duration: 0.55, bounce: 0.2).delay(Double(index) * 0.05), value: grow)
     }
 }
 
-/// Donut (web DonutChart / StatusPieChart) — segments from (label, value, colour).
+/// Donut (web DonutChart / StatusPieChart) — segments from (label, value, colour). The
+/// ring sweeps in clockwise from 12 o'clock on appear (frozen under Reduce Motion / Low
+/// Power Mode).
 @available(iOS 17.0, *)
 private struct DashDonut: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let slices: [(String, Int, Color)]
     var size: CGFloat = 150
     var lineWidth: CGFloat = 20
-    /// Centre label override — defaults to the total (web parity); Command Deck passes
+    /// Centre label override — defaults to the total (web parity); the bento cards pass
     /// e.g. "২৮"/"মোট" (status) or "৫"/"টাইপ" (category).
     var centerTop: String? = nil
     var centerBottom: String = "total"
+    @State private var sweep: CGFloat = 0
     private var total: Int { max(slices.reduce(0) { $0 + $1.1 }, 1) }
 
     var body: some View {
         ZStack {
             ForEach(Array(segments.enumerated()), id: \.offset) { _, seg in
                 Circle()
-                    .trim(from: seg.start, to: seg.end)
+                    .trim(from: seg.start * sweep, to: seg.end * sweep)
                     .stroke(seg.color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
                     .rotationEffect(.degrees(-90))
             }
@@ -2170,6 +2186,14 @@ private struct DashDonut: View {
         .frame(width: size, height: size)
         .frame(maxWidth: .infinity)
         .animation(.spring(duration: 0.6, bounce: 0.1), value: slices.map { $0.1 })
+        .onAppear {
+            if dashMotionOK(reduceMotion) {
+                withAnimation(.spring(duration: 0.8, bounce: 0)) { sweep = 1 }
+            } else {
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { sweep = 1 }
+            }
+        }
     }
 
     private var segments: [(start: CGFloat, end: CGFloat, color: Color)] {
@@ -2203,33 +2227,76 @@ private enum DashFormat {
 @available(iOS 17.0, *)
 private struct DashAurora: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
+
     var body: some View {
-        ZStack {
-            if scheme == .dark {
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.075, green: 0.063, blue: 0.196), location: 0.0),
-                    .init(color: Color(red: 0.216, green: 0.125, blue: 0.439), location: 0.32),
-                    .init(color: Color(red: 0.478, green: 0.176, blue: 0.494), location: 0.62),
-                    .init(color: Color(red: 0.706, green: 0.255, blue: 0.404), location: 1.0),
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.35), .clear],
-                               center: .init(x: 0.15, y: 0.18), startRadius: 10, endRadius: 420)
-                RadialGradient(colors: [Color(red: 0.93, green: 0.42, blue: 0.55).opacity(0.30), .clear],
-                               center: .init(x: 0.9, y: 0.85), startRadius: 20, endRadius: 480)
-            } else {
-                AlmaSwiftTheme.rootBg(.light)
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.902, green: 0.882, blue: 0.973), location: 0.0),
-                    .init(color: Color(red: 0.949, green: 0.941, blue: 0.972), location: 0.45),
-                    .init(color: Color(red: 0.988, green: 0.918, blue: 0.925), location: 1.0),
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.14), .clear],
-                               center: .init(x: 0.12, y: 0.15), startRadius: 10, endRadius: 380)
-                RadialGradient(colors: [AlmaSwiftTheme.coral.opacity(0.12), .clear],
-                               center: .init(x: 0.9, y: 0.9), startRadius: 20, endRadius: 420)
+        let dark = scheme == .dark
+        // Agent-parity living aurora (web --aurora-blob-1…5): five blurred colour blobs
+        // drifting corner-to-corner over the page canvas. Owner directive 2026-07-08:
+        // every native page shares the Assistant tab's moving aurora.
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
             }
+            .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Battery guard: drift only when the owner allows motion — Reduce Motion and
+    /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
     }
 }
 

@@ -908,6 +908,24 @@ const longTaskWorker = new Worker('long-agent-task', async (job) => {
   // Runs the turn via the chat route in stream mode and republishes events to
   // Redis + the agent_turn_events log so the client can tail/replay it.
   if (job.data?.turnId) {
+    // Double-run guard (owner bug 2026-07-12: finished research restarted from
+    // scratch in the same thread). A stale/duplicate delivery of this job —
+    // BullMQ stall re-queue, old backlog after a worker restart — must NEVER
+    // re-run a turn that already reached a terminal status. The durable turn
+    // row is the source of truth: only a still-'running' turn may execute.
+    try {
+      const { data: turnRow } = await supabase
+        .from('agent_turns')
+        .select('status')
+        .eq('id', job.data.turnId)
+        .maybeSingle()
+      if (turnRow && turnRow.status !== 'running') {
+        console.warn(`[worker] streamed-turn ${job.data.turnId} skipped — turn already '${turnRow.status}' (stale duplicate delivery)`)
+        return
+      }
+    } catch (err) {
+      console.warn(`[worker] streamed-turn ${job.data.turnId} status pre-check failed (continuing):`, err.message)
+    }
     const { runStreamedTurn } = await import('./turn/run-streamed-turn.mjs')
     await runStreamedTurn({ supabase, job, redisUrl: LONG_TASK_REDIS_URL, telegramBot })
     return
@@ -953,7 +971,18 @@ const longTaskWorker = new Worker('long-agent-task', async (job) => {
     console.error(`[worker] long-agent-task ${pendingActionId} failed:`, err.message)
     await callJobResult(pendingActionId, 'failed', undefined, err.message)
   }
-}, { connection: longTaskConnection, concurrency: 1, lockDuration: 6 * 60 * 1000 })
+}, {
+  connection: longTaskConnection,
+  concurrency: 1,
+  // A streamed turn may legitimately run up to 25 min (run-streamed-turn's fetch
+  // timeout). The old 6-min lock meant one missed renewal marked a healthy long
+  // turn "stalled" → BullMQ re-queued it → the WHOLE research re-ran in the same
+  // thread as soon as the first run finished (owner bug 2026-07-12). Lock now
+  // covers the longest legitimate turn, and maxStalledCount: 0 fails a genuinely
+  // stalled job instead of ever double-running it.
+  lockDuration: 30 * 60 * 1000,
+  maxStalledCount: 0,
+})
 
 longTaskWorker.on('completed', (job) => {
   if (job?.data?.pendingActionId) enqueuedIds.delete(job.data.pendingActionId)

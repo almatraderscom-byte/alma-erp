@@ -208,6 +208,9 @@ struct EmployeeWalletEntry: Decodable, Identifiable, Equatable {
     let periodYm: String?
     let type: String?
     let note: String?
+    /// Ledger source — the native salary slip needs the web's approved-withdrawal
+    /// filter (salary-slip.ts APPROVED_WITHDRAWAL_SOURCES).
+    let source: String?
     /// Unsigned entry amount (web `entry.amount`) — the salary-correction flow keys off it.
     let amount: Int
     let signedAmount: Int
@@ -216,7 +219,7 @@ struct EmployeeWalletEntry: Decodable, Identifiable, Equatable {
     let id: String
 
     private enum Keys: String, CodingKey {
-        case id, date, periodYm, type, note, amount, signedAmount, runningBalance
+        case id, date, periodYm, type, note, amount, signedAmount, runningBalance, source
     }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
@@ -225,6 +228,7 @@ struct EmployeeWalletEntry: Decodable, Identifiable, Equatable {
         periodYm = try? c.decodeIfPresent(String.self, forKey: .periodYm)
         type = try? c.decodeIfPresent(String.self, forKey: .type)
         note = try? c.decodeIfPresent(String.self, forKey: .note)
+        source = try? c.decodeIfPresent(String.self, forKey: .source)
         amount = employeeFlexInt(c, .amount) ?? 0
         signedAmount = employeeFlexInt(c, .signedAmount) ?? 0
         runningBalance = employeeFlexInt(c, .runningBalance) ?? 0
@@ -905,26 +909,13 @@ struct EmployeesScreen: View {
         Array(Set(vm.employees.compactMap { $0.role }.filter { !$0.isEmpty })).sorted()
     }
 
-    // ── Stats strip (web: Total Employees / Active / Roles) ──
+    // ── Stats (web: Total Employees / Active / Roles) — bento dark hero
+    //    (owner spec 2026-07-08): same three counts, presentation only. ──
 
     private var statsStrip: some View {
-        HStack(spacing: 10) {
-            statCard("Total Employees", vm.employees.count, .primary)
-            statCard("Active", vm.employees.filter { $0.status == "Active" }.count,
-                     EmployeePalette.emerald600)
-            statCard("Roles", uniqueRoles.count, EmployeePalette.accentText(colorScheme))
-        }
-    }
-
-    private func statCard(_ label: String, _ value: Int, _ tint: Color) -> some View {
-        VStack(spacing: 3) {
-            Text("\(value)").font(.title3.weight(.bold)).foregroundStyle(tint)
-            Text(label).font(.caption2).foregroundStyle(.secondary)
-                .lineLimit(1).minimumScaleFactor(0.8)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-        .employeesGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        EmpBentoHeroCard(total: vm.employees.count,
+                         active: vm.employees.filter { $0.status == "Active" }.count,
+                         roles: uniqueRoles.count)
     }
 
     // ── Search + role filter (web search bar parity; filtering is local → instant) ──
@@ -1182,6 +1173,7 @@ private struct EmployeeDetailSheet: View {
     @State private var showReverseConfirm = false
     @State private var resetTarget: EmployeeAttendanceRecord? = nil
     @State private var showResetConfirm = false
+    @State private var slipShare: EmployeeSlipFile? = nil
 
     var body: some View {
         ScrollView {
@@ -1660,20 +1652,163 @@ private struct EmployeeDetailSheet: View {
         }
     }
 
-    /// Slip PDF + profile photo upload are the only web-only leftovers.
+    /// Native salary slip (owner 2026-07-11) — month menu → on-device PDF → share.
+    /// Only the profile-photo upload remains on the web page.
     private var webLink: some View {
-        Button {
-            dismiss()
-            let encoded = employee.empId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? employee.empId
-            openWeb("/employees/\(encoded)", employee.name)
-        } label: {
-            Text("ওয়েব ভার্সন (Slip PDF · ছবি আপলোড)")
-                .font(.caption2)
-                .underline()
+        VStack(spacing: 8) {
+            Menu {
+                ForEach(EmployeeSlipPdf.recentPeriods(), id: \.self) { ym in
+                    Button(EmployeeSlipPdf.periodLabel(ym)) {
+                        if let url = EmployeeSlipPdf.make(
+                            employeeName: employee.name,
+                            employeeId: employee.empId,
+                            entries: vm.wallet?.entries ?? [],
+                            periodYm: ym) {
+                            slipShare = EmployeeSlipFile(url: url)
+                        }
+                    }
+                }
+            } label: {
+                Label("স্যালারি স্লিপ (PDF)", systemImage: "doc.richtext")
+                    .font(.caption.weight(.bold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 9)
+                    .background(Color.primary.opacity(0.06),
+                                in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            Button {
+                dismiss()
+                let encoded = employee.empId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? employee.empId
+                openWeb("/employees/\(encoded)", employee.name)
+            } label: {
+                Text("ওয়েব ভার্সন (ছবি আপলোড)")
+                    .font(.caption2)
+                    .underline()
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.tertiary)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(.tertiary)
         .padding(.top, 2)
+        .sheet(item: $slipShare) { wrap in
+            EmployeeSlipShareSheet(url: wrap.url)
+                .presentationDetents([.medium])
+        }
+    }
+}
+
+/// Identifiable wrapper so a freshly generated slip can drive a .sheet(item:).
+private struct EmployeeSlipFile: Identifiable {
+    let url: URL
+    var id: String { url.absoluteString }
+}
+
+@available(iOS 17.0, *)
+private struct EmployeeSlipShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
+}
+
+/// Native salary-slip PDF — ports src/lib/salary-slip.ts buildSalarySlipBreakdown
+/// (period-scoped basic salary / penalty / net pay / withdrawn / PAID) and renders
+/// an A4 slip with the same data story as the web SalarySlipDocument.
+private enum EmployeeSlipPdf {
+    /// Web APPROVED_WITHDRAWAL_SOURCES verbatim (empty source counts as approved).
+    private static let approvedSources: Set<String> = ["wallet_request", "legacy_hr_payroll", "manual_entry"]
+
+    static func recentPeriods(count: Int = 6) -> [String] {
+        let cal = Calendar(identifier: .gregorian)
+        let now = Date()
+        return (0..<count).compactMap { back in
+            guard let d = cal.date(byAdding: .month, value: -back, to: now) else { return nil }
+            let c = cal.dateComponents([.year, .month], from: d)
+            return String(format: "%04d-%02d", c.year ?? 0, c.month ?? 0)
+        }
+    }
+
+    static func periodLabel(_ ym: String) -> String {
+        let bits = ym.split(separator: "-").compactMap { Int($0) }
+        guard bits.count == 2 else { return ym }
+        let f = DateFormatter()
+        f.dateFormat = "MMMM yyyy"
+        f.locale = Locale(identifier: "en_BD")
+        var comps = DateComponents(); comps.year = bits[0]; comps.month = bits[1]; comps.day = 1
+        guard let d = Calendar(identifier: .gregorian).date(from: comps) else { return ym }
+        return f.string(from: d)
+    }
+
+    private static func inPeriod(_ e: EmployeeWalletEntry, _ ym: String) -> Bool {
+        if e.periodYm == ym { return true }
+        guard let raw = e.date, raw.count >= 7 else { return false }
+        return String(raw.prefix(7)) == ym
+    }
+
+    static func make(employeeName: String, employeeId: String,
+                     entries: [EmployeeWalletEntry], periodYm: String) -> URL? {
+        // buildSalarySlipBreakdown port.
+        var basic = 0, penalty = 0, withdrawn = 0
+        for e in entries where inPeriod(e, periodYm) {
+            let amount = abs(e.amount)
+            guard amount > 0 else { continue }
+            switch e.type {
+            case "SALARY_ACCRUAL": basic += amount
+            case "PENALTY": penalty += amount
+            case "WITHDRAWAL":
+                let src = (e.source ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+                if src.isEmpty || approvedSources.contains(src) { withdrawn += amount }
+            default: break
+            }
+        }
+        let net = basic - penalty
+        let isPaid = net > 0 && withdrawn >= net
+
+        let pageRect = CGRect(x: 0, y: 0, width: 595, height: 842)
+        let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
+        let data = renderer.pdfData { ctx in
+            ctx.beginPage()
+            var y: CGFloat = 48
+            func line(_ text: String, size: CGFloat, bold: Bool = false,
+                      color: UIColor = .black, x: CGFloat = 48, dy: CGFloat = 18) {
+                text.draw(at: CGPoint(x: x, y: y), withAttributes: [
+                    .font: bold ? UIFont.boldSystemFont(ofSize: size) : UIFont.systemFont(ofSize: size),
+                    .foregroundColor: color,
+                ])
+                y += dy
+            }
+            line("Alma Lifestyle", size: 18, bold: true, dy: 24)
+            line("SALARY SLIP — \(periodLabel(periodYm))", size: 11, bold: true,
+                 color: .darkGray, dy: 28)
+            line("Employee: \(employeeName)", size: 11, dy: 16)
+            line("Employee ID: \(employeeId)", size: 9, color: .darkGray, dy: 26)
+
+            func row(_ label: String, _ value: Int, bold: Bool = false, color: UIColor = .black) {
+                label.draw(at: CGPoint(x: 48, y: y), withAttributes: [
+                    .font: bold ? UIFont.boldSystemFont(ofSize: 10) : UIFont.systemFont(ofSize: 10)])
+                "৳\(value.formatted())".draw(at: CGPoint(x: 420, y: y), withAttributes: [
+                    .font: bold ? UIFont.boldSystemFont(ofSize: 10) : UIFont.systemFont(ofSize: 10),
+                    .foregroundColor: color])
+                y += 18
+            }
+            row("Basic salary (accrued this period)", basic)
+            row("Penalty", -penalty, color: penalty > 0 ? .red : .black)
+            y += 4
+            row("Net pay", net, bold: true)
+            row("Withdrawn in period", withdrawn)
+            y += 10
+            line(isPaid ? "STATUS: PAID" : "STATUS: UNPAID", size: 11, bold: true,
+                 color: isPaid ? UIColor(red: 0, green: 0.55, blue: 0.35, alpha: 1) : .red, dy: 26)
+            let stamp = DateFormatter()
+            stamp.dateFormat = "yyyy-MM-dd"
+            line("Generated \(stamp.string(from: Date())) · ALMA ERP", size: 8, color: .gray)
+        }
+        let safe = employeeName.replacingOccurrences(of: "[^\\w\\s-]", with: "",
+                                                     options: .regularExpression)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("salary-slip-\(safe)-\(periodYm).pdf")
+        try? data.write(to: url)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 }
 
@@ -2708,34 +2843,76 @@ private enum EmployeeFormat {
 @available(iOS 17.0, *)
 private struct EmployeesAurora: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
 
     var body: some View {
-        ZStack {
-            if scheme == .dark {
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.075, green: 0.063, blue: 0.196), location: 0.0),  // deep indigo
-                    .init(color: Color(red: 0.216, green: 0.125, blue: 0.439), location: 0.32), // violet
-                    .init(color: Color(red: 0.478, green: 0.176, blue: 0.494), location: 0.62), // purple-magenta
-                    .init(color: Color(red: 0.706, green: 0.255, blue: 0.404), location: 1.0),  // pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.35), .clear],
-                               center: .init(x: 0.15, y: 0.18), startRadius: 10, endRadius: 420)
-                RadialGradient(colors: [Color(red: 0.93, green: 0.42, blue: 0.55).opacity(0.30), .clear],
-                               center: .init(x: 0.9, y: 0.85), startRadius: 20, endRadius: 480)
-            } else {
-                AlmaSwiftTheme.rootBg(.light)
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.902, green: 0.882, blue: 0.973), location: 0.0),  // pale violet
-                    .init(color: Color(red: 0.949, green: 0.941, blue: 0.972), location: 0.45), // cream
-                    .init(color: Color(red: 0.988, green: 0.918, blue: 0.925), location: 1.0),  // pale pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.14), .clear],
-                               center: .init(x: 0.12, y: 0.15), startRadius: 10, endRadius: 380)
-                RadialGradient(colors: [AlmaSwiftTheme.coral.opacity(0.12), .clear],
-                               center: .init(x: 0.9, y: 0.9), startRadius: 20, endRadius: 420)
+        let dark = scheme == .dark
+        // Agent-parity living aurora (web --aurora-blob-1…5): five blurred colour blobs
+        // drifting corner-to-corner over the page canvas. Owner directive 2026-07-08:
+        // every native page shares the Assistant tab's moving aurora.
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
             }
+            .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Battery guard: drift only when the owner allows motion — Reduce Motion and
+    /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
     }
 }
 
@@ -2771,6 +2948,117 @@ private struct EmployeesShimmer: ViewModifier {
 @available(iOS 17.0, *)
 private extension View {
     func employeesShimmer() -> some View { modifier(EmployeesShimmer()) }
+}
+
+// MARK: - Bento components (Employees-owned copies of the Dashboard board language —
+// per-file copies are this repo's parallel-session convention, no cross-file imports)
+
+/// Central motion gate — count-ups freeze under Reduce Motion / Low Power.
+@available(iOS 17.0, *)
+private func empMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number (0 → target on appear, old → new on refresh) — one Animatable
+/// interpolation, no timers; snaps straight to the value when motion is limited.
+@available(iOS 17.0, *)
+private struct EmpCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        EmpCountUpText(value: shown)
+            .animation(empMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if empMotionOK(reduceMotion) {
+                    appeared = true
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct EmpCountUpText: View, Animatable {
+    var value: Double
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text("\(Int(value.rounded()))")
+    }
+}
+
+/// The dark hero anchor — deliberately dark in BOTH schemes (Dashboard hero recipe:
+/// deep indigo base + violet/coral washes + a sage hint). Team-size count-up plus
+/// the Active / Roles split — the same three counts the old strip showed.
+@available(iOS 17.0, *)
+private struct EmpBentoHeroCard: View {
+    let total: Int
+    let active: Int
+    let roles: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("টিম · TOTAL EMPLOYEES").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                .foregroundStyle(EmployeePalette.goldLt)
+            EmpCountUp(target: total)
+                .font(.system(size: 40, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(.white)
+                .lineLimit(1).minimumScaleFactor(0.6)
+                .padding(.top, 8)
+            Text("সব বিজনেস মিলিয়ে টিম")
+                .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.top, 5)
+
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "Active", value: active,
+                         tint: EmployeePalette.green400, sub: "কর্মরত")
+                Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+                    .padding(.vertical, 2).padding(.horizontal, 14)
+                heroStat(label: "Roles", value: roles,
+                         tint: EmployeePalette.goldLt, sub: "পদ")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [AlmaSwiftTheme.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Always the board's dark anchor — force dark traits inside the card.
+        .environment(\.colorScheme, .dark)
+    }
+
+    private func heroStat(label: String, value: Int, tint: Color, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.5)
+                .foregroundStyle(.white.opacity(0.55))
+            EmpCountUp(target: value)
+                .font(.system(size: 20, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+        }
+    }
 }
 
 // MARK: - Preview (stubbed — live data needs the app session)

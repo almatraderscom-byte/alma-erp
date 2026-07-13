@@ -7,7 +7,21 @@
 //    GET /api/agent/staff-monitor            → live staff summaries + geo + feed
 //    GET /api/agent/staff-monitor?date=YYYY-MM-DD → archived day summary
 //  (Session-cookie route — the exact browser fetch the web page itself makes.
-//   No key-authed agent routes, no writes: dispatch/nudge/escalate stay on web.)
+//   No key-authed agent routes; staff dispatch/nudge/escalate stay on web.)
+//
+//  Owner control panels (audit fix 2026-07-11): the web page's four top panels
+//  come native as the SAFETY-CRITICAL essentials only —
+//    · Agent Control Center: master PAUSE/RESUME (GET+PATCH /api/assistant/controls,
+//      same {paused} payload as web AgentControlCenter.tsx); autonomy + capability
+//      states shown READ-ONLY, changes stay web-escaped.
+//    · Live Browser Watch: emergency "সব থামাও" STOP / resume (GET+POST
+//      /api/assistant/live-browser/watch {action:stop|resume}) + read-only status
+//      line; latest screenshot + live step feed stay web-escaped.
+//    · Heartbeat / Models: read-only status rows (GET /api/assistant/heartbeat?limit=1,
+//      GET /api/assistant/models); all toggling stays web-escaped.
+//  Every mutating action passes a Bangla confirmationDialog first (file precedent:
+//  Attendance/Expenses), and the server's echoed state is what the UI shows —
+//  never an optimistic guess (claim-verifier ethos).
 //
 //  Blocks: Live/Archive day chips · KPI strip (active/tasks/unacked) · staff
 //  cards with initials avatars + live status dots + day-progress bars + location
@@ -300,6 +314,457 @@ final class StaffMonitorVM {
     }
 }
 
+// MARK: - Owner control panels — models (web monitor panels' exact shapes)
+
+/// GET/PATCH /api/assistant/controls — web AgentControls (agent-controls.ts).
+/// Web defaulting rule mirrored: paused only when explicitly true, capabilities
+/// ON unless explicitly false, autonomy falls back to "ask".
+private struct StaffMonitorAgentControls: Decodable {
+    let paused: Bool
+    let autonomy: String
+    let webResearch: Bool
+    let socialPosting: Bool
+    let imageVideoGen: Bool
+
+    private enum Keys: String, CodingKey { case paused, autonomy, capabilities }
+    private enum CapKeys: String, CodingKey { case webResearch, socialPosting, imageVideoGen }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        paused = (try? c.decodeIfPresent(Bool.self, forKey: .paused)) ?? false
+        autonomy = (try? c.decodeIfPresent(String.self, forKey: .autonomy)) ?? "ask"
+        let caps = try? c.nestedContainer(keyedBy: CapKeys.self, forKey: .capabilities)
+        webResearch = (try? caps?.decodeIfPresent(Bool.self, forKey: .webResearch)) ?? true
+        socialPosting = (try? caps?.decodeIfPresent(Bool.self, forKey: .socialPosting)) ?? true
+        imageVideoGen = (try? caps?.decodeIfPresent(Bool.self, forKey: .imageVideoGen)) ?? true
+    }
+
+    /// Web AUTONOMY_OPTIONS labels verbatim.
+    var autonomyLabel: String {
+        switch autonomy {
+        case "notify": return "করে জানাও"
+        case "auto": return "স্বয়ংক্রিয়"
+        default: return "আগে জিজ্ঞেস"
+        }
+    }
+}
+
+/// GET /api/assistant/live-browser/watch — status essentials only (the native
+/// panel never decodes latestScreenshot: ~100KB dataURL, web-escaped anyway).
+private struct StaffMonitorWatchDevice: Decodable {
+    let name: String
+    let online: Bool
+    private enum Keys: String, CodingKey { case name, online }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        name = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? "Chrome"
+        online = (try? c.decodeIfPresent(Bool.self, forKey: .online)) ?? false
+    }
+}
+
+private struct StaffMonitorWatchStep: Decodable {
+    let action: String
+    let target: String
+    let status: String
+    private enum Keys: String, CodingKey { case action, target, status }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        action = (try? c.decodeIfPresent(String.self, forKey: .action)) ?? ""
+        target = (try? c.decodeIfPresent(String.self, forKey: .target)) ?? ""
+        status = (try? c.decodeIfPresent(String.self, forKey: .status)) ?? ""
+    }
+}
+
+private struct StaffMonitorWatchFeed: Decodable {
+    let enabled: Bool
+    let devices: [StaffMonitorWatchDevice]
+    let steps: [StaffMonitorWatchStep]
+
+    private enum Keys: String, CodingKey { case enabled, devices, steps }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
+        devices = (try? c.decodeIfPresent([StaffMonitorWatchDevice].self, forKey: .devices)) ?? []
+        steps = (try? c.decodeIfPresent([StaffMonitorWatchStep].self, forKey: .steps)) ?? []
+    }
+
+    var onlineCount: Int { devices.filter(\.online).count }
+    /// Web LiveBrowserWatchPanel `running` rule verbatim.
+    var running: Bool { steps.contains { $0.status == "queued" || $0.status == "delivered" } }
+    var currentStep: StaffMonitorWatchStep? {
+        steps.first { $0.status == "queued" || $0.status == "delivered" }
+    }
+}
+
+/// Web ACTION_BN table (subset shown on the one-line "current step" status).
+private func staffMonitorActionBN(_ action: String) -> String {
+    switch action {
+    case "navigate": return "🌐 পেজ খুলছে"
+    case "read_text": return "📖 পড়ছে"
+    case "read_dom": return "👀 দেখছে"
+    case "click": return "🖱️ ক্লিক"
+    case "type": return "⌨️ লিখছে"
+    case "press": return "⏎ কী চাপছে"
+    case "select_option": return "🔽 অপশন বাছছে"
+    case "hover": return "🫳 হোভার"
+    case "scroll", "scroll_to": return "↕️ স্ক্রল"
+    case "wait": return "⏳ অপেক্ষা"
+    case "screenshot": return "📸 স্ক্রিনশট"
+    case "go_back": return "↩️ পিছনে"
+    case "switch_tab": return "🗂️ ট্যাব বদল"
+    case "close_tab": return "❌ ট্যাব বন্ধ"
+    case "ping": return "📡 পিং"
+    default: return action
+    }
+}
+
+/// GET /api/assistant/heartbeat?limit=1 — settings.enabled + wakesToday only.
+private struct StaffMonitorHeartbeatStatus: Decodable {
+    let enabled: Bool
+    let wakesToday: Int
+    private enum Keys: String, CodingKey { case settings, wakesToday }
+    private enum SettingsKeys: String, CodingKey { case enabled }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        let s = try? c.nestedContainer(keyedBy: SettingsKeys.self, forKey: .settings)
+        enabled = (try? s?.decodeIfPresent(Bool.self, forKey: .enabled)) ?? false
+        wakesToday = staffMonitorFlexInt(c, .wakesToday) ?? 0
+    }
+}
+
+/// GET /api/assistant/models — reduced to an on/off count for the status row.
+private struct StaffMonitorModelsStatus: Decodable {
+    let total: Int
+    let on: Int
+    private enum Keys: String, CodingKey { case models }
+    private struct Row: Decodable {
+        let enabled: Bool
+        private enum RKeys: String, CodingKey { case enabled }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: RKeys.self)
+            enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? true
+        }
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        let rows = (try? c.decodeIfPresent([Row].self, forKey: .models)) ?? []
+        total = rows.count
+        on = rows.filter(\.enabled).count
+    }
+}
+
+/// The four mutating actions the native panel offers — each carries its own
+/// Bangla confirm copy so a single confirmationDialog serves all of them.
+private enum StaffMonitorControlAction {
+    case pauseAgent, resumeAgent, stopBrowser, resumeBrowser
+
+    var title: String {
+        switch self {
+        case .pauseAgent: return "Agent বন্ধ করবেন?"
+        case .resumeAgent: return "Agent আবার চালু করবেন?"
+        case .stopBrowser: return "লাইভ ব্রাউজার — সব থামাবেন?"
+        case .resumeBrowser: return "লাইভ ব্রাউজার আবার চালু করবেন?"
+        }
+    }
+    var message: String {
+        switch self {
+        case .pauseAgent: return "এখন কোনো উত্তর বা কাজ করবে না (ওয়েব + টেলিগ্রাম)।"
+        case .resumeAgent: return "Agent আবার উত্তর ও কাজ শুরু করবে।"
+        case .stopBrowser: return "সার্ভার-সাইড কিল-সুইচ — অপেক্ষমাণ সব কমান্ড সাথে সাথে বাতিল হবে।"
+        case .resumeBrowser: return "Agent আবার আপনার Chrome-এ কাজ করতে পারবে।"
+        }
+    }
+    var confirmLabel: String {
+        switch self {
+        case .pauseAgent: return "🛑 Agent বন্ধ করুন"
+        case .resumeAgent: return "🟢 চালু করুন"
+        case .stopBrowser: return "⏹ সব থামাও"
+        case .resumeBrowser: return "▶️ আবার চালু করো"
+        }
+    }
+    var isDestructive: Bool {
+        switch self {
+        case .pauseAgent, .stopBrowser: return true
+        case .resumeAgent, .resumeBrowser: return false
+        }
+    }
+}
+
+// MARK: - Owner control panels — view model
+
+@available(iOS 17.0, *)
+@Observable
+private final class StaffMonitorControlsVM {
+    var controls: StaffMonitorAgentControls? = nil
+    var watch: StaffMonitorWatchFeed? = nil
+    var heartbeat: StaffMonitorHeartbeatStatus? = nil
+    var models: StaffMonitorModelsStatus? = nil
+    var busy = false
+    var actionError: String? = nil
+
+    /// Each GET fails independently — a 403 (non-owner), AGENT_ENABLED gate, or
+    /// cold start just hides that panel; the rest of the screen never blanks.
+    func loadAll() async {
+        if let c: StaffMonitorAgentControls = try? await AlmaAPI.shared.get("/api/assistant/controls") {
+            controls = c
+        }
+        await refreshWatch()
+        if let h: StaffMonitorHeartbeatStatus =
+            try? await AlmaAPI.shared.get("/api/assistant/heartbeat", query: ["limit": "1"]) {
+            heartbeat = h
+        }
+        if let m: StaffMonitorModelsStatus = try? await AlmaAPI.shared.get("/api/assistant/models") {
+            models = m
+        }
+    }
+
+    func refreshWatch() async {
+        if let w: StaffMonitorWatchFeed =
+            try? await AlmaAPI.shared.get("/api/assistant/live-browser/watch", query: ["limit": "30"]) {
+            watch = w
+        }
+    }
+
+    /// PATCH {paused} — exactly the web AgentControlCenter payload. The route
+    /// echoes the full updated controls back; showing that echo (not an
+    /// optimistic flip) IS the verification.
+    func setPaused(_ paused: Bool) async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        struct Body: Encodable { let paused: Bool }
+        do {
+            let updated: StaffMonitorAgentControls =
+                try await AlmaAPI.shared.send("PATCH", "/api/assistant/controls", body: Body(paused: paused))
+            controls = updated
+            actionError = nil
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            actionError = "পরিবর্তন ব্যর্থ: \(error.localizedDescription)"
+        }
+    }
+
+    /// POST {action: stop|resume} — web LiveBrowserWatchPanel payload. Server
+    /// replies {ok, enabled}; the feed is re-fetched so the pill shows the
+    /// server's verified state.
+    func liveBrowser(stop: Bool) async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        struct Body: Encodable { let action: String }
+        struct Resp: Decodable { let ok: Bool?; let enabled: Bool? }
+        do {
+            let r: Resp = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/live-browser/watch", body: Body(action: stop ? "stop" : "resume"))
+            if r.ok == true {
+                actionError = nil
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+            } else {
+                actionError = "ব্যর্থ — আবার চেষ্টা করুন"
+            }
+        } catch {
+            actionError = "ব্যর্থ: \(error.localizedDescription)"
+        }
+        await refreshWatch()
+    }
+}
+
+// MARK: - Owner control panels — section view
+
+@available(iOS 17.0, *)
+private struct StaffMonitorControlsSection: View {
+    let openWeb: (_ path: String, _ title: String) -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var vm = StaffMonitorControlsVM()
+    @State private var pending: StaffMonitorControlAction? = nil
+
+    var body: some View {
+        VStack(spacing: 10) {
+            if vm.controls != nil { controlCenterCard }
+            if vm.watch != nil { liveBrowserCard }
+            if vm.heartbeat != nil || vm.models != nil { statusCard }
+        }
+        .task {
+            await vm.loadAll()
+            // Watch state must stay fresh (emergency panel); 10s matches the
+            // screen's own live cadence. Cancelled with the view, like the parent.
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 10_000_000_000)
+                if Task.isCancelled { break }
+                await vm.refreshWatch()
+            }
+        }
+        .confirmationDialog(
+            pending?.title ?? "",
+            isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }),
+            titleVisibility: .visible,
+            presenting: pending
+        ) { action in
+            Button(action.confirmLabel, role: action.isDestructive ? .destructive : nil) {
+                run(action)
+            }
+            Button("বাতিল", role: .cancel) {}
+        } message: { action in
+            Text(action.message)
+        }
+    }
+
+    private func run(_ action: StaffMonitorControlAction) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        Task {
+            switch action {
+            case .pauseAgent: await vm.setPaused(true)
+            case .resumeAgent: await vm.setPaused(false)
+            case .stopBrowser: await vm.liveBrowser(stop: true)
+            case .resumeBrowser: await vm.liveBrowser(stop: false)
+            }
+        }
+    }
+
+    // ── 🎛️ Control Center: native master pause + read-only autonomy/capabilities ──
+
+    @ViewBuilder private var controlCenterCard: some View {
+        if let c = vm.controls {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    Text("🎛️ কন্ট্রোল সেন্টার")
+                        .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                    Spacer()
+                    if vm.busy { ProgressView().controlSize(.mini) }
+                }
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(c.paused ? "🛑 Agent বন্ধ আছে" : "🟢 Agent চালু আছে")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(c.paused ? StaffMonitorPalette.red500
+                                                      : StaffMonitorPalette.emerald600)
+                        Text(c.paused
+                             ? "এখন কোনো উত্তর বা কাজ করবে না (ওয়েব + টেলিগ্রাম)।"
+                             : "সব কিছু বন্ধ করতে চাইলে সুইচ দিয়ে সাথে সাথে থামান।")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    // Binding never flips optimistically — it only raises the confirm
+                    // dialog; the switch moves when the server echo lands.
+                    Toggle("", isOn: Binding(
+                        get: { !c.paused },
+                        set: { on in pending = on ? .resumeAgent : .pauseAgent }))
+                        .labelsHidden()
+                        .tint(StaffMonitorPalette.emerald600)
+                        .disabled(vm.busy)
+                }
+                Divider().opacity(0.4)
+                // READ-ONLY (owner spec): changing autonomy/capabilities stays on web.
+                readOnlyRow("🧭 অটোনমি", c.autonomyLabel)
+                readOnlyRow("🔎 ওয়েব রিসার্চ", c.webResearch ? "চালু" : "বন্ধ", ok: c.webResearch)
+                readOnlyRow("📣 সোশ্যাল পোস্ট ও অ্যাড", c.socialPosting ? "চালু" : "বন্ধ", ok: c.socialPosting)
+                readOnlyRow("🎨 ছবি ও ভিডিও", c.imageVideoGen ? "চালু" : "বন্ধ", ok: c.imageVideoGen)
+                if let err = vm.actionError {
+                    Text(err).font(.caption2).foregroundStyle(StaffMonitorPalette.red500)
+                }
+                webChangeLink("অটোনমি ও ফিচার বদলাতে — ওয়েবে খুলুন")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        }
+    }
+
+    // ── 🖥️ Live Browser: native emergency STOP/resume + read-only status line ──
+
+    @ViewBuilder private var liveBrowserCard: some View {
+        if let w = vm.watch {
+            let tint = w.enabled ? StaffMonitorPalette.red500 : StaffMonitorPalette.emerald600
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    Text("🖥️ লাইভ ব্রাউজার")
+                        .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+                    Spacer()
+                    if w.running {
+                        statusPill("🤖 কাজ চলছে", StaffMonitorPalette.amber600)
+                    }
+                    statusPill(w.enabled ? "🟢 চালু · অনলাইন \(w.onlineCount)" : "🔴 বন্ধ",
+                               w.enabled ? StaffMonitorPalette.emerald600 : .secondary)
+                }
+                if let step = w.currentStep {
+                    Text("\(staffMonitorActionBN(step.action))\(step.target.isEmpty ? "" : " · \(step.target)")")
+                        .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Button {
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    pending = w.enabled ? .stopBrowser : .resumeBrowser
+                } label: {
+                    Text(w.enabled ? "⏹ সব থামাও" : "▶️ আবার চালু করো")
+                        .font(.footnote.weight(.bold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background(tint.opacity(0.15), in: Capsule())
+                        .foregroundStyle(tint)
+                        .overlay(Capsule().strokeBorder(tint.opacity(0.35), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .disabled(vm.busy)
+                webChangeLink("স্ক্রিনশট ও লাইভ স্টেপ ফিড — ওয়েবে খুলুন")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+        }
+    }
+
+    // ── 💓/🧠 Heartbeat + models: read-only status rows only ──
+
+    private var statusCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("এজেন্ট স্ট্যাটাস")
+                .font(.caption.weight(.bold)).foregroundStyle(.secondary).textCase(.uppercase)
+            if let h = vm.heartbeat {
+                readOnlyRow("💓 হার্টবিট",
+                            h.enabled ? "চালু · আজ \(h.wakesToday) বার জেগেছে" : "বন্ধ",
+                            ok: h.enabled)
+            }
+            if let m = vm.models {
+                readOnlyRow("🧠 মডেল", "\(m.on)/\(m.total) চালু", ok: m.on > 0)
+            }
+            webChangeLink("হার্টবিট ও মডেল কন্ট্রোল — ওয়েবে খুলুন")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .staffMonitorGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
+    }
+
+    // ── Shared bits ──
+
+    private func readOnlyRow(_ label: String, _ value: String, ok: Bool? = nil) -> some View {
+        HStack {
+            Text(label).font(.caption).foregroundStyle(.primary.opacity(0.85))
+            Spacer()
+            Text(value)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(ok == nil ? StaffMonitorPalette.accentText(colorScheme)
+                                 : (ok == true ? StaffMonitorPalette.emerald600
+                                               : StaffMonitorPalette.red500))
+        }
+    }
+
+    private func statusPill(_ text: String, _ color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(color.opacity(0.10), in: Capsule())
+            .overlay(Capsule().strokeBorder(color.opacity(0.30), lineWidth: 0.8))
+    }
+
+    private func webChangeLink(_ label: String) -> some View {
+        Button { openWeb("/agent/staff-monitor", "Staff monitor") } label: {
+            Label(label, systemImage: "safari").font(.caption2)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+    }
+}
+
 // MARK: - Screen
 
 @available(iOS 17.0, *)
@@ -317,6 +782,8 @@ struct StaffMonitorScreen: View {
                 if vm.authExpired { authCard }
                 if let err = vm.error, vm.data == nil { errorCard(err) }
                 if vm.data != nil { kpiStrip }
+                // Owner control panels (web page order: control panels above staff blocks).
+                if !vm.authExpired { StaffMonitorControlsSection(openWeb: openWeb) }
                 geoFenceNote
                 if vm.loading && vm.data == nil { loadingRows }
                 staffCards
@@ -942,34 +1409,76 @@ private enum StaffMonitorFormat {
 @available(iOS 17.0, *)
 private struct StaffMonitorAurora: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
 
     var body: some View {
-        ZStack {
-            if scheme == .dark {
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.075, green: 0.063, blue: 0.196), location: 0.0),  // deep indigo
-                    .init(color: Color(red: 0.216, green: 0.125, blue: 0.439), location: 0.32), // violet
-                    .init(color: Color(red: 0.478, green: 0.176, blue: 0.494), location: 0.62), // purple-magenta
-                    .init(color: Color(red: 0.706, green: 0.255, blue: 0.404), location: 1.0),  // pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.35), .clear],
-                               center: .init(x: 0.15, y: 0.18), startRadius: 10, endRadius: 420)
-                RadialGradient(colors: [Color(red: 0.93, green: 0.42, blue: 0.55).opacity(0.30), .clear],
-                               center: .init(x: 0.9, y: 0.85), startRadius: 20, endRadius: 480)
-            } else {
-                AlmaSwiftTheme.rootBg(.light)
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.902, green: 0.882, blue: 0.973), location: 0.0),  // pale violet
-                    .init(color: Color(red: 0.949, green: 0.941, blue: 0.972), location: 0.45), // cream
-                    .init(color: Color(red: 0.988, green: 0.918, blue: 0.925), location: 1.0),  // pale pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.14), .clear],
-                               center: .init(x: 0.12, y: 0.15), startRadius: 10, endRadius: 380)
-                RadialGradient(colors: [AlmaSwiftTheme.coral.opacity(0.12), .clear],
-                               center: .init(x: 0.9, y: 0.9), startRadius: 20, endRadius: 420)
+        let dark = scheme == .dark
+        // Agent-parity living aurora (web --aurora-blob-1…5): five blurred colour blobs
+        // drifting corner-to-corner over the page canvas. Owner directive 2026-07-08:
+        // every native page shares the Assistant tab's moving aurora.
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
             }
+            .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Battery guard: drift only when the owner allows motion — Reduce Motion and
+    /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
     }
 }
 

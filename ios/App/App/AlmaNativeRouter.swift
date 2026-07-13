@@ -42,6 +42,15 @@ enum AlmaNativeRouter {
         switch clean {
         // Cases are appended batch-by-batch as pages migrate (S6 marathon).
         case "/", "/dashboard": return host(DashboardScreen(openWeb: openWebForced), "Dashboard")
+        // Owner 2026-07-11: login goes NATIVE — every authCard's "লগইন খুলুন" push lands
+        // here via pushSmart; the screen's own "ওয়েবে লগইন" fallback stays forced-web.
+        case "/login": return host(NativeLoginScreen(onSuccess: {}, openWeb: openWebForced), "Sign in")
+        // S8 audit fix: the three tab pages were reachable natively ONLY as tab roots —
+        // any cross-page link (Dashboard "সব দেখুন" → /orders, briefing → /approvals)
+        // fell through to the web view. One case each closes that hole.
+        case "/orders": return host(OrdersScreen(openWeb: openWebForced), "Orders")
+        case "/orders/new": return host(OrderCreateSheet(onCreated: {}, openWeb: openWebForced), "নতুন অর্ডার")
+        case "/approvals": return host(ApprovalsScreen(openWeb: openWebForced), "Approvals")
         case "/finance": return host(FinanceScreen(openWeb: openWebForced), "Finance")
         case "/invoice": return host(InvoicesScreen(openWeb: openWebForced), "Invoices")
         case "/expenses": return host(ExpensesScreen(openWeb: openWebForced), "Expenses")
@@ -80,6 +89,20 @@ enum AlmaNativeRouter {
         case "/agent/known-people": return host(KnownPeopleScreen(openWeb: openWebForced), "Known people")
         case "/agent/growth": return host(AgentGrowthScreen(openWeb: openWebForced), "Growth")
         case "/agent/staff-monitor": return host(StaffMonitorScreen(openWeb: openWebForced), "Staff monitor")
+        // Trading business (S7 batch — Trading + Digital go native, 2026-07-10)
+        case "/trading": return host(TradingHomeScreen(openWeb: openWebForced), "Trading")
+        case "/trading/accounts": return host(TradingAccountsScreen(openWeb: openWebForced), "Trading accounts")
+        case "/trading/analytics": return host(TradingAnalyticsScreen(openWeb: openWebForced), "Trading analytics")
+        case "/trading/hr": return host(TradingHrScreen(openWeb: openWebForced), "Trading HR")
+        case "/trading/target-control": return host(TargetControlScreen(openWeb: openWebForced), "Target control")
+        case "/trading/telegram": return host(TradingTelegramScreen(openWeb: openWebForced), "Telegram Quick Entry")
+        // Digital (CDIT) business
+        case "/digital": return host(DigitalHomeScreen(openWeb: openWebForced), "CDIT")
+        case "/digital/clients": return host(DigitalClientsScreen(openWeb: openWebForced), "CDIT clients")
+        case "/digital/invoices": return host(DigitalInvoicesScreen(openWeb: openWebForced), "CDIT invoices")
+        case "/digital/projects": return host(DigitalProjectsScreen(openWeb: openWebForced), "CDIT projects")
+        // /digital/finance is a server redirect to /finance — serve the native Finance screen directly.
+        case "/digital/finance": return host(FinanceScreen(openWeb: openWebForced), "Finance")
         default:
             return nil
         }

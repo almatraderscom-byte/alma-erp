@@ -64,7 +64,7 @@ export type ItcBroadcast = {
   mine: { deliveredAt: string | null; playedAt: string | null; confirmedAt: string | null } | null
 }
 type ItcStaff = { id: string; name: string; phone: string | null }
-type ItcFeed = { broadcasts: ItcBroadcast[]; staff: ItcStaff[]; liveChannel?: string }
+type ItcFeed = { broadcasts: ItcBroadcast[]; staff: ItcStaff[]; liveChannel?: string; serverNow?: string }
 
 /** iOS WKWebView records mp4/aac; Chrome webm/opus. Probe in that spirit. */
 function pickRecorderMime(): string {
@@ -130,10 +130,20 @@ export function useIntercom(self: 'owner' | 'staff') {
   const pttRef = useRef<PttState>('idle')
   pttRef.current = ptt
 
+  // Server↔device clock skew (staff phones with a wrong clock must still ring).
+  // All "is this broadcast fresh?" checks go through nowMs(), never raw Date.now().
+  const skewRef = useRef(0)
+  const nowMs = useCallback(() => Date.now() + skewRef.current, [])
+
   const load = useCallback(async () => {
     try {
       const res = await fetch('/api/assistant/office/intercom', { cache: 'no-store' })
-      if (res.ok) setFeed((await res.json()) as ItcFeed)
+      if (res.ok) {
+        const data = (await res.json()) as ItcFeed
+        const serverNow = data.serverNow ? Date.parse(data.serverNow) : NaN
+        if (Number.isFinite(serverNow)) skewRef.current = serverNow - Date.now()
+        setFeed(data)
+      }
     } catch {
       /* best-effort poll */
     }
@@ -400,6 +410,18 @@ export function useIntercom(self: 'owner' | 'staff') {
     }
   }, [callApi.remoteJoined, activeCallId, endCall])
 
+  // Nobody answered within the ring window → give up (WhatsApp-style), instead
+  // of sitting on "রিং হচ্ছে…" forever. The effect re-arms only while a call is
+  // active and NOT yet connected; the moment the peer joins, cleanup clears it.
+  useEffect(() => {
+    if (!activeCallId || callApi.remoteJoined) return
+    const t = setTimeout(() => {
+      setError('কেউ কল ধরেনি')
+      endCall()
+    }, CALL_RING_MS)
+    return () => clearTimeout(t)
+  }, [activeCallId, callApi.remoteJoined, endCall])
+
   return {
     self,
     feed,
@@ -415,6 +437,7 @@ export function useIntercom(self: 'owner' | 'staff') {
     confirm,
     confirming,
     reload: load,
+    nowMs,
     // call
     callApi,
     activeCallId,
@@ -762,7 +785,7 @@ function Receipts({ receipts }: { receipts: ItcReceipt[] }) {
 /* ═══════════════ staff full-screen takeover ═══════════════ */
 
 export function IntercomTakeover({ itc }: { itc: Intercom }) {
-  const { feed, confirm, confirming, markPlayed } = itc
+  const { feed, confirm, confirming, markPlayed, nowMs } = itc
   // Voice/urgent broadcasts the staff hasn't confirmed, oldest first. Calls are
   // handled by IntercomCall (a ringing overlay), never here.
   const pendingList = useMemo(
@@ -835,7 +858,7 @@ export function IntercomTakeover({ itc }: { itc: Intercom }) {
     setEnded(false)
     setPlaying(false)
     warningHaptic()
-    const fresh = Date.now() - new Date(current.createdAt).getTime() < AUTOPLAY_FRESH_MS && isOfficeHoursDhaka()
+    const fresh = nowMs() - new Date(current.createdAt).getTime() < AUTOPLAY_FRESH_MS && isOfficeHoursDhaka()
     if (current.kind === 'urgent') {
       if (fresh) beep()
       try {
@@ -847,7 +870,7 @@ export function IntercomTakeover({ itc }: { itc: Intercom }) {
     }
     if (fresh) play(current)
     else setNeedsTap(true)
-  }, [current, play, beep])
+  }, [current, play, beep, nowMs])
 
   useEffect(
     () => () => {
@@ -931,10 +954,11 @@ export function IntercomTakeover({ itc }: { itc: Intercom }) {
 const fmtClock = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 
 export function IntercomCall({ itc }: { itc: Intercom }) {
-  const { self, feed, activeCallId, callPeer, callApi, endCall, answerCall, declineCall } = itc
+  const { self, feed, activeCallId, callPeer, callApi, endCall, answerCall, declineCall, nowMs } = itc
 
   // Staff: a fresh, unconfirmed call broadcast addressed to me = an incoming ring
-  // (unless I'm already in a call).
+  // (unless I'm already in a call). Freshness uses server-skew-adjusted time so a
+  // phone with a wrong clock still rings.
   const incoming = useMemo(() => {
     if (self !== 'staff' || activeCallId) return null
     return (
@@ -943,10 +967,10 @@ export function IntercomCall({ itc }: { itc: Intercom }) {
           b.kind === 'call' &&
           b.mine &&
           !b.mine.confirmedAt &&
-          Date.now() - new Date(b.createdAt).getTime() < CALL_RING_MS,
+          nowMs() - new Date(b.createdAt).getTime() < CALL_RING_MS,
       ) ?? null
     )
-  }, [self, activeCallId, feed.broadcasts])
+  }, [self, activeCallId, feed.broadcasts, nowMs])
 
   // Ring tone + vibration while an incoming call is pending.
   const ringRef = useRef<{ ctx: AudioContext; stop: () => void } | null>(null)

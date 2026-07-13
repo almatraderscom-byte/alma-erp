@@ -10,9 +10,14 @@ const manage_work_todos: AgentTool = {
     'When owner asks you to do something in chat: add with source=owner. ' +
     'When owner says cancel/remove: action=remove. Owner task complete → removed from list. ' +
     'Office tasks are source=day_shift (scheduler) — do not duplicate.\n\n' +
+    'SOURCE RULES (the owner\'s dashboard "আমার টুডু" widget shows ONLY source=owner + source=owner_action):\n' +
+    '- source=owner → the owner\'s OWN task (he asked to add it, or it is his personal note). Persists on his dashboard until HE marks it done.\n' +
+    '- source=owner_action → something YOU need the OWNER to do/decide today (approve a card, send a payment, reply to a question). Shows on his dashboard today only, resets at day end — re-raise tomorrow if still needed.\n' +
+    '- source=agent → your own working item. NEVER visible on the owner\'s dashboard — do not use it for things you need from him.\n\n' +
     'WORKFLOW:\n' +
     '- Morning office: day_shift scheduler seeds agent office tasks at top of the same todo list\n' +
     '- During chat: owner request → add source=owner, work on it, complete → auto-removed\n' +
+    '- You need the owner\'s action → add source=owner_action (short imperative title in Bangla)\n' +
     '- Owner says বাদ দাও / cancel → action=remove\n' +
     '- Evening: action=summary for day review\n' +
     '- Always update description with results when completing agent office tasks',
@@ -31,8 +36,11 @@ const manage_work_todos: AgentTool = {
       status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'cancelled'], description: 'New status (for update)' },
       source: {
         type: 'string',
-        enum: ['owner', 'agent'],
-        description: 'owner when Boss asked in chat; agent for your own ad-hoc tasks (not day_shift — scheduler owns those)',
+        enum: ['owner', 'agent', 'owner_action'],
+        description:
+          'owner when Boss asked in chat (persists on his dashboard until done); ' +
+          'owner_action when YOU need Boss to act/decide today (his dashboard, resets at day end); ' +
+          'agent for your own ad-hoc tasks (never on his dashboard; not day_shift — scheduler owns those)',
       },
       dueDate: { type: 'string', description: 'ISO date YYYY-MM-DD for when Boss should do this (e.g. tomorrow from evening intake)' },
     },
@@ -88,7 +96,9 @@ const manage_work_todos: AgentTool = {
             title,
             description: input.description ? String(input.description).trim() : null,
             priority: String(input.priority ?? 'normal'),
-            source: input.source === 'owner' ? 'owner' : 'agent',
+            source: input.source === 'owner' || input.source === 'owner_action'
+              ? String(input.source)
+              : 'agent',
             businessId,
             ...(dueDate ? { dueDate } : {}),
           },

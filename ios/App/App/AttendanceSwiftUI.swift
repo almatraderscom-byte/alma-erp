@@ -224,24 +224,95 @@ struct AttendanceSelfieLog: Decodable, Identifiable, Equatable {
     }
 }
 
+/// One row of the web's "Repeat late penalties" analytics footer.
+private struct AttendanceRepeatOffender: Decodable, Equatable {
+    let employeeId: String
+    let penaltyCount: Int
+    let penaltyTotal: Int
+
+    private enum Keys: String, CodingKey { case employeeId, penaltyCount, penaltyTotal }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        employeeId = (try? c.decode(String.self, forKey: .employeeId)) ?? "—"
+        penaltyCount = attendanceFlexInt(c, .penaltyCount) ?? 0
+        penaltyTotal = attendanceFlexInt(c, .penaltyTotal) ?? 0
+    }
+}
+
 /// Web "Penalty appeal analytics (this month)" — GET /api/attendance/waivers/analytics
 /// answers `{ ok, month, analytics: {…} }` flat (no data wrapper).
 struct AttendancePenaltyAnalytics: Decodable, Equatable {
     let totalPenalties: Int
     let waivedAmount: Int
+    let reducedAmount: Int
     let netPenaltiesAfterWaivers: Int
+    let appealCount: Int
+    let pendingCount: Int
     let approvalRate: Int
+    fileprivate let repeatOffenders: [AttendanceRepeatOffender]
 
     private enum Keys: String, CodingKey {
-        case ok, analytics, totalPenalties, waivedAmount, netPenaltiesAfterWaivers, approvalRate
+        case ok, analytics, totalPenalties, waivedAmount, reducedAmount
+        case netPenaltiesAfterWaivers, appealCount, pendingCount, approvalRate, repeatOffenders
     }
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Keys.self)
         let c = (try? root.nestedContainer(keyedBy: Keys.self, forKey: .analytics)) ?? root
         totalPenalties = attendanceFlexInt(c, .totalPenalties) ?? 0
         waivedAmount = attendanceFlexInt(c, .waivedAmount) ?? 0
+        reducedAmount = attendanceFlexInt(c, .reducedAmount) ?? 0
         netPenaltiesAfterWaivers = attendanceFlexInt(c, .netPenaltiesAfterWaivers) ?? 0
+        appealCount = attendanceFlexInt(c, .appealCount) ?? 0
+        pendingCount = attendanceFlexInt(c, .pendingCount) ?? 0
         approvalRate = attendanceFlexInt(c, .approvalRate) ?? 0
+        repeatOffenders = (try? c.decodeIfPresent([AttendanceRepeatOffender].self, forKey: .repeatOffenders)) ?? []
+    }
+}
+
+// MARK: - Integrity monitor models (web AttendanceDashboard.integrity — SUPER_ADMIN
+// duplicate/cross-business audit block; every field lenient/optional)
+
+private struct AttendanceIntegrityIssue: Decodable, Equatable {
+    let kind: String
+    let businessId: String?
+    let employeeId: String?
+    let name: String?
+    let todayCount: Int?
+
+    private enum Keys: String, CodingKey { case kind, businessId, employeeId, name, todayCount }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        kind = (try? c.decode(String.self, forKey: .kind)) ?? "issue"
+        businessId = try? c.decodeIfPresent(String.self, forKey: .businessId)
+        employeeId = try? c.decodeIfPresent(String.self, forKey: .employeeId)
+        name = try? c.decodeIfPresent(String.self, forKey: .name)
+        todayCount = attendanceFlexInt(c, .todayCount)
+    }
+}
+
+private struct AttendanceCrossBizHint: Decodable, Equatable {
+    let businessId: String
+    let todayCount: Int
+
+    private enum Keys: String, CodingKey { case businessId, todayCount }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        businessId = (try? c.decode(String.self, forKey: .businessId)) ?? "?"
+        todayCount = attendanceFlexInt(c, .todayCount) ?? 0
+    }
+}
+
+private struct AttendanceIntegrity: Decodable, Equatable {
+    let issueCount: Int
+    let issues: [AttendanceIntegrityIssue]
+    let crossBusinessHint: [AttendanceCrossBizHint]
+
+    private enum Keys: String, CodingKey { case issueCount, issues, crossBusinessHint }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        issueCount = attendanceFlexInt(c, .issueCount) ?? 0
+        issues = (try? c.decodeIfPresent([AttendanceIntegrityIssue].self, forKey: .issues)) ?? []
+        crossBusinessHint = (try? c.decodeIfPresent([AttendanceCrossBizHint].self, forKey: .crossBusinessHint)) ?? []
     }
 }
 
@@ -288,9 +359,10 @@ struct AttendanceDashboardResponse: Decodable {
     let selfieLogs: [AttendanceSelfieLog]
     let ranking: [AttendanceRankRow]
     let scopeAllBusinesses: Bool
+    fileprivate let integrity: AttendanceIntegrity?
 
     private enum Keys: String, CodingKey {
-        case ok, data, kpis, records, absentEmployees, pendingWaivers, selfieLogs, ranking, scopeAllBusinesses
+        case ok, data, kpis, records, absentEmployees, pendingWaivers, selfieLogs, ranking, scopeAllBusinesses, integrity
     }
     init(from decoder: Decoder) throws {
         let root = try decoder.container(keyedBy: Keys.self)
@@ -302,6 +374,7 @@ struct AttendanceDashboardResponse: Decodable {
         selfieLogs = (try? c.decode([AttendanceSelfieLog].self, forKey: .selfieLogs)) ?? []
         ranking = (try? c.decode([AttendanceRankRow].self, forKey: .ranking)) ?? []
         scopeAllBusinesses = (try? c.decodeIfPresent(Bool.self, forKey: .scopeAllBusinesses)) ?? false
+        integrity = try? c.decodeIfPresent(AttendanceIntegrity.self, forKey: .integrity)
     }
 }
 
@@ -318,6 +391,9 @@ final class AttendanceVM {
     var ranking: [AttendanceRankRow] = []
     var analytics: AttendancePenaltyAnalytics? = nil
     var scopeAllBusinesses = false
+    fileprivate var integrity: AttendanceIntegrity? = nil
+    /// Web viewAllBusinesses (SUPER_ADMIN defaults to ALL) — drives `business_id`.
+    var viewAll = true
     var loading = false
     var error: String? = nil
     var notice: String? = nil             // success line (the web's toast)
@@ -340,7 +416,8 @@ final class AttendanceVM {
         do {
             let resp: AttendanceDashboardResponse = try await AlmaAPI.shared.get(
                 "/api/attendance",
-                query: ["business_id": "ALL", "date": AttendanceFormat.dayParam(day)])
+                query: ["business_id": viewAll ? "ALL" : "ALMA_LIFESTYLE",
+                        "date": AttendanceFormat.dayParam(day)])
             kpis = resp.kpis
             records = resp.records
             absentees = resp.absentEmployees
@@ -348,6 +425,7 @@ final class AttendanceVM {
             selfieLogs = resp.selfieLogs
             ranking = resp.ranking
             scopeAllBusinesses = resp.scopeAllBusinesses
+            integrity = resp.integrity
             authExpired = false
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
@@ -523,6 +601,7 @@ struct AttendanceScreen: View {
     @State private var vm = AttendanceVM()
     @State private var selected: AttendanceRecordRow? = nil
     @State private var showDatePicker = false
+    @State private var showIntegrity = false    // web showIntegrity toggle
     // Action targets — each mutating call passes a Bangla confirmationDialog first.
     @State private var reviewing: AttendanceWaiverReviewTarget? = nil
     @State private var resetTarget: AttendanceRecordRow? = nil
@@ -538,9 +617,11 @@ struct AttendanceScreen: View {
         ScrollView {
             LazyVStack(spacing: 10) {
                 dateNav
+                controlsRow
                 if vm.authExpired { authCard }
                 if let err = vm.error { noticeCard(err) }
                 if let ok = vm.notice { successCard(ok) }
+                integritySection
                 summaryTrio
                 kpiStrip
                 analyticsSection
@@ -669,37 +750,110 @@ struct AttendanceScreen: View {
         .disabled(disabled)
     }
 
-    // ── Summary trio (web: Present / Absent / Late cards, exact tints) ──
+    // ── Header controls (web actions row: business scope · Integrity · My desk) ──
 
-    private var summaryTrio: some View {
-        HStack(spacing: 10) {
-            summaryCard("Present", vm.kpis?.todayAttendance,
-                        icon: "checkmark.circle.fill", tint: AttendancePalette.emerald600)
-            summaryCard("Absent", vm.kpis?.absentEmployees,
-                        icon: "xmark.circle.fill", tint: AttendancePalette.red500)
-            summaryCard("Late", vm.kpis?.lateEmployees,
-                        icon: "clock.fill", tint: AttendancePalette.amber600)
+    private var controlsRow: some View {
+        HStack(spacing: 8) {
+            controlChip(vm.viewAll ? "সব বিজনেস" : "Alma Lifestyle",
+                        icon: "building.2", active: vm.viewAll) {
+                vm.viewAll.toggle()
+                Task { await vm.load() }
+            }
+            controlChip("Integrity", icon: "checkmark.shield", active: showIntegrity) {
+                withAnimation(.snappy) { showIntegrity.toggle() }
+            }
+            controlChip("My Desk", icon: "person.crop.square", active: false) {
+                openWeb("/portal", "My Desk")
+            }
         }
     }
 
-    private func summaryCard(_ label: String, _ value: Int?, icon: String, tint: Color) -> some View {
-        VStack(spacing: 5) {
-            Image(systemName: icon)
-                .font(.subheadline)
-                .foregroundStyle(tint)
-                .frame(width: 30, height: 30)
-                .background(tint.opacity(0.12), in: Circle())
-            Text(value.map { "\($0)" } ?? "—")
-                .font(.title3.weight(.bold)).monospacedDigit()
-                .foregroundStyle(tint)
-            Text(label).font(.caption2).foregroundStyle(.secondary)
+    private func controlChip(_ label: String, icon: String, active: Bool,
+                             action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+            action()
+        } label: {
+            Label(label, systemImage: icon)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .foregroundStyle(active ? AttendancePalette.accentText(colorScheme) : .secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background((active ? AttendancePalette.coral : Color.primary).opacity(active ? 0.14 : 0.05),
+                            in: Capsule())
+                .overlay(Capsule().strokeBorder(
+                    (active ? AttendancePalette.coral : Color.primary).opacity(active ? 0.35 : 0.12),
+                    lineWidth: 1))
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-        .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rCard)
-        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
-            .strokeBorder(tint.opacity(0.25), lineWidth: 1))
-        .attendanceShimmerIf(vm.loading && vm.kpis == nil)
+        .buttonStyle(.plain)
+    }
+
+    // ── Attendance Integrity Monitor (web amber card — issue count hero + rows + hint) ──
+
+    @ViewBuilder private var integritySection: some View {
+        if showIntegrity, let integ = vm.integrity {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("\(integ.issueCount)")
+                        .font(.system(size: 26, weight: .heavy)).monospacedDigit()
+                        .foregroundStyle(integ.issueCount > 0 ? AttendancePalette.amber600
+                                                              : AttendancePalette.emerald600)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Attendance Integrity Monitor")
+                            .font(.footnote.weight(.bold))
+                        Text("\(vm.scopeAllBusinesses ? "Viewing all businesses" : "Scoped to Alma Lifestyle") · \(integ.issueCount) issue(s)")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                if !integ.crossBusinessHint.isEmpty && !vm.viewAll {
+                    Text("Activity today in other businesses: "
+                         + integ.crossBusinessHint.map { "\($0.businessId) (\($0.todayCount))" }
+                             .joined(separator: ", ")
+                         + " — সব বিজনেস চালু করে দেখুন।")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(AttendancePalette.amber600)
+                }
+                if integ.issueCount > 0 {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(Array(integ.issues.prefix(12).enumerated()), id: \.offset) { _, row in
+                            Text(integrityIssueLine(row))
+                                .font(.system(size: 10)).foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                } else {
+                    Text("কোনো সমস্যা পাওয়া যায়নি ✅")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(AttendancePalette.emerald600)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(AttendancePalette.amber500.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                .strokeBorder(AttendancePalette.amber500.opacity(0.35), lineWidth: 1))
+        }
+    }
+
+    /// Web issue row: kind + whichever of businessId / employeeId / name exists.
+    private func integrityIssueLine(_ row: AttendanceIntegrityIssue) -> String {
+        var bits = [row.kind.replacingOccurrences(of: "_", with: " ")]
+        if let biz = row.businessId, !biz.isEmpty { bits.append(biz) }
+        if let emp = row.employeeId, !emp.isEmpty { bits.append(emp) }
+        if let name = row.name, !name.isEmpty { bits.append(name) }
+        return bits.joined(separator: " · ")
+    }
+
+    // ── Summary (web: Present / Absent / Late, exact tints) — bento dark hero
+    //    (owner spec 2026-07-08): same three numbers, presentation only. ──
+
+    private var summaryTrio: some View {
+        AttBentoHeroCard(present: vm.kpis?.todayAttendance,
+                         absent: vm.kpis?.absentEmployees,
+                         late: vm.kpis?.lateEmployees)
+            .attendanceShimmerIf(vm.loading && vm.kpis == nil)
     }
 
     // ── Secondary KPI strip (web KpiCard row, same labels/value colours) ──
@@ -727,14 +881,19 @@ struct AttendanceScreen: View {
         }
     }
 
+    /// Bento tile skin over the same strip — soft accent wash per KPI tint.
     private func kpiCard(_ label: String, _ value: String, tint: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            Text(value).font(.subheadline.weight(.bold)).monospacedDigit().foregroundStyle(tint)
+            Text(label).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary)
+            Text(value).font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                .foregroundStyle(tint)
         }
         .frame(minWidth: 96, alignment: .leading)
-        .padding(12)
-        .attendanceGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+        .padding(.horizontal, 13).padding(.vertical, 12)
+        .background { attBentoWash(tint, scheme: colorScheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.45), lineWidth: 1))
     }
 
     // ── Penalty appeal analytics (web admin card, this month) ──
@@ -753,6 +912,15 @@ struct AttendanceScreen: View {
                                   tint: .primary)
                     analyticsStat("Approval", "\(a.approvalRate)%",
                                   tint: AttendancePalette.goldLt)
+                }
+                // Web footer line (page.tsx:402-406): repeat offenders, first four.
+                if !a.repeatOffenders.isEmpty {
+                    Text("Repeat late penalties: "
+                         + a.repeatOffenders.prefix(4)
+                             .map { "\($0.employeeId) (\(AttendanceFormat.money($0.penaltyTotal)))" }
+                             .joined(separator: " · "))
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1734,34 +1902,76 @@ enum AttendanceFormat {
 @available(iOS 17.0, *)
 private struct AttendanceAurora: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
 
     var body: some View {
-        ZStack {
-            if scheme == .dark {
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.075, green: 0.063, blue: 0.196), location: 0.0),  // deep indigo
-                    .init(color: Color(red: 0.216, green: 0.125, blue: 0.439), location: 0.32), // violet
-                    .init(color: Color(red: 0.478, green: 0.176, blue: 0.494), location: 0.62), // purple-magenta
-                    .init(color: Color(red: 0.706, green: 0.255, blue: 0.404), location: 1.0),  // pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.35), .clear],
-                               center: .init(x: 0.15, y: 0.18), startRadius: 10, endRadius: 420)
-                RadialGradient(colors: [Color(red: 0.93, green: 0.42, blue: 0.55).opacity(0.30), .clear],
-                               center: .init(x: 0.9, y: 0.85), startRadius: 20, endRadius: 480)
-            } else {
-                AlmaSwiftTheme.rootBg(.light)
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.902, green: 0.882, blue: 0.973), location: 0.0),  // pale violet
-                    .init(color: Color(red: 0.949, green: 0.941, blue: 0.972), location: 0.45), // cream
-                    .init(color: Color(red: 0.988, green: 0.918, blue: 0.925), location: 1.0),  // pale pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.14), .clear],
-                               center: .init(x: 0.12, y: 0.15), startRadius: 10, endRadius: 380)
-                RadialGradient(colors: [AlmaSwiftTheme.coral.opacity(0.12), .clear],
-                               center: .init(x: 0.9, y: 0.9), startRadius: 20, endRadius: 420)
+        let dark = scheme == .dark
+        // Agent-parity living aurora (web --aurora-blob-1…5): five blurred colour blobs
+        // drifting corner-to-corner over the page canvas. Owner directive 2026-07-08:
+        // every native page shares the Assistant tab's moving aurora.
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
             }
+            .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Battery guard: drift only when the owner allows motion — Reduce Motion and
+    /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
     }
 }
 
@@ -1801,6 +2011,144 @@ private extension View {
     /// Shimmer only while a section is still loading its first payload.
     @ViewBuilder func attendanceShimmerIf(_ active: Bool) -> some View {
         if active { attendanceShimmer() } else { self }
+    }
+}
+
+// MARK: - Bento components (Attendance-owned copies of the Dashboard board language —
+// per-file copies are this repo's parallel-session convention, no cross-file imports)
+
+/// Central motion gate — count-ups freeze under Reduce Motion / Low Power.
+@available(iOS 17.0, *)
+private func attMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number (0 → target on appear, old → new on refresh) — one Animatable
+/// interpolation, no timers; snaps straight to the value when motion is limited.
+@available(iOS 17.0, *)
+private struct AttCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        AttCountUpText(value: shown)
+            .animation(attMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if attMotionOK(reduceMotion) {
+                    appeared = true
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AttCountUpText: View, Animatable {
+    var value: Double
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text("\(Int(value.rounded()))")
+    }
+}
+
+/// Shared tile backdrop: frosted glass + a soft diagonal accent wash.
+@available(iOS 17.0, *)
+private func attBentoWash(_ accent: Color, scheme: ColorScheme) -> some View {
+    ZStack {
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+        LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.14 : 0.10), .clear],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+}
+
+/// The dark hero anchor — deliberately dark in BOTH schemes (Dashboard hero recipe:
+/// deep indigo base + violet/coral washes + a sage hint). Present-today count-up plus
+/// the Absent / Late split — the same three numbers, same tints, "—" when unloaded.
+@available(iOS 17.0, *)
+private struct AttBentoHeroCard: View {
+    let present: Int?
+    let absent: Int?
+    let late: Int?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("আজ উপস্থিত · PRESENT").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                .foregroundStyle(AttendancePalette.goldLt)
+            Group {
+                if let present {
+                    AttCountUp(target: present)
+                } else {
+                    Text("—")
+                }
+            }
+            .font(.system(size: 40, weight: .heavy)).monospacedDigit()
+            .foregroundStyle(AttendancePalette.green400)
+            .lineLimit(1).minimumScaleFactor(0.6)
+            .padding(.top, 8)
+            Text((absent ?? 0) == 0 ? "আজ কেউ অনুপস্থিত নেই" : "\(absent ?? 0) জন অনুপস্থিত")
+                .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.top, 5)
+
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "Absent", value: absent,
+                         tint: (absent ?? 0) > 0 ? AttendancePalette.red500 : .white,
+                         sub: "অনুপস্থিত")
+                Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+                    .padding(.vertical, 2).padding(.horizontal, 14)
+                heroStat(label: "Late", value: late,
+                         tint: (late ?? 0) > 0 ? AttendancePalette.amber500 : .white,
+                         sub: "দেরি")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [AlmaSwiftTheme.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Always the board's dark anchor — force dark traits inside the card.
+        .environment(\.colorScheme, .dark)
+    }
+
+    private func heroStat(label: String, value: Int?, tint: Color, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.5)
+                .foregroundStyle(.white.opacity(0.55))
+            Group {
+                if let value {
+                    AttCountUp(target: value)
+                } else {
+                    Text("—")
+                }
+            }
+            .font(.system(size: 20, weight: .heavy)).monospacedDigit()
+            .foregroundStyle(tint)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+        }
     }
 }
 

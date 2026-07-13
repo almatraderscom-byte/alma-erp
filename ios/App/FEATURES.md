@@ -47,3 +47,5 @@ Keep the availability check at module level and the material as the pre-26 fallb
 **iOS 27 stretch (not started):** scroll-minimized accessory styles for the Live
 Activity, `glassEffect` tint variants keyed to order status, and View Annotations
 (rides on the N3 entities).
+
+<!-- 2026-07-08: logs page + dashboard bento + aurora perf pass (CI verification run) -->

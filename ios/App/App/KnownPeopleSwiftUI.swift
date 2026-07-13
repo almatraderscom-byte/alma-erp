@@ -232,6 +232,152 @@ final class KnownPeopleVM {
         if deviceId == workRoomDeviceId { label += " (Work Room — বর্তমান)" }
         return label
     }
+
+    // ── Native writes (owner 2026-07-11) — web KnownPeopleManager parity. ──
+
+    var toast: String? = nil
+    var busy = false
+
+    private struct SettingsBody: Encodable {
+        let deviceId: String, enabled: Bool, startHm: String, endHm: String, cooldownMin: Int
+    }
+    /// The API expects photo OBJECTS with RAW base64 (`{base64, mimeType}`) — a
+    /// data-URL string array silently matched nothing server-side and every native
+    /// add failed with "at least one photo required" (owner report 2026-07-12).
+    struct PhotoBody: Encodable { let base64: String, mimeType: String }
+    private struct AddBody: Encodable { let name: String, role: String, photos: [PhotoBody] }
+    private struct ActiveBody: Encodable { let active: Bool }
+    private struct WriteResponse: Decodable { let ok: Bool?, error: String? }
+
+    /// Web saveSettings — patch merges over current settings.
+    func saveSettings(deviceId: String? = nil, enabled: Bool? = nil,
+                      startHm: String? = nil, endHm: String? = nil,
+                      cooldownMin: Int? = nil) async -> Bool {
+        guard let s = settings else { return false }
+        busy = true
+        defer { busy = false }
+        do {
+            let res: WriteResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/known-people/settings",
+                body: SettingsBody(deviceId: deviceId ?? s.deviceId,
+                                   enabled: enabled ?? s.enabled,
+                                   startHm: startHm ?? s.startHm,
+                                   endHm: endHm ?? s.endHm,
+                                   cooldownMin: cooldownMin ?? s.cooldownMin ?? 30))
+            if let err = res.error { toast = err; return false }
+            toast = "✅ সেটিংস সেভ হয়েছে"
+            await load()
+            return true
+        } catch {
+            toast = "সেভ হয়নি — নেটওয়ার্ক সমস্যা"
+            return false
+        }
+    }
+
+    /// Web addPerson — ≤3 small base64 photos (data-URL prefix like fileToSmallBase64).
+    func addPerson(name: String, role: String, photos: [Data]) async -> Bool {
+        busy = true
+        defer { busy = false }
+        do {
+            let encoded = photos.prefix(3).map {
+                PhotoBody(base64: $0.base64EncodedString(), mimeType: "image/jpeg")
+            }
+            let res: WriteResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/known-people",
+                body: AddBody(name: name, role: role, photos: encoded))
+            if let err = res.error { toast = "⚠️ \(err)"; return false }
+            toast = "✅ \(name) যোগ হয়েছে"
+            await load()
+            return true
+        } catch {
+            toast = "⚠️ যোগ করা যায়নি — আবার চেষ্টা করুন"
+            return false
+        }
+    }
+
+    /// Native edit (owner 2026-07-12 — no more "ওয়েবে খুলুন"): PATCH name/role.
+    func updatePerson(_ p: KnownPersonItem, name: String, role: String) async -> Bool {
+        busy = true
+        defer { busy = false }
+        struct EditBody: Encodable { let name: String, role: String }
+        do {
+            let res: WriteResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/assistant/known-people/\(p.id)",
+                body: EditBody(name: name, role: role))
+            if let err = res.error { toast = "⚠️ \(err)"; return false }
+            toast = "✅ সেভ হয়েছে"
+            await load()
+            return true
+        } catch {
+            toast = "⚠️ সেভ হয়নি — নেটওয়ার্ক সমস্যা"
+            return false
+        }
+    }
+
+    /// Swap ALL reference photos (server replacePhotos — same PhotoBody format).
+    func replacePhotos(_ p: KnownPersonItem, photos: [Data]) async -> Bool {
+        busy = true
+        defer { busy = false }
+        struct ReplaceBody: Encodable { let replacePhotos: [PhotoBody] }
+        do {
+            let encoded = photos.prefix(3).map {
+                PhotoBody(base64: $0.base64EncodedString(), mimeType: "image/jpeg")
+            }
+            let res: WriteResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/assistant/known-people/\(p.id)",
+                body: ReplaceBody(replacePhotos: encoded))
+            if let err = res.error { toast = "⚠️ \(err)"; return false }
+            toast = "✅ ছবি বদলে দেওয়া হয়েছে"
+            await load()
+            return true
+        } catch {
+            toast = "⚠️ ছবি বদলানো যায়নি — নেটওয়ার্ক সমস্যা"
+            return false
+        }
+    }
+
+    func toggleActive(_ p: KnownPersonItem) async {
+        busy = true
+        defer { busy = false }
+        struct Resp: Decodable { let ok: Bool? }
+        let _: Resp? = try? await AlmaAPI.shared.send(
+            "PATCH", "/api/assistant/known-people/\(p.id)", body: ActiveBody(active: !p.active))
+        await load()
+    }
+
+    func removePerson(_ p: KnownPersonItem) async {
+        busy = true
+        defer { busy = false }
+        struct Resp: Decodable { let ok: Bool? }
+        let _: Resp? = try? await AlmaAPI.shared.send(
+            "DELETE", "/api/assistant/known-people/\(p.id)")
+        toast = "\(p.name) মুছে ফেলা হয়েছে"
+        await load()
+    }
+
+    /// Web runTest — 🧪 live camera check, result rendered as a toast digest.
+    func runTest() async {
+        struct TestResp: Decodable {
+            let ran: Bool?, error: String?
+            let matched: Bool?, name: String?
+        }
+        busy = true
+        defer { busy = false }
+        struct Empty: Encodable {}
+        do {
+            let res: TestResp = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/known-people/test", body: Empty())
+            if let err = res.error {
+                toast = "🧪 টেস্ট ব্যর্থ: \(err)"
+            } else if res.matched == true {
+                toast = "🧪 চিনেছে: \(res.name ?? "কেউ একজন")"
+            } else {
+                toast = res.ran == true ? "🧪 টেস্ট চলল — কাউকে চেনেনি" : "🧪 টেস্ট চালানো যায়নি"
+            }
+        } catch {
+            toast = "🧪 টেস্ট ব্যর্থ — নেটওয়ার্ক সমস্যা"
+        }
+    }
 }
 
 // MARK: - Screen
@@ -241,6 +387,8 @@ struct KnownPeopleScreen: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var vm = KnownPeopleVM()
     @State private var selected: KnownPersonItem? = nil
+    @State private var showAdd = false
+    @State private var removing: KnownPersonItem? = nil
     let openWeb: (_ path: String, _ title: String) -> Void
 
     var body: some View {
@@ -254,7 +402,6 @@ struct KnownPeopleScreen: View {
                 roleChips
                 if vm.loading && vm.people.isEmpty { loadingRows }
                 peopleList
-                webEscape
                 Color.clear.frame(height: 8)
             }
             .padding(.horizontal, 14)
@@ -268,10 +415,37 @@ struct KnownPeopleScreen: View {
             KnownPersonDetailSheet(
                 person: person,
                 thumbURL: vm.thumbs[person.id],
-                openWeb: openWeb)
+                vm: vm)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showAdd) { KnownPeopleAddSheet(vm: vm) }
+        .confirmationDialog(
+            "\(removing?.name ?? "")-কে মুছে ফেলবেন?",
+            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("হ্যাঁ, মুছুন", role: .destructive) {
+                if let p = removing { Task { await vm.removePerson(p) } }
+                removing = nil
+            }
+            Button("বাতিল", role: .cancel) { removing = nil }
+        }
+        .overlay(alignment: .bottom) {
+            if let t = vm.toast {
+                Text(t)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 24)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .task {
+                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+                        withAnimation { vm.toast = nil }
+                    }
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: vm.toast != nil)
     }
 
     // ── Header (web AgentSubHeader parity) ──
@@ -296,25 +470,68 @@ struct KnownPeopleScreen: View {
                 HStack {
                     Text("🚪 এন্ট্রান্স ক্যামেরা").font(.subheadline.weight(.bold))
                     Spacer()
-                    // Web toggle button text verbatim — shown as a status capsule here.
-                    Text(s.enabled ? "ON ✅" : "OFF ⛔")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(s.enabled ? KnownPeoplePalette.emerald600 : KnownPeoplePalette.red500)
-                        .padding(.horizontal, 10).padding(.vertical, 4)
-                        .background((s.enabled ? KnownPeoplePalette.emerald600 : KnownPeoplePalette.red500).opacity(0.12),
-                                    in: Capsule())
-                        .overlay(Capsule().strokeBorder(
-                            (s.enabled ? KnownPeoplePalette.emerald600 : KnownPeoplePalette.red500).opacity(0.35),
-                            lineWidth: 1))
+                    // Native watch toggle (owner 2026-07-11) — web saveSettings parity.
+                    Toggle("", isOn: Binding(
+                        get: { s.enabled },
+                        set: { on in Task { _ = await vm.saveSettings(enabled: on) } }))
+                        .labelsHidden()
+                        .tint(KnownPeoplePalette.emerald600)
                 }
-                settingsRow("ক্যামেরা", vm.cameraLabel(s.deviceId))
+                // Camera picker (web dropdown parity).
+                Menu {
+                    ForEach(vm.cameras, id: \.deviceId) { cam in
+                        Button(vm.cameraLabel(cam.deviceId)) {
+                            Task { _ = await vm.saveSettings(deviceId: cam.deviceId) }
+                        }
+                    }
+                } label: {
+                    settingsRow("ক্যামেরা", vm.cameraLabel(s.deviceId))
+                }
+                .buttonStyle(.plain)
                 HStack(alignment: .top, spacing: 14) {
                     settingsRow("শুরু", s.startHm)
                     settingsRow("শেষ", s.endHm)
-                    settingsRow("কুলডাউন (মিনিট)", s.cooldownMin.map { "\($0)" } ?? "—")
+                    // Cooldown stepper (web number input parity).
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("কুলডাউন (মিনিট)").font(.caption2).foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            Text(s.cooldownMin.map { "\($0)" } ?? "—")
+                                .font(.footnote.weight(.semibold)).monospacedDigit()
+                            Stepper("", value: Binding(
+                                get: { s.cooldownMin ?? 30 },
+                                set: { v in Task { _ = await vm.saveSettings(cooldownMin: max(1, v)) } }),
+                                in: 1...240)
+                                .labelsHidden()
+                                .scaleEffect(0.75, anchor: .leading)
+                        }
+                    }
                 }
-                Text("ওয়াচ চালু/বন্ধ, ক্যামেরা বদল আর 🧪 টেস্ট — ওয়েবে")
-                    .font(.caption2).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        Task { await vm.runTest() }
+                    } label: {
+                        HStack(spacing: 4) {
+                            if vm.busy { ProgressView().controlSize(.mini) }
+                            Text("🧪 লাইভ টেস্ট").font(.caption.weight(.bold))
+                        }
+                        .padding(.horizontal, 12).padding(.vertical, 7)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.busy)
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        showAdd = true
+                    } label: {
+                        Text("+ নতুন মুখ").font(.caption.weight(.bold))
+                            .foregroundStyle(KnownPeoplePalette.accentText(colorScheme))
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .background(KnownPeoplePalette.coral.opacity(0.12), in: Capsule())
+                            .overlay(Capsule().strokeBorder(KnownPeoplePalette.coral.opacity(0.3), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
@@ -408,6 +625,19 @@ struct KnownPeopleScreen: View {
                 UIImpactFeedbackGenerator(style: .soft).impactOccurred()
                 selected = person
             }
+            .contextMenu {
+                Button {
+                    Task { await vm.toggleActive(person) }
+                } label: {
+                    Label(person.active ? "Inactive করুন" : "Active করুন",
+                          systemImage: person.active ? "pause.circle" : "play.circle")
+                }
+                Button(role: .destructive) {
+                    removing = person
+                } label: {
+                    Label("মুছে ফেলুন", systemImage: "trash")
+                }
+            }
         }
         if !vm.loading && vm.people.isEmpty && vm.error == nil && !vm.authExpired {
             // Web empty-state string verbatim.
@@ -452,18 +682,6 @@ struct KnownPeopleScreen: View {
         }
     }
 
-    private var webEscape: some View {
-        Button {
-            openWeb("/agent/known-people", "Known people")
-        } label: {
-            Label("যোগ/এডিট/টেস্ট — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .padding(.vertical, 6)
-    }
 }
 
 // MARK: - Person row (iOS Contacts feel: avatar · name · role capsule · state)
@@ -555,26 +773,175 @@ private struct KnownPersonAvatar: View {
     }
 }
 
-// MARK: - Detail sheet (read-only person card; edits stay on the web)
+// MARK: - Detail sheet — FULL native edit (owner 2026-07-12): name/role save,
+// photo replace, delete. No more "ওয়েবে খুলুন" punt.
 
 @available(iOS 17.0, *)
 private struct KnownPersonDetailSheet: View {
     let person: KnownPersonItem
     let thumbURL: String?
-    let openWeb: (_ path: String, _ title: String) -> Void
+    let vm: KnownPeopleVM
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+
+    @State private var editName = ""
+    @State private var editRole = "staff"
+    @State private var pickedItems: [PhotosPickerItem] = []
+    @State private var newPhotos: [Data] = []
+    @State private var saving = false
+    @State private var swapping = false
+    @State private var confirmDelete = false
+    @State private var feedback: String? = nil
+
+    private static let roles: [(String, String)] = [
+        ("মালিক", "owner"), ("স্টাফ", "staff"), ("পরিবার", "family"), ("অন্যান্য", "other"),
+    ]
+
+    private var dirty: Bool {
+        editName.trimmingCharacters(in: .whitespaces) != person.name || editRole != person.role
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 headerCard
                 infoCard
-                webLink
+                editCard
+                photoCard
+                deleteButton
             }
             .padding(18)
         }
         .presentationBackground { KnownPeopleAurora() }
+        .onAppear {
+            editName = person.name
+            editRole = person.role
+        }
+        .confirmationDialog("\(person.name)-কে মুছে ফেলবেন?",
+                            isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("হ্যাঁ, মুছুন", role: .destructive) {
+                Task {
+                    await vm.removePerson(person)
+                    dismiss()
+                }
+            }
+            Button("থাক", role: .cancel) {}
+        }
+    }
+
+    private var editCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("এডিট").font(.caption2.weight(.heavy)).textCase(.uppercase)
+                .foregroundStyle(.secondary)
+            TextField("নাম", text: $editName)
+                .font(.subheadline)
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .background(Color.primary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            Picker("Role", selection: $editRole) {
+                ForEach(Self.roles, id: \.1) { r in Text(r.0).tag(r.1) }
+            }
+            .pickerStyle(.segmented)
+            Button {
+                guard dirty, !saving else { return }
+                saving = true
+                Task {
+                    defer { saving = false }
+                    let ok = await vm.updatePerson(person,
+                                                   name: editName.trimmingCharacters(in: .whitespaces),
+                                                   role: editRole)
+                    feedback = vm.toast
+                    UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+                    if ok { dismiss() }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if saving { ProgressView().tint(.white).controlSize(.small) }
+                    Text(saving ? "সেভ হচ্ছে…" : "সেভ করুন").font(.footnote.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(dirty && !saving ? KnownPeoplePalette.coral : KnownPeoplePalette.coral.opacity(0.35),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(!dirty || saving)
+            if let feedback {
+                Text(feedback).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .knownPeopleGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+    }
+
+    private var photoCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("রেফারেন্স ছবি বদল").font(.caption2.weight(.heavy)).textCase(.uppercase)
+                .foregroundStyle(.secondary)
+            PhotosPicker(selection: $pickedItems, maxSelectionCount: 3, matching: .images) {
+                HStack(spacing: 8) {
+                    Image(systemName: newPhotos.isEmpty ? "photo.badge.plus" : "checkmark.circle.fill")
+                    Text(newPhotos.isEmpty ? "নতুন ১-৩টা পরিষ্কার মুখের ছবি বাছুন"
+                                           : "\(newPhotos.count)টা ছবি বাছাই হয়েছে")
+                        .font(.caption.weight(.semibold))
+                }
+                .foregroundStyle(newPhotos.isEmpty ? .secondary : KnownPeoplePalette.emerald600)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12).padding(.vertical, 11)
+                .background(Color.primary.opacity(0.05),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            }
+            .onChange(of: pickedItems) { _, items in
+                Task { newPhotos = await KnownPeoplePhotoPrep.shrink(items) }
+            }
+            Button {
+                guard !newPhotos.isEmpty, !swapping else { return }
+                swapping = true
+                Task {
+                    defer { swapping = false }
+                    let ok = await vm.replacePhotos(person, photos: newPhotos)
+                    feedback = vm.toast
+                    UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+                    if ok { dismiss() }
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    if swapping { ProgressView().tint(.white).controlSize(.small) }
+                    Text(swapping ? "বদলানো হচ্ছে…" : "ছবি বদলে দিন").font(.footnote.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(!newPhotos.isEmpty && !swapping
+                            ? KnownPeoplePalette.emerald600 : KnownPeoplePalette.emerald600.opacity(0.35),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(newPhotos.isEmpty || swapping)
+            Text("নতুন ছবি আগের সব রেফারেন্স ছবির জায়গা নেবে।")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .knownPeopleGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+    }
+
+    private var deleteButton: some View {
+        Button(role: .destructive) {
+            confirmDelete = true
+        } label: {
+            Label("\(person.name)-কে মুছে ফেলুন", systemImage: "trash")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(KnownPeoplePalette.red500)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(KnownPeoplePalette.red500.opacity(0.1),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 2)
     }
 
     private var headerCard: some View {
@@ -631,20 +998,6 @@ private struct KnownPersonDetailSheet: View {
             Text(value).font(.footnote.weight(.semibold))
         }
     }
-
-    private var webLink: some View {
-        Button {
-            dismiss()
-            openWeb("/agent/known-people", "Known people")
-        } label: {
-            Label("এডিট/ছবি বদল/মুছুন — ওয়েবে খুলুন", systemImage: "safari")
-                .font(.footnote)
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .padding(.top, 2)
-    }
 }
 
 // MARK: - Formatting helpers
@@ -682,34 +1035,76 @@ private enum KnownPeopleFormat {
 @available(iOS 17.0, *)
 private struct KnownPeopleAurora: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
 
     var body: some View {
-        ZStack {
-            if scheme == .dark {
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.075, green: 0.063, blue: 0.196), location: 0.0),  // deep indigo
-                    .init(color: Color(red: 0.216, green: 0.125, blue: 0.439), location: 0.32), // violet
-                    .init(color: Color(red: 0.478, green: 0.176, blue: 0.494), location: 0.62), // purple-magenta
-                    .init(color: Color(red: 0.706, green: 0.255, blue: 0.404), location: 1.0),  // pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.35), .clear],
-                               center: .init(x: 0.15, y: 0.18), startRadius: 10, endRadius: 420)
-                RadialGradient(colors: [Color(red: 0.93, green: 0.42, blue: 0.55).opacity(0.30), .clear],
-                               center: .init(x: 0.9, y: 0.85), startRadius: 20, endRadius: 480)
-            } else {
-                AlmaSwiftTheme.rootBg(.light)
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.902, green: 0.882, blue: 0.973), location: 0.0),  // pale violet
-                    .init(color: Color(red: 0.949, green: 0.941, blue: 0.972), location: 0.45), // cream
-                    .init(color: Color(red: 0.988, green: 0.918, blue: 0.925), location: 1.0),  // pale pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.14), .clear],
-                               center: .init(x: 0.12, y: 0.15), startRadius: 10, endRadius: 380)
-                RadialGradient(colors: [AlmaSwiftTheme.coral.opacity(0.12), .clear],
-                               center: .init(x: 0.9, y: 0.9), startRadius: 20, endRadius: 420)
+        let dark = scheme == .dark
+        // Agent-parity living aurora (web --aurora-blob-1…5): five blurred colour blobs
+        // drifting corner-to-corner over the page canvas. Owner directive 2026-07-08:
+        // every native page shares the Assistant tab's moving aurora.
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
             }
+            .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Battery guard: drift only when the owner allows motion — Reduce Motion and
+    /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
     }
 }
 
@@ -752,4 +1147,125 @@ private extension View {
 @available(iOS 17.0, *)
 #Preview("Known people — Light") {
     KnownPeopleScreen(openWeb: { _, _ in }).preferredColorScheme(.light)
+}
+
+// MARK: - Add person (owner 2026-07-11 — web addPerson parity: name + role + ≤3 photos
+// as small base64 data-URLs, POST /api/assistant/known-people).
+
+import PhotosUI
+
+/// Shared picked-photo shrink (web fileToSmallBase64 parity): ≤640px JPEG q0.7.
+@available(iOS 17.0, *)
+enum KnownPeoplePhotoPrep {
+    static func shrink(_ items: [PhotosPickerItem]) async -> [Data] {
+        var loaded: [Data] = []
+        for item in items.prefix(3) {
+            if let data = try? await item.loadTransferable(type: Data.self),
+               let ui = UIImage(data: data) {
+                let side: CGFloat = 640
+                let scale = min(1, side / max(ui.size.width, ui.size.height))
+                let target = CGSize(width: ui.size.width * scale,
+                                    height: ui.size.height * scale)
+                let renderer = UIGraphicsImageRenderer(size: target)
+                let small = renderer.image { _ in
+                    ui.draw(in: CGRect(origin: .zero, size: target))
+                }
+                if let jpeg = small.jpegData(compressionQuality: 0.7) {
+                    loaded.append(jpeg)
+                }
+            }
+        }
+        return loaded
+    }
+}
+
+@available(iOS 17.0, *)
+private struct KnownPeopleAddSheet: View {
+    let vm: KnownPeopleVM
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+
+    @State private var name = ""
+    @State private var role = "staff"
+    @State private var pickedItems: [PhotosPickerItem] = []
+    @State private var photos: [Data] = []
+    @State private var submitting = false
+    @State private var errorText: String? = nil
+
+    // Web ROLES verbatim.
+    private static let roles: [(String, String)] = [
+        ("মালিক", "owner"), ("স্টাফ", "staff"), ("পরিবার", "family"), ("অন্যান্য", "other"),
+    ]
+
+    private var canSubmit: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty && !photos.isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("নতুন মুখ যোগ করুন").font(.subheadline.weight(.bold)).padding(.top, 20)
+            TextField("নাম *", text: $name)
+                .font(.subheadline)
+                .padding(.horizontal, 12).padding(.vertical, 11)
+                .background(Color.primary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            Picker("Role", selection: $role) {
+                ForEach(Self.roles, id: \.1) { r in Text(r.0).tag(r.1) }
+            }
+            .pickerStyle(.segmented)
+            PhotosPicker(selection: $pickedItems, maxSelectionCount: 3, matching: .images) {
+                HStack(spacing: 8) {
+                    Image(systemName: photos.isEmpty ? "photo.badge.plus" : "checkmark.circle.fill")
+                    Text(photos.isEmpty ? "১-৩টা পরিষ্কার মুখের ছবি বাছুন *"
+                                        : "\(photos.count)টা ছবি বাছাই হয়েছে")
+                        .font(.caption.weight(.semibold))
+                }
+                .foregroundStyle(photos.isEmpty ? .secondary : KnownPeoplePalette.emerald600)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12).padding(.vertical, 12)
+                .background(Color.primary.opacity(0.05),
+                            in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+            }
+            .onChange(of: pickedItems) { _, items in
+                Task { photos = await KnownPeoplePhotoPrep.shrink(items) }
+            }
+            if let errorText {
+                Text(errorText).font(.caption2.weight(.semibold))
+                    .foregroundStyle(KnownPeoplePalette.red500)
+            }
+            Button {
+                submit()
+            } label: {
+                HStack(spacing: 8) {
+                    if submitting { ProgressView().tint(.white) }
+                    Text(submitting ? "সেভ হচ্ছে…" : "যোগ করুন").font(.subheadline.weight(.bold))
+                }
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 13)
+                .background(canSubmit && !submitting
+                            ? KnownPeoplePalette.coral : KnownPeoplePalette.coral.opacity(0.4),
+                            in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canSubmit || submitting)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 18)
+        .presentationDetents([.height(400)])
+        .presentationDragIndicator(.visible)
+        .background(AlmaSwiftTheme.rootBg(scheme))
+    }
+
+    private func submit() {
+        guard canSubmit, !submitting else { return }
+        submitting = true; errorText = nil
+        Task {
+            defer { submitting = false }
+            let ok = await vm.addPerson(
+                name: name.trimmingCharacters(in: .whitespaces), role: role, photos: photos)
+            UINotificationFeedbackGenerator().notificationOccurred(ok ? .success : .error)
+            if ok { dismiss() } else { errorText = vm.toast }
+        }
+    }
 }

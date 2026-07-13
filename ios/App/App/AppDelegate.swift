@@ -46,6 +46,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // with any existing screen. Deferred so the scene/window is fully up first.
         if #available(iOS 17.0, *) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { FloatingChatHead.shared.install() }
+            // App-wide offline beacon + the ALMA Island result banner (own overlay
+            // windows, same pattern — nothing existing is touched).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                ConnectivityBeacon.shared.install()
+                AlmaIslandWatch.shared.install()
+            }
         }
 
         return true

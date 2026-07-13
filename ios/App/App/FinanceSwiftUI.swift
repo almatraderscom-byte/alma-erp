@@ -354,45 +354,41 @@ struct FinanceScreen: View {
         .padding(.top, 4)
     }
 
-    // ── KPI grid (web's two 4-card rows, as a 2-column grid on phone) ──
+    // ── KPI board (web's two 4-card rows) — bento language (owner spec 2026-07-08):
+    //    row 1 (Revenue/Expenses/Net profit/Margin) = the dark hero anchor,
+    //    row 2 (Payroll budget/Unpaid/Advances/Order GP) = 2×2 glass stat tiles.
+    //    Same numbers, same nil fallbacks, same tint rules — presentation only. ──
 
     private var kpiGrid: some View {
         let pl = vm.report?.profitLoss
         let k = vm.kpis
-        return LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())],
-                         spacing: 10) {
-            kpiCard("Revenue (range)", money(pl?.revenue), .primary)
-            kpiCard("Expenses", money(pl?.expenses ?? k?.totalExpenses), .primary)
-            kpiCard("Net profit", money(pl?.netProfit ?? k?.netBusinessProfitHint),
-                    FinancePalette.signed(pl?.netProfit ?? k?.netBusinessProfitHint ?? 0, colorScheme))
-            kpiCard("Margin", pl.map { "\(Int($0.marginPct.rounded()))%" } ?? "—", .primary)
-            kpiCard("Payroll budget", money(k?.totalMonthlySalary), .primary)
-            kpiCard("Unpaid / due (roll)", money(k?.unpaidSalaryHint),
-                    (k?.unpaidSalaryHint ?? 0) > 0 ? FinancePalette.amber600 : .primary)
-            kpiCard("Advances out", money(k?.advanceOutstanding), .primary)
-            kpiCard("Order gross profit", money(k?.orderGrossProfit),
-                    FinancePalette.signed(k?.orderGrossProfit ?? 0, colorScheme))
+        return VStack(spacing: 10) {
+            FinBentoHeroCard(revenue: pl?.revenue,
+                             expenses: pl?.expenses ?? k?.totalExpenses,
+                             netProfit: pl?.netProfit ?? k?.netBusinessProfitHint,
+                             marginPct: pl.map { Int($0.marginPct.rounded()) })
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())],
+                      spacing: 10) {
+                FinBentoStatTile(label: "Payroll budget", target: k?.totalMonthlySalary,
+                                 format: { AlmaSwiftTheme.takaShort($0) },
+                                 sub: "মাসিক বেতন বাজেট",
+                                 tint: .primary, accent: AlmaSwiftTheme.violet)
+                FinBentoStatTile(label: "Unpaid / due (roll)", target: k?.unpaidSalaryHint,
+                                 format: { AlmaSwiftTheme.takaShort($0) },
+                                 sub: "বকেয়া / ডিউ",
+                                 tint: (k?.unpaidSalaryHint ?? 0) > 0 ? FinancePalette.amber600 : .primary,
+                                 accent: FinancePalette.amber500)
+                FinBentoStatTile(label: "Advances out", target: k?.advanceOutstanding,
+                                 format: { AlmaSwiftTheme.takaShort($0) },
+                                 sub: "অ্যাডভান্স বাকি",
+                                 tint: .primary, accent: FinancePalette.coral)
+                FinBentoStatTile(label: "Order gross profit", target: k?.orderGrossProfit,
+                                 format: { AlmaSwiftTheme.takaShort($0) },
+                                 sub: "অর্ডার গ্রস প্রফিট",
+                                 tint: FinancePalette.signed(k?.orderGrossProfit ?? 0, colorScheme),
+                                 accent: AlmaSwiftTheme.sage)
+            }
         }
-    }
-
-    private func money(_ amount: Int?) -> String {
-        guard let amount else { return "—" }
-        return AlmaSwiftTheme.takaShort(amount)
-    }
-
-    private func kpiCard(_ label: String, _ value: String, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(label)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(1).minimumScaleFactor(0.8)
-            Text(value)
-                .font(.headline.weight(.bold).monospacedDigit())
-                .foregroundStyle(tint)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .financeGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
     }
 
     // ── Revenue & margin trend (native bars; tap a month → detail sheet) ──
@@ -747,34 +743,76 @@ private enum FinanceFormat {
 @available(iOS 17.0, *)
 private struct FinanceAurora: View {
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
 
     var body: some View {
-        ZStack {
-            if scheme == .dark {
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.075, green: 0.063, blue: 0.196), location: 0.0),  // deep indigo
-                    .init(color: Color(red: 0.216, green: 0.125, blue: 0.439), location: 0.32), // violet
-                    .init(color: Color(red: 0.478, green: 0.176, blue: 0.494), location: 0.62), // purple-magenta
-                    .init(color: Color(red: 0.706, green: 0.255, blue: 0.404), location: 1.0),  // pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.35), .clear],
-                               center: .init(x: 0.15, y: 0.18), startRadius: 10, endRadius: 420)
-                RadialGradient(colors: [Color(red: 0.93, green: 0.42, blue: 0.55).opacity(0.30), .clear],
-                               center: .init(x: 0.9, y: 0.85), startRadius: 20, endRadius: 480)
-            } else {
-                AlmaSwiftTheme.rootBg(.light)
-                LinearGradient(stops: [
-                    .init(color: Color(red: 0.902, green: 0.882, blue: 0.973), location: 0.0),  // pale violet
-                    .init(color: Color(red: 0.949, green: 0.941, blue: 0.972), location: 0.45), // cream
-                    .init(color: Color(red: 0.988, green: 0.918, blue: 0.925), location: 1.0),  // pale pink
-                ], startPoint: .top, endPoint: .bottom)
-                RadialGradient(colors: [AlmaSwiftTheme.violet.opacity(0.14), .clear],
-                               center: .init(x: 0.12, y: 0.15), startRadius: 10, endRadius: 380)
-                RadialGradient(colors: [AlmaSwiftTheme.coral.opacity(0.12), .clear],
-                               center: .init(x: 0.9, y: 0.9), startRadius: 20, endRadius: 420)
+        let dark = scheme == .dark
+        // Agent-parity living aurora (web --aurora-blob-1…5): five blurred colour blobs
+        // drifting corner-to-corner over the page canvas. Owner directive 2026-07-08:
+        // every native page shares the Assistant tab's moving aurora.
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        // Radial-gradient falloff reads the same as the old blur(70)
+                        // but costs ZERO gaussian passes — the live blurs were the
+                        // app-wide transition/scroll jank source (perf audit 2026-07-08).
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
             }
+            .onAppear { updateDrift() }
+            // Covered/backgrounded screens must not keep animating — pausing here means
+            // a stack of pushed pages costs nothing while hidden.
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    /// Battery guard: drift only when the owner allows motion — Reduce Motion and
+    /// Low Power Mode both freeze the aurora to a static wash (blobs at rest).
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            // Start the drift AFTER the push/present transition settles — kicking a
+            // repeatForever animation mid-transition made every slide-in stutter.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
     }
 }
 
@@ -810,6 +848,193 @@ private struct FinanceShimmer: ViewModifier {
 @available(iOS 17.0, *)
 private extension View {
     func financeShimmer() -> some View { modifier(FinanceShimmer()) }
+}
+
+// MARK: - Bento components (Finance-owned copies of the Dashboard board language —
+// per-file copies are this repo's parallel-session convention, no cross-file imports)
+
+/// Central motion gate — count-ups freeze under Reduce Motion / Low Power.
+@available(iOS 17.0, *)
+private func finMotionOK(_ reduceMotion: Bool) -> Bool {
+    !reduceMotion && !ProcessInfo.processInfo.isLowPowerModeEnabled
+}
+
+/// Count-up number (0 → target on appear, old → new on refresh) — one Animatable
+/// interpolation, no timers; snaps straight to the value when motion is limited.
+@available(iOS 17.0, *)
+private struct FinCountUp: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let target: Int
+    let format: (Int) -> String
+    @State private var appeared = false
+
+    var body: some View {
+        let shown = appeared ? Double(target) : 0
+        FinCountUpText(value: shown, format: format)
+            .animation(finMotionOK(reduceMotion) ? .spring(duration: 0.9, bounce: 0) : nil,
+                       value: shown)
+            .onAppear {
+                guard !appeared else { return }
+                if finMotionOK(reduceMotion) {
+                    appeared = true
+                } else {
+                    var tx = Transaction(); tx.disablesAnimations = true
+                    withTransaction(tx) { appeared = true }
+                }
+            }
+    }
+}
+
+@available(iOS 17.0, *)
+private struct FinCountUpText: View, Animatable {
+    var value: Double
+    var format: (Int) -> String
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+    var body: some View {
+        Text(format(Int(value.rounded())))
+    }
+}
+
+/// Shared tile backdrop: frosted glass + a soft diagonal accent wash.
+@available(iOS 17.0, *)
+private func finBentoWash(_ accent: Color, scheme: ColorScheme) -> some View {
+    ZStack {
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous).fill(.ultraThinMaterial)
+        RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .fill(Color.white.opacity(scheme == .dark ? 0.04 : 0.35))
+        LinearGradient(colors: [accent.opacity(scheme == .dark ? 0.14 : 0.10), .clear],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+}
+
+/// Small glass stat tile — count-up value + sub line over a soft accent wash.
+/// `target == nil` renders the old "—" placeholder (same fallback the KPI cards had).
+@available(iOS 17.0, *)
+private struct FinBentoStatTile: View {
+    @Environment(\.colorScheme) private var scheme
+    let label: String
+    let target: Int?
+    let format: (Int) -> String
+    let sub: String
+    let tint: Color
+    let accent: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.4)
+                .foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
+            if let target {
+                FinCountUp(target: target, format: format)
+                    .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+                    .foregroundStyle(tint).lineLimit(1).minimumScaleFactor(0.55)
+            } else {
+                Text("—").font(.system(size: 17, weight: .heavy)).foregroundStyle(tint)
+            }
+            Text(sub).font(.system(size: 9)).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 13).padding(.vertical, 12)
+        .background { finBentoWash(accent, scheme: scheme) }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+    }
+}
+
+/// The dark hero anchor — deliberately dark in BOTH schemes (Dashboard hero recipe:
+/// deep indigo base + violet/coral washes + a sage hint). Range revenue count-up plus
+/// the Net profit / Expenses / Margin split — the web's first KPI row, same numbers,
+/// same nil "—" fallbacks, same signed tint on net profit.
+@available(iOS 17.0, *)
+private struct FinBentoHeroCard: View {
+    let revenue: Int?
+    let expenses: Int?
+    let netProfit: Int?
+    let marginPct: Int?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("মোট আয় · REVENUE (RANGE)").font(.system(size: 10, weight: .bold)).tracking(0.8)
+                .foregroundStyle(FinancePalette.goldLt)
+            Group {
+                if let revenue {
+                    FinCountUp(target: revenue, format: { AlmaSwiftTheme.takaShort($0) })
+                } else {
+                    Text("—")
+                }
+            }
+            .font(.system(size: 40, weight: .heavy)).monospacedDigit()
+            .foregroundStyle(.white)
+            .lineLimit(1).minimumScaleFactor(0.6)
+            .padding(.top, 8)
+            Text("এই রেঞ্জের বিক্রি")
+                .font(.caption2).foregroundStyle(.white.opacity(0.6)).padding(.top, 5)
+
+            HStack(alignment: .top, spacing: 0) {
+                heroStat(label: "Net profit", target: netProfit,
+                         format: { AlmaSwiftTheme.takaShort($0) },
+                         tint: (netProfit ?? 0) < 0 ? FinancePalette.red500 : FinancePalette.green400,
+                         sub: "খরচ বাদে")
+                heroDivider
+                heroStat(label: "Expenses", target: expenses,
+                         format: { AlmaSwiftTheme.takaShort($0) },
+                         tint: .white, sub: "এই রেঞ্জে")
+                heroDivider
+                heroStat(label: "Margin", target: marginPct,
+                         format: { "\($0)%" },
+                         tint: .white, sub: "মুনাফার হার")
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+                    .fill(Color(red: 0.094, green: 0.082, blue: 0.157))
+                LinearGradient(colors: [AlmaSwiftTheme.violet.opacity(0.32), .clear],
+                               startPoint: .topLeading, endPoint: .center)
+                LinearGradient(colors: [AlmaSwiftTheme.coral.opacity(0.30), .clear],
+                               startPoint: .bottomTrailing, endPoint: .center)
+                RadialGradient(colors: [AlmaSwiftTheme.sage.opacity(0.14), .clear],
+                               center: .init(x: 0.85, y: 0.05), startRadius: 0, endRadius: 220)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous))
+        }
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rCard, style: .continuous)
+            .strokeBorder(.white.opacity(0.16), lineWidth: 1))
+        // Always the board's dark anchor — force dark traits inside the card.
+        .environment(\.colorScheme, .dark)
+    }
+
+    private var heroDivider: some View {
+        Rectangle().fill(.white.opacity(0.14)).frame(width: 1)
+            .padding(.vertical, 2).padding(.horizontal, 12)
+    }
+
+    private func heroStat(label: String, target: Int?, format: @escaping (Int) -> String,
+                          tint: Color, sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label.uppercased()).font(.system(size: 9, weight: .bold)).tracking(0.5)
+                .foregroundStyle(.white.opacity(0.55))
+            Group {
+                if let target {
+                    FinCountUp(target: target, format: format)
+                } else {
+                    Text("—")
+                }
+            }
+            .font(.system(size: 17, weight: .heavy)).monospacedDigit()
+            .foregroundStyle(tint)
+            .lineLimit(1).minimumScaleFactor(0.55)
+            Text(sub).font(.system(size: 9)).foregroundStyle(.white.opacity(0.5))
+        }
+    }
 }
 
 // MARK: - Preview (stubbed — live data needs the app session)

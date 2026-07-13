@@ -49,6 +49,12 @@
 - At the END of every session (and before I switch to the other Mac): commit all changes and `git push` to GitHub. Never leave finished work unpushed.
 - If there are uncommitted or unpushed changes when we stop, remind me before finishing.
 
+## iOS TestFlight Build Gate (mandatory — root cause of builds 63–69 losing features)
+- **Every TestFlight build MUST come from a clean, pushed, main-current checkout.** Builds 63–69 each dropped previously-shipped features because they were archived from Mac-local state (uncommitted / unpushed / behind origin/main). Proof: the last build number ever committed to git is 62.
+- **Run `bash scripts/ios-build-preflight.sh` BEFORE every Archive.** It hard-fails on: dirty tree, unpushed commits, checkout missing origin/main work, or a non-main branch (preview override: `ALMA_PREFLIGHT_ALLOW_BRANCH=1`). It also stamps the commit SHA into Info.plist (`ALMAGitCommit`) so every .ipa is traceable to one commit.
+- **The build-number bump is a commit**: bump `CURRENT_PROJECT_VERSION`, commit (`chore(ios): bump build to N`) and push BEFORE uploading. Build number in git must always equal the number on TestFlight.
+- If preflight fails, fix the git state — never archive around it.
+
 ### Sub-agents (use sparingly — Explore only; owner rule, updated 2026-07-06)
 
 - Do NOT fan out work across sub-agents by default. Work the tasks yourself in the main session, one focused thread — even when a request has multiple issues.
