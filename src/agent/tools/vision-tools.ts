@@ -12,6 +12,7 @@ import { geminiVisionJson, resolveImageFromPath } from '@/agent/lib/vision-analy
 const QC_INSPECT_PROMPT = `You are a fashion e-commerce QC inspector for ALMA Lifestyle (Bangladesh).
 Inspect this product/listing photo and return JSON only:
 {
+  "product_description": "what the garment ACTUALLY is — type, exact COLOR(s), pattern, embroidery, who wears it (2-3 sentences)",
   "lighting": "good|acceptable|poor",
   "background_clean": true|false,
   "wrinkles": "none|minor|major",

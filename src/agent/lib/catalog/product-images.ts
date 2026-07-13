@@ -193,17 +193,43 @@ export type ProductImageEntry = {
  * Re-signs storage URLs on the fly when the stored URL is missing/expired so the
  * agent (and CS) always receive a usable link. Limited to `limit` images.
  */
+/** Storage paths whose object is a plausible image (≥1 KB). A failed upload leaves
+ * a ~4-byte object; picking one as a generate_image reference fails the whole
+ * render with Google's "Unable to process input image" (owner incident
+ * 2026-07-13: 133-ADULT/1.jpg was 4 bytes). Fail-open on query errors. */
+async function healthyStoragePaths(paths: string[]): Promise<Set<string>> {
+  if (paths.length === 0) return new Set()
+  try {
+    const rows: Array<{ name: string }> = await prisma.$queryRawUnsafe(
+      `SELECT name FROM storage.objects
+       WHERE bucket_id = 'agent-files'
+         AND name = ANY($1)
+         AND COALESCE((metadata->>'size')::bigint, 0) >= 1024`,
+      paths,
+    )
+    return new Set(rows.map((r) => r.name))
+  } catch {
+    return new Set(paths)
+  }
+}
+
 export async function listProductImages(
   productCode: string,
   business = DEFAULT_CATALOG_BUSINESS,
   limit = 8,
 ): Promise<ProductImageEntry[]> {
   const code = normalizeProductCode(productCode)
-  const rows = await db.productImage.findMany({
+  let rows = await db.productImage.findMany({
     where: { productCode: code, business },
     orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
     take: limit,
   })
+  // Corrupt uploads never leave this function — not as gallery thumbs, not as
+  // generate_image references.
+  const healthy = await healthyStoragePaths(
+    (rows as Array<{ storagePath: string }>).map((r) => r.storagePath),
+  )
+  rows = (rows as Array<{ storagePath: string }>).filter((r) => healthy.has(r.storagePath))
   // Re-sign in parallel: a gallery of expired URLs would otherwise be N serial
   // Supabase round-trips (and, unfixed, N broken thumbnails).
   return Promise.all(
