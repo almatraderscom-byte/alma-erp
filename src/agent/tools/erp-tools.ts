@@ -375,7 +375,7 @@ const get_product: AgentTool = {
       // feed the real photo to generate_image as referenceImageId (owner incident
       // 2026-07-13: the head invented a fake 720 because paths were unreachable).
       let images: Array<{ productCode: string; url: string | null; storagePath: string; isPrimary: boolean }> | undefined
-      if (enriched.length >= 1 && enriched.length <= 4) {
+      if (enriched.length >= 1 && enriched.length <= 8) {
         const sets = await Promise.all(
           enriched.map(async (p) => {
             const all = await listProductImages(p.sku).catch(() => [])
