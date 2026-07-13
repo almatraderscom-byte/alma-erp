@@ -316,7 +316,14 @@ export async function selectToolsAndGroupsForTurnAsync(
     // worker. Its larger MARKETING_HEAD_TOOL_BUDGET (see config) keeps the spree
     // bounded. Other heads keep the lean slim profile + delegation.
     if (isMarketingHead) {
-      const mkGroups = OWNER_STABLE_GROUPS
+      // Marketing-FOCUSED groups, not the full owner set (cost audit 2026-07-13):
+      // the full 11-group set shipped 201 tool schemas ≈ 47k tokens EVERY request
+      // (and tripped xAI's 200-tool cap). A post/creative/ads/SEO turn never
+      // needs staff attendance, finance writes, CS inbox, diag or API-balance
+      // tools — dropping them cuts ~46 schemas (~9k tokens) per request and keeps
+      // the count safely under provider caps. erp stays (product/order/sales
+      // reads feed briefs) and vision stays (real-photo checks before captions).
+      const mkGroups: ToolGroupName[] = ['base', 'erp', 'content', 'growth', 'website', 'vision']
       const mkAssembled = assembleSelectedTools(mkGroups).filter(
         (t) => t.name !== 'delegate_to_specialist',
       )
