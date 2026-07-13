@@ -83,6 +83,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.almatraders.erp.shell.AlmaApi
 import com.almatraders.erp.shell.AlmaApiException
+import com.almatraders.erp.shell.AlmaPullRefresh
 import com.almatraders.erp.shell.AlmaTheme
 import com.almatraders.erp.shell.PushCtx
 import com.almatraders.erp.shell.almaGlass
@@ -581,6 +582,7 @@ fun CreditUsageScreen(ctx: PushCtx) {
         }
     }
 
+    AlmaPullRefresh(refreshing = vm.loading, onRefresh = { scope.launch { vm.load() } }, dark = dark) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -713,6 +715,7 @@ fun CreditUsageScreen(ctx: PushCtx) {
             }
         }
         item { Spacer(Modifier.height(8.dp)) }
+    }
     }
 
     // ── Budget editor (iOS alert parity) ──

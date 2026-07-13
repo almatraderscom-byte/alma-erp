@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.almatraders.erp.shell.AlmaApi
 import com.almatraders.erp.shell.AlmaApiException
+import com.almatraders.erp.shell.AlmaPullRefresh
 import com.almatraders.erp.shell.AlmaTheme
 import com.almatraders.erp.shell.PushCtx
 import com.almatraders.erp.shell.almaGlass
@@ -201,6 +202,7 @@ fun CatalogImagesScreen(ctx: PushCtx) {
 
     LaunchedEffect(Unit) { vm.load() }
 
+    AlmaPullRefresh(refreshing = vm.loading, onRefresh = { scope.launch { vm.load() } }, dark = dark) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -226,6 +228,7 @@ fun CatalogImagesScreen(ctx: PushCtx) {
             )
         }
         item { Spacer(Modifier.height(8.dp)) }
+    }
     }
 
     selected?.let { g ->

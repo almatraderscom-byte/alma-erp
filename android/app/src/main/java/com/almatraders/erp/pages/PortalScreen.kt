@@ -84,6 +84,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.almatraders.erp.shell.AlmaApi
 import com.almatraders.erp.shell.AlmaApiException
+import com.almatraders.erp.shell.AlmaPullRefresh
 import com.almatraders.erp.shell.AlmaTheme
 import com.almatraders.erp.shell.PushCtx
 import com.almatraders.erp.shell.almaGlass
@@ -746,6 +747,7 @@ fun PortalScreen(ctx: PushCtx) {
     /** Web gate for OfficeAdvanceDeskCard: ADMIN / SUPER_ADMIN only. */
     val isAdminRole = vm.profile?.role == "ADMIN" || vm.profile?.role == "SUPER_ADMIN"
 
+    AlmaPullRefresh(refreshing = vm.loading, onRefresh = { scope.launch { vm.load() } }, dark = dark) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -867,6 +869,7 @@ fun PortalScreen(ctx: PushCtx) {
             )
         }
         item { Spacer(Modifier.height(8.dp)) }
+    }
     }
 
     // ── Sheets (native request forms — web modal parity) ──

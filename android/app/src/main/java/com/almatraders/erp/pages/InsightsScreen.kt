@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.almatraders.erp.shell.AlmaApi
 import com.almatraders.erp.shell.AlmaApiException
+import com.almatraders.erp.shell.AlmaPullRefresh
 import com.almatraders.erp.shell.AlmaTheme
 import com.almatraders.erp.shell.PushCtx
 import com.almatraders.erp.shell.almaGlass
@@ -324,6 +325,7 @@ fun InsightsScreen(ctx: PushCtx) {
 
     LaunchedEffect(Unit) { if (vm.bundle == null) vm.load() }
 
+    AlmaPullRefresh(refreshing = vm.loading, onRefresh = { scope.launch { vm.load() } }, dark = dark) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -502,6 +504,7 @@ fun InsightsScreen(ctx: PushCtx) {
             }
         }
         item { Spacer(Modifier.height(8.dp)) }
+    }
     }
 
     // ── Customer detail sheet (read-only; follow-up actions escape to the web) ──
