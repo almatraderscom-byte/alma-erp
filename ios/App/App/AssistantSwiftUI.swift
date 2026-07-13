@@ -1630,8 +1630,14 @@ final class AssistantVM {
 
     // ── Cards ──────────────────────────────────────────────────────────────
 
+    /// Approve timestamps survive the 12s message re-poll (which rebuilds cards
+    /// from the wire and wiped card.approvedAt — the render % restarted from 1
+    /// on every poll, owner bug 2026-07-13). Keyed by pendingActionId.
+    var confirmApprovedAt: [String: Date] = [:]
+
     func approveAction(_ cardId: String, approve: Bool) async {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        if approve { confirmApprovedAt[cardId] = Date() }
         setConfirmStatus(cardId, approve ? "approved" : "rejected")
         do {
             let _: OkResponse = try await AlmaAPI.shared.send(
@@ -2180,13 +2186,23 @@ struct AgentChatImage: View {
         let pal = AgentPalette(scheme)
         Group {
             if failed {
-                VStack(spacing: 3) {
-                    Image(systemName: "photo").font(.system(size: 16))
-                    Text("ছবি নেই").font(.system(size: 9))
+                // Tap-to-retry (owner bug 2026-07-13: a 2.6MB render on 4G failed
+                // once and the tile stayed dead "ছবি নেই" forever). Retry re-signs
+                // and reloads instead of leaving a permanent broken tile.
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    failed = false
+                    url = nil
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: "arrow.clockwise").font(.system(size: 15))
+                        Text("আবার চেষ্টা").font(.system(size: 9))
+                    }
+                    .foregroundStyle(pal.muted)
+                    .frame(width: 80, height: 80)
+                    .background(pal.card.opacity(0.4), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
-                .foregroundStyle(pal.muted)
-                .frame(width: 80, height: 80)
-                .background(pal.card.opacity(0.4), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .buttonStyle(.plain)
             } else if let url {
                 AsyncImage(url: url) { phase in
                     switch phase {
@@ -3350,7 +3366,9 @@ struct AgentConfirmCardView: View {
                 // Creative-Studio-style render count (owner ask 2026-07-13): a live
                 // 1→95% time-eased fill while the artifact renders — the real image
                 // message landing below is the 100% moment.
-                AgentRenderProgressStrip(startedAt: card.approvedAt ?? Date(), pal: pal)
+                AgentRenderProgressStrip(
+                    startedAt: vm.confirmApprovedAt[card.id] ?? card.approvedAt ?? Date(),
+                    pal: pal)
                     .padding(.horizontal, 16).padding(.bottom, 14)
             } else {
                 HStack(spacing: 5) {
