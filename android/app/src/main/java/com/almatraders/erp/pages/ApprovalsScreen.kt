@@ -306,8 +306,10 @@ class ApprovalsState {
         }
     }
 
-    /** APPROVE/REJECT one item — same PATCH body the web tracker sends. */
-    suspend fun act(approval: AlmaApproval, action: String, note: String = "", transactionId: String? = null) {
+    /** APPROVE/REJECT one item — same PATCH body the web tracker sends.
+     *  payoutMode: EXPENSE_REIMBURSEMENT only — 'wallet' (credit staff wallet) or
+     *  'instant' (owner already paid cash/bKash; no wallet credit). */
+    suspend fun act(approval: AlmaApproval, action: String, note: String = "", transactionId: String? = null, payoutMode: String? = null) {
         if (approval.id in busyIds) return
         busyIds = busyIds + approval.id
         notice = null
@@ -317,6 +319,7 @@ class ApprovalsState {
                 .put("note", note)
                 .put("operation_id", "android-${UUID.randomUUID().toString().lowercase()}")
             if (!transactionId.isNullOrEmpty()) body.put("transactionId", transactionId)
+            if (!payoutMode.isNullOrEmpty()) body.put("payoutMode", payoutMode)
             val resp = AlmaApi.send("PATCH", "/api/approvals/${approval.id}", body)
             val data = resp.optJSONObject("data") ?: resp
             notice = when {
@@ -421,6 +424,8 @@ fun ApprovalsScreen(ctx: PushCtx) {
     var selected by remember { mutableStateOf<AlmaApproval?>(null) }
     var rejecting by remember { mutableStateOf<AlmaApproval?>(null) }
     var withdrawing by remember { mutableStateOf<AlmaApproval?>(null) }
+    // Reimbursement approvals pause for a payout choice (wallet vs instant) — web parity.
+    var reimbursing by remember { mutableStateOf<AlmaApproval?>(null) }
     var confirmRepair by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.load() }
@@ -428,8 +433,11 @@ fun ApprovalsScreen(ctx: PushCtx) {
     // Wallet withdrawals need a transaction id first (SMS to staff) — web modal parity.
     fun requestApprove(ap: AlmaApproval) {
         selected = null
-        if (ap.type == "WALLET_WITHDRAWAL") withdrawing = ap
-        else scope.launch { vm.act(ap, "APPROVE") }
+        when (ap.type) {
+            "WALLET_WITHDRAWAL" -> withdrawing = ap
+            "EXPENSE_REIMBURSEMENT" -> reimbursing = ap
+            else -> scope.launch { vm.act(ap, "APPROVE") }
+        }
     }
 
     AlmaPullRefresh(refreshing = vm.loading, onRefresh = { scope.launch { vm.load() } }, dark = dark) {
@@ -633,6 +641,15 @@ fun ApprovalsScreen(ctx: PushCtx) {
             WithdrawTxnSheet(ap, dark) { txn ->
                 withdrawing = null
                 scope.launch { vm.act(ap, "APPROVE", transactionId = txn) }
+            }
+        }
+    }
+
+    reimbursing?.let { ap ->
+        ModalBottomSheet(onDismissRequest = { reimbursing = null }, containerColor = AlmaTheme.rootBg(dark)) {
+            ReimbursePayoutSheet(ap, dark) { mode ->
+                reimbursing = null
+                scope.launch { vm.act(ap, "APPROVE", payoutMode = mode) }
             }
         }
     }
@@ -1368,6 +1385,49 @@ private fun RejectNoteSheet(ap: AlmaApproval, dark: Boolean, onConfirm: (String)
                 .plainClick { if (trimmed.length >= 5) onConfirm(trimmed) }
                 .padding(vertical = 11.dp),
         )
+    }
+}
+
+@Composable
+private fun ReimbursePayoutSheet(ap: AlmaApproval, dark: Boolean, onConfirm: (String) -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 26.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("অনুমোদন — টাকাটা কীভাবে দেবেন?", color = AlmaTheme.ink(dark), fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "${ap.requester?.name ?: ap.requestedBy ?: "—"} · ${ap.reason ?: ""}",
+            color = AlmaTheme.inkSecondary(dark), fontSize = 12.sp,
+            maxLines = 2, overflow = TextOverflow.Ellipsis,
+        )
+        ReimbursePayoutChoice(
+            emoji = "👛", title = "ওয়ালেটে যোগ করুন",
+            hint = "স্টাফের ERP ওয়ালেটে জমা হবে, বেতনের সাথে পাবে", dark = dark,
+        ) { onConfirm("wallet") }
+        ReimbursePayoutChoice(
+            emoji = "⚡️", title = "এখনই পেমেন্ট (ক্যাশ / বিকাশ)",
+            hint = "সাথে সাথে দিয়ে দিয়েছেন — ওয়ালেটে যোগ হবে না, খরচ রেকর্ড হবে", dark = dark,
+        ) { onConfirm("instant") }
+    }
+}
+
+@Composable
+private fun ReimbursePayoutChoice(emoji: String, title: String, hint: String, dark: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .almaGlass(dark, AlmaTheme.R_CONTROL)
+            .border(1.dp, ApprovalPalette.coral.copy(alpha = 0.35f), RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+            .plainClick(onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(emoji, fontSize = 20.sp)
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, color = AlmaTheme.ink(dark), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text(hint, color = AlmaTheme.inkSecondary(dark), fontSize = 11.sp)
+        }
     }
 }
 

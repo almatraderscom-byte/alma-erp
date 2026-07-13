@@ -38,6 +38,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalance
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.Handshake
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -318,6 +319,9 @@ fun FinanceScreen(ctx: PushCtx) {
                     }
                     FinQuickLink("Office Fund", "অফিস ফান্ড — ওয়েবে", Icons.Filled.AccountBalance, dark) {
                         ctx.openWebForced("/finance/office-fund", "Office Fund")
+                    }
+                    FinQuickLink("পাওনা-দেনা", "ব্যক্তিগত লেনদেনের খাতা — নেটিভ", Icons.Filled.Handshake, dark) {
+                        ctx.openSmart("/finance/personal-ledger", "পাওনা-দেনা")
                     }
                     FinQuickLink("Payroll", "বেতন ও অ্যাডভান্স — ওয়েবে", Icons.Filled.Group, dark) {
                         ctx.openWebForced("/payroll", "Payroll")

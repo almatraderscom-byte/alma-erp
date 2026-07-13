@@ -42,6 +42,7 @@ import com.almatraders.erp.pages.OfficeFundScreen
 import com.almatraders.erp.pages.OrderCreateScreen
 import com.almatraders.erp.pages.OrdersScreen
 import com.almatraders.erp.pages.PaymentAccountsScreen
+import com.almatraders.erp.pages.PersonalLedgerScreen
 import com.almatraders.erp.pages.PayrollScreen
 import com.almatraders.erp.pages.PortalExpenseScreen
 import com.almatraders.erp.pages.PortalOfficeScreen
@@ -87,6 +88,7 @@ object AlmaNativeRouter {
         "/expenses" -> NativeDestination("Expenses") { ExpensesScreen(it) }
         "/payroll" -> NativeDestination("Payroll") { PayrollScreen(it) }
         "/finance/office-fund" -> NativeDestination("Office fund") { OfficeFundScreen(it) }
+        "/finance/personal-ledger" -> NativeDestination("পাওনা-দেনা") { PersonalLedgerScreen(it) }
         "/wallet-statement", "/portal/wallet" -> NativeDestination("সম্পূর্ণ হিসাব") { WalletStatementScreen(it) }
         "/activity" -> NativeDestination("Activity") { ActivityScreen(it) }
         "/inventory" -> NativeDestination("Inventory") { InventoryScreen(it) }
