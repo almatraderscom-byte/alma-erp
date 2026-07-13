@@ -137,8 +137,10 @@ export class OpenAiAdapter implements ProviderAdapter {
       tools: args.tools.length ? toOpenAiTools(args.tools) : undefined,
       stream: true as const,
       stream_options: { include_usage: true },
-      // OpenRouter extension: attach the actual billed cost (USD) to the final
-      // usage chunk. Ignored by raw OpenAI, so only set when the factory opted in.
+      // OpenRouter now ALWAYS returns the billed cost in the final chunk's
+      // `usage.cost` (this opt-in flag is a documented no-op kept for intent +
+      // forward-compat). Harmless to raw OpenAI. The actual gate on whether we
+      // TRUST that cost is `this.includeCostUsage`, applied at read time below.
       ...(this.includeCostUsage ? { usage: { include: true } } : {}),
     }
     // Cast to the streaming params type so the `reasoning` extension is accepted
@@ -270,9 +272,10 @@ export class OpenAiAdapter implements ProviderAdapter {
           (chunk.usage as { prompt_tokens_details?: { cached_tokens?: number } })
             .prompt_tokens_details?.cached_tokens ?? 0
         const promptTokens = chunk.usage.prompt_tokens ?? 0
-        // OpenRouter attaches the ACTUAL billed cost (USD, = credits deducted) here
-        // when we opt in with `usage: { include: true }`. This is authoritative —
-        // it already reflects the provider's real per-token + cache-discount rates,
+        // OpenRouter attaches the ACTUAL billed cost (USD; credits == USD on this
+        // non-BYOK account, so it matches the dashboard) in `usage.cost` on the
+        // final chunk. This is authoritative — it already reflects the provider's
+        // real per-token + cache-discount rates,
         // so the caller uses it verbatim instead of estimating from the registry
         // table. Guard against 0/NaN so a provider that omits it falls back to the
         // local estimate rather than persisting a bogus $0.00.
