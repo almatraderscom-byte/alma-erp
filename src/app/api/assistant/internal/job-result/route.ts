@@ -5,6 +5,7 @@ import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { agentStorageSignedUrl } from '@/agent/lib/storage'
 import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
+import { finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { buildOutboundDialMessage } from '@/agent/lib/outbound-call-tracking'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { prisma } from '@/lib/prisma'
@@ -99,6 +100,11 @@ export async function POST(req: NextRequest) {
   })
 
   const payload = action.payload as Record<string, unknown>
+
+  // Progress turn opened at approve time ("ছবিটা বানাতে দিচ্ছি…" + spinner) — the
+  // continuation below reuses it; any other exit closes it so the app's spinner
+  // never runs forever.
+  const progressTurnId = typeof payload.progressTurnId === 'string' ? payload.progressTurnId : null
 
   // Family-chain assembly line: a finished step queues the next one (adult shot →
   // child garment → child shot → merge). Best-effort — a chain problem must never
@@ -303,6 +309,10 @@ export async function POST(req: NextRequest) {
     if (!tg.ok) console.warn('[job-result] owner telegram notify failed:', tg.error)
   }
 
+  if (progressTurnId && (status === 'failed' || !resumeAgentAfterImage)) {
+    await finalizeTurnIfRunning(progressTurnId, status === 'failed' ? 'error' : 'done').catch(() => {})
+  }
+
   // The generated image is now in the conversation → resume the head so it carries on
   // its task (e.g. build the Instagram/Facebook post it was about to make) instead of
   // going silent. Best-effort: no-ops without a worker queue or if the owner disabled
@@ -311,6 +321,10 @@ export async function POST(req: NextRequest) {
     try {
       await enqueueAgentContinuation({
         conversationId: convId,
+        // Reuse the progress turn opened at approve time ("ছবিটা বানাতে দিচ্ছি…")
+        // so the app's spinner runs from the owner's tap straight through to
+        // this reply (Claude-Code-parity progress, owner ask 2026-07-13).
+        turnId: progressTurnId,
         message:
           '[সিস্টেম নোট — অনুমোদিত ছবি তৈরি হয়েছে] Boss-এর approve-করা ছবিটি এইমাত্র তৈরি হয়ে কনভারসেশনে যোগ হয়েছে। ' +
           '**আগে PREVIEW CONFIRM (বাধ্যতামূলক — Boss-এর নিয়ম 2026-07-13):** ছবিটা Boss এখনো নিজের চোখে দেখেননি — ' +
