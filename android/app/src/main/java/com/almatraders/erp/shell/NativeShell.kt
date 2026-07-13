@@ -353,6 +353,12 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
         // walkie-talkie intercom. Self-hides when there's no office session.
         com.almatraders.erp.pages.OfficeChatFloatingHead(dark = dark) { p, t -> pushWebForced(p, t) }
 
+        // ── App-wide offline takeover (iOS ConnectivityBeacon parity) ──
+        // Floats over every tab, pushed screen, and the chat head; renders nothing
+        // while online. A ConnectivityManager callback drives the lighthouse beacon
+        // + auto-retry, dissolving when a real /api/health probe succeeds.
+        ConnectivityBeacon(dark = dark)
+
         // ── Startup native-login gate ──
         // If the server says we're NOT signed in (authed == false), cover the whole shell
         // with the native Sign-in screen so the app opens straight to native login — no

@@ -147,6 +147,10 @@ private object OfficePalette {
 
 private const val OFFICE_LUNCH_LIMIT_SEC = 45 * 60
 
+/** A task where Boss requested an update — carries an absolute deadline for the live
+ *  10-minute countdown (iOS UpdateAlertCard). */
+private data class StaffUpdateReq(val id: String, val title: String, val note: String?, val deadlineMs: Long)
+
 // ── Models (same field names the office routes return) ─────────────────────────────
 
 /** One row of GET /api/assistant/office/my-tasks. */
@@ -432,6 +436,21 @@ private class OfficeState {
     var lunchBusy by mutableStateOf(false)
     var markingRead by mutableStateOf(false)
 
+    // Rich staff office (getStaffOfficeData: performer hero / motivation / check-in /
+    // 10-min update-request countdown) — iOS PortalStaffOffice parity. Sourced from the
+    // /office/hub `staff` + top-level `motivation`; display-only, layered over base tasks.
+    var motivationText by mutableStateOf<String?>(null)
+    var motivationTag by mutableStateOf<String?>(null)
+    var isWinner by mutableStateOf(false)
+    var award by mutableStateOf<OfficeAward?>(null)
+    var staffName by mutableStateOf("")
+    var checkedIn by mutableStateOf(false)
+    var checkedOut by mutableStateOf(false)
+    var checkInLabel by mutableStateOf<String?>(null)
+    var todayDoneCount by mutableStateOf(0)
+    var todayActiveCount by mutableStateOf(0)
+    var updateRequests by mutableStateOf(listOf<StaffUpdateReq>())
+
     // Task detail thread
     var thread by mutableStateOf(listOf<OfficeThreadMsg>())
     var threadLoading by mutableStateOf(false)
@@ -466,6 +485,37 @@ private class OfficeState {
             env.optJSONObject("staff")?.optJSONObject("lunch")?.let { l ->
                 lunchActive = l.flexBool("active") ?: false
                 lunchStartedAt = OfficeFormat.parseMs(l.str("startedAt"))
+            }
+            // Rich staff office layer (motivation / performer / check-in / update countdown).
+            env.optJSONObject("motivation")?.let { m ->
+                motivationText = m.str("text")?.takeIf { it.isNotBlank() }
+                motivationTag = m.str("tag")
+            }
+            env.optJSONObject("staff")?.let { s ->
+                staffName = s.str("staffName") ?: ""
+                isWinner = s.flexBool("isWinner") ?: false
+                award = s.optJSONObject("award")?.let { OfficeAward.from(it) }
+                s.optJSONObject("attendance")?.let { a ->
+                    checkedIn = a.flexBool("checkedIn") ?: false
+                    checkedOut = a.flexBool("checkedOut") ?: false
+                    checkInLabel = a.str("checkInLabel")
+                }
+                val active = s.optJSONArray("active")
+                val done = s.optJSONArray("done")
+                todayActiveCount = active?.length() ?: 0
+                todayDoneCount = done?.length() ?: 0
+                // Tasks where Boss asked for an update → live 10-min countdown alerts.
+                val now = System.currentTimeMillis()
+                updateRequests = active?.mapObjects { it }
+                    ?.filter { it.flexBool("needsUpdate") == true }
+                    ?.map {
+                        StaffUpdateReq(
+                            id = it.str("id") ?: "",
+                            title = it.str("title") ?: "—",
+                            note = it.str("updateNote"),
+                            deadlineMs = now + (it.flexInt("updateSecondsLeft") ?: 0).coerceAtLeast(0) * 1000L,
+                        )
+                    } ?: emptyList()
             }
             if (selfRole == "staff") load()
             else if (selfRole == "owner") loadNotifsOnly()
@@ -861,10 +911,10 @@ fun PortalOfficeScreen(ctx: PushCtx) {
     var showHistory by remember { mutableStateOf(false) }
     var showIntercom by remember { mutableStateOf(false) }
 
-    // Live 1s tick for the lunch countdown.
+    // Live 1s tick for the lunch countdown + the 10-min update-request countdown.
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(vm.lunchActive) {
-        while (vm.lunchActive) {
+    LaunchedEffect(vm.lunchActive, vm.updateRequests) {
+        while (vm.lunchActive || vm.updateRequests.isNotEmpty()) {
             nowMs = System.currentTimeMillis()
             kotlinx.coroutines.delay(1000)
         }
@@ -883,7 +933,7 @@ fun PortalOfficeScreen(ctx: PushCtx) {
                 item { OfficeAuthCard(dark) { ctx.openSmart("/login", "Login") } }
             }
             vm.selfRole == "owner" -> ownerHub(vm, dark, scope = { block -> scope.launch { block() } }, onOwnerTask = { ownerTask = it }, onChat = { showChat = true }, onHistory = { showHistory = true }, onWeb = ctx.openWebForced)
-            else -> staffOffice(vm, dark, nowMs, onTask = { detailTask = it }, onSelfCreate = { showSelfCreate = true }, onChat = { showChat = true }, onLunch = { scope.launch { vm.lunchToggle() } }, onMarkAll = { scope.launch { vm.markAllRead() } }, onMarkOne = { n -> scope.launch { vm.markRead(n) } })
+            else -> staffOffice(vm, dark, nowMs, onTask = { detailTask = it }, onSelfCreate = { showSelfCreate = true }, onChat = { showChat = true }, onLunch = { scope.launch { vm.lunchToggle() } }, onMarkAll = { scope.launch { vm.markAllRead() } }, onMarkOne = { n -> scope.launch { vm.markRead(n) } }, onSubmitUpdate = { id, body -> scope.launch { if (vm.taskAction(id, "update", body)) vm.loadHub() } })
         }
         if (vm.roleResolved && !vm.authExpired) {
             item { IntercomLaunchCard(dark) { showIntercom = true } }
@@ -933,6 +983,134 @@ private fun OfficeHeader(dark: Boolean) {
     }
 }
 
+// ── Rich staff layer: check-in banner / performer hero / motivation / update alert /
+//    performance strip (iOS PortalStaffOffice parity) ─────────────────────────────────
+
+@Composable
+private fun OfficeCheckInBanner(vm: OfficeState, dark: Boolean) {
+    val active = vm.checkedIn && !vm.checkedOut
+    val tint = if (active) OfficePalette.emerald600 else AlmaTheme.inkSecondary(dark)
+    Row(
+        Modifier.fillMaxWidth().almaGlass(dark, AlmaTheme.R_CARD).padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(Modifier.size(9.dp).background(tint, CircleShape))
+        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            Text(
+                when {
+                    vm.checkedOut -> "🏁 আজকের অফিস শেষ"
+                    active -> "✅ অফিসে চেক-ইন করা আছে"
+                    else -> "⏳ এখনো চেক-ইন হয়নি"
+                },
+                color = AlmaTheme.ink(dark), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+            )
+            vm.checkInLabel?.takeIf { it.isNotBlank() }?.let {
+                Text(it, color = AlmaTheme.inkSecondary(dark), fontSize = 10.5.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun OfficePerformerCard(award: OfficeAward, dark: Boolean) {
+    Row(
+        Modifier.fillMaxWidth()
+            .background(Brush.horizontalGradient(listOf(OfficePalette.amber600.copy(alpha = 0.20f), OfficePalette.coral.copy(alpha = 0.12f))), RoundedCornerShape(AlmaTheme.R_CARD))
+            .border(1.dp, OfficePalette.amber600.copy(alpha = 0.4f), RoundedCornerShape(AlmaTheme.R_CARD))
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("👑", fontSize = 30.sp)
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("এই সপ্তাহের সেরা পারফর্মার!", color = OfficePalette.amber600, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text(award.staffName, color = AlmaTheme.ink(dark), fontSize = 16.sp, fontWeight = FontWeight.Black)
+            if (award.score > 0) Text("স্কোর ${OfficeFormat.bn(award.score)} · অভিনন্দন Boss-এর পক্ষ থেকে 🎉", color = AlmaTheme.inkSecondary(dark), fontSize = 10.5.sp)
+        }
+    }
+}
+
+@Composable
+private fun OfficeMotivationCard(text: String, tag: String?, dark: Boolean) {
+    Column(
+        Modifier.fillMaxWidth()
+            .background(OfficePalette.violet.copy(alpha = 0.10f), RoundedCornerShape(AlmaTheme.R_CARD))
+            .border(1.dp, OfficePalette.violet.copy(alpha = 0.3f), RoundedCornerShape(AlmaTheme.R_CARD))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text("✨ আজকের অনুপ্রেরণা", color = OfficePalette.violet, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+        Text(text, color = AlmaTheme.ink(dark), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        tag?.takeIf { it.isNotBlank() }?.let { Text("— $it", color = AlmaTheme.inkSecondary(dark), fontSize = 10.5.sp) }
+    }
+}
+
+@Composable
+private fun OfficePerfStrip(vm: OfficeState, dark: Boolean) {
+    val total = vm.todayActiveCount + vm.todayDoneCount
+    val pct = if (total > 0) vm.todayDoneCount.toFloat() / total else 0f
+    Column(
+        Modifier.fillMaxWidth().almaGlass(dark, AlmaTheme.R_CARD).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OfficeBadge("📊")
+            Text("আজকের পারফরম্যান্স", color = AlmaTheme.ink(dark), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            Text("${OfficeFormat.bn(vm.todayDoneCount)}/${OfficeFormat.bn(total)} সম্পন্ন", color = OfficePalette.emerald600, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+        Box(Modifier.fillMaxWidth().height(8.dp).background(AlmaTheme.inkTertiary(dark).copy(alpha = 0.25f), CircleShape)) {
+            Box(Modifier.fillMaxWidth(pct.coerceIn(0f, 1f)).height(8.dp).background(Brush.horizontalGradient(listOf(OfficePalette.emerald600, OfficePalette.violet)), CircleShape))
+        }
+    }
+}
+
+@Composable
+private fun OfficeUpdateAlerts(vm: OfficeState, dark: Boolean, nowMs: Long, onSubmit: (String, String) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        vm.updateRequests.forEach { req ->
+            val secsLeft = ((req.deadlineMs - nowMs) / 1000).toInt()
+            val over = secsLeft <= 0
+            val mm = kotlin.math.abs(secsLeft) / 60
+            val ss = kotlin.math.abs(secsLeft) % 60
+            val clock = "${OfficeFormat.bn(mm)}:${OfficeFormat.bn(String.format(Locale.US, "%02d", ss))}"
+            var answer by remember(req.id) { mutableStateOf("") }
+            val busy = vm.actionBusyTaskId == req.id
+            Column(
+                Modifier.fillMaxWidth()
+                    .background(OfficePalette.amber600.copy(alpha = 0.12f), RoundedCornerShape(AlmaTheme.R_CARD))
+                    .border(1.dp, (if (over) OfficePalette.red500 else OfficePalette.amber600).copy(alpha = 0.5f), RoundedCornerShape(AlmaTheme.R_CARD))
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("⚠️", fontSize = 18.sp)
+                    Text("Boss আপডেট চেয়েছেন", color = AlmaTheme.ink(dark), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.weight(1f))
+                    Text(if (over) "⏰ $clock দেরি" else "⏳ $clock", color = if (over) OfficePalette.red500 else OfficePalette.amber600, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+                Text(req.title, color = AlmaTheme.ink(dark), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                req.note?.takeIf { it.isNotBlank() }?.let { Text("“$it”", color = AlmaTheme.inkSecondary(dark), fontSize = 11.sp) }
+                OutlinedTextField(
+                    value = answer, onValueChange = { answer = it },
+                    placeholder = { Text("সংক্ষেপে উত্তর দিন…", fontSize = 12.sp) },
+                    modifier = Modifier.fillMaxWidth(), minLines = 1, maxLines = 3,
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, color = AlmaTheme.ink(dark)),
+                )
+                Box(
+                    Modifier.fillMaxWidth()
+                        .background(if (answer.isBlank() || busy) AlmaTheme.inkTertiary(dark).copy(alpha = 0.2f) else OfficePalette.emerald600, CircleShape)
+                        .plainClick { if (answer.isNotBlank() && !busy) onSubmit(req.id, answer.trim()) }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (busy) CircularProgressIndicator(Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                    else Text("উত্তর পাঠান", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+    }
+}
+
 // ── Staff office (base my-tasks view) ──────────────────────────────────────────────
 
 private fun LazyListScope.staffOffice(
@@ -945,10 +1123,19 @@ private fun LazyListScope.staffOffice(
     onLunch: () -> Unit,
     onMarkAll: () -> Unit,
     onMarkOne: (OfficeNotice) -> Unit,
+    onSubmitUpdate: (String, String) -> Unit,
 ) {
     item { OfficeHeader(dark) }
     vm.error?.let { item { OfficeNoticeCard("⚠️ $it", OfficePalette.red500, dark) } }
     vm.notice?.let { item { OfficeNoticeCard("ℹ️ $it", AlmaTheme.inkSecondary(dark), dark) } }
+    // ── Rich staff layer (iOS PortalStaffOffice parity) ──
+    if (vm.checkedIn || vm.checkInLabel != null) item { OfficeCheckInBanner(vm, dark) }
+    if (vm.isWinner && vm.award != null) item { OfficePerformerCard(vm.award!!, dark) }
+    vm.motivationText?.let { txt -> item { OfficeMotivationCard(txt, vm.motivationTag, dark) } }
+    if (vm.updateRequests.isNotEmpty()) {
+        item { OfficeUpdateAlerts(vm, dark, nowMs, onSubmit = onSubmitUpdate) }
+    }
+    if (vm.todayActiveCount + vm.todayDoneCount > 0) item { OfficePerfStrip(vm, dark) }
     item { OfficeLunchCard(vm, dark, nowMs, onLunch) }
     if (vm.loading && vm.tasks.isEmpty() && vm.notices.isEmpty()) {
         items(count = 2) { Box(Modifier.fillMaxWidth().height(110.dp).almaGlass(dark, AlmaTheme.R_CARD)) }
