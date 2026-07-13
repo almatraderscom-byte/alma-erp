@@ -149,6 +149,10 @@ export async function POST(req: NextRequest) {
 
   const convId = resolveConversationId(action)
   let messageText: string | null = null
+  /** Storage path of a generated image — persisted as a file_ref block so the
+   * NATIVE app shows the actual picture (it renders images only from file_ref;
+   * a markdown image link is plain text there — owner report 2026-07-13). */
+  let messageImagePath: string | null = null
   let pushTelegram = false
   // True only for a plain image_gen success that just posted its image into the
   // conversation. That is the moment the head can finally chain to the next step
@@ -205,6 +209,12 @@ export async function POST(req: NextRequest) {
           : String(data?.imageUrl ?? '')
         if (!imageUrl) throw new Error('No image path in job result')
         messageText = `✅ Image generated successfully.\n![Generated image](${imageUrl})`
+        // The native app renders images ONLY from file_ref content blocks —
+        // markdown image links display as plain text there, so the owner
+        // couldn't see the preview he was asked to confirm (2026-07-13).
+        if (storagePath) {
+          messageImagePath = storagePath
+        }
         resumeAgentAfterImage = true
         const qcFlag = typeof data?.qc === 'object' && data.qc !== null
           ? (data.qc as { flagged?: string }).flagged
@@ -262,11 +272,21 @@ export async function POST(req: NextRequest) {
   }
 
   if (convId && messageText) {
+    const contentBlocks: Array<Record<string, unknown>> = [{ type: 'text', text: messageText }]
+    if (messageImagePath) {
+      const ext = messageImagePath.split('.').pop()?.toLowerCase()
+      contentBlocks.push({
+        type: 'file_ref',
+        bucket: 'agent-files',
+        path: messageImagePath,
+        mediaType: ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png',
+      })
+    }
     await db.agentMessage.create({
       data: {
         conversationId: convId,
         role: 'assistant',
-        content: [{ type: 'text', text: messageText }],
+        content: contentBlocks,
         tokensIn: 0,
         tokensOut: 0,
         costUsd: 0,
