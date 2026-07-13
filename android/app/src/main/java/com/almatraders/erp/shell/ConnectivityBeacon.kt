@@ -114,8 +114,13 @@ fun ConnectivityBeacon(dark: Boolean) {
 
     DisposableEffect(Unit) {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        // Authoritative online = at least one usable network is present. Counting the
+        // live network set avoids the onLost race where activeNetwork still reports the
+        // dying network for a beat (which had left the takeover from ever arming).
+        val live = java.util.Collections.synchronizedSet(HashSet<Network>())
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
+                live.add(network)
                 offlineSince = 0L
                 if (showOverlay) {
                     showOverlay = false
@@ -124,12 +129,14 @@ fun ConnectivityBeacon(dark: Boolean) {
             }
 
             override fun onLost(network: Network) {
-                // Only arm the debounce if no other network is active.
-                if (cm?.activeNetwork == null) offlineSince = System.currentTimeMillis()
+                live.remove(network)
+                if (live.isEmpty()) offlineSince = System.currentTimeMillis()
             }
         }
         try {
             cm?.registerDefaultNetworkCallback(callback)
+            // Seed current state so a launch that is ALREADY offline arms the takeover.
+            if (cm?.activeNetwork == null) offlineSince = System.currentTimeMillis()
         } catch (_: Exception) { }
         onDispose {
             try {
