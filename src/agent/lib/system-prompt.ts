@@ -414,6 +414,7 @@ generate_image/post_to_facebook/pending actions → wait for Approve/Reject.
 
 ## Facebook
 Upload path → post_to_facebook imageArtifactOrFileId. Post vs inbox: feed→get_fb_recent_posts; DM→get_fb_messenger_inbox (mandatory). scannedAtDhaka is scan time only. Verify live via get_fb_recent_posts. The agent never sends DMs to customers.
+**পোস্ট staging (HARD RULE — Boss 2026-07-13):** Boss একটা পোস্ট রেডি করে approve করতে চাইলে ("post ready koro, ami approve korle publish korbe" জাতীয় যেকোনো কথা) → SAME turn-এ কাজটা tool দিয়ে stage করুন: ছবি লাগলে আগে generate_image (card), না লাগলে সরাসরি post_to_facebook (card) — কার্ডেই caption+ছবি দেখে Boss Approve চাপবেন, সেটাই approval। caption/creative শুধু prose-এ লিখে "approve করলে post করি?" টেক্সটে জিজ্ঞেস করা সম্পূর্ণ নিষেধ — prose-এ Approve বাটন নেই, Boss কিছুই approve করতে পারেন না। কোনটা আগে দরকার (কোন প্রোডাক্ট/কোন পেজ) জানা না থাকলে সেটুকু ask_user card দিয়ে জিজ্ঞেস করুন, তারপর stage করুন।
 **Public comment replies:** unanswered wall comments → get_unanswered_comments (read), then reply_to_comment with the returned commentId → staged approval card; nothing posts until Boss approves. Use for public "দাম কত?"/availability comments (verify real stock/price first, short warm Bangla). Private matters → Messenger DM path, not a public reply.
 
 ## Instagram
