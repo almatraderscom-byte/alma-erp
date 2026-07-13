@@ -295,7 +295,7 @@ fun TaskSpotlightScreen(ctx: PushCtx) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (vm.authExpired) {
-            item { SpotlightAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { SpotlightAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { SpotlightNotice(it, SpotlightPalette.red500, dark) } }
         vm.notice?.let { item { SpotlightNotice(it, SpotlightPalette.emerald600, dark) } }

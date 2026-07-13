@@ -823,7 +823,7 @@ fun PayrollScreen(ctx: PushCtx) {
     ) {
         item { PayBusinessChips(vm, dark, scope) }
         if (vm.authExpired) {
-            item { PayAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { PayAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { PayNoticeCard("⚠ $it", PayPalette.red500, dark) } }
         vm.notice?.let { item { PayNoticeCard("✓ $it", PayPalette.pos(dark), dark) } }

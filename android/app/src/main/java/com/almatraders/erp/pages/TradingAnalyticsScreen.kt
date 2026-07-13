@@ -553,7 +553,7 @@ fun TradingAnalyticsScreen(ctx: PushCtx) {
             }
         }
         if (vm.authExpired) {
-            item { TAAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { TAAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { err ->
             item {

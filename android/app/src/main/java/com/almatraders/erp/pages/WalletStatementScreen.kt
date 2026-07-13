@@ -418,7 +418,7 @@ fun WalletStatementScreen(
     ) {
         item { WsHeader(dark, onClose) }
         if (vm.authExpired) {
-            item { WsAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { WsAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { WsNoticeRow(it, WsPalette.red500, dark) } }
         vm.notice?.let { item { WsNoticeRow(it, WsPalette.emerald600, dark) } }

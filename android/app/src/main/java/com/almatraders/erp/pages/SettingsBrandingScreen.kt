@@ -241,7 +241,7 @@ fun SettingsBrandingScreen(ctx: PushCtx) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (vm.authExpired) {
-                item { BrandingAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+                item { BrandingAuthCard(dark) { ctx.openSmart("/login", "Login") } }
             }
             vm.error?.let { item { BrandingNoticeCard("⚠️ $it", SettingsBrandingPalette.red500, dark) } }
             if (vm.fallback) {

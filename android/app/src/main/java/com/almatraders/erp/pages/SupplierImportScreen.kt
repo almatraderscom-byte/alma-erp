@@ -253,7 +253,7 @@ fun SupplierImportScreen(ctx: PushCtx) {
         contentPadding = PaddingValues(top = 6.dp, bottom = 8.dp),
     ) {
         if (vm.authExpired) {
-            item { SupAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { SupAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { err ->
             item {

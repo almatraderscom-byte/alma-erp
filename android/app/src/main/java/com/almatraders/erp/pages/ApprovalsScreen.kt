@@ -459,7 +459,7 @@ fun ApprovalsScreen(ctx: PushCtx) {
             }
         }
         if (vm.authExpired) {
-            item { AuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { AuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         if (view == "business") {
             vm.error?.let { item { NoticeCard(it, ApprovalPalette.red500, dark) } }

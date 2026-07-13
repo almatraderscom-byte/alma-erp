@@ -330,7 +330,7 @@ fun KnownPeopleScreen(ctx: PushCtx) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item { Header(dark) }
-        if (vm.authExpired) item { AuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+        if (vm.authExpired) item { AuthCard(dark) { ctx.openSmart("/login", "Login") } }
         vm.error?.let { item { ErrorCard(it, dark) } }
         vm.toast?.let { item { NoticeCard(it, dark) } }
         item { SettingsCard(vm, dark, scope) { ctx.openWebForced("/agent/known-people", "Known people") } }

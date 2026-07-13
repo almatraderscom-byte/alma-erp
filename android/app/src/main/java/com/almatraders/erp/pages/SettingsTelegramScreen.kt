@@ -351,7 +351,7 @@ fun SettingsTelegramScreen(ctx: PushCtx) {
                 }
             }
 
-            if (vm.authExpired) TelegramAuthCard(dark) { ctx.openWebForced("/login", "Login") }
+            if (vm.authExpired) TelegramAuthCard(dark) { ctx.openSmart("/login", "Login") }
             vm.error?.let { TelegramNoticeCard(it, TelegramPalette.red500, dark) }
 
             if (vm.loading && vm.setting == null && vm.dashboard == null) {

@@ -292,7 +292,7 @@ fun BriefingScreen(ctx: PushCtx) {
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         if (vm.authExpired) {
-            item { BfAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { BfAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.takeIf { vm.data == null }?.let { err ->
             item { BfErrorCard(err, dark) { scope.launch { vm.load(fresh = true) } } }

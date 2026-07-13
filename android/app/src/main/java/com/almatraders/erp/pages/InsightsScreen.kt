@@ -357,7 +357,7 @@ fun InsightsScreen(ctx: PushCtx) {
         }
 
         if (vm.authExpired) {
-            item { InsAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { InsAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { err ->
             item {

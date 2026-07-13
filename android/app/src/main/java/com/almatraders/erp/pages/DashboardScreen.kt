@@ -445,7 +445,9 @@ fun DashboardScreen(ctx: PushCtx) {
     val scope = rememberCoroutineScope()
     var todoOpen by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
+    // Key on AlmaSession.authVersion so a fresh sign-in (which bumps it) re-fetches the
+    // dashboard + clears the "সেশন পাওয়া যায়নি" card without needing an app restart.
+    LaunchedEffect(com.almatraders.erp.shell.AlmaSession.authVersion) {
         vm.load()
         todo.load()
     }
@@ -457,7 +459,7 @@ fun DashboardScreen(ctx: PushCtx) {
         ) {
             item { Spacer(Modifier.height(if (todo.visible) 30.dp else 0.dp)) }
             if (vm.authExpired) {
-                item { DashAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+                item { DashAuthCard(dark) { ctx.openSmart("/login", "Login") } }
             }
             vm.error?.let { err -> item { DashNotice(err, dark) } }
             vm.data?.slaBreaches?.takeIf { it.isNotEmpty() }?.let { breaches ->

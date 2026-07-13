@@ -479,7 +479,7 @@ fun AnalyticsScreen(ctx: PushCtx) {
             }
         }
         if (vm.authExpired) {
-            item { AnAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { AnAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { AnNoticeCard(it, dark) } }
 

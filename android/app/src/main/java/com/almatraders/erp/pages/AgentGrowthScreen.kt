@@ -236,7 +236,7 @@ fun AgentGrowthScreen(ctx: PushCtx) {
             }
         }
         if (vm.authExpired) {
-            item { GrowthAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { GrowthAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { GrowthWarnCard(it, dark) } }
         item { GrowthSummaryChips(vm.features, dark) }

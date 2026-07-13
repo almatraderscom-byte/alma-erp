@@ -33,6 +33,12 @@ object AlmaSession {
 
     @Volatile private var loaded = false
 
+    /** Bumps after every COMPLETED load. Screens key their fetch on this so a fresh
+     *  login (which force-reloads the session) makes them re-fetch automatically —
+     *  the fix for "role-based nav/data didn't appear after signing in". */
+    var authVersion by mutableStateOf(0)
+        private set
+
     /** SUPER_ADMIN or ADMIN — the web `isAdminRole` gate for business-module writes. */
     val isAdmin: Boolean get() = isOwner || role == "SUPER_ADMIN" || role == "ADMIN"
 
@@ -75,6 +81,27 @@ object AlmaSession {
             }
         } catch (_: Exception) { }
         loaded = true
+        authVersion++          // signal every screen keyed on authVersion to re-fetch
+    }
+
+    /** Force a fresh identity fetch — call right after a successful sign-in so the role
+     *  (and owner flag) update from the fail-closed STAFF default to the real values,
+     *  and every screen keyed on [authVersion] reloads. Resets owner first so an
+     *  account switch can't keep a stale elevated flag. */
+    suspend fun reload() {
+        isOwner = false
+        role = null
+        loaded = false
+        load(force = true)
+    }
+
+    /** Clear all identity on explicit sign-out (fail closed to STAFF). */
+    fun signedOut() {
+        isOwner = false
+        role = null
+        businessAccess = emptyList()
+        loaded = false
+        authVersion++
     }
 }
 

@@ -398,7 +398,7 @@ fun DigitalInvoicesScreen(ctx: PushCtx) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             if (vm.authExpired) {
-                item { InvoicesAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+                item { InvoicesAuthCard(dark) { ctx.openSmart("/login", "Login") } }
             }
             vm.error?.let { item { InvoicesNoticeCard("⚠ $it", DigitalInvoicesPalette.red500, dark) } }
 

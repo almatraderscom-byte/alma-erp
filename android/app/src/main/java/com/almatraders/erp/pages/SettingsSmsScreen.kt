@@ -345,7 +345,7 @@ fun SettingsSmsScreen(ctx: PushCtx) {
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             if (vm.authExpired) {
-                item { SmsAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+                item { SmsAuthCard(dark) { ctx.openSmart("/login", "Login") } }
             }
             vm.error?.let { item { SmsNoticeCard("⚠️ $it", SettingsSmsPalette.red500, dark) } }
 

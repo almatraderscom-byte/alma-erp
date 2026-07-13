@@ -683,7 +683,7 @@ fun SubscriptionsScreen(ctx: PushCtx) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item { Spacer(Modifier.height(2.dp)) }
-        if (vm.authExpired) item { AuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+        if (vm.authExpired) item { AuthCard(dark) { ctx.openSmart("/login", "Login") } }
         vm.error?.let { item { ErrorCard(it, dark) } }
         if (vm.loading && vm.subs.isEmpty()) {
             items(4) { Box(Modifier.fillMaxWidth().height(108.dp).subSolid(dark)) }

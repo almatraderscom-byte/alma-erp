@@ -553,7 +553,7 @@ fun CrmScreen(ctx: PushCtx) {
         }
 
         if (vm.authExpired) {
-            item { CrmAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { CrmAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { CrmNotice("⚠️ $it", CrmPalette.red500, dark) } }
         syncNote?.let { item { CrmNotice(it, AlmaTheme.inkSecondary(dark), dark) } }

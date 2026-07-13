@@ -212,7 +212,7 @@ fun DigitalHomeScreen(ctx: PushCtx) {
         item { Spacer(Modifier.height(6.dp)) }
 
         if (vm.authExpired) {
-            item { HomeAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { HomeAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { HomeNoticeCard("⚠ $it", DigitalHomePalette.red500, dark) } }
 

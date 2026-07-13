@@ -880,7 +880,7 @@ fun PortalOfficeScreen(ctx: PushCtx) {
             !vm.roleResolved -> items(count = 3) { Box(Modifier.fillMaxWidth().height(110.dp).almaGlass(dark, AlmaTheme.R_CARD)) }
             vm.authExpired -> {
                 item { OfficeHeader(dark) }
-                item { OfficeAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+                item { OfficeAuthCard(dark) { ctx.openSmart("/login", "Login") } }
             }
             vm.selfRole == "owner" -> ownerHub(vm, dark, scope = { block -> scope.launch { block() } }, onOwnerTask = { ownerTask = it }, onChat = { showChat = true }, onHistory = { showHistory = true }, onWeb = ctx.openWebForced)
             else -> staffOffice(vm, dark, nowMs, onTask = { detailTask = it }, onSelfCreate = { showSelfCreate = true }, onChat = { showChat = true }, onLunch = { scope.launch { vm.lunchToggle() } }, onMarkAll = { scope.launch { vm.markAllRead() } }, onMarkOne = { n -> scope.launch { vm.markRead(n) } })

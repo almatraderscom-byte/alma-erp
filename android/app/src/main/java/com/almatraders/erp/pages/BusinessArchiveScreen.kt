@@ -343,7 +343,7 @@ fun BusinessArchiveScreen(ctx: PushCtx) {
         }
 
         if (vm.authExpired) {
-            item { ArchiveAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { ArchiveAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { ArchiveNotice(it, ArchivePalette.red500, dark) } }
         vm.loadWarning?.let { item { ArchiveNotice(it, ArchivePalette.amber600, dark) } }

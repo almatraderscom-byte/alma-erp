@@ -296,7 +296,7 @@ fun FinanceScreen(ctx: PushCtx) {
             }
         }
         if (vm.authExpired) {
-            item { FinAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { FinAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { FinNoticeCard("⚠️ $it", FinancePalette.red500, dark) } }
 

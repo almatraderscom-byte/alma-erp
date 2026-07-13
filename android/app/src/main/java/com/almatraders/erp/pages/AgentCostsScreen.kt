@@ -280,7 +280,7 @@ fun AgentCostsScreen(ctx: PushCtx) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         if (vm.authExpired) {
-            item { CostAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { CostAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { err ->
             item { CostErrorCard(err, dark) { scope.launch { vm.load() } } }

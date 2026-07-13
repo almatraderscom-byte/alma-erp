@@ -281,7 +281,7 @@ fun TradingStaffScreen(ctx: PushCtx) {
                 }
             }
             if (vm.authExpired) {
-                item { TSAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+                item { TSAuthCard(dark) { ctx.openSmart("/login", "Login") } }
             }
             vm.error?.let { item { TSNoticeCard("⚠ $it", TSPalette.red500, dark) } }
 

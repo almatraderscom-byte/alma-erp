@@ -213,7 +213,7 @@ fun SettingsUsersScreen(ctx: PushCtx) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (vm.authExpired) {
-            item { UsersAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { UsersAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { UsersNoticeCard(it, SettingsUsersPalette.red500, dark) } }
 

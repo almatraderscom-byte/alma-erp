@@ -388,7 +388,7 @@ fun ExpensesScreen(ctx: PushCtx) {
             }
         }
         if (vm.authExpired) {
-            item { ExpAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { ExpAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { ExpNoticeCard("⚠️ $it", ExpensePalette.red500, dark) } }
         vm.notice?.let { item { ExpNoticeCard("✓ $it", ExpensePalette.emerald600, dark) } }

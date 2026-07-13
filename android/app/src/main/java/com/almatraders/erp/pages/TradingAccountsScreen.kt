@@ -575,7 +575,7 @@ fun TradingAccountsScreen(ctx: PushCtx) {
                 }
             }
             if (vm.authExpired) {
-                item { TradingAccAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+                item { TradingAccAuthCard(dark) { ctx.openSmart("/login", "Login") } }
             }
             vm.error?.let { err ->
                 item {

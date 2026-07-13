@@ -769,7 +769,7 @@ fun EmployeesScreen(ctx: PushCtx) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (vm.authExpired) {
-            item { EmpAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { EmpAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { EmpNotice("⚠️ $it", EmpPalette.red500, dark) } }
         vm.notice?.let { item { EmpNotice("✓ $it", EmpPalette.emerald600, dark) } }

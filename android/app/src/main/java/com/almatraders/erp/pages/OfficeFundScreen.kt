@@ -447,7 +447,7 @@ fun OfficeFundScreen(ctx: PushCtx) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (vm.authExpired) {
-            item { OfAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { OfAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         if (vm.adminOnly) {
             item { OfAdminOnlyCard(dark) }

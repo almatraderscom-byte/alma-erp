@@ -436,7 +436,7 @@ fun TradingHrScreen(ctx: PushCtx) {
             item { Spacer(Modifier.height(2.dp)) }
             item { HRKpiBoard(vm.kpis, vm.employees.size, dark) }
 
-            if (vm.authExpired) item { HRAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            if (vm.authExpired) item { HRAuthCard(dark) { ctx.openSmart("/login", "Login") } }
             vm.error?.let { item { HRErrorCard(it, dark) } }
 
             if (vm.loading && !vm.loadedOnce) {

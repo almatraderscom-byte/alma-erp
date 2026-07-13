@@ -298,7 +298,7 @@ fun SettingsNotificationsScreen(ctx: PushCtx) {
         }
 
         if (vm.authExpired) {
-            item { NotifAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { NotifAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { NotifNoticeCard("⚠️ $it", SettingsNotifPalette.red500, dark) } }
         vm.notice?.let { item { NotifNoticeCard("✓ $it", SettingsNotifPalette.emerald600, dark) } }

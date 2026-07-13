@@ -492,7 +492,7 @@ fun CreativeStudioScreen(ctx: PushCtx) {
                     color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                     modifier = Modifier
                         .background(CsPalette.cta, CircleShape)
-                        .plainClick { ctx.openWebForced("/login", "Login") }
+                        .plainClick { ctx.openSmart("/login", "Login") }
                         .padding(horizontal = 14.dp, vertical = 6.dp),
                 )
             }

@@ -645,7 +645,7 @@ fun AttendanceScreen(ctx: PushCtx) {
         }
 
         if (vm.authExpired) {
-            item { AttAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { AttAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { AttNoticeCard("⚠ $it", AttPalette.red500, dark) } }
         vm.notice?.let { item { AttNoticeCard("✓ $it", AttPalette.emerald600, dark) } }

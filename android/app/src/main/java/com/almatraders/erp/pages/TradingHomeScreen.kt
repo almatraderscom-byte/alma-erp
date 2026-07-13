@@ -554,7 +554,7 @@ fun TradingHomeScreen(ctx: PushCtx) {
                 }
             }
             if (vm.authExpired) {
-                item { THAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+                item { THAuthCard(dark) { ctx.openSmart("/login", "Login") } }
             }
             vm.error?.let { item { THErrorCard(it, dark) } }
 

@@ -530,7 +530,7 @@ fun StaffMonitorScreen(ctx: PushCtx) {
         item { SmHeaderBar(vm, dark) }
         smDayChips(vm, dark, scope)
         if (vm.authExpired) {
-            item { SmAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { SmAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         if (vm.error != null && vm.data == null) {
             item { SmErrorCard(vm.error ?: "", dark) { scope.launch { vm.load() } } }

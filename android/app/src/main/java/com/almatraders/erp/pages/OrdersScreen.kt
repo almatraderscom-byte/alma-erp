@@ -540,7 +540,7 @@ fun OrdersScreen(ctx: PushCtx) {
                 }
             }
             if (vm.authExpired) {
-                item { AuthExpiredCard(dark) { ctx.openWebForced("/login", "Login") } }
+                item { AuthExpiredCard(dark) { ctx.openSmart("/login", "Login") } }
             }
             vm.error?.let { err ->
                 item { ErrorCard(err, dark) }

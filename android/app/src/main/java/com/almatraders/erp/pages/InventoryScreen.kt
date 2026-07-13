@@ -456,7 +456,7 @@ fun InventoryScreen(ctx: PushCtx) {
                 }
             }
             if (vm.authExpired) {
-                item { InvAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+                item { InvAuthCard(dark) { ctx.openSmart("/login", "Login") } }
             }
             vm.error?.let { item { InvNoticeLine(it, InvPalette.red500, dark) } }
             vm.notice?.let { item { InvNoticeLine(it, InvPalette.positive(dark), dark) } }

@@ -412,7 +412,7 @@ fun TargetControlScreen(ctx: PushCtx) {
             item { TCDateRow(vm, dark) { scope.launch { vm.load() } } }
             item { TCTabChips(vm, dark) }
 
-            if (vm.authExpired) item { TCAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            if (vm.authExpired) item { TCAuthCard(dark) { ctx.openSmart("/login", "Login") } }
             vm.error?.let { item { TCErrorCard(it, dark) } }
 
             when (vm.tab) {

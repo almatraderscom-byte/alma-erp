@@ -204,6 +204,10 @@ fun NativeLoginScreen(ctx: PushCtx) {
                 is LoginResult.Success -> {
                     welcome = r.name
                     password = ""
+                    // Refresh identity so role-based nav + data appear immediately (the
+                    // fix for "logged in but nothing role-based showed"). Bumps authVersion
+                    // → every screen keyed on it re-fetches.
+                    com.almatraders.erp.shell.AlmaSession.reload()
                     delay(600)
                     ctx.pop()   // signed in — leave the login screen
                 }

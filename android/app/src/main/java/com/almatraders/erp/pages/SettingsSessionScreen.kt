@@ -213,7 +213,7 @@ fun SettingsSessionScreen(ctx: PushCtx) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Spacer(Modifier.height(4.dp))
-        if (vm.authExpired) SessionAuthCard(dark) { ctx.openWebForced("/login", "Login") }
+        if (vm.authExpired) SessionAuthCard(dark) { ctx.openSmart("/login", "Login") }
         vm.error?.let { SessionNoticeCard(it, dark) }
 
         if (vm.loading && vm.user == null && vm.health == null) {

@@ -1101,7 +1101,7 @@ fun AssistantScreen(ctx: PushCtx) {
                             .padding(top = 6.dp)
                             .clip(CircleShape)
                             .background(AgentPal.coral)
-                            .plainClick { ctx.openWebForced("/login", "Login") }
+                            .plainClick { ctx.openSmart("/login", "Login") }
                             .padding(horizontal = 14.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),

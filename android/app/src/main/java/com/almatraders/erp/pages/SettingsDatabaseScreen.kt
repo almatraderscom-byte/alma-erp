@@ -205,7 +205,7 @@ fun SettingsDatabaseScreen(ctx: PushCtx) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Spacer(Modifier.height(4.dp))
-        if (vm.authExpired) DatabaseAuthCard(dark) { ctx.openWebForced("/login", "Login") }
+        if (vm.authExpired) DatabaseAuthCard(dark) { ctx.openSmart("/login", "Login") }
         vm.error?.let { DatabaseNoticeCard(it, DatabasePalette.red500, dark) }
 
         if (vm.loading && vm.status == null) {

@@ -241,7 +241,7 @@ fun PaymentAccountsScreen(ctx: PushCtx) {
         }
 
         if (vm.authExpired) {
-            item { PayAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { PayAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { PayNoticeCard("⚠️ $it", PayAcctPalette.red500, dark) } }
         vm.notice?.let { item { PayNoticeCard("✓ $it", PayAcctPalette.emerald600, dark) } }

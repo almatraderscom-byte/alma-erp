@@ -193,7 +193,7 @@ fun AgentWhatsappScreen(ctx: PushCtx) {
             }
         }
         if (vm.authExpired) {
-            item { WaAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { WaAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.takeIf { it.isNotEmpty() }?.let {
             item {

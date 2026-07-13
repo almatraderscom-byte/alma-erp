@@ -546,7 +546,7 @@ fun TradingTelegramScreen(ctx: PushCtx) {
             }
             item { TtTabChips(vm, canManage, dark, scope) }
             if (vm.authExpired) {
-                item { TtAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+                item { TtAuthCard(dark) { ctx.openSmart("/login", "Login") } }
             }
             vm.error?.let { item { TtErrorCard(it, dark) } }
 

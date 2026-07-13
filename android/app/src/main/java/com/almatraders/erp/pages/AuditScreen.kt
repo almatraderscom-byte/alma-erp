@@ -201,7 +201,7 @@ fun AuditScreen(ctx: PushCtx) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (vm.authExpired) {
-            item { AuditAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { AuditAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { AuditNotice(it, AuditPalette.red500, dark) } }
 

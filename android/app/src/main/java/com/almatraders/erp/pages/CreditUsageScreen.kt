@@ -589,7 +589,7 @@ fun CreditUsageScreen(ctx: PushCtx) {
             CUSegment(listOf("Usage", "Logs"), pane, dark) { pane = it }
         }
         if (vm.authExpired) {
-            item { CUAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { CUAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { CUErrorCard(it, dark) } }
         if (vm.loading && vm.summary == null) {

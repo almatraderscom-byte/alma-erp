@@ -260,7 +260,7 @@ fun ActivityScreen(ctx: PushCtx) {
             }
         }
         if (vm.authExpired) {
-            item { ActAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { ActAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { err ->
             item { ActErrorCard(err, dark) { scope.launch { vm.load() } } }

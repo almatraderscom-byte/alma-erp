@@ -323,7 +323,7 @@ fun SystemDiagnosticsScreen(ctx: PushCtx) {
         }
 
         if (vm.authExpired) {
-            item { SysDiagAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { SysDiagAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { SysDiagNotice(it, SysDiagPalette.red500, dark) } }
 

@@ -751,7 +751,7 @@ fun PortalScreen(ctx: PushCtx) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (vm.authExpired) {
-            item { PortalAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { PortalAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { PortalNoticeCard("⚠️ $it", PortalPalette.red500, dark) } }
         vm.notice?.let { item { PortalNoticeCard("✓ $it", PortalPalette.emerald600, dark) } }

@@ -247,7 +247,7 @@ fun PortalExpenseScreen(ctx: PushCtx) {
     ) {
         item { ExpenseHeader(dark) }
         if (vm.authExpired) {
-            item { ExpenseAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+            item { ExpenseAuthCard(dark) { ctx.openSmart("/login", "Login") } }
         }
         vm.error?.let { item { ExpenseNoticeCard("⚠️ $it", PortalExpensePalette.red500, dark) } }
         vm.notice?.let { item { ExpenseNoticeCard("✓ $it", PortalExpensePalette.emerald600, dark) } }

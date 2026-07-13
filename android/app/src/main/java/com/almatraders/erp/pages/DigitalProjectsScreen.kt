@@ -425,7 +425,7 @@ fun DigitalProjectsScreen(ctx: PushCtx) {
             }
 
             if (vm.authExpired) {
-                item { ProjectsAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+                item { ProjectsAuthCard(dark) { ctx.openSmart("/login", "Login") } }
             }
             vm.error?.let { item { ProjectsNoticeCard("⚠ $it", DigitalProjectsPalette.red500, dark) } }
 

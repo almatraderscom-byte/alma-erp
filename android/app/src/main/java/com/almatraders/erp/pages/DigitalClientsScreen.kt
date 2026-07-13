@@ -446,7 +446,7 @@ fun DigitalClientsScreen(ctx: PushCtx) {
             }
 
             if (vm.authExpired) {
-                item { ClientsAuthCard(dark) { ctx.openWebForced("/login", "Login") } }
+                item { ClientsAuthCard(dark) { ctx.openSmart("/login", "Login") } }
             }
             vm.error?.let { item { ClientsNoticeCard("⚠ $it", DigitalClientsPalette.red500, dark) } }
 
