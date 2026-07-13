@@ -4712,6 +4712,12 @@ struct AssistantScreen: View {
                     let next = distance < 120
                     if next != nearBottom { nearBottom = next }
                 }
+                // iOS 18+: the GeometryReader-preference trick above stops firing
+                // DURING user scrolls under the new scroll system (sim-verified on
+                // iOS 26: two screens up, no preference update → arrow never showed).
+                // onScrollGeometryChange is the supported live signal; the preference
+                // path stays as the iOS 17 fallback.
+                .modifier(AgentNearBottomScrollModifier(nearBottom: $nearBottom))
                 .onChange(of: vm.messages.last?.text) { _, _ in
                     guard nearBottom else { return }
                     scheduleScrollToBottom(proxy: proxy)
@@ -4868,6 +4874,26 @@ struct AssistantScreen: View {
 struct AgentScrollBottomKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+/// iOS 18+ live near-bottom tracking for the assistant thread. The old
+/// GeometryReader/PreferenceKey pattern does not deliver updates while the user
+/// is dragging under the iOS 18/26 scroll system, so the scroll-down arrow never
+/// appeared (build-70 sim finding). `onScrollGeometryChange` fires continuously.
+struct AgentNearBottomScrollModifier: ViewModifier {
+    @Binding var nearBottom: Bool
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollGeometryChange(for: Bool.self) { g in
+                g.contentSize.height + g.contentInsets.bottom
+                    - (g.contentOffset.y + g.containerSize.height) < 120
+            } action: { _, isNear in
+                if isNear != nearBottom { nearBottom = isNear }
+            }
+        } else {
+            content
+        }
+    }
 }
 
 /// Measured height of the assistant scroll viewport (issue #2 build 69).
