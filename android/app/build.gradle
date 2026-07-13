@@ -1,4 +1,6 @@
 apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
+apply plugin: 'org.jetbrains.kotlin.plugin.compose'
 
 android {
     namespace "com.almatraders.erp"
@@ -31,10 +33,33 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // Real Android phones are ARM — dropping the x86 (emulator-only) ABIs keeps
+            // the release download small despite the ~25MB/ABI Agora native libs.
+            ndk {
+                abiFilters 'arm64-v8a', 'armeabi-v7a'
+            }
             if (System.getenv('ALMA_ANDROID_KEYSTORE_PATH')) {
                 signingConfig signingConfigs.release
             }
         }
+    }
+    // Native Compose screens (ALMA Lifestyle native shell). Compose compiler comes from
+    // the org.jetbrains.kotlin.plugin.compose Gradle plugin (Kotlin 2.x way) — no
+    // composeOptions block needed.
+    buildFeatures {
+        compose true
+    }
+    kotlinOptions {
+        jvmTarget = '21'
+        // Native Compose screens use Material3/Foundation experimental APIs (ModalBottomSheet,
+        // FlowRow, etc.) throughout — opt in module-wide instead of per-composable annotations.
+        freeCompilerArgs += [
+            '-opt-in=androidx.compose.material3.ExperimentalMaterial3Api',
+            '-opt-in=androidx.compose.foundation.layout.ExperimentalLayoutApi',
+            '-opt-in=androidx.compose.foundation.ExperimentalFoundationApi',
+            '-opt-in=androidx.compose.animation.ExperimentalAnimationApi',
+            '-opt-in=androidx.compose.ui.ExperimentalComposeUiApi',
+        ]
     }
 }
 
@@ -50,6 +75,24 @@ dependencies {
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
+
+    // Native Compose screens (ALMA Lifestyle native shell — Kotlin/Compose twin of the
+    // iOS SwiftUI program; same JSON APIs via the WebView cookie session)
+    implementation platform('androidx.compose:compose-bom:2024.02.02')
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.foundation:foundation'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.material:material-icons-extended'
+    implementation 'androidx.activity:activity-compose:1.8.2'
+    implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.7.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    implementation 'io.coil-kt:coil-compose:2.5.0'
+    // AlmaApi transport (HttpURLConnection can't send PATCH) + document-start JS injection
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation "androidx.webkit:webkit:$androidxWebkitVersion"
+    // Agora RTC (audio-only) — native Office intercom / walkie-talkie + 1:1 call.
+    implementation 'io.agora.rtc:voice-sdk:4.5.1'
+
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

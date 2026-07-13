@@ -9,6 +9,11 @@ buildscript {
     dependencies {
         classpath 'com.android.tools.build:gradle:8.2.1'
         classpath 'com.google.gms:google-services:4.4.0'
+        // Native Compose screens (ALMA Lifestyle native shell — mirrors the iOS SwiftUI program).
+        // 2.2.20 matches the OneSignal Capacitor plugin's recommended kotlin_version — a 1.9
+        // compiler on the shared classpath can't read its 2.x stdlib metadata.
+        classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.20'
+        classpath 'org.jetbrains.kotlin:compose-compiler-gradle-plugin:2.2.20'
 
         // NOTE: Do not place your application dependencies here; they belong
         // in the individual module build.gradle files
