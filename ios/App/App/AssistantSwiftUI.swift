@@ -2136,6 +2136,12 @@ struct AgentMessageRow: View {
                             } label: {
                                 Label("কপি করুন", systemImage: "doc.on.doc")
                             }
+                            Button {
+                                UISelectionFeedbackGenerator().selectionChanged()
+                                onActivitySheet(.init(message: message, kind: .selectText, slice: message.text))
+                            } label: {
+                                Label("টেক্সট সিলেক্ট করুন", systemImage: "text.cursor")
+                            }
                         }
                 }
             }
@@ -2156,8 +2162,8 @@ struct AgentMessageRow: View {
                     if !message.blocks.isEmpty {
                         // Claude composition — chronological prose ↔ compact rows;
                         // rows persist after settle (tap → sheets), prose never moves.
-                        AgentTurnBlocksView(message: message, pal: pal, vm: vm, onToolTap: onToolTap) { kind in
-                            onActivitySheet(.init(message: message, kind: kind))
+                        AgentTurnBlocksView(message: message, pal: pal, vm: vm, onToolTap: onToolTap) { kind, slice in
+                            onActivitySheet(.init(message: message, kind: kind, slice: slice))
                         }
                     } else {
                         // Persisted history turn — one collapsed summary row above the prose.
@@ -2193,6 +2199,12 @@ struct AgentMessageRow: View {
                                                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                                             } label: {
                                                 Label("কপি করুন", systemImage: "doc.on.doc")
+                                            }
+                                            Button {
+                                                UISelectionFeedbackGenerator().selectionChanged()
+                                                onActivitySheet(.init(message: message, kind: .selectText, slice: message.text))
+                                            } label: {
+                                                Label("টেক্সট সিলেক্ট করুন", systemImage: "text.cursor")
                                             }
                                         }
                                 }
@@ -2545,11 +2557,15 @@ struct AgentToolIOSheet: View {
 /// Opens when the owner taps a compact 🕐 Thinking / 🔍 Searched / settled summary row.
 @available(iOS 17.0, *)
 struct AgentActivitySheetRequest: Identifiable, Equatable {
-    enum Kind: Equatable { case thoughtProcess, summary }
+    enum Kind: Equatable { case thoughtProcess, summary, selectText }
 
     let message: AgentChatMessage
     let kind: Kind
-    var id: String { "\(message.id)-\(kind == .thoughtProcess ? "thought" : "summary")" }
+    /// Row-scoped payload: a thinking row's OWN burst (owner report build-70: every
+    /// row used to open the WHOLE trace from the first thought), or the text opened
+    /// for manual selection (selectText). nil → whole-message fallback.
+    var slice: String? = nil
+    var id: String { "\(message.id)-\(kind)-\(slice?.hashValue ?? 0)" }
 }
 
 @available(iOS 17.0, *)
@@ -2573,7 +2589,8 @@ struct AgentThoughtProcessSheet: View {
                         .background(Color.white.opacity(0.06), in: Circle())
                 }
                 Spacer()
-                Text(request.kind == .thoughtProcess ? "Thought process" : "Summary")
+                Text(request.kind == .thoughtProcess ? "Thought process"
+                     : request.kind == .selectText ? "টেক্সট সিলেক্ট করুন" : "Summary")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(pal.ink)
                 Spacer()
@@ -2588,16 +2605,17 @@ struct AgentThoughtProcessSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    if request.kind == .thoughtProcess {
-                        thoughtProcessBody(pal)
-                    } else {
+                    if request.kind == .summary {
                         summaryTimelineBody(pal)
+                    } else {
+                        // thoughtProcess AND selectText — plain selectable prose.
+                        thoughtProcessBody(pal)
                     }
                 }
                 .padding(.horizontal, 16).padding(.bottom, 28)
             }
         }
-        .presentationDetents(request.kind == .thoughtProcess ? [.large] : [.medium, .large])
+        .presentationDetents(request.kind == .summary ? [.medium, .large] : [.large])
         .presentationDragIndicator(.visible)
         .presentationCornerRadius(22)
         .presentationBackground {
@@ -2608,7 +2626,10 @@ struct AgentThoughtProcessSheet: View {
     }
 
     @ViewBuilder private func thoughtProcessBody(_ pal: AgentPalette) -> some View {
-        let prose = combinedThinkingText
+        // Row-scoped slice first (this step's OWN thought / the tapped text);
+        // whole-trace fallback for the settled-summary header path.
+        let slice = request.slice?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let prose = slice.isEmpty ? combinedThinkingText : slice
         if prose.isEmpty {
             Text("এখনো কোনো চিন্তার বিবরণ নেই।")
                 .font(.system(size: 13))
@@ -3412,7 +3433,7 @@ struct AgentTurnBlocksView: View {
     let pal: AgentPalette
     let vm: AssistantVM
     let onToolTap: (AgentChatMessage.Tool) -> Void
-    let onActivitySheet: (AgentActivitySheetRequest.Kind) -> Void
+    let onActivitySheet: (AgentActivitySheetRequest.Kind, String?) -> Void
 
     private static let maxVisibleRows = 4
 
@@ -3437,7 +3458,7 @@ struct AgentTurnBlocksView: View {
                             AgentCompactActivityRow(icon: "clock.arrow.circlepath",
                                                     label: "আগের \(almaBn(hiddenCount)) ধাপ",
                                                     labelColor: pal.muted, iconColor: pal.muted) {
-                                onActivitySheet(.summary)
+                                onActivitySheet(.summary, nil)
                             }
                         }
                     } else {
@@ -3470,6 +3491,14 @@ struct AgentTurnBlocksView: View {
                         } label: {
                             Label("কপি করুন", systemImage: "doc.on.doc")
                         }
+                        // Owner ask build-70 round 2: partial copy — opens the text
+                        // in a selectable sheet so any portion can be marked+copied.
+                        Button {
+                            UISelectionFeedbackGenerator().selectionChanged()
+                            onActivitySheet(.selectText, text)
+                        } label: {
+                            Label("টেক্সট সিলেক্ট করুন", systemImage: "text.cursor")
+                        }
                         if message.text.trimmingCharacters(in: .whitespacesAndNewlines) != text
                             .trimmingCharacters(in: .whitespacesAndNewlines), !message.text.isEmpty {
                             Button {
@@ -3488,15 +3517,17 @@ struct AgentTurnBlocksView: View {
         switch a.kind {
         case .thinking:
             // Tail thinking row = the LIVE changing headline → shimmer (Claude parity).
+            // Tap → ONLY this step's own burst — never the whole trace from the
+            // first thought (owner report build-70 round 2).
             AgentCompactActivityRow(icon: "clock", label: a.label, italic: true,
                                     labelColor: pal.muted, iconColor: pal.muted,
                                     shimmer: isTail) {
-                onActivitySheet(.thoughtProcess)
+                onActivitySheet(.thoughtProcess, a.thinkFull)
             }
         case .search:
             AgentCompactActivityRow(icon: "magnifyingglass", label: a.label,
                                     labelColor: pal.muted, iconColor: pal.muted) {
-                onActivitySheet(.summary)
+                onActivitySheet(.summary, nil)
             }
         case .tool:
             // A step still RUNNING (no result yet) shimmers its icon+title while it
@@ -3509,7 +3540,7 @@ struct AgentTurnBlocksView: View {
                 if let t = message.tools.first(where: { $0.id == a.toolId }) {
                     onToolTap(t)
                 } else {
-                    onActivitySheet(.summary)
+                    onActivitySheet(.summary, nil)
                 }
             }
         }
@@ -5366,10 +5397,14 @@ struct AssistantScreen: View {
                     if h > 0, abs(h - scrollViewportH) > 0.5 { scrollViewportH = h }
                 }
                 .onPreferenceChange(AgentScrollBottomKey.self) { contentMaxY in
-                    let viewport = scrollViewportH > 0 ? scrollViewportH : UIScreen.main.bounds.height
-                    let distance = contentMaxY - viewport
-                    let next = distance < 120
-                    if next != nearBottom { nearBottom = next }
+                    // iOS 17 ONLY — on 18+ the modifier below owns nearBottom; this
+                    // preference fires on layout (not scroll) and would fight it.
+                    if #unavailable(iOS 18.0) {
+                        let viewport = scrollViewportH > 0 ? scrollViewportH : UIScreen.main.bounds.height
+                        let distance = contentMaxY - viewport
+                        let next = distance < 120
+                        if next != nearBottom { nearBottom = next }
+                    }
                 }
                 // iOS 18+: the GeometryReader-preference trick above stops firing
                 // DURING user scrolls under the new scroll system (sim-verified on
@@ -5571,9 +5606,12 @@ struct AgentNearBottomScrollModifier: ViewModifier {
     @Binding var nearBottom: Bool
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
+            // Insets deliberately EXCLUDED: the composer's safe-area inset (~140pt
+            // with the model row) does not extend the reachable contentOffset, so
+            // including it left distance ≈ insetB even at rest at the true bottom —
+            // the arrow lingered forever (owner report, build-70 round 2).
             content.onScrollGeometryChange(for: Bool.self) { g in
-                g.contentSize.height + g.contentInsets.bottom
-                    - (g.contentOffset.y + g.containerSize.height) < 120
+                g.contentSize.height - (g.contentOffset.y + g.containerSize.height) < 120
             } action: { _, isNear in
                 if isNear != nearBottom { nearBottom = isNear }
             }
