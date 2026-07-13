@@ -14,6 +14,9 @@ buildscript {
         // compiler on the shared classpath can't read its 2.x stdlib metadata.
         classpath 'org.jetbrains.kotlin:kotlin-gradle-plugin:2.2.20'
         classpath 'org.jetbrains.kotlin:compose-compiler-gradle-plugin:2.2.20'
+        // Baseline Profile generation (startup + scroll AOT hints → faster cold start,
+        // less jank). 1.2.x is the AGP 8.2-compatible line.
+        classpath 'androidx.benchmark:benchmark-baseline-profile-gradle-plugin:1.2.4'
 
         // NOTE: Do not place your application dependencies here; they belong
         // in the individual module build.gradle files
