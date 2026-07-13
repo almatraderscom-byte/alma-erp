@@ -39,6 +39,15 @@ object AlmaSession {
     var authVersion by mutableStateOf(0)
         private set
 
+    /** Tri-state auth signal for the startup gate:
+     *   null  = not yet checked / couldn't reach the server (offline) → don't gate,
+     *   true  = /users/me returned a user → signed in,
+     *   false = server said 401/403 → NOT signed in → show the native login gate.
+     *  Only a definite `false` gates, so an offline launch with a valid cookie still
+     *  opens the app instead of wrongly forcing a login. */
+    var authed by mutableStateOf<Boolean?>(null)
+        private set
+
     /** SUPER_ADMIN or ADMIN — the web `isAdminRole` gate for business-module writes. */
     val isAdmin: Boolean get() = isOwner || role == "SUPER_ADMIN" || role == "ADMIN"
 
@@ -64,13 +73,18 @@ object AlmaSession {
 
     suspend fun load(force: Boolean = false) {
         if (loaded && !force) return
-        // Role from /api/users/me (authoritative role string).
+        // Role from /api/users/me (authoritative role string). A 401/403 here is the
+        // definite "not signed in" signal that drives the startup login gate; a network
+        // error leaves `authed` unknown (null) so we never gate an offline-but-valid user.
         try {
             val me = AlmaApi.getObject("/api/users/me")
             val u = me.optJSONObject("user") ?: me.optJSONObject("data") ?: me
             u.str("role")?.let { role = it }
             u.flexBool("isSystemOwner")?.let { if (it) isOwner = true }
-        } catch (_: Exception) { /* leave least-privilege */ }
+            authed = true
+        } catch (e: AlmaApiException.NotAuthenticated) {
+            authed = false
+        } catch (_: Exception) { /* offline / transient — leave authed unknown */ }
         // Owner flag + business access from more-pulse (best-effort).
         try {
             val pulse = AlmaApi.getObject("/api/assistant/more-pulse")
@@ -95,12 +109,13 @@ object AlmaSession {
         load(force = true)
     }
 
-    /** Clear all identity on explicit sign-out (fail closed to STAFF). */
+    /** Clear all identity on explicit sign-out (fail closed to STAFF + gate to login). */
     fun signedOut() {
         isOwner = false
         role = null
         businessAccess = emptyList()
         loaded = false
+        authed = false
         authVersion++
     }
 }

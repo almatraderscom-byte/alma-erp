@@ -562,6 +562,9 @@ private class MoreState {
                 }
                 cm.flush()
             }
+            // Flip identity to signed-out so the startup login gate reappears immediately
+            // (main thread — state write). Without this the app kept acting "logged in".
+            com.almatraders.erp.shell.AlmaSession.signedOut()
         } finally {
             signingOut = false
         }

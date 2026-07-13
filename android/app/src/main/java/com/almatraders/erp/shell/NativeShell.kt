@@ -352,6 +352,21 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
         // Floats over every tab + pushed screen; tap = office group chat, long-press =
         // walkie-talkie intercom. Self-hides when there's no office session.
         com.almatraders.erp.pages.OfficeChatFloatingHead(dark = dark) { p, t -> pushWebForced(p, t) }
+
+        // ── Startup native-login gate ──
+        // If the server says we're NOT signed in (authed == false), cover the whole shell
+        // with the native Sign-in screen so the app opens straight to native login — no
+        // dashboard "session missing" card, no web login. A definite false only: an
+        // offline launch (authed == null) still opens the app so a cached session works.
+        // On success NativeLoginScreen calls AlmaSession.reload() → authed flips true →
+        // this gate disappears and the shell shows with full role-based nav.
+        // Hidden while a screen is pushed (Forgot-password / web-login escape) so those
+        // are reachable; returns when that screen is popped. Cleared on successful login.
+        if (AlmaSession.authed == false && stack.isEmpty()) {
+            AuroraBackground(dark) {
+                com.almatraders.erp.pages.NativeLoginScreen(pushCtx)
+            }
+        }
     }
 }
 
