@@ -2554,6 +2554,36 @@ struct AgentToolIOSheet: View {
 
 // MARK: - Thought process / Summary bottom sheet (Claude iOS parity)
 
+/// UIKit-backed selectable text for the "টেক্সট সিলেক্ট করুন" sheet. SwiftUI's
+/// `.textSelection(.enabled)` on iOS offers only whole-block copy — real selection
+/// grabbers + partial copy + the system edit menu need a UITextView (owner ask
+/// build-70 round 3, Claude-app parity).
+@available(iOS 17.0, *)
+struct AlmaSelectableTextView: UIViewRepresentable {
+    let text: String
+    let inkColor: UIColor
+
+    func makeUIView(context: Context) -> UITextView {
+        let tv = UITextView()
+        tv.isEditable = false
+        tv.isSelectable = true
+        tv.isScrollEnabled = true
+        tv.alwaysBounceVertical = true
+        tv.backgroundColor = .clear
+        tv.font = .systemFont(ofSize: 16)
+        tv.textColor = inkColor
+        tv.tintColor = UIColor(AgentPalette.coral)   // selection handles/highlight
+        tv.textContainerInset = UIEdgeInsets(top: 14, left: 12, bottom: 28, right: 12)
+        tv.text = text
+        return tv
+    }
+
+    func updateUIView(_ tv: UITextView, context: Context) {
+        if tv.text != text { tv.text = text }
+        tv.textColor = inkColor
+    }
+}
+
 /// Opens when the owner taps a compact 🕐 Thinking / 🔍 Searched / settled summary row.
 @available(iOS 17.0, *)
 struct AgentActivitySheetRequest: Identifiable, Equatable {
@@ -2603,16 +2633,24 @@ struct AgentThoughtProcessSheet: View {
                 .frame(height: 1)
                 .padding(.bottom, 2)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if request.kind == .summary {
-                        summaryTimelineBody(pal)
-                    } else {
-                        // thoughtProcess AND selectText — plain selectable prose.
-                        thoughtProcessBody(pal)
+            if request.kind == .selectText {
+                // Claude-app parity (owner ask build-70 round 3): REAL native text
+                // selection — tap/long-press marks with grabbers, partial copy,
+                // system Copy/Translate/Share menu. SwiftUI Text can only copy the
+                // whole block on iOS, so this must be a UITextView.
+                AlmaSelectableTextView(text: request.slice ?? message.text,
+                                       inkColor: UIColor(pal.ink))
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        if request.kind == .summary {
+                            summaryTimelineBody(pal)
+                        } else {
+                            thoughtProcessBody(pal)
+                        }
                     }
+                    .padding(.horizontal, 16).padding(.bottom, 28)
                 }
-                .padding(.horizontal, 16).padding(.bottom, 28)
             }
         }
         .presentationDetents(request.kind == .summary ? [.medium, .large] : [.large])
