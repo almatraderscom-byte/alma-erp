@@ -34,12 +34,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -105,6 +108,8 @@ private data class PortalExpenseClaim(
     val amount: Int,
     val category: String,
     val note: String?,
+    val expenseDate: String?,
+    val hasReceipt: Boolean,
     val status: String,
     val createdAt: String?,
 ) {
@@ -123,6 +128,8 @@ private data class PortalExpenseClaim(
             amount = o.flexInt("amount") ?: 0,
             category = o.str("category") ?: "Reimbursement",
             note = o.str("note"),
+            expenseDate = o.str("expenseDate"),
+            hasReceipt = o.optBoolean("hasReceipt", false),
             status = o.str("status") ?: "PENDING",
             createdAt = o.str("createdAt"),
         )
@@ -133,6 +140,17 @@ private data class PortalExpenseClaim(
 
 private const val EXPENSE_BUSINESS_ID = "ALMA_LIFESTYLE"
 
+/** One not-yet-submitted expense in the batch basket (owner concept: staff adds
+ *  many at once, then submits together — one approval per item server-side). */
+private data class ReimburseDraft(
+    val amount: Int,
+    val category: String,
+    val vendor: String,
+    val note: String,
+    val expenseDate: String,
+    val receiptAttachmentId: String?,
+)
+
 private class PortalExpenseState {
     var claims by mutableStateOf(listOf<PortalExpenseClaim>())
     var pendingTotal by mutableStateOf(0)
@@ -141,6 +159,7 @@ private class PortalExpenseState {
     var error by mutableStateOf<String?>(null)
     var notice by mutableStateOf<String?>(null)     // success line (the web's toast)
     var authExpired by mutableStateOf(false)
+    var drafts by mutableStateOf(listOf<ReimburseDraft>())
 
     /** Web: approvedTotal = sum of APPROVED claim amounts (already in the wallet). */
     val approvedTotal: Int
@@ -176,29 +195,41 @@ private class PortalExpenseState {
                 mapOf("business_id" to EXPENSE_BUSINESS_ID),
             )
             val data = resp.optJSONObject("data") ?: resp
-            data.str("id") ?: resp.str("id")
+            // /api/finance/receipts returns {ok, attachment:{id,…}} — read that first.
+            data.optJSONObject("attachment")?.str("id")
+                ?: data.str("id")
+                ?: resp.str("id")
         } catch (_: Exception) {
             null
         }
     }
 
-    /** POST one claim — same body the web submit() sends. Returns true on success. */
-    suspend fun submit(amount: Int, category: String, vendor: String, note: String, receiptAttachmentId: String? = null): Boolean {
-        if (submitting) return false
+    /** POST every basket item in ONE request (items[]) — each becomes its own
+     *  approval server-side, so the owner decides each expense independently. */
+    suspend fun submitAll(): Boolean {
+        if (submitting || drafts.isEmpty()) return false
         submitting = true
         notice = null
         try {
+            val items = org.json.JSONArray()
+            drafts.forEach { d ->
+                val item = JSONObject()
+                    .put("amount", d.amount)
+                    .put("category", d.category)
+                    .put("expense_date", d.expenseDate)
+                d.vendor.trim().takeIf { it.isNotEmpty() }?.let { item.put("vendor", it) }
+                d.note.trim().takeIf { it.isNotEmpty() }?.let { item.put("note", it) }
+                d.receiptAttachmentId?.takeIf { it.isNotEmpty() }?.let { item.put("receipt_attachment_id", it) }
+                items.put(item)
+            }
             val body = JSONObject()
                 .put("business_id", EXPENSE_BUSINESS_ID)
-                .put("amount", amount)
-                .put("category", category)
-            vendor.trim().takeIf { it.isNotEmpty() }?.let { body.put("vendor", it) }
-            note.trim().takeIf { it.isNotEmpty() }?.let { body.put("note", it) }
-            receiptAttachmentId?.takeIf { it.isNotEmpty() }?.let { body.put("receipt_attachment_id", it) }
+                .put("items", items)
 
             val resp = AlmaApi.send("POST", "/api/finance/reimbursement", body)
             val data = resp.optJSONObject("data") ?: resp
             notice = data.str("message") ?: "ফেরতের আবেদন পাঠানো হয়েছে।"
+            drafts = emptyList()
             load()
             return true
         } catch (e: AlmaApiException.NotAuthenticated) {
@@ -239,6 +270,7 @@ fun PortalExpenseScreen(ctx: PushCtx) {
     val vm = remember { PortalExpenseState() }
     val scope = rememberCoroutineScope()
     var showSubmit by remember { mutableStateOf(false) }
+    var confirmSubmitAll by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { vm.load() }
 
@@ -255,6 +287,14 @@ fun PortalExpenseScreen(ctx: PushCtx) {
         vm.notice?.let { item { ExpenseNoticeCard("✓ $it", PortalExpensePalette.emerald600, dark) } }
         item { ExpenseSummaryCards(vm, dark) { ctx.openWebForced("/portal", "My Desk") } }
         item { ExpenseNewClaimButton(dark) { showSubmit = true } }
+        if (vm.drafts.isNotEmpty()) {
+            item {
+                ExpenseBasketCard(vm, dark,
+                    onRemove = { i -> vm.drafts = vm.drafts.filterIndexed { idx, _ -> idx != i } },
+                    onSubmitAll = { confirmSubmitAll = true },
+                )
+            }
+        }
         item { ExpenseHistoryCard(vm, dark) }
         item { Spacer(Modifier.height(8.dp)) }
     }
@@ -265,12 +305,103 @@ fun PortalExpenseScreen(ctx: PushCtx) {
             PortalExpenseSubmitSheet(
                 vm.submitting, dark,
                 onUploadReceipt = { picked -> vm.uploadReceipt(picked) },
-            ) { amount, category, vendor, note, receiptId ->
-                scope.launch {
-                    if (vm.submit(amount, category, vendor, note, receiptId)) showSubmit = false
-                }
+            ) { amount, category, vendor, note, receiptId, expenseDate ->
+                vm.drafts = vm.drafts + ReimburseDraft(amount, category, vendor, note, expenseDate, receiptId)
+                showSubmit = false
             }
         }
+    }
+
+    if (confirmSubmitAll) {
+        val total = vm.drafts.sumOf { it.amount }
+        AlertDialog(
+            onDismissRequest = { confirmSubmitAll = false },
+            title = { Text("${vm.drafts.size}টি খরচ · মোট ${PortalExpenseFormat.money(total)}") },
+            text = { Text("সবগুলো একসাথে মালিকের Approval Center-এ যাবে — প্রতিটা আলাদা আলাদা অনুমোদন হবে। পাঠানোর পর সম্পাদনা করা যাবে না।") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmSubmitAll = false
+                    scope.launch { vm.submitAll() }
+                }) { Text("হ্যাঁ, একসাথে জমা দিন") }
+            },
+            dismissButton = { TextButton(onClick = { confirmSubmitAll = false }) { Text("বাতিল") } },
+        )
+    }
+}
+
+// ── Batch basket (owner concept: many expenses → one submit) ────────────────────────
+
+@Composable
+private fun ExpenseBasketCard(
+    vm: PortalExpenseState,
+    dark: Boolean,
+    onRemove: (Int) -> Unit,
+    onSubmitAll: () -> Unit,
+) {
+    val total = vm.drafts.sumOf { it.amount }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .almaGlass(dark, AlmaTheme.R_CARD)
+            .border(1.dp, PortalExpensePalette.coral.copy(alpha = 0.35f), RoundedCornerShape(AlmaTheme.R_CARD.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("জমা দেওয়ার তালিকা (${vm.drafts.size}টি)", color = AlmaTheme.ink(dark), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        vm.drafts.forEachIndexed { i, d ->
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                    Text(
+                        "${PortalExpenseFormat.money(d.amount)} · ${d.category}",
+                        color = AlmaTheme.ink(dark), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        d.expenseDate +
+                            (if (d.vendor.isNotEmpty()) " · ${d.vendor}" else "") +
+                            (if (d.receiptAttachmentId != null) " · 📎 রসিদ" else ""),
+                        color = AlmaTheme.inkSecondary(dark), fontSize = 10.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    "✕",
+                    color = AlmaTheme.inkSecondary(dark), fontSize = 12.sp,
+                    modifier = Modifier
+                        .background(AlmaTheme.fill(dark), CircleShape)
+                        .plainClick { onRemove(i) }
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+            if (i < vm.drafts.size - 1) HorizontalDivider(color = AlmaTheme.separator(dark))
+        }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(PortalExpensePalette.coral, RoundedCornerShape(AlmaTheme.R_CONTROL.dp))
+                .plainClick { if (!vm.submitting) onSubmitAll() }
+                .padding(vertical = 11.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (vm.submitting) {
+                CircularProgressIndicator(Modifier.size(14.dp), color = Color.White, strokeWidth = 2.dp)
+                Spacer(Modifier.size(8.dp))
+            }
+            Text(
+                "একসাথে জমা দিন (${vm.drafts.size}টি · ${PortalExpenseFormat.money(total)})",
+                color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Text(
+            "সব খরচ একসাথে মালিকের Approval Center-এ যাবে।",
+            color = AlmaTheme.inkSecondary(dark), fontSize = 9.sp, textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
@@ -361,7 +492,7 @@ private fun ExpenseNewClaimButton(dark: Boolean, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("＋ নতুন আবেদন", color = PortalExpensePalette.accentText(dark), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Text("＋ খরচ যোগ করুন", color = PortalExpensePalette.accentText(dark), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -414,15 +545,17 @@ private fun ExpenseClaimRow(claim: PortalExpenseClaim, dark: Boolean) {
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                claim.category, color = AlmaTheme.ink(dark), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                claim.category + (if (claim.hasReceipt) " 📎" else ""),
+                color = AlmaTheme.ink(dark), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
             claim.note?.takeIf { it.isNotEmpty() }?.let {
                 Text(it, color = AlmaTheme.inkSecondary(dark), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            PortalExpenseFormat.dateTime(claim.createdAt)?.let {
-                Text(it, color = AlmaTheme.inkSecondary(dark), fontSize = 10.sp)
-            }
+            Text(
+                (claim.expenseDate?.let { "খরচ: $it · " } ?: "") + (PortalExpenseFormat.dateTime(claim.createdAt) ?: ""),
+                color = AlmaTheme.inkSecondary(dark), fontSize = 10.sp,
+            )
         }
         Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
@@ -480,12 +613,13 @@ private fun ExpenseAuthCard(dark: Boolean, onLogin: () -> Unit) {
 
 // ── Submit sheet (web "নতুন আবেদন" card → native form + confirm step) ────────────────
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PortalExpenseSubmitSheet(
     submitting: Boolean,
     dark: Boolean,
     onUploadReceipt: suspend (PickedImage) -> String?,
-    onSubmit: (amount: Int, category: String, vendor: String, note: String, receiptAttachmentId: String?) -> Unit,
+    onAddToBasket: (amount: Int, category: String, vendor: String, note: String, receiptAttachmentId: String?, expenseDate: String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var receiptId by remember { mutableStateOf<String?>(null) }
@@ -512,7 +646,8 @@ private fun PortalExpenseSubmitSheet(
     var category by remember { mutableStateOf(categories[0]) }
     var vendor by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
-    var confirm by remember { mutableStateOf(false) }
+    var expenseDate by remember { mutableStateOf(PortalExpenseFormat.today()) }
+    var showDatePicker by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf<String?>(null) }
 
     val parsedAmount = amount.filter { it.isDigit() }.toIntOrNull() ?: 0
@@ -521,7 +656,7 @@ private fun PortalExpenseSubmitSheet(
         Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 26.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("নতুন আবেদন", color = AlmaTheme.ink(dark), fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        Text("খরচ যোগ করুন", color = AlmaTheme.ink(dark), fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
         localError?.let { Text("⚠️ $it", color = PortalExpensePalette.red500, fontSize = 12.sp) }
 
         ExpenseFieldLabel("টাকার অঙ্ক *", dark)
@@ -532,6 +667,17 @@ private fun PortalExpenseSubmitSheet(
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth(),
+        )
+
+        ExpenseFieldLabel("খরচের তারিখ *", dark)
+        Text(
+            "📅 $expenseDate",
+            color = AlmaTheme.ink(dark), fontSize = 13.sp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .almaGlass(dark, AlmaTheme.R_CONTROL)
+                .plainClick { showDatePicker = true }
+                .padding(horizontal = 13.dp, vertical = 11.dp),
         )
 
         ExpenseFieldLabel("খরচের ধরন", dark)
@@ -580,7 +726,7 @@ private fun PortalExpenseSubmitSheet(
             )
         }
 
-        Text("মালিক অনুমোদন করলে টাকা আপনার ওয়ালেটে যোগ হবে।", color = AlmaTheme.inkSecondary(dark), fontSize = 10.sp)
+        Text("যোগ করলে তালিকায় জমবে — এখনই পাঠানো হবে না। একসাথে যতগুলো দরকার যোগ করুন।", color = AlmaTheme.inkSecondary(dark), fontSize = 10.sp)
 
         Row(
             Modifier
@@ -589,36 +735,35 @@ private fun PortalExpenseSubmitSheet(
                 .plainClick {
                     if (parsedAmount <= 0) {
                         localError = "সঠিক একটি টাকার অঙ্ক দিন।"
+                    } else if (uploadingReceipt) {
+                        localError = "রসিদ আপলোড শেষ হওয়া পর্যন্ত অপেক্ষা করুন।"
                     } else if (!submitting) {
                         localError = null
-                        confirm = true
+                        onAddToBasket(parsedAmount, category, vendor, note, receiptId, expenseDate)
                     }
                 }
                 .padding(vertical = 11.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (submitting) {
-                CircularProgressIndicator(Modifier.size(14.dp), color = Color.White, strokeWidth = 2.dp)
-                Spacer(Modifier.size(8.dp))
-            }
-            Text("আবেদন পাঠান", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            Text("＋ তালিকায় যোগ করুন", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 
-    if (confirm) {
-        AlertDialog(
-            onDismissRequest = { confirm = false },
-            title = { Text("${PortalExpenseFormat.money(parsedAmount)} — $category") },
-            text = { Text("ফেরতের আবেদনটি মালিকের অনুমোদনের জন্য পাঠানো হবে। পাঠানোর পর সম্পাদনা করা যাবে না।") },
+    if (showDatePicker) {
+        val state = rememberDatePickerState(initialSelectedDateMillis = PortalExpenseFormat.ymdMillis(expenseDate))
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(onClick = {
-                    confirm = false
-                    onSubmit(parsedAmount, category, vendor, note, receiptId)
-                }) { Text("হ্যাঁ, আবেদন পাঠান") }
+                    state.selectedDateMillis?.let { expenseDate = PortalExpenseFormat.ymdFromMillis(it) }
+                    showDatePicker = false
+                }) { Text("ঠিক আছে") }
             },
-            dismissButton = { TextButton(onClick = { confirm = false }) { Text("বাতিল") } },
-        )
+            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("বাতিল") } },
+        ) {
+            DatePicker(state = state, title = { Text("খরচের তারিখ", modifier = Modifier.padding(16.dp)) })
+        }
     }
 }
 
@@ -666,6 +811,18 @@ private fun ExpenseCategoryChips(items: List<String>, selected: String, dark: Bo
 private object PortalExpenseFormat {
     /** Web <Money>: whole-taka with ৳ sign and thousand separators. */
     fun money(amount: Int): String = "৳" + String.format(Locale.US, "%,d", amount)
+
+    private val ymd = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+
+    /** Today in Asia/Dhaka as YYYY-MM-DD (web todayYmd twin). */
+    fun today(): String {
+        val f = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        f.timeZone = TimeZone.getTimeZone("Asia/Dhaka")
+        return f.format(Date())
+    }
+
+    fun ymdMillis(raw: String): Long = try { ymd.parse(raw)!!.time } catch (_: Exception) { Date().time }
+    fun ymdFromMillis(ms: Long): String = ymd.format(Date(ms))
 
     /** Web fmtDate: Asia/Dhaka, "5 Jul, 8:50 PM" style. */
     fun dateTime(iso: String?): String? {
