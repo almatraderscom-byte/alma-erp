@@ -997,6 +997,22 @@ longTaskWorker.on('failed', async (job, err) => {
   }
 })
 
+// Turn-consumer heartbeat (2026-07-13 incident: this consumer sat dead for 11 days
+// while the HTTP poll loop looked healthy, so approval continuations silently hung).
+// Written ONLY while the BullMQ consumer is actually running — the app's
+// approval-continuation reads it and runs the turn inline when it goes stale.
+setInterval(async () => {
+  try {
+    if (!longTaskWorker.isRunning()) return
+    const now = new Date().toISOString()
+    await supabase
+      .from('agent_kv_settings')
+      .upsert({ key: 'worker_heartbeat_at', value: now, updated_at: now }, { onConflict: 'key' })
+  } catch (err) {
+    console.warn('[worker] heartbeat write failed:', err.message)
+  }
+}, 60 * 1000)
+
 // ── Staff dispatch worker ──────────────────────────────────────────────────────
 
 const staffDispatchWorker = new Worker('staff-dispatch', async (job) => {

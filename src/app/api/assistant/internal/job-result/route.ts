@@ -12,6 +12,9 @@ import { prisma } from '@/lib/prisma'
 const IMAGE_SIGNED_URL_TTL_SEC = 3600
 
 export const runtime = 'nodejs'
+// The continuation may run INLINE here (up to 90s) when the VPS worker's turn
+// consumer is down — see approval-continuation.ts. Default fn timeout is too short.
+export const maxDuration = 120
 
 function verifyToken(provided: string): boolean {
   const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''
