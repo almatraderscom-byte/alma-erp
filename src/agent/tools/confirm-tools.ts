@@ -13,7 +13,9 @@ const generate_image: AgentTool = {
     'Generates an image using Nano Banana (Google Gemini). ' +
     'This tool creates a PENDING ACTION — the owner must approve before the image is generated. ' +
     'quality: "pro" (face-preservation, product mockups, ~৳4.50/image) | "standard" (routine, ~৳1.10/image). ' +
-    'referenceImageId: optional Supabase storage path for reference image.',
+    'referenceImageId: optional Supabase storage path for reference image — for PRODUCT ' +
+    'creatives pass a real catalog image storagePath from get_product so the render matches ' +
+    'the actual product (never generate a product look without a reference).',
   input_schema: {
     type: 'object' as const,
     properties: {

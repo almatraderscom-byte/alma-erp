@@ -344,13 +344,16 @@ const get_product: AgentTool = {
   name: 'get_product',
   description:
     'Search products by name or SKU keyword. Returns matching products with price, stock, ' +
-    'a primary catalog image URL and the total image count per product. ' +
-    'When exactly one product matches, ALL its catalog images (4-5) are returned in `images` ' +
-    'so the agent can actually SEE the product to understand or verify a visual task.',
+    'a primary catalog image URL and — for up to 4 matches — each product\'s REAL catalog ' +
+    'images with their `storagePath`. Family sets live under VARIANT SKUs ' +
+    '(e.g. code 720 → 720-ADULT / 720-KIDS / 720T-ORNA): search the BASE code ("720"), never ' +
+    'conclude "product missing" without trying it. To render a creative from the REAL product, ' +
+    'pass an image\'s `storagePath` as generate_image `referenceImageId` — never invent the ' +
+    'product\'s look from imagination.',
   input_schema: {
     type: 'object' as const,
     properties: {
-      query: { type: 'string', description: 'Name or SKU search term' },
+      query: { type: 'string', description: 'Name or SKU search term (base code like "720" matches its variants)' },
     },
     required: ['query'],
   },
@@ -367,11 +370,24 @@ const get_product: AgentTool = {
           primaryImageUrl: await getPrimaryImageUrl(p.sku).catch(() => null),
         })),
       )
-      // When a single product matches, return its full image set so the agent can see it.
-      let images: Array<{ url: string | null; isPrimary: boolean }> | undefined
-      if (enriched.length === 1) {
-        const all = await listProductImages(enriched[0].sku).catch(() => [])
-        images = all.map((i) => ({ url: i.url, isPrimary: i.isPrimary }))
+      // Small result set (a single product or a family's variants) → return every
+      // catalog image WITH its storagePath, so the head can SEE the product and
+      // feed the real photo to generate_image as referenceImageId (owner incident
+      // 2026-07-13: the head invented a fake 720 because paths were unreachable).
+      let images: Array<{ productCode: string; url: string | null; storagePath: string; isPrimary: boolean }> | undefined
+      if (enriched.length >= 1 && enriched.length <= 4) {
+        const sets = await Promise.all(
+          enriched.map(async (p) => {
+            const all = await listProductImages(p.sku).catch(() => [])
+            return all.map((i) => ({
+              productCode: p.sku,
+              url: i.url,
+              storagePath: i.storagePath,
+              isPrimary: i.isPrimary,
+            }))
+          }),
+        )
+        images = sets.flat()
       }
       return { success: true, data: { products: enriched, images, meta } }
     } catch (err) {
