@@ -4036,3 +4036,48 @@ model OfficeIntercomReceipt {
   @@index([staffId, confirmedAt])
   @@map("office_intercom_receipts")
 }
+
+/// ── Owner personal receivable/payable khata (পাওনা-দেনা) ─────────────────
+/// Persons/organisations OUTSIDE the staff system (owner decision 2026-07-13).
+/// Serial transactions per party; running balance is computed, never stored.
+/// Entries are owner-editable (+/- adjust): edits append the prior values to
+/// edit_history, deletes are soft (deleted_at) — the paper trail survives.
+enum PersonalLedgerDirection {
+  OUT // owner gave money (টাকা দিলাম) → they owe more
+  IN // owner received/borrowed money (টাকা নিলাম) → they owe less
+}
+
+model PersonalLedgerParty {
+  id          String              @id @default(uuid())
+  /// User.id of the owner this khata belongs to (super admin only today).
+  ownerUserId String              @map("owner_user_id")
+  name        String
+  phone       String?
+  note        String?             @db.Text
+  archivedAt  DateTime?           @map("archived_at")
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+  txns        PersonalLedgerTxn[]
+
+  @@index([ownerUserId, archivedAt])
+  @@map("personal_ledger_parties")
+}
+
+model PersonalLedgerTxn {
+  id          String                  @id @default(uuid())
+  partyId     String                  @map("party_id")
+  direction   PersonalLedgerDirection
+  amount      Decimal                 @db.Decimal(12, 2)
+  reason      String
+  /// Calendar day of the transaction (Asia/Dhaka date, stored at midnight UTC).
+  txnDate     DateTime                @map("txn_date")
+  deletedAt   DateTime?               @map("deleted_at")
+  /// Append-only audit: [{at, byUserId, prev:{direction,amount,reason,txnDate}}]
+  editHistory Json?                   @map("edit_history")
+  createdAt   DateTime                @default(now()) @map("created_at")
+  updatedAt   DateTime                @updatedAt @map("updated_at")
+  party       PersonalLedgerParty     @relation(fields: [partyId], references: [id], onDelete: Cascade)
+
+  @@index([partyId, deletedAt, txnDate])
+  @@map("personal_ledger_txns")
+}
