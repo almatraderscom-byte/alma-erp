@@ -85,12 +85,6 @@ const generate_image: AgentTool = {
         description: 'Output resolution (default 2K)',
       },
       conversationId: { type: 'string' },
-      force: {
-        type: 'boolean',
-        description:
-          'ONLY when Boss explicitly asked for a NEW/CHANGED image after seeing the previous one. ' +
-          'Without it, a fresh render is refused while another card is pending or a render just finished.',
-      },
     },
     required: ['prompt'],
   },
@@ -101,32 +95,14 @@ const generate_image: AgentTool = {
 
       // ── Spree guard (owner incident 2026-07-13): ONE owner-decision card per
       // conversation at a time — cross-type, so a post + a fresh image can't be
-      // staged together, and 5 image cards can't queue for one request. Plus a
-      // 5-minute cool-off after a resolved render unless Boss explicitly asked
-      // for another (force:true).
+      // staged together, and cards can't queue up for one request. This alone
+      // stops the spree: a second card is impossible while the first is pending.
+      // NO time-based cool-off — that blocked the legitimate "ছবি change চাই"
+      // flow (owner: after rejecting an image the head silently couldn't re-render
+      // for 5 min). Once a card is resolved, a new one is allowed.
       const convIdForGuard = input.conversationId ? String(input.conversationId) : null
-      if (convIdForGuard && input.force !== true) {
-        const blocked = await assertSingleOpenCard(convIdForGuard, 'নতুন ছবি')
-        if (blocked) return blocked
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const recentResolved = await (prisma as any).agentPendingAction.findFirst({
-          where: {
-            conversationId: convIdForGuard,
-            type: 'image_gen',
-            status: { in: ['approved', 'executed'] },
-            resolvedAt: { gte: new Date(Date.now() - 5 * 60 * 1000) },
-          },
-          select: { id: true },
-        })
-        if (recentResolved) {
-          return {
-            success: false,
-            error:
-              'COOLOFF_BLOCKED: এই conversation-এ এইমাত্র একটা ছবি approve/তৈরি হয়েছে — আগে Boss-কে সেটা দেখিয়ে ' +
-              'ask_user দিয়ে মত নাও। Boss নিজে নতুন/ভিন্ন ছবি চাইলে তবেই force:true দিয়ে আবার call করবে।',
-          }
-        }
-      }
+      const blockedImg = await assertSingleOpenCard(convIdForGuard, 'নতুন ছবি')
+      if (blockedImg) return blockedImg
 
       const summary =
         `Image generation request (${quality} quality)\n` +
