@@ -289,7 +289,7 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
             )
         }
         Column(Modifier.fillMaxSize()) {
-            Box(Modifier.fillMaxSize().padding(bottom = 0.dp).weight(1f)) {
+            Box(Modifier.fillMaxSize().padding(bottom = 0.dp).weight(1f).dismissKeyboardOnInteraction()) {
                 // ── Active tab root ──
                 val tabIndex = selectedTab.intValue
                 val spec = ALL_TABS[tabIndex]
@@ -364,7 +364,9 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
         // are reachable; returns when that screen is popped. Cleared on successful login.
         if (AlmaSession.authed == false && stack.isEmpty()) {
             AuroraBackground(dark) {
-                com.almatraders.erp.pages.NativeLoginScreen(pushCtx)
+                Box(Modifier.fillMaxSize().dismissKeyboardOnInteraction()) {
+                    com.almatraders.erp.pages.NativeLoginScreen(pushCtx)
+                }
             }
         }
 

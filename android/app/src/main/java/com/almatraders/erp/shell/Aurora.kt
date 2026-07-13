@@ -22,7 +22,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.pullrefresh.pullRefresh
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -128,6 +130,35 @@ fun Modifier.plainClick(onClick: () -> Unit): Modifier {
             onClick()
         },
     )
+}
+
+/**
+ * Dismiss the soft keyboard when the user SCROLLS — the native behaviour every premium
+ * app has (start scrolling a list while typing → the keyboard drops). Applied once at
+ * the shell content root so every native screen inherits it. Scroll-driven only: a
+ * tap-outside variant is deliberately avoided here because a wrapping tap detector on
+ * this Compose version can race with TextField focus and swallow field taps.
+ */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@Composable
+fun Modifier.dismissKeyboardOnInteraction(): Modifier {
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val conn = remember {
+        object : androidx.compose.ui.input.nestedscroll.NestedScrollConnection {
+            override fun onPreScroll(
+                available: androidx.compose.ui.geometry.Offset,
+                source: androidx.compose.ui.input.nestedscroll.NestedScrollSource,
+            ): androidx.compose.ui.geometry.Offset {
+                if (available.y != 0f) {
+                    keyboard?.hide()
+                    focus.clearFocus(force = true)
+                }
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+        }
+    }
+    return this.nestedScroll(conn)
 }
 
 /**
