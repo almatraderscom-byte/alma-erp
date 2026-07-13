@@ -86,6 +86,8 @@ function ApprovalsPageInner() {
   const [selected, setSelected] = useState<ApprovalRow | null>(null)
   const [actionTarget, setActionTarget] = useState<{ row: ApprovalRow; action: 'APPROVE' | 'REJECT' } | null>(null)
   const [withdrawApprove, setWithdrawApprove] = useState<{ row: ApprovalRow; transactionId: string } | null>(null)
+  // Reimbursement approvals pause for a payout choice: wallet credit vs already-paid-instantly.
+  const [reimburseApprove, setReimburseApprove] = useState<ApprovalRow | null>(null)
   const [note, setNote] = useState('')
   const [integrity, setIntegrity] = useState<IntegrityReport | null>(null)
   const [integrityLoading, setIntegrityLoading] = useState(false)
@@ -170,7 +172,7 @@ function ApprovalsPageInner() {
   const priorityCounts = useMemo(() => Object.fromEntries((data?.byPriority || []).map(row => [row.priority, row.count])), [data])
   const orphanCount = integrity?.orphans?.length ?? 0
 
-  async function processApproval(row: ApprovalRow, action: 'APPROVE' | 'REJECT', actionNote = '', transactionId?: string) {
+  async function processApproval(row: ApprovalRow, action: 'APPROVE' | 'REJECT', actionNote = '', transactionId?: string, payoutMode?: 'wallet' | 'instant') {
     if (isRowProcessing(row.id)) return
     if (action === 'REJECT' && actionNote.trim().length < 5) {
       toast.error('Rejection reason must be at least 5 characters')
@@ -182,11 +184,13 @@ function ApprovalsPageInner() {
       note: actionNote,
       rowLabel: row.type.replace(/_/g, ' '),
       transactionId,
+      payoutMode,
     })
     if (result.ok) {
       setSelected(current => (current?.id === row.id ? null : current))
       setActionTarget(null)
       setWithdrawApprove(null)
+      setReimburseApprove(null)
       setNote('')
     }
   }
@@ -195,6 +199,10 @@ function ApprovalsPageInner() {
   function handleApproveClick(row: ApprovalRow) {
     if (row.type === 'WALLET_WITHDRAWAL') {
       setWithdrawApprove({ row, transactionId: '' })
+      return
+    }
+    if (row.type === 'EXPENSE_REIMBURSEMENT') {
+      setReimburseApprove(row)
       return
     }
     void processApproval(row, 'APPROVE')
@@ -630,6 +638,69 @@ function ApprovalsPageInner() {
                 onClick={() => void processApproval(withdrawApprove.row, 'APPROVE', '', txn)}
               >
                 {waUi.state === 'processing' ? <><Spinner /> Processing approval…</> : 'Confirm approval'}
+              </Button>
+            </div>
+          </Card>
+        </MobileModalPortal>
+        )
+      })()}
+      {reimburseApprove && (() => {
+        const raUi = getRowUi(reimburseApprove.id)
+        const raBusy = isRowProcessing(reimburseApprove.id)
+        const raDisabled = raBusy || actionsGloballyDisabled
+        const snap = (reimburseApprove.payloadSnapshot && typeof reimburseApprove.payloadSnapshot === 'object'
+          ? reimburseApprove.payloadSnapshot
+          : {}) as Record<string, unknown>
+        const raAmount = Number(snap.reimburse_amount || snap.amount || 0)
+        return (
+        <MobileModalPortal open zIndex={10001} onBackdropClick={() => { if (!raBusy) setReimburseApprove(null) }}>
+          <Card className="mobile-modal-shell w-full max-w-lg sm:rounded-2xl">
+            <div className="mobile-modal-header p-5 pb-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-black text-cream">অনুমোদন — টাকাটা কীভাবে দেবেন?</p>
+                  <p className="mt-1 text-xs text-muted">
+                    {reimburseApprove.requester?.name || reimburseApprove.requestedBy} · ৳{raAmount.toLocaleString('en-IN')} · {String(snap.category || 'Reimbursement')}
+                  </p>
+                </div>
+                <Button size="xs" variant="ghost" disabled={raBusy} onClick={() => setReimburseApprove(null)}>Close</Button>
+              </div>
+              {raUi.state === 'processing' && (
+                <div className="mt-3 flex items-center gap-2 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs font-bold text-amber-200">
+                  <Spinner />
+                  Processing approval…
+                </div>
+              )}
+            </div>
+            <div className="mobile-modal-body space-y-2 px-5">
+              <button
+                type="button"
+                disabled={raDisabled}
+                onClick={() => void processApproval(reimburseApprove, 'APPROVE', '', undefined, 'wallet')}
+                className="flex w-full items-center gap-3 rounded-2xl border border-border bg-white/[0.04] px-4 py-3 text-left transition hover:border-gold-dim/60 disabled:opacity-60"
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gold/15 text-lg">👛</span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-bold text-cream">ওয়ালেটে যোগ করুন</span>
+                  <span className="block text-[11px] text-muted">স্টাফের ERP ওয়ালেটে জমা হবে, বেতনের সাথে পাবে</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={raDisabled}
+                onClick={() => void processApproval(reimburseApprove, 'APPROVE', '', undefined, 'instant')}
+                className="flex w-full items-center gap-3 rounded-2xl border border-border bg-white/[0.04] px-4 py-3 text-left transition hover:border-gold-dim/60 disabled:opacity-60"
+              >
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gold/15 text-lg">⚡️</span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-bold text-cream">এখনই পেমেন্ট (ক্যাশ / বিকাশ)</span>
+                  <span className="block text-[11px] text-muted">সাথে সাথে দিয়ে দিয়েছেন — ওয়ালেটে যোগ হবে না, খরচ রেকর্ড হবে</span>
+                </span>
+              </button>
+            </div>
+            <div className="mobile-modal-footer px-5 pt-3">
+              <Button variant="ghost" className="w-full justify-center" disabled={raBusy} onClick={() => setReimburseApprove(null)}>
+                বাতিল
               </Button>
             </div>
           </Card>

@@ -22,6 +22,17 @@ import { apiDataSuccess, apiFailure } from '@/lib/safe-api-response'
 const LIFESTYLE_BUSINESS_ID = 'ALMA_LIFESTYLE'
 const REIMBURSEMENT_SOURCE = 'office_reimbursement'
 
+/** How the owner pays an approved claim: credit the staff wallet (default) or
+ *  mark it already paid in cash/bKash on the spot (no wallet credit). */
+export type ReimbursementPayoutMode = 'wallet' | 'instant'
+
+/** Keep only a valid YYYY-MM-DD; anything else falls back to null (=today downstream). */
+function normalizeExpenseDate(raw?: string | null): string | null {
+  const s = String(raw || '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null
+  return Number.isNaN(new Date(s).getTime()) ? null : s
+}
+
 export interface ReimbursementClaimInput {
   businessId?: string
   /** Staff GAS employee id — the wallet that gets credited on approval. */
@@ -35,6 +46,8 @@ export interface ReimbursementClaimInput {
   vendor?: string | null
   receiptRef?: string | null
   receiptAttachmentId?: string | null
+  /** YYYY-MM-DD the money was actually spent (defaults to today at expense-create time). */
+  expenseDate?: string | null
 }
 
 /** File a reimbursement claim → PENDING approval for the owner. */
@@ -58,6 +71,8 @@ export async function enqueueReimbursementClaim(input: ReimbursementClaimInput) 
     payment_status: 'Reimbursed',
     receipt_ref: input.receiptRef ? String(input.receiptRef).slice(0, 600) : null,
     receipt_attachment_id: input.receiptAttachmentId || null,
+    // createLifestyleExpenseInPostgres reads `date` for expenseDate.
+    date: normalizeExpenseDate(input.expenseDate),
     actor: input.actorName,
     actor_role: 'STAFF',
     actor_user_id: input.userId,
@@ -90,6 +105,7 @@ export async function processReimbursementApproval(
   action: 'APPROVE' | 'REJECT',
   actorUserId: string,
   note?: string,
+  payoutMode: ReimbursementPayoutMode = 'wallet',
 ) {
   if (action === 'REJECT') {
     const updated = await resolveApprovalRequestById({
@@ -124,7 +140,11 @@ export async function processReimbursementApproval(
 
   let reimbursed = false
   let ledgerEntryId: string | null = null
-  if (employeeId && amount > 0) {
+  if (payoutMode === 'instant') {
+    // Owner already handed the money over (cash/bKash) — record the company
+    // expense above but do NOT credit the wallet, or the staffer gets paid twice.
+    reimbursed = false
+  } else if (employeeId && amount > 0) {
     try {
       const entry = await prisma.employeeLedgerEntry.create({
         data: {
@@ -159,11 +179,11 @@ export async function processReimbursementApproval(
     id: approval.id,
     status: 'APPROVED',
     actorUserId,
-    reason: note || 'Approved',
+    reason: note || (payoutMode === 'instant' ? 'Approved · paid instantly (cash/bKash)' : 'Approved · credited to wallet'),
   })
   dispatchApprovalsUpdated()
   return apiDataSuccess({
     approval: updated,
-    moduleResult: { created: true, expenseId, reimbursed, ledgerEntryId, amount },
+    moduleResult: { created: true, expenseId, reimbursed, ledgerEntryId, amount, payoutMode },
   })
 }
