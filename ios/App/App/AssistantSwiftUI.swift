@@ -351,6 +351,9 @@ struct AgentChatMessage: Identifiable, Equatable {
         var status: String        // pending | approved | executed | failed | expired | rejected
         var actionType: String?
         var costEstimate: Double?
+        /// Set locally the moment the owner taps Approve — drives the Creative-
+        /// Studio-style render % on approved image cards (owner ask 2026-07-13).
+        var approvedAt: Date? = nil
     }
     struct AskCard: Identifiable, Equatable {
         let id: String            // askCardId
@@ -1646,6 +1649,7 @@ final class AssistantVM {
         for i in messages.indices {
             if let j = messages[i].confirmCards.firstIndex(where: { $0.id == cardId }) {
                 messages[i].confirmCards[j].status = status
+                messages[i].confirmCards[j].approvedAt = status == "approved" ? Date() : nil
             }
         }
     }
@@ -3204,6 +3208,49 @@ struct AgentPlayingBars: View {
 }
 
 @available(iOS 17.0, *)
+/// Live render progress inside an approved image/video card — the Creative Studio
+/// GeneratingTile recipe (owner ask 2026-07-13): time-eased % that approaches 95
+/// and holds (typical render ~38s); the REAL artifact arriving in the thread is
+/// the honest 100%. Never fakes completion.
+@available(iOS 17.0, *)
+struct AgentRenderProgressStrip: View {
+    let startedAt: Date
+    let pal: AgentPalette
+
+    private func pct(_ now: Date) -> Int {
+        let elapsed = now.timeIntervalSince(startedAt)
+        guard elapsed > 0 else { return 3 }
+        return max(3, min(95, Int(95 * (1 - exp(-elapsed / 38)))))
+    }
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
+            let p = pct(ctx.date)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small).tint(AgentPalette.coral)
+                    Text("ছবি তৈরি হচ্ছে… \(almaBn(p))%")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AgentPalette.coral)
+                    Spacer()
+                }
+                GeometryReader { g in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.08))
+                        Capsule()
+                            .fill(LinearGradient(colors: [AgentPalette.coralDim, AgentPalette.coral],
+                                                 startPoint: .leading, endPoint: .trailing))
+                            .frame(width: g.size.width * CGFloat(p) / 100)
+                            .animation(.easeOut(duration: 0.4), value: p)
+                    }
+                }
+                .frame(height: 5)
+            }
+        }
+    }
+}
+
+@available(iOS 17.0, *)
 struct AgentConfirmCardView: View {
     let card: AgentChatMessage.ConfirmCard
     let pal: AgentPalette
@@ -3299,6 +3346,12 @@ struct AgentConfirmCardView: View {
                         .overlay(alignment: .top) { Rectangle().fill(pal.borderSubtle).frame(height: 1) }
                     }
                 }
+            } else if card.status == "approved", card.actionType == "image_gen" || card.actionType == "video_gen" {
+                // Creative-Studio-style render count (owner ask 2026-07-13): a live
+                // 1→95% time-eased fill while the artifact renders — the real image
+                // message landing below is the 100% moment.
+                AgentRenderProgressStrip(startedAt: card.approvedAt ?? Date(), pal: pal)
+                    .padding(.horizontal, 16).padding(.bottom, 14)
             } else {
                 HStack(spacing: 5) {
                     Image(systemName: statusIcon).font(.system(size: 11))

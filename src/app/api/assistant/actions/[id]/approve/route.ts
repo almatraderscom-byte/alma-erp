@@ -2129,19 +2129,22 @@ async function beginApprovalProgress(actionId: string): Promise<{ turnId: string
     const db = prisma as any
     const action = await db.agentPendingAction.findUnique({
       where: { id: actionId },
-      select: { conversationId: true, status: true, type: true, payload: true },
+      select: { conversationId: true, status: true, type: true, payload: true, summary: true },
     })
     if (!action || action.status !== 'pending') return null
     const conversationId = resolveConversationId(action)
     if (!conversationId) return null
 
     const isRender = action.type === 'image_gen' || action.type === 'video_gen'
+    // Contextual, not canned (owner ask 2026-07-13 round 2): acknowledge the
+    // SPECIFIC job like a person would, then keep the thread visibly working.
+    const summaryLine = String(action.summary ?? '').split('\n')[0].slice(0, 80).trim()
     await appendConversationNote(
       db,
       action,
       isRender
-        ? '⏳ ঠিক আছে বস — ছবিটা এখনই বানাতে দিচ্ছি, রেডি হলেই দেখাচ্ছি…'
-        : '⏳ অনুমোদন পেলাম বস — কাজটা এখনই করছি…',
+        ? '🎨 ঠিক আছে বস — ছবিটা বানানো শুরু করলাম (সাধারণত ৩০–৯০ সেকেন্ড)। রেডি হলেই এখানে preview দেখাব।'
+        : `⏳ অনুমোদন পেলাম বস${summaryLine ? ` — "${summaryLine}"` : ''} — এখনই করছি, শেষ করে ফলাফল জানাচ্ছি…`,
     )
     const { createTurn } = await import('@/agent/lib/turn-status')
     const turnId = await createTurn(conversationId)
