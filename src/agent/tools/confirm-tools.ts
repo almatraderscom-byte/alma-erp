@@ -40,6 +40,12 @@ const generate_image: AgentTool = {
         description: 'Output resolution (default 2K)',
       },
       conversationId: { type: 'string' },
+      force: {
+        type: 'boolean',
+        description:
+          'ONLY when Boss explicitly asked for a NEW/CHANGED image after seeing the previous one. ' +
+          'Without it, a fresh render is refused while another card is pending or a render just finished.',
+      },
     },
     required: ['prompt'],
   },
@@ -47,6 +53,46 @@ const generate_image: AgentTool = {
     try {
       const quality = (input.quality as string) === 'standard' ? 'standard' : 'pro'
       const costEstimate = quality === 'pro' ? 4.5 : 1.1 // BDT estimate
+
+      // ── Duplicate/spree guard (owner incident 2026-07-13: the head staged FIVE
+      // image cards for ONE request, re-calling with tweaked prompts because
+      // "pending" read as not-done). ONE image card per conversation at a time,
+      // and a 5-minute cool-off after a resolved render unless Boss explicitly
+      // asked for another (force:true).
+      const convIdForGuard = input.conversationId ? String(input.conversationId) : null
+      if (convIdForGuard && input.force !== true) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const dbAny = prisma as any
+        const pendingDup = await dbAny.agentPendingAction.findFirst({
+          where: { conversationId: convIdForGuard, type: 'image_gen', status: 'pending' },
+          select: { id: true },
+        })
+        if (pendingDup) {
+          return {
+            success: false,
+            error:
+              `DUPLICATE_BLOCKED: একটা ছবি-কার্ড (${pendingDup.id}) ইতিমধ্যে Boss-এর সিদ্ধান্তের অপেক্ষায় আছে। ` +
+              'নতুন card বানানো নিষেধ — প্রম্পট ঘষে আবার call কোরো না। Boss approve/reject করা পর্যন্ত এই কাজে থামো।',
+          }
+        }
+        const recentResolved = await dbAny.agentPendingAction.findFirst({
+          where: {
+            conversationId: convIdForGuard,
+            type: 'image_gen',
+            status: { in: ['approved', 'executed'] },
+            resolvedAt: { gte: new Date(Date.now() - 5 * 60 * 1000) },
+          },
+          select: { id: true },
+        })
+        if (recentResolved) {
+          return {
+            success: false,
+            error:
+              'COOLOFF_BLOCKED: এই conversation-এ এইমাত্র একটা ছবি approve/তৈরি হয়েছে — আগে Boss-কে সেটা দেখিয়ে ' +
+              'ask_user দিয়ে মত নাও। Boss নিজে নতুন/ভিন্ন ছবি চাইলে তবেই force:true দিয়ে আবার call করবে।',
+          }
+        }
+      }
 
       const summary =
         `Image generation request (${quality} quality)\n` +
@@ -124,6 +170,24 @@ const post_to_facebook: AgentTool = {
       const pageId = resolvePageId(page)
       const conversationId = input.conversationId ? String(input.conversationId) : null
       const textOnly = input.textOnly === true
+
+      // ONE pending post card per conversation (same spree guard as generate_image,
+      // owner incident 2026-07-13) — a pending card means WAIT for Boss, not retry.
+      if (conversationId) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const dupe = await (prisma as any).agentPendingAction.findFirst({
+          where: { conversationId, type: 'fb_post', status: 'pending' },
+          select: { id: true },
+        })
+        if (dupe) {
+          return {
+            success: false,
+            error:
+              `DUPLICATE_BLOCKED: একটা Facebook post card (${dupe.id}) ইতিমধ্যে Boss-এর অপেক্ষায় আছে। ` +
+              'নতুন card বানানো নিষেধ — Boss approve/reject করা পর্যন্ত থামো।',
+          }
+        }
+      }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { imageRef, hadRecentPostableImage } = await resolveFbPostImageRef(prisma as any, {
