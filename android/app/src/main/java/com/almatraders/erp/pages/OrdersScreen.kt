@@ -106,6 +106,7 @@ import com.almatraders.erp.shell.almaGlass
 import com.almatraders.erp.shell.flexBool
 import com.almatraders.erp.shell.flexInt
 import com.almatraders.erp.shell.mapObjects
+import com.almatraders.erp.shell.AlmaPullRefresh
 import com.almatraders.erp.shell.plainClick
 import com.almatraders.erp.shell.str
 import kotlinx.coroutines.Job
@@ -519,6 +520,7 @@ fun OrdersScreen(ctx: PushCtx) {
     LaunchedEffect(OrdersRefreshBus.tick) { vm.load() }
 
     Box(Modifier.fillMaxSize()) {
+        AlmaPullRefresh(refreshing = vm.loading, onRefresh = { scope.launch { vm.load() } }, dark = dark) {
         LazyColumn(
             Modifier.fillMaxSize().padding(horizontal = 14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -565,6 +567,7 @@ fun OrdersScreen(ctx: PushCtx) {
                 }
             }
             item { Spacer(Modifier.height(70.dp)) }
+        }
         }
 
         // Coral "নতুন অর্ডার" FAB — opens the NATIVE order form (web form reachable inside it).

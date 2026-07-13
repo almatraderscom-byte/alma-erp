@@ -81,6 +81,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.almatraders.erp.shell.AlmaApi
 import com.almatraders.erp.shell.AlmaApiException
+import com.almatraders.erp.shell.AlmaPullRefresh
 import com.almatraders.erp.shell.AlmaTheme
 import com.almatraders.erp.shell.PushCtx
 import com.almatraders.erp.shell.almaGlass
@@ -403,6 +404,7 @@ fun InventoryScreen(ctx: PushCtx) {
     val dark = AlmaTheme.isDark
     val context = androidx.compose.ui.platform.LocalContext.current
     val vm = remember { InventoryState() }
+    val scope = rememberCoroutineScope()
     var selectedSku by remember { mutableStateOf<String?>(null) }
     var showAdd by remember { mutableStateOf(false) }
 
@@ -417,6 +419,7 @@ fun InventoryScreen(ctx: PushCtx) {
     val visible = rows.take(INV_MOBILE_CAP)
 
     Box(Modifier.fillMaxSize()) {
+        AlmaPullRefresh(refreshing = vm.loading, onRefresh = { scope.launch { vm.load() } }, dark = dark) {
         LazyColumn(
             Modifier.fillMaxSize().padding(horizontal = 14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -542,6 +545,7 @@ fun InventoryScreen(ctx: PushCtx) {
                 }
             }
             item { Spacer(Modifier.height(64.dp)) }   // keep the FAB off the last card
+        }
         }
 
         // Add-item FAB (the web's fixed "+ Add item" button).

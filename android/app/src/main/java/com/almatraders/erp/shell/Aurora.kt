@@ -22,6 +22,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -127,6 +128,33 @@ fun Modifier.plainClick(onClick: () -> Unit): Modifier {
             onClick()
         },
     )
+}
+
+/**
+ * Swipe-down pull-to-refresh wrapper (the iOS `.refreshable` twin). Wrap a screen's
+ * scrollable content; [refreshing] shows the spinner, [onRefresh] fires on pull.
+ * Uses the stable M2 pullRefresh (material3 1.2.x has no PullToRefreshBox yet).
+ */
+@OptIn(androidx.compose.material.ExperimentalMaterialApi::class)
+@Composable
+fun AlmaPullRefresh(
+    refreshing: Boolean,
+    onRefresh: () -> Unit,
+    dark: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val state = androidx.compose.material.pullrefresh.rememberPullRefreshState(refreshing, onRefresh)
+    Box(modifier.fillMaxSize().pullRefresh(state)) {
+        content()
+        androidx.compose.material.pullrefresh.PullRefreshIndicator(
+            refreshing = refreshing,
+            state = state,
+            modifier = Modifier.align(androidx.compose.ui.Alignment.TopCenter),
+            backgroundColor = AlmaTheme.rootBg(dark),
+            contentColor = AlmaTheme.violet,
+        )
+    }
 }
 
 /** Loading skeleton shimmer (iOS Shimmer twin). */

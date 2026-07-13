@@ -99,6 +99,9 @@ dependencies {
     implementation 'androidx.compose.foundation:foundation'
     implementation 'androidx.compose.material3:material3'
     implementation 'androidx.compose.material:material-icons-extended'
+    // material (M2) pulled in only for the stable pullRefresh API — material3 1.2.x
+    // (compose-bom 2024.02) has no PullToRefreshBox yet. Indicator is theme-neutral.
+    implementation 'androidx.compose.material:material'
     implementation 'androidx.activity:activity-compose:1.8.2'
     implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.7.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
