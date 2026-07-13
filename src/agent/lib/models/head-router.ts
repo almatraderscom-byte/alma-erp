@@ -24,7 +24,7 @@ import { prisma } from '@/lib/prisma'
 import { isOutboundCallIntent } from '@/agent/lib/outbound-call-intent'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
 
-export type HeadTier = 'light' | 'heavy' | 'explicit' | 'marketing'
+export type HeadTier = 'light' | 'heavy' | 'explicit' | 'marketing' | 'personal'
 
 export interface HeadDecision {
   modelId: string
@@ -115,6 +115,102 @@ const ROUTINE_RE = new RegExp(
   ].join('|'),
   'i',
 )
+
+// Personal-empathy mode kill switch (owner-tunable, default ON). When the owner
+// shares HIS OWN feelings ("mon valo nei", "hotash lagche") in a work chat, the
+// head must LISTEN — not treat it as a business command and run tools. Set
+// ENABLE_PERSONAL_EMPATHY_MODE=false to disable.
+const personalEmpathyEnabled = (): boolean => process.env.ENABLE_PERSONAL_EMPATHY_MODE !== 'false'
+
+/**
+ * CHEAP first-pass HINT that a message might be the owner sharing his own
+ * feelings / mood / mental state (Bangla + Banglish + English). Deliberately a
+ * recall-oriented net, NOT the decision: a match only triggers the confirming
+ * classifier below, so normal work traffic (which won't match) pays nothing and
+ * the accuracy ("my feelings" vs "customer is upset" vs "feeling + do this task")
+ * is decided by the classifier, never by keywords alone.
+ */
+const PERSONAL_EMOTION_RE = new RegExp(
+  [
+    'hotash|হতাশ|নিরাশ|hopeless|depress|বিষণ্ণ|বিমর্ষ|frustrated',
+    'mon\\s*(kharap|kharab|খারাপ|bhalo\\s*na|valo\\s*na|valo\\s*nei|bhalo\\s*nei|ভালো\\s*ন|bosche\\s*na|বসছে\\s*না)',
+    'মন\\s*(খারাপ|ভালো\\s*ন|বসছে\\s*না|ভারী)',
+    '(kichu|kono\\s*kichu|কিছু(তে)?)\\s*(i\\s*)?(bhalo|valo|ভালো)\\s*lag',
+    '(bhalo|valo|ভালো)\\s*lag(che|ছে|e)?\\s*na|ভালো\\s*লাগছে\\s*না',
+    'kanna|কাঁদ|কান্না|crying|kadte\\s*iche',
+    '(eka|একা|nihshongo|নিঃসঙ্গ)\\s*(lag|feel|লাগ)|lonely',
+    'clanto|ক্লান্ত|obosonno|অবসন্ন|exhausted|hapiye',
+    'ghum\\s*(hocche|hoy|asche)?\\s*na|ঘুম\\s*(হচ্ছে|আসছে)?\\s*না|can\\W?t\\s*sleep',
+    'ভালো\\s*নেই|valo\\s*nei|bhalo\\s*nei',
+    'kosto\\s*(hocche|lagche|pacchi|hoy)|কষ্ট\\s*(হচ্ছে|লাগছে|পাচ্ছি)',
+    '(khub|খুব|onek|অনেক)\\s*(chinta|চিন্তা|tension|টেনশন|stress|osthir|অস্থির)',
+    'nijeke\\s*(kharap|eka|osohay)|নিজেকে\\s*(খারাপ|একা|অসহায়)',
+  ].join('|'),
+  'i',
+)
+
+const CLASSIFY_PERSONAL_SYSTEM =
+  'You classify ONE message a small-business owner sent to his assistant. ' +
+  'Messages are often Banglish (Bangla written in English letters). ' +
+  'Answer "personal" ONLY if the owner is expressing HIS OWN feelings, mood, emotional or mental state, ' +
+  'or personal well-being — e.g. feeling low, hopeless, sad, lonely, anxious, tired, "mon valo nei", ' +
+  '"kichu valo lage na", venting, or simply saying he is not okay — AND he is NOT asking for any ' +
+  'business or work task in the same message. ' +
+  'Answer "work" for everything else: business questions or tasks, orders, marketing, staff, money, ' +
+  'status lookups, OR an emotion that is ABOUT someone else (a customer/staff being upset), ' +
+  'OR any message that mixes a feeling with a concrete work request. ' +
+  'When unsure, answer "work". Reply with EXACTLY one word: personal or work.'
+
+/**
+ * Confirm (via the cheap triage model) whether an emotion-hinted message is the
+ * owner sharing his OWN feelings with no work ask. Returns false on any doubt,
+ * error, or missing key — so a work message is NEVER misrouted into listen mode
+ * (owner rule 2026-07-14: the agent must accurately tell "I'm emotional" from
+ * "do this work", and err toward work).
+ */
+async function classifyIsPersonalEmotional(text: string, conversationId?: string): Promise<boolean> {
+  const client = openRouterClient()
+  if (!client) return false
+  const model = getModel(triageModelId())
+  try {
+    const resp = await client.chat.completions.create(
+      {
+        model: model.apiModel,
+        max_tokens: 4,
+        temperature: 0,
+        messages: [
+          { role: 'system', content: CLASSIFY_PERSONAL_SYSTEM },
+          { role: 'user', content: text.slice(0, 1500) },
+        ],
+      },
+      { signal: AbortSignal.timeout(8000) },
+    )
+    const usage = resp.usage
+    if (usage) {
+      void logCost({
+        provider: 'openai',
+        kind: 'chat',
+        units: {
+          input_tokens: usage.prompt_tokens ?? 0,
+          output_tokens: usage.completion_tokens ?? 0,
+          model: model.id,
+          via: 'personal-classify',
+        },
+        costUsd: calcModelTurnCostUsd(model, {
+          inputTokens: usage.prompt_tokens ?? 0,
+          outputTokens: usage.completion_tokens ?? 0,
+        }),
+        conversationId: conversationId ?? null,
+        dedupKey: `personal-classify:${conversationId ?? 'na'}:${Date.now()}`,
+      }).catch(() => {})
+    }
+    const out = (resp.choices[0]?.message?.content ?? '').toLowerCase()
+    return out.includes('personal') && !out.includes('work')
+  } catch (err) {
+    console.warn('[head-router] personal-emotional classify failed → work:', err instanceof Error ? err.message : err)
+    return false
+  }
+}
 
 /**
  * Irreversible / high-stakes signals that must ALWAYS get Sonnet — we don't even
@@ -321,6 +417,21 @@ export async function resolveHeadModelId(opts: {
   // reputation) and must never be triaged to a cheap head — the cheap head mistook it for
   // a "reminder". Force Sonnet so the outbound_phone_call flow is handled correctly.
   if (isOutboundCallIntent(text)) return heavy('call_intent')
+
+  // Personal / emotional message — the owner sharing HIS OWN feelings, not a task.
+  // Route to the heavy head in LISTEN mode (tier 'personal'): downstream withholds
+  // business tools + work context so the head just listens instead of pivoting to
+  // work (the 2026-07-14 "hotash lagche → agent ran generate_image/ads" incident).
+  // Placed AFTER the money/destructive + call guards (those still win) and BEFORE
+  // the marketing/routine/sticky fast-paths (so a short emotional follow-up can't
+  // stick to the marketing head). Gated behind a cheap regex hint → confirming
+  // classifier; fails toward normal work routing so a work message is never
+  // misread as personal.
+  if (personalEmpathyEnabled() && PERSONAL_EMOTION_RE.test(text)) {
+    if (await classifyIsPersonalEmotional(text, opts.conversationId)) {
+      return { modelId: heavyHeadModelId(), tier: 'personal', via: 'personal_emotional' }
+    }
+  }
 
   // Marketing/content work → Qwen answers DIRECTLY as head (no Sonnet→worker hop),
   // the same direct-responder pattern as the cheap head. FAST PATH: an obvious

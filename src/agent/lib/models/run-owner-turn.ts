@@ -187,6 +187,19 @@ async function loadOwnerDecisions(businessId: AgentBusinessId): Promise<OwnerDec
   }
 }
 
+// Injected at the FRONT of a listen-mode turn (router tier 'personal'). It reframes
+// the turn as pure emotional support and explicitly cancels the system prompt's
+// "always act / never just announce / finish the task" pressure for this one message.
+const LISTEN_MODE_NOTE =
+  '[LISTEN MODE — Boss তার নিজের মনের কথা / ব্যক্তিগত অনুভূতি শেয়ার করছেন, এটা কোনো কাজের নির্দেশ নয়।]\n' +
+  'এই টার্নে তোমার একমাত্র কাজ: মন দিয়ে শোনা আর সত্যিকারের সহানুভূতি দেখানো — যেন একজন কাছের বন্ধু।\n' +
+  '- আগে তার অনুভূতিটা কোমলভাবে স্বীকার করো ("বুঝতে পারছি", "খারাপ লাগছে শুনে")। ঠিক করার তাড়া নয়, আগে শোনো।\n' +
+  '- ব্যবসা / অর্ডার / মার্কেটিং / ছবি / অ্যাড / স্টাফ / todo / কোনো কাজের কথা এই মেসেজে একদম তুলবে না।\n' +
+  '- কোনো tool চালাবে না, কোনো কাজ resume করবে না, তাকে কিছু করতে বলবে না, "Chrome খুলুন" জাতীয় তাগাদা নয়।\n' +
+  '- "একই টার্নে action করো / শুধু ঘোষণা নয় / কাজ শেষ করো / proactive হও" — এই সব নিয়ম এই মেসেজের জন্য প্রযোজ্য নয়; এখানে কোনো task নেই।\n' +
+  '- ছোট, আন্তরিক, উষ্ণ বাংলায় উত্তর দাও। সম্বোধন শুধু "Boss" (কখনো Sir/স্যার নয়)। চাইলে আলতো করে জিজ্ঞেস করো কী হয়েছে — শুধু শুনতে চাও।\n' +
+  'পরে Boss স্পষ্টভাবে কোনো কাজ চাইলে তখন স্বাভাবিক কাজের mode-এ ফিরে যেও।'
+
 async function* runAlternateProviderTurn(
   conversationId: string,
   modelId: string,
@@ -198,6 +211,16 @@ async function* runAlternateProviderTurn(
   const businessId: AgentBusinessId = personalMode
     ? 'ALMA_LIFESTYLE'
     : normalizeBusinessId(options.businessId)
+
+  // LISTEN MODE — the owner just shared his OWN feelings in a work chat (router
+  // tier 'personal'). Deterministically withhold ALL business tools + work-pull
+  // context and inject an empathy override, so the head listens instead of running
+  // generate_image/ads/todos (the 2026-07-14 incident). Prompt rules alone don't
+  // hold the cheap heads back — withholding the tools does.
+  const listenMode = headTier === 'personal'
+  // Suppress the work-pulling context blocks on a listen turn exactly like the
+  // personal project already does — reusing the same gates keeps behaviour proven.
+  const suppressWork = personalMode || listenMode
 
   let totalInputTokens = 0
   let totalOutputTokens = 0
@@ -262,7 +285,7 @@ async function* runAlternateProviderTurn(
   // Salah conscience-nudge + nightly muhasaba must work on this cheap-head path too
   // (short salah replies like "porechi" can be triaged here, not only to the Claude head).
   let intakeContextBlock: string | undefined
-  if (!personalMode) {
+  if (!suppressWork) {
     const autoMark = await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
     if (autoMark.marked.length) {
       const fresh = autoMark.marked[autoMark.marked.length - 1]
@@ -296,24 +319,24 @@ async function* runAlternateProviderTurn(
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
     lastUserText ? retrieveRelevantOldTurns(conversationId, lastUserText) : Promise.resolve([]),
-    personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
-    personalMode || telegramFastPath
+    suppressWork ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
+    suppressWork || telegramFastPath
       ? Promise.resolve([])
       : loadRecentOtherConversations(conversationId, 5),
-    personalMode ? Promise.resolve([]) : getActivePlaybook(businessId),
-    personalMode ? Promise.resolve([] as OutcomeLearning[]) : getRecentOutcomeLearnings({ limit: 5 }).catch(() => [] as OutcomeLearning[]),
-    personalMode ? Promise.resolve([] as OwnerDecision[]) : loadOwnerDecisions(businessId),
-    (personalMode || !lastUserText) ? Promise.resolve([]) : detectInstructionConflicts(lastUserText, businessId).catch(() => []),
-    personalMode ? Promise.resolve('') : buildBusinessContext(businessId).catch(() => ''),
-    personalMode ? Promise.resolve('') : buildOwnerActiveTasksContextBlock(businessId).catch(() => ''),
-    personalMode ? Promise.resolve('') : buildStaffActiveTasksContextBlock(businessId).catch(() => ''),
+    suppressWork ? Promise.resolve([]) : getActivePlaybook(businessId),
+    suppressWork ? Promise.resolve([] as OutcomeLearning[]) : getRecentOutcomeLearnings({ limit: 5 }).catch(() => [] as OutcomeLearning[]),
+    suppressWork ? Promise.resolve([] as OwnerDecision[]) : loadOwnerDecisions(businessId),
+    (suppressWork || !lastUserText) ? Promise.resolve([]) : detectInstructionConflicts(lastUserText, businessId).catch(() => []),
+    suppressWork ? Promise.resolve('') : buildBusinessContext(businessId).catch(() => ''),
+    suppressWork ? Promise.resolve('') : buildOwnerActiveTasksContextBlock(businessId).catch(() => ''),
+    suppressWork ? Promise.resolve('') : buildStaffActiveTasksContextBlock(businessId).catch(() => ''),
     selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId, headTier }),
-    personalMode || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
+    suppressWork || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
     // LIVE office pulse (owner decision 2026-07-08) — shared rolling summary of
     // today's office/staff/agent-work state, delta-refreshed ≤10 min. Lets
     // office questions and autonomous wakes answer in ONE round instead of
     // paying tool round-trips that re-bill the whole context.
-    personalMode || businessId === 'ALMA_TRADING'
+    suppressWork || businessId === 'ALMA_TRADING'
       ? Promise.resolve(null)
       : getOfficePulse().catch(() => null),
   ])
@@ -324,13 +347,13 @@ async function* runAlternateProviderTurn(
     relevantMemories,
     recalledTurns,
     salahContext: salahContext ?? undefined,
-    prayerTimeOnlyTurn: personalMode
+    prayerTimeOnlyTurn: suppressWork
       ? false
       : !isSalahStatusInquiry(lastUserText) && isPrayerTimeInquiry(lastUserText),
-    staffTaskPlanningTurn: personalMode ? false : isStaffTaskPlanningInquiry(lastUserText),
-    staffTaskStatusTurn: personalMode ? false : isStaffTaskStatusInquiry(lastUserText),
+    staffTaskPlanningTurn: suppressWork ? false : isStaffTaskPlanningInquiry(lastUserText),
+    staffTaskStatusTurn: suppressWork ? false : isStaffTaskStatusInquiry(lastUserText),
     crossSurface,
-    salahStatusTurn: personalMode ? false : isSalahStatusInquiry(lastUserText),
+    salahStatusTurn: suppressWork ? false : isSalahStatusInquiry(lastUserText),
     personalMode,
     businessId,
     activePlaybook,
@@ -341,7 +364,7 @@ async function* runAlternateProviderTurn(
     businessContext,
     ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,
     staffActiveTasksBlock: staffActiveTasksBlock || undefined,
-    activeGroups: toolSelection.groups,
+    activeGroups: listenMode ? [] : toolSelection.groups,
     businessSnapshot,
     officePulse,
     headTier,
@@ -356,10 +379,19 @@ async function* runAlternateProviderTurn(
   // conversation. The injection is transient (only the assistant reply is
   // persisted), so replayed history stays clean.
   let volatileText = systemBlocksToText(volatile)
+  // LISTEN MODE override — prepend the empathy instruction and, crucially, CANCEL
+  // the system prompt's action-pressure for this one turn. There are no business
+  // tools on a listen turn (assembled empty below), so the head physically cannot
+  // pivot to work; this note shapes the tone. Placed first so it leads the turn.
+  if (listenMode) {
+    volatileText = `${LISTEN_MODE_NOTE}\n\n${volatileText}`.trim()
+  }
   // P0 resume fast-path: unresolved checkpoints ride the same transient per-turn
   // injection — the head resumes stalled work from the exact step with ZERO
   // history re-reading (the note is self-contained by contract). Fail-open.
-  try {
+  // Skipped in listen mode: a personal/emotional message must NOT drag a stalled
+  // ads/browser task back into context (a top cause of the work-pivot incident).
+  if (!listenMode) try {
     const { listUnresolvedCheckpoints, buildCheckpointSystemNote } = await import('@/agent/lib/checkpoint')
     const cps = await listUnresolvedCheckpoints(conversationId)
     const note = buildCheckpointSystemNote(cps)
@@ -369,8 +401,9 @@ async function* runAlternateProviderTurn(
   // text arrives as a bare user message with zero context — heads treated it as a
   // brand-new request and RESTARTED the task from scratch (2026-07-12 carousel
   // incident). Anchor it: this is the ANSWER to your own question — resume, don't
-  // re-derive. Fail-open.
-  try {
+  // re-derive. Fail-open. Skipped in listen mode (a feelings message is never a
+  // card answer, and we must not pull prior work into it).
+  if (!listenMode) try {
     if (lastUserText) {
       // Find the card this exact message answers — match by OPTION TEXT across the
       // recent cards, never "latest answered by createdAt" (the old lookup): the
@@ -452,7 +485,11 @@ async function* runAlternateProviderTurn(
     )
     cappedTools = selectedTools.slice(0, toolCap)
   }
-  const neutralTools = anthropicToolsToNeutral(cappedTools)
+  // Listen mode: withhold ALL business tools. This is the deterministic guarantee
+  // (prompt rules alone don't hold the cheap heads back) that a feelings message
+  // can't be answered with generate_image / ads / list_owner_todos etc. — the head
+  // has nothing to call, so it must simply respond in words.
+  const neutralTools = listenMode ? [] : anthropicToolsToNeutral(cappedTools)
   const adapter = adapterFor(model.provider)
 
   type ToolRecord = {
@@ -1168,7 +1205,7 @@ export async function* runOwnerTurn(
   // sim ≥ 0.95, TTL) — any doubt falls through to the normal agent. Cheap heads
   // (DeepSeek-class) and explicit owner pins bypass entirely; a miss costs one
   // embedding (~$0.000002).
-  if (!options.approveModelSwitch && decision.tier !== 'explicit' && lastUserText) {
+  if (!options.approveModelSwitch && decision.tier !== 'explicit' && decision.tier !== 'personal' && lastUserText) {
     try {
       const { ANSWER_GATE_ENABLED, isExpensiveHead, tryAnswerGate, recordGateServe } = await import('@/agent/lib/answer-gate')
       if (ANSWER_GATE_ENABLED && isExpensiveHead(model)) {
