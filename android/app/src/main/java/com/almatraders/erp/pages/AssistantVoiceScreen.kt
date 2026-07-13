@@ -20,9 +20,13 @@
 package com.almatraders.erp.pages
 
 import android.content.Context
+import android.content.Intent
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.os.Build
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -121,6 +125,13 @@ private class VoiceEngine(private val context: Context, private val scope: Corou
     var micLevel by mutableFloatStateOf(0f)
     var conversationId: String? = null
 
+    // On-device STT (Android SpeechRecognizer, offline+free — iOS NativeSpeechBridge
+    // parity). Owner opt-in, persisted; falls back to the Whisper server path whenever
+    // it's unavailable or returns nothing (e.g. no Bangla offline pack installed).
+    private val prefs = context.getSharedPreferences("alma_voice", Context.MODE_PRIVATE)
+    var onDeviceStt by mutableStateOf(prefs.getBoolean("alma_native_stt", true))
+    fun updateOnDeviceStt(on: Boolean) { onDeviceStt = on; prefs.edit().putBoolean("alma_native_stt", on).apply() }
+
     private var recorder: MediaRecorder? = null
     private var audioFile: File? = null
     private var vadJob: Job? = null
@@ -129,6 +140,9 @@ private class VoiceEngine(private val context: Context, private val scope: Corou
     private val ttsQueue = ArrayDeque<String>()
     private var player: MediaPlayer? = null
     private var speaking = false
+    private var recognizer: SpeechRecognizer? = null
+    private var usingOnDevice = false
+    private var triedWhisperFallback = false
 
     private val http = OkHttpClient.Builder()
         .followRedirects(false).followSslRedirects(false)
@@ -147,12 +161,81 @@ private class VoiceEngine(private val context: Context, private val scope: Corou
     fun shutdown() {
         vadJob?.cancel(); turnJob?.cancel()
         stopRecorder(); stopTts()
+        try { recognizer?.destroy() } catch (_: Exception) {}
+        recognizer = null
     }
 
-    // ── Listening + calibrated VAD ──
+    // ── Listening (on-device SpeechRecognizer preferred, Whisper fallback) ──
     fun startListening() {
         if (ttsActive) return
         transcript = ""
+        triedWhisperFallback = false
+        if (onDeviceStt && SpeechRecognizer.isRecognitionAvailable(context)) startListeningOnDevice()
+        else startListeningWhisper()
+    }
+
+    /** Android SpeechRecognizer: mic capture + endpointing + transcription in one, on
+     *  device / offline when the language pack is present. Drives the orb from onRmsChanged. */
+    private fun startListeningOnDevice() {
+        usingOnDevice = true
+        try { recognizer?.destroy() } catch (_: Exception) {}
+        val rec = SpeechRecognizer.createSpeechRecognizer(context)
+        recognizer = rec
+        rec.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: android.os.Bundle?) { state = VoiceState.LISTENING }
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rms: Float) { micLevel = ((rms + 2f) / 12f).coerceIn(0f, 1f) }
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() { micLevel = 0f }
+            override fun onPartialResults(partial: android.os.Bundle?) {
+                partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                    ?.takeIf { it.isNotBlank() }?.let { if (state == VoiceState.LISTENING) transcript = it }
+            }
+            override fun onEvent(eventType: Int, params: android.os.Bundle?) {}
+            override fun onResults(results: android.os.Bundle?) {
+                val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.trim()
+                micLevel = 0f
+                if (text.isNullOrBlank()) { onNoSpeech(); return }
+                transcript = text
+                runTurn(text)
+            }
+            override fun onError(error: Int) {
+                micLevel = 0f
+                when (error) {
+                    SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> onNoSpeech()
+                    else -> {
+                        // Recognizer unusable (no offline pack / busy) → fall back to Whisper once.
+                        if (!triedWhisperFallback) { triedWhisperFallback = true; usingOnDevice = false; startListeningWhisper() }
+                        else onNoSpeech()
+                    }
+                }
+            }
+        })
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "bn-BD")
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            if (Build.VERSION.SDK_INT >= 23) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
+        }
+        state = VoiceState.LISTENING
+        try { rec.startListening(intent) } catch (_: Exception) {
+            usingOnDevice = false; startListeningWhisper()
+        }
+    }
+
+    /** No usable speech — in কথোপকথন mode gently re-arm once, else go idle. */
+    private fun onNoSpeech() {
+        usingOnDevice = false
+        micLevel = 0f
+        state = VoiceState.IDLE
+        if (conversationMode) scope.launch { delay(400); if (state == VoiceState.IDLE && !ttsActive) startListening() }
+    }
+
+    // ── Whisper fallback: record + calibrated VAD → /transcribe ──
+    private fun startListeningWhisper() {
+        usingOnDevice = false
+        if (ttsActive) return
         try {
             val f = File.createTempFile("alma-voice", ".m4a", context.cacheDir)
             audioFile = f
@@ -231,6 +314,11 @@ private class VoiceEngine(private val context: Context, private val scope: Corou
     }
 
     fun finishListening() {
+        if (usingOnDevice) {
+            // Recognizer endpoints itself; a manual stop flushes onResults with the partial.
+            try { recognizer?.stopListening() } catch (_: Exception) {}
+            return
+        }
         vadJob?.cancel()
         stopRecorder()
         micLevel = 0f
@@ -452,7 +540,7 @@ fun AssistantVoiceScreen(ctx: PushCtx) {
             }
             Spacer(Modifier.weight(1f))
 
-            // কথোপকথন (auto-relisten) toggle
+            // কথোপকথন (auto-relisten) + on-device STT toggles
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -460,6 +548,15 @@ fun AssistantVoiceScreen(ctx: PushCtx) {
             ) {
                 Text("কথোপকথন মোড", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp)
                 Switch(checked = engine.conversationMode, onCheckedChange = { engine.conversationMode = it })
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.background(Color.White.copy(alpha = 0.06f), CircleShape).padding(horizontal = 16.dp, vertical = 6.dp),
+            ) {
+                Text("অন-ডিভাইস STT (ফ্রি)", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp)
+                Switch(checked = engine.onDeviceStt, onCheckedChange = { engine.updateOnDeviceStt(it) })
             }
             Spacer(Modifier.height(24.dp))
         }
