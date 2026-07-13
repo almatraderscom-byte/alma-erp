@@ -1231,7 +1231,7 @@ private fun DashAuthCard(dark: Boolean, onLogin: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text(
-            "সেশন পাওয়া যায়নি — একবার ওয়েব ভিউতে লগইন করুন",
+            "সেশন পাওয়া যায়নি — একবার লগইন করুন",
             color = AlmaTheme.ink(dark), fontSize = 14.sp, textAlign = TextAlign.Center,
         )
         Text(
