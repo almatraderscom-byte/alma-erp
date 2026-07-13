@@ -350,7 +350,8 @@ private class CreativeStudioState {
 
     /** Per-image finishing: server stamps logo + code + hook (web FinishPanel parity). */
     suspend fun finishImage(item: CsGalleryItem, hook: String, code: String, eyebrow: String,
-                            offer: String, mode: String, theme: String, footer: Boolean, fitContain: Boolean): Boolean {
+                            offer: String, mode: String, theme: String, footer: Boolean, fitContain: Boolean,
+                            layout: JSONObject? = null): Boolean {
         val path = item.storagePath ?: return false
         return try {
             val body = JSONObject()
@@ -359,6 +360,8 @@ private class CreativeStudioState {
             if (code.isNotEmpty()) body.put("productCode", code)
             if (eyebrow.isNotEmpty()) body.put("eyebrow", eyebrow)
             if (offer.isNotEmpty()) body.put("offer", offer)
+            // Lifestyle drag-editor geometry overrides (native CSLifestyleEditor parity).
+            if (layout != null && mode == "lifestyle") body.put("layout", layout)
             AlmaApi.send("POST", "/api/assistant/creative-studio/finish", body)
             toast = "ফিনিশিং হয়ে গেছে ✅"
             refreshGallery()
@@ -1247,7 +1250,24 @@ private fun CsFinishPanel(item: CsGalleryItem, vm: CreativeStudioState, dark: Bo
     var footer by remember { mutableStateOf(false) }
     var fitContain by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    var showDragEditor by remember { mutableStateOf(false) }
     val isLifestyle = CsData.finishModes[modeIdx].first == "lifestyle"
+
+    if (showDragEditor) {
+        ModalBottomSheet(onDismissRequest = { showDragEditor = false }, containerColor = AlmaTheme.rootBg(dark)) {
+            CSLifestyleEditorSheet(
+                item = CsGalleryItemRef(item.previewFull ?: item.imageUrl),
+                dark = dark, scope = scope,
+                seedHook = hook, seedEyebrow = eyebrow, seedOffer = offer, seedCode = code, seedThemeIdx = themeIdx,
+                onApply = { h, ey, of, cd, th, layout ->
+                    val ok = vm.finishImage(item, h, cd, ey, of, "lifestyle", th, footer, fitContain, layout)
+                    if (ok) onDone()
+                    ok
+                },
+                onClose = { showDragEditor = false },
+            )
+        }
+    }
 
     Column(modifier.fillMaxWidth().almaGlass(dark, AlmaTheme.R_CARD).padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (isLifestyle) CsField("ছোট লাইন (খালি রাখলে: নতুন এসেছে)", eyebrow) { eyebrow = it }
@@ -1265,6 +1285,16 @@ private fun CsFinishPanel(item: CsGalleryItem, vm: CreativeStudioState, dark: Bo
         }
         if (CsData.finishModes[modeIdx].first == "model_overlay") CsToggle("নিচে ফুটার (পেজ নাম + অর্ডার লাইন)", footer, dark) { footer = it }
         if (isLifestyle) CsToggle("পুরো ছবি রাখুন (ক্রপ ছাড়া)", fitContain, dark) { fitContain = it }
+
+        // Native drag/resize finishing editor (iOS CSLifestyleEditor parity) — lifestyle only.
+        if (isLifestyle) {
+            Text(
+                "🎨 ব্লক নিজে সাজান (ড্র্যাগ এডিটর)",
+                color = AlmaTheme.violet, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().background(AlmaTheme.violet.copy(alpha = 0.12f), CircleShape)
+                    .border(1.dp, AlmaTheme.violet.copy(alpha = 0.4f), CircleShape).plainClick { showDragEditor = true }.padding(vertical = 10.dp),
+            )
+        }
 
         if (busy) {
             Box(Modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
