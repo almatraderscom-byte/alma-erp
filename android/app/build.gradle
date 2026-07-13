@@ -31,15 +31,25 @@ android {
     }
     buildTypes {
         release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // R8 full-mode: shrink + obfuscate code and strip unused resources. Keep
+            // rules in proguard-rules.pro protect the Capacitor reflection bridge + the
+            // JNI native SDKs. Verified on an API 35 emulator (debug-signed release
+            // install boots, WebView bridge + native shell work) before shipping.
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             // Real Android phones are ARM — dropping the x86 (emulator-only) ABIs keeps
             // the release download small despite the ~25MB/ABI Agora native libs.
             ndk {
                 abiFilters 'arm64-v8a', 'armeabi-v7a'
             }
+            // Prod uses the real upload keystore when the env vars are set; otherwise
+            // fall back to the debug keystore so `assembleRelease` is installable for
+            // local R8 verification (never ships to Play unsigned/debug-signed).
             if (System.getenv('ALMA_ANDROID_KEYSTORE_PATH')) {
                 signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
             }
         }
     }

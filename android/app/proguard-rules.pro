@@ -1,21 +1,48 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
+# ALMA ERP — R8 keep rules for the release (minified + resource-shrunk) build.
 #
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# The app is a Capacitor shell: Capacitor discovers plugins and bridges JS↔native
+# by REFLECTION and annotations, so those classes/members must survive R8 or the
+# WebView bridge (login, push, camera, voice, intercom …) breaks at runtime. Native
+# libs (Agora, OneSignal) call back into Java by name via JNI — keep them whole.
+# Third-party AndroidX/OkHttp/Coil/Kotlin libs ship their own consumer rules; the
+# entries here cover Capacitor, our own reflection entry points, and defensive dontwarns.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# ── Capacitor core + plugins (reflection + @CapacitorPlugin / @PluginMethod) ──
+-keep class com.getcapacitor.** { *; }
+-keep @com.getcapacitor.annotation.CapacitorPlugin public class * { *; }
+-keep public class * extends com.getcapacitor.Plugin { *; }
+-keepclassmembers class * extends com.getcapacitor.Plugin {
+    @com.getcapacitor.annotation.PermissionCallback <methods>;
+    @com.getcapacitor.annotation.ActivityCallback <methods>;
+    @com.getcapacitor.PluginMethod public <methods>;
+}
+-keep class org.apache.cordova.** { *; }
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# JS → native bridges exposed to the WebView.
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# ── Our own reflection entry points ──
+# WorkManager instantiates the worker by class name via the default WorkerFactory.
+-keep class com.almatraders.erp.ReminderRefreshWorker { <init>(...); }
+# (MainActivity + ReminderAlarmReceiver + AlmaPushChannels are manifest components →
+#  AGP keeps them automatically.)
+
+# ── Native SDKs that call back via JNI / reflection ──
+-keep class io.agora.** { *; }
+-dontwarn io.agora.**
+-keep class com.onesignal.** { *; }
+-dontwarn com.onesignal.**
+
+# ── Defensive dontwarns for optional deps referenced by OkHttp/Okio/etc. ──
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-dontwarn org.conscrypt.**
+-dontwarn org.bouncycastle.**
+-dontwarn org.openjsse.**
+-dontwarn javax.annotation.**
+
+# Keep crash-trace line info (renamed via mapping.txt).
+-keepattributes SourceFile,LineNumberTable,*Annotation*,Signature,Exceptions,InnerClasses
+-renamesourcefileattribute SourceFile
