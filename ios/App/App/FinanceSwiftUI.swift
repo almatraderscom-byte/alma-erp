@@ -504,6 +504,8 @@ struct FinanceScreen: View {
                          icon: "banknote", path: "/expenses")
             quickLinkRow("Office Fund", subtitle: "অফিস ফান্ড — ওয়েবে",
                          icon: "building.columns", path: "/finance/office-fund")
+            quickLinkRow("পাওনা-দেনা", subtitle: "ব্যক্তিগত লেনদেনের খাতা — নেটিভ",
+                         icon: "hand.raised.fill", path: "/finance/personal-ledger")
             quickLinkRow("Payroll", subtitle: "বেতন ও অ্যাডভান্স — ওয়েবে",
                          icon: "person.2", path: "/payroll")
         }

@@ -11,6 +11,8 @@
 
 ## PROGRESS TRACKER (Claude updates this after every phase)
 
+**STATUS: ROADMAP COMPLETE — final sim hard-check PASSED 2026-07-14. TestFlight build gated on the OWNER's explicit confirmation (his rule).**
+
 **Working branch:** `claude/alma-ios-stability-roadmap-f74eca`
 **Deep-audit against repo:** DONE 2026-07-14 at `d94c199c` (2 commits after the audited `cb48cecb`; both touched agent cost badge/LISTEN mode only — every roadmap claim still holds). Verification details in the Audit Annex at the bottom of this file.
 
@@ -88,6 +90,22 @@
 - 4.3: `turn.foregroundRecoveryMs` latency metric + `sync.deltaNew`/`sync.olderPage` signposts (contents never logged).
 - 4.4: protocol-layer assertions runnable on-screen via `ALMA_ASSISTANT_UNITTEST=1` (parser matrix, event mapping, classifier, buffer chronology) — an XCTest target needs shared-pbxproj surgery best done in Xcode, flagged as owner follow-up; backend suite 274/274 green.
 - 4.5: `ios-simulator.yml` now triggers on PRs touching `ios/**`, the protocol schema, turn plumbing, or the Prisma schema (path-scoped — unrelated PRs never bill a Mac runner).
+
+### FINAL HARD-CHECK on the complete build (2026-07-14, PRs #351/#353/#355 all merged, backend live on prod)
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Protocol unit assertions (`ALMA_ASSISTANT_UNITTEST=1`) — parser matrix, event mapping, classifier, buffer chronology | ✅ 14/14 on-screen |
+| 2 | Canned-wire event test (subagent rows, multi-line data, unknown-event telemetry, ask card, live cost) | ✅ |
+| 3 | 100-round scroll stress over 1,000-delta fixture + row-height audit | ✅ zero phantom heights, stressDone |
+| 4 | Real prod turn (new pipeline) — stream, settle, cost badge; DB row carries app's clientMessageId, inline, linked | ✅ |
+| 5 | Background mid-turn → foreground — no English toast, live state, settle | ✅ |
+| 6 | KILL mid-turn → relaunch — descriptor recovery, timeline replayed, settled | ✅ |
+| 7 | Pagination on a REAL 81-message thread — window reconciles `count=50` (not 81), "আরও পুরনো মেসেজ" at top, delta poll quiet at idle | ✅ |
+| 8 | Idempotency global audit — keys with >1 turn in prod | ✅ 0 |
+| 9 | Old long conversation renders (cards resolved, no gaps) | ✅ |
+
+Definition-of-done items still OWNER-side: real-device TestFlight pass (one batched build — awaiting owner confirmation), real push/Face ID/keyboard feel. Remaining engineering follow-ups (non-blocking): XCTest target via Xcode, continued view/VM extraction, tool-screenshot inline image, web client adopting clientMessageId.
 
 ---
 

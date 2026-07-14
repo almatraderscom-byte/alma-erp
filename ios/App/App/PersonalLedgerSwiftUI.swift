@@ -1,155 +1,230 @@
 //
 //  PersonalLedgerSwiftUI.swift
-//  ALMA ERP — owner personal পাওনা-দেনা khata as a native SwiftUI screen.
+//  ALMA ERP — owner personal পাওনা-দেনা khata (/finance/personal-ledger) as a native
+//  SwiftUI screen. Twin of the web page + Android PersonalLedgerScreen.kt.
 //
-//  ⚠️ NOT WIRED YET (owner decision 2026-07-13): this file is intentionally NOT
-//  added to the Xcode target — it does not compile into the app. When the owner
-//  says go:
-//    1. Add this file to the App target in Xcode (or via project.pbxproj).
-//    2. Register the route in AlmaNativeRouter for /finance/personal-ledger.
-//    3. In ApprovalsSwiftUI, EXPENSE_REIMBURSEMENT approvals must show the
-//       payout chooser (👛 wallet / ⚡️ instant) and PATCH /api/approvals/[id]
-//       with {"payoutMode":"wallet"|"instant"} — same contract as the web.
-//
-//  Mirrors the web page 1:1 — same endpoint, same semantics:
-//    GET  /api/assistant… ✗ (not an agent route)
+//  SUPER_ADMIN only (the API enforces; non-owners get a Bangla forbidden card).
+//  Same endpoint + semantics as web/Android:
 //    GET  /api/finance/personal-ledger              → parties + totals
-//    GET  /api/finance/personal-ledger?party_id=…   → party + serial txns
-//    POST /api/finance/personal-ledger {op: create_party|add_txn|edit_txn|delete_txn}
+//    GET  /api/finance/personal-ledger?party_id=…   → party + serial txns (oldest→newest)
+//    POST /api/finance/personal-ledger {op: create_party|add_txn|edit_txn|delete_txn, …}
 //  Direction: OUT = টাকা দিলাম (they owe more) · IN = টাকা নিলাম (they owe less).
-//  Net > 0 → আমি পাব (emerald) · net < 0 → আমি দেব (red) · 0 → নিষ্পত্তি.
+//  Net > 0 আমি পাব (green) · net < 0 আমি দেব (red) · 0 নিষ্পত্তি. Running balance is
+//  recomputed per row (same math as the web detailRows memo).
 //
 
 import SwiftUI
 
-// MARK: - Palette (mirror of AlmaSwiftTheme — keep in sync)
+// MARK: - Palette (web tokens + AlmaSwiftTheme)
 
 private enum PLPalette {
-    static let coral = Color(red: 0.878, green: 0.478, blue: 0.373)   // #E07A5F
+    static let coral = AlmaSwiftTheme.coral
     static let coralLt = Color(red: 0.957, green: 0.635, blue: 0.549) // #F4A28C
-    static let emerald = Color(red: 0.290, green: 0.871, blue: 0.502) // #4ADE80
-    static let red = Color(red: 0.937, green: 0.267, blue: 0.267)     // #EF4444
+    static let coralDim = Color(red: 0.769, green: 0.353, blue: 0.235) // #C45A3C
 
-    static func accentText(_ scheme: ColorScheme) -> Color {
-        scheme == .dark ? coralLt : Color(red: 0.769, green: 0.353, blue: 0.235)
+    static func accentText(_ s: ColorScheme) -> Color { s == .dark ? coralLt : coralDim }
+    static func green(_ s: ColorScheme) -> Color { AlmaSwiftTheme.ios27Green(s) }
+    static func red(_ s: ColorScheme) -> Color { AlmaSwiftTheme.ios27Red(s) }
+    static func net(_ net: Int, _ s: ColorScheme) -> Color {
+        net > 0 ? green(s) : net < 0 ? red(s) : .secondary
     }
-    static func netColor(_ net: Int, scheme: ColorScheme) -> Color {
-        net > 0 ? emerald : net < 0 ? red : .secondary
-    }
+    /// Web <Money>: whole-taka, ৳ + thousand separators.
+    static func money(_ amount: Int) -> String { "৳\(abs(amount).formatted())" }
 }
 
-// MARK: - Models (same field names the web API returns)
+// MARK: - Models (web field names)
 
-struct PLParty: Decodable, Identifiable, Equatable {
+private struct PLParty: Decodable, Identifiable, Equatable {
     let id: String
     let name: String
-    let phone: String?
     let net: Int
     let txnCount: Int
     let lastTxnDate: String?
+
+    private enum K: String, CodingKey { case id, name, net, txnCount, lastTxnDate }
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: K.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? ""
+        name = (try? c.decode(String.self, forKey: .name)) ?? "—"
+        net = PLDecode.int(c, .net) ?? 0
+        txnCount = PLDecode.int(c, .txnCount) ?? 0
+        lastTxnDate = try? c.decodeIfPresent(String.self, forKey: .lastTxnDate)
+    }
 }
 
-struct PLTxn: Decodable, Identifiable, Equatable {
+private struct PLTxn: Decodable, Identifiable, Equatable {
     let id: String
-    let direction: String // "OUT" | "IN"
+    let direction: String // OUT | IN
     let amount: Int
     let reason: String
     let txnDate: String
-    let createdAt: String?
     let edited: Bool
+
+    private enum K: String, CodingKey { case id, direction, amount, reason, txnDate, edited }
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: K.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? ""
+        direction = (try? c.decode(String.self, forKey: .direction)) ?? "OUT"
+        amount = PLDecode.int(c, .amount) ?? 0
+        reason = (try? c.decode(String.self, forKey: .reason)) ?? ""
+        txnDate = (try? c.decode(String.self, forKey: .txnDate)) ?? ""
+        edited = (try? c.decodeIfPresent(Bool.self, forKey: .edited)) ?? false
+    }
+    var out: Bool { direction == "OUT" }
 }
 
-struct PLPartyDetail: Decodable, Equatable {
+private struct PLPartyDetail: Decodable, Equatable {
     let id: String
     let name: String
-    let phone: String?
-    let note: String?
     let net: Int
     let txns: [PLTxn]
+
+    private enum K: String, CodingKey { case id, name, net, txns }
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: K.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? ""
+        name = (try? c.decode(String.self, forKey: .name)) ?? "—"
+        net = PLDecode.int(c, .net) ?? 0
+        txns = (try? c.decode([PLTxn].self, forKey: .txns)) ?? []
+    }
 }
 
 private struct PLListResponse: Decodable {
-    let ok: Bool?
     let parties: [PLParty]?
     let totalReceivable: Int?
     let totalPayable: Int?
     let net: Int?
+
+    private enum K: String, CodingKey { case parties, totalReceivable, totalPayable, net, data }
+    init(from d: Decoder) throws {
+        let root = try d.container(keyedBy: K.self)
+        // apiDataSuccess may wrap in {data:{…}} — unwrap if present.
+        let c = (try? root.nestedContainer(keyedBy: K.self, forKey: .data)) ?? root
+        parties = try? c.decode([PLParty].self, forKey: .parties)
+        totalReceivable = PLDecode.int(c, .totalReceivable)
+        totalPayable = PLDecode.int(c, .totalPayable)
+        net = PLDecode.int(c, .net)
+    }
 }
 
 private struct PLDetailResponse: Decodable {
-    let ok: Bool?
     let party: PLPartyDetail?
+    private enum K: String, CodingKey { case party, data }
+    init(from d: Decoder) throws {
+        let root = try d.container(keyedBy: K.self)
+        let c = (try? root.nestedContainer(keyedBy: K.self, forKey: .data)) ?? root
+        party = try? c.decode(PLPartyDetail.self, forKey: .party)
+    }
 }
 
-// MARK: - API
+private struct PLOpResponse: Decodable { let ok: Bool?; let message: String?; let partyId: String? }
 
-/// POST body for every ledger write — op decides which fields matter (web parity).
-struct PLOpBody: Encodable {
-    var op: String // create_party | add_txn | edit_txn | delete_txn
+/// Flexible int (legacy rows mix int/double/string) — iOS flexInt twin.
+private enum PLDecode {
+    static func int<K: CodingKey>(_ c: KeyedDecodingContainer<K>, _ k: K) -> Int? {
+        if let i = try? c.decodeIfPresent(Int.self, forKey: k) { return i }
+        if let d = try? c.decodeIfPresent(Double.self, forKey: k) { return Int(d.rounded()) }
+        if let s = try? c.decodeIfPresent(String.self, forKey: k) { return Int(Double(s) ?? 0) }
+        return nil
+    }
+}
+
+/// POST body for every write op — op decides which fields matter (web parity).
+private struct PLOpBody: Encodable {
+    var op: String
     var name: String?
     var party_id: String?
     var txn_id: String?
-    var direction: String? // OUT | IN
+    var direction: String?
     var amount: Int?
     var reason: String?
-    var txn_date: String? // YYYY-MM-DD
+    var txn_date: String?
 }
 
-private struct PLOpResponse: Decodable {
-    let ok: Bool?
-    let message: String?
-    let partyId: String?
-}
+// MARK: - Model
 
 @MainActor
-final class PersonalLedgerModel: ObservableObject {
+private final class PersonalLedgerModel: ObservableObject {
     @Published var parties: [PLParty] = []
     @Published var totalReceivable = 0
     @Published var totalPayable = 0
-    @Published var net = 0
+    @Published var netTotal = 0
     @Published var detail: PLPartyDetail?
     @Published var loading = false
+    @Published var busy = false
     @Published var errorText: String?
+    @Published var notice: String?
+    @Published var forbidden = false
 
     func loadList() async {
-        loading = true
-        defer { loading = false }
+        loading = true; defer { loading = false }
         do {
-            let parsed: PLListResponse = try await AlmaAPI.shared.get("/api/finance/personal-ledger")
-            parties = parsed.parties ?? []
-            totalReceivable = parsed.totalReceivable ?? 0
-            totalPayable = parsed.totalPayable ?? 0
-            net = parsed.net ?? 0
-            errorText = nil
+            let r: PLListResponse = try await AlmaAPI.shared.get("/api/finance/personal-ledger")
+            parties = r.parties ?? []
+            totalReceivable = r.totalReceivable ?? 0
+            totalPayable = r.totalPayable ?? 0
+            netTotal = r.net ?? 0
+            forbidden = false; errorText = nil
+        } catch AlmaAPIError.notAuthenticated {
+            forbidden = true
         } catch {
-            errorText = "খাতা লোড করা যায়নি।"
+            // API 403 (not owner) arrives as .http(403) — treat as owner-only card.
+            if case AlmaAPIError.http(let code, _) = error, code == 403 { forbidden = true }
+            else { errorText = "খাতা লোড করা যায়নি।" }
         }
     }
 
     func openParty(_ id: String) async {
-        loading = true
-        defer { loading = false }
+        loading = true; defer { loading = false }
         do {
-            let parsed: PLDetailResponse = try await AlmaAPI.shared.get(
+            let r: PLDetailResponse = try await AlmaAPI.shared.get(
                 "/api/finance/personal-ledger", query: ["party_id": id])
-            detail = parsed.party
-        } catch {
-            errorText = "খাতাটি লোড করা যায়নি।"
-        }
+            detail = r.party
+        } catch { errorText = "খাতাটি লোড করা যায়নি।" }
     }
 
+    @discardableResult
     func post(_ body: PLOpBody) async -> Bool {
+        if busy { return false }
+        busy = true; notice = nil; defer { busy = false }
         do {
-            let _: PLOpResponse = try await AlmaAPI.shared.send("POST", "/api/finance/personal-ledger", body: body)
+            let r: PLOpResponse = try await AlmaAPI.shared.send("POST", "/api/finance/personal-ledger", body: body)
+            notice = r.message ?? "সংরক্ষণ হয়েছে।"
             return true
+        } catch AlmaAPIError.notAuthenticated {
+            forbidden = true; return false
         } catch {
-            errorText = "সংরক্ষণ করা যায়নি।"
-            return false
+            errorText = "সংরক্ষণ করা যায়নি।"; return false
         }
     }
 }
 
-// MARK: - Screens
+// MARK: - Date helpers
+
+private enum PLDate {
+    static func today() -> String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        f.timeZone = TimeZone(identifier: "Asia/Dhaka")
+        return f.string(from: Date())
+    }
+    static func display(_ ymd: String?) -> String {
+        guard let ymd, !ymd.isEmpty else { return "—" }
+        let inF = DateFormatter(); inF.dateFormat = "yyyy-MM-dd"; inF.timeZone = TimeZone(identifier: "UTC")
+        guard let d = inF.date(from: ymd) else { return ymd }
+        let out = DateFormatter(); out.dateFormat = "d MMM, yyyy"; out.timeZone = TimeZone(identifier: "UTC")
+        return out.string(from: d)
+    }
+    static func toDate(_ ymd: String) -> Date {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.timeZone = TimeZone(identifier: "UTC")
+        return f.date(from: ymd) ?? Date()
+    }
+    static func fromDate(_ d: Date) -> String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.timeZone = TimeZone(identifier: "UTC")
+        return f.string(from: d)
+    }
+}
+
+// MARK: - Root screen
 
 struct PersonalLedgerScreen: View {
     @StateObject private var model = PersonalLedgerModel()
@@ -157,20 +232,138 @@ struct PersonalLedgerScreen: View {
 
     var body: some View {
         Group {
-            if let detail = model.detail {
-                PLPartyDetailView(model: model, detail: detail)
+            if model.forbidden {
+                PLForbiddenCard()
+            } else if let detail = model.detail {
+                PLDetailView(model: model, detail: detail)
             } else {
-                PLPartyListView(model: model)
+                PLListView(model: model)
             }
         }
+        // App-wide living aurora (owner directive 2026-07-08: every native page shares
+        // the Assistant tab's moving mesh) — NOT the flat rootBg, which read as an
+        // off-brand dark slab (owner report 2026-07-14).
+        .background(PersonalLedgerAurora())
         .task { await model.loadList() }
     }
 }
 
-private struct PLPartyListView: View {
+// MARK: - Liquid-glass card (translucent so the aurora bleeds through — page-owned
+// copy of financeGlass; the shared AlmaGlassCard/lgCard is opaque and read as a flat
+// dark slab over the aurora, owner report 2026-07-14).
+
+private struct PLGlassCard: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+    var radius: CGFloat = AlmaSwiftTheme.rCard
+    var padding: CGFloat? = AlmaSwiftTheme.margin
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        return content
+            .padding(.all, padding ?? 0)
+            .background(.ultraThinMaterial, in: shape)
+            .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35), in: shape)
+            .overlay(shape.strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+            .shadow(color: .black.opacity(scheme == .dark ? 0.35 : 0.08), radius: 12, y: 5)
+    }
+}
+
+private extension View {
+    func plCard(radius: CGFloat = AlmaSwiftTheme.rCard, padding: CGFloat? = AlmaSwiftTheme.margin) -> some View {
+        modifier(PLGlassCard(radius: radius, padding: padding))
+    }
+}
+
+// MARK: - Aurora background (page-owned copy — parallel-session rule: page files
+// never import another page's helpers, so the shared look is duplicated verbatim
+// from the Finance/Approvals spec).
+
+private struct PersonalLedgerAurora: View {
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
+
+    var body: some View {
+        let dark = scheme == .dark
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
+            }
+            .onAppear { updateDrift() }
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
+    }
+}
+
+// MARK: - Forbidden
+
+private struct PLForbiddenCard: View {
+    var body: some View {
+        VStack(spacing: 8) {
+            Text("🔒").font(.system(size: 30))
+            Text("শুধু মালিকের জন্য").font(.headline)
+            Text("এই খাতা শুধু Super Admin দেখতে পারেন।")
+                .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .plCard()
+        .padding(AlmaSwiftTheme.margin)
+    }
+}
+
+// MARK: - Party list
+
+private struct PLListView: View {
     @ObservedObject var model: PersonalLedgerModel
     @Environment(\.colorScheme) private var scheme
     @State private var filter = 0 // 0 সব · 1 পাওনা · 2 দেনা · 3 নিষ্পত্তি
+    @State private var showNewParty = false
 
     private var filtered: [PLParty] {
         switch filter {
@@ -182,125 +375,364 @@ private struct PLPartyListView: View {
     }
 
     var body: some View {
-        List {
-            Section {
-                HStack(spacing: 10) {
-                    PLStat(label: "মোট পাওনা", amount: model.totalReceivable, color: PLPalette.emerald)
-                    PLStat(label: "মোট দেনা", amount: model.totalPayable, color: PLPalette.red)
-                    PLStat(label: "নিট", amount: abs(model.net), color: PLPalette.netColor(model.net, scheme: scheme))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("পাওনা-দেনা").font(.title2.bold())
+                    Text("আপনার ব্যক্তিগত লেনদেন — স্টাফ নয়, বাইরের ব্যক্তি/প্রতিষ্ঠান")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                .listRowBackground(Color.clear)
-            }
-            Section {
+
+                model.errorText.map { PLNotice(text: "⚠️ \($0)", tint: PLPalette.red(scheme)) }
+                model.notice.map { PLNotice(text: "✓ \($0)", tint: PLPalette.green(scheme)) }
+
+                HStack(spacing: 8) {
+                    PLStat(label: "মোট পাওনা", amount: model.totalReceivable, tint: PLPalette.green(scheme))
+                    PLStat(label: "মোট দেনা", amount: model.totalPayable, tint: PLPalette.red(scheme))
+                    PLStat(label: "নিট", amount: abs(model.netTotal),
+                           tint: PLPalette.net(model.netTotal, scheme), negative: model.netTotal < 0)
+                }
+
                 Picker("ফিল্টার", selection: $filter) {
-                    Text("সব").tag(0)
-                    Text("পাওনা").tag(1)
-                    Text("দেনা").tag(2)
-                    Text("নিষ্পত্তি").tag(3)
-                }
-                .pickerStyle(.segmented)
-                .listRowBackground(Color.clear)
-            }
-            Section("খাতা · \(model.parties.count) জন") {
-                ForEach(filtered) { party in
-                    Button {
-                        Task { await model.openParty(party.id) }
-                    } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(party.name).font(.subheadline.weight(.semibold))
-                                Text("\(party.txnCount)টি লেনদেন · শেষ: \(party.lastTxnDate ?? "—")")
-                                    .font(.caption2).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            VStack(alignment: .trailing, spacing: 2) {
-                                Text("\(party.net < 0 ? "−" : "")৳\(abs(party.net).formatted())")
-                                    .font(.subheadline.weight(.bold))
-                                    .foregroundStyle(PLPalette.netColor(party.net, scheme: scheme))
-                                Text(party.net > 0 ? "আমি পাব" : party.net < 0 ? "আমি দেব" : "নিষ্পত্তি")
-                                    .font(.caption2.weight(.bold))
-                                    .foregroundStyle(PLPalette.netColor(party.net, scheme: scheme))
-                            }
+                    Text("সব").tag(0); Text("পাওনা").tag(1); Text("দেনা").tag(2); Text("নিষ্পত্তি").tag(3)
+                }.pickerStyle(.segmented)
+
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("খাতা · \(model.parties.count) জন").font(.subheadline.bold()).padding(.bottom, 6)
+                    if filtered.isEmpty {
+                        Text("এই ফিল্টারে কেউ নেই").font(.footnote).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity).padding(.vertical, 24)
+                    } else {
+                        ForEach(Array(filtered.enumerated()), id: \.element.id) { i, p in
+                            Button { Task { await model.openParty(p.id) } } label: { PLPartyRow(party: p) }
+                                .buttonStyle(.plain)
+                            if i < filtered.count - 1 { Divider().background(AlmaSwiftTheme.separator(scheme)) }
                         }
                     }
                 }
+                .plCard()
+
+                Button { showNewParty = true } label: {
+                    Text("＋ নতুন ব্যক্তি / প্রতিষ্ঠান")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(PLPalette.accentText(scheme))
+                        .frame(maxWidth: .infinity).padding(.vertical, 12)
+                        .background(PLPalette.coral.opacity(scheme == .dark ? 0.22 : 0.12), in: Capsule())
+                        .overlay(Capsule().strokeBorder(PLPalette.coral.opacity(0.45), lineWidth: 1))
+                }
             }
+            .padding(AlmaSwiftTheme.margin)
         }
-        .navigationTitle("পাওনা-দেনা")
         .refreshable { await model.loadList() }
+        .sheet(isPresented: $showNewParty) {
+            PLTxnForm(title: "নতুন ব্যক্তি / প্রতিষ্ঠান", askName: true, busy: model.busy) { name, dir, amt, reason, date in
+                Task {
+                    let ok = await model.post(PLOpBody(op: "create_party", name: name, direction: dir,
+                                                       amount: amt, reason: reason, txn_date: date))
+                    if ok { showNewParty = false; await model.loadList() }
+                }
+            }
+            .presentationDetents([.large])
+        }
     }
 }
 
-private struct PLPartyDetailView: View {
+private struct PLPartyRow: View {
+    let party: PLParty
+    @Environment(\.colorScheme) private var scheme
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(party.name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                Text("\(party.txnCount)টি লেনদেন · শেষ: \(PLDate.display(party.lastTxnDate))")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("\(party.net < 0 ? "−" : "")\(PLPalette.money(party.net))")
+                    .font(.subheadline.weight(.bold)).monospacedDigit()
+                    .foregroundStyle(PLPalette.net(party.net, scheme))
+                Text(party.net > 0 ? "আমি পাব" : party.net < 0 ? "আমি দেব" : "নিষ্পত্তি")
+                    .font(.caption2.weight(.bold)).foregroundStyle(PLPalette.net(party.net, scheme))
+            }
+            Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 9)
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - Party detail (খতিয়ান)
+
+private struct PLDetailView: View {
     @ObservedObject var model: PersonalLedgerModel
     let detail: PLPartyDetail
     @Environment(\.colorScheme) private var scheme
+    @State private var showAddTxn = false
+    @State private var editing: PLTxn?
+    @State private var deleting: PLTxn?
 
-    /// Serial rows with running balance (oldest → newest), same math as web.
+    /// Serial rows with running balance (oldest → newest), same math as web/Android.
     private var rows: [(txn: PLTxn, run: Int)] {
         var run = 0
-        return detail.txns.map { t in
-            run += t.direction == "OUT" ? t.amount : -t.amount
-            return (t, run)
-        }
+        return detail.txns.map { t in run += t.out ? t.amount : -t.amount; return (t, run) }
     }
 
     var body: some View {
-        List {
-            Section {
-                VStack(spacing: 4) {
-                    Text("\(detail.net < 0 ? "−" : "")৳\(abs(detail.net).formatted())")
-                        .font(.title.weight(.black))
-                        .foregroundStyle(PLPalette.netColor(detail.net, scheme: scheme))
-                    Text(detail.net > 0 ? "সে আমাকে দেবে (আমি পাব)" : detail.net < 0 ? "আমি তাকে দেব (আমার দেনা)" : "হিসাব নিষ্পত্তি ✓")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Button { model.detail = nil; Task { await model.loadList() } } label: {
+                    Text("‹ পাওনা-দেনা তালিকায় ফিরুন")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(PLPalette.accentText(scheme))
+                }.buttonStyle(.plain)
+
+                VStack(spacing: 3) {
+                    Text("\(detail.net < 0 ? "−" : "")\(PLPalette.money(detail.net))")
+                        .font(.system(size: 26, weight: .black)).monospacedDigit()
+                        .foregroundStyle(PLPalette.net(detail.net, scheme))
+                    Text(detail.net > 0 ? "সে আমাকে দেবে (আমি পাব)"
+                         : detail.net < 0 ? "আমি তাকে দেব (আমার দেনা)" : "হিসাব নিষ্পত্তি ✓")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity)
-                .listRowBackground(Color.clear)
-            }
-            Section("লেনদেনের খতিয়ান · \(detail.txns.count)টি") {
-                ForEach(rows, id: \.txn.id) { row in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack {
-                            Text("\(row.txn.direction == "OUT" ? "↑ টাকা দিলাম" : "↓ টাকা নিলাম") · \(row.txn.reason)")
-                                .font(.subheadline.weight(.semibold))
-                            Spacer()
-                            Text("\(row.txn.direction == "OUT" ? "−" : "+")৳\(row.txn.amount.formatted())")
-                                .font(.subheadline.weight(.bold))
-                                .foregroundStyle(row.txn.direction == "OUT" ? PLPalette.red : PLPalette.emerald)
+                .frame(maxWidth: .infinity).padding(.vertical, 18).plCard()
+
+                model.notice.map { PLNotice(text: "✓ \($0)", tint: PLPalette.green(scheme)) }
+
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("লেনদেনের খতিয়ান · \(detail.txns.count)টি").font(.subheadline.bold()).padding(.bottom, 6)
+                    if rows.isEmpty {
+                        Text("কোনো লেনদেন নেই").font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        ForEach(Array(rows.enumerated()), id: \.element.txn.id) { i, row in
+                            PLTxnRow(txn: row.txn, run: row.run) { editing = row.txn }
+                            if i < rows.count - 1 { Divider().background(AlmaSwiftTheme.separator(scheme)) }
                         }
-                        Text(row.txn.txnDate).font(.caption2).foregroundStyle(.secondary)
-                        Text("ব্যালেন্স: \(row.run < 0 ? "−" : "")৳\(abs(row.run).formatted()) \(row.run > 0 ? "আমি পাব" : row.run < 0 ? "আমি দেব" : "— নিষ্পত্তি")")
-                            .font(.caption2).foregroundStyle(.tertiary)
                     }
-                    // Edit/delete: swipe actions call model.post(op: edit_txn/delete_txn)
-                    // — wire when this screen is added to the target.
+                }.plCard()
+
+                Button { showAddTxn = true } label: {
+                    Text("＋ নতুন লেনদেন")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(PLPalette.accentText(scheme))
+                        .frame(maxWidth: .infinity).padding(.vertical, 12)
+                        .background(PLPalette.coral.opacity(scheme == .dark ? 0.22 : 0.12), in: Capsule())
+                        .overlay(Capsule().strokeBorder(PLPalette.coral.opacity(0.45), lineWidth: 1))
+                }
+
+                if detail.net != 0 {
+                    Text(detail.net > 0
+                         ? "টিপ: পুরো টাকা ফেরত পেলে “টাকা নিলাম”-এ সেই অঙ্ক লিখুন — খাতা নিজেই নিষ্পত্তি দেখাবে।"
+                         : "টিপ: পুরো টাকা দিয়ে দিলে “টাকা দিলাম”-এ লিখুন — খাতা নিষ্পত্তি হবে।")
+                        .font(.caption2).foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
             }
-            Section {
-                Button("‹ পাওনা-দেনা তালিকায় ফিরুন") {
-                    model.detail = nil
-                    Task { await model.loadList() }
-                }
-                .foregroundStyle(PLPalette.accentText(scheme))
-            }
+            .padding(AlmaSwiftTheme.margin)
         }
-        .navigationTitle(detail.name)
+        .refreshable { await model.openParty(detail.id) }
+        .sheet(isPresented: $showAddTxn) {
+            PLTxnForm(title: "\(detail.name) — নতুন লেনদেন", askName: false, busy: model.busy) { _, dir, amt, reason, date in
+                Task {
+                    let ok = await model.post(PLOpBody(op: "add_txn", party_id: detail.id, direction: dir,
+                                                       amount: amt, reason: reason, txn_date: date))
+                    if ok { showAddTxn = false; await model.openParty(detail.id) }
+                }
+            }.presentationDetents([.large])
+        }
+        .sheet(item: $editing) { txn in
+            PLTxnForm(title: "লেনদেন অ্যাডজাস্ট (+/−)", askName: false, busy: model.busy,
+                      initialDir: txn.direction, initialAmount: "\(txn.amount)",
+                      initialReason: txn.reason, initialDate: txn.txnDate,
+                      onDelete: { editing = nil; deleting = txn }) { _, dir, amt, reason, date in
+                Task {
+                    let ok = await model.post(PLOpBody(op: "edit_txn", txn_id: txn.id, direction: dir,
+                                                       amount: amt, reason: reason, txn_date: date))
+                    if ok { editing = nil; await model.openParty(detail.id) }
+                }
+            }.presentationDetents([.large])
+        }
+        .confirmationDialog("লেনদেন মুছবেন?",
+                            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                            titleVisibility: .visible) {
+            Button("হ্যাঁ, মুছুন", role: .destructive) {
+                if let t = deleting {
+                    deleting = nil
+                    Task {
+                        let ok = await model.post(PLOpBody(op: "delete_txn", txn_id: t.id))
+                        if ok { await model.openParty(detail.id) }
+                    }
+                }
+            }
+            Button("বাতিল", role: .cancel) { deleting = nil }
+        } message: {
+            Text("মুছে ফেললে ব্যালেন্স নতুন করে হিসাব হবে (রেকর্ড অডিটে থেকে যায়)।")
+        }
     }
 }
+
+private struct PLTxnRow: View {
+    let txn: PLTxn
+    let run: Int
+    let onEdit: () -> Void
+    @Environment(\.colorScheme) private var scheme
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(txn.out ? "↑" : "↓")
+                .font(.subheadline.bold())
+                .foregroundStyle(txn.out ? PLPalette.red(scheme) : PLPalette.green(scheme))
+                .padding(.horizontal, 8).padding(.vertical, 4)
+                .background((txn.out ? PLPalette.red(scheme) : PLPalette.green(scheme)).opacity(0.12), in: Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(txn.out ? "টাকা দিলাম" : "টাকা নিলাম") · \(txn.reason)" + (txn.edited ? " (অ্যাডজাস্ট করা)" : ""))
+                    .font(.subheadline.weight(.semibold))
+                Text(PLDate.display(txn.txnDate)).font(.caption2).foregroundStyle(.secondary)
+                Text("ব্যালেন্স: \(run < 0 ? "−" : "")\(PLPalette.money(run)) " +
+                     (run > 0 ? "আমি পাব" : run < 0 ? "আমি দেব" : "— নিষ্পত্তি"))
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 4) {
+                Text("\(txn.out ? "−" : "+")\(PLPalette.money(txn.amount))")
+                    .font(.subheadline.weight(.bold)).monospacedDigit()
+                    .foregroundStyle(txn.out ? PLPalette.red(scheme) : PLPalette.green(scheme))
+                Button(action: onEdit) {
+                    Image(systemName: "pencil").font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(6).background(AlmaSwiftTheme.fill(scheme), in: Circle())
+                }.buttonStyle(.plain)
+            }
+        }
+        .padding(.vertical, 9)
+    }
+}
+
+// MARK: - Shared bits
 
 private struct PLStat: View {
     let label: String
     let amount: Int
-    let color: Color
-
+    let tint: Color
+    var negative = false
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.caption2).foregroundStyle(.secondary)
-            Text("৳\(amount.formatted())").font(.subheadline.weight(.bold)).foregroundStyle(color)
+            Text(label).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            Text("\(negative ? "−" : "")\(PLPalette.money(amount))")
+                .font(.subheadline.weight(.bold)).monospacedDigit().foregroundStyle(tint).lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .padding(11)
+        .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+    }
+}
+
+private struct PLNotice: View {
+    let text: String
+    let tint: Color
+    var body: some View {
+        Text(text).font(.footnote).foregroundStyle(tint)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .plCard(radius: AlmaSwiftTheme.rControl)
+    }
+}
+
+// MARK: - Add/edit form (shared by create_party / add_txn / edit_txn)
+
+private struct PLTxnForm: View {
+    let title: String
+    let askName: Bool
+    let busy: Bool
+    var initialDir = "OUT"
+    var initialAmount = ""
+    var initialReason = ""
+    var initialDate = PLDate.today()
+    var onDelete: (() -> Void)?
+    let onSubmit: (_ name: String, _ dir: String, _ amount: Int, _ reason: String, _ date: String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var scheme
+    @State private var name = ""
+    @State private var dir = "OUT"
+    @State private var amount = ""
+    @State private var reason = ""
+    @State private var date = Date()
+    @State private var localError: String?
+    @State private var loaded = false
+
+    private var parsedAmount: Int { Int(amount.filter { $0.isNumber }) ?? 0 }
+
+    var body: some View {
+        // presentationBackground is iOS 16.4+; deployment target is 16.0, so gate it
+        // (the aurora sheet look only needs to hold on the 17-gated native screens).
+        if #available(iOS 16.4, *) {
+            formStack.presentationBackground { PersonalLedgerAurora() }
+        } else {
+            formStack
+        }
+    }
+
+    private var formStack: some View {
+        NavigationStack {
+            Form {
+                localError.map { Text("⚠️ \($0)").font(.footnote).foregroundStyle(PLPalette.red(scheme)) }
+
+                if askName {
+                    Section("নাম *") {
+                        TextField("যেমন: করিম ট্রেডার্স", text: $name)
+                    }
+                }
+                Section("ধরন *") {
+                    Picker("ধরন", selection: $dir) {
+                        Text("টাকা দিলাম").tag("OUT")
+                        Text("টাকা নিলাম").tag("IN")
+                    }.pickerStyle(.segmented)
+                }
+                Section("পরিমাণ (৳) *") {
+                    TextField("যেমন: 4000", text: $amount).keyboardType(.numberPad)
+                }
+                Section("কারণ *") {
+                    TextField("যেমন: ধার দিলাম / ধার নিলাম", text: $reason)
+                }
+                Section("তারিখ *") {
+                    DatePicker("তারিখ", selection: $date, displayedComponents: .date)
+                        .datePickerStyle(.compact)
+                }
+                Section {
+                    Button {
+                        if askName && name.trimmingCharacters(in: .whitespaces).isEmpty { localError = "নাম দিন।" }
+                        else if parsedAmount <= 0 { localError = "সঠিক একটি টাকার অঙ্ক দিন।" }
+                        else if reason.trimmingCharacters(in: .whitespaces).isEmpty { localError = "কারণ লিখুন।" }
+                        else if !busy {
+                            localError = nil
+                            onSubmit(name.trimmingCharacters(in: .whitespaces), dir, parsedAmount,
+                                     reason.trimmingCharacters(in: .whitespaces), PLDate.fromDate(date))
+                        }
+                    } label: {
+                        HStack {
+                            if busy { ProgressView().tint(.white) }
+                            Text("সংরক্ষণ করুন").font(.subheadline.weight(.semibold)).foregroundStyle(.white)
+                        }
+                        .frame(maxWidth: .infinity).padding(.vertical, 4)
+                    }
+                    .listRowBackground(PLPalette.coral)
+
+                    if let onDelete {
+                        Button(role: .destructive) { onDelete() } label: {
+                            Text("এই লেনদেনটি মুছে ফেলুন").frame(maxWidth: .infinity)
+                        }
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden)   // let the aurora show through the Form
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("বাতিল") { dismiss() } } }
+            .onAppear {
+                guard !loaded else { return }
+                loaded = true
+                dir = initialDir
+                amount = initialAmount
+                reason = initialReason
+                date = PLDate.toDate(initialDate)
+            }
+        }
     }
 }
