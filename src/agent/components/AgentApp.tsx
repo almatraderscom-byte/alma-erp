@@ -25,10 +25,6 @@ interface AgentAppProps {
 let _msgCounter = 0
 function nextId(prefix = 'msg') { return `${prefix}-${++_msgCounter}` }
 
-// Auto-continue after a serverless-deadline turn (see needContinue on the done
-// event). The text doubles as the marker that a send was machine-initiated —
-// any OTHER text resets the consecutive counter.
-const AUTO_CONTINUE_TEXT = 'continue — ঠিক যেখানে ছিলে সেখান থেকে কাজ চালিয়ে যাও'
 const MAX_AUTO_CONTINUES = 8
 
 async function readAssistantError(res: Response, fallback: string): Promise<string> {
@@ -340,12 +336,12 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
   // issue a real cross-instance cancel, and to poll a backgrounded turn to completion.
   const activeTurnIdRef = useRef<string | null>(null)
   // Auto-continue: a long browser task dies at the ~280s serverless cap; the server
-  // marks the turn `needContinue` and the client re-sends "continue" itself so the
-  // task finishes end-to-end without the owner typing it every 4-5 minutes. Bounded
+  // marks the turn `needContinue` and the client claims a structured continuation
+  // so the task finishes end-to-end without impersonating the owner. Bounded
   // (consecutive cap) and reset by any manual message; a Stop click cancels it too.
-  const pendingAutoContinueRef = useRef(false)
+  const pendingAutoContinueRef = useRef<string | null>(null)
   const autoContinueCountRef = useRef(0)
-  const handleSendRef = useRef<((text: string, files: PendingFile[]) => Promise<void>) | null>(null)
+  const handleSendRef = useRef<((text: string, files: PendingFile[], resume?: { approve: boolean; rememberChoice?: boolean; fallbackModelId?: string }, autoContinueFromTurnId?: string) => Promise<void>) | null>(null)
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const dayShiftPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -710,12 +706,15 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
     text: string,
     pendingFiles: PendingFile[],
     resumeOpts?: { approve: boolean; rememberChoice?: boolean; fallbackModelId?: string },
+    autoContinueFromTurnId?: string,
   ) => {
     if (streaming) return
-    // A human message resets the auto-continue budget; only the machine-sent
-    // continuation text keeps the consecutive counter running.
-    if (text !== AUTO_CONTINUE_TEXT) autoContinueCountRef.current = 0
-    pendingAutoContinueRef.current = false
+    // Only a real owner turn resets the bounded continuation budget.
+    if (!resumeOpts && !autoContinueFromTurnId) autoContinueCountRef.current = 0
+    pendingAutoContinueRef.current = null
+    const clientRequestId = !resumeOpts && !autoContinueFromTurnId
+      ? crypto.randomUUID()
+      : null
     abortRef.current = new AbortController()
     setStreaming(true)
     setStreamStatus('প্রসেস করা হচ্ছে…')
@@ -782,7 +781,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       // Model-upgrade resume: no new user message — clear the approval card off the
       // paused reply and stream a fresh answer beneath it.
       setMessages((prev) => prev.map((m) => (m.modelSwitch ? { ...m, modelSwitch: undefined } : m)))
-    } else {
+    } else if (!autoContinueFromTurnId) {
       const userMsgId = nextId('user')
       const userMsg: ChatMessage = {
         id: userMsgId,
@@ -825,13 +824,17 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
     try {
       const body: Record<string, unknown> = {}
-      if (resumeOpts) {
+      if (autoContinueFromTurnId) {
+        body.conversationId = finalConvId
+        body.autoContinueFromTurnId = autoContinueFromTurnId
+      } else if (resumeOpts) {
         // Resume the paused turn — no new message; rerun on the premium model
         // (approve) or the cheap fallback (decline).
         body.conversationId = finalConvId
         body.resume = resumeOpts
       } else {
         body.message = text
+        if (clientRequestId) body.clientRequestId = clientRequestId
         if (finalConvId) body.conversationId = finalConvId
         else {
           if (pendingProjectIdRef.current) body.projectId = pendingProjectIdRef.current
@@ -844,7 +847,7 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       // Arm the going-long guard: aborts a hung request so we can re-run on the
       // worker. Disarmed as soon as the first SSE event arrives (direct path OK).
       // Resume turns are short (just model selection) — skip the worker fallback.
-      if (finalConvId && !resumeOpts) {
+      if (finalConvId && !resumeOpts && !autoContinueFromTurnId) {
         firstByteTimer = setTimeout(() => {
           if (!gotAnyEvent) {
             goLong = true
@@ -1088,9 +1091,11 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           ))
         } else if (evt.type === 'done') {
           gotStreamDone = true
-          // Serverless deadline cut the task mid-flight → queue a machine "continue"
-          // (fires in the finally block, after this stream fully closes).
-          if (evt.needContinue === true) pendingAutoContinueRef.current = true
+          // Serverless deadline cut the task mid-flight → queue a structured,
+          // exactly-once continuation after this stream fully closes.
+          if (evt.needContinue === true && activeTurnIdRef.current) {
+            pendingAutoContinueRef.current = activeTurnIdRef.current
+          }
           setStreamStatus(null)
           setStreamMode('writing')
           flushThinkingBuffer()
@@ -1189,14 +1194,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       const runWorkerFallback = async () => {
         if (!finalConvId) return false
         setStreamStatus('দীর্ঘ কাজ — সার্ভারে চালানো হচ্ছে…')
-        // The direct turn keeps running server-side (it's decoupled from the
-        // client connection); cancel it if we know its id so it can't also persist
-        // a reply. When no event arrived its turn_id is unknown, but in that case
-        // the direct function never started the turn, so there's nothing to clobber.
-        const directTurnId = activeTurnIdRef.current
-        if (directTurnId) {
-          await fetch(`/api/assistant/turn/${directTurnId}/cancel`, { method: 'POST' }).catch(() => {})
-        }
+        // The direct server execution survives the disconnected browser request.
+        // Both paths claim the same durable request id; never cancel the winner.
         const enqRes = await fetch('/api/assistant/turn', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1204,12 +1203,35 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
             conversationId: finalConvId,
             message: text,
             files: fileRefs.length > 0 ? fileRefs : undefined,
+            clientRequestId: clientRequestId ?? undefined,
           }),
         })
         if (!enqRes.ok) return false
-        const { turnId: workerTurnId } = await enqRes.json() as { turnId: string | null }
+        const { turnId: workerTurnId, alreadyRunning, jobId } = await enqRes.json() as {
+          turnId: string | null
+          alreadyRunning?: boolean
+          jobId?: string | null
+        }
         if (!workerTurnId) return false
         activeTurnIdRef.current = workerTurnId
+        if (alreadyRunning || !jobId) {
+          // Another path already owns (or completed) this logical request. Observe
+          // its durable turn and reload the one persisted result; never rerun it.
+          for (let attempt = 0; attempt < 100; attempt++) {
+            if (alreadyRunning) await new Promise((r) => setTimeout(r, 3000))
+            const statusRes = await fetch(`/api/assistant/conversations/${finalConvId}/turn-status`).catch(() => null)
+            if (!statusRes?.ok) continue
+            const status = ((await statusRes.json()) as { status?: string }).status
+            if (status === 'running') continue
+            const msgRes = await fetch(`/api/assistant/conversations/${finalConvId}/messages`).catch(() => null)
+            if (msgRes?.ok) {
+              const rows: MessageRow[] = await msgRes.json()
+              setMessages(mapMessageRows(rows))
+            }
+            return true
+          }
+          return false
+        }
         const streamCtrl = new AbortController()
         abortRef.current = streamCtrl
         const sres = await fetch(`/api/assistant/turn/${workerTurnId}/stream`, { signal: streamCtrl.signal })
@@ -1226,6 +1248,9 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           signal: abortRef.current.signal,
         })
 
+        if (res.status === 409 && autoContinueFromTurnId) {
+          return
+        }
         if (!res.ok || !res.body) {
           let errMsg = `HTTP ${res.status}`
           if (res.status === 401) errMsg = 'অননুমোদিত'
@@ -1237,7 +1262,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       } catch (innerErr) {
         // First-byte timeout tripped the guard → run it on the worker instead.
         if ((innerErr as Error).name === 'AbortError' && goLong) {
-          await runWorkerFallback()
+          const recovered = await runWorkerFallback()
+          if (!recovered) throw new Error('দীর্ঘ কাজের server handoff যাচাই করা যায়নি। কাজটি আবার চালানো হয়নি।')
         } else {
           throw innerErr
         }
@@ -1332,16 +1358,17 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
       }
 
       // Auto-continue: the turn ended at the serverless deadline with the browser
-      // task unfinished — re-send "continue" so the agent finishes end-to-end.
+      // task unfinished — claim the persisted predecessor state exactly once.
       // Bounded to MAX_AUTO_CONTINUES consecutive machine sends; any manual
       // message resets the budget (see handleSend entry).
       if (pendingAutoContinueRef.current && autoContinueCountRef.current < MAX_AUTO_CONTINUES) {
-        pendingAutoContinueRef.current = false
+        const previousTurnId = pendingAutoContinueRef.current
+        pendingAutoContinueRef.current = null
         autoContinueCountRef.current += 1
         setStreamStatus(`⏩ কাজ অসমাপ্ত — নিজে থেকেই চালিয়ে যাচ্ছি (${autoContinueCountRef.current}/${MAX_AUTO_CONTINUES})…`)
-        setTimeout(() => { void handleSendRef.current?.(AUTO_CONTINUE_TEXT, []) }, 1200)
+        setTimeout(() => { void handleSendRef.current?.('', [], undefined, previousTurnId) }, 1200)
       } else if (pendingAutoContinueRef.current) {
-        pendingAutoContinueRef.current = false
+        pendingAutoContinueRef.current = null
         toast.error('কাজটা লম্বা — অটো-continue সীমা শেষ। "continue" লিখলে বাকিটা এগোবে।')
       }
     }
@@ -1349,7 +1376,10 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
 
   // Keep a stable ref so the auto-continue timer always calls the LATEST
   // handleSend (the useCallback identity changes with its deps).
-  useEffect(() => { handleSendRef.current = (t, f) => handleSend(t, f) }, [handleSend])
+  useEffect(() => {
+    handleSendRef.current = (t, f, resume, autoContinueFromTurnId) =>
+      handleSend(t, f, resume, autoContinueFromTurnId)
+  }, [handleSend])
 
   const handleVoiceMessage = useCallback(async (
     text: string,

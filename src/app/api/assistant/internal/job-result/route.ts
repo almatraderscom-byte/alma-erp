@@ -8,6 +8,7 @@ import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
 import { finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { buildOutboundDialMessage } from '@/agent/lib/outbound-call-tracking'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
+import { shouldEmitGenericJobSuccess } from '@/agent/lib/job-result-message-policy'
 import { prisma } from '@/lib/prisma'
 
 const IMAGE_SIGNED_URL_TTL_SEC = 3600
@@ -241,6 +242,11 @@ export async function POST(req: NextRequest) {
     pushTelegram = true
   } else if (status === 'failed') {
     messageText = `❌ কাজটি সম্পাদন ব্যর্থ হয়েছে।\nকারণ: ${error ?? 'Unknown error'}`
+  } else if (status === 'success' && !shouldEmitGenericJobSuccess(action.type)) {
+    // The head polls this durable action and delivers the real score/report/file.
+    // A second context-free assistant bubble ("কাজটি সফল...") interleaved with
+    // that turn and made the owner think the agent had restarted on its own.
+    messageText = null
   } else if (status === 'success') {
     messageText = `✅ কাজটি সফলভাবে সম্পাদিত হয়েছে।`
   }

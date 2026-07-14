@@ -33,6 +33,7 @@ import { logCost } from '@/agent/lib/cost-events'
 import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact-detect'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { isTurnCancelRequested } from '@/agent/lib/turn-status'
+import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import {
   verifyClaimsAgainstLedger,
   buildVerificationReminder,
@@ -902,9 +903,12 @@ async function* runAlternateProviderTurn(
     // never save an EMPTY message (context hole → next turn restarts the task),
     // persist a compact progress footer into replayed history, and auto-write a
     // resume checkpoint + signal the client to auto-continue.
-    const browserTurn = toolRecords.some((r) => r.toolName.startsWith('live_browser_'))
     const deadlineHit = Boolean(signal?.aborted) || deadlineNudgeSent
-    const taskUnfinished = browserTurn && deadlineHit && emittedAskCards.length === 0
+    const taskUnfinished = shouldAutoContinueTurn({
+      deadlineHit,
+      hasAskCard: emittedAskCards.length > 0,
+      tools: toolRecords,
+    })
     const browserSteps = toolRecords
       .filter((r) => r.toolName.startsWith('live_browser_') && r.status === 'success')
       .map((r) => {
@@ -1049,13 +1053,7 @@ async function* runAlternateProviderTurn(
       dedupKey: `chat:msg:${savedMsg.id}`,
     })
 
-    // A browser turn that ENDS on an announced next step (the intent guard is
-    // bounded 2× and stubborn flash heads outlast it) also signals the client
-    // to auto-continue — otherwise the task stalls until the owner pokes it
-    // ("স্ক্রোল করে Format সেকশনটা পুরো দেখি।" then silence, 2026-07-12).
-    const endedWithPromise =
-      browserTurn && emittedAskCards.length === 0 && INTENT_TAIL_RE.test(finalText.trim().slice(-600))
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished || endedWithPromise, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined }
+    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined }
   } catch (err) {
     if (signal?.aborted) {
       // The 280s cap aborted mid-round (the adapter stream throws). Salvage what

@@ -3,7 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
-import { cancelRunningTurnsForConversation, createTurn } from '@/agent/lib/turn-status'
+import { claimTurnForRequest, finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { buildTurnJobData, enqueueTurnJob, isTurnHandoffConfigured } from '@/agent/lib/turn-queue'
 
 export const runtime = 'nodejs'
@@ -52,22 +52,34 @@ export async function POST(req: NextRequest) {
   })
   if (!conv) return Response.json({ error: 'conversation_not_found' }, { status: 404 })
 
-  // ONE live turn per conversation: this enqueue is the client's fallback after
-  // it gave up on a direct serverless run — but that run is deliberately not tied
-  // to the client connection and may still be executing. Cancel it (the turn loop
-  // polls cancelRequested) before starting the worker run, so the same message
-  // can never execute twice in parallel.
-  const superseded = await cancelRunningTurnsForConversation(conversationId)
-  if (superseded > 0) {
-    console.warn(`[assistant/turn] superseded ${superseded} running turn(s) on conversation ${conversationId}`)
+  const clientRequestId = typeof body.clientRequestId === 'string' && /^[A-Za-z0-9_-]{8,100}$/.test(body.clientRequestId)
+    ? body.clientRequestId
+    : null
+  if (!clientRequestId) return Response.json({ error: 'client_request_id_required' }, { status: 400 })
+
+  // Direct Vercel and VPS fallback race on one durable request id. If direct
+  // already owns it, observe that turn instead of canceling/re-running the work.
+  const claim = await claimTurnForRequest(conversationId, clientRequestId)
+  if (!claim.claimed) {
+    return Response.json({
+      turnId: claim.turnId,
+      conversationId,
+      jobId: null,
+      alreadyRunning: claim.status === 'running',
+      status: claim.status,
+    })
   }
 
-  const turnId = await createTurn(conversationId)
+  const turnId = claim.turnId
   const jobData = buildTurnJobData(turnId, conversationId, body as Parameters<typeof buildTurnJobData>[2])
-  if (!jobData) return Response.json({ error: 'message_required' }, { status: 400 })
+  if (!jobData) {
+    await finalizeTurnIfRunning(turnId, 'error')
+    return Response.json({ error: 'message_required' }, { status: 400 })
+  }
 
   const jobId = await enqueueTurnJob(jobData)
   if (!jobId) {
+    await finalizeTurnIfRunning(turnId, 'error')
     return Response.json({ error: 'enqueue_failed', message: 'Could not enqueue turn on the worker queue.' }, { status: 502 })
   }
 

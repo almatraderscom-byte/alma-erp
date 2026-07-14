@@ -8,11 +8,13 @@
  * serverless instance than the running turn, so the running loop polls
  * `cancelRequested` each iteration rather than relying on an in-memory abort.
  *
- * Every call is fail-open: a turn-status glitch must never break the actual turn.
+ * Observability/cancel helpers are fail-open. Exactly-once claim helpers are
+ * deliberately fail-closed: uncertainty must never execute an owner task twice.
  */
 import { prisma } from '@/lib/prisma'
 
 export type TurnStatus = 'running' | 'done' | 'error' | 'canceled'
+export type TurnClaim = { turnId: string | null; claimed: boolean; status: TurnStatus | null }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = () => prisma as any
@@ -31,40 +33,102 @@ export async function createTurn(conversationId: string): Promise<string | null>
   }
 }
 
+/**
+ * Claim one execution for a browser-generated logical request id. Direct Vercel
+ * execution and the 15s VPS fallback race on the same unique key; only the winner
+ * may execute. The loser receives the winner's turn id and observes its result.
+ */
+export async function claimTurnForRequest(
+  conversationId: string,
+  requestId: string,
+): Promise<TurnClaim> {
+  try {
+    const row = await db().agentTurn.create({
+      data: { conversationId, requestId, status: 'running' },
+      select: { id: true, status: true },
+    })
+    return { turnId: row.id as string, claimed: true, status: row.status as TurnStatus }
+  } catch (err) {
+    if ((err as { code?: string })?.code !== 'P2002') {
+      console.warn('[turn-status] claimTurnForRequest failed:', err instanceof Error ? err.message : err)
+      return { turnId: null, claimed: false, status: null }
+    }
+    try {
+      const row = await db().agentTurn.findUnique({
+        where: { requestId },
+        select: { id: true, conversationId: true, status: true },
+      })
+      if (!row || row.conversationId !== conversationId) return { turnId: null, claimed: false, status: null }
+      return { turnId: row.id as string, claimed: false, status: row.status as TurnStatus }
+    } catch (lookupErr) {
+      console.warn('[turn-status] request claim lookup failed:', lookupErr instanceof Error ? lookupErr.message : lookupErr)
+      return { turnId: null, claimed: false, status: null }
+    }
+  }
+}
+
+/**
+ * Atomically consume a persisted `continuationNeeded` flag and create its sole
+ * successor turn. No owner/user message is involved. Replays and double clicks
+ * lose the claim and cannot execute the continuation again.
+ */
+export async function claimContinuationTurn(
+  conversationId: string,
+  previousTurnId: string,
+): Promise<TurnClaim> {
+  try {
+    return await db().$transaction(async (tx: any) => {
+      const claimed = await tx.agentTurn.updateMany({
+        where: {
+          id: previousTurnId,
+          conversationId,
+          status: 'done',
+          continuationNeeded: true,
+          continuationClaimedAt: null,
+        },
+        data: { continuationClaimedAt: new Date() },
+      })
+      if (claimed.count !== 1) {
+        const existing = await tx.agentTurn.findUnique({
+          where: { continuationOfTurnId: previousTurnId },
+          select: { id: true, status: true },
+        })
+        return {
+          turnId: (existing?.id as string | undefined) ?? null,
+          claimed: false,
+          status: (existing?.status as TurnStatus | undefined) ?? null,
+        }
+      }
+      const row = await tx.agentTurn.create({
+        data: { conversationId, continuationOfTurnId: previousTurnId, status: 'running' },
+        select: { id: true, status: true },
+      })
+      return { turnId: row.id as string, claimed: true, status: row.status as TurnStatus }
+    })
+  } catch (err) {
+    console.warn('[turn-status] claimContinuationTurn failed:', err instanceof Error ? err.message : err)
+    return { turnId: null, claimed: false, status: null }
+  }
+}
+
 /** Move a still-running turn to a terminal status. No-op if already terminal. */
 export async function finalizeTurnIfRunning(
   turnId: string | null,
   status: Exclude<TurnStatus, 'running'>,
+  options: { continuationNeeded?: boolean } = {},
 ): Promise<void> {
   if (!turnId) return
   try {
     await db().agentTurn.updateMany({
       where: { id: turnId, status: 'running' },
-      data: { status, finishedAt: new Date() },
+      data: {
+        status,
+        finishedAt: new Date(),
+        continuationNeeded: status === 'done' && options.continuationNeeded === true,
+      },
     })
   } catch (err) {
     console.warn('[turn-status] finalizeTurnIfRunning failed:', err instanceof Error ? err.message : err)
-  }
-}
-
-/**
- * Cancel every still-running turn of a conversation (idempotent, fail-open).
- * Used by the A2 enqueue route so a conversation can only ever have ONE live
- * turn: the client's first-event watchdog re-runs a "hung" send through the VPS
- * worker, but the direct serverless run is deliberately NOT tied to the client
- * connection — without this supersede the same message could execute twice in
- * parallel (owner bug 2026-07-12: research re-ran inside the same thread).
- */
-export async function cancelRunningTurnsForConversation(conversationId: string): Promise<number> {
-  try {
-    const res = await db().agentTurn.updateMany({
-      where: { conversationId, status: 'running' },
-      data: { cancelRequested: true, status: 'canceled', finishedAt: new Date() },
-    })
-    return (res.count as number) ?? 0
-  } catch (err) {
-    console.warn('[turn-status] cancelRunningTurnsForConversation failed:', err instanceof Error ? err.message : err)
-    return 0
   }
 }
 

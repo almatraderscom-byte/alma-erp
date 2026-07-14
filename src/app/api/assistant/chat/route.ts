@@ -14,7 +14,13 @@ import { embedMessageInBackground } from '@/agent/lib/message-recall'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
 import { captureAgentError } from '@/agent/lib/sentry'
-import { createTurn, finalizeTurnIfRunning, isRunningTurnForConversation } from '@/agent/lib/turn-status'
+import {
+  claimContinuationTurn,
+  claimTurnForRequest,
+  createTurn,
+  finalizeTurnIfRunning,
+  isRunningTurnForConversation,
+} from '@/agent/lib/turn-status'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { notifyOwnerIfAway } from '@/agent/lib/notify-owner'
 import { ensurePersonalProject, isPersonalProject } from '@/lib/personal-space'
@@ -27,6 +33,7 @@ import {
   isAgentBusinessId,
   type AgentBusinessId,
 } from '@/lib/agent-api/business-context'
+import { shouldPersistIncomingMessage } from '@/agent/lib/continuation-policy'
 
 export const runtime = 'nodejs'
 export const maxDuration = 300
@@ -49,6 +56,10 @@ interface ChatBody {
    * enqueue route already created. Reused instead of creating a second one, and
    * (for a web conversation) it authorizes the internal call. */
   turnId?: string
+  /** Stable id shared by the direct web send and its VPS fallback. */
+  clientRequestId?: string
+  /** Structured, owner-session-only continuation. Never stored as a user message. */
+  autoContinueFromTurnId?: string
   /**
    * Model-upgrade approval resume: the previous turn paused on a
    * `model_switch_required` card. This re-runs the SAME turn (no new user message)
@@ -124,6 +135,16 @@ export async function POST(req: NextRequest) {
     !isInternalCall && body.resume && typeof body.conversationId === 'string'
       ? body.resume
       : null
+  const autoContinueFromTurnId =
+    !isInternalCall
+    && typeof body.conversationId === 'string'
+    && typeof body.autoContinueFromTurnId === 'string'
+      ? body.autoContinueFromTurnId.trim()
+      : ''
+  const clientRequestId =
+    typeof body.clientRequestId === 'string' && /^[A-Za-z0-9_-]{8,100}$/.test(body.clientRequestId.trim())
+      ? body.clientRequestId.trim()
+      : null
 
   const message = typeof body.message === 'string' ? body.message.trim() : ''
   // Attached files (image/PDF) make a caption-less turn valid — Claude.ai lets you
@@ -132,7 +153,7 @@ export async function POST(req: NextRequest) {
   const files: FileRef[] = Array.isArray(body.files)
     ? body.files.filter((f) => f && typeof f.path === 'string' && typeof f.mediaType === 'string')
     : []
-  if (!message && !resume && files.length === 0) {
+  if (!message && !resume && !autoContinueFromTurnId && files.length === 0) {
     return Response.json({ error: 'message_required' }, { status: 400 })
   }
 
@@ -184,6 +205,7 @@ export async function POST(req: NextRequest) {
   // Business scope for the turn — resolved from project or conversation row.
   let businessId: AgentBusinessId | null = null
   let conversationModelId: string = DEFAULT_MODEL_ID
+  let claimedRequestTurnId: string | null = null
 
   if (requestedProjectId && !personalMode) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -298,9 +320,27 @@ export async function POST(req: NextRequest) {
       projectSystemInstructions = null
     }
 
+    // Exactly-once claim BEFORE persisting the owner message or executing tools.
+    // If the 15s VPS fallback already won this request id, this direct path exits
+    // without creating another user row or running the task a second time.
+    if (!isInternalCall && !resume && !autoContinueFromTurnId && clientRequestId) {
+      const claim = await claimTurnForRequest(conversationId, clientRequestId)
+      if (!claim.claimed) {
+        return Response.json(
+          { error: 'request_already_claimed', turnId: claim.turnId, status: claim.status, conversationId },
+          { status: 409 },
+        )
+      }
+      claimedRequestTurnId = claim.turnId
+    }
+
     // Resume (model-upgrade approval) re-runs the SAME turn already in the thread —
     // the owner's question is already stored, so we DON'T persist another user message.
-    if (!resume) {
+    // Structured auto-continuation is also server state, never owner-authored text.
+    if (shouldPersistIncomingMessage({
+      isResume: Boolean(resume),
+      autoContinueFromTurnId: autoContinueFromTurnId || null,
+    })) {
       type StoredBlock = { type: string; [k: string]: unknown }
       const userContent: StoredBlock[] = [
         ...files.map((f) => ({ type: 'file_ref', bucket: f.bucket, path: f.path, mediaType: f.mediaType })),
@@ -339,6 +379,7 @@ export async function POST(req: NextRequest) {
       const savedUserMsg = await prisma.agentMessage.create({
         data: {
           conversationId,
+          clientRequestId,
           role: 'user',
           content: userContent as unknown as Parameters<typeof prisma.agentMessage.create>[0]['data']['content'],
         },
@@ -369,6 +410,7 @@ export async function POST(req: NextRequest) {
     }
   } catch (err) {
     console.error('[assistant/chat] persistence failed', err)
+    await finalizeTurnIfRunning(claimedRequestTurnId, 'error')
     if (isAgentDbError(err)) {
       return Response.json({
         error: 'agent_db_not_migrated',
@@ -385,7 +427,10 @@ export async function POST(req: NextRequest) {
     // 'auto' resolves to a concrete model only inside the turn (head-router), so its
     // provider key is checked there; for a pinned model we can validate up-front.
     const providerKeyMissing = requireModelProviderKey(conversationModelId)
-    if (providerKeyMissing) return providerKeyMissing
+    if (providerKeyMissing) {
+      await finalizeTurnIfRunning(claimedRequestTurnId, 'error')
+      return providerKeyMissing
+    }
   }
 
   const telegramFastPath =
@@ -411,10 +456,22 @@ export async function POST(req: NextRequest) {
   // Stop button a cross-instance cancel target. Fail-open (null id) if it can't write.
   // A2: a worker-run turn reuses the row the enqueue route already created, so the
   // same turnId flows through the worker's event log and the client's stream.
-  const turnId =
-    isInternalCall && typeof body.turnId === 'string' && body.turnId
-      ? body.turnId
-      : await createTurn(conversationId!)
+  let turnId: string | null
+  if (isInternalCall && typeof body.turnId === 'string' && body.turnId) {
+    turnId = body.turnId
+  } else if (autoContinueFromTurnId) {
+    const claim = await claimContinuationTurn(conversationId!, autoContinueFromTurnId)
+    if (!claim.claimed || !claim.turnId) {
+      clearTimeout(turnCapTimer)
+      return Response.json(
+        { error: 'continuation_not_eligible', turnId: claim.turnId, status: claim.status },
+        { status: 409 },
+      )
+    }
+    turnId = claim.turnId
+  } else {
+    turnId = claimedRequestTurnId ?? await createTurn(conversationId!)
+  }
 
   // Model-upgrade approval resume: re-run the same turn either on the premium model
   // (approve → router re-resolves and approveModelSwitch skips the gate) or pinned to
@@ -459,11 +516,16 @@ export async function POST(req: NextRequest) {
     '- টাকা বা অপরিবর্তনীয় কাজের জন্য confirm card আগের মতোই বানাও, কিন্তু বলো এক লাইনে: "অ্যাপে Approve-এ ট্যাপ করুন" — মুখের "হ্যাঁ" কখনো টাকার কাজ approve বলে ধরে নিও না; ' +
     'অস্পষ্ট শোনা টাকার অংক/পরিমাণ নিজে অনুমান করে বসিও না — আগে নিশ্চিত হও।\n' +
     '- বাক্য এমনভাবে শেষ করো যেন শুনতে স্বাভাবিক লাগে।'
+  const AUTO_CONTINUE_INSTRUCTION =
+    '[SYSTEM CONTINUATION — Boss নতুন কোনো message পাঠাননি। আগের turn সত্যিই server deadline-এ থেমেছে এবং persisted continuation claim এই turn-কে একবারের জন্য চালু করেছে।] ' +
+    'Unresolved checkpoint থেকে ঠিক পরের ধাপটি ধরো; completed tool/action/artifact আবার চালাবে না। কাজ ইতিমধ্যে complete হলে কোনো tool rerun না করে শুধু স্থির final status দাও।'
   const turnOptions = {
     projectSystemInstructions:
-      body.voice === true
-        ? [projectSystemInstructions, VOICE_TURN_INSTRUCTION].filter(Boolean).join('\n\n')
-        : projectSystemInstructions,
+      [
+        projectSystemInstructions,
+        body.voice === true ? VOICE_TURN_INSTRUCTION : null,
+        autoContinueFromTurnId ? AUTO_CONTINUE_INSTRUCTION : null,
+      ].filter(Boolean).join('\n\n') || null,
     personalMode,
     telegramFastPath,
     businessId,
@@ -508,6 +570,7 @@ export async function POST(req: NextRequest) {
     const askCards: Array<{ askCardId: string; question: string; options: string[] }> = []
     let newConversationId: string | null = null
     let compactedFromCost: number | null = null
+    let continuationNeeded = false
     try {
       for await (const event of runTurn()) {
         if (event.type === 'text_delta') finalText += event.delta
@@ -532,6 +595,7 @@ export async function POST(req: NextRequest) {
         else if (event.type === 'ask_card') askCards.push({ askCardId: event.askCardId, question: event.question, options: event.options })
         else if (event.type === 'error') { errorMsg = event.message; break }
         else if (event.type === 'done') {
+          continuationNeeded = event.needContinue === true
           const turnCost = (event as { costUsd?: number }).costUsd ?? 0
           if (turnCost > 0 && conversationId) {
             try {
@@ -567,7 +631,7 @@ export async function POST(req: NextRequest) {
     } finally {
       clearTimeout(turnCapTimer)
     }
-    await finalizeTurnIfRunning(turnId, errorMsg ? 'error' : 'done')
+    await finalizeTurnIfRunning(turnId, errorMsg ? 'error' : 'done', { continuationNeeded })
     if (errorMsg) return Response.json({ error: errorMsg }, { status: 500 })
     const turnMs = Date.now() - turnStarted
     if (telegramFastPath && turnMs > 30_000) {
@@ -652,7 +716,7 @@ export async function POST(req: NextRequest) {
           }
           if (event.type === 'done') {
             doneTurnMs = Date.now() - turnStartedAt
-            await finalizeTurnIfRunning(turnId, 'done')
+            await finalizeTurnIfRunning(turnId, 'done', { continuationNeeded: event.needContinue === true })
             const turnCost = (event as { costUsd?: number }).costUsd ?? 0
             if (turnCost > 0 && conversationId) {
               try {
