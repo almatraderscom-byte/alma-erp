@@ -49,8 +49,14 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             // Real Android phones are ARM — dropping the x86 (emulator-only) ABIs keeps
             // the release download small despite the ~25MB/ABI Agora native libs.
+            // `-Parm64Only` drops armeabi-v7a too (~29MB) so the APK fits the 50MB Supabase
+            // storage cap for the in-app OTA download; the Play AAB build keeps both ABIs.
             ndk {
-                abiFilters 'arm64-v8a', 'armeabi-v7a'
+                if (project.hasProperty('arm64Only')) {
+                    abiFilters 'arm64-v8a'
+                } else {
+                    abiFilters 'arm64-v8a', 'armeabi-v7a'
+                }
             }
             // Prod uses the real upload keystore when the env vars are set; otherwise
             // fall back to the debug keystore so `assembleRelease` is installable for
