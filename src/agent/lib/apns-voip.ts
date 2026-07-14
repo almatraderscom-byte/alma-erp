@@ -31,6 +31,32 @@ export function apnsVoipConfigured(): boolean {
   )
 }
 
+/** Non-secret diagnostics on the APNS_AUTH_KEY value (shape only, never the key). */
+export function apnsKeyDiag(): Record<string, unknown> {
+  const raw = process.env.APNS_AUTH_KEY ?? ''
+  const d: Record<string, unknown> = {
+    len: raw.length,
+    hasBegin: raw.includes('BEGIN'),
+    hasEnd: raw.includes('END'),
+    hasRealNewline: raw.includes('\n'),
+    hasEscapedNewline: raw.includes('\\n'),
+    keyIdLen: (process.env.APNS_KEY_ID ?? '').trim().length,
+    teamIdLen: (process.env.APNS_TEAM_ID ?? '').trim().length,
+    normalizedPresent: false,
+    parseError: null as string | null,
+  }
+  try {
+    const pem = normalizePem(raw.trim())
+    d.normalizedPresent = pem.includes('BEGIN') && pem.includes('\n')
+    createPrivateKey(pem)
+    d.parseOk = true
+  } catch (err) {
+    d.parseOk = false
+    d.parseError = (err as Error)?.message?.slice(0, 160) ?? 'unknown'
+  }
+  return d
+}
+
 // APNs allows reusing one auth JWT for up to 1h (and forbids minting more than
 // ~once per 20 min). Cache it in module scope and refresh every ~50 min.
 let cachedJwt: { token: string; at: number } | null = null
