@@ -21,6 +21,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // this method returns, per BGTaskScheduler requirements.
         BackgroundRefresh.register()
 
+        // Stage 1: WhatsApp-style incoming calls. Register the PushKit VoIP registry
+        // (+ CallKit) at launch so a live office call rings a native full-screen call
+        // even when the app is backgrounded or killed. Deferred paths (token upload)
+        // handle the not-yet-logged-in case. iOS 17+ to match AgoraIntercom.
+        if #available(iOS 17.0, *) {
+            CallKitVoIP.shared.start()
+        }
+
         // PHASE S1: wrap the app in a native tab bar. The storyboard already created
         // the Capacitor bridge VC as the window root; we REUSE that same instance as
         // tab 0 so Capacitor keeps running (push / Live Pulse / reminders / on-device

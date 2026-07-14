@@ -122,6 +122,7 @@
 		F2AA7700000000000000B102 /* SubscriptionsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A102 /* SubscriptionsSwiftUI.swift */; };
 		F2AA7701000000000000B0FE /* FloatingChatHead.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7701000000000000A0FE /* FloatingChatHead.swift */; };
 		F2AA7702000000000000B0FE /* AgoraIntercom.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7702000000000000A0FE /* AgoraIntercom.swift */; };
+		CA11C17700000000B0FECA11 /* CallKitVoIP.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA11C17700000000A0FECA11 /* CallKitVoIP.swift */; };
 		F2AA7703000000000000B0FE /* IntercomUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7703000000000000A0FE /* IntercomUI.swift */; };
 		F2AA7704000000000000B0FE /* PortalStaffOfficeSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */; };
 		F2AA7705000000000000B0FE /* ConnectivityBeacon.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7705000000000000A0FE /* ConnectivityBeacon.swift */; };
@@ -271,6 +272,7 @@
 		F2AA7700000000000000A102 /* SubscriptionsSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubscriptionsSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7701000000000000A0FE /* FloatingChatHead.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingChatHead.swift; sourceTree = "<group>"; };
 		F2AA7702000000000000A0FE /* AgoraIntercom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgoraIntercom.swift; sourceTree = "<group>"; };
+		CA11C17700000000A0FECA11 /* CallKitVoIP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallKitVoIP.swift; sourceTree = "<group>"; };
 		F2AA7703000000000000A0FE /* IntercomUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntercomUI.swift; sourceTree = "<group>"; };
 		F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortalStaffOfficeSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7705000000000000A0FE /* ConnectivityBeacon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectivityBeacon.swift; sourceTree = "<group>"; };
@@ -362,6 +364,7 @@
 				F2AA7700000000000000A0FE /* KeyboardDismiss.swift */,
 				F2AA7701000000000000A0FE /* FloatingChatHead.swift */,
 				F2AA7702000000000000A0FE /* AgoraIntercom.swift */,
+				CA11C17700000000A0FECA11 /* CallKitVoIP.swift */,
 				F2AA7703000000000000A0FE /* IntercomUI.swift */,
 				F2AA7704000000000000A0FE /* PortalStaffOfficeSwiftUI.swift */,
 				F2AA7705000000000000A0FE /* ConnectivityBeacon.swift */,
@@ -668,6 +671,7 @@
 				F2AA7700000000000000B0FE /* KeyboardDismiss.swift in Sources */,
 				F2AA7701000000000000B0FE /* FloatingChatHead.swift in Sources */,
 				F2AA7702000000000000B0FE /* AgoraIntercom.swift in Sources */,
+				CA11C17700000000B0FECA11 /* CallKitVoIP.swift in Sources */,
 				F2AA7703000000000000B0FE /* IntercomUI.swift in Sources */,
 				F2AA7704000000000000B0FE /* PortalStaffOfficeSwiftUI.swift in Sources */,
 				F2AA7705000000000000B0FE /* ConnectivityBeacon.swift in Sources */,

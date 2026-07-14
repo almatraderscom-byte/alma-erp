@@ -74,6 +74,10 @@ final class AgoraIntercom: NSObject {
     var remoteSpeaking = false        // someone else is publishing audio right now
     var localSpeaking = false         // WE are publishing voice right now (live orb animation)
     var micMuted = false
+    /// When a call is answered through CallKit (VoIP push), CallKit OWNS the audio
+    /// session: it activates/deactivates it and Agora must not fight that. Set by
+    /// CallKitVoIP around startCall/leave. Off = the in-app path manages the session.
+    var callKitManaged = false
     var callSeconds = 0
     var statusText = ""
     var error: String? = nil
@@ -177,6 +181,18 @@ final class AgoraIntercom: NSObject {
     func toggleMute() {
         micMuted.toggle()
         engine?.muteLocalAudioStream(micMuted)
+    }
+
+    /// Set mute explicitly (CallKit's mute button routes here so the two UIs agree).
+    @MainActor func setMuted(_ muted: Bool) {
+        micMuted = muted
+        engine?.muteLocalAudioStream(muted)
+    }
+
+    /// CallKit finished activating the shared audio session — make sure Agora routes
+    /// call audio to the loud speaker (CallKit already owns activation/teardown).
+    @MainActor func audioSessionActivated() {
+        engine?.setEnableSpeakerphone(true)
     }
 
     @MainActor
@@ -353,6 +369,9 @@ final class AgoraIntercom: NSObject {
         let tok = try await token(for: ch)
         try configureAudioSession()
         let e = engineFor(appId: tok.appId)
+        // Under CallKit, don't let Agora deactivate the shared session on leave — CallKit
+        // owns the session lifecycle and would otherwise get its audio killed under it.
+        if callKitManaged { e.setAudioSessionOperationRestriction(.deactivateSession) }
         // Agora is single-channel per engine: if we were live-listening, leave that
         // channel before joining the call channel (otherwise joinChannel errors -17).
         if let prev = channel, prev != ch { e.leaveChannel(nil) }
@@ -386,7 +405,11 @@ final class AgoraIntercom: NSObject {
         let s = AVAudioSession.sharedInstance()
         try s.setCategory(.playAndRecord, mode: .voiceChat,
                           options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP])
-        try s.setActive(true)
+        // Under CallKit, the framework activates the session in `didActivate` — us
+        // calling setActive(true) here races/​fights it, so skip when CallKit-managed.
+        if !callKitManaged {
+            try s.setActive(true)
+        }
     }
 
     private func ensureMicPermission() async throws {

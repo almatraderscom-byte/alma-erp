@@ -13,6 +13,9 @@
  */
 import { prisma } from '@/lib/prisma'
 import { pushStaffPing, pushStaffDevice } from '@/agent/lib/office-notify'
+import { getCallPushTargets } from '@/agent/lib/call-push'
+import { sendVoipCall } from '@/agent/lib/apns-voip'
+import { sendFcmCall } from '@/agent/lib/fcm-call'
 
 /** 'voice' = PTT audio · 'urgent' = full-volume text alert · 'call' = live VoIP ring (Agora channel = itc_<broadcastId>). */
 export type IntercomKind = 'voice' | 'urgent' | 'call'
@@ -140,10 +143,35 @@ export async function createIntercomBroadcast(args: {
     args.kind === 'call'
       ? { type: 'office_call', broadcastId: row.id, channel: `itc_${row.id}`, actionUrl: `${OFFICE_URL}` }
       : { type: `office_${args.kind}`, broadcastId: row.id, actionUrl: `${OFFICE_URL}` }
-  await Promise.allSettled([
+
+  const pushes: Promise<unknown>[] = [
     ...targets.map((t) => pushStaffPing(t, title, body)),
     pushStaffDevice(deviceUserIds, title, body, callData, highPriority),
-  ])
+  ]
+
+  // A live call additionally fires the real wake layer: an APNs VoIP push (iOS
+  // CallKit) + an FCM high-priority data message (Android full-screen) so the
+  // callee's phone rings a native incoming call even when the app is closed.
+  // OneSignal/Telegram above stay as fallbacks. All best-effort, never blocks.
+  if (args.kind === 'call' && deviceUserIds.length > 0) {
+    const callerName = 'বস — মারুফ'
+    const voipPayload = { type: 'office_call' as const, broadcastId: row.id, channel: `itc_${row.id}`, caller: callerName }
+    pushes.push(
+      (async () => {
+        try {
+          const { voip, fcm } = await getCallPushTargets(deviceUserIds)
+          await Promise.allSettled([
+            voip.length ? sendVoipCall(voip, voipPayload) : Promise.resolve([]),
+            fcm.length ? sendFcmCall(fcm, voipPayload) : Promise.resolve([]),
+          ])
+        } catch (err) {
+          console.warn('[office-intercom] call wake push failed:', (err as Error)?.message)
+        }
+      })(),
+    )
+  }
+
+  await Promise.allSettled(pushes)
 
   return { id: row.id, createdAt: row.createdAt.toISOString() }
 }
