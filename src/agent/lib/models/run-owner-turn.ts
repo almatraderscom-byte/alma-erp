@@ -18,7 +18,7 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { selectToolsAndGroupsForTurnAsync } from '@/agent/tools/select-tools'
+import { selectOwnerHeadTools } from '@/agent/tools/state-router'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -207,6 +207,8 @@ async function* runAlternateProviderTurn(
   modelId: string,
   options: RunOwnerTurnOptions,
   headTier?: HeadTier,
+  /** Phase 3: same-model retry counter for owner-PINNED heads (never recurses past 1). */
+  sameModelAttempt = 0,
 ): AsyncGenerator<AgentEvent> {
   const model = getModel(modelId)
   const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false, deadlineAt = null } = options
@@ -339,7 +341,10 @@ async function* runAlternateProviderTurn(
     suppressWork ? Promise.resolve('') : buildBusinessContext(businessId).catch(() => ''),
     suppressWork ? Promise.resolve('') : buildOwnerActiveTasksContextBlock(businessId).catch(() => ''),
     suppressWork ? Promise.resolve('') : buildStaffActiveTasksContextBlock(businessId).catch(() => ''),
-    selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId, headTier }),
+    // Phase 3: state-aware router first (pending cards / checkpoints / plans
+    // precede text routing, ≤24 tools) — falls back to the legacy selector when
+    // the flag is off or no confident signal exists.
+    selectOwnerHeadTools({ conversationId, text: lastUserText, personalMode, businessId, headTier }),
     suppressWork || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
     // LIVE office pulse (owner decision 2026-07-08) — shared rolling summary of
     // today's office/staff/agent-work state, delta-refreshed ≤10 min. Lets
@@ -499,6 +504,12 @@ async function* runAlternateProviderTurn(
   // can't be answered with generate_image / ads / list_owner_todos etc. — the head
   // has nothing to call, so it must simply respond in words.
   const neutralTools = listenMode ? [] : anthropicToolsToNeutral(cappedTools)
+  // Phase 3 request controller: parallel tool calls are legal ONLY when the whole
+  // pack is pure reads (capability manifest). Any stage/write tool in the pack →
+  // sequential, so the provider can never emit two confirm cards / writes chosen
+  // blind to each other (the multi-card and tool-spree incident class).
+  const { packAllowsParallelToolCalls } = await import('@/agent/tools/capability-manifest')
+  const packParallelToolCalls = packAllowsParallelToolCalls(neutralTools.map((t) => t.name))
   // Phase 1 route span: what this turn's head was actually given — groups, final
   // tool count (after controls gating, provider cap and listen mode), model and
   // behavior-artifact versions. The tool events say what the model CALLED; this
@@ -513,6 +524,13 @@ async function* runAlternateProviderTurn(
     modelId: model.id,
     headTier,
     versions: AGENT_VERSIONS,
+    extras: {
+      router: toolSelection.router,
+      packs: toolSelection.packs ?? null,
+      signals: toolSelection.signals ?? null,
+      trimmed: toolSelection.trimmed?.length ? toolSelection.trimmed : null,
+      parallelToolCalls: packParallelToolCalls,
+    },
   })
   const adapter = adapterFor(model.provider)
 
@@ -628,6 +646,7 @@ async function* runAlternateProviderTurn(
         tools: iterationTools,
         thinking: model.thinking,
         signal,
+        parallelToolCalls: iterationTools.length > 0 ? packParallelToolCalls : undefined,
       })) {
         if (ev.type === 'text_delta') {
           if (thinkingText && thinkingMs == null && thinkingStartedAt) {
@@ -1103,6 +1122,32 @@ async function* runAlternateProviderTurn(
           const abortedBrowserTurn = toolRecords.some((r) => r.toolName.startsWith('live_browser_'))
           yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: 0, needContinue: abortedBrowserTurn && emittedAskCards.length === 0 }
         } catch { /* best-effort — worst case matches the old silent return */ }
+      }
+      return
+    }
+    // Phase 3 — PINNED-head identity guard (roadmap: "Grok identity never changes
+    // silently"): when the owner explicitly pinned this model on the conversation
+    // (tier 'explicit'), a pre-answer crash must NEVER silently switch models.
+    // Retry the SAME model once (transient provider blips — the adapter's request
+    // ladder already handles shape rejections), then surface a clear incident so
+    // the owner knows his pinned model is down and chooses what to do.
+    if (headTier === 'explicit' && !finalText.trim()) {
+      if (sameModelAttempt === 0) {
+        console.warn(
+          `[run-owner-turn] pinned head ${model.id} failed pre-answer → same-model retry:`,
+          err instanceof Error ? err.message : err,
+        )
+        yield* runAlternateProviderTurn(conversationId, model.id, options, headTier, 1)
+        return
+      }
+      await captureAgentError(err, 'agent.head.pinned_down', { conversationId, modelId: model.id })
+      const msg = err instanceof Error ? err.message : String(err)
+      yield {
+        type: 'error',
+        message:
+          `⚠️ Boss, এই চ্যাটটা **${model.label}**-এ পিন করা, কিন্তু মডেলটা এখন সাড়া দিচ্ছে না — ` +
+          `২ বার চেষ্টা করেছি, আর আপনার অনুমতি ছাড়া চুপচাপ অন্য মডেলে যাইনি। ` +
+          `একটু পরে আবার মেসেজ করুন, অথবা মডেল-পিকার থেকে অন্য মডেল বেছে নিন। (${msg.slice(0, 200)})`,
       }
       return
     }

@@ -65,6 +65,8 @@ export async function logRouteSpan(opts: {
   modelId: string
   headTier?: string
   versions?: Record<string, string>
+  /** Phase 3 router extras: router kind, packs, state signals, trim, parallel policy. */
+  extras?: Record<string, unknown>
 }): Promise<void> {
   void logToolEvent({
     surface: 'owner',
@@ -80,6 +82,7 @@ export async function logRouteSpan(opts: {
       modelId: opts.modelId,
       headTier: opts.headTier ?? null,
       versions: opts.versions ?? null,
+      ...(opts.extras ?? {}),
     },
   })
 }

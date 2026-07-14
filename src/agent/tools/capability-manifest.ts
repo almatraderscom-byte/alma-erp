@@ -106,6 +106,16 @@ export function executableButUnroutable(): string[] {
   return CAPABILITIES.filter((c) => c.groups.length === 0 && c.routing === 'group').map((c) => c.name)
 }
 
+/**
+ * Phase 3 parallel-call policy: a head request may allow parallel tool calls
+ * ONLY when every tool in the pack is a pure read (roadmap §D — never
+ * parallelize confirm cards, writes, browser actions or dependent steps).
+ * Unknown names fail closed (sequential).
+ */
+export function packAllowsParallelToolCalls(toolNames: readonly string[]): boolean {
+  return toolNames.every((n) => getCapability(n)?.mode === 'read')
+}
+
 /** Classification entries that no longer match any executable tool (must be empty). */
 export function orphanClassificationEntries(): string[] {
   return Object.keys(TOOL_CLASSIFICATION).filter((name) => !manifest.has(name))
