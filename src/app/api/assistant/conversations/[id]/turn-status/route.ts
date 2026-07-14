@@ -25,5 +25,15 @@ export async function GET(
   const { id } = await Promise.resolve(params)
   const turn = await getLatestTurn(id)
   if (!turn) return Response.json({ status: 'idle', turnId: null })
-  return Response.json({ status: turn.status, turnId: turn.id, startedAt: turn.startedAt })
+  // Roadmap 3.6 — lastSeq lets the client tell "stream quiet but alive" from
+  // stale/ghost; assistantMessageId lets it fetch the exact final row.
+  return Response.json({
+    status: turn.status,
+    turnId: turn.id,
+    startedAt: turn.startedAt,
+    updatedAt: turn.updatedAt,
+    lastSeq: turn.lastSeq,
+    assistantMessageId: turn.assistantMessageId,
+    executionMode: turn.executionMode,
+  })
 }

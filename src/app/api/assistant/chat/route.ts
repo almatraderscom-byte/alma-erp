@@ -14,7 +14,17 @@ import { embedMessageInBackground } from '@/agent/lib/message-recall'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
 import { captureAgentError } from '@/agent/lib/sentry'
-import { createTurn, finalizeTurnIfRunning, isRunningTurnForConversation } from '@/agent/lib/turn-status'
+import {
+  createTurn,
+  finalizeTurnIfRunning,
+  isRunningTurnForConversation,
+  findOrCreateTurnByClientMessageId,
+  findTurnByClientMessageId,
+  getTurnSnapshot,
+  linkTurnUserMessage,
+  linkTurnAssistantMessage,
+} from '@/agent/lib/turn-status'
+import { createTurnEventPublisher } from '@/agent/lib/turn-events'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { notifyOwnerIfAway } from '@/agent/lib/notify-owner'
 import { ensurePersonalProject, isPersonalProject } from '@/lib/personal-space'
@@ -49,6 +59,9 @@ interface ChatBody {
    * enqueue route already created. Reused instead of creating a second one, and
    * (for a web conversation) it authorizes the internal call. */
   turnId?: string
+  /** Phase 3 idempotency key (client-generated UUID): one key → at most one
+   * stored owner message and one turn, however many times the client retries. */
+  clientMessageId?: string
   /**
    * Model-upgrade approval resume: the previous turn paused on a
    * `model_switch_required` card. This re-runs the SAME turn (no new user message)
@@ -175,6 +188,29 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // Roadmap Phase 3 — client idempotency key. A retry (timeout / reconnect /
+  // watchdog fallback) with the same clientMessageId must OBSERVE the existing
+  // turn, never store the message or execute the work again. Checked before
+  // conversation creation so a fresh-chat retry can't orphan a new conversation.
+  const clientMessageId =
+    !isInternalCall && typeof body.clientMessageId === 'string' && body.clientMessageId.trim()
+      ? body.clientMessageId.trim().slice(0, 64)
+      : null
+  if (clientMessageId) {
+    const dup = await findTurnByClientMessageId(clientMessageId)
+    if (dup) {
+      return Response.json({
+        duplicate: true,
+        turnId: dup.id,
+        conversationId: dup.conversationId,
+        status: dup.status,
+        lastSeq: dup.lastSeq,
+        userMessageId: dup.userMessageId,
+        assistantMessageId: dup.assistantMessageId,
+      }, { status: 202 })
+    }
+  }
+
   let conversationId = typeof body.conversationId === 'string' ? body.conversationId : null
   let convSource: string | null = null
   let convProjectId: string | null = null
@@ -200,6 +236,10 @@ export async function POST(req: NextRequest) {
   if (personalMode && !requestedProjectId) {
     requestedProjectId = await ensurePersonalProject()
   }
+
+  // Set inside the persistence block; linked onto the turn row after creation.
+  let savedUserMessageId: string | null = null
+  let alreadyStoredUserMessageId: string | null = null
 
   try {
     if (conversationId) {
@@ -298,9 +338,17 @@ export async function POST(req: NextRequest) {
       projectSystemInstructions = null
     }
 
+    // Internal worker run of an EXISTING turn whose owner message was already
+    // stored by the direct attempt: do not store it again (roadmap invariant 1 —
+    // one clientMessageId → one owner message, whatever path re-runs the turn).
+    if (isInternalCall && typeof body.turnId === 'string' && body.turnId) {
+      const snap = await getTurnSnapshot(body.turnId)
+      if (snap?.userMessageId) alreadyStoredUserMessageId = snap.userMessageId
+    }
+
     // Resume (model-upgrade approval) re-runs the SAME turn already in the thread —
     // the owner's question is already stored, so we DON'T persist another user message.
-    if (!resume) {
+    if (!resume && !alreadyStoredUserMessageId) {
       type StoredBlock = { type: string; [k: string]: unknown }
       const userContent: StoredBlock[] = [
         ...files.map((f) => ({ type: 'file_ref', bucket: f.bucket, path: f.path, mediaType: f.mediaType })),
@@ -343,6 +391,7 @@ export async function POST(req: NextRequest) {
           content: userContent as unknown as Parameters<typeof prisma.agentMessage.create>[0]['data']['content'],
         },
       })
+      savedUserMessageId = savedUserMsg.id
       // B2: embed the owner turn for later semantic recall (best-effort; the SSE
       // turn keeps the lambda alive long enough for this to finish).
       embedMessageInBackground(savedUserMsg.id, userContent)
@@ -411,10 +460,30 @@ export async function POST(req: NextRequest) {
   // Stop button a cross-instance cancel target. Fail-open (null id) if it can't write.
   // A2: a worker-run turn reuses the row the enqueue route already created, so the
   // same turnId flows through the worker's event log and the client's stream.
-  const turnId =
-    isInternalCall && typeof body.turnId === 'string' && body.turnId
-      ? body.turnId
-      : await createTurn(conversationId!)
+  // Phase 3: with a clientMessageId the create is idempotent — the DB uniqueness
+  // constraint is the guarantee; a concurrent duplicate observes, never re-runs.
+  let turnId: string | null
+  if (isInternalCall && typeof body.turnId === 'string' && body.turnId) {
+    turnId = body.turnId
+  } else if (clientMessageId) {
+    const r = await findOrCreateTurnByClientMessageId(conversationId!, clientMessageId, 'inline')
+    if (r && !r.created) {
+      clearTimeout(turnCapTimer)
+      return Response.json({
+        duplicate: true,
+        turnId: r.turn.id,
+        conversationId: r.turn.conversationId,
+        status: r.turn.status,
+        lastSeq: r.turn.lastSeq,
+        userMessageId: r.turn.userMessageId,
+        assistantMessageId: r.turn.assistantMessageId,
+      }, { status: 202 })
+    }
+    turnId = r?.turn.id ?? null
+  } else {
+    turnId = await createTurn(conversationId!, { executionMode: 'inline' })
+  }
+  if (savedUserMessageId) await linkTurnUserMessage(turnId, savedUserMessageId)
 
   // Model-upgrade approval resume: re-run the same turn either on the premium model
   // (approve → router re-resolves and approveModelSwitch skips the gate) or pinned to
@@ -532,6 +601,8 @@ export async function POST(req: NextRequest) {
         else if (event.type === 'ask_card') askCards.push({ askCardId: event.askCardId, question: event.question, options: event.options })
         else if (event.type === 'error') { errorMsg = event.message; break }
         else if (event.type === 'done') {
+          const doneMessageId = (event as { messageId?: string }).messageId
+          if (doneMessageId && turnId) await linkTurnAssistantMessage(turnId, doneMessageId)
           const turnCost = (event as { costUsd?: number }).costUsd ?? 0
           if (turnCost > 0 && conversationId) {
             try {
@@ -600,6 +671,11 @@ export async function POST(req: NextRequest) {
 
   const encoder = new TextEncoder()
   let streamClosed = false
+  // Roadmap 3.4 — inline turns write the SAME durable event log the worker does
+  // (agent_turn_events + Redis live channel + AgentTurn.lastSeq), so a client that
+  // reconnects mid-turn replays from its cursor instead of waiting for polls.
+  // Internal (worker-driven) calls skip it: the worker mirrors events itself.
+  const durable = !isInternalCall && turnId ? createTurnEventPublisher(turnId) : null
   const stream = new ReadableStream({
     async start(controller) {
       // CRITICAL (owner bug 2026-07-12, "app close = kaj theme jay"): once the
@@ -617,6 +693,13 @@ export async function POST(req: NextRequest) {
           clientConnected = false
         }
       }
+      // Live wire + durable log together. The durable write keeps going after the
+      // client disconnects — that's the point: replay must have what the dropped
+      // socket never delivered.
+      const emit = (evt: unknown) => {
+        enqueue(evt)
+        durable?.emit(evt as { type: string })
+      }
 
       // SSE keepalive — a long tool/sub-agent step can run 30–60s without yielding
       // any event; without traffic an idle proxy/CDN may drop the stream and the
@@ -627,14 +710,14 @@ export async function POST(req: NextRequest) {
         try { controller.enqueue(encoder.encode(`: ping\n\n`)) } catch { /* stream closed — expected */ }
       }, 10_000)
 
-      enqueue({ type: 'conversation_id', id: conversationId })
-      enqueue({ type: 'personal_mode', active: personalMode })
+      emit({ type: 'conversation_id', id: conversationId })
+      emit({ type: 'personal_mode', active: personalMode })
       // Give the client the durable turn id so its Stop button can issue a real
       // server-side cancel, and so it can poll this turn's status after re-open.
-      if (turnId) enqueue({ type: 'turn_id', id: turnId })
+      if (turnId) emit({ type: 'turn_id', id: turnId })
       try {
         for await (const event of runTurn()) {
-          enqueue(event)
+          emit(event)
           // App-style push (ntfy) ONLY when the owner is away — suppressed while
           // he's in the app (notifyOwnerIfAway checks app-presence). Telegram turns
           // already push via Telegram, so skip them here.
@@ -652,6 +735,10 @@ export async function POST(req: NextRequest) {
           }
           if (event.type === 'done') {
             doneTurnMs = Date.now() - turnStartedAt
+            // Terminal linkage (roadmap 3.6): the exact persisted assistant row,
+            // so a recovering client fetches one message, not the whole history.
+            const doneMessageId = (event as { messageId?: string }).messageId
+            if (doneMessageId && turnId) await linkTurnAssistantMessage(turnId, doneMessageId)
             await finalizeTurnIfRunning(turnId, 'done')
             const turnCost = (event as { costUsd?: number }).costUsd ?? 0
             if (turnCost > 0 && conversationId) {
@@ -677,7 +764,7 @@ export async function POST(req: NextRequest) {
             const compacted = await compactConversationIfNeeded(conversationId, COMPACT_THRESHOLD_USD)
             if (compacted) {
               conversationId = compacted.newConversationId
-              enqueue({
+              emit({
                 type: 'conversation_compacted',
                 previousConversationId: compacted.previousConversationId,
                 conversationId: compacted.newConversationId,
@@ -693,12 +780,14 @@ export async function POST(req: NextRequest) {
           // Also log to stdout so the cause is visible in Vercel runtime logs, not only Sentry.
           console.error('[assistant/chat] stream turn failed:', err instanceof Error ? err.stack ?? err.message : String(err))
           void captureAgentError(err, 'agent.chat.stream_error', { conversationId: conversationId ?? undefined })
-          enqueue({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+          emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
         }
       } finally {
         streamClosed = true
         clearInterval(keepAlive)
         clearTimeout(turnCapTimer)
+        // Flush the durable log before the function freezes (replay completeness).
+        try { await durable?.finish() } catch { /* advisory — rows already best-effort */ }
         req.signal.removeEventListener('abort', markDisconnected)
         // Safety net: if the turn ended without done/error (hard-cap timeout or a
         // crash), leave it marked error rather than stuck 'running'. No-op if the

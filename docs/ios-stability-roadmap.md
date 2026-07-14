@@ -20,7 +20,7 @@
 | Phase 1 (PR 1) | Recovery hotfix: transport classification, lifecycle observers, immediate foreground recovery, visible resume tail, ID-map hygiene | ✅ DONE 2026-07-14 (sim-verified e2e) |
 | Phase 1.4 (PR 2) | Scroll/layout gap fix + single scroll-debounce task | ✅ DONE 2026-07-14 (100-round scroll stress clean) |
 | Phase 2 (PR 3) | Event parity + robust SSE parser + buffered reducer | ✅ DONE 2026-07-14 (split → PR 3b) |
-| Phase 3 (PR 4) | Idempotent durable turn backend (Prisma migration, command endpoint, durable events for inline, replay cursor, richer status) | ⬜ not started |
+| Phase 3 (PR 4) | Idempotent durable turn backend (Prisma migration, command endpoint, durable events for inline, replay cursor, richer status) | ✅ DONE 2026-07-14 |
 | Phase 3 native (PR 5) | Native migration to canonical durable turn + recovery descriptor | ⬜ not started |
 | Phase 4 (PR 6) | Pagination, consolidated polling, metrics, tests, CI gates | ⬜ not started |
 
@@ -51,6 +51,17 @@
 - **Event parity shipped (P0-E closed):** `personal_mode` (stored), `subagent_start/end` (native "সহকারী: <role>" activity rows), `verification_retry` (web parity: draft cleared + "নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি (n/m)…"), `model_switch_required` (truthful Bangla notice; native approval card = tracked follow-up), `conversation_compacted` (follows new conversation id), `done` usage → live tokens/cost on the tail + `needContinue` → bounded auto-continue (8, resets on manual send, web-parity text), `tool_end.screenshot` (noted in row preview; inline image = follow-up), confirm/ask-card dedupe guards for replay-safety.
 - **Sim verification:** EVENTTEST canned wire (CRLF + no-space data + keepalives + multi-line + unknown + trailing done) rendered subagent row, tool row, prose, mid-turn ask card and live cost badge on screen; `stream.unknownEvent: future_event_xyz` telemetried, stream survived. Real prod turn through the new buffered pipeline streamed and settled cleanly (thinking/tool rows + answer + cost badge).
 - **Deferred to PR 3b:** monolith split (2.5), full 2.4 renderer work (markdown parse now capped at flush cadence ≤25/s — the 8–10/s throttle + settle-only full parse + single shimmer clock remain), native model-switch approval card, tool-screenshot inline rendering, blocks-vs-prose duplicate investigation.
+
+### Phase 3 / PR 4 completion notes (2026-07-14)
+
+- **3.1 Migration** `20260914120000_agent_turn_idempotency` (additive; IF NOT EXISTS): `client_message_id`, `user_message_id`, `assistant_message_id`, `last_seq` (default −1), `execution_mode`, `updated_at` + unique `(conversation_id, client_message_id)` + key index. Auto-applies on the next Vercel build via migrate-on-deploy.
+- **3.2 Idempotency:** `findOrCreateTurnByClientMessageId` (DB-constraint-backed, race returns the winner); `/chat` gates on the key BEFORE conversation creation/message persist (fresh-chat retry can't orphan a conversation) and returns `202 {duplicate:true, …snapshot}` instead of re-executing; `/turn` accepts new conversations + key with the same duplicate semantics. Legacy bodies unchanged.
+- **3.3 Execution handoff:** `/turn` re-dispatches a DEAD direct run (running, `lastSeq<0`, >15s) to the worker — old turn cancelled and the idempotency key MOVES to the replacement turn in one transaction. Deviation from the roadmap's same-turnId ideal: same-row handoff can't be made race-free with the polled `cancelRequested` flag (two executors could interleave on one row); key-transfer preserves every invariant the client sees (key → one live execution). Client resubmission of the prompt is gone either way.
+- **3.4 Durable inline events:** `createTurnEventPublisher` — durable row first, Redis publish second, `lastSeq` bump third (worker's order); serialized write chain off the SSE hot loop; text/thinking deltas coalesced (350ms / 2000 chars); wired into `/chat` SSE via `emit()` (envelope + turn + compacted + error events). Worker path untouched (it mirrors itself). Worker duplicate user-message fixed via `turn.userMessageId` guard on internal calls; `linkTurnUserMessage`/`linkTurnAssistantMessage` set exact message linkage.
+- **3.5 Replay:** stream route takes `?afterSeq=` / `Last-Event-ID` (frames now carry `id: <seq>`), emits a `turn_snapshot` hello, page-caps at 5000 with `replay_continue`, `Cache-Control: no-cache, no-transform` + `X-Accel-Buffering: no`.
+- **3.6 Status:** turn-status returns `lastSeq`, `updatedAt`, `assistantMessageId`, `executionMode`.
+- **Tests:** publisher coalescing/chronology/oversize-flush/lastSeq + cursor deduper + fail-open replay (`turn-event-publisher.test.ts`); full agent-lib suite 268/268 green; `tsc --noEmit` clean.
+- **Note:** the web/native clients don't send `clientMessageId` yet — that's PR 5 (native migration). Until then the new paths are dormant-but-live: inline turns already write durable events and richer status.
 
 ---
 
