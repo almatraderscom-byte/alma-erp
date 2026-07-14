@@ -1,0 +1,34 @@
+# Phase 7 — permanent agent PR gate (roadmap release discipline).
+# Every PR touching the agent surface must pass typecheck + the full agent
+# suite (capability-manifest coverage, router goldens, workflow transition
+# tests, guard/authorization matrices, prompt conflict linter + token budgets)
+# BEFORE merge — a Vercel build alone proves compilation, not behavior.
+name: Agent PR Gate
+
+on:
+  pull_request:
+    paths:
+      - 'src/agent/**'
+      - 'src/app/api/assistant/**'
+      - 'src/lib/agent-api/**'
+      - 'prisma/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/agent-gate.yml'
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install (postinstall runs prisma generate)
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Agent test suite (behavior gates)
+        run: npm run test:agent

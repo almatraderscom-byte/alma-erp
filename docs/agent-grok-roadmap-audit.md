@@ -111,6 +111,15 @@ Not yet measurable (needs Phase 1 telemetry): wrong-tool rate, duplicate actions
 - ✅ Dead `''` constants removed; live-browser repeated-navigation prose → guard reference (enforcement is Phase 5 code); versions bumped `p/r 2026.07.14.3`.
 - ⏳ **Deferred (deliberate)**: history-message cache breakpoints in the Anthropic adapter (system+tools cached; history caching returns with the head, if ever); core.ts stays in-tree solely as the kill-switch path (delete after a quiet canary, Phase 7); multimodal tool results for Grok via content-parts (OpenRouter chat-completions limitation).
 
+## Phase 7 status (Canary + permanent release discipline — 2026-07-14)
+
+- ✅ **Rollout ladder for the state router**: `AGENT_STATE_ROUTER` now supports `shadow` (router predicts, legacy executes, prediction logged in the route span as `detail.shadow`) and `canary:N` (stable FNV-1a conversation cohorts; widening never evicts). **Production default moved from OFF to SHADOW** — real traffic scores the router's recall/precision with zero behavior change; preview stays ON; `false` remains the kill switch. Ladder: shadow → canary:10 → 25 → 50 → `true`, 48h green per step ([agent-rollout-runbook.md](./agent-rollout-runbook.md)).
+- ✅ **Per-component kill switches** (each `false` reverts one phase without a deploy): `AGENT_WORKFLOW_TEMPLATES` (P5 templates → Phase 4 lifecycle), `AGENT_WORKFLOW_GUARDS` (guard blocking off, hooks stay), `AGENT_WORKFLOW_LEASES` (unleased handout), `AGENT_PROMPT_GATING` (full prompt every turn), `AGENT_OWNER_INTENT_GATE` (mutation gate + note off), plus the existing `AGENT_NATIVE_ANTHROPIC_LOOP=true` (P6) and head-model envs.
+- ✅ **Permanent PR gate in CI**: [.github/workflows/agent-gate.yml](../.github/workflows/agent-gate.yml) — every PR touching `src/agent/**`, `/api/assistant/**`, `src/lib/agent-api/**` or `prisma/**` must pass `tsc` + the full agent suite (manifest coverage, router goldens, workflow transition/guard/authorization matrices, prompt conflict linter + token budgets). Behavior changes can no longer merge on a Vercel compile alone.
+- ✅ **Owner-intent gate fix shipped en route** (PR #363, owner-approved): information-only guesses keep stage/service tools (cards are Approve-gated anyway), Banglish imperatives recognized, ask-card answers / continuations of in-flight runs upgrade to `workflow_continuation` — the pair-code incident class closed.
+- ✅ Tests: canary determinism/spread, mode-ladder matrix, kill-switch behavior; suite green.
+- ⏳ **Ongoing (process, by design)**: the 48h canary gates advance over the coming days via the runbook (owner or next sessions flip the env at each green checkpoint); Phase 0's 100–200 real replay fixtures still await a prod-side export + PII review — golden suites cover the deterministic layers meanwhile.
+
 ## Recommended phase order (unchanged from roadmap)
 
 Phase 0 (this PR) → 1 Observability → 2 Tool Contract V2 → 3 Grok request controller + router → 4 WorkflowRun → 5 Workflow templates → 6 Prompt compiler + one turn engine → 7 Canary discipline. One phase per session/PR, exit gates as written, plus the corrections above.
