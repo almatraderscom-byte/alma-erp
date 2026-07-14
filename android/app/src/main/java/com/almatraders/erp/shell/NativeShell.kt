@@ -60,6 +60,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.haze
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
@@ -231,6 +233,10 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
 
     // Pending-approvals badge count on the Approvals tab (polled; iOS parity).
     var approvalsCount by remember { mutableStateOf(0) }
+    // Separate haze sources for the tab-root vs a pushed native screen (only one shows at
+    // a time, but keeping them distinct avoids stale blur areas across a push/pop).
+    val tabHazeState = remember { HazeState() }
+    val pushHazeState = remember { HazeState() }
     LaunchedEffect(Unit) {
         while (true) {
             approvalsCount = fetchApprovalsCount()
@@ -298,10 +304,20 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
                         ShellHeader(title = spec.title, dark = dark, onBack = null)
                     }
                     Box(Modifier.weight(1f)) {
-                        TabContent(tabIndex, pushCtx)
-                        // Claude top scroll-edge fade — content dissolves into the aura as
-                        // it scrolls up under the header (iOS ClaudeTopFade parity).
-                        ClaudeTopFade(dark)
+                        // Content is the haze SOURCE; the fade overlay frosts it (Claude look).
+                        Box(
+                            Modifier.fillMaxSize().haze(
+                                state = tabHazeState,
+                                backgroundColor = AlmaTheme.rootBg(dark),
+                                tint = Color.Transparent,
+                                blurRadius = CLAUDE_TOP_FADE_BLUR,
+                                noiseFactor = 0f,
+                            ),
+                        ) {
+                            TabContent(tabIndex, pushCtx)
+                        }
+                        // Claude top scroll-edge fade — frosted blur + colour dissolve.
+                        ClaudeTopFade(dark, tabHazeState)
                     }
                 }
                 // ── Pushed screen (top of stack) covers the tab, keeps its own header ──
@@ -318,11 +334,23 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
                                         factory = { top.webView.also { wv -> (wv.parent as? ViewGroup)?.removeView(wv) } },
                                         modifier = Modifier.fillMaxSize(),
                                     )
-                                    is StackEntry.Native -> top.content(pushCtx)
+                                    // Native content is the haze SOURCE (a WebView can't be
+                                    // frosted — it renders outside Compose — so web skips it).
+                                    is StackEntry.Native -> Box(
+                                        Modifier.fillMaxSize().haze(
+                                            state = pushHazeState,
+                                            backgroundColor = AlmaTheme.rootBg(dark),
+                                            tint = Color.Transparent,
+                                            blurRadius = CLAUDE_TOP_FADE_BLUR,
+                                            noiseFactor = 0f,
+                                        ),
+                                    ) {
+                                        top.content(pushCtx)
+                                    }
                                 }
                                 // Claude top scroll-edge fade over native pushed screens
                                 // (skip web pushes — the WebView paints its own chrome).
-                                if (top is StackEntry.Native) ClaudeTopFade(dark)
+                                if (top is StackEntry.Native) ClaudeTopFade(dark, pushHazeState)
                             }
                         }
                     }
