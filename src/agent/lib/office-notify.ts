@@ -6,9 +6,74 @@
  */
 import { sendTelegramMessage } from '@/lib/trading-telegram-bot'
 import { sendStaffNtfy } from '@/agent/lib/notify-owner'
+import { ANDROID_NOTIFICATION_CHANNEL_ID } from '@/lib/notification-sound'
 
 const APP_BASE = (process.env.NEXT_PUBLIC_APP_URL || 'https://alma-erp-six.vercel.app').replace(/\/$/, '')
 const OFFICE_URL = `${APP_BASE}/portal/office`
+
+/**
+ * Fire a native OneSignal push straight to a staff member's installed app
+ * (web + iOS/Android APK register with `OneSignal.login(userId)`, so their ERP
+ * user id is the OneSignal external_id). Self-contained REST call — mirrors
+ * native-owner-push.ts so it lights up exactly the subscriptions the app made,
+ * WITHOUT writing to the ERP notifications table or importing ERP send code.
+ *
+ * `data` rides along so the in-app OneSignal click/foreground listener can
+ * surface an incoming-call ring (data.type='office_call'). Never throws.
+ *
+ * @param userIds  ERP user ids to target (empty → clean no-op)
+ * @param highPriority  OneSignal priority 10 + PUBLIC lock-screen (calls/urgent)
+ */
+export async function pushStaffDevice(
+  userIds: string[],
+  title: string,
+  body: string,
+  data: Record<string, unknown> = {},
+  highPriority = false,
+): Promise<void> {
+  try {
+    const ids = userIds.filter(Boolean)
+    if (ids.length === 0) return
+    const appId = process.env.ONESIGNAL_APP_ID || process.env.NEXT_PUBLIC_ONESIGNAL_APP_ID
+    const apiKey = process.env.ONESIGNAL_REST_API_KEY
+    if (!appId || !apiKey) return
+
+    const usesV2Key = apiKey.startsWith('os_v2_')
+    const actionUrl = typeof data.actionUrl === 'string' && data.actionUrl ? data.actionUrl : OFFICE_URL
+
+    const payload: Record<string, unknown> = {
+      app_id: appId,
+      target_channel: 'push',
+      headings: { en: title },
+      contents: { en: body },
+      web_url: actionUrl,
+      priority: highPriority ? 10 : 5,
+      // Android 8+: the alma_alerts_v2 channel carries the sound; keep calls on it.
+      existing_android_channel_id: ANDROID_NOTIFICATION_CHANNEL_ID,
+      android_visibility: 1, // PUBLIC — show on lock screen (a call must be visible)
+      ios_badgeType: 'Increase',
+      ios_badgeCount: 1,
+      small_icon: 'ic_stat_onesignal_default',
+      data: { source: 'office', actionUrl, ...data },
+    }
+    if (usesV2Key) payload.include_aliases = { external_id: ids }
+    else payload.include_external_user_ids = ids
+
+    await fetch(
+      usesV2Key ? 'https://api.onesignal.com/notifications?c=push' : 'https://onesignal.com/api/v1/notifications',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `${usesV2Key ? 'Key' : 'Basic'} ${apiKey}`,
+        },
+        body: JSON.stringify(payload),
+      },
+    )
+  } catch (err) {
+    console.warn('[office-notify] staff device push failed:', (err as Error)?.message)
+  }
+}
 
 /** Ping a staff member on Telegram + their ntfy topic. Never throws. */
 export async function pushStaffPing(
