@@ -117,7 +117,10 @@ async function conversationAutoApprovesUpgrade(conversationId: string): Promise<
 function providerToCostProvider(provider: string): CostProvider {
   if (provider === 'google') return 'gemini'
   if (provider === 'openrouter') return 'openrouter'
-  if (provider === 'openai') return 'openai'
+  // xAI direct is OpenAI-compatible and priced from the same registry rates —
+  // tag its spend under 'openai' (CostProvider has no xai bucket; adding one
+  // would ripple through the cost dashboards for no accounting gain).
+  if (provider === 'openai' || provider === 'xai') return 'openai'
   return 'anthropic'
 }
 

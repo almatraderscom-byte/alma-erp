@@ -14,8 +14,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 
 // The classifier's reply, per test. The mocked OpenAI branches on the system
-// prompt: the personal classifier ("... personal or work") returns this; the
-// triage classifier ("... light, marketing, or heavy") returns a safe 'heavy'.
+// prompt: the personal classifier ("You classify ONE message ...") returns this;
+// the triage classifier ("... routing classifier ...") returns a safe 'heavy'.
+// Plain-word replies exercise the legacy keyword net that backs up the
+// structured-output (json_schema) path.
 let classifyReply = 'work'
 let personalCallCount = 0
 
@@ -25,7 +27,7 @@ vi.mock('openai', () => ({
       completions: {
         create: vi.fn(async (params: { messages: Array<{ role: string; content: string }> }) => {
           const sys = params.messages[0]?.content ?? ''
-          if (sys.includes('personal or work')) {
+          if (sys.includes('classify ONE message')) {
             personalCallCount++
             return { choices: [{ message: { content: classifyReply } }], usage: { prompt_tokens: 20, completion_tokens: 1 } }
           }
