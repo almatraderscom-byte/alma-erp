@@ -395,7 +395,7 @@ fun OrderCreateScreen(ctx: PushCtx) {
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp)
-            .padding(top = 10.dp, bottom = 24.dp),
+            .padding(top = com.almatraders.erp.shell.LocalHeaderInset.current, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         // ── গ্রাহক ──

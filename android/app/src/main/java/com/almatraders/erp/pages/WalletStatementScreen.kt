@@ -424,6 +424,7 @@ fun WalletStatementScreen(
     AlmaPullRefresh(refreshing = vm.loading, onRefresh = { scope.launch { vm.load() } }, dark = dark) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 14.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = com.almatraders.erp.shell.LocalHeaderInset.current),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         item { WsHeader(dark, onClose) }

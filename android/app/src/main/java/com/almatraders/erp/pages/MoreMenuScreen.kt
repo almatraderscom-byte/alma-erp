@@ -718,7 +718,7 @@ private fun MoreRootList(
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(top = 8.dp, bottom = 28.dp),
+            .padding(top = com.almatraders.erp.shell.LocalHeaderInset.current, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(22.dp),
     ) {
         // ── Watch-app header: Business pill (left) + avatar (right) + large name ──

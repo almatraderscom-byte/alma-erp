@@ -59,7 +59,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
@@ -293,13 +299,14 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
                 // ── Active tab root ──
                 val tabIndex = selectedTab.intValue
                 val spec = ALL_TABS[tabIndex]
-                Column(Modifier.fillMaxSize()) {
-                    if (spec.nativeHeader && stack.isEmpty()) {
-                        ShellHeader(title = spec.title, dark = dark, onBack = null)
-                    }
-                    Box(Modifier.weight(1f)) {
+                if (spec.nativeHeader) {
+                    // Content scrolls under a floating title bar and fades into the aura.
+                    HeaderFadeScaffold(title = spec.title, dark = dark, onBack = null) {
                         TabContent(tabIndex, pushCtx)
                     }
+                } else {
+                    // Assistant etc. render their own header — no shell fade.
+                    Box(Modifier.fillMaxSize()) { TabContent(tabIndex, pushCtx) }
                 }
                 // ── Pushed screen (top of stack) covers the tab, keeps its own header ──
                 // Paint the AURORA (not a flat near-black) so every sub-page matches the
@@ -307,16 +314,21 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
                 // tab content behind it. Web pushes are opaque WebViews anyway.
                 stack.lastOrNull()?.let { top ->
                     AuroraBackground(dark) {
-                        Column(Modifier.fillMaxSize()) {
-                            ShellHeader(title = top.title, dark = dark, onBack = pushCtx.pop)
-                            Box(Modifier.weight(1f)) {
-                                when (top) {
-                                    is StackEntry.Web -> AndroidView(
+                        when (top) {
+                            // A WebView renders outside Compose (can't be alpha-masked) — keep
+                            // the plain stacked header for web pushes.
+                            is StackEntry.Web -> Column(Modifier.fillMaxSize()) {
+                                ShellHeader(title = top.title, dark = dark, onBack = pushCtx.pop)
+                                Box(Modifier.weight(1f)) {
+                                    AndroidView(
                                         factory = { top.webView.also { wv -> (wv.parent as? ViewGroup)?.removeView(wv) } },
                                         modifier = Modifier.fillMaxSize(),
                                     )
-                                    is StackEntry.Native -> top.content(pushCtx)
                                 }
+                            }
+                            // Native pushed screen — content scrolls under the fading bar.
+                            is StackEntry.Native -> HeaderFadeScaffold(title = top.title, dark = dark, onBack = pushCtx.pop) {
+                                top.content(pushCtx)
                             }
                         }
                     }
@@ -399,33 +411,121 @@ private fun TabContent(tabIndex: Int, pushCtx: PushCtx) {
 
 // ── Chrome pieces ─────────────────────────────────────────────────────────────────
 
-/** Slim centered-title header over the aurora (the iOS glass nav bar's Android twin —
- *  transparent, crisp title, optional back chevron). */
+/** Top inset a screen's scroll content should pad by, so at rest nothing sits under the
+ *  floating title bar / fade zone; only SCROLLED content passes under it and dissolves. */
+val LocalHeaderInset = androidx.compose.runtime.compositionLocalOf { 0.dp }
+
+/** Claude-style header: the title bar FLOATS over the content, and the content's own top
+ *  edge alpha-fades to transparent (revealing the aura behind) as it scrolls up under the
+ *  bar. No blur, no opaque overlay layer — the content itself is masked; the title sits
+ *  above it. A screen pads its scroll top by [LocalHeaderInset] so it's clean at rest. */
+@Composable
+fun HeaderFadeScaffold(
+    title: String,
+    dark: Boolean,
+    onBack: (() -> Unit)?,
+    content: @Composable () -> Unit,
+) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val statusTop = androidx.compose.foundation.layout.WindowInsets.statusBars
+        .asPaddingValues().calculateTopPadding()
+    val barHeight = 52.dp
+    val fadeTail = 30.dp
+    val inset = statusTop + barHeight + fadeTail
+    val statusTopPx = with(density) { statusTop.toPx() }
+    val fadeEndPx = with(density) { inset.toPx() }
+
+    Box(Modifier.fillMaxSize()) {
+        // Content scrolls under the bar; its top edge fades out (reveals the aura).
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer(compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen)
+                .drawWithContent {
+                    drawContent()
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            1f to Color.Black,
+                            startY = statusTopPx,
+                            endY = fadeEndPx,
+                        ),
+                        blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
+                    )
+                },
+        ) {
+            androidx.compose.runtime.CompositionLocalProvider(LocalHeaderInset provides inset) {
+                content()
+            }
+        }
+        // Floating title bar over the aura, above the faded content.
+        Box(Modifier.fillMaxWidth().statusBarsPadding().height(barHeight)) {
+            if (onBack != null) {
+                IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart)) {
+                    Icon(
+                        Icons.AutoMirrored.Outlined.ArrowBack,
+                        contentDescription = "Back",
+                        tint = AlmaTheme.ink(dark),
+                    )
+                }
+            }
+            Text(
+                title,
+                modifier = Modifier.align(Alignment.Center),
+                color = AlmaTheme.ink(dark),
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+/** Slim centered-title header over the aurora (the iOS glass nav bar's Android twin).
+ *  The header's OWN background is a soft vertical fade — the page colour holds under the
+ *  status-bar + title, then dissolves to transparent at the header's bottom edge, so the
+ *  bar melts into the content below (no separate overlay layer, no blur). */
 @Composable
 fun ShellHeader(title: String, dark: Boolean, onBack: (() -> Unit)?) {
+    val bg = AlmaTheme.rootBg(dark)
     Box(
         Modifier
             .fillMaxWidth()
-            .statusBarsPadding()
-            .height(48.dp),
+            .background(
+                Brush.verticalGradient(
+                    0.00f to bg.copy(alpha = 0.86f),
+                    0.62f to bg.copy(alpha = 0.72f),
+                    1.00f to Color.Transparent,
+                ),
+            ),
     ) {
-        if (onBack != null) {
-            IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart)) {
-                Icon(
-                    Icons.AutoMirrored.Outlined.ArrowBack,
-                    contentDescription = "Back",
-                    tint = AlmaTheme.ink(dark),
-                )
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .height(58.dp),
+        ) {
+            if (onBack != null) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.align(Alignment.CenterStart).padding(bottom = 8.dp),
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Outlined.ArrowBack,
+                        contentDescription = "Back",
+                        tint = AlmaTheme.ink(dark),
+                    )
+                }
             }
+            Text(
+                title,
+                modifier = Modifier.align(Alignment.Center).padding(bottom = 8.dp),
+                color = AlmaTheme.ink(dark),
+                fontSize = 17.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+            )
         }
-        Text(
-            title,
-            modifier = Modifier.align(Alignment.Center),
-            color = AlmaTheme.ink(dark),
-            fontSize = 17.sp,
-            fontWeight = FontWeight.SemiBold,
-            textAlign = TextAlign.Center,
-        )
     }
 }
 

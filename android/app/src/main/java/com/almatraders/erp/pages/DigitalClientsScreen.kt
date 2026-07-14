@@ -402,6 +402,7 @@ fun DigitalClientsScreen(ctx: PushCtx) {
         AlmaPullRefresh(refreshing = vm.loading, onRefresh = { scope.launch { vm.load() } }, dark = dark) {
         LazyColumn(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(top = com.almatraders.erp.shell.LocalHeaderInset.current),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             item { Spacer(Modifier.height(6.dp)) }

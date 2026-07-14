@@ -602,7 +602,7 @@ private fun CsHomeTab(vm: CreativeStudioState, dark: Boolean, go: (CsTab) -> Uni
 
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 18.dp),
-        contentPadding = PaddingValues(bottom = 96.dp),
+        contentPadding = PaddingValues(top = com.almatraders.erp.shell.LocalHeaderInset.current, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
@@ -725,7 +725,7 @@ private fun CsGalleryTab(vm: CreativeStudioState, dark: Boolean, scope: Coroutin
     // Manual 2-col grid inside a LazyColumn (avoids a second same-named `items` import).
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 18.dp),
-        contentPadding = PaddingValues(bottom = 96.dp),
+        contentPadding = PaddingValues(top = com.almatraders.erp.shell.LocalHeaderInset.current, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
@@ -1360,7 +1360,7 @@ private fun CsLibraryTab(vm: CreativeStudioState, dark: Boolean, scope: Coroutin
     }
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 18.dp),
-        contentPadding = PaddingValues(bottom = 96.dp),
+        contentPadding = PaddingValues(top = com.almatraders.erp.shell.LocalHeaderInset.current, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item { CsHeader(dark, "মডেল লাইব্রেরি", "লাইব্রেরি", onBack = null) }

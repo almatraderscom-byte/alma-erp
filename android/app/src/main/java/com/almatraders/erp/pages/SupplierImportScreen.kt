@@ -252,7 +252,7 @@ fun SupplierImportScreen(ctx: PushCtx) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
-        contentPadding = PaddingValues(top = 6.dp, bottom = 8.dp),
+        contentPadding = PaddingValues(top = com.almatraders.erp.shell.LocalHeaderInset.current, bottom = 8.dp),
     ) {
         if (vm.authExpired) {
             item { SupAuthCard(dark) { ctx.openSmart("/login", "Login") } }

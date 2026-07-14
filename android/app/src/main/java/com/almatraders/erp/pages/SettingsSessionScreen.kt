@@ -213,7 +213,8 @@ fun SettingsSessionScreen(ctx: PushCtx) {
         Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 14.dp),
+            .padding(horizontal = 14.dp)
+            .padding(top = com.almatraders.erp.shell.LocalHeaderInset.current),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Spacer(Modifier.height(4.dp))

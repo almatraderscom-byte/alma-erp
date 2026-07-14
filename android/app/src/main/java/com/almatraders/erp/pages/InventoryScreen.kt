@@ -427,7 +427,7 @@ fun InventoryScreen(ctx: PushCtx) {
         LazyColumn(
             Modifier.fillMaxSize().padding(horizontal = 14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
-            contentPadding = PaddingValues(top = 6.dp),
+            contentPadding = PaddingValues(top = com.almatraders.erp.shell.LocalHeaderInset.current),
         ) {
             item { InvHeroCard(vm.stockValue, vm.potentialProfit, vm.totalSkus) }
             item {
