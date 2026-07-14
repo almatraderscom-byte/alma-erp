@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "alma-erp/agent-event",
+  "title": "ALMA Agent SSE wire event",
+  "description": "Canonical wire contract for /api/assistant/chat and /api/assistant/turn/:id/stream. Semantic source of truth: src/agent/lib/core.ts (AgentEvent union) plus the route-level envelope events emitted by src/app/api/assistant/chat/route.ts. Native Swift mirror: AgentTurnEvent in ios/App/App/AssistantSwiftUI.swift. Any NEW event type must be added in all three places — the Swift side logs unmatched types as stream.unknownEvent telemetry (roadmap Phase 2).",
+  "oneOf": [
+    { "$ref": "#/$defs/conversation_id" },
+    { "$ref": "#/$defs/personal_mode" },
+    { "$ref": "#/$defs/turn_id" },
+    { "$ref": "#/$defs/model_info" },
+    { "$ref": "#/$defs/model_switch_required" },
+    { "$ref": "#/$defs/thinking_delta" },
+    { "$ref": "#/$defs/text_delta" },
+    { "$ref": "#/$defs/tool_start" },
+    { "$ref": "#/$defs/tool_end" },
+    { "$ref": "#/$defs/subagent_start" },
+    { "$ref": "#/$defs/subagent_end" },
+    { "$ref": "#/$defs/confirm_card" },
+    { "$ref": "#/$defs/artifact_saved" },
+    { "$ref": "#/$defs/ask_card" },
+    { "$ref": "#/$defs/verification_retry" },
+    { "$ref": "#/$defs/conversation_compacted" },
+    { "$ref": "#/$defs/done" },
+    { "$ref": "#/$defs/error" }
+  ],
+  "$defs": {
+    "conversation_id": {
+      "type": "object",
+      "properties": { "type": { "const": "conversation_id" }, "id": { "type": "string" } },
+      "required": ["type", "id"]
+    },
+    "personal_mode": {
+      "type": "object",
+      "properties": { "type": { "const": "personal_mode" }, "active": { "type": "boolean" } },
+      "required": ["type", "active"]
+    },
+    "turn_id": {
+      "type": "object",
+      "properties": { "type": { "const": "turn_id" }, "id": { "type": "string" } },
+      "required": ["type", "id"]
+    },
+    "model_info": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "model_info" },
+        "modelId": { "type": "string" },
+        "label": { "type": "string" },
+        "variant": { "enum": ["claude", "qwen", "deepseek", "default"] },
+        "tier": { "type": "string" }
+      },
+      "required": ["type", "modelId", "label"]
+    },
+    "model_switch_required": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "model_switch_required" },
+        "conversationId": { "type": "string" },
+        "toModelId": { "type": "string" },
+        "toLabel": { "type": "string" },
+        "fromModelId": { "type": "string" },
+        "fromLabel": { "type": "string" },
+        "fallbackModelId": { "type": "string" }
+      },
+      "required": ["type", "toModelId", "toLabel"]
+    },
+    "thinking_delta": {
+      "type": "object",
+      "properties": { "type": { "const": "thinking_delta" }, "delta": { "type": "string" } },
+      "required": ["type", "delta"]
+    },
+    "text_delta": {
+      "type": "object",
+      "properties": { "type": { "const": "text_delta" }, "delta": { "type": "string" } },
+      "required": ["type", "delta"]
+    },
+    "tool_start": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "tool_start" },
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "input": {}
+      },
+      "required": ["type", "id", "name"]
+    },
+    "tool_end": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "tool_end" },
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "success": { "type": "boolean" },
+        "error": { "type": "string" },
+        "resultPreview": { "type": "string" },
+        "screenshot": { "type": "string", "description": "data URL or storage path of a browser-tool screenshot" }
+      },
+      "required": ["type", "id", "name", "success"]
+    },
+    "subagent_start": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "subagent_start" },
+        "id": { "type": "string" },
+        "role": { "type": "string" },
+        "roleLabel": { "type": "string" },
+        "task": { "type": "string" }
+      },
+      "required": ["type", "id", "role", "roleLabel", "task"]
+    },
+    "subagent_end": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "subagent_end" },
+        "id": { "type": "string" },
+        "role": { "type": "string" },
+        "success": { "type": "boolean" },
+        "summary": { "type": "string" },
+        "toolsUsed": { "type": "array", "items": { "type": "string" } },
+        "error": { "type": "string" }
+      },
+      "required": ["type", "id", "role", "success"]
+    },
+    "confirm_card": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "confirm_card" },
+        "pendingActionId": { "type": "string" },
+        "summary": { "type": "string" },
+        "costEstimate": { "type": "number" },
+        "actionType": { "type": "string" },
+        "entryCount": { "type": "number" },
+        "isFinance": { "type": "boolean" },
+        "isBatch": { "type": "boolean" }
+      },
+      "required": ["type", "pendingActionId", "summary"]
+    },
+    "artifact_saved": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "artifact_saved" },
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "artifactType": { "type": "string" }
+      },
+      "required": ["type", "id", "title", "artifactType"]
+    },
+    "ask_card": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "ask_card" },
+        "askCardId": { "type": "string" },
+        "question": { "type": "string" },
+        "options": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["type", "askCardId", "question", "options"]
+    },
+    "verification_retry": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "verification_retry" },
+        "attempt": { "type": "integer" },
+        "maxAttempts": { "type": "integer" },
+        "categories": { "type": "array", "items": { "type": "string" } },
+        "snippets": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["type", "attempt", "maxAttempts"]
+    },
+    "conversation_compacted": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "conversation_compacted" },
+        "previousConversationId": { "type": "string" },
+        "conversationId": { "type": "string" },
+        "convoCost": { "type": "number" }
+      },
+      "required": ["type", "conversationId"]
+    },
+    "done": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "done" },
+        "messageId": { "type": "string" },
+        "tokensIn": { "type": "integer" },
+        "tokensOut": { "type": "integer" },
+        "cacheCreation": { "type": "integer" },
+        "cacheRead": { "type": "integer" },
+        "costUsd": { "type": "number" },
+        "needContinue": { "type": "boolean", "description": "serverless deadline hit mid-task — client machine-sends a bounded continue" },
+        "apiRounds": { "type": "integer" },
+        "roundCostsUsd": { "type": "array", "items": { "type": "number" } }
+      },
+      "required": ["type", "messageId"]
+    },
+    "error": {
+      "type": "object",
+      "properties": { "type": { "const": "error" }, "message": { "type": "string" } },
+      "required": ["type", "message"]
+    }
+  }
+}

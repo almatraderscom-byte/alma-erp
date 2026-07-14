@@ -19,7 +19,7 @@
 | Phase 0 | Instrumentation: signposts, debug row overlays, stress fixture | ✅ DONE 2026-07-14 |
 | Phase 1 (PR 1) | Recovery hotfix: transport classification, lifecycle observers, immediate foreground recovery, visible resume tail, ID-map hygiene | ✅ DONE 2026-07-14 (sim-verified e2e) |
 | Phase 1.4 (PR 2) | Scroll/layout gap fix + single scroll-debounce task | ✅ DONE 2026-07-14 (100-round scroll stress clean) |
-| Phase 2 (PR 3) | Event parity + robust SSE parser + buffered reducer + monolith split | ⬜ not started |
+| Phase 2 (PR 3) | Event parity + robust SSE parser + buffered reducer | ✅ DONE 2026-07-14 (split → PR 3b) |
 | Phase 3 (PR 4) | Idempotent durable turn backend (Prisma migration, command endpoint, durable events for inline, replay cursor, richer status) | ⬜ not started |
 | Phase 3 native (PR 5) | Native migration to canonical durable turn + recovery descriptor | ⬜ not started |
 | Phase 4 (PR 6) | Pagination, consolidated polling, metrics, tests, CI gates | ⬜ not started |
@@ -42,6 +42,15 @@
   - `mergeServerMessages` applies in a `Transaction(disablesAnimations:)` — reconciliation height changes never animate mid-scroll.
 - **Sim verification:** `ALMA_ASSISTANT_SCROLLTEST=1` — 100 top↔bottom round-trips during + after the 1,000-delta fixture stream with `ALMA_DEBUG_ROWS` overlays: no blank gap in any screenshot; signpost audit over the full run shows **zero rows with <200 chars reserving >400 pt** (no phantom heights); tail heights strictly proportional to content (h=3117@5044ch → h=4154@6056ch settle); real prod conversation re-checked clean after (bubble hugging intact).
 - **Residual:** the original gap was device-reported; owner's next TestFlight device pass is the final confirmation. Debug overlays (`ALMA_DEBUG_ROWS=1`) remain available if it ever reappears.
+
+### Phase 2 / PR 3 completion notes (2026-07-14)
+
+- **2.1 Typed contract:** `AgentTurnEvent` Swift enum (19 cases + `.unknown` with `stream.unknownEvent` telemetry) mirrors `core.ts` + route envelope events; wire DTO extended with every missing field; machine-readable schema at `src/agent/protocol/agent-event.schema.json` (documents the three-place update rule).
+- **2.2 Robust SSE parser:** `AlmaSSEParser` — byte-level line split, `data:` with/without space, CRLF+LF, multi-line data joined per spec, `:` comment keepalives, `id:`/`retry:`/`event:` fields accepted, trailing event without final blank line, malformed JSON → `stream.malformedEvent` telemetry without killing the stream. Voice console kept per-event delivery (TTS latency) on the same parser via a DTO-callback variant.
+- **2.3 `AgentEventBuffer` actor:** decode runs off-main; adjacent text/thinking deltas coalesce ~40ms (25 applies/s ceiling); control events flush pending deltas first (exact chronology); `stream.bufferFlush` metrics. `refreshPhases` now runs ONCE per flush instead of once per token (P1-A fixed).
+- **Event parity shipped (P0-E closed):** `personal_mode` (stored), `subagent_start/end` (native "সহকারী: <role>" activity rows), `verification_retry` (web parity: draft cleared + "নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি (n/m)…"), `model_switch_required` (truthful Bangla notice; native approval card = tracked follow-up), `conversation_compacted` (follows new conversation id), `done` usage → live tokens/cost on the tail + `needContinue` → bounded auto-continue (8, resets on manual send, web-parity text), `tool_end.screenshot` (noted in row preview; inline image = follow-up), confirm/ask-card dedupe guards for replay-safety.
+- **Sim verification:** EVENTTEST canned wire (CRLF + no-space data + keepalives + multi-line + unknown + trailing done) rendered subagent row, tool row, prose, mid-turn ask card and live cost badge on screen; `stream.unknownEvent: future_event_xyz` telemetried, stream survived. Real prod turn through the new buffered pipeline streamed and settled cleanly (thinking/tool rows + answer + cost badge).
+- **Deferred to PR 3b:** monolith split (2.5), full 2.4 renderer work (markdown parse now capped at flush cadence ≤25/s — the 8–10/s throttle + settle-only full parse + single shimmer clock remain), native model-switch approval card, tool-screenshot inline rendering, blocks-vs-prose duplicate investigation.
 
 ---
 

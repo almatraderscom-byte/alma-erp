@@ -374,6 +374,211 @@ struct AgentSSEEvent: Decodable {
     let error: String?
     let title: String?          // artifact_saved
     let artifactType: String?   // artifact_saved
+    // Phase 2 (roadmap 2.1) — full wire parity; every field the server emits:
+    let active: Bool?           // personal_mode
+    let screenshot: String?     // tool_end (browser tools)
+    let role: String?           // subagent_start/end
+    let roleLabel: String?      // subagent_start
+    let task: String?           // subagent_start
+    let toolsUsed: [String]?    // subagent_end
+    let attempt: Int?           // verification_retry
+    let maxAttempts: Int?       // verification_retry
+    let toLabel: String?        // model_switch_required
+    let fromLabel: String?      // model_switch_required
+    let fallbackModelId: String?// model_switch_required
+    let messageId: String?      // done
+    let tokensIn: Int?          // done
+    let tokensOut: Int?         // done
+    let cacheCreation: Int?     // done
+    let cacheRead: Int?         // done
+    let costUsd: Double?        // done
+    let needContinue: Bool?     // done — serverless deadline hit mid-task
+    let apiRounds: Int?         // done
+    let roundCostsUsd: [Double]?// done
+    let conversationId: String? // conversation_compacted
+}
+
+/// Roadmap 2.1 — the typed native event contract. Mirrors `src/agent/lib/core.ts`
+/// `AgentEvent` plus the route-level envelope events. `.unknown` keeps protocol
+/// drift OBSERVABLE (telemetry) instead of silently dropped rows.
+enum AgentTurnEvent: Sendable {
+    case conversationId(String)
+    case turnId(String)
+    case personalMode(Bool)
+    case modelInfo(label: String)
+    case modelSwitchRequired(toLabel: String, fromLabel: String)
+    case thinkingDelta(String)
+    case textDelta(String)
+    case toolStart(id: String, name: String, inputPretty: String?)
+    case toolEnd(id: String, ok: Bool, resultPreview: String?, screenshot: String?)
+    case subagentStart(id: String, roleLabel: String, task: String?)
+    case subagentEnd(id: String, ok: Bool, summary: String?)
+    case artifactSaved(id: String, title: String)
+    case confirmCard(pendingActionId: String, summary: String, actionType: String?, costEstimate: Double?)
+    case askCard(id: String, question: String, options: [String])
+    case verificationRetry(attempt: Int, maxAttempts: Int)
+    case conversationCompacted(newConversationId: String)
+    case done(messageId: String?, tokensIn: Int?, tokensOut: Int?, costUsd: Double?,
+              needContinue: Bool, apiRounds: Int?)
+    case turnError(message: String)
+    case unknown(type: String)
+
+    /// True for events that must flush buffered deltas FIRST (exact chronology).
+    var isControl: Bool {
+        switch self {
+        case .textDelta, .thinkingDelta: return false
+        default: return true
+        }
+    }
+
+    init(dto ev: AgentSSEEvent) {
+        switch ev.type {
+        case "conversation_id":
+            self = ev.id.map(AgentTurnEvent.conversationId) ?? .unknown(type: "conversation_id/noid")
+        case "turn_id":
+            self = ev.id.map(AgentTurnEvent.turnId) ?? .unknown(type: "turn_id/noid")
+        case "personal_mode":
+            self = .personalMode(ev.active == true)
+        case "model_info":
+            self = .modelInfo(label: ev.label ?? "")
+        case "model_switch_required":
+            self = .modelSwitchRequired(toLabel: ev.toLabel ?? "প্রিমিয়াম মডেল", fromLabel: ev.fromLabel ?? "")
+        case "thinking_delta":
+            self = .thinkingDelta(ev.delta ?? "")
+        case "text_delta":
+            self = .textDelta(ev.delta ?? "")
+        case "tool_start":
+            self = .toolStart(id: ev.id ?? UUID().uuidString, name: ev.name ?? "টুল",
+                              inputPretty: ev.input?.pretty())
+        case "tool_end":
+            self = .toolEnd(id: ev.id ?? "", ok: ev.success ?? true,
+                            resultPreview: ev.resultPreview, screenshot: ev.screenshot)
+        case "subagent_start":
+            self = .subagentStart(id: ev.id ?? UUID().uuidString,
+                                  roleLabel: ev.roleLabel ?? ev.role ?? "সহকারী",
+                                  task: ev.task)
+        case "subagent_end":
+            self = .subagentEnd(id: ev.id ?? "", ok: ev.success ?? true, summary: ev.summary)
+        case "artifact_saved":
+            self = ev.id.map { .artifactSaved(id: $0, title: ev.title ?? "ডকুমেন্ট") }
+                ?? .unknown(type: "artifact_saved/noid")
+        case "confirm_card":
+            self = ev.pendingActionId.map {
+                .confirmCard(pendingActionId: $0, summary: ev.summary ?? "",
+                             actionType: ev.actionType, costEstimate: ev.costEstimate)
+            } ?? .unknown(type: "confirm_card/noid")
+        case "ask_card":
+            self = ev.askCardId.map {
+                .askCard(id: $0, question: ev.question ?? "", options: ev.options ?? [])
+            } ?? .unknown(type: "ask_card/noid")
+        case "verification_retry":
+            self = .verificationRetry(attempt: ev.attempt ?? 1, maxAttempts: ev.maxAttempts ?? 1)
+        case "conversation_compacted":
+            self = ev.conversationId.map(AgentTurnEvent.conversationCompacted)
+                ?? .unknown(type: "conversation_compacted/noid")
+        case "done":
+            self = .done(messageId: ev.messageId, tokensIn: ev.tokensIn, tokensOut: ev.tokensOut,
+                         costUsd: ev.costUsd, needContinue: ev.needContinue == true, apiRounds: ev.apiRounds)
+        case "error":
+            self = .turnError(message: ev.message ?? ev.error ?? "সমস্যা হয়েছে — আবার চেষ্টা করুন")
+        default:
+            self = .unknown(type: ev.type)
+        }
+    }
+}
+
+/// Roadmap 2.2 — spec-shaped SSE line parser. Handles `data:` with/without the
+/// space, CRLF and LF, multi-line data joined with \n, `:` comment keepalives,
+/// `id:`/`retry:`/`event:` fields, and a trailing event with no final blank line.
+/// Pure + synchronous so it is testable without a network.
+struct AlmaSSEParser {
+    private var dataLines: [String] = []
+
+    /// Feed one line (no trailing \n). Returns a complete event payload when a
+    /// blank line closes the pending event.
+    mutating func consume(line rawLine: String) -> String? {
+        var line = rawLine
+        if line.hasSuffix("\r") { line.removeLast() }          // CRLF wire
+        if line.isEmpty {
+            guard !dataLines.isEmpty else { return nil }
+            defer { dataLines = [] }
+            return dataLines.joined(separator: "\n")
+        }
+        if line.hasPrefix(":") { return nil }                  // ": ping" keepalive
+        guard let colon = line.firstIndex(of: ":") else {
+            if line == "data" { dataLines.append("") }         // field, empty value
+            return nil
+        }
+        let field = String(line[..<colon])
+        var value = String(line[line.index(after: colon)...])
+        if value.hasPrefix(" ") { value.removeFirst() }        // exactly one optional space
+        if field == "data" { dataLines.append(value) }
+        // id:/retry:/event: accepted and currently unused (Phase 3 wires id → afterSeq)
+        return nil
+    }
+
+    /// Stream ended without a final blank line — emit what is pending.
+    mutating func flushTrailing() -> String? {
+        guard !dataLines.isEmpty else { return nil }
+        defer { dataLines = [] }
+        return dataLines.joined(separator: "\n")
+    }
+}
+
+/// Roadmap 2.3 — event batching between the network task and MainActor. Adjacent
+/// text/thinking deltas coalesce for ~40ms; control events flush the pending batch
+/// FIRST so chronology stays exact. One MainActor apply per flush (20–30/s max)
+/// instead of one per token.
+actor AgentEventBuffer {
+    private var batch: [AgentTurnEvent] = []
+    private var flushScheduled = false
+    private var flushCount = 0
+    private let apply: @MainActor ([AgentTurnEvent]) -> Void
+
+    init(apply: @escaping @MainActor ([AgentTurnEvent]) -> Void) {
+        self.apply = apply
+    }
+
+    func push(_ ev: AgentTurnEvent) async {
+        if ev.isControl {
+            batch.append(ev)
+            await flushNow()                       // deltas before it already queued in order
+            return
+        }
+        switch (ev, batch.last) {
+        case (.textDelta(let d), .textDelta(let prev)):
+            batch[batch.count - 1] = .textDelta(prev + d)
+        case (.thinkingDelta(let d), .thinkingDelta(let prev)):
+            batch[batch.count - 1] = .thinkingDelta(prev + d)
+        default:
+            batch.append(ev)
+        }
+        scheduleFlush()
+    }
+
+    private func scheduleFlush() {
+        guard !flushScheduled else { return }
+        flushScheduled = true
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 40_000_000)     // 25 flushes/s ceiling
+            await self?.flushNow()
+        }
+    }
+
+    func flushNow() async {
+        flushScheduled = false
+        guard !batch.isEmpty else { return }
+        let out = batch
+        batch = []
+        flushCount += 1
+        if flushCount == 1 || flushCount % 25 == 0 {
+            AlmaTurnLog.event("stream.bufferFlush", "n=\(flushCount) batch=\(out.count)")
+        }
+        await apply(out)
+    }
+
+    /// Stream closed — deliver whatever is left.
+    func finish() async { await flushNow() }
 }
 
 // MARK: - UI models
@@ -835,6 +1040,65 @@ enum AssistantNet {
     }
 
     /// Open an SSE stream and yield parsed events. Caller cancels via Task cancellation.
+    /// Monotonic one-way flag, safely readable across tasks (first-event watchdog).
+    final class EventFlag: @unchecked Sendable {
+        private(set) var raised = false
+        func raise() { raised = true }
+    }
+
+    /// Phase 2 (roadmap 2.2/2.3): bytes are split + parsed + JSON-decoded OFF the
+    /// main actor, then batched through `AgentEventBuffer` — MainActor sees at most
+    /// ~25 applies/second, not one per token. Malformed payloads are telemetry,
+    /// never a stream kill; cancellation propagates as CancellationError.
+    static func streamEvents(request: URLRequest,
+                             buffer: AgentEventBuffer,
+                             firstEvent: EventFlag? = nil) async throws {
+        let (bytes, resp) = try await streamSession.bytes(for: request)
+        guard let http = resp as? HTTPURLResponse else { throw AlmaAPIError.transport(URLError(.badServerResponse)) }
+        if http.statusCode == 401 || http.statusCode == 403 || (300..<400).contains(http.statusCode) {
+            throw AlmaAPIError.notAuthenticated
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw AlmaAPIError.http(status: http.statusCode, body: "stream")
+        }
+        var parser = AlmaSSEParser()
+        let decoder = JSONDecoder()
+
+        func dispatch(_ payload: String) async {
+            guard let d = payload.data(using: .utf8) else { return }
+            guard let dto = try? decoder.decode(AgentSSEEvent.self, from: d) else {
+                AlmaTurnLog.event("stream.malformedEvent", String(payload.prefix(80)))
+                return                                   // one bad frame never kills the rest
+            }
+            firstEvent?.raise()
+            let ev = AgentTurnEvent(dto: dto)
+            if case .unknown(let t) = ev { AlmaTurnLog.event("stream.unknownEvent", t) }
+            await buffer.push(ev)
+        }
+
+        var lineBuf: [UInt8] = []
+        lineBuf.reserveCapacity(1024)
+        for try await byte in bytes {
+            if byte == 0x0A {                            // \n — CR handled by the parser
+                let line = String(decoding: lineBuf, as: UTF8.self)
+                lineBuf.removeAll(keepingCapacity: true)
+                try Task.checkCancellation()
+                if let payload = parser.consume(line: line) { await dispatch(payload) }
+            } else {
+                lineBuf.append(byte)
+            }
+        }
+        // Trailing event without the final blank line (roadmap 2.2).
+        if !lineBuf.isEmpty, let p = parser.consume(line: String(decoding: lineBuf, as: UTF8.self)) {
+            await dispatch(p)
+        }
+        if let p = parser.flushTrailing() { await dispatch(p) }
+        await buffer.finish()
+    }
+
+    /// DTO-callback variant on the SAME robust parser — the voice console needs
+    /// per-event delivery (each text_delta feeds TTS immediately; batching would
+    /// add spoken latency). Chat uses the buffered variant above.
     static func streamEvents(request: URLRequest,
                              onEvent: @MainActor @escaping (AgentSSEEvent) -> Void) async throws {
         let (bytes, resp) = try await streamSession.bytes(for: request)
@@ -845,13 +1109,32 @@ enum AssistantNet {
         guard (200..<300).contains(http.statusCode) else {
             throw AlmaAPIError.http(status: http.statusCode, body: "stream")
         }
-        for try await line in bytes.lines {
-            try Task.checkCancellation()
-            guard line.hasPrefix("data: ") else { continue }   // skip ": ping" keepalives
-            guard let d = line.dropFirst(6).data(using: .utf8),
-                  let ev = try? JSONDecoder().decode(AgentSSEEvent.self, from: d) else { continue }
+        var parser = AlmaSSEParser()
+        let decoder = JSONDecoder()
+        func dispatch(_ payload: String) async {
+            guard let d = payload.data(using: .utf8),
+                  let ev = try? decoder.decode(AgentSSEEvent.self, from: d) else {
+                AlmaTurnLog.event("stream.malformedEvent", String(payload.prefix(80)))
+                return
+            }
             await onEvent(ev)
         }
+        var lineBuf: [UInt8] = []
+        lineBuf.reserveCapacity(1024)
+        for try await byte in bytes {
+            if byte == 0x0A {
+                let line = String(decoding: lineBuf, as: UTF8.self)
+                lineBuf.removeAll(keepingCapacity: true)
+                try Task.checkCancellation()
+                if let payload = parser.consume(line: line) { await dispatch(payload) }
+            } else {
+                lineBuf.append(byte)
+            }
+        }
+        if !lineBuf.isEmpty, let p = parser.consume(line: String(decoding: lineBuf, as: UTF8.self)) {
+            await dispatch(p)
+        }
+        if let p = parser.flushTrailing() { await dispatch(p) }
     }
 }
 
@@ -890,6 +1173,11 @@ final class AssistantVM {
     /// Bumped on every owner send — the screen scrolls to the tail on THIS signal
     /// (user-initiated), while plain count changes respect the reading position.
     var ownSendTick = 0
+    /// personal_mode wire event (web parity) — the head is in LISTEN/personal mode.
+    var personalMode = false
+    /// done.needContinue arrived — fire one bounded machine "continue" after settle.
+    private var pendingAutoContinue = false
+    private var autoContinueCount = 0
     /// Wall-clock of the last send — recovery uses it to tell OUR turn's terminal
     /// status apart from a PREVIOUS turn's stale terminal row (until Phase 3's
     /// clientMessageId gives exact identity).
@@ -1637,7 +1925,8 @@ final class AssistantVM {
         var voice: Bool? = nil    // voice console turns: TTS-friendly replies
     }
 
-    func send(_ raw: String) {
+    func send(_ raw: String, isAutoContinue: Bool = false) {
+        if !isAutoContinue { autoContinueCount = 0 }   // manual message resets the budget
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let readyFiles: [AgentFileRef] = pendingFiles.compactMap {
             if case .ready(let ref) = $0.state { return ref } else { return nil }
@@ -1686,31 +1975,29 @@ final class AssistantVM {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = try JSONEncoder().encode(body)
 
-            var sawEvent = false
+            // Phase 2: one buffer per turn — deltas coalesce off-main and land as
+            // batched reducer applies (roadmap 2.3).
+            let buffer = AgentEventBuffer { [weak self] evs in self?.apply(evs) }
+            let firstEvent = AssistantNet.EventFlag()
             do {
                 // Direct SSE, with a 15s first-event watchdog (web parity: a hung
                 // serverless run is handed to the VPS worker via /turn).
-                try await withFirstEventWatchdog(seconds: 15, sawEvent: { sawEvent }) {
-                    try await AssistantNet.streamEvents(request: req) { [weak self] ev in
-                        if !sawEvent { AlmaTurnLog.event("turn.firstEvent", ev.type) }
-                        sawEvent = true
-                        self?.handle(ev)
-                    }
+                try await withFirstEventWatchdog(seconds: 15, sawEvent: { firstEvent.raised }) {
+                    try await AssistantNet.streamEvents(request: req, buffer: buffer, firstEvent: firstEvent)
                 }
             } catch is WatchdogTimeout {
-                try await runWorkerFallback(body: body)
+                try await runWorkerFallback(body: body, buffer: buffer)
             } catch AlmaAPIError.notAuthenticated {
                 // One cookie refresh + retry, mirroring AlmaAPI.perform.
                 AlmaAPI.shared.invalidateCookieCache()
                 await AlmaAPI.shared.syncCookies()
-                try await AssistantNet.streamEvents(request: req) { [weak self] ev in
-                    self?.handle(ev)
-                }
+                try await AssistantNet.streamEvents(request: req, buffer: buffer)
             }
             // Server truth (final card ids/statuses, tool rows, cost) merges into the
             // tail in place — never a wholesale replace (prose must not blink).
             await finalizeTurn()
             AlmaTurnLog.event("turn.terminal", "stream-done")
+            fireAutoContinueIfNeeded()
         } catch is CancellationError {
             await finalizeTurn()
         } catch AlmaAPIError.notAuthenticated {
@@ -1771,7 +2058,7 @@ final class AssistantVM {
     }
 
     /// A2 fallback: enqueue on the VPS worker queue and tail its durable stream.
-    private func runWorkerFallback(body: ChatBody) async throws {
+    private func runWorkerFallback(body: ChatBody, buffer: AgentEventBuffer) async throws {
         struct TurnBody: Encodable {
             let conversationId: String?
             let message: String
@@ -1784,105 +2071,187 @@ final class AssistantVM {
         if conversationId == nil { conversationId = enq.conversationId }
         var req = URLRequest(url: AssistantNet.base.appendingPathComponent("/api/assistant/turn/\(enq.turnId)/stream"))
         req.httpMethod = "GET"
-        try await AssistantNet.streamEvents(request: req) { [weak self] ev in
-            self?.handle(ev)
+        try await AssistantNet.streamEvents(request: req, buffer: buffer)
+    }
+
+    /// Phase 2 reducer — applies ONE buffered batch per MainActor hop (roadmap 2.3).
+    /// Deltas arrive pre-coalesced; `refreshPhases` runs once per flush, not once
+    /// per token. Every wire event has an explicit handler (roadmap 2.1) — unknown
+    /// types were already telemetried at decode and are dropped knowingly.
+    private func apply(_ events: [AgentTurnEvent]) {
+        var touchedStream = false
+        for ev in events {
+            switch ev {
+            case .conversationId(let id):
+                conversationId = id
+            case .turnId(let id):
+                currentTurnId = id
+            case .personalMode(let active):
+                personalMode = active
+            case .modelInfo(let label):
+                if !label.isEmpty { modelLabel = label }
+            case .thinkingDelta(let chunk):
+                guard !chunk.isEmpty else { break }
+                requestLiveMode("thinking")
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    messages[i].thinking = (messages[i].thinking ?? "") + chunk
+                    messages[i].timeline = AgentChatMessage.appendThink(messages[i].timeline, chunk: chunk)
+                    messages[i].blocks = AgentChatMessage.appendThinkBlock(
+                        messages[i].blocks, chunk: chunk, messageId: messages[i].id)
+                    touchedStream = true
+                }
+            case .textDelta(let chunk):
+                guard !chunk.isEmpty else { break }
+                requestLiveMode("writing")
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    if messages[i].text.isEmpty, let start = messages[i].streamStartedAt {
+                        messages[i].thinkingMs = max(1, Int(Date().timeIntervalSince(start) * 1000))
+                    }
+                    messages[i].text += chunk
+                    messages[i].blocks = AgentChatMessage.appendProseBlock(
+                        messages[i].blocks, chunk: chunk, messageId: messages[i].id)
+                    touchedStream = true
+                }
+            case .toolStart(let tid, let name, let inputPretty):
+                requestLiveMode("searching")
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    messages[i].timeline = AgentChatMessage.pushOrUpdateTool(
+                        messages[i].timeline, id: tid, name: name, inputPretty: inputPretty)
+                    messages[i].blocks = AgentChatMessage.appendToolBlock(
+                        messages[i].blocks, toolId: tid, name: name, messageId: messages[i].id)
+                    touchedStream = true
+                }
+            case .toolEnd(let tid, let ok, let preview, let screenshot):
+                requestLiveMode("writing")
+                if let i = messages.lastIndex(where: { $0.isStreaming }), !tid.isEmpty {
+                    // Screenshot payload noted in the row preview; inline image
+                    // rendering in the tool sheet is a tracked follow-up.
+                    let result = screenshot != nil
+                        ? [preview, "📸 স্ক্রিনশট নেওয়া হয়েছে"].compactMap { $0 }.joined(separator: "\n")
+                        : preview
+                    messages[i].timeline = AgentChatMessage.finalizeTool(
+                        messages[i].timeline, id: tid, ok: ok, result: result)
+                    messages[i].blocks = AgentChatMessage.finalizeToolBlock(
+                        messages[i].blocks, toolId: tid, ok: ok)
+                    touchedStream = true
+                }
+            case .subagentStart(let sid, let roleLabel, let task):
+                // Specialist worker spun up — a Claude-style activity row (parity:
+                // web shows subagent activity; native silently dropped it, P0-E).
+                requestLiveMode("searching")
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    messages[i].timeline = AgentChatMessage.pushOrUpdateTool(
+                        messages[i].timeline, id: "sub-\(sid)", name: "সহকারী: \(roleLabel)",
+                        inputPretty: task)
+                    messages[i].blocks = AgentChatMessage.appendToolBlock(
+                        messages[i].blocks, toolId: "sub-\(sid)", name: "সহকারী: \(roleLabel)",
+                        messageId: messages[i].id)
+                    touchedStream = true
+                }
+            case .subagentEnd(let sid, let ok, let summary):
+                if let i = messages.lastIndex(where: { $0.isStreaming }), !sid.isEmpty {
+                    messages[i].timeline = AgentChatMessage.finalizeTool(
+                        messages[i].timeline, id: "sub-\(sid)", ok: ok, result: summary)
+                    messages[i].blocks = AgentChatMessage.finalizeToolBlock(
+                        messages[i].blocks, toolId: "sub-\(sid)", ok: ok)
+                    touchedStream = true
+                }
+            case .artifactSaved(let aid, let title):
+                // A tool filed a document (SEO report, research…) — drop a FILE CARD
+                // into the reply flow, Claude-style (web AgentApp parity).
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    messages[i].timeline.append(.file(id: aid, name: title))
+                    messages[i].blocks.append(.file(id: "fb-\(messages[i].id)-\(aid)", artifactId: aid, name: title))
+                }
+            case .confirmCard(let pid, let summary, let actionType, let costEstimate):
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }),
+                   !messages[i].confirmCards.contains(where: { $0.id == pid }) {
+                    messages[i].confirmCards.append(.init(id: pid, summary: summary,
+                                                          status: "pending", actionType: actionType,
+                                                          costEstimate: costEstimate))
+                    messages[i].blocks.append(.confirmCard(id: "bc-\(messages[i].id)-\(pid)", pendingActionId: pid))
+                }
+            case .askCard(let aid, let question, let options):
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }),
+                   !messages[i].askCards.contains(where: { $0.id == aid }) {
+                    messages[i].askCards.append(.init(id: aid, question: question,
+                                                      options: options, status: "pending",
+                                                      selectedOption: nil))
+                    messages[i].blocks.append(.askCard(id: "bq-\(messages[i].id)-\(aid)", askCardId: aid))
+                }
+            case .verificationRetry(let attempt, let maxAttempts):
+                // Web parity: the honesty guard is rewriting the draft — clear it
+                // and say so, instead of a confusing blank-then-reappear.
+                requestLiveMode("thinking")
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    messages[i].text = ""
+                    messages[i].blocks = []
+                    messages[i].timeline = AgentChatMessage.appendThink(
+                        messages[i].timeline,
+                        chunk: "নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি (\(almaBn(attempt))/\(almaBn(maxAttempts)))…")
+                    touchedStream = true
+                }
+            case .modelSwitchRequired(let toLabel, _):
+                // The turn paused server-side for a premium-model approval. The
+                // native approval card is a tracked follow-up — until then, say it
+                // truthfully instead of dropping the event (P0-E).
+                thinkingLive = false
+                settleLiveMode()
+                errorToast = "\(toLabel) মডেলে আপগ্রেডের অনুমোদন দরকার — ওয়েব অ্যাপ থেকে approve করুন Boss"
+            case .conversationCompacted(let newId):
+                // Server folded this thread into a fresh conversation (cost cap) —
+                // follow it, exactly like the web client.
+                conversationId = newId
+            case .done(_, let tokensIn, let tokensOut, let costUsd, let needContinue, _):
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    if let tokensIn { messages[i].tokensIn = tokensIn }
+                    if let tokensOut { messages[i].tokensOut = tokensOut }
+                    if let costUsd, costUsd > 0 { messages[i].costUsd = String(format: "%.4f", costUsd) }
+                }
+                if needContinue { pendingAutoContinue = true }
+                thinkingLive = false
+                settleLiveMode()
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            case .turnError(let message):
+                thinkingLive = false
+                settleLiveMode()
+                errorToast = message
+            case .unknown:
+                break   // telemetried at decode (stream.unknownEvent)
+            }
+        }
+        if touchedStream, let i = messages.lastIndex(where: { $0.isStreaming }) {
+            AgentChatMessage.refreshPhases(on: &messages[i], live: messages[i].text.isEmpty)
         }
     }
 
-    /// Apply one SSE event to the streaming tail message.
-    private func handle(_ ev: AgentSSEEvent) {
-        switch ev.type {
-        case "conversation_id":
-            if let id = ev.id { conversationId = id }
-        case "turn_id":
-            currentTurnId = ev.id
-        case "model_info":
-            if let l = ev.label { modelLabel = l }
-        case "thinking_delta":
-            requestLiveMode("thinking")
-            ensureStreamingTail()
-            if let i = messages.lastIndex(where: { $0.isStreaming }) {
-                let chunk = ev.delta ?? ""
-                messages[i].thinking = (messages[i].thinking ?? "") + chunk
-                messages[i].timeline = AgentChatMessage.appendThink(messages[i].timeline, chunk: chunk)
-                messages[i].blocks = AgentChatMessage.appendThinkBlock(
-                    messages[i].blocks, chunk: chunk, messageId: messages[i].id)
-                let live = messages[i].text.isEmpty
-                AgentChatMessage.refreshPhases(on: &messages[i], live: live)
-            }
-        case "text_delta":
-            requestLiveMode("writing")
-            ensureStreamingTail()
-            if let i = messages.lastIndex(where: { $0.isStreaming }) {
-                if messages[i].text.isEmpty {
-                    if let start = messages[i].streamStartedAt {
-                        messages[i].thinkingMs = max(1, Int(Date().timeIntervalSince(start) * 1000))
-                    }
-                    AgentChatMessage.refreshPhases(on: &messages[i], live: false)
-                }
-                messages[i].text += ev.delta ?? ""
-                messages[i].blocks = AgentChatMessage.appendProseBlock(
-                    messages[i].blocks, chunk: ev.delta ?? "", messageId: messages[i].id)
-            }
-        case "tool_start":
-            requestLiveMode("searching")
-            ensureStreamingTail()
-            if let i = messages.lastIndex(where: { $0.isStreaming }) {
-                let tid = ev.id ?? UUID().uuidString
-                messages[i].timeline = AgentChatMessage.pushOrUpdateTool(
-                    messages[i].timeline, id: tid, name: ev.name ?? "টুল",
-                    inputPretty: ev.input?.pretty())
-                messages[i].blocks = AgentChatMessage.appendToolBlock(
-                    messages[i].blocks, toolId: tid, name: ev.name ?? "টুল",
-                    messageId: messages[i].id)
-                AgentChatMessage.refreshPhases(on: &messages[i], live: messages[i].text.isEmpty)
-            }
-        case "tool_end":
-            requestLiveMode("writing")
-            if let i = messages.lastIndex(where: { $0.isStreaming }),
-               let tid = ev.id {
-                messages[i].timeline = AgentChatMessage.finalizeTool(
-                    messages[i].timeline, id: tid, ok: ev.success ?? true,
-                    result: ev.resultPreview)
-                messages[i].blocks = AgentChatMessage.finalizeToolBlock(
-                    messages[i].blocks, toolId: tid, ok: ev.success ?? true)
-                AgentChatMessage.refreshPhases(on: &messages[i], live: messages[i].text.isEmpty)
-            }
-        case "artifact_saved":
-            // A tool filed a document (SEO report, research…) — drop a FILE CARD
-            // into the reply flow, Claude-style (web AgentApp parity).
-            ensureStreamingTail()
-            if let i = messages.lastIndex(where: { $0.isStreaming }), let aid = ev.id {
-                let name = ev.title ?? "ডকুমেন্ট"
-                messages[i].timeline.append(.file(id: aid, name: name))
-                messages[i].blocks.append(.file(id: "fb-\(messages[i].id)-\(aid)", artifactId: aid, name: name))
-            }
-        case "confirm_card":
-            ensureStreamingTail()
-            if let i = messages.lastIndex(where: { $0.isStreaming }), let pid = ev.pendingActionId {
-                messages[i].confirmCards.append(.init(id: pid, summary: ev.summary ?? "",
-                                                      status: "pending", actionType: ev.actionType,
-                                                      costEstimate: ev.costEstimate))
-                messages[i].blocks.append(.confirmCard(id: "bc-\(messages[i].id)-\(pid)", pendingActionId: pid))
-            }
-        case "ask_card":
-            ensureStreamingTail()
-            if let i = messages.lastIndex(where: { $0.isStreaming }), let aid = ev.askCardId {
-                messages[i].askCards.append(.init(id: aid, question: ev.question ?? "",
-                                                  options: ev.options ?? [], status: "pending",
-                                                  selectedOption: nil))
-                messages[i].blocks.append(.askCard(id: "bq-\(messages[i].id)-\(aid)", askCardId: aid))
-            }
-        case "done":
-            thinkingLive = false
-            settleLiveMode()
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        case "error":
-            thinkingLive = false
-            settleLiveMode()
-            errorToast = ev.message ?? ev.error ?? "সমস্যা হয়েছে — আবার চেষ্টা করুন"
-        default:
-            break
+    /// Web parity (AgentApp MAX_AUTO_CONTINUES): a serverless-deadline turn ended
+    /// mid-task — machine-send "continue" so long jobs finish end-to-end. Bounded;
+    /// any manual owner message resets the budget (see send()).
+    private static let maxAutoContinues = 8
+    private static let autoContinueText = "continue — ঠিক যেখানে ছিলে সেখান থেকে কাজ চালিয়ে যাও"
+
+    private func fireAutoContinueIfNeeded() {
+        guard pendingAutoContinue else { return }
+        pendingAutoContinue = false
+        guard autoContinueCount < Self.maxAutoContinues else {
+            errorToast = "কাজটা লম্বা — অটো-continue সীমা শেষ। \"continue\" লিখলে বাকিটা এগোবে।"
+            return
+        }
+        autoContinueCount += 1
+        AlmaTurnLog.event("turn.autoContinue", "\(autoContinueCount)/\(Self.maxAutoContinues)")
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard let self, !self.isStreaming else { return }
+            self.send(Self.autoContinueText, isAutoContinue: true)
         }
     }
 
@@ -1972,6 +2341,60 @@ final class AssistantVM {
                 }
             }
             guard let self, !Task.isCancelled else { return }
+            self.isStreaming = false
+            if let i = self.messages.lastIndex(where: { $0.isStreaming }) { self.messages[i].isStreaming = false }
+        }
+    }
+
+    /// Phase 2 self-test — ALMA_ASSISTANT_EVENTTEST=1: pipes a canned SSE byte
+    /// stream through the REAL parser → typed enum → buffer → reducer. Exercises
+    /// CRLF, no-space `data:`, comment keepalives, multi-line data, an unknown
+    /// event, subagent rows, tool screenshot, ask card, and a trailing `done`
+    /// with no final blank line — the whole roadmap 2.1/2.2 matrix on screen.
+    func runDebugEventTest() {
+        isStreaming = true
+        thinkingLive = true
+        ensureStreamingTail()
+        let wire = [
+            "data: {\"type\":\"conversation_id\",\"id\":\"evt-conv\"}", "",
+            "data:{\"type\":\"personal_mode\",\"active\":false}", "",       // no space after colon
+            ": ping", "",                                                   // comment keepalive
+            "data: {\"type\":\"model_info\",\"modelId\":\"m\",\"label\":\"Grok 4.20\",\"variant\":\"default\",\"tier\":\"heavy\"}", "",
+            "data: {\"type\":\"thinking_delta\",\"delta\":\"সেলস ডেটা মিলিয়ে দেখছি…\"}", "",
+            "data: {\"type\":\"subagent_start\",\"id\":\"s1\",\"role\":\"ops\",\"roleLabel\":\"অপারেশনস\",\"task\":\"স্টক রিপোর্ট টানা\"}", "",
+            "data: {\"type\":\"tool_start\",\"id\":\"t1\",\"name\":\"get_sales_summary\"}", "",
+            "data: {\"type\":\"tool_end\",\"id\":\"t1\",\"name\":\"get_sales_summary\",\"success\":true,\"resultPreview\":\"মোট ৳৬,০৫২\",\"screenshot\":\"shot.png\"}", "",
+            "data: {\"type\":\"subagent_end\",\"id\":\"s1\",\"role\":\"ops\",\"success\":true,\"summary\":\"স্টক ঠিক আছে\"}", "",
+            "data: {\"type\":\"future_event_xyz\",\"foo\":1}", "",          // unknown → telemetry, nonfatal
+            "data: {\"type\":\"text_delta\",\"delta\":\"আজকের বিক্রি ভালো হয়েছে Boss।\"}", "",
+            "data: {\"type\":\"text_delta\",",                              // multi-line data event
+            "data: \"delta\":\" মাল্টি-লাইন ইভেন্টও ঠিকভাবে এসেছে।\"}", "",
+            "data: {\"type\":\"ask_card\",\"askCardId\":\"a1\",\"question\":\"কোনটা আগে করব Boss?\",\"options\":[\"স্টক অর্ডার\",\"ক্যাম্পেইন\",\"পরে বলব\"]}", "",
+            "data: {\"type\":\"done\",\"messageId\":\"evt-m1\",\"tokensIn\":1200,\"tokensOut\":86,\"cacheCreation\":0,\"cacheRead\":0,\"costUsd\":0.0123}",
+            // no trailing blank line — exercises the flushTrailing() path
+        ].joined(separator: "\r\n")
+
+        let buffer = AgentEventBuffer { [weak self] evs in self?.apply(evs) }
+        streamTask = Task { [weak self] in
+            var parser = AlmaSSEParser()
+            let decoder = JSONDecoder()
+            func dispatch(_ payload: String) async {
+                guard let d = payload.data(using: .utf8),
+                      let dto = try? decoder.decode(AgentSSEEvent.self, from: d) else {
+                    AlmaTurnLog.event("stream.malformedEvent", String(payload.prefix(80)))
+                    return
+                }
+                let ev = AgentTurnEvent(dto: dto)
+                if case .unknown(let t) = ev { AlmaTurnLog.event("stream.unknownEvent", t) }
+                await buffer.push(ev)
+            }
+            for line in wire.components(separatedBy: "\n") {                // CR kept — parser strips
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                if let payload = parser.consume(line: line) { await dispatch(payload) }
+            }
+            if let p = parser.flushTrailing() { await dispatch(p) }
+            await buffer.finish()
+            guard let self else { return }
             self.isStreaming = false
             if let i = self.messages.lastIndex(where: { $0.isStreaming }) { self.messages[i].isStreaming = false }
         }
@@ -6198,6 +6621,11 @@ struct AssistantScreen: View {
             // server entirely (no bootstrap) so layout is tested in isolation.
             if argFlag("ALMA_ASSISTANT_FIXTURE") {
                 vm.loadDebugFixture()
+                return
+            }
+            // Roadmap Phase 2 — canned SSE wire through the real parser/reducer.
+            if argFlag("ALMA_ASSISTANT_EVENTTEST") {
+                vm.runDebugEventTest()
                 return
             }
             await vm.bootstrap()
