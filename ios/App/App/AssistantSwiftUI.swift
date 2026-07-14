@@ -782,6 +782,10 @@ final class AssistantVM {
     }
     private let lifecycleTokens = NotificationTokenBox()
     private var backgroundedAt: Date?
+    /// 4.2 — nonessential polling pauses while backgrounded.
+    private var isInBackground = false
+    /// 4.3 — foreground→recovery latency metric anchor.
+    private var lastForegroundAt: Date?
     private var streamTask: Task<Void, Never>?
     private var understandingTask: Task<Void, Never>?
     private var requestedLiveMode = "thinking"
@@ -958,6 +962,7 @@ final class AssistantVM {
             Task { @MainActor in
                 guard let self else { return }
                 self.backgroundedAt = Date()
+                self.isInBackground = true
                 // PR 5: stamp the replay cursor into the persisted descriptor —
                 // if iOS kills the process, relaunch recovers from here.
                 if var rt = self.recoverableTurn {
@@ -972,6 +977,8 @@ final class AssistantVM {
                                               object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                self.isInBackground = false
+                self.lastForegroundAt = Date()
                 AlmaTurnLog.event("turn.foreground")
                 await self.recoverTurnState(trigger: "foreground")
             }
@@ -1001,20 +1008,73 @@ final class AssistantVM {
         }
     }
 
+    // ── Phase 4.1: windowed history + delta sync ───────────────────────────
+    /// The 12s full-history replacement is gone: the initial load takes the LATEST
+    /// window, older pages prepend on demand, and the quiet poll asks "anything
+    /// new since <stamp>?" (an empty array ≈ free) — a full window refresh runs
+    /// only when the delta says something changed, or every 5th tick to true-up
+    /// card statuses that mutate without new rows.
+    static let historyWindow = 50
+    /// Max createdAt seen in the last window (ISO — lexicographic order works).
+    private var lastSyncStamp: String?
+    /// Rows PREPENDED via "load older" — merge preserves them above the window.
+    private var paginatedPrefixCount = 0
+    var canLoadOlder = false
+    var loadingOlder = false
+
     func loadMessages(showSpinner: Bool = false) async {
         guard let cid = conversationId else { return }
         if showSpinner { loadingHistory = true }
         defer { loadingHistory = false }
         do {
-            let wire: [AgentMessageWire] = try await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/messages")
+            let wire: [AgentMessageWire] = try await AlmaAPI.shared.get(
+                "/api/assistant/conversations/\(cid)/messages",
+                query: ["limit": String(Self.historyWindow)])
             // Never clobber an in-flight optimistic/streaming tail with the poll.
             guard !isStreaming else { return }
             mergeServerMessages(wire)
+            canLoadOlder = wire.count >= Self.historyWindow || paginatedPrefixCount > 0
             authExpired = false
             await loadOpenTasks()
         } catch AlmaAPIError.notAuthenticated { authExpired = true } catch {
             if showSpinner { errorToast = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription }
         }
+    }
+
+    /// Cheap delta poll: only rows newer than the sync stamp come back.
+    private func pollForNewMessages() async {
+        guard let cid = conversationId else { return }
+        guard let stamp = lastSyncStamp else { await loadMessages(); return }
+        guard let fresh: [AgentMessageWire] = try? await AlmaAPI.shared.get(
+            "/api/assistant/conversations/\(cid)/messages", query: ["since": stamp]) else { return }
+        if !fresh.isEmpty {
+            AlmaTurnLog.event("sync.deltaNew", "\(fresh.count)")
+            await loadMessages()   // one windowed refresh folds them in with full pairing
+        }
+    }
+
+    /// Scroll-up pagination: prepend the page ABOVE the oldest loaded row.
+    func loadOlderMessages() async {
+        guard !loadingOlder, canLoadOlder, let cid = conversationId,
+              let oldest = messages.first,
+              !oldest.id.hasPrefix("local-"), !oldest.id.hasPrefix("stream-") else { return }
+        loadingOlder = true
+        defer { loadingOlder = false }
+        guard let older: [AgentMessageWire] = try? await AlmaAPI.shared.get(
+            "/api/assistant/conversations/\(cid)/messages",
+            query: ["limit": String(Self.historyWindow), "before": oldest.id]) else { return }
+        canLoadOlder = older.count >= Self.historyWindow
+        // A server without cursor support echoes rows we already hold — drop them
+        // (graceful against an un-upgraded backend during rollout).
+        let known = Set(messages.map(\.id))
+        let fresh = older.filter { !known.contains($0.id) }
+        guard !fresh.isEmpty else { canLoadOlder = false; return }
+        let rows = fresh.map(AgentChatMessage.from)
+        var tx = Transaction()
+        tx.disablesAnimations = true
+        withTransaction(tx) { messages.insert(contentsOf: rows, at: 0) }
+        paginatedPrefixCount += rows.count
+        AlmaTurnLog.event("sync.olderPage", "\(rows.count)")
     }
 
     /// Local ("stream-…" / "local-…") id per server message id — keeps SwiftUI row
@@ -1077,9 +1137,13 @@ final class AssistantVM {
         }
         // 1.4: authoritative reconciliation applies in ONE non-animated transaction —
         // height changes from server truth must not run springs mid-scroll.
+        // 4.1: rows prepended by "load older" sit ABOVE the refreshed window and
+        // are preserved verbatim (they are settled history — nothing to merge).
+        let prefix = Array(messages.prefix(paginatedPrefixCount))
         var tx = Transaction()
         tx.disablesAnimations = true
-        withTransaction(tx) { messages = incoming }
+        withTransaction(tx) { messages = prefix + incoming }
+        if let maxStamp = wire.compactMap(\.createdAt).max() { lastSyncStamp = maxStamp }
         AlmaTurnLog.event("turn.messagesReconciled", "count=\(incoming.count)")
     }
 
@@ -1112,13 +1176,22 @@ final class AssistantVM {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 12_000_000_000)
                 guard let self, !Task.isCancelled else { return }
-                if !self.isStreaming { await self.loadMessages() }
+                // 4.2: nonessential polling pauses while backgrounded — the
+                // foreground observer runs recovery + one sync immediately anyway.
+                if self.isInBackground { continue }
+                tick += 1
+                if !self.isStreaming {
+                    // 4.1: cheap delta poll; a full windowed refresh only when the
+                    // delta reports news, or every 5th tick (~60s) to true-up card
+                    // statuses that mutate without new rows.
+                    if tick % 5 == 0 { await self.loadMessages() }
+                    else { await self.pollForNewMessages() }
+                }
                 // Server-side work started outside this client (approval execution,
                 // continuation turns) shows the live spinner within one poll tick —
                 // not only on app-resume (owner ask 2026-07-13, Claude-Code parity:
                 // approve → "করছি বস" line + working animation until the reply lands).
                 if !self.isStreaming { await self.recoverTurnState(trigger: "poll") }
-                tick += 1
                 if tick % 2 == 0 {
                     let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/presence",
                                                                         body: [String: String]())
@@ -1151,6 +1224,11 @@ final class AssistantVM {
             try? await Task.sleep(nanoseconds: UInt64(500_000_000 * (attempt + 1)))
         }
         guard let status = st else { return }   // unreachable — next trigger retries
+        // 4.3 metric: foreground-to-recovery-state latency (no content, just ms).
+        if let t0 = lastForegroundAt {
+            lastForegroundAt = nil
+            AlmaTurnLog.event("turn.foregroundRecoveryMs", "\(Int(Date().timeIntervalSince(t0) * 1000))")
+        }
 
         if status.status == "running" {
             currentTurnId = status.turnId
@@ -1438,6 +1516,9 @@ final class AssistantVM {
         conversationId = id
         modelId = conversations.first { $0.id == id }?.modelId   // pinned model follows the chat
         localIdByServerId = [:]   // 1.5: optimistic-ID maps never leak across conversations
+        lastSyncStamp = nil       // 4.1: window/delta cursors are per-conversation
+        paginatedPrefixCount = 0
+        canLoadOlder = false
         messages = []
         openTasks = []
         artifacts = []
@@ -1452,6 +1533,9 @@ final class AssistantVM {
         stopStreaming(cancelServer: false)
         conversationId = nil     // server creates one on the first send
         localIdByServerId = [:]  // 1.5: optimistic-ID maps never leak across conversations
+        lastSyncStamp = nil      // 4.1: window/delta cursors are per-conversation
+        paginatedPrefixCount = 0
+        canLoadOlder = false
         // Owner rule 2026-07-12: a NEW chat always starts on Auto (router picks) —
         // it must not inherit the previous conversation's pinned model (the picker
         // was silently carrying over e.g. Sonnet 4.6 from the last-opened chat).
@@ -2202,6 +2286,72 @@ final class AssistantVM {
             guard let self else { return }
             self.isStreaming = false
             if let i = self.messages.lastIndex(where: { $0.isStreaming }) { self.messages[i].isStreaming = false }
+        }
+    }
+
+    /// Phase 4.4 — in-app unit assertions for the pure protocol layer (parser,
+    /// typed-event mapping, transport classifier, event buffer). Runs headlessly
+    /// in the simulator via ALMA_ASSISTANT_UNITTEST=1 and renders PASS/FAIL as a
+    /// local message, so CI can screenshot it without an XCTest target (adding
+    /// one to the shared pbxproj is an owner/Xcode decision).
+    func runDebugUnitTests() {
+        var results: [String] = []
+        func check(_ name: String, _ cond: Bool) { results.append("\(cond ? "✅" : "❌") \(name)") }
+
+        // AlmaSSEParser — spec matrix
+        var p = AlmaSSEParser()
+        check("keepalive ignored", p.consume(line: ": ping") == nil)
+        check("no-space data", { _ = p.consume(line: "data:{\"a\":1}"); return p.consume(line: "") == "{\"a\":1}" }())
+        check("CRLF stripped", { _ = p.consume(line: "data: x\r"); return p.consume(line: "\r") == "x" }())
+        _ = p.consume(line: "data: line1")
+        _ = p.consume(line: "data: line2")
+        check("multi-line joined", p.consume(line: "") == "line1\nline2")
+        _ = p.consume(line: "id: 42")
+        check("id: captured", p.lastEventId == "42")
+        _ = p.consume(line: "data: tail")
+        check("trailing flush", p.flushTrailing() == "tail")
+
+        // Typed event mapping
+        func decode(_ json: String) -> AgentTurnEvent? {
+            guard let d = json.data(using: .utf8),
+                  let dto = try? JSONDecoder().decode(AgentSSEEvent.self, from: d) else { return nil }
+            return AgentTurnEvent(dto: dto)
+        }
+        if case .unknown(let t)? = decode(#"{"type":"future_thing"}"#) { check("unknown telemetried", t == "future_thing") } else { check("unknown telemetried", false) }
+        if case .done(let mid, let tin, _, let cost, let cont, _)? = decode(#"{"type":"done","messageId":"m1","tokensIn":5,"costUsd":0.1,"needContinue":true}"#) {
+            check("done fields", mid == "m1" && tin == 5 && cost == 0.1 && cont)
+        } else { check("done fields", false) }
+        if case .turnSnapshot(let tid, _, let st, let seq)? = decode(#"{"type":"turn_snapshot","turnId":"t9","status":"running","lastSeq":7}"#) {
+            check("turn_snapshot", tid == "t9" && st == "running" && seq == 7)
+        } else { check("turn_snapshot", false) }
+
+        // Transport classifier
+        if case .offline = TurnFailureKind.classify(URLError(.notConnectedToInternet)) { check("offline classified", true) } else { check("offline classified", false) }
+        if case .transportInterrupted = TurnFailureKind.classify(URLError(.networkConnectionLost)) { check("drop classified", true) } else { check("drop classified", false) }
+        if case .authentication = TurnFailureKind.classify(AlmaAPIError.notAuthenticated) { check("auth classified", true) } else { check("auth classified", false) }
+        if case .server(let s) = TurnFailureKind.classify(AlmaAPIError.http(status: 502, body: "")) { check("server classified", s == 502) } else { check("server classified", false) }
+
+        // Event buffer — coalescing + control-flush chronology (async)
+        Task { [weak self] in
+            var applied: [[AgentTurnEvent]] = []
+            let buf = AgentEventBuffer { evs in applied.append(evs) }
+            await buf.push(.textDelta("আ"))
+            await buf.push(.textDelta("জ"))
+            await buf.push(.toolStart(id: "t", name: "x", inputPretty: nil))   // control → flush
+            await buf.finish()
+            let flat = applied.flatMap { $0 }
+            var ok = flat.count == 2
+            if ok, case .textDelta(let joined) = flat[0] { ok = joined == "আজ" } else { ok = false }
+            if ok, case .toolStart = flat[1] {} else { ok = false }
+            guard let self else { return }
+            var final = results
+            final.append("\(ok ? "✅" : "❌") buffer coalesce+order")
+            let passed = final.allSatisfy { $0.hasPrefix("✅") }
+            var m = AgentChatMessage(id: "unittest-\(UUID().uuidString)", role: .assistant,
+                                     text: (passed ? "প্রোটোকল ইউনিট টেস্ট: সব পাশ ✅" : "প্রোটোকল ইউনিট টেস্ট: FAIL ❌")
+                                        + "\n\n" + final.joined(separator: "\n"))
+            self.messages.append(m)
+            AlmaTurnLog.event("unittest.result", passed ? "PASS \(final.count)" : "FAIL")
         }
     }
 
@@ -6330,6 +6480,37 @@ struct AssistantScreen: View {
                         if vm.loadingHistory && vm.messages.isEmpty {
                             AlmaPageLoader()
                         }
+                        // 4.1 — history above the loaded window, on demand. Anchor
+                        // is preserved: the previous top row is scrolled back to
+                        // top after the non-animated prepend.
+                        if vm.canLoadOlder && !vm.messages.isEmpty {
+                            Button {
+                                UISelectionFeedbackGenerator().selectionChanged()
+                                let anchorId = vm.messages.first?.id
+                                Task {
+                                    await vm.loadOlderMessages()
+                                    if let anchorId {
+                                        var tx = Transaction(); tx.disablesAnimations = true
+                                        withTransaction(tx) { proxy.scrollTo(anchorId, anchor: .top) }
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if vm.loadingOlder {
+                                        ProgressView().controlSize(.mini)
+                                    } else {
+                                        Image(systemName: "arrow.up.circle").font(.system(size: 12))
+                                    }
+                                    Text(vm.loadingOlder ? "আনা হচ্ছে…" : "আরও পুরনো মেসেজ")
+                                        .font(.system(size: 12.5, weight: .medium))
+                                }
+                                .foregroundStyle(pal.muted)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.bottom, 6)
+                        }
                         // Plan-Drive Live Desk — in-thread only while a plan is in flight.
                         if !(vm.planDrive?.drives ?? []).isEmpty {
                             AgentPlanDriveCard(vm: vm, pal: pal)
@@ -6506,6 +6687,11 @@ struct AssistantScreen: View {
             // Roadmap Phase 2 — canned SSE wire through the real parser/reducer.
             if argFlag("ALMA_ASSISTANT_EVENTTEST") {
                 vm.runDebugEventTest()
+                return
+            }
+            // Roadmap Phase 4.4 — protocol-layer unit assertions, on-screen.
+            if argFlag("ALMA_ASSISTANT_UNITTEST") {
+                vm.runDebugUnitTests()
                 return
             }
             await vm.bootstrap()

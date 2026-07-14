@@ -22,7 +22,8 @@
 | Phase 2 (PR 3) | Event parity + robust SSE parser + buffered reducer | ✅ DONE 2026-07-14 (split → PR 3b) |
 | Phase 3 (PR 4) | Idempotent durable turn backend (Prisma migration, command endpoint, durable events for inline, replay cursor, richer status) | ✅ DONE 2026-07-14 |
 | Phase 3 native (PR 5) | Native migration to canonical durable turn + recovery descriptor | ✅ DONE 2026-07-14 (kill/relaunch e2e proven) |
-| Phase 4 (PR 6) | Pagination, consolidated polling, metrics, tests, CI gates | ⬜ not started |
+| PR 3b | Monolith extraction (transport layer), renderer fast-path, 30fps clocks, native model-switch card | ✅ DONE 2026-07-14 |
+| Phase 4 (PR 6) | Pagination, delta sync, poll pause, metrics, tests, CI gates | ✅ DONE 2026-07-14 |
 
 ### Phase 0 + 1 completion notes (2026-07-14)
 
@@ -71,6 +72,22 @@
 - **RecoverableTurn descriptor (roadmap 4.3):** persisted to UserDefaults on turn_id, cleared only on terminal reconcile/explicit cancel; `bootstrap()` follows it after relaunch — even into a different conversation than the active-pointer.
 - **Sim e2e proof (prod backend):** (1) normal send → DB row `client_message_id=230E72B6…`, inline, linked; (2) **KILL mid-turn → relaunch** → full activity timeline replayed + turn continued live (~১২৬ টোকেন counter) → settled with cost badge; DB: `turns_for_key=1`, `user_msgs_in_conv=1`, `last_seq=15`, assistant linked. Fresh-conversation recovery included (test ran on a new chat).
 - **Note:** a parallel session's turns (other code paths) show `execution_mode=null` — expected; only turns through the updated routes carry the new fields.
+
+### PR 3b + Phase 4 / PR 6 completion notes (2026-07-14)
+
+**PR 3b:**
+- First monolith extraction (2.5): `AssistantTransport.swift` — diagnostics, failure classifier, wire DTO, typed `AgentTurnEvent`, `AlmaSSEParser`, `AgentEventBuffer`, `AssistantNet` (493 lines); registered in pbxproj; remaining view/VM split continues in later passes (each must compile alone).
+- 2.4 remainder: markdown segmentation fast-path for fence/table-free streaming prose; ALL shimmer/spinner `TimelineView(.animation)` clocks bounded to 30fps (LOCKED visuals unchanged).
+- Native `model_switch_required` approval card (`AgentModelSwitchCardView`) + `ChatBody.resume{}` — the paused turn resumes on premium/fallback from the phone (was a "go to web" toast).
+- Blocks-dup verdict: wire-level repetition from the agent's deadline wrap-up; client faithful, persisted view clean → server-behavior item for the Grok roadmap program. `tool_end.screenshot` inline image deferred (needs signed-URL fetch design); event captured + row-noted since PR 3.
+
+**Phase 4 / PR 6:**
+- 4.1 backend: `?limit` (latest-N), `?before` (older page), `?since` (delta poll) on the messages route via pure `buildMessagesPagePlan` (unit-tested, capped 200, legacy default untouched).
+- 4.1 native: initial load = latest 50; "আরও পুরনো মেসেজ" button prepends pages (non-animated, anchor restored, dedupe-guarded against un-upgraded servers); quiet poll = `since` delta (empty ≈ free) with a full-window true-up every 5th tick; merge preserves the paginated prefix; cursors reset per conversation.
+- 4.2: polling pauses while backgrounded (foreground observer already syncs immediately on return).
+- 4.3: `turn.foregroundRecoveryMs` latency metric + `sync.deltaNew`/`sync.olderPage` signposts (contents never logged).
+- 4.4: protocol-layer assertions runnable on-screen via `ALMA_ASSISTANT_UNITTEST=1` (parser matrix, event mapping, classifier, buffer chronology) — an XCTest target needs shared-pbxproj surgery best done in Xcode, flagged as owner follow-up; backend suite 274/274 green.
+- 4.5: `ios-simulator.yml` now triggers on PRs touching `ios/**`, the protocol schema, turn plumbing, or the Prisma schema (path-scoped — unrelated PRs never bill a Mac runner).
 
 ---
 
