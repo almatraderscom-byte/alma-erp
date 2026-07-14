@@ -307,7 +307,7 @@ async function* runAlternateProviderTurn(
     if (typeof m.content === 'string' && m.content.trim()) recentUserTexts.unshift(m.content.trim())
   }
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
-  const turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
+  let turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
 
   const now = new Date()
   // Salah conscience-nudge + nightly muhasaba must work on this cheap-head path too
@@ -405,6 +405,19 @@ async function* runAlternateProviderTurn(
         workflowRuns = await relist(conversationId)
       }
     } catch { /* fail-open — the note/advance are aids, never blockers */ }
+  }
+
+  // Owner-approved gate fix (2026-07-14, layer 3): STRUCTURED STATE upgrades a
+  // text-guessed read-only turn. An ask-card answer, or a continuation reply
+  // ("হ্যাঁ/ok") while canonical runs are in flight, continues work the owner
+  // already authorized — the intent regex must not strand it tool-less.
+  if (!turnAuthorization.allowMutations) {
+    const continuesInFlightWork =
+      Boolean(matchedAskCard?.selectedOption)
+      || (workflowRuns.length > 0 && isContinuationText(lastUserText))
+    if (continuesInFlightWork) {
+      turnAuthorization = { allowMutations: true, reason: 'workflow_continuation' }
+    }
   }
 
   const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot, officePulse] = await Promise.all([
