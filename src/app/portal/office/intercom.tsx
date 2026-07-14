@@ -441,6 +441,33 @@ export function useIntercom(self: 'owner' | 'staff') {
     return () => clearTimeout(t)
   }, [activeCallId, callApi.remoteJoined, endCall])
 
+  // Deep-link auto-answer: Android's native full-screen "Accept" (Stage 1) opens
+  // the app at /portal/office?answerCall=<broadcastId>. Join that call as soon as
+  // it shows up in the feed, then strip the param so a refresh can't re-answer.
+  // (Skipped in the iOS native shell — CallKit already answered there.)
+  const autoAnsweredRef = useRef(false)
+  useEffect(() => {
+    if (autoAnsweredRef.current || activeCallId || self !== 'staff' || isIosNativeShell()) return
+    let wanted: string | null = null
+    try {
+      wanted = new URLSearchParams(window.location.search).get('answerCall')
+    } catch {
+      /* no window */
+    }
+    if (!wanted) return
+    const b = feed.broadcasts.find((x) => x.id === wanted && x.kind === 'call' && x.mine && !x.mine.confirmedAt)
+    if (!b) return
+    autoAnsweredRef.current = true
+    void answerCall(b)
+    try {
+      const u = new URL(window.location.href)
+      u.searchParams.delete('answerCall')
+      window.history.replaceState({}, '', u.toString())
+    } catch {
+      /* ignore */
+    }
+  }, [feed.broadcasts, activeCallId, self, answerCall])
+
   return {
     self,
     feed,
