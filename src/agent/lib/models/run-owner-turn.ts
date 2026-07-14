@@ -232,6 +232,13 @@ async function* runAlternateProviderTurn(
   // exact model+rate. When non-null it overrides the estimate so the per-message
   // cost matches the OpenRouter dashboard.
   let totalActualCostUsd: number | null = null
+  // One reply = several provider API calls (one per tool round), which appear as
+  // SEPARATE rows on the OpenRouter Logs page. Count the rounds and keep each
+  // round's billed cost so the badge can show "$0.0787 · ৫ ধাপ" with a per-step
+  // breakdown — reconciling one-badge-vs-many-dashboard-rows at a glance
+  // (owner ask 2026-07-14).
+  let apiRounds = 0
+  const roundCostsUsd: number[] = []
 
   const allRows = await prisma.agentMessage.findMany({
     where: { conversationId },
@@ -629,7 +636,11 @@ async function* runAlternateProviderTurn(
           totalOutputTokens += ev.outputTokens
           totalCacheCreationTokens += ev.cacheWrite ?? 0
           totalCacheReadTokens += ev.cacheRead ?? 0
-          if (ev.costUsd != null) totalActualCostUsd = (totalActualCostUsd ?? 0) + ev.costUsd
+          apiRounds++
+          if (ev.costUsd != null) {
+            totalActualCostUsd = (totalActualCostUsd ?? 0) + ev.costUsd
+            roundCostsUsd.push(roundUsd(ev.costUsd))
+          }
         }
       }
 
@@ -979,7 +990,7 @@ async function* runAlternateProviderTurn(
         // Persist the reasoning trace in usage metadata (display-only) so the
         // "Thought for Ns" block survives reload. The GET messages route surfaces
         // it as `thinking`/`thinkingMs`; history replay never sees it.
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])
@@ -1044,7 +1055,7 @@ async function* runAlternateProviderTurn(
     // ("স্ক্রোল করে Format সেকশনটা পুরো দেখি।" then silence, 2026-07-12).
     const endedWithPromise =
       browserTurn && emittedAskCards.length === 0 && INTENT_TAIL_RE.test(finalText.trim().slice(-600))
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished || endedWithPromise }
+    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished || endedWithPromise, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined }
   } catch (err) {
     if (signal?.aborted) {
       // The 280s cap aborted mid-round (the adapter stream throws). Salvage what
@@ -1069,7 +1080,7 @@ async function* runAlternateProviderTurn(
               costUsd: totalActualCostUsd != null
                 ? roundUsd(totalActualCostUsd)
                 : calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens }),
-              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
             },
           })
           const abortedBrowserTurn = toolRecords.some((r) => r.toolName.startsWith('live_browser_'))

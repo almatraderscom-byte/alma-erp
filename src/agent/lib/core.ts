@@ -89,7 +89,7 @@ export type AgentEvent =
   // needContinue: the turn hit the serverless deadline mid-task (browser work
   // unfinished) — the web client auto-sends a bounded "continue" so a long task
   // finishes end-to-end without the owner typing it every ~4.5 minutes.
-  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; cacheCreation: number; cacheRead: number; costUsd: number; needContinue?: boolean }
+  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; cacheCreation: number; cacheRead: number; costUsd: number; needContinue?: boolean; apiRounds?: number; roundCostsUsd?: number[] }
   | { type: 'error'; message: string }
 
 // ── Mutating tools (conservative: unknown = treat as mutating) ──────────────
