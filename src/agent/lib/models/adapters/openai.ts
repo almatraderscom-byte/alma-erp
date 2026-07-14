@@ -4,7 +4,43 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from 'openai/resources/chat/completions'
-import type { NeutralMsg, NeutralTool, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
+import type { NeutralMsg, NeutralTool, NeutralToolChoice, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
+
+/**
+ * Phase 3 request shaping (pure, unit-tested): map the neutral tool_choice /
+ * parallel_tool_calls controls to OpenAI-dialect params. Only emitted when the
+ * request actually carries tools — a tool_choice with no tools 400s on several
+ * OpenRouter providers. Omitted fields keep the provider default, so callers
+ * that don't pass the controls get the exact pre-Phase-3 request.
+ */
+export function buildOpenAiRequestShaping(args: {
+  tools: NeutralTool[]
+  toolChoice?: NeutralToolChoice
+  parallelToolCalls?: boolean
+}): { tool_choice?: unknown; parallel_tool_calls?: boolean } {
+  if (args.tools.length === 0) return {}
+  const out: { tool_choice?: unknown; parallel_tool_calls?: boolean } = {}
+  if (args.toolChoice !== undefined && args.toolChoice !== 'auto') {
+    out.tool_choice =
+      typeof args.toolChoice === 'object'
+        ? { type: 'function', function: { name: args.toolChoice.name } }
+        : args.toolChoice // 'none' | 'required'
+  }
+  if (args.parallelToolCalls !== undefined) {
+    out.parallel_tool_calls = args.parallelToolCalls
+  }
+  return out
+}
+
+/**
+ * Grok (x-ai/*) caches automatically on stable prefixes; the Anthropic-style
+ * `cache_control` block is ignored there and only muddies the request (audit
+ * correction #4). Keep it for the models that DO honour it via OpenRouter
+ * (Claude, DeepSeek, Qwen).
+ */
+export function wantsAnthropicCacheControl(apiModel: string): boolean {
+  return !apiModel.startsWith('x-ai/')
+}
 
 function toOpenAiMessages(
   system: string,
@@ -118,6 +154,8 @@ export class OpenAiAdapter implements ProviderAdapter {
     tools: NeutralTool[]
     signal?: AbortSignal
     thinking?: 'adaptive' | 'level' | 'none'
+    toolChoice?: NeutralToolChoice
+    parallelToolCalls?: boolean
   }): AsyncGenerator<TurnEvent> {
     // `reasoning` is an OpenRouter extension (not in the OpenAI SDK types) that
     // asks reasoning-capable models (DeepSeek, Qwen-thinking) to stream their
@@ -131,12 +169,19 @@ export class OpenAiAdapter implements ProviderAdapter {
     const reasoningParam = wantReasoning
       ? { reasoning: { enabled: true, effort: 'medium' } }
       : {}
+    // Grok caches prefixes automatically — skip the Anthropic-style cache_control
+    // extension for x-ai/* models (Phase 3 cleanup; see wantsAnthropicCacheControl).
+    const cachePrefix = this.cachePrefix && wantsAnthropicCacheControl(args.apiModel)
     const baseParams = {
       model: args.apiModel,
-      messages: toOpenAiMessages(args.system, args.messages, this.cachePrefix),
+      messages: toOpenAiMessages(args.system, args.messages, cachePrefix),
       tools: args.tools.length ? toOpenAiTools(args.tools) : undefined,
       stream: true as const,
       stream_options: { include_usage: true },
+      // Phase 3 request controller: per-call tool_choice + parallel_tool_calls.
+      // Both drop out of the final BARE retry below, so a provider that rejects
+      // either param degrades to plain OpenAI-spec instead of knocking the head over.
+      ...buildOpenAiRequestShaping(args),
       // OpenRouter now ALWAYS returns the billed cost in the final chunk's
       // `usage.cost` (this opt-in flag is a documented no-op kept for intent +
       // forward-compat). Harmless to raw OpenAI. The actual gate on whether we
