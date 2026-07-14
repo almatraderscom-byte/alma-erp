@@ -2069,7 +2069,24 @@ model AgentTurn {
   versions        Json?
   startedAt       DateTime  @default(now()) @map("started_at")
   finishedAt      DateTime? @map("finished_at")
+  /// Client-generated idempotency key (roadmap Phase 3): one clientMessageId maps
+  /// to at most ONE owner message and ONE turn, however many times the client
+  /// retries after a timeout/reconnect. Nullable — legacy clients keep working.
+  clientMessageId String?   @map("client_message_id")
+  /// The persisted owner AgentMessage this turn executes (set once — an internal
+  /// worker re-run of the same turn must NOT store the message again).
+  userMessageId   String?   @map("user_message_id")
+  /// The persisted assistant AgentMessage of the terminal reply — lets the client
+  /// fetch the exact final row instead of re-reading the whole history.
+  assistantMessageId String? @map("assistant_message_id")
+  /// Highest agent_turn_events.seq written for this turn (-1 = none yet) — the
+  /// client's replay cursor and the "stream quiet but alive" liveness signal.
+  lastSeq         Int       @default(-1) @map("last_seq")
+  executionMode   String?   @map("execution_mode") // inline | worker
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
 
+  @@unique([conversationId, clientMessageId])
+  @@index([clientMessageId])
   @@index([conversationId, startedAt(sort: Desc)])
   @@map("agent_turns")
 }
