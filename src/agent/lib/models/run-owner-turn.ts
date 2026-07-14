@@ -34,7 +34,10 @@ import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { isTurnCancelRequested } from '@/agent/lib/turn-status'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
-import { shouldNudgeAdapterIntent } from '@/agent/lib/turn-loop-policy'
+import {
+  shouldNudgeAdapterIntent,
+  shouldRestartHeadAfterFailure,
+} from '@/agent/lib/turn-loop-policy'
 import {
   verifyClaimsAgainstLedger,
   buildVerificationReminder,
@@ -1130,7 +1133,12 @@ async function* runAlternateProviderTurn(
     // Retry the SAME model once (transient provider blips — the adapter's request
     // ladder already handles shape rejections), then surface a clear incident so
     // the owner knows his pinned model is down and chooses what to do.
-    if (headTier === 'explicit' && !finalText.trim()) {
+    const canRestartHead = shouldRestartHeadAfterFailure({
+      text: finalText,
+      toolRecords,
+      hasAskCard: emittedAskCards.length > 0,
+    })
+    if (headTier === 'explicit' && canRestartHead) {
       if (sameModelAttempt === 0) {
         console.warn(
           `[run-owner-turn] pinned head ${model.id} failed pre-answer → same-model retry:`,
@@ -1156,7 +1164,7 @@ async function* runAlternateProviderTurn(
     // to Sonnet (the expensive rescue that spiked cost). Guards: only when no answer
     // was streamed yet, and not already on the cheap head (prevents recursion loop).
     const cheapId = process.env.CHEAP_HEAD_MODEL_ID?.trim() || 'or-deepseek-v4-flash'
-    if (!finalText.trim() && model.id !== cheapId && isKnownModelId(cheapId)) {
+    if (canRestartHead && model.id !== cheapId && isKnownModelId(cheapId)) {
       const cheap = getModel(cheapId)
       if (cheap.provider !== 'anthropic' && cheap.supportsTools) {
         console.warn(

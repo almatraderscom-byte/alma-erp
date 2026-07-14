@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   shouldNudgeAdapterIntent,
+  shouldRestartHeadAfterFailure,
   shouldNudgeZeroToolIntent,
 } from '../turn-loop-policy'
 
@@ -45,5 +46,33 @@ describe('turn-loop policy — no hidden duplicate work', () => {
     expect(shouldNudgeZeroToolIntent({ text: 'আমি আগে চেক করি—আপনি চান কি?' })).toBe(false)
     expect(shouldNudgeZeroToolIntent({ text: 'সংযোগ নেই, তাই চেক করতে পারছি না।' })).toBe(false)
     expect(shouldNudgeZeroToolIntent({ text: 'একটু দাঁড়ান, let me check the record.' })).toBe(true)
+  })
+
+  it('allows a head restart only before any work or owner-facing output', () => {
+    expect(shouldRestartHeadAfterFailure({
+      text: '',
+      toolRecords: [],
+    })).toBe(true)
+
+    expect(shouldRestartHeadAfterFailure({
+      text: '',
+      toolRecords: [{ status: 'success' }],
+    })).toBe(false)
+
+    expect(shouldRestartHeadAfterFailure({
+      text: '',
+      toolRecords: [{ status: 'error' }],
+    })).toBe(false)
+
+    expect(shouldRestartHeadAfterFailure({
+      text: 'কাজ শুরু করেছি।',
+      toolRecords: [],
+    })).toBe(false)
+
+    expect(shouldRestartHeadAfterFailure({
+      text: '',
+      toolRecords: [],
+      hasAskCard: true,
+    })).toBe(false)
   })
 })

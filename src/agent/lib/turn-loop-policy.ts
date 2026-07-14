@@ -47,3 +47,17 @@ export function shouldNudgeZeroToolIntent(input: {
   if (input.hasAskCard || isTerminalReply(input.text)) return false
   return ZERO_TOOL_INTENT_RE.test(input.text)
 }
+
+/**
+ * A provider retry/fallback restarts the whole owner turn. That is safe only
+ * before the turn has produced any visible text, tool attempt, or owner handoff.
+ * Once any of those exists, restarting can repeat arbitrary work and charge the
+ * owner for a second execution of the same request.
+ */
+export function shouldRestartHeadAfterFailure(input: {
+  text: string
+  toolRecords: TurnLoopToolRecord[]
+  hasAskCard?: boolean
+}): boolean {
+  return !input.text.trim() && input.toolRecords.length === 0 && !input.hasAskCard
+}
