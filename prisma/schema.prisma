@@ -3677,11 +3677,47 @@ model AgentToolEvent {
   latencyMs      Int      @default(0) @map("latency_ms")
   conversationId String?  @map("conversation_id")
   businessId     String   @default("ALMA_LIFESTYLE") @map("business_id")
+  // ── Phase 1 span fields (roadmap: turn → route → tool-call → approval → proof).
+  // All nullable/additive: legacy writers keep working; richer writers fill them.
+  /// AgentTurn.id this event belongs to — joins a whole turn's trace together.
+  turnId         String?  @map("turn_id")
+  /// Span kind: 'route' (tool-pack selection), 'tool' (default), 'approval', 'proof'.
+  phase          String   @default("tool")
+  /// Stable machine error code (e.g. 'not_found', 'provider_4xx') — errorClass stays coarse.
+  errorCode      String?  @map("error_code")
+  /// Structured span payload: route → {groups, toolCount, modelId, headTier, versions};
+  /// tool → {expectedTool?, argsValid?, idempotencyKey?}; proof → {kind, ref}.
+  detail         Json?
 
   @@index([ts])
   @@index([toolName, ts])
   @@index([businessId, ts])
+  @@index([turnId])
   @@map("agent_tool_events")
+}
+
+/// Phase 1 (roadmap): one-tap owner corrections on agent replies. Each row links
+/// the owner's verdict to the exact conversation/turn/message (and through
+/// AgentTurn.versions to the prompt/tool/router revision that produced it), so
+/// "wrong tool" reports become trace-to-root-cause queries instead of chat lore.
+model AgentOwnerFeedback {
+  id             String   @id @default(uuid())
+  ts             DateTime @default(now())
+  /// wrong_tool | lost_progress | unnecessary_navigation | wrong_answer | too_many_questions | good
+  kind           String
+  conversationId String   @map("conversation_id")
+  /// AgentTurn.id when the client knows it (links to the versions stamp + spans).
+  turnId         String?  @map("turn_id")
+  /// AgentMessage.id of the assistant reply the owner judged.
+  messageId      String?  @map("message_id")
+  /// Optional free-text note from the owner.
+  note           String?
+  businessId     String   @default("ALMA_LIFESTYLE") @map("business_id")
+
+  @@index([ts])
+  @@index([kind, ts])
+  @@index([conversationId])
+  @@map("agent_owner_feedback")
 }
 
 model AgentPlan {

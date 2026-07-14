@@ -396,6 +396,70 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
+// Roadmap Phase 1 — one-tap owner corrections. Each tap files a row in
+// agent_owner_feedback linked to this conversation/message (the server resolves
+// the producing turn + its behavior-artifact versions), so "ভুল টুল" reports
+// become traceable incidents instead of chat lore.
+const FEEDBACK_OPTIONS: { kind: string; label: string }[] = [
+  { kind: 'wrong_tool', label: 'ভুল টুল' },
+  { kind: 'lost_progress', label: 'কাজ হারিয়ে ফেলেছে' },
+  { kind: 'unnecessary_navigation', label: 'অকারণ ঘোরাঘুরি' },
+  { kind: 'wrong_answer', label: 'ভুল উত্তর' },
+  { kind: 'too_many_questions', label: 'বেশি প্রশ্ন' },
+]
+
+function FeedbackButtons({ conversationId, messageId }: { conversationId: string; messageId: string }) {
+  const [open, setOpen] = useState(false)
+  const [sent, setSent] = useState(false)
+
+  function send(kind: string) {
+    impactLight()
+    setSent(true)
+    setOpen(false)
+    void fetch('/api/assistant/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, conversationId, messageId }),
+    }).catch(() => {
+      // best-effort — feedback must never break the chat
+    })
+  }
+
+  if (sent) return <span className="px-1.5 text-[10px] text-emerald-600/80">✓ নোট করেছি</span>
+
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      <button
+        onClick={() => send('good')}
+        className="rounded-lg p-1.5 text-muted transition-all hover:bg-white/[0.05] hover:text-muted-hi active:scale-90"
+        title="ভালো উত্তর"
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3zM7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/></svg>
+      </button>
+      <button
+        onClick={() => { impactLight(); setOpen((v) => !v) }}
+        className={`rounded-lg p-1.5 transition-all hover:bg-white/[0.05] hover:text-muted-hi active:scale-90 ${open ? 'text-[#E07A5F]' : 'text-muted'}`}
+        title="সমস্যা জানাও"
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3zm7-13h2.67A2.31 2.31 0 0122 4v7a2.31 2.31 0 01-2.33 2H17"/></svg>
+      </button>
+      {open && (
+        <span className="ml-1 inline-flex flex-wrap items-center gap-1">
+          {FEEDBACK_OPTIONS.map((o) => (
+            <button
+              key={o.kind}
+              onClick={() => send(o.kind)}
+              className="rounded-full border border-border-subtle bg-card/60 px-2 py-0.5 text-[10px] text-muted transition-all hover:border-[#E07A5F]/40 hover:text-muted-hi active:scale-95"
+            >
+              {o.label}
+            </button>
+          ))}
+        </span>
+      )}
+    </span>
+  )
+}
+
 function TtsButton({ text, messageId }: { text: string; messageId: string }) {
   const [loading, setLoading] = useState(false)
   const [playing, setPlaying] = useState(false)
@@ -1466,6 +1530,9 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                       )}
                       <CopyButton text={msg.text} />
                       <TtsButton text={msg.text} messageId={msg.id} />
+                      {conversationId && (
+                        <FeedbackButtons conversationId={conversationId} messageId={msg.id} />
+                      )}
                       {detectArtifact(msg.text) && !artifactSaved.has(msg.id) && (
                         <button
                           onClick={() => saveArtifact(msg)}

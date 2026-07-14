@@ -593,32 +593,52 @@ export async function executeTool(
 ): Promise<ToolResult> {
   const businessId = (serverContext.businessId as string | undefined) ?? 'ALMA_LIFESTYLE'
   const conversationId = serverContext.conversationId as string | undefined
+  const turnId = serverContext.turnId as string | undefined
   const started = Date.now()
   const pool = businessId === 'ALMA_TRADING' ? TRADING_TOOLS : TOOLS
   const tool = pool.find((t) => t.name === name)
   if (!tool) {
     const anyTool = TOOLS.find((t) => t.name === name)
     if (!anyTool) {
-      void logToolEvent({ toolName: name, success: false, errorClass: 'unknown_tool', latencyMs: Date.now() - started, conversationId, businessId })
+      void logToolEvent({ toolName: name, success: false, errorClass: 'unknown_tool', errorCode: 'unknown_tool', latencyMs: Date.now() - started, conversationId, businessId, turnId })
       return { success: false, error: `Unknown tool: ${name}` }
     }
     if (businessId === 'ALMA_TRADING') {
-      void logToolEvent({ toolName: name, success: false, errorClass: 'wrong_business', latencyMs: Date.now() - started, conversationId, businessId })
+      void logToolEvent({ toolName: name, success: false, errorClass: 'wrong_business', errorCode: 'wrong_business', latencyMs: Date.now() - started, conversationId, businessId, turnId })
       return {
         success: false,
         error: `Tool "${name}" Trading registry-এ available নয় — Lifestyle conversation এ চেষ্টা করুন।`,
       }
     }
     const result = await anyTool.handler({ ...input, ...serverContext })
-    void logToolEvent({ toolName: name, success: result.success, errorClass: result.success ? undefined : 'handler_error', latencyMs: Date.now() - started, conversationId, businessId })
+    void logToolEvent({ toolName: name, success: result.success, errorClass: result.success ? undefined : 'handler_error', errorCode: result.success ? undefined : classifyErrorCode(result.error), latencyMs: Date.now() - started, conversationId, businessId, turnId })
     return result
   }
   try {
     const result = await tool.handler({ ...input, ...serverContext })
-    void logToolEvent({ toolName: name, success: result.success, errorClass: result.success ? undefined : 'handler_error', latencyMs: Date.now() - started, conversationId, businessId })
+    void logToolEvent({ toolName: name, success: result.success, errorClass: result.success ? undefined : 'handler_error', errorCode: result.success ? undefined : classifyErrorCode(result.error), latencyMs: Date.now() - started, conversationId, businessId, turnId })
     return result
   } catch (err) {
-    void logToolEvent({ toolName: name, success: false, errorClass: 'uncaught_exception', latencyMs: Date.now() - started, conversationId, businessId })
+    void logToolEvent({ toolName: name, success: false, errorClass: 'uncaught_exception', errorCode: classifyErrorCode(String(err)), latencyMs: Date.now() - started, conversationId, businessId, turnId })
     return { success: false, error: String(err) }
   }
+}
+
+/**
+ * Phase 1 stable error codes, derived from the handler's free-form error string.
+ * Coarse but MACHINE-STABLE: dashboards and retry policy can group on these while
+ * Phase 2's result envelope migrates handlers to declare codes themselves.
+ */
+export function classifyErrorCode(error: string | undefined): string {
+  const e = (error ?? '').toLowerCase()
+  if (!e) return 'unknown'
+  if (/(not\s*found|missing|no such|খুঁজে পাইনি|পাওয়া যায়নি)/.test(e)) return 'not_found'
+  if (/(unauthorized|forbidden|permission|401|403|api.?key)/.test(e)) return 'auth'
+  if (/(timeout|timed out|etimedout|deadline)/.test(e)) return 'timeout'
+  if (/(rate.?limit|429|too many requests|quota)/.test(e)) return 'rate_limited'
+  if (/(econnrefused|econnreset|enotfound|network|fetch failed|socket)/.test(e)) return 'network'
+  if (/(invalid|validation|required|must be|expected|malformed)/.test(e)) return 'bad_args'
+  if (/(prisma|database|column|relation|constraint|sql)/.test(e)) return 'db'
+  if (/(5\d\d|internal server|upstream|provider)/.test(e)) return 'provider_5xx'
+  return 'handler_error'
 }

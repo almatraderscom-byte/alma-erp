@@ -43,6 +43,8 @@ import { getModel, isKnownModelId } from '@/agent/lib/models/registry'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
 import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 import { adapterFor } from '@/agent/lib/models/adapters'
+import { logRouteSpan } from '@/agent/lib/tool-telemetry'
+import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { roundUsd } from '@/agent/lib/pricing'
 import {
@@ -497,6 +499,21 @@ async function* runAlternateProviderTurn(
   // can't be answered with generate_image / ads / list_owner_todos etc. — the head
   // has nothing to call, so it must simply respond in words.
   const neutralTools = listenMode ? [] : anthropicToolsToNeutral(cappedTools)
+  // Phase 1 route span: what this turn's head was actually given — groups, final
+  // tool count (after controls gating, provider cap and listen mode), model and
+  // behavior-artifact versions. The tool events say what the model CALLED; this
+  // span says what it had to CHOOSE from — the missing half of every wrong-tool
+  // investigation.
+  void logRouteSpan({
+    conversationId,
+    turnId,
+    businessId,
+    groups: listenMode ? [] : toolSelection.groups,
+    toolCount: neutralTools.length,
+    modelId: model.id,
+    headTier,
+    versions: AGENT_VERSIONS,
+  })
   const adapter = adapterFor(model.provider)
 
   type ToolRecord = {
@@ -771,7 +788,7 @@ async function* runAlternateProviderTurn(
         const started = Date.now()
         const result = personalMode
           ? await executePersonalTool(call.name, call.input, { conversationId, businessId })
-          : await executeTool(call.name, call.input, { conversationId, businessId, modelId: model.id })
+          : await executeTool(call.name, call.input, { conversationId, businessId, modelId: model.id, turnId })
         const durationMs = Date.now() - started
 
         if (!result.success) {
