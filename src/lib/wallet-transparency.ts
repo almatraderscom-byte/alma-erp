@@ -67,19 +67,55 @@ export async function mapFineAppeals(
       },
       orderBy: { createdAt: 'desc' },
     }),
+    // A fine row can be linked from ANY of the three AttendanceRecord penalty
+    // columns — late check-in, early leave, or no-checkout. Match all three so
+    // every fine type resolves to its attendanceRecordId, which is the value the
+    // appeal button is gated on (web + iOS). Previously only penaltyLedgerEntryId
+    // was matched, so early-leave / no-checkout fines never got an appeal button
+    // even though the server accepts appeals for them.
     prisma.attendanceRecord.findMany({
-      where: { penaltyLedgerEntryId: { in: fineIds } },
-      select: { id: true, penaltyLedgerEntryId: true },
+      where: {
+        OR: [
+          { penaltyLedgerEntryId: { in: fineIds } },
+          { earlyLeavePenaltyLedgerEntryId: { in: fineIds } },
+          { noCheckoutFineLedgerEntryId: { in: fineIds } },
+        ],
+      },
+      select: {
+        id: true,
+        penaltyLedgerEntryId: true,
+        earlyLeavePenaltyLedgerEntryId: true,
+        noCheckoutFineLedgerEntryId: true,
+      },
     }),
   ])
 
-  const recordToEntry = new Map(records.map(r => [r.id, r.penaltyLedgerEntryId as string]))
+  // entryId → attendanceRecordId across every fine-link column, and the reverse
+  // (record → all its fine entryIds) for the waiver fallback join.
+  const entryToRecord = new Map<string, string>()
+  const recordToEntries = new Map<string, string[]>()
+  for (const r of records) {
+    for (const eid of [r.penaltyLedgerEntryId, r.earlyLeavePenaltyLedgerEntryId, r.noCheckoutFineLedgerEntryId]) {
+      if (!eid) continue
+      entryToRecord.set(eid, r.id)
+      const arr = recordToEntries.get(r.id) ?? []
+      arr.push(eid)
+      recordToEntries.set(r.id, arr)
+    }
+  }
+
   const byEntry = new Map<string, WaiverLite>()
   for (const w of waivers) {
-    const entryId = w.penaltyLedgerEntryId || recordToEntry.get(w.attendanceRecordId) || null
-    if (entryId && !byEntry.has(entryId)) byEntry.set(entryId, w)
+    // One waiver covers the whole attendance record (the server sums every fine
+    // on that day), so surface it on all of the record's fine entries — not just
+    // the late check-in one — when the waiver has no direct penalty-entry link.
+    const targetEntries = w.penaltyLedgerEntryId
+      ? [w.penaltyLedgerEntryId]
+      : (w.attendanceRecordId ? recordToEntries.get(w.attendanceRecordId) ?? [] : [])
+    for (const eid of targetEntries) {
+      if (eid && !byEntry.has(eid)) byEntry.set(eid, w)
+    }
   }
-  const entryToRecord = new Map(records.map(r => [r.penaltyLedgerEntryId as string, r.id]))
 
   const result: Record<string, FineAppealInfo> = {}
   for (const fine of fines) {
