@@ -35,6 +35,26 @@ export function apnsVoipConfigured(): boolean {
 // ~once per 20 min). Cache it in module scope and refresh every ~50 min.
 let cachedJwt: { token: string; at: number } | null = null
 
+/**
+ * Rebuild a valid PEM no matter how the .p8 got mangled when pasted into an env
+ * field: real newlines pass through; escaped "\n" are unescaped; and a value
+ * whose line breaks were stripped entirely (a common paste failure) is
+ * reconstructed from the base64 body, re-wrapped at 64 cols with a proper
+ * header/footer. Without this, createPrivateKey throws and every VoIP push
+ * silently no-ops.
+ */
+function normalizePem(raw: string): string {
+  let s = raw.trim()
+  if (s.includes('\\n')) s = s.replace(/\\n/g, '\n')
+  if (s.includes('\n')) return s
+  const m = s.match(/-----BEGIN ([^-]+)-----(.*)-----END \1-----/)
+  if (!m) return s
+  const label = m[1].trim()
+  const body = (m[2].match(/[A-Za-z0-9+/=]+/g) ?? []).join('')
+  const wrapped = body.match(/.{1,64}/g)?.join('\n') ?? body
+  return `-----BEGIN ${label}-----\n${wrapped}\n-----END ${label}-----\n`
+}
+
 function apnsJwt(): string | null {
   const keyRaw = process.env.APNS_AUTH_KEY?.trim()
   const keyId = process.env.APNS_KEY_ID?.trim()
@@ -45,8 +65,7 @@ function apnsJwt(): string | null {
   if (cachedJwt && now - cachedJwt.at < 50 * 60_000) return cachedJwt.token
 
   try {
-    // Vercel env may store the PEM with escaped newlines.
-    const pem = keyRaw.includes('\\n') ? keyRaw.replace(/\\n/g, '\n') : keyRaw
+    const pem = normalizePem(keyRaw)
     const key = createPrivateKey(pem)
     const header = b64url(JSON.stringify({ alg: 'ES256', kid: keyId }))
     const payload = b64url(JSON.stringify({ iss: teamId, iat: Math.floor(now / 1000) }))
