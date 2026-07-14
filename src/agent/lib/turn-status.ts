@@ -282,6 +282,24 @@ export async function finalizeTurnIfRunning(
   }
 }
 
+/**
+ * Cancel every still-running turn of a conversation (idempotent, fail-open).
+ * Kept only for legacy handoff requests that have no durable idempotency key;
+ * modern direct/worker races are settled by `claimTurnForRequest` instead.
+ */
+export async function cancelRunningTurnsForConversation(conversationId: string): Promise<number> {
+  try {
+    const res = await db().agentTurn.updateMany({
+      where: { conversationId, status: 'running' },
+      data: { cancelRequested: true, status: 'canceled', finishedAt: new Date() },
+    })
+    return (res.count as number) ?? 0
+  } catch (err) {
+    console.warn('[turn-status] cancelRunningTurnsForConversation failed:', err instanceof Error ? err.message : err)
+    return 0
+  }
+}
+
 /** Flip the cancel flag and mark the turn canceled (idempotent). */
 export async function requestTurnCancel(turnId: string): Promise<boolean> {
   try {

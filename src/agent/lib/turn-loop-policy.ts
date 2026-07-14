@@ -47,4 +47,3 @@ export function shouldNudgeZeroToolIntent(input: {
   if (input.hasAskCard || isTerminalReply(input.text)) return false
   return ZERO_TOOL_INTENT_RE.test(input.text)
 }
-
