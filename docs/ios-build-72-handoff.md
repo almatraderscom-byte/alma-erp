@@ -57,3 +57,41 @@ A follow-up pass added more calling parity. These iOS changes are **additive on 
 - iOS CallKit ringtone is the system default (a bundled `.caf` could be added).
 - ~~cancel push~~ — DONE (see the 2026-07-14 update above).
 - The owner-only diag endpoint (`/api/assistant/internal/call-push/diag`) can be removed once you're confident, or kept as an ops tool.
+
+---
+
+## UPDATE 2026-07-14 (session 2) — presentation-parity work is NOW ON THIS BRANCH
+
+The iOS presentation-parity program (`docs/ios-agent-presentation-parity-roadmap.md`, PR #369) is **merged into this branch** at `76449cc1`. It rides along in the SAME build 72 — nothing extra to archive.
+
+### What it is (short)
+One canonical presentation for every agent reply on web + iOS:
+- native now decodes persisted `t:'text'`/`t:'verify'` timeline entries (cold-load no longer drops work prose — RC-1);
+- `verification_retry` no longer blanks the reply (draft stays, marked superseded in data, verify row appended — RC-2);
+- cold-load/poll/relaunch rebuild the SAME interleaved TurnBlock composition as the live stream (`applyPersistedBlocks` — RC-3);
+- wire + `done` decode `cacheCreation/cacheRead/apiRounds/roundCostsUsd`; footer = web semantics `Σ ↑ ⚡ ♻ ↓ $ · N ধাপ` (RC-4);
+- server: `buildAgentPresentationV1()` + additive `presentation` field on the messages API; both head loops persist `t:'verify'` + `state:'superseded'` on verification retry.
+
+**Touched iOS files:** `AssistantSwiftUI.swift` (large), `AssistantTransport.swift` (done-event fields). If your work also touches these, MERGE — do not overwrite. The `AgentTurnEvent.done` case now has 9 associated values; pattern-matches must use the new arity.
+
+**Proof already banked:** vitest 867/867 (11 new presentation golden tests), tsc 0, sim BUILD SUCCEEDED, in-sim assertions **18/18** (`SIMCTL_CHILD_ALMA_OPEN_ASSISTANT=1 SIMCTL_CHILD_ALMA_ASSISTANT_UNITTEST=1 xcrun simctl launch <udid> com.almatraders.erp` → renders "প্রোটোকল ইউনিট টেস্ট: সব পাশ ✅"), preview API shows `presentation.version=1` with byte-identical repeated GETs, owner-logged-in web preview renders unchanged.
+
+### Self-test hooks you can reuse (no login needed)
+- `SIMCTL_CHILD_ALMA_ASSISTANT_UNITTEST=1` → 18 protocol/parity assertions on screen (must stay "সব পাশ ✅" in your final build)
+- `SIMCTL_CHILD_ALMA_ASSISTANT_PARITY=1` → renders the persisted verification-retry fixture: progress prose → tool rows → superseded draft (VISIBLE) → "নিজের উত্তর যাচাই…" row → final prose → Σ/⚡/♻ footer
+- `SIMCTL_CHILD_ALMA_ASSISTANT_EVENTTEST=1` → live SSE fixture incl. mid-stream `verification_retry` (draft must NOT blank)
+- App lock in sim: passcode `Maruf@123` typed via osascript after activating Simulator (flaky — retry).
+- Fresh worktree: `npm install`, then `LANG=en_US.UTF-8 pod install` in `ios/App`, then `npx cap copy ios`.
+
+## OWNER PROCESS RULE for whoever ships build 72 (owner instruction 2026-07-14)
+
+1. **Batch everything**: this branch already carries (a) VoIP/CallKit calling (via main), (b) presentation parity (merged here), (c) your new session's work. Verify them TOGETHER, resolve any conflict here on the branch, and ship **ONE** TestFlight build 72 — no drip builds.
+2. **Before archive**: run the three sim self-test hooks above + a normal sim launch, plus your own feature's checks. All green first.
+3. **Preflight is mandatory**: `bash scripts/ios-build-preflight.sh` (use `ALMA_PREFLIGHT_ALLOW_BRANCH=1` while on this non-main branch, or merge to main first per owner approval of PR #369). Bump 71 → 72 as a pushed commit.
+4. **After upload, give the owner a Bangla checklist** covering EVERYTHING in the build, e.g.:
+   - কলিং: বন্ধ/ব্যাকগ্রাউন্ড iPhone-এ অফিস-কল এলে নেটিভ ফুল-স্ক্রিন রিং, ধরলে দুই-দিকে অডিও, কেটে দিলে সাথে সাথে রিং বন্ধ
+   - এজেন্ট চ্যাট: পুরনো conversation খুললে কাজের ধাপে-ধাপে লেখা + টুল row সব দেখা যায় (শুধু শেষ লাইন না)
+   - যাচাই-turn: আগের draft দৃশ্যমান + মাঝে "নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি…" row + নিচে ঠিক করা উত্তর; উত্তর কখনো ফাঁকা হয় না
+   - Footer: Σ মোট টোকেন, ⚡/♻ cache, $ খরচ, N ধাপ — web-এর সংখ্যার সাথে মিলবে
+   - App বন্ধ করে আবার খুললে একই reply-র চেহারা একটুও বদলায় না (৬০ সেকেন্ড পরেও)
+   - + নতুন session-এর নিজের ফিচারগুলোর আইটেম
