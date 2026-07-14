@@ -104,9 +104,13 @@ const ROUTINE_RE = new RegExp(
     // today's sales / revenue
     '(aj|ajk|ajke|আজ|আজকে)[^\\n]{0,20}(sell|sale|sales|bikri|বিক্রি|বিক্রয়|সেল|revenue|আয়|koto\\s*holo|koto\\s*hoyeche)',
     '(koto|কত)[^\\n]{0,12}(sell|sale|bikri|বিক্রি|সেল)',
-    // who is present / attendance / in office
-    '(ke|কে|kara|কারা)[^\\n]{0,20}(office|অফিস|ase|আছে|present|উপস্থিত|hajir|হাজির|check\\s*in|checkin|checked\\s*in)',
-    'attendance|হাজিরা|উপস্থিতি|ke\\s*ke\\s*ase',
+    // who is present / attendance / in office. Word-bounded (2026-07-14 fix):
+    // bare 'ke'/'ase' matched INSIDE words ("keno ... ase?" → false routine hit,
+    // masked until the structured-output change exposed it in tests). Latin tokens
+    // get \b; Bangla কে gets the (?![ঀ-ৼ]) no-more-Bangla-letters guard used
+    // elsewhere (turn-loop-policy) since \b doesn't understand Bangla script.
+    '(\\bke\\b|কে(?![ঀ-ৼ])|\\bkara\\b|কারা)[^\\n]{0,20}(office|অফিস|\\base\\b|আছে|present|উপস্থিত|hajir|হাজির|check\\s*in|checkin|checked\\s*in)',
+    'attendance|হাজিরা|উপস্থিতি|\\bke\\s*ke\\s*ase\\b',
     // stock / inventory counts
     'stock|স্টক|মজুদ|inventory|koto\\s*pcs|koto\\s*piece',
     // order / pending counts

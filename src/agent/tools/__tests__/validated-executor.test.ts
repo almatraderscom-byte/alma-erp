@@ -37,6 +37,36 @@ describe('validated executor (Phase 2)', () => {
     expect(res).toMatchObject({ success: false, errorCode: 'turn_read_only', retryable: false })
   })
 
+  it('streamed-JSON parse failure ({_raw} marker) returns a self-repair error, never runs the handler', async () => {
+    let handlerRan = false
+    const tool = fakeTool({
+      name: 'fake_malformed_args',
+      handler: async () => {
+        handlerRan = true
+        return { success: true }
+      },
+    })
+    const res = await runRegisteredTool(tool, { _raw: '{"count": 1, "mode": "a' }, {}, {})
+    expect(handlerRan).toBe(false)
+    expect(res).toMatchObject({ success: false, errorCode: 'malformed_args', retryable: true })
+    // The error must ECHO the broken text and instruct a correct re-call —
+    // not the misleading `unknown field "_raw"` schema message.
+    expect(res.error).toContain('NOT valid JSON')
+    expect(res.error).toContain('count') // the broken text is echoed back
+    expect(res.error).not.toContain('_raw')
+  })
+
+  it('a real field named _raw alongside others is NOT treated as the marker', async () => {
+    const tool = fakeTool({
+      name: 'fake_real_raw_field',
+      handler: async () => ({ success: true }),
+    })
+    // Two keys → not the adapter marker shape; falls through to normal schema
+    // validation (which rejects the unknown fields as before).
+    const res = await runRegisteredTool(tool, { _raw: 'x', count: 1 }, {}, {})
+    expect(res).toMatchObject({ success: false, errorCode: 'invalid_args' })
+  })
+
   it('invalid args NEVER reach the handler — unknown field', async () => {
     let handlerRan = false
     clearValidatorCache()
