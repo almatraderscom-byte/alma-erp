@@ -259,11 +259,11 @@ const get_orders: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      business: { type: 'string' },
-      status: { type: 'string' },
-      from: { type: 'string' },
-      to: { type: 'string' },
-      limit: { type: 'number' },
+      business: { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING', 'CDIT'], description: 'Business to query (default: current conversation business)' },
+      status: { type: 'string', enum: ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded', 'unknown'], description: 'Filter by order status' },
+      from: { type: 'string', description: 'Start date YYYY-MM-DD (inclusive)' },
+      to: { type: 'string', description: 'End date YYYY-MM-DD (inclusive)' },
+      limit: { type: 'number', description: 'Max orders to return (max 100, default 20)' },
     },
     required: [],
   },
@@ -304,8 +304,8 @@ const get_inventory_status: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      business: { type: 'string' },
-      lowStockOnly: { type: 'boolean' },
+      business: { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING', 'CDIT'], description: 'Business to query (default: current conversation business)' },
+      lowStockOnly: { type: 'boolean', description: 'true → only items at or below their reorder level' },
       deadStockDays: { type: 'number', description: 'Minimum days with no reorder signal to flag' },
     },
     required: [],
@@ -450,7 +450,7 @@ const get_customer_summary: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      query: { type: 'string' },
+      query: { type: 'string', description: 'Optional customer name or phone search' },
       topN: { type: 'number', description: 'Top N customers by total spend (default 20)' },
     },
     required: [],

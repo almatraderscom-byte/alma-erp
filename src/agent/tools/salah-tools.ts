@@ -180,8 +180,8 @@ const mark_salah: AgentTool = {
     type: 'object' as const,
     properties: {
       date:   { type: 'string', description: 'YYYY-MM-DD (default: today)' },
-      waqt:   { type: 'string', enum: ['fajr','dhuhr','asr','maghrib','isha'] },
-      status: { type: 'string', enum: ['prayed_on_time','prayed_late','qaza','missed'] },
+      waqt:   { type: 'string', enum: ['fajr','dhuhr','asr','maghrib','isha'], description: 'Which waqt to mark' },
+      status: { type: 'string', enum: ['prayed_on_time','prayed_late','qaza','missed'], description: 'Confirmed outcome — only after the owner explicitly said it' },
     },
     required: ['waqt', 'status'],
   },
@@ -380,7 +380,7 @@ const set_salah_time: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      waqt: { type: 'string', enum: ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'] },
+      waqt: { type: 'string', enum: ['fajr', 'dhuhr', 'asr', 'maghrib', 'isha'], description: 'Which waqt to change' },
       azan: { type: 'string', description: 'HH:MM 24h — wakto start (optional)' },
       prayer: { type: 'string', description: 'HH:MM 24h — jamat (optional)' },
       end: { type: 'string', description: 'HH:MM 24h — wakto end (optional)' },

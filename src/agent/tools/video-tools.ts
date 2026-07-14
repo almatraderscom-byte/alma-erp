@@ -26,8 +26,8 @@ const make_product_reel: AgentTool = {
       imagePath: { type: 'string', description: 'agent-files path — ad creative or product photo' },
       aspect: { type: 'string', enum: ['9:16', '16:9'], description: 'Default 9:16 (Reels/Story)' },
       durationSec: { type: 'number', description: '4–8 seconds, default 6' },
-      vibe: { type: 'string', enum: ['premium', 'festival', 'offer', 'lifestyle'] },
-      conversationId: { type: 'string' },
+      vibe: { type: 'string', enum: ['premium', 'festival', 'offer', 'lifestyle'], description: 'Overall mood of the reel' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
   },
   handler: async (input) => {

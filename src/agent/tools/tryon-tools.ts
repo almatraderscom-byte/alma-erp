@@ -22,7 +22,7 @@ const manage_model_library: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      action: { type: 'string', enum: ['list', 'add', 'remove', 'set_default', 'list_by_role'] },
+      action: { type: 'string', enum: ['list', 'add', 'remove', 'set_default', 'list_by_role'], description: 'Model-library operation to perform' },
       id: { type: 'string', description: 'Short slug, e.g. "maruf-father" (add/remove/set_default)' },
       name: { type: 'string', description: 'Display name (add)' },
       imagePath: { type: 'string', description: 'agent-files storage path of the uploaded model photo (add)' },
@@ -130,11 +130,11 @@ const generate_on_model_image: AgentTool = {
     properties: {
       productImagePath: { type: 'string', description: 'Product/reseller/mannequin photo path' },
       modelId: { type: 'string', description: 'Model name or id, e.g. "Maruf", "model-maruf"' },
-      style: { type: 'string', enum: ['studio', 'outdoor_bd', 'festival', 'lifestyle'] },
-      pose: { type: 'string', enum: ['front', 'three_quarter', 'walking', 'sitting', 'detail'] },
-      garmentType: { type: 'string' },
-      extra: { type: 'string' },
-      conversationId: { type: 'string' },
+      style: { type: 'string', enum: ['studio', 'outdoor_bd', 'festival', 'lifestyle'], description: 'Scene style for the render' },
+      pose: { type: 'string', enum: ['front', 'three_quarter', 'walking', 'sitting', 'detail'], description: 'Model pose' },
+      garmentType: { type: 'string', description: 'Garment type, e.g. panjabi, saree (helps fit accuracy)' },
+      extra: { type: 'string', description: 'Extra render instruction (optional)' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['productImagePath'],
   },
@@ -183,16 +183,17 @@ const generate_on_model_batch: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      productImagePath: { type: 'string' },
+      productImagePath: { type: 'string', description: 'Storage path of the product photo (from get_product)' },
       modelId: { type: 'string', description: 'Override for single variant' },
       variants: {
         type: 'array',
         items: { type: 'string', enum: CHAT_TRYON_VARIANTS },
+        description: 'Which try-on variants to render (each becomes its own approval card)',
       },
-      style: { type: 'string', enum: ['studio', 'outdoor_bd', 'festival', 'lifestyle'] },
-      pose: { type: 'string', enum: ['front', 'three_quarter', 'walking', 'sitting', 'detail'] },
-      extra: { type: 'string' },
-      conversationId: { type: 'string' },
+      style: { type: 'string', enum: ['studio', 'outdoor_bd', 'festival', 'lifestyle'], description: 'Scene style for the render' },
+      pose: { type: 'string', enum: ['front', 'three_quarter', 'walking', 'sitting', 'detail'], description: 'Model pose' },
+      extra: { type: 'string', description: 'Extra render instruction (optional)' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['productImagePath'],
   },

@@ -17,7 +17,7 @@ const list_playbook: AgentTool = {
         enum: ['proposed', 'active', 'rejected', 'retired', 'all'],
         description: 'Default proposed — pending owner review',
       },
-      businessId: { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING'] },
+      businessId: { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING'], description: 'Business — omit; the server fills it from the conversation' },
     },
   },
   handler: async (input) => {

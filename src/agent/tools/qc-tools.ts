@@ -9,7 +9,7 @@ const set_qc_level: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      level: { type: 'string', enum: ['off', 'normal', 'strict'] },
+      level: { type: 'string', enum: ['off', 'normal', 'strict'], description: 'QC gate level for generated creatives' },
     },
     required: ['level'],
   },

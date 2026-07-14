@@ -264,7 +264,7 @@ const get_trading_account_detail: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      accountId: { type: 'string' },
+      accountId: { type: 'string', description: 'Trading account id (from get_trading_accounts)' },
       accountTitle: { type: 'string', description: 'Substring match if accountId not given' },
       tradeLimit: { type: 'number', description: 'How many recent trades to return (default 15, max 50)' },
     },

@@ -12,7 +12,7 @@ const plan_marketing: AgentTool = {
     type: 'object' as const,
     properties: {
       weeks: { type: 'number', description: 'Planning horizon 1–4 weeks (default 2)' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
   },
   handler: async (input) => {

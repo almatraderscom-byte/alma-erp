@@ -29,7 +29,7 @@ const manage_competitor_watchlist: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      action: { type: 'string', enum: ['list', 'add', 'remove'] },
+      action: { type: 'string', enum: ['list', 'add', 'remove'], description: 'Watchlist operation' },
       name: { type: 'string', description: 'Competitor name (required for add/remove)' },
       url: { type: 'string', description: 'Competitor website URL (required for add)' },
     },

@@ -270,7 +270,7 @@ const draft_seo_fixes: AgentTool = {
         },
       },
       note: { type: 'string', description: 'Short label for this SEO batch (shown on the card).' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['fixes'],
   },
@@ -468,7 +468,7 @@ const untrack_keyword: AgentTool = {
   description: 'Stop weekly rank tracking for a keyword (deactivates it — history is kept). Cost-free.',
   input_schema: {
     type: 'object' as const,
-    properties: { keyword: { type: 'string' } },
+    properties: { keyword: { type: 'string', description: 'The tracked keyword to deactivate' } },
     required: ['keyword'],
   },
   handler: async (input) => {

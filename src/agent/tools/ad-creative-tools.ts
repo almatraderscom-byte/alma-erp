@@ -74,6 +74,7 @@ const make_ad_creatives: AgentTool = {
       },
       offer: {
         type: 'object',
+        description: 'The offer numbers/lines rendered onto the creative (exact Bangla prices via SVG overlay)',
         properties: {
           priceBdt: { type: 'number', description: 'Sale price in whole taka' },
           strikePriceBdt: { type: 'number', description: 'Original price (struck through)' },
@@ -88,7 +89,7 @@ const make_ad_creatives: AgentTool = {
         items: { type: 'string', enum: ['1:1', '4:5', '9:16'] },
         description: 'Output aspect ratios (default ["4:5","1:1"])',
       },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['productCode'],
   },

@@ -79,7 +79,7 @@ const complete_skill_pack_run: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      pack: { type: 'string', enum: ['research', 'seo', 'marketing', 'website', 'client_seo'] },
+      pack: { type: 'string', enum: ['research', 'seo', 'marketing', 'website', 'client_seo'], description: 'Which skill pack this run belongs to (same as start_skill_pack)' },
       goal: { type: 'string', description: 'The run goal (same as start_skill_pack).' },
       steps: {
         type: 'array',
