@@ -62,23 +62,20 @@ export function apnsKeyDiag(): Record<string, unknown> {
 let cachedJwt: { token: string; at: number } | null = null
 
 /**
- * Rebuild a valid PEM no matter how the .p8 got mangled when pasted into an env
- * field: real newlines pass through; escaped "\n" are unescaped; and a value
- * whose line breaks were stripped entirely (a common paste failure) is
- * reconstructed from the base64 body, re-wrapped at 64 cols with a proper
- * header/footer. Without this, createPrivateKey throws and every VoIP push
- * silently no-ops.
+ * Rebuild a valid PKCS#8 PEM no matter how the .p8 got mangled when pasted into
+ * an env field. Apple's APNs auth keys are always PKCS#8 ("BEGIN PRIVATE KEY"),
+ * so we strip whatever markers/whitespace survived, keep only the base64 body,
+ * and re-wrap it at 64 cols with a fresh header/footer. Handles every observed
+ * paste failure: real newlines, escaped "\n", newlines stripped, AND the
+ * BEGIN/END header/footer stripped entirely (only the base64 middle pasted).
+ * Without this, createPrivateKey throws and every VoIP push silently no-ops.
  */
 function normalizePem(raw: string): string {
-  let s = raw.trim()
-  if (s.includes('\\n')) s = s.replace(/\\n/g, '\n')
-  if (s.includes('\n')) return s
-  const m = s.match(/-----BEGIN ([^-]+)-----(.*)-----END \1-----/)
-  if (!m) return s
-  const label = m[1].trim()
-  const body = (m[2].match(/[A-Za-z0-9+/=]+/g) ?? []).join('')
+  const s = raw.trim().replace(/\\n/g, '\n')
+  const body = (s.replace(/-----(BEGIN|END)[^-]*-----/g, '').match(/[A-Za-z0-9+/=]+/g) ?? []).join('')
+  if (!body) return s
   const wrapped = body.match(/.{1,64}/g)?.join('\n') ?? body
-  return `-----BEGIN ${label}-----\n${wrapped}\n-----END ${label}-----\n`
+  return `-----BEGIN PRIVATE KEY-----\n${wrapped}\n-----END PRIVATE KEY-----\n`
 }
 
 function apnsJwt(): string | null {
