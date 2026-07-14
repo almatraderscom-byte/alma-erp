@@ -14,7 +14,7 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { apnsVoipConfigured, sendVoipCall } from '@/agent/lib/apns-voip'
+import { apnsVoipConfigured, apnsKeyDiag, sendVoipCall } from '@/agent/lib/apns-voip'
 import { fcmCallConfigured } from '@/agent/lib/fcm-call'
 import { prisma } from '@/lib/prisma'
 
@@ -56,6 +56,7 @@ export async function GET(req: NextRequest) {
   return Response.json({
     apnsConfigured,
     apnsProbe,
+    apnsKey: apnsKeyDiag(),
     fcmConfigured: fcmCallConfigured(),
     registered,
   })
