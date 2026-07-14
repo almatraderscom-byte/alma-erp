@@ -18,7 +18,7 @@
 |---|---|---|
 | Phase 0 | Instrumentation: signposts, debug row overlays, stress fixture | ✅ DONE 2026-07-14 |
 | Phase 1 (PR 1) | Recovery hotfix: transport classification, lifecycle observers, immediate foreground recovery, visible resume tail, ID-map hygiene | ✅ DONE 2026-07-14 (sim-verified e2e) |
-| Phase 1.4 (PR 2) | Scroll/layout gap fix + single scroll-debounce task (after Phase 0 device evidence) | ⬜ next |
+| Phase 1.4 (PR 2) | Scroll/layout gap fix + single scroll-debounce task | ✅ DONE 2026-07-14 (100-round scroll stress clean) |
 | Phase 2 (PR 3) | Event parity + robust SSE parser + buffered reducer + monolith split | ⬜ not started |
 | Phase 3 (PR 4) | Idempotent durable turn backend (Prisma migration, command endpoint, durable events for inline, replay cursor, richer status) | ⬜ not started |
 | Phase 3 native (PR 5) | Native migration to canonical durable turn + recovery descriptor | ⬜ not started |
@@ -29,7 +29,19 @@
 - **Phase 0 shipped:** `AlmaTurnLog` os_signposts (`turn.submit/firstEvent/transportDisconnected/foreground/reconnectStarted/terminal/messagesReconciled/background`, `message.rowHeightChanged`); `ALMA_DEBUG_ROWS=1` per-row overlay (id/role/height/blocks/live + height-change signpost); `ALMA_ASSISTANT_FIXTURE=1` stress fixture (40 mixed rows, 2,000+ char interleaved reply, 1,000-delta live tail through the real mutation helpers). `stream.bufferFlush` lands with the Phase-2 event buffer (no buffer exists yet).
 - **Phase 1 shipped:** `TurnFailureKind` classifier (all user-facing errors now Bangla); transport interruption freezes the partial tail, sets `reconnecting`, shows "কাজ চলছে — সংযোগ ফিরছে…" glyph/text-only and hands off to recovery — never a raw toast; `UIApplication` background/foreground/didBecomeActive observers (registered once, token-boxed deinit cleanup; also fixed the pre-existing duplicate auth-observer registration); `recoverTurnState()` single-flight immediate status fetch with 1s→3s backoff+jitter, visible `ensureStreamingTail()` on resume (P0-C), our-turn-vs-stale-turn heuristic via `lastSendAt`/`startedAt` (Phase 3 replaces with clientMessageId), bounded no-turn proof → Bangla failure without losing the optimistic user row; empty placeholder tails removed / partial-tail blocks cleared on terminal reconcile (1.5); `localIdByServerId` cleared on `openConversation()`/`newChat()` (P1-E).
 - **Sim e2e proof:** send → background (Settings) mid-turn 10s → foreground: no English toast, live activity + token/step counter visible ~1.5s after return, turn streamed on and settled with cost badge. Fixture + debug overlay verified. Prod head model pill read "Auto · Grok 4.20" — roadmap model note confirmed live.
-- **Deferred bits:** single cancelable scroll-debounce task → PR 2 (scroll scope); selectable-text-view count in overlay (blocks count is the proxy). Observation for Phase 2: settled reply showed a repeated prose line around a deadline-continue turn (blocks vs persisted prose) — investigate during reducer work.
+- **Deferred bits:** selectable-text-view count in overlay (blocks count is the proxy). Observation for Phase 2: the STREAMING blocks view showed a repeated prose line around a deadline-continue turn (persisted view rendered clean) — investigate during reducer work.
+
+### Phase 1.4 / PR 2 completion notes (2026-07-14)
+
+- **Root cause identified (code-level):** `AlmaSelectableRichText.sizeThatFits` returned `nil` for nil-width proposals. LazyVStack issues nil-width estimation passes as rows enter/leave the viewport; the `nil` fell back to UIKit intrinsic sizing of a 0pt-wide `UITextView` → one-word-per-line layout → a viewport-sized phantom height cached by the lazy layout for that row = the giant gap.
+- **Fix set shipped:**
+  - `sizeThatFits` now answers EVERY proposal: real widths are cached (content-hash × rounded-width × Dynamic Type category, 64-entry bound), nil-width passes reuse the last real layout width (first-ever pass measures at screen−32); `widthTracksTextView`, vertical hugging/compression `.required`, `invalidateIntrinsicContentSize()` on content change.
+  - Long-answer collapse cap `? 340 : .infinity` → `? 340 : nil` (no greedy `.infinity` inside the lazy list; the two remaining `.infinity` sites are the side drawer + activity sheet, outside the chat list).
+  - `messages.count` autoscroll now respects `nearBottom` (server merges/polls never yank the owner off older content); the owner's OWN send scrolls via a dedicated `ownSendTick` signal.
+  - `scheduleScrollToBottom` = ONE stored cancelable debounce task (old generation-counter fan-out removed).
+  - `mergeServerMessages` applies in a `Transaction(disablesAnimations:)` — reconciliation height changes never animate mid-scroll.
+- **Sim verification:** `ALMA_ASSISTANT_SCROLLTEST=1` — 100 top↔bottom round-trips during + after the 1,000-delta fixture stream with `ALMA_DEBUG_ROWS` overlays: no blank gap in any screenshot; signpost audit over the full run shows **zero rows with <200 chars reserving >400 pt** (no phantom heights); tail heights strictly proportional to content (h=3117@5044ch → h=4154@6056ch settle); real prod conversation re-checked clean after (bubble hugging intact).
+- **Residual:** the original gap was device-reported; owner's next TestFlight device pass is the final confirmation. Debug overlays (`ALMA_DEBUG_ROWS=1`) remain available if it ever reappears.
 
 ---
 

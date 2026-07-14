@@ -887,6 +887,9 @@ final class AssistantVM {
     /// Transport lost while the server turn (presumably) still runs — drives the
     /// truthful "কাজ চলছে — সংযোগ ফিরছে…" label instead of an error (Phase 1.1).
     var reconnecting = false
+    /// Bumped on every owner send — the screen scrolls to the tail on THIS signal
+    /// (user-initiated), while plain count changes respect the reading position.
+    var ownSendTick = 0
     /// Wall-clock of the last send — recovery uses it to tell OUR turn's terminal
     /// status apart from a PREVIOUS turn's stale terminal row (until Phase 3's
     /// clientMessageId gives exact identity).
@@ -1168,7 +1171,11 @@ final class AssistantVM {
             kept.isStreaming = false
             incoming.append(kept)
         }
-        messages = incoming
+        // 1.4: authoritative reconciliation applies in ONE non-animated transaction —
+        // height changes from server truth must not run springs mid-scroll.
+        var tx = Transaction()
+        tx.disablesAnimations = true
+        withTransaction(tx) { messages = incoming }
         AlmaTurnLog.event("turn.messagesReconciled", "count=\(incoming.count)")
     }
 
@@ -1651,6 +1658,7 @@ final class AssistantVM {
         reconnecting = false
         recoveryTask?.cancel(); recoveryTask = nil
         lastSendAt = Date()
+        ownSendTick += 1
         AlmaTurnLog.event("turn.submit")
         ensureStreamingTail()
 
@@ -2274,6 +2282,20 @@ struct AlmaSelectableRichText: UIViewRepresentable {
         self.tint = .white
     }
 
+    /// Roadmap Phase 1.4 — measurement stability. LazyVStack re-proposes rows many
+    /// times (including nil-width estimation passes) while rows enter/leave the
+    /// viewport; an unanswered nil proposal used to fall back to UIKit intrinsic
+    /// sizing at a 0pt-wide container → one-word-per-line → a viewport-sized
+    /// phantom height reserved for the row (the giant scroll gap). Every proposal
+    /// is now answered from an explicit measure, cached by
+    /// (content, rounded width, Dynamic Type size); a nil width reuses the last
+    /// REAL layout width so a stale estimate can never stick.
+    final class Coordinator {
+        var cache: [String: CGSize] = [:]
+        var lastRealWidth: CGFloat = 0
+    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeUIView(context: Context) -> UITextView {
         let tv = UITextView()
         tv.isEditable = false
@@ -2282,20 +2304,42 @@ struct AlmaSelectableRichText: UIViewRepresentable {
         tv.backgroundColor = .clear
         tv.textContainerInset = .zero
         tv.textContainer.lineFragmentPadding = 0
+        tv.textContainer.widthTracksTextView = true
+        tv.setContentHuggingPriority(.required, for: .vertical)
+        tv.setContentCompressionResistancePriority(.required, for: .vertical)
         tv.tintColor = tint
         tv.attributedText = attributed
         return tv
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
-        if !tv.attributedText.isEqual(to: attributed) { tv.attributedText = attributed }
+        if !tv.attributedText.isEqual(to: attributed) {
+            tv.attributedText = attributed
+            tv.invalidateIntrinsicContentSize()
+        }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
-        guard let width = proposal.width, width > 0, width.isFinite else { return nil }
+        let co = context.coordinator
+        let width: CGFloat
+        if let w = proposal.width, w > 0, w.isFinite {
+            width = w
+            co.lastRealWidth = w
+        } else if co.lastRealWidth > 0 {
+            width = co.lastRealWidth          // estimation pass — reuse the real width
+        } else {
+            // First-ever pass before any real proposal: measure at a sane chat
+            // width instead of letting UIKit size a 0pt-wide container.
+            width = UIScreen.main.bounds.width - 32
+        }
+        let key = "\(attributed.hash)|\(Int(width.rounded()))|\(uiView.traitCollection.preferredContentSizeCategory.rawValue)"
+        if let cached = co.cache[key] { return cached }
         let fit = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
         // Hug the longest line (owner bubble must not stretch full-width for "Ok").
-        return CGSize(width: min(width, fit.width.rounded(.up)), height: fit.height)
+        let size = CGSize(width: min(width, fit.width.rounded(.up)), height: fit.height.rounded(.up))
+        co.cache[key] = size
+        if co.cache.count > 64 { co.cache.removeAll() }   // bound churn on live tails
+        return size
     }
 }
 
@@ -2674,7 +2718,9 @@ struct AgentMessageRow: View {
                                     }
                                 } else {
                                     AgentMarkdownText(text: message.text, pal: pal)
-                                        .frame(maxHeight: long && !expandedLong ? 340 : .infinity, alignment: .top)
+                                        // 1.4: cap ONLY the collapsed state; expanded rows size
+                                        // naturally (never a greedy .infinity inside the lazy list).
+                                        .frame(maxHeight: long && !expandedLong ? 340 : nil, alignment: .top)
                                         .clipped()
                                         .mask(
                                             LinearGradient(stops: long && !expandedLong
@@ -5947,7 +5993,9 @@ struct AssistantScreen: View {
     @State private var scrollViewportH: CGFloat = 0
     @State private var toolSheet: AgentChatMessage.Tool?
     @State private var activitySheet: AgentActivitySheetRequest?
-    @State private var bottomScrollGeneration: UInt = 0
+    /// 1.4: ONE cancelable debounce task owns bottom-scrolling (the old
+    /// generation-counter fan-out left every superseded task alive on MainActor).
+    @State private var scrollDebounceTask: Task<Void, Never>?
     @State private var showArtifacts = false
 
     let openWeb: (_ path: String, _ title: String) -> Void
@@ -6046,12 +6094,22 @@ struct AssistantScreen: View {
                     scheduleScrollToBottom(proxy: proxy)
                 }
                 .onChange(of: vm.messages.count) { _, _ in
+                    // 1.4: server merges/polls must never yank the owner away from
+                    // older content he is reading — only follow when near bottom.
+                    guard nearBottom else { return }
                     if vm.isStreaming {
                         scheduleScrollToBottom(proxy: proxy)
                     } else {
                         withAnimation(.easeOut(duration: 0.2)) {
                             proxy.scrollTo(Self.bottomID, anchor: .bottom)
                         }
+                    }
+                }
+                // The owner's OWN send always jumps to the tail (Claude-app feel),
+                // even if he had scrolled up — user-initiated, unlike merges.
+                .onChange(of: vm.ownSendTick) { _, _ in
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(Self.bottomID, anchor: .bottom)
                     }
                 }
                 .overlay(alignment: .bottom) {
@@ -6071,6 +6129,26 @@ struct AssistantScreen: View {
                         .padding(.bottom, 10)
                         .transition(.scale(scale: 0.6).combined(with: .opacity))
                     }
+                }
+                // Phase 1.4 self-test — ALMA_ASSISTANT_SCROLLTEST=1 (debug launches
+                // only): 100 top↔bottom round-trips during and after the fixture
+                // stream; lazy rows mount/unmount at both ends while heights are
+                // logged, reproducing the gap conditions deterministically.
+                .task {
+                    let p = ProcessInfo.processInfo
+                    guard p.environment["ALMA_ASSISTANT_SCROLLTEST"] == "1"
+                        || p.arguments.contains("ALMA_ASSISTANT_SCROLLTEST=1") else { return }
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    for round in 0..<100 {
+                        if let top = vm.messages.first?.id {
+                            withAnimation(.linear(duration: 0.05)) { proxy.scrollTo(top, anchor: .top) }
+                        }
+                        try? await Task.sleep(nanoseconds: 130_000_000)
+                        withAnimation(.linear(duration: 0.05)) { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+                        try? await Task.sleep(nanoseconds: 130_000_000)
+                        if (round + 1) % 25 == 0 { AlmaTurnLog.event("scroll.stressRound", "\(round + 1)/100") }
+                    }
+                    AlmaTurnLog.event("scroll.stressDone")
                 }
             }
         }
@@ -6174,13 +6252,12 @@ struct AssistantScreen: View {
     }
 
     private func scheduleScrollToBottom(proxy: ScrollViewProxy) {
-        bottomScrollGeneration &+= 1
-        let gen = bottomScrollGeneration
-        Task { @MainActor in
+        scrollDebounceTask?.cancel()
+        scrollDebounceTask = Task { @MainActor in
             // Coalesce rapid SSE text_delta bursts — avoids SwiftUI
             // "onChange tried to update multiple times per frame" freeze.
             try? await Task.sleep(for: .milliseconds(48))
-            guard gen == bottomScrollGeneration else { return }
+            guard !Task.isCancelled else { return }
             proxy.scrollTo(Self.bottomID, anchor: .bottom)
         }
     }
