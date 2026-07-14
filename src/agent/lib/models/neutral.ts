@@ -97,7 +97,7 @@ export function dbRowsToNeutral(
 // (~3k tokens) keeps everything a model actually needs from a single result.
 const MAX_TOOL_RESULT_CHARS = 12_000
 
-function capToolResult(result: unknown): unknown {
+function capText(result: unknown): unknown {
   try {
     const s = typeof result === 'string' ? result : JSON.stringify(result)
     if (s.length <= MAX_TOOL_RESULT_CHARS) return result
@@ -105,6 +105,21 @@ function capToolResult(result: unknown): unknown {
   } catch {
     return result
   }
+}
+
+function capToolResult(result: unknown): unknown {
+  // Phase 6 fix: a vision result's base64 `image` (~100KB) always tripped the
+  // text cap, so the WHOLE result became a truncated JSON string — the image
+  // never reached the adapters' image paths (Gemini inlineData / Anthropic
+  // image block were dead code) and ~12k chars of base64 garbage shipped as
+  // text instead. The image is its own channel: cap only the textual rest and
+  // re-attach the image object untouched.
+  if (result && typeof result === 'object' && 'image' in (result as Record<string, unknown>)) {
+    const { image, ...rest } = result as Record<string, unknown>
+    const capped = capText(rest)
+    return typeof capped === 'string' ? { _truncated: capped, image } : { ...(capped as Record<string, unknown>), image }
+  }
+  return capText(result)
 }
 
 export function appendToolExchange(

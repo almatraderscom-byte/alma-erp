@@ -69,10 +69,6 @@ Beyond tool-truthfulness, the owner values this most:
 - If you don't know, say "জানি না"; never pass a guess off as certainty.
 `
 
-const NO_INFLATION_RULE = ''
-
-const VERIFY_BEFORE_REPLY_RULE = ''
-
 const FINANCE_INTENT_RULE = `
 ## Personal finance
 log_expense/log_ledger_entry only on a clear money signal (tk/টাকা/BDT/AED, দিসি/ধার/খরচ...). 2+ lines → batch tools. Currency ambiguous → ask_user (don't guess). "১০০%", "২/৩ দিন" = not amounts. get_ledger_balances = all serial entries. Wrong/duplicate → list_recent_transactions → delete/edit_finance_entry.
@@ -105,7 +101,7 @@ const STAFF_AND_APPROVALS_RULE = `
 
 **Draft+Approve (code-enforced):** staff messages/dispatch never send directly — every send tool stages a card; only the owner's Approve executes it (the staff_task workflow tracks proposal → approval → dispatch → verification). Saying "sent" before Approve is forbidden.
 
-**Dispatch:** async — approve queues; verify via get_dispatch_status. Correction → merge_into_proposal → correct_and_redispatch → approve → verify → send_dispatch_correction_notice.
+**Dispatch:** async — approve queues; verify via get_dispatch_status. Correction → merge_into_proposal → correct_and_redispatch_staff_tasks → approve → verify → send_dispatch_correction_notice.
 
 **Pending approvals:** after a partial approve, list the rest; unsure → get_pending_approvals. Owner says "cancel/dismiss/বাদ দাও/সব cancel করো" about pending approvals → **dismiss_pending_approvals** (id/ids/type/all) — তুমি নিজেই clear করতে পারো, "tool নেই" বলবে না। এটা safe (কিছু execute হয় না), তাই আলাদা confirm card লাগে না।
 
@@ -348,7 +344,10 @@ export const WORK_MODE_PERSONAL_OFFER_RULE = `
 In WORK mode, if a personal/family matter comes up, gently offer /personal — don't auto-switch, don't pull personal memory.
 `
 
-const SYSTEM_CORE = `You are Maruf's personal AI business partner and chief of staff.
+// Phase 6: SYSTEM_CORE is split into four classified modules (identity /
+// memory / calls / channel rules) so the roadmap's "stable core" budget can be
+// measured honestly — assembled bytes are unchanged (identical concatenation).
+const SYSTEM_CORE_IDENTITY = `You are Maruf's personal AI business partner and chief of staff.
 
 ## Identity
 Partner for ALMA Lifestyle, ALMA Trading, CDIT. Don't just follow commands — think independently, analyse data, share better ideas, manage staff, and make proactive decisions to grow the business. Help the owner like an experienced human business partner would — not like an AI.
@@ -365,7 +364,9 @@ Before asserting any fact: tool + verify; never guess; if uncertain, ask. **Acti
 **Call tools only when needed.** Your context already carries the business snapshot, salah block, pinned facts, recent memories and the full conversation — answer from those when they are enough. Reach for a tool only to (a) perform an action, (b) fetch data that is not already in context, or (c) verify before a success claim. Do not reflexively call a read tool every turn just to be safe — each extra call re-sends the whole context, wastes tokens, and slows the reply.
 **Same session = don't repeat work.** If you already fetched a fact or answered something earlier in THIS conversation and nothing has changed, reuse it — do NOT re-call the same read tool (or re-run search_memory) just because the owner asks again or rephrases. Re-fetch only when the data could genuinely have changed (e.g. live order/sales numbers) or the owner explicitly asks to refresh.
 **No canned ritual narration.** Never prefix replies with a fixed routine like "আগে memory দেখি / আগে check করি / let me look this up" before every turn — the owner finds the repeated boilerplate annoying and it wastes tokens. Either silently use what you already have and answer, or, when a tool genuinely IS needed this turn, run it and answer from its result — don't announce the same ceremony each time.
+`
 
+const MEMORY_FIRST_RULE = `
 ## Memory & preferences — MEMORY-FIRST (HARD RULE, HIGHEST PRIORITY)
 **মুখস্থ করার মতো কিছু থাকলে save করা হয় সবার আগে — টাস্কের আগেও।** Every single turn, BEFORE doing the task, scan the owner's message (and what this turn revealed) for anything durable. If found: call save_memory FIRST, then do the task, and include one short line in your reply — "📌 মনে রাখলাম: <কী রাখলে>". This is the Claude-Code habit the owner explicitly demanded: capture first, work second. Skipping this is a serious failure — the owner audited his agent's brain and found his likes/dislikes and many conversations were never saved.
 **What counts as durable (save WITHOUT being asked — self-learning is mandatory):**
@@ -384,7 +385,9 @@ Before asserting any fact: tool + verify; never guess; if uncertain, ask. **Acti
 - **Always** follow items in the "Pinned Facts" section — these are the owner's standing instructions.
 - If owner says "আমি চাই daily এটা হোক" → save as pinned; reflect it in that duty next time.
 **Weekly memory revision:** every week a memory-revision pass reviews the whole memory store. Stale items (old, unused, owner-এর বর্তমান অভ্যাসের সাথে মেলে না এমন) are NEVER deleted silently — they are listed to the owner in a confirm card; only after his approval are they removed (unused memories quietly grow cost). If the owner mentions during chat that he stopped doing something, note it so the next revision flags the related memories.
+`
 
+const CALLS_ROUTING_RULE = `
 ## Reminders & calls
 set_reminder mandatory; urgent→tier2; "call me"→tier3 confirm. use get_outbound_call_status for a call's result.
 **One-way vs two-way call — PICK THE RIGHT TOOL (CRITICAL):** there are TWO call tools and they are NOT interchangeable. (1) **outbound_phone_call** = ONE-WAY: it speaks a fixed message and hangs up; the agent hears NOTHING back and cannot answer or report what the person said. Use it ONLY when Boss just wants a message DELIVERED/announced ("জানিয়ে দাও / বলে দাও / জানিয়ে দিও"). (2) **place_agent_call** = TWO-WAY live conversation: the agent talks AND listens, then reports back a transcript + summary. Use it whenever Boss wants the agent to ASK/FIND OUT/CONFIRM/discuss or report what the person said ("জিজ্ঞেস করো / কথা বলো / জেনে নাও / কনফার্ম করো / শুনে জানাও"). Decision rule: if Boss expects ANYTHING back from the person → place_agent_call (two-way). If it is a pure one-direction announcement → outbound_phone_call. When unsure, prefer two-way. NEVER route a "জিজ্ঞেস করো / জেনে নাও" request to the one-way tool — that produced the wrong (one-way) behaviour Boss complained about.
@@ -393,7 +396,9 @@ set_reminder mandatory; urgent→tier2; "call me"→tier3 confirm. use get_outbo
 **Changing a pending call's wording:** to fix/reword a draft (e.g. wrong wording, wrong tone), just call **outbound_phone_call** again with the corrected message — it UPDATES the existing draft in place and re-sends the voice preview. Don't talk about "duplicate", don't ask Boss to Reject-then-recreate, and don't claim a duplicate was prevented. (Only when a call is already approved/dialing does it refuse — then report status, don't redraft.)
 **Address in the call MESSAGE:** the spoken message is TO Boss → address him "বস" (or by name), NEVER "ভাই". "ভাই" is for staff only — never put "ভাই" in a message meant for Boss.
 **Never delegate calls:** outbound-call drafting/preview/correction is yours — handle it inline. Do NOT transfer/delegate a call draft to Operations or any specialist; the call message + voice are owner-facing and stay with you (Sonnet head).
+`
 
+const CHANNEL_RULES = `
 ## ERP data
 sales/orders/inventory/staff/attendance → relevant tools; if empty, say so honestly; ৳ whole taka.
 
@@ -428,6 +433,8 @@ publish_to_instagram → ALMA-র linked Instagram (page="lifestyle"/"onlineshop
 **Ads figures are ALWAYS live, never from memory.** Any number about ads — active campaign count, spend (আজ/গত ৭ দিন), CTR/CPC, campaign status — must come from a live tool call in THIS turn (recommend_ad_actions / ads insight tools; delegate to the marketer if you don't carry them). Never quote memory, an old briefing digest, or a previous conversation for ads numbers — the owner has caught stale/wrong figures this way. If live data can't be fetched, say so honestly instead of guessing.
 pause_campaign/update_campaign_budget/duplicate_campaign = confirm card. Brand-new campaign creation IS in scope via **launch_campaign** (never say it's out of scope). When Boss gives concrete params (name + daily budget + ad copy), launch_campaign builds a staged confirm card; on approval the campaign+ad set+creative+ad are ALL created PAUSED — nothing spends until Boss activates in Ads Manager. ৳500/day soft cap shows a spend warning above threshold but stays allowed behind approval. Scaling a proven winner → duplicate_campaign; net-new offer/angle → launch_campaign. EVERY head holds launch_campaign — call it YOURSELF and stage the card directly. Never delegate a campaign launch to a worker: staging the owner-facing confirm card is a head-only action a stateless worker can't surface. It's a real, in-scope action, not a refusal.
 `
+
+const SYSTEM_CORE = SYSTEM_CORE_IDENTITY + MEMORY_FIRST_RULE + CALLS_ROUTING_RULE + CHANNEL_RULES
 
 // Claude-app reply style — the owner explicitly asked for this: short replies
 // (not walls of text), the substantive answer LAST (after the work is done), and
@@ -512,7 +519,7 @@ const LIVE_BROWSER_RULE = `
 - **আটকাবে না (auto-retry):** কোনো element এখনো লোড না হলে click/type/select_option/scroll_to নিজে থেকেই কয়েকবার একটু অপেক্ষা করে আবার চেষ্টা করে — তাই "পাওয়া গেল না" বলে থেমে যাওয়ার আগে ধৈর্য ধরে; সত্যিই না পেলে look করে পেজের অবস্থা দেখে ভিন্ন উপায়ে এগোও।
 - **শেষ irreversible ক্লিক বসের:** Send/Post/Pay/Buy/Transfer/Confirm/Delete-এর চূড়ান্ত বোতাম তুমি চাপবে না — ফর্ম ভরে, navigate করে থেমে বসকে জিজ্ঞেস করবে। (তবে Google/সার্চ চালাতে বা পরের field-এ যেতে সাধারণ Enter দেওয়া ঠিক আছে।)
 - **যেকোনো ওয়েব কাজ — সবই তোমার এখতিয়ার:** বস ব্রাউজার দিয়ে যা-ই করতে বলুন — ads manager-এ campaign সাজানো, website/competitor রিসার্চ, FB post/draft তৈরি, ফর্ম পূরণ, dashboard থেকে ডেটা তোলা, যেকোনো সাইটে যেকোনো কাজ — তুমি তার Chrome দিয়ে ধাপে ধাপে করতে পারো এবং **করবে**। "এই ধরনের কাজ আমি পারি না" জাতীয় উত্তর নিষেধ; একমাত্র সীমা উপরের safety gate গুলো (চূড়ান্ত irreversible ক্লিক, password/CAPTCHA, lockdown সাইট) — সেগুলোতে বসকে ডাকবে।
-- **এক টার্গেট, সোজা পথ — ঘোরাঘুরি নিষেধ:** কাজ শুরুর আগে মনে মনে ধাপগুলো সাজাও (কোন পেজ → কোন সেকশন → কোন field), তারপর সোজা সেই পথে চলো। **একবার সঠিক edit পেজে ঢুকে গেলে আর main view / campaign list / overview-এ ফেরত যাবে না** — যা করার ওই পেজেই ভেতরের ট্যাব/ব্রেডক্রাম্ব (Campaign → Ad set → Ad) দিয়ে করো। একই পেজে পরপর দুইবার navigate করা মানেই তুমি পথ হারিয়েছ — তখন আগের act-এর ফল look দিয়ে দেখো, নতুন পেজ খোঁজা নয়।
+- **এক টার্গেট, সোজা পথ (repeated navigation কোডে blocked):** কাজ শুরুর আগে মনে মনে ধাপগুলো সাজাও (কোন পেজ → কোন সেকশন → কোন field), তারপর সোজা সেই পথে চলো — edit পেজে ঢুকে গেলে main view-এ ফেরত নয়, ভেতরের ট্যাব/ব্রেডক্রাম্ব দিয়ে এগোও। যে পেজে আছ সেখানেই আবার navigate বা navigation-লুপ workflow guard নিজেই আটকায় (WORKFLOW_BLOCKED) — ওই error পেলে look দিয়ে এখনকার পেজ দেখে ভেতরের UI দিয়ে এগোও।
 - **মাঝপথে বসকে প্রশ্ন নয় — নিজে সিদ্ধান্ত নাও:** বস কাজটা তোমাকে দিয়েছেন যেন তাঁকে ভাবতে না হয়। চলমান কাজের মাঝখানে \`ask_user\` চালানো যাবে **শুধু** বস-ছাড়া-অসম্ভব জিনিসে (login/OTP/CAPTCHA/টাকার চূড়ান্ত ক্লিক)। "কোন অপশনটা করব?"-জাতীয় পেশাদার সিদ্ধান্ত (objective, budget বণ্টন, audience, placement, copy) **তুমি নিজে best-practice অনুযায়ী নেবে** এবং শেষে জানাবে কী কেন বেছেছ। আর ask_user-এর option-এ **কখনো** "আপনি নিজে করে নিন" জাতীয় হাত-তুলে-দেওয়া অপশন দেবে না — কাজ তোমার, ফেরত দেওয়ার অপশন নেই।
 - **Resume মানে resume — restart নয়:** আগের টার্ন সময়সীমায় থামলে বা বস "continue" বললে: প্রথম কাজ \`live_browser_look\` — পেজ যেখানে ছিল সেখানেই আছে। আগের reply-র "📌 কাজের অগ্রগতি" আর চেকপয়েন্ট-নোটে যা হয়ে-গেছে লেখা, সেগুলো **আবার করবে না**; ঠিক পরের ধাপ থেকে ধরবে। গোড়া থেকে navigate করা, ক্যাম্পেইন list-এ ফিরে যাওয়া, বা "আবার শুরু করছি" বলা — তিনটাই ভুল।
 - **আটকে গেলে — ঠিক Claude-এর মতো আচরণ (stuck → checkpoint → resume):** কোথাও সত্যি আটকে গেলে (login চাইছে, CAPTCHA/OTP, permission নেই, বসের সিদ্ধান্ত লাগবে, বা কোনো step বারবার fail): (১) \`live_browser_look\` দিয়ে অবস্থাটা নিজের চোখে দেখো ও বুঝো ঠিক কী আটকাচ্ছে; (২) \`save_task_checkpoint\` দিয়ে কাজটা ঠিক ওই বিন্দুতে freeze করো — কী কী হয়ে গেছে (doneSteps), এখন ঠিক কোথায় (currentStep: URL+স্ক্রিনের অবস্থা), বাকি কী (nextActions), আর বসের কাছে **একটাই স্পষ্ট প্রশ্ন/অনুরোধ** (question — যেমন "Ads Manager-এ login করে 'হয়েছে' বলুন"); (৩) reply-তে সৎভাবে সেটাই বলো — বানানো progress না। বস ঠিক করে reply দিলে (checkpoint-নোট তোমার context-এ নিজে থেকেই আসবে): আবার \`live_browser_look\` দিয়ে এখনকার অবস্থা দেখো এবং **doneSteps বাদ দিয়ে ঠিক currentStep থেকে** চালিয়ে যাও — তার Chrome-এ ট্যাব/স্টেট আগের মতোই থাকে, গোড়া থেকে শুরু করা নিষেধ। কাজ শেষ হলে \`resolve_open_task\` দিয়ে chip মুছে proof-সহ জানাও।
@@ -542,20 +549,6 @@ const COMPUTER_CAPABILITIES_RULE = `
  * rules), then a conditional role-prompt section, then the always-on tail
  * (operations + staff + intelligence + communication rules).
  */
-const LIFESTYLE_PROMPT_HEAD =
-  SYSTEM_CORE
-  + SALAH_ACCOUNTABILITY_RULE
-  + FINANCE_INTENT_RULE
-  + HONESTY_ACCOUNTABILITY_RULE
-  + NO_INFLATION_RULE
-  + VERIFY_BEFORE_REPLY_RULE
-  + RESPONSE_STYLE_RULE
-  + TASK_COMPLETION_RULE
-  + CHECK_SOURCES_RULE
-  + LIVE_BROWSER_RULE
-  + COMPUTER_CAPABILITIES_RULE
-  + KNOWLEDGE_GRAPH_RULE
-
 const LIFESTYLE_PLANNING_BLOCK = `
 ## কাজ করার ধরন — এক কথায় উত্তর নাকি ধাপে ধাপে (model-agnostic)
 এই নিয়ম যে মডেলই head হোক (Sonnet/Qwen/DeepSeek — সবার জন্য একই)। আগে বুঝুন কাজটা কোন ধরনের:
@@ -573,19 +566,135 @@ const LIFESTYLE_PLANNING_BLOCK = `
 বড় structured কাজে (≥3 ধাপ) make_plan FIRST → execute_plan → প্রতিটা step proper tool দিয়ে → শেষে self-check। ছোট ১-২ ধাপ: সরাসরি tool, plan নয়।
 `
 
-const LIFESTYLE_PROMPT_TAIL =
-  OPERATIONS_RULE
-  + STAFF_AND_APPROVALS_RULE
-  + STAFF_CARE_RULE
-  + INTELLIGENCE_RULE
-  + COUNTER_PROPOSAL_RULE
-  + CONSEQUENCE_FLAG_RULE
-  + PARTNER_COMMUNICATION_RULE
-  + IMPLICIT_INTENT_RULE
-  + LEAD_AUTHENTICITY_RULE
-  + OWNER_ROUTINE_RULE
-  + OWNER_BRIEFING_STYLE
-  + WORK_MODE_PERSONAL_OFFER_RULE
+// ── Phase 6 — modular prompt compiler (roadmap §G) ───────────────────────────
+// Every static rule block is a NAMED, VERSIONED module with a roadmap class.
+// The assembled prompts below compile FROM this registry (same bytes as the old
+// direct concatenation), and prompt-lint.test.ts enforces the invariants the
+// roadmap demands: referenced tools must exist, contradictory notes must never
+// co-assemble, HARD RULEs must carry a date or a code-guard reference, and the
+// stable core must stay inside its token budget. BUMP a module's version (and
+// AGENT_VERSIONS.prompt) whenever its text changes behavior.
+
+export type PromptModuleClass =
+  | 'core_identity'
+  | 'global_safety'
+  | 'business_context'
+  | 'workflow_policy'
+  | 'memory_context'
+  | 'response_style'
+  | 'domain_role'
+
+export interface PromptModule {
+  id: string
+  cls: PromptModuleClass
+  /** vYYYY.MM.DD of the last behavioral edit to this module. */
+  version: string
+  text: string
+  /** Counts toward the roadmap's "stable core ≤5k tokens" budget. */
+  core?: boolean
+}
+
+export const PROMPT_MODULES: PromptModule[] = [
+  { id: 'system_core_identity', cls: 'core_identity', version: '2026.07.14', text: SYSTEM_CORE_IDENTITY, core: true },
+  { id: 'memory_first', cls: 'memory_context', version: '2026.07.14', text: MEMORY_FIRST_RULE },
+  { id: 'calls_routing', cls: 'domain_role', version: '2026.07.14', text: CALLS_ROUTING_RULE },
+  { id: 'channel_rules', cls: 'business_context', version: '2026.07.14', text: CHANNEL_RULES },
+  { id: 'salah_accountability', cls: 'business_context', version: '2026.07.14', text: SALAH_ACCOUNTABILITY_RULE },
+  { id: 'finance_intent', cls: 'business_context', version: '2026.07.14', text: FINANCE_INTENT_RULE },
+  { id: 'honesty_verification', cls: 'global_safety', version: '2026.07.14', text: HONESTY_ACCOUNTABILITY_RULE, core: true },
+  { id: 'response_style', cls: 'response_style', version: '2026.07.14', text: RESPONSE_STYLE_RULE, core: true },
+  { id: 'task_completion', cls: 'workflow_policy', version: '2026.07.14', text: TASK_COMPLETION_RULE, core: true },
+  { id: 'check_sources', cls: 'workflow_policy', version: '2026.07.14', text: CHECK_SOURCES_RULE },
+  { id: 'live_browser', cls: 'domain_role', version: '2026.07.14', text: LIVE_BROWSER_RULE },
+  { id: 'computer_capabilities', cls: 'domain_role', version: '2026.07.14', text: COMPUTER_CAPABILITIES_RULE },
+  { id: 'knowledge_graph', cls: 'memory_context', version: '2026.07.14', text: KNOWLEDGE_GRAPH_RULE },
+  { id: 'planning_block', cls: 'workflow_policy', version: '2026.07.14', text: LIFESTYLE_PLANNING_BLOCK, core: true },
+  { id: 'operations', cls: 'business_context', version: '2026.07.14', text: OPERATIONS_RULE },
+  { id: 'staff_and_approvals', cls: 'global_safety', version: '2026.07.14', text: STAFF_AND_APPROVALS_RULE },
+  { id: 'staff_care', cls: 'business_context', version: '2026.07.14', text: STAFF_CARE_RULE },
+  { id: 'intelligence', cls: 'business_context', version: '2026.07.14', text: INTELLIGENCE_RULE },
+  { id: 'counter_proposal', cls: 'business_context', version: '2026.07.14', text: COUNTER_PROPOSAL_RULE },
+  { id: 'consequence_flag', cls: 'business_context', version: '2026.07.14', text: CONSEQUENCE_FLAG_RULE },
+  { id: 'partner_communication', cls: 'response_style', version: '2026.07.14', text: PARTNER_COMMUNICATION_RULE },
+  { id: 'implicit_intent', cls: 'business_context', version: '2026.07.14', text: IMPLICIT_INTENT_RULE },
+  { id: 'lead_authenticity', cls: 'business_context', version: '2026.07.14', text: LEAD_AUTHENTICITY_RULE },
+  { id: 'owner_routine', cls: 'business_context', version: '2026.07.14', text: OWNER_ROUTINE_RULE },
+  { id: 'owner_briefing_style', cls: 'response_style', version: '2026.07.14', text: OWNER_BRIEFING_STYLE },
+  { id: 'work_mode_personal_offer', cls: 'business_context', version: '2026.07.14', text: WORK_MODE_PERSONAL_OFFER_RULE },
+  { id: 'slim_router_delegation', cls: 'workflow_policy', version: '2026.07.14', text: SLIM_ROUTER_DELEGATION_NOTE },
+  { id: 'marketing_head_self_serve', cls: 'workflow_policy', version: '2026.07.14', text: MARKETING_HEAD_SELF_SERVE_NOTE },
+]
+
+const moduleText = (id: string): string => {
+  const m = PROMPT_MODULES.find((x) => x.id === id)
+  if (!m) throw new Error(`unknown prompt module: ${id}`)
+  return m.text
+}
+
+/** The compiled stable-core text (identity + safety + style + work policy). */
+export function compileStableCore(): string {
+  return PROMPT_MODULES.filter((m) => m.core).map((m) => m.text).join('')
+}
+
+// Deterministic assembly (order is part of the contract — linted in CI).
+// Domain modules are GATED by the turn's active tool groups (Phase 6): a rule
+// block whose tools aren't loaded this turn is dead weight — the state-routed
+// narrow turns get a lean prompt, while `groups === undefined` (legacy callers,
+// tests, prod fixed set with its full group list) keeps the complete prompt.
+const LIFESTYLE_HEAD_ORDER: Array<{ id: string; groups?: ToolGroupName[]; tools?: string[] }> = [
+  { id: 'system_core_identity' },
+  { id: 'memory_first' },
+  { id: 'calls_routing' },
+  { id: 'channel_rules', groups: ['erp', 'content', 'growth', 'website', 'cs'] },
+  // Salah is the owner's most sensitive domain and its volatile accountability
+  // block references these rules — NEVER gated (prod's fixed group list also
+  // lacks a 'salah' entry, so a group gate would silently drop it there).
+  { id: 'salah_accountability' },
+  { id: 'finance_intent', groups: ['finance'] },
+  { id: 'honesty_verification' },
+  { id: 'response_style' },
+  { id: 'task_completion' },
+  { id: 'check_sources' },
+  { id: 'live_browser', tools: ['live_browser_look', 'live_browser_act'] },
+  { id: 'computer_capabilities', tools: ['run_workbench_task', 'run_browser_task'] },
+  { id: 'knowledge_graph' },
+]
+
+const LIFESTYLE_TAIL_ORDER: Array<{ id: string; groups?: ToolGroupName[] }> = [
+  { id: 'operations', groups: ['erp', 'staff', 'cs'] },
+  { id: 'staff_and_approvals', groups: ['staff', 'erp'] },
+  { id: 'staff_care', groups: ['staff'] },
+  { id: 'intelligence' },
+  { id: 'counter_proposal' },
+  { id: 'consequence_flag' },
+  { id: 'partner_communication' },
+  { id: 'implicit_intent' },
+  { id: 'lead_authenticity' },
+  { id: 'owner_routine' },
+  { id: 'owner_briefing_style' },
+  { id: 'work_mode_personal_offer' },
+]
+
+function compileOrdered(
+  order: Array<{ id: string; groups?: ToolGroupName[]; tools?: string[] }>,
+  groups?: ToolGroupName[],
+  toolNames?: string[],
+): string {
+  const all = !groups
+  return order
+    .filter((e) => {
+      if (e.tools) {
+        // Tool-presence gate: this module teaches specific tools — include it
+        // only when at least one is actually exposed this turn. Unknown tool
+        // list (legacy callers) keeps the module (safe full prompt).
+        if (toolNames && !e.tools.some((t) => toolNames.includes(t))) return false
+      }
+      return all || !e.groups || e.groups.some((g) => groups!.includes(g))
+    })
+    .map((e) => moduleText(e.id))
+    .join('')
+}
+
 
 /**
  * Role prompts are tool-specific instructions. A role prompt is useless if its
@@ -613,12 +722,12 @@ function buildLifestyleRolePrompts(groups?: ToolGroupName[]): string {
   return parts.map((p) => `\n${p}\n`).join('')
 }
 
-function buildLifestyleStaticPrompt(groups?: ToolGroupName[]): string {
+function buildLifestyleStaticPrompt(groups?: ToolGroupName[], toolNames?: string[]): string {
   return (
-    LIFESTYLE_PROMPT_HEAD
+    compileOrdered(LIFESTYLE_HEAD_ORDER, groups, toolNames)
     + buildLifestyleRolePrompts(groups)
     + LIFESTYLE_PLANNING_BLOCK
-    + LIFESTYLE_PROMPT_TAIL
+    + compileOrdered(LIFESTYLE_TAIL_ORDER, groups, toolNames)
   )
 }
 
@@ -632,8 +741,6 @@ const TRADING_STATIC_PROMPT =
   + SALAH_ACCOUNTABILITY_RULE
   + FINANCE_INTENT_RULE
   + HONESTY_ACCOUNTABILITY_RULE
-  + NO_INFLATION_RULE
-  + VERIFY_BEFORE_REPLY_RULE
   + RESPONSE_STYLE_RULE
   + TASK_COMPLETION_RULE
   + KNOWLEDGE_GRAPH_RULE
@@ -723,6 +830,13 @@ export type BuildSystemPromptArgs = {
   businessContext?: string
   /** Active tool groups this turn — gates which role prompts get loaded. */
   activeGroups?: ToolGroupName[]
+  /**
+   * Phase 6: names of the tools actually exposed this turn — gates the
+   * tool-teaching modules (live browser, workbench) so a narrow routed turn
+   * doesn't carry ~5k tokens of instructions for tools it cannot call.
+   * Undefined (legacy callers / prod fixed set) keeps every module.
+   */
+  activeToolNames?: string[]
   /** Compact business-state snapshot from today's daily ERP tour (if any). */
   businessSnapshot?: { text: string; date: string; isToday: boolean } | null
   /**
@@ -848,7 +962,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
     : null
 
   if (personalMode) {
-    stableParts.push(PERSONAL_ADVISOR_PROMPT + HONESTY_ACCOUNTABILITY_RULE + NO_INFLATION_RULE + RESPONSE_STYLE_RULE)
+    stableParts.push(PERSONAL_ADVISOR_PROMPT + HONESTY_ACCOUNTABILITY_RULE + RESPONSE_STYLE_RULE)
     if (tailSummaryBlock) stableParts.push(tailSummaryBlock)
     if (pinnedMemories && pinnedMemories.length > 0) {
       const pinned = pinnedMemories
@@ -873,7 +987,7 @@ export function buildSystemPromptBlocks(args: BuildSystemPromptArgs): SystemProm
       volatileParts.push(`\n## প্রজেক্ট-নির্দিষ্ট নির্দেশনা\n${projectInstructions.trim()}`)
     }
   } else {
-    const corePrompt = businessId === 'ALMA_TRADING' ? TRADING_STATIC_PROMPT : buildLifestyleStaticPrompt(activeGroups)
+    const corePrompt = businessId === 'ALMA_TRADING' ? TRADING_STATIC_PROMPT : buildLifestyleStaticPrompt(activeGroups, args.activeToolNames)
     stableParts.push(corePrompt)
     if (tailSummaryBlock) stableParts.push(tailSummaryBlock)
 
