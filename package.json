@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && node scripts/migrate-on-deploy.mjs && node scripts/build-companion-dist.mjs && next build",
+    "build": "prisma generate && node scripts/migrate-on-deploy.mjs && node scripts/build-companion-dist.mjs && rm -rf .next/cache/.tsbuildinfo .next/cache/eslint && next build",
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",

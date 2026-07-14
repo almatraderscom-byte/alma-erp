@@ -1,0 +1,29 @@
+{
+  "id": "rc-0001-continue-must-not-restart-post",
+  "source": { "conversationId": "anon-conv-0001", "turnAt": "2026-07-13T00:00:00+06:00" },
+  "description": "Post/content pipeline incident (Boss 2026-07-13, '720/133'): mid-pipeline the owner replied with a bare continue ('হ্যাঁ, করো'). Correct behavior: resume the SAME in-flight post pipeline at the blocked step (image already generated, preview confirmed → stage the post card). Wrong behavior observed: the head treated the reply as a fresh request, delegated to a content specialist that cannot see the conversation or fetch the real image, and the pipeline restarted from zero.",
+  "transcript": [
+    { "role": "owner", "text": "নতুন পাঞ্জাবিটার একটা ফেসবুক পোস্ট বানাও" },
+    { "role": "agent", "text": "ছবি বানিয়েছি — preview card পাঠালাম, দেখে বলুন Boss" },
+    { "role": "tool", "text": "generate_image → success (preview card staged)" },
+    { "role": "owner", "text": "ছবি ঠিক আছে" },
+    { "role": "agent", "text": "তাহলে পোস্ট card বানাচ্ছি…" }
+  ],
+  "latestMessage": "হ্যাঁ, করো",
+  "replyTo": { "kind": "checkpoint", "id": "anon-checkpoint-0001" },
+  "expected": {
+    "intent": "resume_in_flight_post_pipeline",
+    "toolGroups": ["content"],
+    "tools": ["run_content_post"],
+    "forbiddenTools": ["delegate_to_specialist", "generate_image"],
+    "workflow": { "kind": "product_social_post", "from": "CreativeApproval", "to": "PostApproval" },
+    "approvalRequired": true,
+    "outcome": "The head resumes the existing pipeline at the post-staging step and stages exactly ONE post approval card. No delegation, no image regeneration, no duplicate cards, no restart."
+  },
+  "observed": {
+    "tools": ["delegate_to_specialist"],
+    "outcome": "Pipeline restarted from zero via a stateless content worker; broken brief; owner had to correct.",
+    "failureClass": "lost-progress"
+  },
+  "tags": ["lost-progress", "wrong-tool", "post-pipeline", "continue-reply"]
+}

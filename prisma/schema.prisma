@@ -2064,6 +2064,9 @@ model AgentTurn {
   conversationId  String    @map("conversation_id")
   status          String    @default("running") // running | done | error | canceled
   cancelRequested Boolean   @default(false) @map("cancel_requested")
+  /// Behavior-artifact versions live when this turn ran (Roadmap Phase 0):
+  /// { prompt, toolManifest, router, workflow } — see src/agent/lib/agent-versions.ts.
+  versions        Json?
   startedAt       DateTime  @default(now()) @map("started_at")
   finishedAt      DateTime? @map("finished_at")
   /// Client-generated idempotency key (roadmap Phase 3): one clientMessageId maps

@@ -11,6 +11,7 @@
  * Every call is fail-open: a turn-status glitch must never break the actual turn.
  */
 import { prisma } from '@/lib/prisma'
+import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
 
 export type TurnStatus = 'running' | 'done' | 'error' | 'canceled'
 
@@ -24,11 +25,14 @@ export async function createTurn(
 ): Promise<string | null> {
   try {
     const row = await db().agentTurn.create({
+      // versions: behavior-artifact stamp (Grok roadmap Phase 0) — which prompt/
+      // tool/router/workflow revisions were live for this turn, for tracing.
       data: {
         conversationId,
         status: 'running',
         clientMessageId: opts?.clientMessageId ?? null,
         executionMode: opts?.executionMode ?? null,
+        versions: AGENT_VERSIONS,
       },
       select: { id: true },
     })
@@ -88,7 +92,7 @@ export async function findOrCreateTurnByClientMessageId(
     if (existing) return { turn: existing as TurnSnapshot, created: false }
     try {
       const row = await db().agentTurn.create({
-        data: { conversationId, status: 'running', clientMessageId, executionMode },
+        data: { conversationId, status: 'running', clientMessageId, executionMode, versions: AGENT_VERSIONS },
         select: TURN_SNAPSHOT_SELECT,
       })
       return { turn: row as TurnSnapshot, created: true }
