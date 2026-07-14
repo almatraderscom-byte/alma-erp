@@ -10,6 +10,7 @@
       header { display: flex; align-items: center; gap: 8px; padding: 14px 16px 8px; }
       header .dot { width: 10px; height: 10px; border-radius: 50%; background: #555; }
       header.on .dot { background: #2e7d32; }
+      header.warn .dot { background: #e0a52b; }
       header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
       .body { padding: 6px 16px 16px; }
       .row { margin: 10px 0; }
@@ -19,6 +20,7 @@
       button.ghost { background: transparent; color: var(--muted); border: 1px solid #3a331f; font-weight: 500; }
       .status { font-size: 13px; line-height: 1.5; }
       .status b { color: var(--gold); }
+      .status b.bad { color: #e0a52b; }
       .err { color: #e57373; font-size: 12px; margin-top: 6px; min-height: 14px; }
       .muted { color: var(--muted); font-size: 11px; line-height: 1.5; }
       .switch { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

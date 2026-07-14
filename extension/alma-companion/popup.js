@@ -26,20 +26,32 @@ function suggestDeviceName() {
 async function render() {
   const s = await send({ type: 'status' })
   const paired = s && s.paired
+  const heartbeatAge = s && s.lastSuccessfulPollAt ? Date.now() - s.lastSuccessfulPollAt : Infinity
+  const serverConnected = paired && !s.paused && heartbeatAge < 90000
   el('pairView').style.display = paired ? 'none' : 'block'
   el('liveView').style.display = paired ? 'block' : 'none'
-  el('hdr').className = paired && !s.paused ? 'on' : ''
+  el('hdr').className = serverConnected ? 'on' : paired && !s.paused ? 'warn' : ''
 
   if (paired) {
-    el('statusText').innerHTML = s.paused
-      ? 'অবস্থা: <b>থামানো আছে</b> — এজেন্ট এখন কিছু করতে পারবে না।'
-      : 'অবস্থা: <b>সক্রিয়</b> — এজেন্ট এই Chrome-এ কাজ করতে পারবে, আপনি লাইভ দেখবেন।'
+    if (s.paused) {
+      el('statusText').innerHTML = 'অবস্থা: <b>থামানো আছে</b> — এজেন্ট এখন কিছু করতে পারবে না।'
+    } else if (serverConnected) {
+      el('statusText').innerHTML = 'অবস্থা: <b>সার্ভারের সাথে যুক্ত</b> — এজেন্ট এই Chrome-এ কাজ করতে পারবে, আপনি লাইভ দেখবেন।'
+    } else {
+      const mins = Number.isFinite(heartbeatAge) ? Math.max(1, Math.floor(heartbeatAge / 60000)) : null
+      const when = mins ? `${mins} মিনিট ধরে ` : ''
+      el('statusText').innerHTML =
+        `অবস্থা: <b class="bad">সুইচ চালু, কিন্তু সার্ভার সংযোগ নেই</b> — ${when}heartbeat পৌঁছায়নি। ` +
+        'Chrome/ইন্টারনেট চালু রাখুন; নিজে থেকেই আবার চেষ্টা হচ্ছে।'
+    }
     el('toggleBtn').textContent = s.paused ? 'চালু করুন' : 'থামান'
     el('toggleBtn').style.background = s.paused ? '#c9a84c' : '#e57373'
     el('toggleBtn').style.color = s.paused ? '#1a1505' : '#1a1505'
     el('pauseHint').textContent = s.paused
       ? 'নিরাপত্তার জন্য থামিয়ে রাখলে এজেন্ট কোনো কমান্ড চালাবে না।'
-      : 'যেকোনো সময় "থামান" চেপে এক ক্লিকে বন্ধ করতে পারবেন।'
+      : serverConnected
+        ? 'যেকোনো সময় "থামান" চেপে এক ক্লিকে বন্ধ করতে পারবেন।'
+        : (s.lastError || `Server: ${s.baseUrl}`)
   }
 }
 

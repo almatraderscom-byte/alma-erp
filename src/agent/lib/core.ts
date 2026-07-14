@@ -42,6 +42,7 @@ import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
+import { shouldNudgeZeroToolIntent } from '@/agent/lib/turn-loop-policy'
 import {
   buildVerificationReminder,
   detectMissingCardViolation,
@@ -135,9 +136,6 @@ const HEAD_TOOL_BUDGET_NUDGE =
 // claims, but not future-intent "I WILL do X" with zero tool calls. This regex
 // detects that announced intent (Bangla + Banglish + English) so we can re-prompt
 // the head to actually run the tool in the SAME turn instead of stopping.
-const ANNOUNCED_TOOL_INTENT =
-  /(দিয়ে\s*দেখি|করে\s*দেখি|চেক\s*কর(ি|ছি)|দেখে\s*নিই|দেখে\s*নি|বের\s*কর(ি|ছি)|চালাই|চালাচ্ছি|টান(ি|ছি)|আনছি|আগে.*দেখি|let me (check|look|see|pull|run|fetch)|i('|’)?ll (check|look|see|pull|run|fetch|grab)|i will (check|look|see|pull|run|fetch)|going to (check|look|run|pull|fetch)|let's (check|look|run|see))/i
-
 // One-time message injected when the head announces it will use a tool but ends
 // its turn without calling any. Force it to act NOW, in this same turn.
 const ACT_NOW_NUDGE =
@@ -1223,7 +1221,10 @@ export async function* runAgentTurn(
             .map((b) => b.text)
             .join('\n')
             .trim()
-          if (finalIntentText && ANNOUNCED_TOOL_INTENT.test(finalIntentText)) {
+          if (shouldNudgeZeroToolIntent({
+            text: finalIntentText,
+            hasAskCard: emittedAskCards.length > 0,
+          })) {
             intentNudgeSent = true
             assistantTurns.pop()
             messages = [

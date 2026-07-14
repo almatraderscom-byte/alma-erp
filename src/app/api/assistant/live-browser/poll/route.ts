@@ -14,6 +14,10 @@ import {
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+const NO_STORE_HEADERS = {
+  'Cache-Control': 'private, no-store, no-cache, max-age=0, must-revalidate',
+} as const
+
 function bearer(req: NextRequest): string {
   const h = req.headers.get('authorization') ?? ''
   return h.startsWith('Bearer ') ? h.slice(7).trim() : ''
@@ -28,7 +32,7 @@ export async function GET(req: NextRequest) {
 
   // Kill-switch OFF ⇒ stay connected but never dispatch work.
   if (!(await isLiveBrowserEnabled())) {
-    return Response.json({ command: null, paused: true })
+    return Response.json({ command: null, paused: true }, { headers: NO_STORE_HEADERS })
   }
 
   const cmd = await claimNextCommand(device.id)
@@ -37,5 +41,5 @@ export async function GET(req: NextRequest) {
   // `params`, so flatten here — keeping the fix server-side means the owner
   // never has to reload the extension.
   const command = cmd ? { id: cmd.id, action: cmd.action, ...cmd.params } : null
-  return Response.json({ command })
+  return Response.json({ command }, { headers: NO_STORE_HEADERS })
 }

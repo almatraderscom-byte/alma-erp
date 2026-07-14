@@ -34,6 +34,7 @@ import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { isTurnCancelRequested } from '@/agent/lib/turn-status'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
+import { shouldNudgeAdapterIntent } from '@/agent/lib/turn-loop-policy'
 import {
   verifyClaimsAgainstLedger,
   buildVerificationReminder,
@@ -115,11 +116,7 @@ const MARKETING_HEAD_WRAPUP_NUDGE =
 // doing it — the owner had to say "continue" after every round (2026-07-12
 // Ads Manager incident). core.ts has this net only for zero-tool Claude turns;
 // here we check the TAIL of the final text so a turn that already ran tools but
-// signs off with a future promise gets pushed to actually act. Bounded 2×.
-// NOTE: no \b after Bangla letters — JS ASCII \b never matches next to them
-// (the first version silently never fired on "সিলেক্ট করব।").
-const INTENT_TAIL_RE =
-  /(করা\s*হবে|করব(ো)?(?![ঀ-ৼ])|করে\s*দিচ্ছি|করে\s*দেব|নির্বাচন\s*কর|সিলেক্ট\s*কর(ব|ছি|া\s*হবে)|ক্লিক\s*কর(ব|ছি|া\s*হবে)|পরের\s*ধাপে|খুলছি|খুলব(?![ঀ-ৼ])|খুলে\s*দিচ্ছ|যাচ্ছি|চালাচ্ছি|শুরু\s*কর(ছি|ব)(?![ঀ-ৼ])|চেষ্টা\s*কর(ছি|ব)(?![ঀ-ৼ])|নেভিগেট\s*কর|ওপেন\s*কর|দেখি(?![ঀ-ৼ])|দেখছি|দেখে\s*নিচ্ছি|দেখব(?![ঀ-ৼ])|স্ক্র(ো|)ল\s*কর|খুঁজ(ছি|ব)|opening\s|navigating\s|scrolling\s|let me\s|i('|’)?ll\s|now i (will|am)|going to\s)/i
+// signs off with a future promise gets pushed to actually act. Bounded once.
 const ADAPTER_ACT_NOW_NUDGE =
   'তুমি বললে পরের ধাপটা করবে, কিন্তু না করেই টার্ন শেষ করে দিয়েছ। ঘোষণা নয় — কাজ। ' +
   'এখনই, এই একই টার্নে, যে ধাপটার কথা বললে সেটা live_browser_act/দরকারি টুল দিয়ে আসলে করো, ' +
@@ -511,7 +508,7 @@ async function* runAlternateProviderTurn(
   // Gemini does this occasionally and ending the turn there strands the owner
   // with a blank reply (2026-07-12: WhatsApp-fix turn died after one navigate).
   let emptyRoundRetries = 0
-  // Announced-intent guard (see INTENT_TAIL_RE above).
+  // Announced-intent guard (global terminal/failure rules live in turn-loop-policy).
   let intentNudges = 0
   let memoryNudgeSent = false
   let finalText = ''
@@ -683,9 +680,13 @@ async function* runAlternateProviderTurn(
         if (
           !signal?.aborted
           && !deadlineNudgeSent
-          && intentNudges < 2
+          && intentNudges < 1
           && iterationText.trim()
-          && INTENT_TAIL_RE.test(iterationText.trim().slice(-600))
+          && shouldNudgeAdapterIntent({
+            text: iterationText,
+            toolRecords,
+            hasAskCard: emittedAskCards.length > 0,
+          })
         ) {
           intentNudges++
           messages = [

@@ -1558,24 +1558,32 @@ async function postResult(base, token, commandId, result) {
 
 async function pollOnce() {
   const { baseUrl, token, paused } = await getConfig()
-  if (!token || paused) return false
+  if (!token || paused) return 'stop'
   let cmd = null
   try {
     const res = await fetch(`${baseUrl}${POLL_PATH}`, {
       method: 'GET',
+      cache: 'no-store',
       headers: { Authorization: `Bearer ${token}` },
     })
     if (res.status === 401) {
       await chrome.storage.local.set({ token: '', lastError: 'pairing rejected (401)' })
-      return false
+      return 'stop'
     }
-    if (!res.ok) return false
+    if (!res.ok) {
+      await chrome.storage.local.set({ lastError: `server heartbeat failed (${res.status})` })
+      return 'retry'
+    }
+    await chrome.storage.local.set({ lastSuccessfulPollAt: Date.now(), lastError: '' })
     const body = await res.json().catch(() => ({}))
     cmd = body && body.command ? body.command : null
-  } catch {
-    return false
+  } catch (err) {
+    await chrome.storage.local.set({
+      lastError: `server heartbeat failed: ${err && err.message ? err.message : String(err)}`,
+    })
+    return 'retry'
   }
-  if (!cmd) return true // connected, just idle
+  if (!cmd) return 'connected' // connected, just idle
   await setBadge('run')
   let result
   try {
@@ -1588,7 +1596,7 @@ async function pollOnce() {
   }
   await postResult(baseUrl, token, cmd.id, result)
   await setBadge('on')
-  return true
+  return 'connected'
 }
 
 async function loop() {
@@ -1598,9 +1606,11 @@ async function loop() {
     // Keep cycling while paired + active. Each pollOnce returns quickly; the
     // server long-polls so this stays gentle.
     for (let i = 0; i < 1000; i++) {
-      const cont = await pollOnce()
-      if (!cont) break
-      await new Promise((r) => setTimeout(r, 800))
+      const state = await pollOnce()
+      if (state === 'stop') break
+      // A transient network/server failure must not silently kill the bridge
+      // until the next browser alarm. Retry with a gentle backoff instead.
+      await new Promise((r) => setTimeout(r, state === 'retry' ? 5000 : 800))
     }
   } finally {
     looping = false
@@ -1702,7 +1712,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   ;(async () => {
     if (msg.type === 'status') {
       const c = await getConfig()
-      sendResponse({ paired: Boolean(c.token), paused: c.paused, baseUrl: c.baseUrl, deviceName: c.deviceName })
+      const health = await chrome.storage.local.get(['lastSuccessfulPollAt', 'lastError'])
+      sendResponse({
+        paired: Boolean(c.token),
+        paused: c.paused,
+        baseUrl: c.baseUrl,
+        deviceName: c.deviceName,
+        lastSuccessfulPollAt: Number(health.lastSuccessfulPollAt || 0),
+        lastError: String(health.lastError || ''),
+      })
     } else if (msg.type === 'pair') {
       const r = await pairWithCode(msg.code, msg.baseUrl, msg.deviceName)
       sendResponse(r)
@@ -1729,7 +1747,14 @@ async function pairWithCode(code, baseUrlIn, deviceName) {
     })
     const body = await res.json().catch(() => ({}))
     if (!res.ok || !body.token) return { ok: false, error: body.error || `pairing failed (${res.status})` }
-    await chrome.storage.local.set({ token: body.token, baseUrl: base, paused: false, deviceName: deviceName || 'My Chrome' })
+    await chrome.storage.local.set({
+      token: body.token,
+      baseUrl: base,
+      paused: false,
+      deviceName: deviceName || 'My Chrome',
+      lastSuccessfulPollAt: Date.now(),
+      lastError: '',
+    })
     await setBadge('on')
     loop()
     return { ok: true }
