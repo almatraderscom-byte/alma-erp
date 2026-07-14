@@ -5,6 +5,7 @@ import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { toolResultPreview } from '@/agent/lib/tool-labels'
 import { decodeUnicodeEscapes } from '@/agent/lib/decode-unicode-escapes'
+import { buildMessagesPagePlan } from '@/agent/lib/messages-page'
 
 export async function GET(
   req: NextRequest,
@@ -31,9 +32,27 @@ export async function GET(
     return Response.json({ error: 'not_found' }, { status: 404 })
   }
 
-  const messages = await prisma.agentMessage.findMany({
-    where: { conversationId: id },
-    orderBy: { createdAt: 'asc' },
+  // Roadmap 4.1 — additive pagination/delta params; absent params = legacy full
+  // history so existing clients keep identical behavior.
+  const beforeId = req.nextUrl.searchParams.get('before')
+  let beforeCreatedAt: Date | null = null
+  if (beforeId) {
+    const anchor = await prisma.agentMessage.findUnique({
+      where: { id: beforeId },
+      select: { createdAt: true, conversationId: true },
+    })
+    if (anchor && anchor.conversationId === id) beforeCreatedAt = anchor.createdAt
+  }
+  const plan = buildMessagesPagePlan({
+    limit: req.nextUrl.searchParams.get('limit'),
+    since: req.nextUrl.searchParams.get('since'),
+    beforeCreatedAt,
+  })
+
+  let messages = await prisma.agentMessage.findMany({
+    where: { conversationId: id, ...(plan.createdAt ? { createdAt: plan.createdAt } : {}) },
+    orderBy: { createdAt: plan.fetchDescThenReverse ? 'desc' : 'asc' },
+    ...(plan.take ? { take: plan.take } : {}),
     select: {
       id: true,
       role: true,
@@ -45,6 +64,7 @@ export async function GET(
       createdAt: true,
     },
   })
+  if (plan.fetchDescThenReverse) messages = messages.reverse()
 
   // Confirm cards are persisted inside assistant message content as breadcrumbs so
   // they survive a page reload. Their interactive vs. resolved state depends on the
