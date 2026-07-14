@@ -417,7 +417,7 @@ const get_trading_trades_today: AgentTool = {
     type: 'object' as const,
     properties: {
       accountId: { type: 'string', description: 'Optional — filter by single account' },
-      date: { type: 'string', description: 'YYYY-MM-DD (default today)' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD (default today)' },
     },
   },
   handler: async (input) => {
@@ -497,7 +497,7 @@ const get_volume_targets: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      date: { type: 'string', description: 'YYYY-MM-DD (default today Dhaka)' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD (default today Dhaka)' },
     },
   },
   handler: async (input) => {
@@ -630,7 +630,7 @@ const get_trading_employee_reports: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      date: { type: 'string', description: 'YYYY-MM-DD (default today)' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD (default today)' },
     },
   },
   handler: async (input) => {
@@ -722,7 +722,7 @@ const get_trading_daily_summary: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      date: { type: 'string', description: 'YYYY-MM-DD (default today)' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD (default today)' },
     },
   },
   handler: async (input) => {
@@ -757,7 +757,7 @@ const get_trading_bkash_summary: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      date: { type: 'string', description: 'YYYY-MM-DD (default today)' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD (default today)' },
     },
   },
   handler: async (input) => {

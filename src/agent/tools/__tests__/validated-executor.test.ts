@@ -56,6 +56,25 @@ describe('validated executor (Phase 2)', () => {
     expect(res.error).not.toContain('_raw')
   })
 
+  it('date pattern (staff/trading tools, 2026-07-14): "today"/Bangla dates rejected BEFORE the handler, ISO accepted', async () => {
+    // Mirrors the real prepare_staff_task_proposal date field — including the
+    // double-backslash escape ('\\d'); a single '\d' in a TS string silently
+    // becomes 'd' and would reject every real date.
+    const schema = {
+      type: 'object',
+      properties: {
+        date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD' },
+      },
+    }
+    clearValidatorCache()
+    expect(validateToolInput('fake_date_ok', schema, { date: '2026-07-14' }).ok).toBe(true)
+    for (const bad of ['today', 'আজ', '14-07-2026', '2026-7-14']) {
+      const v = validateToolInput('fake_date_ok', schema, { date: bad })
+      expect(v.ok).toBe(false)
+      expect(v.error).toContain('call the tool again')
+    }
+  })
+
   it('a real field named _raw alongside others is NOT treated as the marker', async () => {
     const tool = fakeTool({
       name: 'fake_real_raw_field',
