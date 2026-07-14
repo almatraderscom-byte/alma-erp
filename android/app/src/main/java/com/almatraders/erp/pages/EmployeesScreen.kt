@@ -857,18 +857,6 @@ fun EmployeesScreen(ctx: PushCtx) {
             }
         }
 
-        item {
-            // Every web action is native now — keep only a small escape link.
-            Text(
-                "ওয়েব ভার্সন",
-                color = AlmaTheme.inkTertiary(dark), fontSize = 11.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .plainClick { ctx.openWebForced("/employees", "Employees") }
-                    .padding(vertical = 4.dp),
-            )
-        }
         item { Spacer(Modifier.height(8.dp)) }
     }
     }

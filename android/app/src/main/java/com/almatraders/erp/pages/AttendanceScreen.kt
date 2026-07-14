@@ -766,24 +766,6 @@ fun AttendanceScreen(ctx: PushCtx) {
             item { AttRankingCard(vm.ranking, dark) }
         }
 
-        // ── Web escape (every admin action is native now; this is just the exit) ──
-        item {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .plainClick { ctx.openWebForced("/attendance", "Attendance") }
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    Icons.Outlined.Language, contentDescription = null,
-                    tint = AlmaTheme.inkSecondary(dark), modifier = Modifier.size(14.dp),
-                )
-                Spacer(Modifier.width(5.dp))
-                Text("ওয়েব ভার্সন", color = AlmaTheme.inkSecondary(dark), fontSize = 11.sp)
-            }
-        }
         item { Spacer(Modifier.height(8.dp)) }
     }
     }

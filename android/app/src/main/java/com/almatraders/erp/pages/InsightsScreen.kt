@@ -485,24 +485,6 @@ fun InsightsScreen(ctx: PushCtx) {
             }
         }
 
-        // ── Web escape ──
-        item {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .plainClick { ctx.openWebForced("/insights", "Insights") }
-                    .padding(vertical = 6.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    Icons.Outlined.Language, contentDescription = null,
-                    tint = AlmaTheme.inkSecondary(dark), modifier = Modifier.size(14.dp),
-                )
-                Spacer(Modifier.width(5.dp))
-                Text("সব অপশন — ওয়েবে খুলুন", color = AlmaTheme.inkSecondary(dark), fontSize = 12.sp)
-            }
-        }
         item { Spacer(Modifier.height(8.dp)) }
     }
     }

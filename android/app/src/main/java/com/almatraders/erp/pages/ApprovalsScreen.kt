@@ -549,17 +549,6 @@ fun ApprovalsScreen(ctx: PushCtx) {
                 item { ModuleSummary(vm.byModule, dark) }
             }
 
-            item {
-                Text(
-                    "🌐 ওয়েব ভার্সন",
-                    color = AlmaTheme.inkSecondary(dark).copy(alpha = 0.7f), fontSize = 11.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .plainClick { ctx.openWebForced("/approvals", "Approvals") }
-                        .padding(vertical = 4.dp),
-                )
-            }
         } else {
             // ── Agent view ──
             item {

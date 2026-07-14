@@ -507,16 +507,6 @@ fun DashboardScreen(ctx: PushCtx) {
                     item { SlaDetailCard(d.slaBreaches, dark) }
                 }
             }
-            item {
-                Text(
-                    "🌐 সম্পূর্ণ ড্যাশবোর্ড — ওয়েবে খুলুন",
-                    color = AlmaTheme.inkSecondary(dark), fontSize = 13.sp, textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .plainClick { ctx.openWebForced("/", "Dashboard") }
-                        .padding(vertical = 6.dp),
-                )
-            }
             item { Spacer(Modifier.height(8.dp)) }
         }
         }

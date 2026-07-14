@@ -603,15 +603,6 @@ fun CrmScreen(ctx: PushCtx) {
                         color = AlmaTheme.ink(dark), fontSize = 12.sp, fontWeight = FontWeight.Bold,
                     )
                 }
-                Text(
-                    "🌐 ওয়েব ভার্সন",
-                    color = AlmaTheme.inkSecondary(dark), fontSize = 13.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .plainClick { ctx.openWebForced("/crm", "CRM") }
-                        .padding(vertical = 4.dp),
-                )
             }
         }
         item { Spacer(Modifier.height(8.dp)) }

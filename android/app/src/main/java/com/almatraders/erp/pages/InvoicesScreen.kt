@@ -450,14 +450,6 @@ fun InvoicesScreen(ctx: PushCtx) {
             item { InvEmptyState(dark) }
         }
 
-        item {
-            Text(
-                "🌐 ওয়েব ভার্সন",
-                color = AlmaTheme.inkSecondary(dark).copy(alpha = 0.7f), fontSize = 12.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().plainClick { ctx.openWebForced("/invoice", "Invoices") }.padding(vertical = 6.dp),
-            )
-        }
         item { Spacer(Modifier.height(8.dp)) }
     }
     }

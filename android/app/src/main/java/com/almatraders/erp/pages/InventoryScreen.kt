@@ -537,11 +537,6 @@ fun InventoryScreen(ctx: PushCtx) {
                                 .padding(vertical = 10.dp),
                         )
                     }
-                    Text(
-                        "🌐 ওয়েব ভার্সন",
-                        color = AlmaTheme.inkSecondary(dark).copy(alpha = 0.7f), fontSize = 11.sp,
-                        modifier = Modifier.plainClick { ctx.openWebForced("/inventory", "Inventory") },
-                    )
                 }
             }
             item { Spacer(Modifier.height(64.dp)) }   // keep the FAB off the last card

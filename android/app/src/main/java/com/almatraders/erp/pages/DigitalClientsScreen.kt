@@ -476,17 +476,6 @@ fun DigitalClientsScreen(ctx: PushCtx) {
                 }
             }
 
-            item {
-                Text(
-                    "🌐 সব অপশন — ওয়েবে খুলুন",
-                    color = AlmaTheme.inkSecondary(dark).copy(alpha = 0.7f), fontSize = 12.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .plainClick { ctx.openWebForced("/digital/clients", "CDIT clients") }
-                        .padding(vertical = 6.dp),
-                )
-            }
             item { Spacer(Modifier.height(8.dp)) }
         }
         }
