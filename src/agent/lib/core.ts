@@ -1449,6 +1449,7 @@ export async function* runAgentTurn(
             })
             // Phase 4 (parity with run-owner-turn): every staged card gets a
             // canonical WorkflowRun the moment it exists — idempotent, fail-open.
+            // Phase 5: actionType drives the workflow-template mapping.
             if (row && !personalMode) {
               void import('@/agent/lib/workflow-run')
                 .then(async (wf) => {
@@ -1458,6 +1459,7 @@ export async function* runAgentTurn(
                     pendingActionId: d.pendingActionId as string,
                     conversationId,
                     businessId,
+                    actionType: String(row.type ?? ''),
                     kind,
                     goal: String(row.summary ?? '').slice(0, 500) || `${row.type} card`,
                   })

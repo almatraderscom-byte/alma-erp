@@ -251,11 +251,16 @@ export interface StateRoutedSelection {
 
 /**
  * Pure pack→tools assembly with the hard cap (exported for CI gates).
- * Priority: CORE first, then packs in the order given; first HEAD_TOOL_HARD_LIMIT
- * names survive, the rest are reported as trimmed.
+ * Priority: CORE first, then Phase 5 workflow step tools (the template's EXACT
+ * legal next tools — they must survive any trim), then packs in the order
+ * given; first HEAD_TOOL_HARD_LIMIT names survive, the rest are reported as
+ * trimmed.
  */
-export function assemblePack(packs: PackKey[]): { names: string[]; trimmed: string[] } {
+export function assemblePack(packs: PackKey[], workflowTools: string[] = []): { names: string[]; trimmed: string[] } {
   const ordered: string[] = [...CORE_PACK]
+  for (const name of workflowTools) {
+    if (!ordered.includes(name)) ordered.push(name)
+  }
   for (const p of packs) {
     for (const name of DOMAIN_PACKS[p]) {
       if (!ordered.includes(name)) ordered.push(name)
@@ -268,9 +273,15 @@ export function assemblePack(packs: PackKey[]): { names: string[]; trimmed: stri
 }
 
 /** DB state signals — each read fails open (a DB blip must never block routing). */
-async function readStateSignals(conversationId: string): Promise<{ packs: PackKey[]; signals: string[] }> {
+async function readStateSignals(conversationId: string): Promise<{
+  packs: PackKey[]
+  signals: string[]
+  /** Phase 5: exact tool names the ACTIVE workflow step legalizes (template-populated). */
+  workflowTools: string[]
+}> {
   const packs: PackKey[] = []
   const signals: string[] = []
+  const workflowTools: string[] = []
   const add = (ps: PackKey[], label: string) => {
     for (const p of ps) if (!packs.includes(p)) packs.push(p)
     signals.push(label)
@@ -298,20 +309,30 @@ async function readStateSignals(conversationId: string): Promise<{ packs: PackKe
       })
       .catch(() => []),
     // Phase 4: the CANONICAL job record routes first — its kind is a pack key
-    // by construction (run-owner-turn derives it via packsForPendingActionType),
-    // and nextAllowedTools (workflow templates, Phase 5) narrow further later.
+    // by construction (run-owner-turn derives it via packsForPendingActionType).
+    // Phase 5: template runs carry nextAllowedTools — the step's EXACT legal
+    // tools — which narrow the selection beyond whole packs.
     db.workflowRun
       .findMany({
         where: { conversationId, status: { in: ['active', 'waiting_owner', 'waiting_worker'] } },
         orderBy: { updatedAt: 'desc' },
         take: 3,
-        select: { id: true, kind: true, status: true },
+        select: { id: true, kind: true, status: true, state: true, nextAllowedTools: true },
       })
       .catch(() => []),
   ])
-  for (const wf of workflows as Array<{ id: string; kind: string; status: string }>) {
-    if (wf.kind in DOMAIN_PACKS) add([wf.kind as PackKey], `workflow:${wf.kind}:${wf.status}`)
-    else signals.push(`workflow:${wf.kind}:${wf.status}`)
+  const { WORKFLOW_TEMPLATES } = await import('@/agent/lib/workflow-templates')
+  for (const wf of workflows as Array<{ id: string; kind: string; status: string; state: string; nextAllowedTools?: unknown }>) {
+    const allowed = Array.isArray(wf.nextAllowedTools) ? (wf.nextAllowedTools as string[]) : []
+    for (const t of allowed) if (!workflowTools.includes(t)) workflowTools.push(t)
+    const tpl = WORKFLOW_TEMPLATES[wf.kind]
+    if (tpl && tpl.routerPack in DOMAIN_PACKS) {
+      add([tpl.routerPack as PackKey], `workflow:${wf.kind}:${wf.state}:${wf.status}`)
+    } else if (wf.kind in DOMAIN_PACKS) {
+      add([wf.kind as PackKey], `workflow:${wf.kind}:${wf.status}`)
+    } else {
+      signals.push(`workflow:${wf.kind}:${wf.status}`)
+    }
   }
   for (const a of pending as Array<{ id: string; type: string }>) {
     add(packsForPendingActionType(a.type), `pending:${a.type}`)
@@ -320,7 +341,7 @@ async function readStateSignals(conversationId: string): Promise<{ packs: PackKe
     add(packsForCheckpointTaskType(String(cp.checkpoint?.taskType ?? '')), `checkpoint:${cp.checkpoint?.taskType ?? 'unknown'}`)
   }
   if ((plans as unknown[]).length > 0) add(['plan'], 'plan:active')
-  return { packs, signals }
+  return { packs, signals, workflowTools }
 }
 
 /**
@@ -347,9 +368,16 @@ export async function selectStateRoutedTools(opts: {
   const packs: PackKey[] = continuation && state.packs.length > 0
     ? state.packs
     : [...state.packs, ...intentPacks.filter((p) => !state.packs.includes(p))]
-  if (packs.length === 0) return null
+  if (packs.length === 0 && state.workflowTools.length === 0) return null
 
-  const { names, trimmed } = assemblePack(packs)
+  // Phase 5 narrowing: a continuation reply inside a template-driven workflow
+  // exposes ONLY the step's legal tools (+ core) — the smallest legal pack the
+  // roadmap asks for. Any new-intent text keeps the pack union so the owner can
+  // always pivot mid-job.
+  const narrowToWorkflow = continuation && state.workflowTools.length > 0
+  const { names, trimmed } = narrowToWorkflow
+    ? assemblePack([], state.workflowTools)
+    : assemblePack(packs, state.workflowTools)
   const byName = new Map(TOOLS.map((t) => [t.name, t]))
   const selected = names.map((n) => byName.get(n)).filter((t): t is NonNullable<typeof t> => Boolean(t))
   if (selected.length === 0) return null

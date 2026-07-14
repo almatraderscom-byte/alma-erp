@@ -100,6 +100,19 @@ export async function POST(req: NextRequest) {
     },
   })
 
+  // Phase 5: the worker reported — free the execution lease and sync the
+  // canonical WorkflowRun to the card's final status right away (turn-start
+  // reconcile would catch it later; doing it here keeps the run's step honest
+  // for anything reading it between now and the next turn). Fail-open.
+  void import('@/agent/lib/workflow-run')
+    .then(async (wf) => {
+      await wf.releaseWorkflowLease(pendingActionId)
+      await wf.syncWorkflowWithPendingAction(pendingActionId, 'worker')
+    })
+    .catch((err) => {
+      console.warn('[job-result] workflow sync failed open:', err instanceof Error ? err.message : err)
+    })
+
   const payload = action.payload as Record<string, unknown>
 
   // Progress turn opened at approve time ("ছবিটা বানাতে দিচ্ছি…" + spinner) — the

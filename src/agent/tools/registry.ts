@@ -689,6 +689,33 @@ export async function runRegisteredTool(
     return { success: false, error: validation.error, errorCode: 'invalid_args', retryable: false }
   }
 
+  // Phase 5 workflow guards — the incident HARD RULEs enforced in code (preview
+  // confirm before post, real product reference, no delegate mid-pipeline,
+  // repeated-navigation protection). Small named tool set; fails open on errors,
+  // blocks only on a POSITIVE invariant violation with a self-recoverable
+  // Bangla instruction. Dynamic import keeps the lib→tools layering acyclic.
+  if (ctx.conversationId) {
+    try {
+      const wg = await import('@/agent/lib/workflow-guards')
+      if (wg.WORKFLOW_GUARDED_TOOLS.has(tool.name)) {
+        const block = await wg.checkWorkflowGuards(tool.name, input ?? {}, ctx)
+        if (block) {
+          void logToolEvent({
+            ...baseEvent,
+            success: false,
+            errorClass: 'workflow_blocked',
+            errorCode: 'workflow_blocked',
+            latencyMs: Date.now() - started,
+            detail: { ...capDetail, argsValidation: 'passed', guard: block.guard },
+          })
+          return { success: false, error: block.error, errorCode: 'workflow_blocked', retryable: false }
+        }
+      }
+    } catch (err) {
+      console.warn('[registry] workflow guard failed open:', err instanceof Error ? err.message : err)
+    }
+  }
+
   try {
     const result = await tool.handler({ ...input, ...serverContext })
     if (result.success) {
@@ -698,7 +725,26 @@ export async function runRegisteredTool(
         latencyMs: Date.now() - started,
         detail: { ...capDetail, argsValidation: 'passed' },
       })
+      // Phase 5 post-hook: successful get_product / extract_invoice / live
+      // browser calls feed the workflow state machine (facts, session state,
+      // doc_extraction run). Fire-and-forget, never blocks the reply.
+      if (ctx.conversationId) {
+        void import('@/agent/lib/workflow-guards')
+          .then((wg) =>
+            wg.WORKFLOW_HOOKED_TOOLS.has(tool.name)
+              ? wg.onWorkflowToolExecuted(tool.name, input ?? {}, result.data, ctx)
+              : undefined,
+          )
+          .catch(() => {})
+      }
       return result
+    }
+    // Failed live-browser act → record it so the §H navigation guard permits a
+    // retry of the same target (fail-open bookkeeping).
+    if (ctx.conversationId && tool.name === 'live_browser_act') {
+      void import('@/agent/lib/workflow-guards')
+        .then((wg) => wg.onWorkflowToolFailed(tool.name, input ?? {}, ctx))
+        .catch(() => {})
     }
     const errorCode = result.errorCode ?? classifyErrorCode(result.error)
     const retryable = result.retryable ?? isRetryableErrorCode(errorCode)
