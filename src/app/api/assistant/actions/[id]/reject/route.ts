@@ -94,6 +94,19 @@ export async function POST(
     data: { status: 'rejected', resolvedAt: new Date() },
   })
 
+  // Phase 1 approval span: rejections join the turn trace too — a rejected card
+  // is the strongest "the agent staged the wrong thing" signal we have (fail-open).
+  void import('@/agent/lib/tool-telemetry').then((m) =>
+    m.logToolEvent({
+      toolName: '__approval__',
+      phase: 'approval',
+      success: true,
+      conversationId: (action.conversationId as string | null) ?? null,
+      businessId: (action.businessId as string) ?? 'ALMA_LIFESTYLE',
+      detail: { actionId, actionType: action.type, decision: 'rejected' },
+    }),
+  ).catch(() => {})
+
   // Record trust rejection (non-blocking)
   const trustDomain = (action.type as string).startsWith('staff_') ? 'staff' :
     ['content_gate1', 'content_gate2', 'fb_post', 'instagram_post', 'ad_creative_gate', 'ads_creative_brief', 'reply_to_comment', 'launch_campaign'].includes(action.type as string) ? 'content' :

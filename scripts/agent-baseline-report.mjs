@@ -24,9 +24,9 @@ async function main() {
   // ── Tool events ────────────────────────────────────────────────────────────
   const events = await prisma.agentToolEvent.findMany({
     where: { ts: sinceFilter },
-    select: { toolName: true, success: true, verified: true, errorClass: true, latencyMs: true },
+    select: { toolName: true, success: true, verified: true, errorClass: true, latencyMs: true, phase: true, errorCode: true, detail: true },
   })
-  const real = events.filter((e) => e.toolName !== '__refusal__')
+  const real = events.filter((e) => e.toolName !== '__refusal__' && (e.phase ?? 'tool') === 'tool')
   const fails = real.filter((e) => !e.success)
   const latencies = real.map((e) => e.latencyMs).sort((a, b) => a - b)
   const p95 = latencies[Math.floor(latencies.length * 0.95)] ?? 0
@@ -39,7 +39,30 @@ async function main() {
     byTool.set(e.toolName, t)
   }
   const byError = new Map()
-  for (const e of fails) byError.set(e.errorClass ?? 'unknown', (byError.get(e.errorClass ?? 'unknown') ?? 0) + 1)
+  for (const e of fails) byError.set(e.errorCode ?? e.errorClass ?? 'unknown', (byError.get(e.errorCode ?? e.errorClass ?? 'unknown') ?? 0) + 1)
+
+  // ── Phase 1 spans ──────────────────────────────────────────────────────────
+  const routeSpans = events.filter((e) => e.phase === 'route')
+  const toolCounts = routeSpans.map((e) => e.detail?.toolCount ?? 0).sort((a, b) => a - b)
+  const toolCountP95 = toolCounts[Math.floor(toolCounts.length * 0.95)] ?? null
+  const approvalSpans = events.filter((e) => e.phase === 'approval')
+  const approvalByDecision = new Map()
+  for (const e of approvalSpans) {
+    const d = e.detail?.decision ?? 'unknown'
+    approvalByDecision.set(d, (approvalByDecision.get(d) ?? 0) + 1)
+  }
+
+  // ── Owner feedback (Phase 1) ───────────────────────────────────────────────
+  let feedback = []
+  try {
+    feedback = await prisma.agentOwnerFeedback.groupBy({
+      by: ['kind'],
+      where: { ts: sinceFilter },
+      _count: { _all: true },
+    })
+  } catch {
+    // table may not exist yet on older DBs
+  }
 
   // ── Turns ──────────────────────────────────────────────────────────────────
   const turns = await prisma.agentTurn.groupBy({
@@ -70,7 +93,12 @@ async function main() {
   for (const t of turns) console.log(`  ${t.status}: ${t._count._all}`)
   const cost = msgs._sum.costUsd ? Number(msgs._sum.costUsd) : 0
   console.log(`\nAssistant messages: ${msgs._count._all}  total cost $${cost.toFixed(2)}  ($${(cost / DAYS).toFixed(2)}/day)`)
-  console.log('\nNot yet measurable (needs Phase 1 telemetry): wrong-tool rate, duplicate actions, restart-from-zero, exposed-tool p95.')
+
+  console.log('\n── Phase 1 spans ──')
+  console.log(`Route spans: ${routeSpans.length}  exposed-tool count p95: ${toolCountP95 ?? 'n/a'}`)
+  console.log(`Approval decisions: ${[...approvalByDecision.entries()].map(([d, n]) => `${d} ${n}`).join(' · ') || 'none'}`)
+  console.log(`Owner feedback: ${feedback.length ? feedback.map((f) => `${f.kind} ${f._count._all}`).join(' · ') : 'none yet'}`)
+  console.log('\nStill needs later phases: duplicate-action detection, restart-from-zero rate (Phase 4 WorkflowRun).')
   await prisma.$disconnect()
 }
 

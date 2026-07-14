@@ -99,6 +99,19 @@ async function runApprove(
     return Response.json({ error: 'expired' }, { status: 410 })
   }
 
+  // Phase 1 approval span: ties the owner's decision to the conversation trace,
+  // so approvals/revisions join the turn → route → tool timeline (fail-open).
+  void import('@/agent/lib/tool-telemetry').then((m) =>
+    m.logToolEvent({
+      toolName: '__approval__',
+      phase: 'approval',
+      success: true,
+      conversationId: (action.conversationId as string | null) ?? null,
+      businessId: (action.businessId as string) ?? 'ALMA_LIFESTYLE',
+      detail: { actionId, actionType: action.type, decision: 'approved' },
+    }),
+  ).catch(() => {})
+
   // Record trust approval (non-blocking)
   const trustDomain = action.type.startsWith('staff_') ? 'staff' :
     action.type.startsWith('content_') || action.type === 'fb_post' || action.type === 'instagram_post' || action.type === 'ad_creative_gate' || action.type === 'ads_creative_brief' ? 'content' :

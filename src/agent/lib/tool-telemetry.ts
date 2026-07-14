@@ -16,6 +16,15 @@ export interface ToolEventInput {
   latencyMs?: number
   conversationId?: string | null
   businessId?: string
+  // ── Phase 1 span fields (roadmap: turn → route → tool-call → approval → proof)
+  /** AgentTurn.id — joins every span of one turn into a single trace. */
+  turnId?: string | null
+  /** Span kind. Default 'tool' keeps every legacy call site unchanged. */
+  phase?: 'route' | 'tool' | 'approval' | 'proof'
+  /** Stable machine error code (errorClass stays the coarse bucket). */
+  errorCode?: string | null
+  /** Structured span payload — see schema.prisma AgentToolEvent.detail. */
+  detail?: Record<string, unknown> | null
 }
 
 export async function logToolEvent(input: ToolEventInput): Promise<void> {
@@ -30,11 +39,49 @@ export async function logToolEvent(input: ToolEventInput): Promise<void> {
         latencyMs: input.latencyMs ?? 0,
         conversationId: input.conversationId ?? null,
         businessId: input.businessId ?? 'ALMA_LIFESTYLE',
+        turnId: input.turnId ?? null,
+        phase: input.phase ?? 'tool',
+        errorCode: input.errorCode ?? null,
+        detail: input.detail ?? undefined,
       },
     })
   } catch {
     // Fire-and-forget — never crash the turn
   }
+}
+
+/**
+ * Route span (Phase 1): one row per owner turn recording WHAT the head was given —
+ * selected tool groups, tool count, model, head tier and the behavior-artifact
+ * versions. This is the missing half of every wrong-tool investigation: the tool
+ * event says what the model called; this span says what it had to choose from.
+ */
+export async function logRouteSpan(opts: {
+  conversationId?: string | null
+  turnId?: string | null
+  businessId?: string
+  groups: readonly string[]
+  toolCount: number
+  modelId: string
+  headTier?: string
+  versions?: Record<string, string>
+}): Promise<void> {
+  void logToolEvent({
+    surface: 'owner',
+    toolName: '__route__',
+    success: true,
+    phase: 'route',
+    conversationId: opts.conversationId,
+    turnId: opts.turnId,
+    businessId: opts.businessId,
+    detail: {
+      groups: [...opts.groups],
+      toolCount: opts.toolCount,
+      modelId: opts.modelId,
+      headTier: opts.headTier ?? null,
+      versions: opts.versions ?? null,
+    },
+  })
 }
 
 /**
@@ -83,7 +130,12 @@ export async function aggregateToolEvents(
 
   const total = events.length
   const refusals = events.filter((e: { toolName: string }) => e.toolName === '__refusal__')
-  const real = events.filter((e: { toolName: string }) => e.toolName !== '__refusal__')
+  // Real tool executions only — route/approval/proof spans (Phase 1) and refusal
+  // markers must not skew per-tool fail/latency stats.
+  const real = events.filter(
+    (e: { toolName: string; phase?: string }) =>
+      e.toolName !== '__refusal__' && (e.phase ?? 'tool') === 'tool',
+  )
   const fails = real.filter((e: { success: boolean }) => !e.success)
   const verified = real.filter((e: { verified: boolean }) => e.verified)
   const latencies = real.map((e: { latencyMs: number }) => e.latencyMs).sort((a: number, b: number) => a - b)
