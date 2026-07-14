@@ -4,6 +4,16 @@
 import * as Sentry from '@sentry/node'
 
 let initialized = false
+let floodCount = 0
+
+/** True for high-frequency, low-signal reasons that must be rate-limited. */
+function isFloodingReason(reason) {
+  const m = String(reason?.message ?? reason ?? '')
+  return m.includes('max requests limit') ||
+    m.includes('max daily request') ||
+    m.includes('Connection is closed') ||
+    m.includes('ECONNREFUSED')
+}
 
 export function initWorkerSentry() {
   const dsn = process.env.SENTRY_DSN
@@ -21,6 +31,16 @@ export function initWorkerSentry() {
   initialized = true
 
   process.on('unhandledRejection', (reason) => {
+    // Storm guard (2026-07-14): a metered Redis over its quota can reject
+    // thousands of commands/sec. Left unthrottled that floods the disk log and
+    // burns the Sentry quota. Rate-limit floods of the same repeated reason so
+    // one sick dependency can't take out observability too.
+    if (isFloodingReason(reason)) {
+      floodCount++
+      if (floodCount % 1000 !== 1) return
+      captureWorkerError(reason, 'worker.unhandled_rejection', { floodCount })
+      return
+    }
     captureWorkerError(reason, 'worker.unhandled_rejection')
   })
 }
