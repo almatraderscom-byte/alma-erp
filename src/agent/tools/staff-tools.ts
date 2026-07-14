@@ -1521,7 +1521,10 @@ const set_staff_task_due: AgentTool = {
 
 // ── get_marketing_history ─────────────────────────────────────────────────────
 
-const get_marketing_history: AgentTool = {
+// Exported individually: the marketing head carries the `growth` group (not
+// `staff`), and this read feeds its "which products haven't been promoted"
+// planning — tool-groups.ts appends it to `growth` alongside its staff slot.
+export const get_marketing_history: AgentTool = {
   name: 'get_marketing_history',
   description:
     'Returns the last promotion date for each product. ' +
