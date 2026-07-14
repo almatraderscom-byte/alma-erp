@@ -381,7 +381,7 @@ final class ApprovalsVM {
     /// APPROVE/REJECT one item — same PATCH body the web tracker sends
     /// ({action, note, operation_id, transactionId?}); row animates out on success.
     func act(_ approval: AlmaApproval, action: String, note: String = "",
-             transactionId: String? = nil) async {
+             transactionId: String? = nil, payoutMode: String? = nil) async {
         guard !busyIds.contains(approval.id) else { return }
         busyIds.insert(approval.id)
         notice = nil
@@ -393,6 +393,8 @@ final class ApprovalsVM {
                 "operation_id": "ios-\(UUID().uuidString.lowercased())",
             ]
             if let transactionId, !transactionId.isEmpty { body["transactionId"] = transactionId }
+            // EXPENSE_REIMBURSEMENT only: 'wallet' (credit staff wallet) | 'instant' (owner paid cash/bKash).
+            if let payoutMode, !payoutMode.isEmpty { body["payoutMode"] = payoutMode }
             let resp: ApprovalActionResponse = try await AlmaAPI.shared.send(
                 "PATCH", "/api/approvals/\(approval.id)", body: body)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -539,6 +541,7 @@ struct ApprovalsScreen: View {
     @State private var selected: AlmaApproval? = nil
     @State private var rejecting: AlmaApproval? = nil
     @State private var withdrawing: AlmaApproval? = nil  // WALLET_WITHDRAWAL → txn id first
+    @State private var reimbursing: AlmaApproval? = nil  // EXPENSE_REIMBURSEMENT → payout choice
     @State private var revising: AlmaAgentAction? = nil  // agent card → "আমার মত" opinion
     let openWeb: (_ path: String, _ title: String) -> Void
 
@@ -591,6 +594,12 @@ struct ApprovalsScreen: View {
             }
             .presentationDetents([.height(320)])
         }
+        .sheet(item: $reimbursing) { ap in
+            ReimbursePayoutSheet(approval: ap) { mode in
+                Task { await vm.act(ap, action: "APPROVE", payoutMode: mode) }
+            }
+            .presentationDetents([.height(340)])
+        }
         .sheet(item: $revising) { ac in
             ReviseNoteSheet(action: ac) { feedback in
                 Task { await vm.agentRevise(ac, feedback: feedback) }
@@ -605,6 +614,8 @@ struct ApprovalsScreen: View {
         if dismissFirst { selected = nil }
         if ap.type == "WALLET_WITHDRAWAL" {
             withdrawing = ap
+        } else if ap.type == "EXPENSE_REIMBURSEMENT" {
+            reimbursing = ap
         } else {
             Task { await vm.act(ap, action: "APPROVE") }
         }
@@ -1642,6 +1653,55 @@ private struct WithdrawTxnSheet: View {
         .padding(18)
         .presentationBackground { ApprovalsAurora() }
         .onAppear { focused = true }
+    }
+}
+
+// MARK: - Reimbursement payout sheet (👛 wallet / ⚡️ instant — web/Android parity)
+
+@available(iOS 17.0, *)
+private struct ReimbursePayoutSheet: View {
+    let approval: AlmaApproval
+    let onConfirm: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("অনুমোদন — টাকাটা কীভাবে দেবেন?").font(.headline)
+            Text("\(approval.requester?.name ?? approval.requestedBy ?? "—") · \(approval.reason ?? "")")
+                .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+
+            payoutChoice(emoji: "👛", title: "ওয়ালেটে যোগ করুন",
+                         hint: "স্টাফের ERP ওয়ালেটে জমা হবে, বেতনের সাথে পাবে") {
+                dismiss(); onConfirm("wallet")
+            }
+            payoutChoice(emoji: "⚡️", title: "এখনই পেমেন্ট (ক্যাশ / বিকাশ)",
+                         hint: "সাথে সাথে দিয়ে দিয়েছেন — ওয়ালেটে যোগ হবে না, খরচ রেকর্ড হবে") {
+                dismiss(); onConfirm("instant")
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(18)
+        .presentationBackground { ApprovalsAurora() }
+    }
+
+    private func payoutChoice(emoji: String, title: String, hint: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Text(emoji).font(.title3)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.subheadline.weight(.bold)).foregroundStyle(.primary)
+                    Text(hint).font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .approvalsGlass(colorScheme, corner: AlmaSwiftTheme.rControl)
+            .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+                .strokeBorder(ApprovalPalette.coral.opacity(0.35), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
     }
 }
 
