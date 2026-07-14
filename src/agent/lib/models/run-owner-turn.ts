@@ -500,7 +500,8 @@ async function* runAlternateProviderTurn(
   // Owner-intent mutation gate note (origin/main "gate mutations by owner
   // intent"): tells the head which mutation authorization this turn carries.
   // Rides right after the listen override, before the job state.
-  const authorizationNote = ownerTurnAuthorizationNote(turnAuthorization)
+  const authorizationNote =
+    process.env.AGENT_OWNER_INTENT_GATE !== 'false' ? ownerTurnAuthorizationNote(turnAuthorization) : ''
   if (authorizationNote) volatileSections.push(authorizationNote)
   // Phase 4 — the canonical WorkflowRun snapshot precedes everything else in the
   // per-turn context: the head reads the EXACT in-flight job state (status, step,
@@ -570,8 +571,11 @@ async function* runAlternateProviderTurn(
   const agentControls = await getAgentControls()
   const controlsNote = controlsPromptNote(agentControls)
   const systemText = systemBlocksToText(stable) + (controlsNote ? `\n\n${controlsNote}` : '')
+  // Phase 7 kill switch: AGENT_OWNER_INTENT_GATE=false disables the owner-intent
+  // mutation filter (and its note) without a deploy.
+  const intentGateOn = process.env.AGENT_OWNER_INTENT_GATE !== 'false'
   const selectedTools = filterToolDefsByControls(
-    filterToolsForOwnerTurn(toolSelection.tools, turnAuthorization),
+    intentGateOn ? filterToolsForOwnerTurn(toolSelection.tools, turnAuthorization) : [...toolSelection.tools],
     agentControls,
   )
   // xAI hard-caps tool definitions at 200 per request — the owner head carries 201,
@@ -638,6 +642,9 @@ async function* runAlternateProviderTurn(
       parallelToolCalls: packParallelToolCalls,
       boundTool: boundToolName,
       turnAuthorization: turnAuthorization.reason,
+      // Phase 7 shadow: the router's prediction on legacy-executed turns —
+      // prod traffic scores recall/precision before any canary turns on.
+      shadow: toolSelection.shadow ?? null,
     },
   })
   const adapter = adapterFor(model.provider)

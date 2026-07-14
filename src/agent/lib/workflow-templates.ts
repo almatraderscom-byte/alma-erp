@@ -525,11 +525,23 @@ const CARD_TYPE_TEMPLATES: Record<string, string[]> = {
   browser_action: ['browser_setup'],
 }
 
+/**
+ * Phase 7 per-component kill switch: AGENT_WORKFLOW_TEMPLATES=false reverts
+ * the card lifecycle to the exact Phase 4 behavior (generic runs, executed →
+ * done, rejected → cancelled) without a deploy. The resolvers below all key
+ * off this, so one flag silences the whole template layer.
+ */
+export function workflowTemplatesEnabled(): boolean {
+  return process.env.AGENT_WORKFLOW_TEMPLATES !== 'false'
+}
+
 export function templateKindsForCardType(type: string): string[] {
+  if (!workflowTemplatesEnabled()) return []
   return CARD_TYPE_TEMPLATES[type] ?? []
 }
 
 export function getWorkflowTemplate(kind: string): WorkflowTemplate | undefined {
+  if (!workflowTemplatesEnabled()) return undefined
   return WORKFLOW_TEMPLATES[kind]
 }
 

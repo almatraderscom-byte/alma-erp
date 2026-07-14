@@ -22,7 +22,7 @@
 export const AGENT_VERSIONS = {
   prompt: 'p2026.07.14.3',
   toolManifest: 't2026.07.14',
-  router: 'r2026.07.14.3',
+  router: 'r2026.07.14.4',
   workflow: 'w2026.07.14',
 } as const
 

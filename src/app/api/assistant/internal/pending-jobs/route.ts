@@ -55,6 +55,11 @@ export async function GET(req: NextRequest) {
     long_agent_task: 15 * 60_000, browser_action: 15 * 60_000, workbench_run: 15 * 60_000,
     seo_audit: 15 * 60_000,
   }
+  // Phase 7 kill switch: AGENT_WORKFLOW_LEASES=false hands every job out
+  // unleased (pre-Phase-5 behavior) without a deploy.
+  if (process.env.AGENT_WORKFLOW_LEASES === 'false') {
+    return Response.json({ jobs })
+  }
   try {
     const { acquireWorkflowLease } = await import('@/agent/lib/workflow-run')
     const handout: unknown[] = []

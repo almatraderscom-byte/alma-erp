@@ -680,16 +680,20 @@ function compileOrdered(
   groups?: ToolGroupName[],
   toolNames?: string[],
 ): string {
-  const all = !groups
+  // Phase 7 kill switch: AGENT_PROMPT_GATING=false ships every module every
+  // turn (the pre-Phase-6 full prompt) without a deploy.
+  const gatingOff = process.env.AGENT_PROMPT_GATING === 'false'
+  const all = gatingOff || !groups
   return order
     .filter((e) => {
+      if (all) return true
       if (e.tools) {
         // Tool-presence gate: this module teaches specific tools — include it
         // only when at least one is actually exposed this turn. Unknown tool
         // list (legacy callers) keeps the module (safe full prompt).
         if (toolNames && !e.tools.some((t) => toolNames.includes(t))) return false
       }
-      return all || !e.groups || e.groups.some((g) => groups!.includes(g))
+      return !e.groups || e.groups.some((g) => groups!.includes(g))
     })
     .map((e) => moduleText(e.id))
     .join('')
