@@ -127,9 +127,10 @@ async function requireActiveDevice(
     return {
       ok: false,
       error:
-        `ALMA server এখন কোনো Chrome-এর live heartbeat পাচ্ছে না, Boss। ${heartbeatNote}` +
-        'Companion popup-এ local switch ON থাকলেও server connection আলাদা; popup-এ “সার্ভারের সাথে যুক্ত” ' +
-        'দেখালে তবেই browser command পৌঁছাবে। Extension বন্ধ—এটা আমি নিশ্চিতভাবে বলছি না।',
+        `STATUS_FACT=server_heartbeat_missing. ALMA server এখন কোনো Chrome-এর live heartbeat পাচ্ছে না। ${heartbeatNote}` +
+        'Companion popup-এর local switch ON/OFF অবস্থা server জানে না। FORBIDDEN CLAIM: Chrome, browser, extension ' +
+        'বা device “offline/বন্ধ” বলা যাবে না। Boss-কে হুবহু সত্যটা বলুন: “Server Companion heartbeat পাচ্ছে না; ' +
+        'আপনার extension ON/OFF অবস্থা আমি এখান থেকে জানি না।”',
     }
   }
 
