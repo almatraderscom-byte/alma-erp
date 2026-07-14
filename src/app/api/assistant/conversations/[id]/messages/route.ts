@@ -236,6 +236,13 @@ export async function GET(
       toolCalls: toolsByMsg.get(m.id) ?? [],
       cacheCreation: num(u.cache_creation_input_tokens),
       cacheRead: num(u.cache_read_input_tokens),
+      // One reply = several provider API calls (one per tool round) = several rows
+      // on the OpenRouter Logs page. Surface the round count + per-round billed
+      // costs so the cost badge can show "· N ধাপ" with a breakdown.
+      apiRounds: num(u.api_rounds) ?? undefined,
+      roundCostsUsd: Array.isArray(u.round_costs_usd)
+        ? (u.round_costs_usd as unknown[]).filter((n): n is number => typeof n === 'number')
+        : undefined,
       // Surface the extended-thinking trace (persisted in usage metadata) so the
       // "Thought for Ns" block survives reload, not just the live stream.
       thinking: typeof u.reasoning === 'string' && u.reasoning ? u.reasoning : undefined,

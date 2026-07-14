@@ -104,6 +104,10 @@ export interface ChatMessage {
   cacheCreation?: number
   cacheRead?: number
   costUsd?: number
+  /** Provider API calls in this reply — one per tool round (= rows on the OpenRouter Logs page). */
+  apiRounds?: number
+  /** Per-round billed cost (USD) when the provider reported actuals. */
+  roundCostsUsd?: number[]
   streaming?: boolean
   /** True when the honesty guard caught a false completion claim and the agent rewrote its answer. */
   selfCorrected?: boolean
@@ -1496,7 +1500,19 @@ export default function AgentThread({ messages, onArtifactSave, conversationId, 
                             {cw > 0 && ` ⚡${fmtTok(cw)}`}
                             {cr > 0 && ` ♻${fmtTok(cr)}`}
                             {` ↓${fmtTok(tout)}`}{' '}
-                            {msg.costUsd != null && <span className="text-[#E07A5F]/60">${msg.costUsd.toFixed(4)}</span>}
+                            {msg.costUsd != null && (
+                              <span
+                                className="text-[#E07A5F]/60"
+                                title={
+                                  msg.roundCostsUsd && msg.roundCostsUsd.length > 1
+                                    ? `OpenRouter-এ ${msg.roundCostsUsd.length}টা আলাদা সারি — ধাপে ধাপে: ${msg.roundCostsUsd.map((c) => `$${c.toFixed(4)}`).join(' + ')} = $${msg.costUsd.toFixed(4)}`
+                                    : undefined
+                                }
+                              >
+                                ${msg.costUsd.toFixed(4)}
+                                {(msg.apiRounds ?? 0) > 1 && ` · ${msg.apiRounds} ধাপ`}
+                              </span>
+                            )}
                           </span>
                         )
                       })()}

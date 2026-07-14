@@ -84,6 +84,10 @@ type MessageRow = {
   cacheCreation: number | null
   cacheRead: number | null
   costUsd: string | null
+  /** Provider API calls in this reply (= rows on the OpenRouter Logs page). */
+  apiRounds?: number
+  /** Per-round billed cost (USD) when the provider reported actuals. */
+  roundCostsUsd?: number[]
   /** Persisted reasoning trace — restores the "Thought for Ns" block after reload. */
   thinking?: string
   /** Reasoning wall-clock (ms) — restores the "Thought for Ns" duration after reload. */
@@ -140,6 +144,8 @@ function mapMessageRows(rows: MessageRow[]): ChatMessage[] {
       cacheCreation: r.cacheCreation ?? undefined,
       cacheRead: r.cacheRead ?? undefined,
       costUsd: r.costUsd != null ? parseFloat(r.costUsd) : undefined,
+      apiRounds: r.apiRounds ?? undefined,
+      roundCostsUsd: r.roundCostsUsd ?? undefined,
       pendingActions: confirmBlocks.length
         ? confirmBlocks.map((cb) => ({
             id: cb.pendingActionId as string,
@@ -1104,6 +1110,8 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
                   cacheCreation: evt.cacheCreation as number,
                   cacheRead: evt.cacheRead as number,
                   costUsd: evt.costUsd as number,
+                  apiRounds: (evt.apiRounds as number | undefined) ?? undefined,
+                  roundCostsUsd: (evt.roundCostsUsd as number[] | undefined) ?? undefined,
                 }
               : m
           ))
