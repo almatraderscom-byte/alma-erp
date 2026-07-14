@@ -248,6 +248,32 @@ struct PersonalLedgerScreen: View {
     }
 }
 
+// MARK: - Liquid-glass card (translucent so the aurora bleeds through — page-owned
+// copy of financeGlass; the shared AlmaGlassCard/lgCard is opaque and read as a flat
+// dark slab over the aurora, owner report 2026-07-14).
+
+private struct PLGlassCard: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+    var radius: CGFloat = AlmaSwiftTheme.rCard
+    var padding: CGFloat? = AlmaSwiftTheme.margin
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        return content
+            .padding(.all, padding ?? 0)
+            .background(.ultraThinMaterial, in: shape)
+            .background(Color.white.opacity(scheme == .dark ? 0.04 : 0.35), in: shape)
+            .overlay(shape.strokeBorder(Color.white.opacity(scheme == .dark ? 0.10 : 0.45), lineWidth: 1))
+            .shadow(color: .black.opacity(scheme == .dark ? 0.35 : 0.08), radius: 12, y: 5)
+    }
+}
+
+private extension View {
+    func plCard(radius: CGFloat = AlmaSwiftTheme.rCard, padding: CGFloat? = AlmaSwiftTheme.margin) -> some View {
+        modifier(PLGlassCard(radius: radius, padding: padding))
+    }
+}
+
 // MARK: - Aurora background (page-owned copy — parallel-session rule: page files
 // never import another page's helpers, so the shared look is duplicated verbatim
 // from the Finance/Approvals spec).
@@ -326,7 +352,7 @@ private struct PLForbiddenCard: View {
                 .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .lgCard()
+        .plCard()
         .padding(AlmaSwiftTheme.margin)
     }
 }
@@ -384,7 +410,7 @@ private struct PLListView: View {
                         }
                     }
                 }
-                .lgCard()
+                .plCard()
 
                 Button { showNewParty = true } label: {
                     Text("＋ নতুন ব্যক্তি / প্রতিষ্ঠান")
@@ -468,7 +494,7 @@ private struct PLDetailView: View {
                          : detail.net < 0 ? "আমি তাকে দেব (আমার দেনা)" : "হিসাব নিষ্পত্তি ✓")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity).padding(.vertical, 18).lgCard()
+                .frame(maxWidth: .infinity).padding(.vertical, 18).plCard()
 
                 model.notice.map { PLNotice(text: "✓ \($0)", tint: PLPalette.green(scheme)) }
 
@@ -482,7 +508,7 @@ private struct PLDetailView: View {
                             if i < rows.count - 1 { Divider().background(AlmaSwiftTheme.separator(scheme)) }
                         }
                     }
-                }.lgCard()
+                }.plCard()
 
                 Button { showAddTxn = true } label: {
                     Text("＋ নতুন লেনদেন")
@@ -604,7 +630,7 @@ private struct PLNotice: View {
     var body: some View {
         Text(text).font(.footnote).foregroundStyle(tint)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .lgCard(radius: AlmaSwiftTheme.rControl)
+            .plCard(radius: AlmaSwiftTheme.rControl)
     }
 }
 
@@ -634,6 +660,16 @@ private struct PLTxnForm: View {
     private var parsedAmount: Int { Int(amount.filter { $0.isNumber }) ?? 0 }
 
     var body: some View {
+        // presentationBackground is iOS 16.4+; deployment target is 16.0, so gate it
+        // (the aurora sheet look only needs to hold on the 17-gated native screens).
+        if #available(iOS 16.4, *) {
+            formStack.presentationBackground { PersonalLedgerAurora() }
+        } else {
+            formStack
+        }
+    }
+
+    private var formStack: some View {
         NavigationStack {
             Form {
                 localError.map { Text("⚠️ \($0)").font(.footnote).foregroundStyle(PLPalette.red(scheme)) }
@@ -685,6 +721,7 @@ private struct PLTxnForm: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)   // let the aurora show through the Form
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("বাতিল") { dismiss() } } }
