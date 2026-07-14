@@ -35,6 +35,23 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- Stage 1: WhatsApp-style full-screen incoming call. Shows over the lock
+             screen, launched by CallNotifications' full-screen intent. -->
+        <activity
+            android:name=".IncomingCallActivity"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:theme="@style/AppTheme.NoActionBarLaunch" />
+
+        <!-- OneSignal owns the FCM service; this extension turns an office-call push
+             into the full-screen call instead of a default notification. -->
+        <meta-data
+            android:name="com.onesignal.NotificationServiceExtension"
+            android:value="com.almatraders.erp.CallNotificationExtension" />
     </application>
 
     <!-- Permissions -->
@@ -45,6 +62,9 @@
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Stage 1 calls: full-screen incoming-call notification + wake the screen. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
