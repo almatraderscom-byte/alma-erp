@@ -144,6 +144,26 @@ extension CallKitVoIP: PKPushRegistryDelegate {
         let broadcastId = (d["broadcastId"] as? String) ?? ""
         let channel = (d["channel"] as? String) ?? (broadcastId.isEmpty ? "" : "itc_\(broadcastId)")
         let caller = (d["caller"] as? String) ?? "বস — মারুফ"
+        let event = (d["event"] as? String) ?? "ring"
+
+        // Cancel push: the caller hung up / the call was answered elsewhere before we
+        // picked up. End the real ring so this phone stops instantly (WhatsApp-style).
+        // iOS still requires a report on EVERY VoIP push, so satisfy that with a
+        // transient placeholder call reported-and-immediately-ended (no lasting ring).
+        if event == "cancel" {
+            if !broadcastId.isEmpty { endCallKitCall(broadcastId: broadcastId) }
+            let uuid = UUID()
+            let update = CXCallUpdate()
+            update.remoteHandle = CXHandle(type: .generic, value: caller)
+            update.localizedCallerName = caller
+            update.hasVideo = false
+            provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] _ in
+                self?.provider.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
+                completion()
+            }
+            return
+        }
+
         guard !broadcastId.isEmpty, !channel.isEmpty else {
             // Still MUST report SOMETHING or iOS penalises the app — report + immediately end.
             reportIncoming(broadcastId: "unknown", channel: "", caller: caller) { [weak self] in

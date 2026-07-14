@@ -13,7 +13,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { resolveSessionStaff } from '@/agent/lib/office-staff'
 import { agentStorageUpload, agentStorageSignedUrl } from '@/agent/lib/storage'
-import { createIntercomBroadcast, getIntercomFeed } from '@/agent/lib/office-intercom'
+import { createIntercomBroadcast, getIntercomFeed, resolveOwnerUserId } from '@/agent/lib/office-intercom'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -37,7 +37,7 @@ function extForAudio(mime: string): string {
 
 type Identity =
   | { ok: true; role: 'owner'; userId: string; businessId: string }
-  | { ok: true; role: 'staff'; staffId: string; businessId: string }
+  | { ok: true; role: 'staff'; staffId: string; userId: string; staffName: string; businessId: string }
   | { ok: false; error: string; code: number }
 
 async function identify(req: NextRequest): Promise<Identity> {
@@ -49,7 +49,7 @@ async function identify(req: NextRequest): Promise<Identity> {
   }
   const staff = await resolveSessionStaff(token.sub)
   if (!staff) return { ok: false, error: 'forbidden', code: 403 }
-  return { ok: true, role: 'staff', staffId: staff.id, businessId: staff.businessId }
+  return { ok: true, role: 'staff', staffId: staff.id, userId: token.sub, staffName: staff.name, businessId: staff.businessId }
 }
 
 export async function GET(req: NextRequest) {
@@ -61,7 +61,9 @@ export async function GET(req: NextRequest) {
 
   const feed = await getIntercomFeed(
     id.businessId,
-    id.role === 'owner' ? { role: 'owner' } : { role: 'staff', staffId: id.staffId },
+    id.role === 'owner'
+      ? { role: 'owner', userId: id.userId }
+      : { role: 'staff', staffId: id.staffId, userId: id.userId },
   )
   return Response.json(feed)
 }
@@ -72,7 +74,6 @@ export async function POST(req: NextRequest) {
 
   const id = await identify(req)
   if (!id.ok) return Response.json({ error: id.error }, { status: id.code })
-  if (id.role !== 'owner') return Response.json({ error: 'owner_only' }, { status: 403 })
 
   const contentType = req.headers.get('content-type') ?? ''
 
@@ -87,20 +88,52 @@ export async function POST(req: NextRequest) {
     if (body.kind !== 'urgent' && body.kind !== 'call') {
       return Response.json({ error: 'unsupported_kind' }, { status: 400 })
     }
-    // A live call rings ONE person — the Agora channel is itc_<broadcastId>.
-    const targetStaffId = body.targetStaffId?.trim() || null
-    if (body.kind === 'call' && !targetStaffId) {
-      return Response.json({ error: 'call_needs_target' }, { status: 400 })
+
+    // A live call rings ONE person on the Agora channel itc_<broadcastId>. Calling
+    // is bidirectional: the owner rings a chosen staff; a staff rings the owner.
+    // (Urgent alerts stay owner-only.)
+    if (body.kind === 'call') {
+      if (id.role === 'owner') {
+        const targetStaffId = body.targetStaffId?.trim() || null
+        if (!targetStaffId) return Response.json({ error: 'call_needs_target' }, { status: 400 })
+        const res = await createIntercomBroadcast({
+          businessId: id.businessId,
+          senderUserId: id.userId,
+          kind: 'call',
+          targetStaffId,
+        })
+        if ('error' in res) return Response.json({ error: res.error }, { status: 422 })
+        return Response.json({ ok: true, ...res }, { status: 201 })
+      }
+      // staff → owner
+      const ownerUserId = await resolveOwnerUserId()
+      if (!ownerUserId) return Response.json({ error: 'owner_unavailable' }, { status: 422 })
+      const res = await createIntercomBroadcast({
+        businessId: id.businessId,
+        senderUserId: id.userId,
+        kind: 'call',
+        targetUserId: ownerUserId,
+        callerName: id.staffName,
+      })
+      if ('error' in res) return Response.json({ error: res.error }, { status: 422 })
+      return Response.json({ ok: true, ...res }, { status: 201 })
     }
+
+    // urgent — owner-only
+    if (id.role !== 'owner') return Response.json({ error: 'owner_only' }, { status: 403 })
+    const targetStaffId = body.targetStaffId?.trim() || null
     const res = await createIntercomBroadcast({
       businessId: id.businessId,
       senderUserId: id.userId,
-      kind: body.kind,
+      kind: 'urgent',
       targetStaffId,
     })
     if ('error' in res) return Response.json({ error: res.error }, { status: 422 })
     return Response.json({ ok: true, ...res }, { status: 201 })
   }
+
+  // ── voice broadcast (multipart) is owner-only ──
+  if (id.role !== 'owner') return Response.json({ error: 'owner_only' }, { status: 403 })
 
   // ── voice broadcast (multipart) ──
   let formData: FormData
