@@ -395,7 +395,12 @@ struct AgentSSEEvent: Decodable {
     let needContinue: Bool?     // done — serverless deadline hit mid-task
     let apiRounds: Int?         // done
     let roundCostsUsd: [Double]?// done
-    let conversationId: String? // conversation_compacted
+    let conversationId: String? // conversation_compacted + turn_snapshot
+    let status: String?         // turn_snapshot
+    let lastSeq: Int?           // turn_snapshot
+    let assistantMessageId: String? // turn_snapshot
+    let afterSeq: Int?          // replay_continue
+    let turnId: String?         // turn_snapshot
 }
 
 /// Roadmap 2.1 — the typed native event contract. Mirrors `src/agent/lib/core.ts`
@@ -421,6 +426,10 @@ enum AgentTurnEvent: Sendable {
     case done(messageId: String?, tokensIn: Int?, tokensOut: Int?, costUsd: Double?,
               needContinue: Bool, apiRounds: Int?)
     case turnError(message: String)
+    /// Durable-stream hello (roadmap 3.5/PR 5): current turn state on (re)connect.
+    case turnSnapshot(turnId: String?, conversationId: String?, status: String?, lastSeq: Int?)
+    /// Page-capped replay ended early — reconnect from this cursor.
+    case replayContinue(afterSeq: Int)
     case unknown(type: String)
 
     /// True for events that must flush buffered deltas FIRST (exact chronology).
@@ -481,6 +490,11 @@ enum AgentTurnEvent: Sendable {
                          costUsd: ev.costUsd, needContinue: ev.needContinue == true, apiRounds: ev.apiRounds)
         case "error":
             self = .turnError(message: ev.message ?? ev.error ?? "সমস্যা হয়েছে — আবার চেষ্টা করুন")
+        case "turn_snapshot":
+            self = .turnSnapshot(turnId: ev.turnId, conversationId: ev.conversationId,
+                                 status: ev.status, lastSeq: ev.lastSeq)
+        case "replay_continue":
+            self = .replayContinue(afterSeq: ev.afterSeq ?? -1)
         default:
             self = .unknown(type: ev.type)
         }
@@ -493,6 +507,9 @@ enum AgentTurnEvent: Sendable {
 /// Pure + synchronous so it is testable without a network.
 struct AlmaSSEParser {
     private var dataLines: [String] = []
+    /// Last `id:` field seen — the durable stream stamps each frame with its seq,
+    /// so this is the client's replay cursor (`?afterSeq=`) after a drop (PR 5).
+    private(set) var lastEventId: String?
 
     /// Feed one line (no trailing \n). Returns a complete event payload when a
     /// blank line closes the pending event.
@@ -513,7 +530,7 @@ struct AlmaSSEParser {
         var value = String(line[line.index(after: colon)...])
         if value.hasPrefix(" ") { value.removeFirst() }        // exactly one optional space
         if field == "data" { dataLines.append(value) }
-        // id:/retry:/event: accepted and currently unused (Phase 3 wires id → afterSeq)
+        if field == "id" { lastEventId = value }
         return nil
     }
 
@@ -1046,17 +1063,37 @@ enum AssistantNet {
         func raise() { raised = true }
     }
 
+    /// The server answered a (retried) send with a JSON duplicate-turn snapshot
+    /// instead of SSE (Phase 3 idempotency) — the caller attaches to the existing
+    /// turn's durable stream instead of executing anything again.
+    struct DuplicateTurn: Error, Decodable {
+        let turnId: String
+        let conversationId: String?
+        let status: String?
+        let lastSeq: Int?
+    }
+
     /// Phase 2 (roadmap 2.2/2.3): bytes are split + parsed + JSON-decoded OFF the
     /// main actor, then batched through `AgentEventBuffer` — MainActor sees at most
     /// ~25 applies/second, not one per token. Malformed payloads are telemetry,
     /// never a stream kill; cancellation propagates as CancellationError.
+    /// `onSeq` fires with each durable frame's `id:` seq (replay cursor, PR 5).
     static func streamEvents(request: URLRequest,
                              buffer: AgentEventBuffer,
-                             firstEvent: EventFlag? = nil) async throws {
+                             firstEvent: EventFlag? = nil,
+                             onSeq: (@Sendable (Int) -> Void)? = nil) async throws {
         let (bytes, resp) = try await streamSession.bytes(for: request)
         guard let http = resp as? HTTPURLResponse else { throw AlmaAPIError.transport(URLError(.badServerResponse)) }
         if http.statusCode == 401 || http.statusCode == 403 || (300..<400).contains(http.statusCode) {
             throw AlmaAPIError.notAuthenticated
+        }
+        // Idempotent duplicate: 202 + JSON body carrying the existing turn.
+        if http.statusCode == 202,
+           (http.value(forHTTPHeaderField: "Content-Type") ?? "").contains("application/json") {
+            var body = Data()
+            for try await byte in bytes { body.append(byte) }
+            if let dup = try? JSONDecoder().decode(DuplicateTurn.self, from: body) { throw dup }
+            throw AlmaAPIError.http(status: 202, body: "duplicate")
         }
         guard (200..<300).contains(http.statusCode) else {
             throw AlmaAPIError.http(status: http.statusCode, body: "stream")
@@ -1083,7 +1120,10 @@ enum AssistantNet {
                 let line = String(decoding: lineBuf, as: UTF8.self)
                 lineBuf.removeAll(keepingCapacity: true)
                 try Task.checkCancellation()
-                if let payload = parser.consume(line: line) { await dispatch(payload) }
+                if let payload = parser.consume(line: line) {
+                    await dispatch(payload)
+                    if let onSeq, let idStr = parser.lastEventId, let seq = Int(idStr) { onSeq(seq) }
+                }
             } else {
                 lineBuf.append(byte)
             }
@@ -1178,6 +1218,40 @@ final class AssistantVM {
     /// done.needContinue arrived — fire one bounded machine "continue" after settle.
     private var pendingAutoContinue = false
     private var autoContinueCount = 0
+
+    // ── PR 5: durable-turn client state ─────────────────────────────────────
+    /// Roadmap 4.3 — recovery descriptor, persisted so process death can't lose
+    /// the running turn. Cleared only on terminal reconcile or explicit cancel.
+    struct RecoverableTurn: Codable {
+        var conversationId: String
+        var turnId: String?
+        var clientMessageId: String
+        var lastSeq: Int
+        var startedAt: Date
+    }
+    private static let recoverableTurnKey = "alma.assistant.recoverableTurn"
+    private var recoverableTurn: RecoverableTurn? = AssistantVM.loadRecoverableTurn() {
+        didSet {
+            if let rt = recoverableTurn, let d = try? JSONEncoder().encode(rt) {
+                UserDefaults.standard.set(d, forKey: Self.recoverableTurnKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.recoverableTurnKey)
+            }
+        }
+    }
+    private static func loadRecoverableTurn() -> RecoverableTurn? {
+        guard let d = UserDefaults.standard.data(forKey: recoverableTurnKey) else { return nil }
+        return try? JSONDecoder().decode(RecoverableTurn.self, from: d)
+    }
+    /// Idempotency key of the in-flight send (goes to the server with the body).
+    private var currentClientMessageId: String?
+    /// Highest durable-stream seq observed (single network-task writer; monotonic
+    /// int reads are race-benign) — persisted into the descriptor on background.
+    final class SeqBox: @unchecked Sendable { var value: Int = -1 }
+    private let seqBox = SeqBox()
+    /// A terminal done/error event flowed through apply() for the current watch —
+    /// distinguishes "stream closed because finished" from "replay page ended".
+    private var sawTerminalEvent = false
     /// Wall-clock of the last send — recovery uses it to tell OUR turn's terminal
     /// status apart from a PREVIOUS turn's stale terminal row (until Phase 3's
     /// clientMessageId gives exact identity).
@@ -1328,8 +1402,28 @@ final class AssistantVM {
         registerObserversOnce()
         await loadModels()
         await loadActiveConversation()
+        await recoverFromPersistedDescriptor()
         await loadPlanDrive()
         startPolling()
+    }
+
+    /// PR 5 — kill/relaunch recovery: the persisted descriptor outlives the
+    /// process. If it points at a still-running turn (possibly in a different
+    /// conversation than the active-pointer), follow it and re-attach; a stale
+    /// descriptor for a finished turn is dropped after normal reconciliation.
+    private func recoverFromPersistedDescriptor() async {
+        guard let rt = recoverableTurn else { return }
+        if isStreaming { return }   // active-conversation recovery already took it
+        if conversationId != rt.conversationId {
+            let st: TurnStatusResponse? = try? await AlmaAPI.shared.get(
+                "/api/assistant/conversations/\(rt.conversationId)/turn-status")
+            guard st?.status == "running" else { recoverableTurn = nil; return }
+            await openConversation(rt.conversationId)   // ends in recoverTurnState
+        } else {
+            currentTurnId = rt.turnId ?? currentTurnId
+            await recoverTurnState(trigger: "relaunch")
+        }
+        if !isStreaming { recoverableTurn = nil }        // nothing running — stale
     }
 
     /// One-time observer registration (bootstrap can re-run; observers must not
@@ -1348,6 +1442,12 @@ final class AssistantVM {
             Task { @MainActor in
                 guard let self else { return }
                 self.backgroundedAt = Date()
+                // PR 5: stamp the replay cursor into the persisted descriptor —
+                // if iOS kills the process, relaunch recovers from here.
+                if var rt = self.recoverableTurn {
+                    rt.lastSeq = self.seqBox.value
+                    self.recoverableTurn = rt
+                }
                 AlmaTurnLog.event("turn.background", self.isStreaming ? "streaming" : "idle")
                 // Server work continues — nothing is cancelled here by design.
             }
@@ -1482,6 +1582,9 @@ final class AssistantVM {
             await loadOpenTasks()
             await loadArtifacts()   // the turn may have just produced one
         }
+        // PR 5: terminal + reconciled — the descriptor has done its job.
+        recoverableTurn = nil
+        currentClientMessageId = nil
     }
 
     /// Web parity: quiet message re-poll every 12s (day-shift lines, Telegram echoes)
@@ -1539,7 +1642,14 @@ final class AssistantVM {
             ensureStreamingTail()               // P0-C fix: progress needs a row to live on
             thinkingLive = true
             requestLiveMode("thinking")
-            startRecoveryPolling(cid: cid)
+            // PR 5: every turn now has a durable event log — replay the missed
+            // activity and continue LIVE instead of blind status-polling. Polling
+            // remains the fallback when the stream can't be attached.
+            if let tid = status.turnId {
+                startDurableRecoveryTail(cid: cid, turnId: tid)
+            } else {
+                startRecoveryPolling(cid: cid)
+            }
         } else if reconnecting || isStreaming {
             // We believed a turn was live. Is this terminal row OUR turn, or a stale
             // previous one (our send may have died before the server created a turn)?
@@ -1568,6 +1678,42 @@ final class AssistantVM {
         let started = iso.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
         guard let started else { return true }
         return started >= sentAt.addingTimeInterval(-15)
+    }
+
+    /// PR 5 recovery transport: attach the durable stream — the full activity
+    /// timeline replays (thinking/tools/cards/prose, tail rebuilt authoritatively)
+    /// and then continues live until the terminal event. If the stream closes
+    /// without a terminal (Redis-less replay page) we reconcile via status; if it
+    /// can't be attached at all, plain status polling takes over.
+    private func startDurableRecoveryTail(cid: String, turnId: String) {
+        recoveryTask?.cancel()
+        recoveryTask = Task { [weak self] in
+            guard let self else { return }
+            self.sawTerminalEvent = false
+            let buffer = AgentEventBuffer { [weak self] evs in self?.apply(evs) }
+            do {
+                try await self.tailDurableTurn(turnId, afterSeq: -1, buffer: buffer)
+                guard !Task.isCancelled else { return }
+                if self.sawTerminalEvent {
+                    await self.finishRecovery(terminalStatus: "stream-terminal")
+                } else {
+                    // Replay ended without done/error — check whether the turn is
+                    // really still running before deciding anything.
+                    let s: TurnStatusResponse? = try? await AlmaAPI.shared.get(
+                        "/api/assistant/conversations/\(cid)/turn-status")
+                    guard !Task.isCancelled else { return }
+                    if s?.status == "running" {
+                        self.startRecoveryPolling(cid: cid)
+                    } else {
+                        await self.finishRecovery(terminalStatus: s?.status ?? "done")
+                    }
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                AlmaTurnLog.event("turn.recoveryTailFailed", "\(error)")
+                self.startRecoveryPolling(cid: cid)
+            }
+        }
     }
 
     /// Poll turn-status with 1s initial cadence, exponential backoff capped at 3s,
@@ -1640,6 +1786,7 @@ final class AssistantVM {
         }
         reconnecting = false
         justSettledId = messages.last(where: { $0.role == .assistant })?.id
+        recoverableTurn = nil            // terminal + reconciled (PR 5)
         AlmaTurnLog.event("turn.terminal", "recovery:\(terminalStatus)")
         if terminalStatus == "error" {
             errorToast = "সমস্যা হয়েছে — আবার চেষ্টা করুন"
@@ -1663,6 +1810,7 @@ final class AssistantVM {
                 messages[i].isStreaming = false
             }
         }
+        recoverableTurn = nil            // nothing recoverable exists (PR 5)
         AlmaTurnLog.event("turn.terminal", "recovery:failed-no-turn")
         errorToast = "পাঠানো যায়নি — আবার চেষ্টা করুন"
         UINotificationFeedbackGenerator().notificationOccurred(.error)
@@ -1923,6 +2071,9 @@ final class AssistantVM {
         let files: [AgentFileRef]
         let modelId: String?
         var voice: Bool? = nil    // voice console turns: TTS-friendly replies
+        /// Roadmap PR 5 — idempotency key: one key = at most one stored message and
+        /// one server turn, however many times transport makes us retry.
+        var clientMessageId: String? = nil
     }
 
     func send(_ raw: String, isAutoContinue: Bool = false) {
@@ -1948,11 +2099,18 @@ final class AssistantVM {
         recoveryTask?.cancel(); recoveryTask = nil
         lastSendAt = Date()
         ownSendTick += 1
-        AlmaTurnLog.event("turn.submit")
+        // PR 5 — idempotency key: however transport fails, THIS send can only ever
+        // become one server message + one turn + one execution.
+        let clientMessageId = UUID().uuidString
+        currentClientMessageId = clientMessageId
+        seqBox.value = -1
+        sawTerminalEvent = false
+        AlmaTurnLog.event("turn.submit", clientMessageId)
         ensureStreamingTail()
 
         let body = ChatBody(conversationId: conversationId, message: text,
-                            files: readyFiles, modelId: modelId ?? "auto")
+                            files: readyFiles, modelId: modelId ?? "auto",
+                            clientMessageId: clientMessageId)
         streamTask = Task { [weak self] in
             await self?.runTurn(body: body)
         }
@@ -1968,6 +2126,9 @@ final class AssistantVM {
                 if let i = messages.lastIndex(where: { $0.isStreaming }) { messages[i].isStreaming = false }
             }
         }
+        // Phase 2: one buffer per turn — deltas coalesce off-main and land as
+        // batched reducer applies (roadmap 2.3).
+        let buffer = AgentEventBuffer { [weak self] evs in self?.apply(evs) }
         do {
             await AlmaAPI.shared.syncCookies()
             var req = URLRequest(url: AssistantNet.base.appendingPathComponent("/api/assistant/chat"))
@@ -1975,20 +2136,20 @@ final class AssistantVM {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = try JSONEncoder().encode(body)
 
-            // Phase 2: one buffer per turn — deltas coalesce off-main and land as
-            // batched reducer applies (roadmap 2.3).
-            let buffer = AgentEventBuffer { [weak self] evs in self?.apply(evs) }
             let firstEvent = AssistantNet.EventFlag()
             do {
-                // Direct SSE, with a 15s first-event watchdog (web parity: a hung
-                // serverless run is handed to the VPS worker via /turn).
+                // Direct SSE, with a 15s first-event watchdog. PR 5: the fallback no
+                // longer re-sends the prompt — it asks /turn for THE turn by
+                // clientMessageId and tails its durable stream.
                 try await withFirstEventWatchdog(seconds: 15, sawEvent: { firstEvent.raised }) {
                     try await AssistantNet.streamEvents(request: req, buffer: buffer, firstEvent: firstEvent)
                 }
             } catch is WatchdogTimeout {
                 try await runWorkerFallback(body: body, buffer: buffer)
             } catch AlmaAPIError.notAuthenticated {
-                // One cookie refresh + retry, mirroring AlmaAPI.perform.
+                // One cookie refresh + retry, mirroring AlmaAPI.perform. The retry
+                // carries the SAME clientMessageId — if the first attempt secretly
+                // created the turn, the server answers 202 duplicate (caught below).
                 AlmaAPI.shared.invalidateCookieCache()
                 await AlmaAPI.shared.syncCookies()
                 try await AssistantNet.streamEvents(request: req, buffer: buffer)
@@ -2000,6 +2161,21 @@ final class AssistantVM {
             fireAutoContinueIfNeeded()
         } catch is CancellationError {
             await finalizeTurn()
+        } catch let dup as AssistantNet.DuplicateTurn {
+            // A retry raced an EXISTING turn (Phase 3 idempotency) — observe it,
+            // never re-run (roadmap invariant 2).
+            AlmaTurnLog.event("turn.duplicateObserved", dup.turnId)
+            currentTurnId = dup.turnId
+            if conversationId == nil { conversationId = dup.conversationId }
+            do {
+                try await tailDurableTurn(dup.turnId, afterSeq: -1, buffer: buffer)
+                await finalizeTurn()
+            } catch {
+                handedToRecovery = true
+                reconnecting = true
+                ensureStreamingTail()
+                Task { [weak self] in await self?.recoverTurnState(trigger: "duplicate-tail-drop") }
+            }
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
         } catch {
@@ -2057,21 +2233,64 @@ final class AssistantVM {
         }
     }
 
-    /// A2 fallback: enqueue on the VPS worker queue and tail its durable stream.
+    /// PR 5 — the first-event watchdog fallback. No longer re-sends the prompt as
+    /// a fresh job (the old P0-D duplicate-work race): /turn is idempotent on
+    /// clientMessageId, so the server returns the EXISTING turn when the direct
+    /// run is healthy, or re-dispatches a dead one to the VPS worker. Either way
+    /// we then tail ONE durable stream — the same message can never run twice.
     private func runWorkerFallback(body: ChatBody, buffer: AgentEventBuffer) async throws {
         struct TurnBody: Encodable {
             let conversationId: String?
             let message: String
             let files: [AgentFileRef]
+            let clientMessageId: String?
         }
         let enq: TurnEnqueueResponse = try await AlmaAPI.shared.send(
             "POST", "/api/assistant/turn",
-            body: TurnBody(conversationId: body.conversationId, message: body.message, files: body.files))
+            body: TurnBody(conversationId: body.conversationId, message: body.message,
+                           files: body.files, clientMessageId: body.clientMessageId))
         currentTurnId = enq.turnId
         if conversationId == nil { conversationId = enq.conversationId }
-        var req = URLRequest(url: AssistantNet.base.appendingPathComponent("/api/assistant/turn/\(enq.turnId)/stream"))
+        if let cid = conversationId, let cmid = body.clientMessageId {
+            recoverableTurn = RecoverableTurn(conversationId: cid, turnId: enq.turnId,
+                                              clientMessageId: cmid, lastSeq: -1, startedAt: Date())
+        }
+        try await tailDurableTurn(enq.turnId, afterSeq: -1, buffer: buffer)
+    }
+
+    /// Attach to a turn's durable stream: replay everything after `afterSeq`, then
+    /// live-tail. A FULL replay (afterSeq < 0) rebuilds the tail from scratch —
+    /// partial content rendered before a drop is replaced by the authoritative
+    /// log, never doubled (the direct stream carries no seq to splice on). The
+    /// wipe fires on the stream's `turn_snapshot` hello, NOT before the request:
+    /// a failed attach must keep the frozen partial on screen.
+    private var pendingReplayReset = false
+
+    private func tailDurableTurn(_ turnId: String, afterSeq: Int, buffer: AgentEventBuffer) async throws {
+        if afterSeq < 0 { pendingReplayReset = true }
+        defer { pendingReplayReset = false }
+        var comps = URLComponents(url: AssistantNet.base.appendingPathComponent("/api/assistant/turn/\(turnId)/stream"),
+                                  resolvingAgainstBaseURL: false)!
+        if afterSeq >= 0 { comps.queryItems = [URLQueryItem(name: "afterSeq", value: String(afterSeq))] }
+        var req = URLRequest(url: comps.url!)
         req.httpMethod = "GET"
-        try await AssistantNet.streamEvents(request: req, buffer: buffer)
+        let box = seqBox
+        try await AssistantNet.streamEvents(request: req, buffer: buffer,
+                                            onSeq: { box.value = max(box.value, $0) })
+    }
+
+    /// Wipe the streaming tail's derived content ahead of an authoritative replay.
+    private func resetStreamingTailForReplay() {
+        ensureStreamingTail()
+        guard let i = messages.lastIndex(where: { $0.isStreaming }) else { return }
+        messages[i].text = ""
+        messages[i].thinking = nil
+        messages[i].timeline = []
+        messages[i].blocks = []
+        messages[i].phases = []
+        messages[i].tools = []
+        messages[i].confirmCards = []
+        messages[i].askCards = []
     }
 
     /// Phase 2 reducer — applies ONE buffered batch per MainActor hop (roadmap 2.3).
@@ -2086,12 +2305,20 @@ final class AssistantVM {
                 conversationId = id
             case .turnId(let id):
                 currentTurnId = id
+                // PR 5: the turn is now addressable — persist the recovery descriptor
+                // so even process death can find its way back.
+                if let cid = conversationId, let cmid = currentClientMessageId {
+                    recoverableTurn = RecoverableTurn(conversationId: cid, turnId: id,
+                                                      clientMessageId: cmid,
+                                                      lastSeq: seqBox.value, startedAt: Date())
+                }
             case .personalMode(let active):
                 personalMode = active
             case .modelInfo(let label):
                 if !label.isEmpty { modelLabel = label }
             case .thinkingDelta(let chunk):
                 guard !chunk.isEmpty else { break }
+                if reconnecting { reconnecting = false }   // live content flows again
                 requestLiveMode("thinking")
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
@@ -2103,6 +2330,7 @@ final class AssistantVM {
                 }
             case .textDelta(let chunk):
                 guard !chunk.isEmpty else { break }
+                if reconnecting { reconnecting = false }   // live content flows again
                 requestLiveMode("writing")
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
@@ -2217,13 +2445,35 @@ final class AssistantVM {
                     if let costUsd, costUsd > 0 { messages[i].costUsd = String(format: "%.4f", costUsd) }
                 }
                 if needContinue { pendingAutoContinue = true }
+                sawTerminalEvent = true
                 thinkingLive = false
                 settleLiveMode()
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
             case .turnError(let message):
+                sawTerminalEvent = true
                 thinkingLive = false
                 settleLiveMode()
                 errorToast = message
+            case .turnSnapshot(let turnId, let convId, _, _):
+                // Durable-stream hello (PR 5) — reconcile ids on (re)connect, and
+                // NOW (stream provably attached) wipe the frozen partial so the
+                // authoritative replay rebuilds the tail without doubling.
+                if let turnId { currentTurnId = turnId }
+                if conversationId == nil, let convId { conversationId = convId }
+                if pendingReplayReset {
+                    pendingReplayReset = false
+                    resetStreamingTailForReplay()
+                }
+            case .replayContinue(let afterSeq):
+                // Page-capped replay: continue from the cursor (no tail reset).
+                if let tid = currentTurnId {
+                    recoveryTask?.cancel()
+                    recoveryTask = Task { [weak self] in
+                        guard let self else { return }
+                        let buffer = AgentEventBuffer { [weak self] evs in self?.apply(evs) }
+                        try? await self.tailDurableTurn(tid, afterSeq: afterSeq, buffer: buffer)
+                    }
+                }
             case .unknown:
                 break   // telemetried at decode (stream.unknownEvent)
             }
@@ -2273,6 +2523,7 @@ final class AssistantVM {
         recoveryTask = nil
         reconnecting = false
         if cancelServer, let tid = currentTurnId {
+            recoverableTurn = nil    // explicit cancel — nothing to recover (PR 5)
             Task {
                 let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/turn/\(tid)/cancel")
             }
