@@ -46,7 +46,14 @@ The Android full-screen incoming call is on branch `claude/android-ota-calling-v
    - Archive + upload to App Store Connect (ASC API key `~/.appstoreconnect/private_keys/AuthKey_T875C2865Y.p8` — the DIFFERENT key, for uploads; see memory `project_apple_developer_enroll`).
 5. **Owner device test (the real proof — hardware only):** staff iPhone closed/backgrounded → owner places a live call from the office (native roster or web) → the staff iPhone should ring a **native CallKit incoming call**, answer → two-way audio, and the app can be backgrounded mid-call.
 
+## UPDATE 2026-07-14 — WhatsApp-parity round 2 also landed on `main` (additive, sim BUILD SUCCEEDED)
+A follow-up pass added more calling parity. These iOS changes are **additive on the same files** and are on `main` (commit `a61a36f8` on branch `claude/calling-feature-audit-43f696` → merges to main). When you sync `main` into this branch you get them automatically — just keep them:
+- **`CallKitVoIP.swift`** — handles a VoIP push with `event:"cancel"`: ends the ringing CallKit call for that `broadcastId` instantly (caller hung up / answered elsewhere), while still reporting-and-ending a transient call to satisfy iOS's "must report on every VoIP push" rule. This is the "cancel push" the previous known-follow-up asked for — now DONE.
+- **`AgoraIntercom.swift`** — `pendingIncomingCall()` now rings on the server-computed `incomingForMe` (bidirectional: the **owner** also rings for a **staff→owner** call, and never for a call he placed), suppresses `endedAt` calls, and uses the dynamic `callerName`. Falls back to the staff `mine` receipt for older server builds.
+- Server: new `POST /api/assistant/office/intercom/end` + `endedAt`/`endedReason` columns (additive migration `20260916120000_intercom_call_lifecycle`) + `event:'ring'|'cancel'` on the VoIP payload. All merged to main + deployed.
+- **Nothing extra to build for these** — they compile in the same sim build; ship them with build 72.
+
 ## Known follow-ups / polish (optional)
 - iOS CallKit ringtone is the system default (a bundled `.caf` could be added).
-- APNs VoIP push currently sends on call-create; if a call is cancelled before answer, the callee's CallKit call is not remotely ended (it times out) — a `voip`-type "cancel" push could end it precisely.
+- ~~cancel push~~ — DONE (see the 2026-07-14 update above).
 - The owner-only diag endpoint (`/api/assistant/internal/call-push/diag`) can be removed once you're confident, or kept as an ops tool.
