@@ -277,7 +277,7 @@ async function readStateSignals(conversationId: string): Promise<{ packs: PackKe
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
-  const [pending, checkpoints, plans] = await Promise.all([
+  const [pending, checkpoints, plans, workflows] = await Promise.all([
     db.agentPendingAction
       .findMany({
         where: { conversationId, status: 'pending' },
@@ -297,7 +297,22 @@ async function readStateSignals(conversationId: string): Promise<{ packs: PackKe
         select: { id: true },
       })
       .catch(() => []),
+    // Phase 4: the CANONICAL job record routes first — its kind is a pack key
+    // by construction (run-owner-turn derives it via packsForPendingActionType),
+    // and nextAllowedTools (workflow templates, Phase 5) narrow further later.
+    db.workflowRun
+      .findMany({
+        where: { conversationId, status: { in: ['active', 'waiting_owner', 'waiting_worker'] } },
+        orderBy: { updatedAt: 'desc' },
+        take: 3,
+        select: { id: true, kind: true, status: true },
+      })
+      .catch(() => []),
   ])
+  for (const wf of workflows as Array<{ id: string; kind: string; status: string }>) {
+    if (wf.kind in DOMAIN_PACKS) add([wf.kind as PackKey], `workflow:${wf.kind}:${wf.status}`)
+    else signals.push(`workflow:${wf.kind}:${wf.status}`)
+  }
   for (const a of pending as Array<{ id: string; type: string }>) {
     add(packsForPendingActionType(a.type), `pending:${a.type}`)
   }

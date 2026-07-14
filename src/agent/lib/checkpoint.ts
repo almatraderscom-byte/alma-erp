@@ -44,6 +44,8 @@ export type WriteCheckpointInput = Omit<TaskCheckpoint, 'savedAt' | 'state'> & {
   state?: CheckpointState
   conversationId?: string | null
   businessId?: string
+  /** Phase 4: canonical WorkflowRun this checkpoint belongs to. */
+  workflowRunId?: string | null
 }
 
 const KIND_BY_STATE: Record<CheckpointState, string> = {
@@ -97,6 +99,7 @@ export async function writeCheckpoint(input: WriteCheckpointInput): Promise<stri
       resumeNote: resumeNoteFor(cp),
       checkpoint: cp,
       pendingActionId: input.taskRef,
+      workflowRunId: input.workflowRunId ?? null,
     }
 
     const existing = await db.agentOpenTask.findFirst({

@@ -2111,8 +2111,28 @@ export async function POST(
   // parity): before the action executes, drop a "করছি বস" line + open a running
   // turn — the app's 12s poll surfaces both, so the owner watches the work
   // instead of a minute of silence followed by a surprise "done" message.
+  // Phase 4 execution guard: approving a card whose canonical WorkflowRun the
+  // owner already cancelled/finished must NOT execute (stale card). Fail-open
+  // on lookup errors — blocks only on a positive terminal finding.
+  try {
+    const { workflowBlocksApproval } = await import('@/agent/lib/workflow-run')
+    const guard = await workflowBlocksApproval(ctx.params.id)
+    if (guard.blocked) {
+      return Response.json({ error: 'workflow_outdated', message: guard.reason }, { status: 409 })
+    }
+  } catch { /* fail-open */ }
+
   const progress = await beginApprovalProgress(ctx.params.id)
   const res = await runApprove(req, ctx)
+  // Phase 4 sync: transition the linked WorkflowRun to the card's REAL status
+  // (executed→done+proof, approved→waiting_worker …). Awaited but tiny; a sync
+  // failure never affects the approval response.
+  try {
+    const { syncWorkflowWithPendingAction } = await import('@/agent/lib/workflow-run')
+    await syncWorkflowWithPendingAction(ctx.params.id, 'approval')
+  } catch (err) {
+    console.warn('[approve] workflow sync failed (approval unaffected):', err instanceof Error ? err.message : err)
+  }
   try {
     if (res.status >= 200 && res.status < 300) {
       await enqueueApprovalContinuation(ctx.params.id, progress?.turnId ?? null)

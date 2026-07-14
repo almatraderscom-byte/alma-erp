@@ -94,6 +94,15 @@ export async function POST(
     data: { status: 'rejected', resolvedAt: new Date() },
   })
 
+  // Phase 4 sync: a rejected card cancels its canonical WorkflowRun and the
+  // terminal transition auto-closes the linked open-task chips. Fail-open.
+  try {
+    const { syncWorkflowWithPendingAction } = await import('@/agent/lib/workflow-run')
+    await syncWorkflowWithPendingAction(actionId, 'approval')
+  } catch (err) {
+    console.warn('[reject] workflow sync failed (rejection unaffected):', err instanceof Error ? err.message : err)
+  }
+
   // Phase 1 approval span: rejections join the turn trace too — a rejected card
   // is the strongest "the agent staged the wrong thing" signal we have (fail-open).
   void import('@/agent/lib/tool-telemetry').then((m) =>

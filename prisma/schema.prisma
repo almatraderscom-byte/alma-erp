@@ -2059,6 +2059,65 @@ model AgentMessage {
 /// the cross-instance Stop signal — a cancel POST hits a different serverless
 /// instance than the running turn, so an in-memory AbortController can't reach it;
 /// the running loop polls this flag each iteration instead.
+/// Phase 4 (roadmap AGENT-STATE-001) — the ONE canonical record of an in-flight
+/// job: what outcome is being pursued, what state it is in, and what is legal
+/// next. Plans, open tasks, checkpoints and pending actions LINK here; chat
+/// history is supporting context, not task state.
+model WorkflowRun {
+  id               String    @id @default(uuid())
+  conversationId   String?   @map("conversation_id")
+  businessId       String    @default("ALMA_LIFESTYLE") @map("business_id")
+  /// Job family: browser | plan | creative | social | staff_dispatch | seo |
+  /// calls | workbench | generic … (matches state-router pack keys where possible)
+  kind             String
+  goal             String    @db.Text
+  /// active | waiting_owner | waiting_worker | done | failed | cancelled
+  status           String    @default("active")
+  /// Current step label inside the job (template-defined from Phase 5).
+  state            String    @default("started")
+  /// Optimistic concurrency: every transition bumps this; writers must present
+  /// the version they read or the transition is rejected.
+  stateVersion     Int       @default(1) @map("state_version")
+  inputs           Json?
+  facts            Json?
+  artifacts        Json?
+  /// Tool names legal from this state (router narrows packs with it).
+  nextAllowedTools Json?     @map("next_allowed_tools")
+  /// The approval card this run is blocked on (status waiting_owner).
+  pendingActionId  String?   @map("pending_action_id")
+  lastProof        Json?     @map("last_proof")
+  retryCount       Int       @default(0) @map("retry_count")
+  /// Execution lease — a worker/turn holding the lease may transition; others wait.
+  leaseUntil       DateTime? @map("lease_until")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  completedAt      DateTime? @map("completed_at")
+
+  @@index([conversationId, status])
+  @@index([businessId, status])
+  @@index([pendingActionId])
+  @@map("workflow_runs")
+}
+
+/// Append-only transition log for WorkflowRun — every state/status change lands
+/// here with its cause, so "how did this job get stuck" reads as one trace.
+model WorkflowRunEvent {
+  id            String   @id @default(uuid())
+  workflowRunId String   @map("workflow_run_id")
+  fromStatus    String?  @map("from_status")
+  toStatus      String   @map("to_status")
+  fromState     String?  @map("from_state")
+  toState       String   @map("to_state")
+  stateVersion  Int      @map("state_version")
+  /// turn | approval | worker | auto | reconcile
+  cause         String
+  detail        Json?
+  ts            DateTime @default(now())
+
+  @@index([workflowRunId, ts])
+  @@map("workflow_run_events")
+}
+
 model AgentTurn {
   id              String    @id @default(uuid())
   conversationId  String    @map("conversation_id")
@@ -2229,6 +2288,9 @@ model AgentPendingAction {
   createdAt      DateTime  @default(now())
   resolvedAt     DateTime?
   result         Json?
+  /// Phase 4: canonical WorkflowRun this card belongs to (camelCase column —
+  /// this legacy table is camelCase in the DB).
+  workflowRunId  String?
 
   @@index([status])
   @@index([conversationId])
@@ -3007,6 +3069,8 @@ model AgentAskCard {
   options        String   @db.Text
   status         String   @default("pending")
   selectedOption String?  @map("selected_option")
+  /// Phase 4: the WorkflowRun this question belongs to (structured reply link).
+  workflowRunId  String?  @map("workflow_run_id")
   createdAt      DateTime @default(now()) @map("created_at")
 
   @@index([conversationId, status])
@@ -3671,6 +3735,8 @@ model AgentOpenTask {
   checkpoint      Json?     @map("checkpoint")
   /// Links to the AgentPendingAction when kind = approval_pending.
   pendingActionId String?   @map("pending_action_id")
+  /// Phase 4: the WorkflowRun this open task/checkpoint belongs to.
+  workflowRunId   String?   @map("workflow_run_id")
   /// When the next "still pending?" nudge is due (30/60 min escalation).
   nudgeDueAt      DateTime? @map("nudge_due_at")
   nudgedCount     Int       @default(0) @map("nudged_count")
@@ -3743,6 +3809,8 @@ model AgentPlan {
   businessId     String          @default("ALMA_LIFESTYLE") @map("business_id")
   goal           String
   status         String          @default("draft")
+  /// Phase 4: the WorkflowRun this plan belongs to.
+  workflowRunId  String?         @map("workflow_run_id")
   createdAt      DateTime        @default(now()) @map("created_at")
   updatedAt      DateTime        @updatedAt @map("updated_at")
   completedAt    DateTime?       @map("completed_at")
