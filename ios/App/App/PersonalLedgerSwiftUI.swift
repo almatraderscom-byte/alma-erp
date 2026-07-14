@@ -231,19 +231,87 @@ struct PersonalLedgerScreen: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        ZStack {
-            AlmaSwiftTheme.rootBg(scheme).ignoresSafeArea()
-            Group {
-                if model.forbidden {
-                    PLForbiddenCard()
-                } else if let detail = model.detail {
-                    PLDetailView(model: model, detail: detail)
-                } else {
-                    PLListView(model: model)
-                }
+        Group {
+            if model.forbidden {
+                PLForbiddenCard()
+            } else if let detail = model.detail {
+                PLDetailView(model: model, detail: detail)
+            } else {
+                PLListView(model: model)
             }
         }
+        // App-wide living aurora (owner directive 2026-07-08: every native page shares
+        // the Assistant tab's moving mesh) — NOT the flat rootBg, which read as an
+        // off-brand dark slab (owner report 2026-07-14).
+        .background(PersonalLedgerAurora())
         .task { await model.loadList() }
+    }
+}
+
+// MARK: - Aurora background (page-owned copy — parallel-session rule: page files
+// never import another page's helpers, so the shared look is duplicated verbatim
+// from the Finance/Approvals spec).
+
+private struct PersonalLedgerAurora: View {
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drift = false
+
+    private struct AuroraBlob { let color: Color; let size: CGFloat; let x: CGFloat; let y: CGFloat; let dx: CGFloat; let dy: CGFloat }
+
+    var body: some View {
+        let dark = scheme == .dark
+        let blobs: [AuroraBlob] = [
+            .init(color: Color(red: 0.220, green: 0.502, blue: 1.000).opacity(dark ? 0.60 : 0.30), size: 380, x: 0.15, y: 0.10, dx: 60, dy: 40),
+            .init(color: Color(red: 0.486, green: 0.302, blue: 1.000).opacity(dark ? 0.55 : 0.26), size: 420, x: 0.85, y: 0.25, dx: -50, dy: 60),
+            .init(color: Color(red: 0.839, green: 0.200, blue: 1.000).opacity(dark ? 0.50 : 0.24), size: 360, x: 0.30, y: 0.55, dx: 70, dy: -40),
+            .init(color: Color(red: 1.000, green: 0.180, blue: 0.525).opacity(dark ? 0.55 : 0.26), size: 400, x: 0.80, y: 0.80, dx: -60, dy: -50),
+            .init(color: Color(red: 1.000, green: 0.431, blue: 0.314).opacity(dark ? 0.45 : 0.22), size: 340, x: 0.20, y: 0.95, dx: 50, dy: -60),
+        ]
+        GeometryReader { geo in
+            ZStack {
+                (dark ? Color(red: 0.078, green: 0.078, blue: 0.094)
+                      : Color(red: 0.980, green: 0.976, blue: 0.965))
+                RadialGradient(colors: [Color(red: 0.388, green: 0.400, blue: 0.945).opacity(dark ? 0.22 : 0.10), .clear],
+                               center: .init(x: 0.5, y: -0.1), startRadius: 0, endRadius: geo.size.height * 0.8)
+                RadialGradient(colors: [Color(red: 0.925, green: 0.282, blue: 0.600).opacity(dark ? 0.28 : 0.12), .clear],
+                               center: .init(x: 0.5, y: 1.15), startRadius: 0, endRadius: geo.size.height * 0.9)
+                ForEach(Array(blobs.enumerated()), id: \.offset) { _, b in
+                    Circle()
+                        .fill(RadialGradient(colors: [b.color, b.color.opacity(0)],
+                                             center: .center,
+                                             startRadius: b.size * 0.10,
+                                             endRadius: b.size * 0.62))
+                        .frame(width: b.size * 1.35, height: b.size * 1.35)
+                        .position(x: geo.size.width * b.x + (drift ? b.dx : -b.dx),
+                                  y: geo.size.height * b.y + (drift ? b.dy : -b.dy))
+                }
+            }
+            .onAppear { updateDrift() }
+            .onDisappear { pauseDrift() }
+            .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)
+                .receive(on: DispatchQueue.main)) { _ in updateDrift() }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    private func pauseDrift() {
+        var tx = Transaction(); tx.disablesAnimations = true
+        withTransaction(tx) { drift = false }
+    }
+
+    private func updateDrift() {
+        if reduceMotion || ProcessInfo.processInfo.isLowPowerModeEnabled {
+            var tx = Transaction(); tx.disablesAnimations = true
+            withTransaction(tx) { drift = false }
+        } else if !drift {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                guard !drift, !reduceMotion,
+                      !ProcessInfo.processInfo.isLowPowerModeEnabled else { return }
+                withAnimation(.easeInOut(duration: 26).repeatForever(autoreverses: true)) { drift = true }
+            }
+        }
     }
 }
 
