@@ -109,6 +109,9 @@ export type VoipCallPayload = {
   broadcastId: string
   channel: string
   caller: string
+  /** 'ring' (default) reports a new CallKit incoming call; 'cancel' ends the call
+   *  already showing for this broadcastId (caller hung up / callee answered elsewhere). */
+  event?: 'ring' | 'cancel'
 }
 
 type SendResult = { token: string; ok: boolean; status?: number; reason?: string }

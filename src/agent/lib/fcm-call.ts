@@ -82,6 +82,8 @@ export type FcmCallPayload = {
   broadcastId: string
   channel: string
   caller: string
+  /** 'ring' (default) shows a full-screen incoming call; 'cancel' dismisses it. */
+  event?: 'ring' | 'cancel'
 }
 
 type SendResult = { token: string; ok: boolean; status?: number; reason?: string }
@@ -102,6 +104,7 @@ export async function sendFcmCall(tokens: string[], payload: FcmCallPayload): Pr
     broadcastId: payload.broadcastId,
     channel: payload.channel,
     caller: payload.caller,
+    event: payload.event ?? 'ring',
   }
 
   const sendOne = async (deviceToken: string): Promise<SendResult> => {
