@@ -139,7 +139,8 @@ enum AgentTurnEvent: Sendable {
     case verificationRetry(attempt: Int, maxAttempts: Int)
     case conversationCompacted(newConversationId: String)
     case done(messageId: String?, tokensIn: Int?, tokensOut: Int?, costUsd: Double?,
-              needContinue: Bool, apiRounds: Int?)
+              needContinue: Bool, apiRounds: Int?, cacheCreation: Int?, cacheRead: Int?,
+              roundCostsUsd: [Double]?)
     case turnError(message: String)
     /// Durable-stream hello (roadmap 3.5/PR 5): current turn state on (re)connect.
     case turnSnapshot(turnId: String?, conversationId: String?, status: String?, lastSeq: Int?)
@@ -203,7 +204,9 @@ enum AgentTurnEvent: Sendable {
                 ?? .unknown(type: "conversation_compacted/noid")
         case "done":
             self = .done(messageId: ev.messageId, tokensIn: ev.tokensIn, tokensOut: ev.tokensOut,
-                         costUsd: ev.costUsd, needContinue: ev.needContinue == true, apiRounds: ev.apiRounds)
+                         costUsd: ev.costUsd, needContinue: ev.needContinue == true, apiRounds: ev.apiRounds,
+                         cacheCreation: ev.cacheCreation, cacheRead: ev.cacheRead,
+                         roundCostsUsd: ev.roundCostsUsd)
         case "error":
             self = .turnError(message: ev.message ?? ev.error ?? "সমস্যা হয়েছে — আবার চেষ্টা করুন")
         case "turn_snapshot":
