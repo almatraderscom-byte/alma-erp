@@ -22,6 +22,8 @@
 
 package com.almatraders.erp.pages
 
+import kotlinx.coroutines.CancellationException
+
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -395,6 +397,8 @@ private class TradingAccountsState {
             authExpired = false
         } catch (e: AlmaApiException.NotAuthenticated) {
             authExpired = true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {

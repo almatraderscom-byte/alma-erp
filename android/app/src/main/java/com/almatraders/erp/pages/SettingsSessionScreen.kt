@@ -13,6 +13,8 @@
 
 package com.almatraders.erp.pages
 
+import kotlinx.coroutines.CancellationException
+
 import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -188,6 +190,8 @@ private class SessionState {
             authExpired = false
         } catch (e: AlmaApiException.NotAuthenticated) {
             authExpired = true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {

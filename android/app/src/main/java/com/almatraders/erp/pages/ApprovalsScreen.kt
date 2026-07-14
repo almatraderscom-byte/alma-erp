@@ -17,6 +17,8 @@
 
 package com.almatraders.erp.pages
 
+import kotlinx.coroutines.CancellationException
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -299,6 +301,8 @@ class ApprovalsState {
             authExpired = false
         } catch (e: AlmaApiException.NotAuthenticated) {
             authExpired = true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {
@@ -331,6 +335,8 @@ class ApprovalsState {
             approvals = approvals.filter { it.id != approval.id }
             totalPending = maxOf(0, totalPending - 1)
             load()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {
@@ -367,6 +373,8 @@ class ApprovalsState {
             notice = "Repaired ${data.optJSONArray("repaired")?.length() ?: 0} item(s)"
             loadIntegrity()
             load()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {

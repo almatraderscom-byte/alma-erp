@@ -17,6 +17,8 @@
 
 package com.almatraders.erp.pages
 
+import kotlinx.coroutines.CancellationException
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -235,6 +237,8 @@ private class TaskSpotlightState {
             authExpired = false
         } catch (e: AlmaApiException.NotAuthenticated) {
             authExpired = true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {
@@ -251,6 +255,8 @@ private class TaskSpotlightState {
             AlmaApi.send("PATCH", "/api/operational-tasks/${task.id}", JSONObject().put("action", "archive"))
             notice = "Task archived"                    // web toast verbatim
             load()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {
@@ -270,6 +276,8 @@ private class TaskSpotlightState {
             )
             notice = "Spotlight reset — employee will see on next Start Work"   // web toast verbatim
             load()
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {

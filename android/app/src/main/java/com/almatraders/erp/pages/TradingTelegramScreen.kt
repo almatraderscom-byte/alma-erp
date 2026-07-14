@@ -22,6 +22,8 @@
 
 package com.almatraders.erp.pages
 
+import kotlinx.coroutines.CancellationException
+
 import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -431,6 +433,8 @@ private class TradingTelegramState {
             } catch (_: Exception) { }
         } catch (e: AlmaApiException.NotAuthenticated) {
             authExpired = true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {
@@ -476,6 +480,8 @@ private class TradingTelegramState {
             live = TtLive.from(unwrap(AlmaApi.getObject("/api/trading/telegram/live", mapOf("limit" to "40"))))
         } catch (e: AlmaApiException.NotAuthenticated) {
             authExpired = true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             if (live == null) error = e.message
         }
@@ -493,6 +499,8 @@ private class TradingTelegramState {
             mappingLoaded = true
         } catch (e: AlmaApiException.NotAuthenticated) {
             authExpired = true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             if (!mappingLoaded) error = e.message
         }

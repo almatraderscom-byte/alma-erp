@@ -29,6 +29,8 @@
 
 package com.almatraders.erp.pages
 
+import kotlinx.coroutines.CancellationException
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -547,6 +549,8 @@ private class OfficeState {
             authExpired = false
         } catch (e: AlmaApiException.NotAuthenticated) {
             authExpired = true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {
@@ -584,6 +588,8 @@ private class OfficeState {
             if (!authExpired) notice = "লাঞ্চ টাইমার শুধু স্টাফ অ্যাকাউন্টের জন্য।"
         } catch (e: AlmaApiException.Http) {
             if (e.status == 404) { lunchActive = false; lunchStartedAt = null } else error = e.message
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {
@@ -634,6 +640,8 @@ private class OfficeState {
             }
             loadThread(taskId)
             return true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
             return false
@@ -661,6 +669,8 @@ private class OfficeState {
             notice = "📎 প্রমাণ পাঠানো হয়েছে — Boss যাচাই করবেন।"
             load()
             return true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
             return false
@@ -678,6 +688,8 @@ private class OfficeState {
             AlmaApi.send("POST", "/api/assistant/office/staff-action", payload)
             notice = "✨ নিজ উদ্যোগের কাজ পাঠানো হয়েছে — Boss অনুমোদন দিলে পারফরম্যান্সে +পয়েন্ট।"
             return true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
             return false
@@ -741,6 +753,8 @@ private class OfficeState {
             AlmaApi.send("POST", "/api/assistant/office/action", body)
             loadHub()
             return true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
             return false

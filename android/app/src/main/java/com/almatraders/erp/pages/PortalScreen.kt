@@ -28,6 +28,8 @@
 
 package com.almatraders.erp.pages
 
+import kotlinx.coroutines.CancellationException
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -501,6 +503,8 @@ private class PortalState {
             authExpired = true
             loading = false
             return
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
             loading = false
@@ -581,6 +585,8 @@ private class PortalState {
         } catch (e: AlmaApiException.Http) {
             error = httpErrorMessage(e)
             return false
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message ?: "নেটওয়ার্ক সমস্যা — আবার চেষ্টা করুন।"
             return false
@@ -694,6 +700,8 @@ private class PortalState {
             authExpired = true
         } catch (e: AlmaApiException.Http) {
             error = httpErrorMessage(e)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message ?: "নেটওয়ার্ক সমস্যা — আবার চেষ্টা করুন।"
         } finally {

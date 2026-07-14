@@ -16,6 +16,8 @@
 
 package com.almatraders.erp.pages
 
+import kotlinx.coroutines.CancellationException
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -270,6 +272,8 @@ private class SystemDiagnosticsState {
         } catch (e: AlmaApiException.Http) {
             // The route is SUPER_ADMIN-only — same wording the web toast surfaces.
             error = if (e.status == 403) "SUPER_ADMIN only" else e.message
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {

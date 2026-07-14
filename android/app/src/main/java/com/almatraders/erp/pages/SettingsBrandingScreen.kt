@@ -15,6 +15,8 @@
 
 package com.almatraders.erp.pages
 
+import kotlinx.coroutines.CancellationException
+
 import android.util.Base64
 import android.webkit.CookieManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -184,6 +186,8 @@ private class SettingsBrandingState {
             authExpired = false
         } catch (e: AlmaApiException.NotAuthenticated) {
             authExpired = true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {

@@ -16,6 +16,8 @@
 
 package com.almatraders.erp.pages
 
+import kotlinx.coroutines.CancellationException
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -189,6 +191,8 @@ private class SettingsUsersState {
         } catch (e: AlmaApiException.NotAuthenticated) {
             // /api/users answers 403 for non-admin roles too — same card either way.
             authExpired = true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {

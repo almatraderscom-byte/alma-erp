@@ -28,6 +28,8 @@
 
 package com.almatraders.erp.pages
 
+import kotlinx.coroutines.CancellationException
+
 import android.content.Intent
 import android.net.Uri
 import android.webkit.CookieManager
@@ -363,6 +365,8 @@ private class EmployeesState {
             authExpired = false
         } catch (e: AlmaApiException.NotAuthenticated) {
             authExpired = true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {

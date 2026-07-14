@@ -32,6 +32,8 @@
 
 package com.almatraders.erp.pages
 
+import kotlinx.coroutines.CancellationException
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -506,6 +508,8 @@ private class PayrollState {
             authExpired = true
             loading = false
             return
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
             loading = false
@@ -629,6 +633,8 @@ private class PayrollState {
             else "রিকোয়েস্ট বাতিল করা হয়েছে"
             pendingRequests = pendingRequests.filter { it.id != request.id }
             load(fresh = true)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {
@@ -646,6 +652,8 @@ private class PayrollState {
             AlmaApi.send("POST", "/api/payroll/wallet/accruals/run", JSONObject().put("business_id", businessId))
             notice = "মাসিক স্যালারি অ্যাক্রুয়াল চেক সম্পন্ন হয়েছে"
             load(fresh = true)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {
@@ -664,6 +672,8 @@ private class PayrollState {
             automationEnabled = enabled
             applyAutomation(resp)
             notice = if (enabled) "পেরোল অটোমেশন চালু হয়েছে" else "পেরোল অটোমেশন বন্ধ হয়েছে"
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {
@@ -690,6 +700,8 @@ private class PayrollState {
             notice = "কমপেনসেশন লেজার এন্ট্রি পোস্ট হয়েছে"
             load(fresh = true)
             true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
             false
@@ -732,6 +744,8 @@ private class PayrollState {
                 .put("amountBdt", if (current.enabled) amount else 0)
             AlmaApi.send("PATCH", "/api/payroll/meal-allowance/profiles", body)
             notice = "${current.name} — খাবার ভাতা সেভ হয়েছে"
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         }
@@ -756,6 +770,8 @@ private class PayrollState {
                 "${current.name} — ড্রাইভিং মোড চালু (সেটিং) সেভ হয়েছে"
             else
                 "${current.name} — ড্রাইভিং মোড বন্ধ (সেটিং) সেভ হয়েছে"
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         }
@@ -778,6 +794,8 @@ private class PayrollState {
             notice = if (turningOn) "${current.name} এখন ড্রাইভিং মোডে"
             else "${current.name}-এর ড্রাইভিং মোড বন্ধ করা হলো"
             updateDriving(row.userId) { it.copy(drivingStatus = if (turningOn) "ACTIVE" else null) }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         }

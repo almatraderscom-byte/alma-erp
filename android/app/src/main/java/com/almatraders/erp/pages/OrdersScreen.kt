@@ -22,6 +22,8 @@
 
 package com.almatraders.erp.pages
 
+import kotlinx.coroutines.CancellationException
+
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.core.animateIntAsState
@@ -459,6 +461,8 @@ class OrdersState {
             authExpired = false
         } catch (e: AlmaApiException.NotAuthenticated) {
             authExpired = true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {
@@ -495,6 +499,8 @@ class OrdersState {
             AlmaApi.send("POST", "/api/orders/orders/status", body)
             load() // refresh counts + row (server may cascade fields)
             true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             allOrders = allOrders.map { if (it.id == order.id) it.copy(status = old) else it }
             applyFilter()
@@ -1726,6 +1732,8 @@ private fun OrdEditSheet(order: AlmaOrder, vm: OrdersState, dark: Boolean, onClo
                     vm.load()
                     onClose()
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 error = e.message
             } finally {
@@ -1808,6 +1816,8 @@ private fun OrdDeleteRequestSheet(order: AlmaOrder, dark: Boolean, onClose: () -
                 done = r.str("message") ?: "Delete request sent for Super Admin approval"
                 delay(1200)
                 onClose()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 error = e.message
             } finally {

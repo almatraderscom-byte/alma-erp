@@ -17,6 +17,8 @@
 
 package com.almatraders.erp.pages
 
+import kotlinx.coroutines.CancellationException
+
 import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -242,6 +244,8 @@ private class InvoicesState {
             authExpired = true
             loading = false
             return
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
             loading = false

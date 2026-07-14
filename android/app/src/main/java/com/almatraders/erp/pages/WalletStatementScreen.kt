@@ -21,6 +21,8 @@
 
 package com.almatraders.erp.pages
 
+import kotlinx.coroutines.CancellationException
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -291,6 +293,8 @@ private class WalletStatementState(val employeeId: String, val businessId: Strin
             authExpired = false
         } catch (e: AlmaApiException.NotAuthenticated) {
             authExpired = true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {
@@ -313,6 +317,8 @@ private class WalletStatementState(val employeeId: String, val businessId: Strin
             )
         } catch (e: AlmaApiException.NotAuthenticated) {
             authExpired = true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
         } finally {
@@ -335,6 +341,8 @@ private class WalletStatementState(val employeeId: String, val businessId: Strin
             notice = "আপিল জমা হয়েছে — Boss দেখে সিদ্ধান্ত দেবেন।"
             load()
             true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             error = e.message
             false
