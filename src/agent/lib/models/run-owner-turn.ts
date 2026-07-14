@@ -49,6 +49,11 @@ import {
   shouldRestartHeadAfterFailure,
 } from '@/agent/lib/turn-loop-policy'
 import {
+  deriveOwnerTurnAuthorization,
+  filterToolsForOwnerTurn,
+  ownerTurnAuthorizationNote,
+} from '@/agent/lib/turn-authorization'
+import {
   verifyClaimsAgainstLedger,
   buildVerificationReminder,
   MAX_VERIFY_RETRIES,
@@ -302,6 +307,7 @@ async function* runAlternateProviderTurn(
     if (typeof m.content === 'string' && m.content.trim()) recentUserTexts.unshift(m.content.trim())
   }
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
+  const turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
 
   const now = new Date()
   // Salah conscience-nudge + nightly muhasaba must work on this cheap-head path too
@@ -468,6 +474,10 @@ async function* runAlternateProviderTurn(
   // conversation. The injection is transient (only the assistant reply is
   // persisted), so replayed history stays clean.
   let volatileText = systemBlocksToText(volatile)
+  const authorizationNote = ownerTurnAuthorizationNote(turnAuthorization)
+  if (authorizationNote) {
+    volatileText = volatileText ? `${authorizationNote}\n\n${volatileText}` : authorizationNote
+  }
   // LISTEN MODE override — prepend the empathy instruction and, crucially, CANCEL
   // the system prompt's action-pressure for this one turn. There are no business
   // tools on a listen turn (assembled empty below), so the head physically cannot
@@ -539,7 +549,7 @@ async function* runAlternateProviderTurn(
   const controlsNote = controlsPromptNote(agentControls)
   const systemText = systemBlocksToText(stable) + (controlsNote ? `\n\n${controlsNote}` : '')
   const selectedTools = filterToolDefsByControls(
-    toolSelection.tools,
+    filterToolsForOwnerTurn(toolSelection.tools, turnAuthorization),
     agentControls,
   )
   // xAI hard-caps tool definitions at 200 per request — the owner head carries 201,
@@ -605,6 +615,7 @@ async function* runAlternateProviderTurn(
       trimmed: toolSelection.trimmed?.length ? toolSelection.trimmed : null,
       parallelToolCalls: packParallelToolCalls,
       boundTool: boundToolName,
+      turnAuthorization: turnAuthorization.reason,
     },
   })
   const adapter = adapterFor(model.provider)
@@ -806,6 +817,7 @@ async function* runAlternateProviderTurn(
             text: iterationText,
             toolRecords,
             hasAskCard: emittedAskCards.length > 0,
+            ownerRequestedAction: turnAuthorization.allowMutations,
           })
         ) {
           intentNudges++
@@ -854,6 +866,7 @@ async function* runAlternateProviderTurn(
           !signal?.aborted
           && !memoryNudgeSent
           && lastUserText
+          && turnAuthorization.allowMutations
           && looksLikeDurableFact(lastUserText)
           && !toolRecords.some((r) => r.toolName === 'save_memory')
         ) {
@@ -892,8 +905,8 @@ async function* runAlternateProviderTurn(
         yield { type: 'tool_start', id: call.id, name: call.name, input: call.input }
         const started = Date.now()
         const result = personalMode
-          ? await executePersonalTool(call.name, call.input, { conversationId, businessId })
-          : await executeTool(call.name, call.input, { conversationId, businessId, modelId: model.id, turnId })
+          ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization })
+          : await executeTool(call.name, call.input, { conversationId, businessId, modelId: model.id, turnId, turnAuthorization })
         const durationMs = Date.now() - started
 
         if (!result.success) {

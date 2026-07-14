@@ -44,6 +44,11 @@ import { applyTailCompaction } from '@/agent/lib/tail-compact'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import { shouldNudgeZeroToolIntent } from '@/agent/lib/turn-loop-policy'
 import {
+  deriveOwnerTurnAuthorization,
+  filterToolsForOwnerTurn,
+  ownerTurnAuthorizationNote,
+} from '@/agent/lib/turn-authorization'
+import {
   buildVerificationReminder,
   detectMissingCardViolation,
   MAX_VERIFY_RETRIES,
@@ -628,6 +633,7 @@ export async function* runAgentTurn(
     if (text.trim()) recentUserTexts.unshift(text.trim())
   }
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
+  const turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
 
   const now = new Date()
   let teachingBlock: string | undefined
@@ -939,6 +945,10 @@ export async function* runAgentTurn(
   // buildTurnApiMessages), keeping the system block byte-stable across turns.
   const systemBlocks = [...stableSystem]
   let volatileText = volatileSystem.map((b) => b.text).join('\n')
+  const authorizationNote = ownerTurnAuthorizationNote(turnAuthorization)
+  if (authorizationNote) {
+    volatileText = volatileText ? `${authorizationNote}\n\n${volatileText}` : authorizationNote
+  }
   // Phase 4 parity with the alternate-provider path: reconcile the conversation's
   // canonical WorkflowRuns against their cards' live status, then put the exact
   // in-flight state in front of the head — "হ্যাঁ/continue" resumes THE step.
@@ -965,7 +975,10 @@ export async function* runAgentTurn(
   // Owner Control Center: drop OFF-capability tools and tell the agent (in the
   // prompt) to ask the owner to enable instead of improvising. Fail-open.
   const agentControls = await getAgentControls()
-  const gatedTools = filterToolDefsByControls(selectedTools, agentControls)
+  const gatedTools = filterToolDefsByControls(
+    filterToolsForOwnerTurn(selectedTools, turnAuthorization),
+    agentControls,
+  )
   const controlsNote = controlsPromptNote(agentControls)
   if (controlsNote) systemBlocks.push({ type: 'text', text: controlsNote })
 
@@ -1208,6 +1221,7 @@ export async function* runAgentTurn(
           !signal?.aborted
           && !memoryNudgeSent
           && lastUserText
+          && turnAuthorization.allowMutations
           && looksLikeDurableFact(lastUserText)
           && !toolRecords.some((r) => r.toolName === 'save_memory')
         ) {
@@ -1238,6 +1252,7 @@ export async function* runAgentTurn(
           if (shouldNudgeZeroToolIntent({
             text: finalIntentText,
             hasAskCard: emittedAskCards.length > 0,
+            ownerRequestedAction: turnAuthorization.allowMutations,
           })) {
             intentNudgeSent = true
             assistantTurns.pop()
@@ -1313,8 +1328,8 @@ export async function* runAgentTurn(
         }
         const started = Date.now()
         const result = personalMode
-          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId })
-          : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id })
+          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization })
+          : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id, turnAuthorization })
         return { tb, result, durationMs: Date.now() - started }
       }
 

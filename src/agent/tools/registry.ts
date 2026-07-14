@@ -11,6 +11,10 @@ import {
   type ResolvedClassification,
 } from './tool-contract'
 import { TOOL_CLASSIFICATION } from './capability-classification'
+import {
+  isToolAllowedForOwnerTurn,
+  type OwnerTurnAuthorization,
+} from '@/agent/lib/turn-authorization'
 import { attachMemoryEmbedding, createOrUpdateAgentMemory } from '@/agent/lib/agent-memory'
 import { ERP_TOOLS } from './erp-tools'
 import { CONFIRM_TOOLS } from './confirm-tools'
@@ -470,6 +474,7 @@ export async function executePersonalTool(
     conversationId: serverContext.conversationId as string | undefined,
     businessId: (serverContext.businessId as string | undefined) ?? 'ALMA_LIFESTYLE',
     turnId: serverContext.turnId as string | undefined,
+    turnAuthorization: serverContext.turnAuthorization as OwnerTurnAuthorization | undefined,
   })
 }
 
@@ -636,6 +641,7 @@ interface ToolRunContext {
   businessId?: string
   turnId?: string
   surface?: 'owner' | 'cs' | 'scheduler'
+  turnAuthorization?: OwnerTurnAuthorization
 }
 
 function classificationFor(name: string): ResolvedClassification {
@@ -675,6 +681,25 @@ export async function runRegisteredTool(
     turnId: ctx.turnId,
   }
   const capDetail = { domain: cap.domain, mode: cap.mode, risk: cap.risk }
+
+  if (!isToolAllowedForOwnerTurn(tool.name, ctx.turnAuthorization)) {
+    void logToolEvent({
+      ...baseEvent,
+      success: false,
+      errorClass: 'turn_authorization',
+      errorCode: 'turn_read_only',
+      latencyMs: Date.now() - started,
+      detail: { ...capDetail, authorization: ctx.turnAuthorization?.reason, execution: 'rejected' },
+    })
+    return {
+      success: false,
+      error:
+        'Boss-এর original message শুধু তথ্য/স্ট্যাটাস চেয়েছে—কোনো পরিবর্তনের অনুমতি দেয়নি। ' +
+        `তাই ${tool.name} server থেকে block করা হয়েছে। read tool দিয়ে উত্তর দিন; পরিবর্তন দরকার হলে Boss-এর explicit instruction চান।`,
+      errorCode: 'turn_read_only',
+      retryable: false,
+    }
+  }
 
   const validation = validateToolInput(tool.name, tool.input_schema, input ?? {})
   if (!validation.ok) {
@@ -717,7 +742,9 @@ export async function runRegisteredTool(
   }
 
   try {
-    const result = await tool.handler({ ...input, ...serverContext })
+    const handlerContext = { ...serverContext }
+    delete handlerContext.turnAuthorization
+    const result = await tool.handler({ ...input, ...handlerContext })
     if (result.success) {
       void logToolEvent({
         ...baseEvent,
@@ -798,7 +825,12 @@ export async function executeTool(
     }
     tool = anyTool
   }
-  return runRegisteredTool(tool, input, serverContext, { conversationId, businessId, turnId })
+  return runRegisteredTool(tool, input, serverContext, {
+    conversationId,
+    businessId,
+    turnId,
+    turnAuthorization: serverContext.turnAuthorization as OwnerTurnAuthorization | undefined,
+  })
 }
 
 // Back-compat re-exports — the contract layer now owns these (tool-contract.ts).
