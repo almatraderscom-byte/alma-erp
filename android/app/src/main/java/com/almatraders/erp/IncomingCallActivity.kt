@@ -129,6 +129,16 @@ class IncomingCallActivity : ComponentActivity() {
         LaunchedEffect(mode, answered) {
             if (answered && mode == AgoraIntercom.Mode.IDLE) finishAndCleanup()
         }
+        // Caller cancelled before we answered (a cancel push arrived) → close instantly,
+        // WhatsApp-style, instead of ringing on to the 60s timeout.
+        val cancelledId = AgoraIntercom.cancelledCallId
+        LaunchedEffect(cancelledId) {
+            if (cancelledId == broadcastId) {
+                AgoraIntercom.stopRinging()
+                if (!answered) AgoraIntercom.leave()
+                finishAndCleanup()
+            }
+        }
         // Nobody answered within the ring window → auto-dismiss (missed call).
         LaunchedEffect(Unit) {
             delay(60_000)

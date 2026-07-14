@@ -29,3 +29,4 @@ android/capacitor-cordova-android-plugins/build/
 /public/companion/
 /public/companion-version.json
 /public/companion-updater.sh
+android/local.properties

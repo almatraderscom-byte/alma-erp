@@ -19,7 +19,19 @@ import com.onesignal.notifications.INotificationServiceExtension
 class CallNotificationExtension : INotificationServiceExtension {
     override fun onNotificationReceived(event: INotificationReceivedEvent) {
         val data = event.notification.additionalData ?: return
-        if (data.optString("type") != "office_call") return
+        val type = data.optString("type")
+
+        // A cancel push (caller hung up / answered elsewhere) — stop the ring instantly:
+        // dismiss the full-screen notification and close a live IncomingCallActivity.
+        if (type == "office_call_cancel") {
+            event.preventDefault()
+            val broadcastId = data.optString("broadcastId")
+            if (broadcastId.isNotEmpty()) com.almatraders.erp.pages.AgoraIntercom.markCallCancelled(broadcastId)
+            CallNotifications.cancel(event.context)
+            return
+        }
+
+        if (type != "office_call") return
 
         // Don't let OneSignal post its default banner — we render a call instead.
         event.preventDefault()

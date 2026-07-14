@@ -162,7 +162,7 @@ object AgoraIntercom {
         }
     }
 
-    /** Staff side: freshest still-ringing call addressed to me, else null. */
+    /** Freshest still-ringing call addressed to me (owner OR staff), else null. */
     suspend fun pendingIncomingCall(): Pair<String, String>? {  // (broadcastId, channel)
         if (mode != Mode.IDLE && mode != Mode.LISTENING) return null
         return try {
@@ -171,12 +171,18 @@ object AgoraIntercom {
             for (i in arr.length() - 1 downTo 0) {
                 val b = arr.optJSONObject(i) ?: continue
                 if (b.str("kind") != "call") continue
-                val mine = b.optJSONObject("mine") ?: continue
-                // Already answered/declined (here, the full-screen call, or the web office)
-                // → must not re-ring.
-                if (mine.str("confirmedAt") != null) continue
+                // Bidirectional: incomingForMe is server-computed (the owner rings for a
+                // staff→owner call too, and never for a call he placed). Fall back to the
+                // staff `mine` receipt for older server builds.
+                val mine = b.optJSONObject("mine")
+                val forMe = if (b.has("incomingForMe")) b.optBoolean("incomingForMe") else (mine != null)
+                if (!forMe) continue
+                // Ended (caller cancelled / answered elsewhere) or already handled → skip.
+                if (b.str("endedAt") != null) continue
+                if (mine?.str("confirmedAt") != null) continue
                 val id = b.str("id") ?: continue
                 if (handledCallIds.contains(id)) continue
+                b.str("callerName")?.let { post { callPeer = it } }
                 return Pair(id, "itc_$id")
             }
             null
@@ -184,6 +190,14 @@ object AgoraIntercom {
     }
 
     fun markCallHandled(id: String) { handledCallIds.add(id) }
+
+    /** A call was cancelled remotely (caller hung up before answer). Observed by a
+     *  live IncomingCallActivity so it closes instantly instead of ringing to timeout. */
+    var cancelledCallId by mutableStateOf<String?>(null); private set
+    fun markCallCancelled(id: String) {
+        handledCallIds.add(id)
+        post { cancelledCallId = id }
+    }
 
     fun toggleMute() {
         val next = !micMuted
