@@ -938,7 +938,21 @@ export async function* runAgentTurn(
   // It is injected into the current owner user turn instead (see
   // buildTurnApiMessages), keeping the system block byte-stable across turns.
   const systemBlocks = [...stableSystem]
-  const volatileText = volatileSystem.map((b) => b.text).join('\n')
+  let volatileText = volatileSystem.map((b) => b.text).join('\n')
+  // Phase 4 parity with the alternate-provider path: reconcile the conversation's
+  // canonical WorkflowRuns against their cards' live status, then put the exact
+  // in-flight state in front of the head — "হ্যাঁ/continue" resumes THE step.
+  // Fail-open; skipped in personal mode.
+  if (!personalMode) {
+    try {
+      const wf = await import('@/agent/lib/workflow-run')
+      const runs = await wf.reconcileConversationWorkflows(conversationId)
+      const note = wf.buildWorkflowSnapshotNote(runs)
+      if (note) volatileText = volatileText ? `${volatileText}\n\n${note}` : note
+    } catch (err) {
+      console.warn('[core] workflow reconcile failed open:', err instanceof Error ? err.message : err)
+    }
+  }
 
   // The current owner turn is the last user message at this point (history +
   // optional compaction summary; tool-loop reminders/nudges are appended AFTER
@@ -1431,8 +1445,25 @@ export async function* runAgentTurn(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const row = await (prisma as any).agentPendingAction.findUnique({
               where: { id: d.pendingActionId },
-              select: { status: true, summary: true, costEstimate: true },
+              select: { status: true, summary: true, costEstimate: true, type: true },
             })
+            // Phase 4 (parity with run-owner-turn): every staged card gets a
+            // canonical WorkflowRun the moment it exists — idempotent, fail-open.
+            if (row && !personalMode) {
+              void import('@/agent/lib/workflow-run')
+                .then(async (wf) => {
+                  const { packsForPendingActionType } = await import('@/agent/tools/state-router')
+                  const kind = packsForPendingActionType(String(row.type ?? ''))[0] ?? 'generic'
+                  await wf.ensureWorkflowRunForPendingAction({
+                    pendingActionId: d.pendingActionId as string,
+                    conversationId,
+                    businessId,
+                    kind,
+                    goal: String(row.summary ?? '').slice(0, 500) || `${row.type} card`,
+                  })
+                })
+                .catch(() => {})
+            }
             if (row?.status === 'pending') {
               const cardSummary = decodeUnicodeEscapes(
                 typeof d.summary === 'string' && d.summary ? d.summary : (row.summary ?? ''),
