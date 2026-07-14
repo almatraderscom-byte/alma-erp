@@ -20,10 +20,10 @@
  * by eye in telemetry.
  */
 export const AGENT_VERSIONS = {
-  prompt: 'p2026.07.14',
+  prompt: 'p2026.07.14.2',
   toolManifest: 't2026.07.14',
-  router: 'r2026.07.14',
-  workflow: 'w0',
+  router: 'r2026.07.14.2',
+  workflow: 'w2026.07.14',
 } as const
 
 export type AgentVersionStamp = typeof AGENT_VERSIONS

@@ -18,7 +18,8 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { selectOwnerHeadTools, packsForPendingActionType } from '@/agent/tools/state-router'
+import { selectOwnerHeadTools, packsForPendingActionType, isContinuationText } from '@/agent/tools/state-router'
+import { workflowToolBinding } from '@/agent/lib/workflow-templates'
 import {
   reconcileConversationWorkflows,
   buildWorkflowSnapshotNote,
@@ -350,6 +351,56 @@ async function* runAlternateProviderTurn(
     }
   }
 
+  // Ask-card answer matching — MOVED BEFORE routing (Phase 5): when the owner's
+  // message is the tapped option of a recent ask card, we must know it now, so
+  // (a) a card bound to a workflow run advances the template step BEFORE tool
+  // selection (else the turn Boss confirms the image still can't see the post
+  // tool), and (b) the answer-anchoring note below reuses the same match.
+  // Match by OPTION TEXT across recent cards, never "latest answered by
+  // createdAt" (2026-07-12: the head bound the reply to the wrong question).
+  type MatchedAskCard = { id: string; question: string; status: string; selectedOption: string | null; options: unknown; workflowRunId?: string | null }
+  let matchedAskCard: MatchedAskCard | undefined
+  if (!suppressWork && !listenMode && lastUserText) {
+    try {
+      const recentCards: MatchedAskCard[] =
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (prisma as any).agentAskCard.findMany({
+          where: { conversationId },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          select: { id: true, question: true, status: true, selectedOption: true, options: true, workflowRunId: true },
+        })
+      const matchesText = (opt: unknown): boolean =>
+        typeof opt === 'string' && !!opt.trim() && lastUserText.startsWith(opt.trim().slice(0, 40))
+      matchedAskCard = recentCards.find((c) => matchesText(c.selectedOption))
+      if (!matchedAskCard) {
+        // Race self-heal: the tapped option arrived as the message but the answer
+        // write hasn't landed (or failed) — the card is still pending. Record it
+        // ourselves so the durable row and the anchoring note agree.
+        const pendingHit = recentCards.find(
+          (c) => c.status === 'pending' && Array.isArray(c.options) && (c.options as unknown[]).some(matchesText),
+        )
+        if (pendingHit) {
+          const chosen = (pendingHit.options as unknown[]).find(matchesText) as string
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (prisma as any).agentAskCard.update({
+            where: { id: pendingHit.id },
+            data: { status: 'answered', selectedOption: chosen },
+          }).catch(() => {})
+          matchedAskCard = { ...pendingHit, status: 'answered', selectedOption: chosen }
+        }
+      }
+      // Phase 5: a bound answer moves the template state machine NOW (e.g. image
+      // preview confirm unlocks the post step) — then re-read the runs so the
+      // router, snapshot note and tool_choice binding all see the NEW step.
+      if (matchedAskCard?.workflowRunId && matchedAskCard.selectedOption) {
+        const { advanceWorkflowOnAskAnswer, listActiveWorkflowRuns: relist } = await import('@/agent/lib/workflow-run')
+        await advanceWorkflowOnAskAnswer(matchedAskCard.workflowRunId, matchedAskCard.selectedOption, 'turn')
+        workflowRuns = await relist(conversationId)
+      }
+    } catch { /* fail-open — the note/advance are aids, never blockers */ }
+  }
+
   const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot, officePulse] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
@@ -447,66 +498,32 @@ async function* runAlternateProviderTurn(
   // text arrives as a bare user message with zero context — heads treated it as a
   // brand-new request and RESTARTED the task from scratch (2026-07-12 carousel
   // incident). Anchor it: this is the ANSWER to your own question — resume, don't
-  // re-derive. Fail-open. Skipped in listen mode (a feelings message is never a
-  // card answer, and we must not pull prior work into it).
-  if (!listenMode) try {
-    if (lastUserText) {
-      // Find the card this exact message answers — match by OPTION TEXT across the
-      // recent cards, never "latest answered by createdAt" (the old lookup): the
-      // web client fires the turn without awaiting the answer write, so the tapped
-      // card can still be 'pending' here, and the latest-answered card could be a
-      // DIFFERENT question — the head then bound the reply to the wrong question
-      // (owner bug 2026-07-12: tapped "অন্য কিছু change চাই", head ran "Ok" approve).
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const recentCards: Array<{ id: string; question: string; status: string; selectedOption: string | null; options: unknown; workflowRunId?: string | null }> =
-        await (prisma as any).agentAskCard.findMany({
-          where: { conversationId },
-          orderBy: { createdAt: 'desc' },
-          take: 5,
-          select: { id: true, question: true, status: true, selectedOption: true, options: true, workflowRunId: true },
-        })
-      const matchesText = (opt: unknown): boolean =>
-        typeof opt === 'string' && !!opt.trim() && lastUserText.startsWith(opt.trim().slice(0, 40))
-      let matched = recentCards.find((c) => matchesText(c.selectedOption))
-      if (!matched) {
-        // Race self-heal: the tapped option arrived as the message but the answer
-        // write hasn't landed (or failed) — the card is still pending. Record it
-        // ourselves so the durable row and the anchoring note agree.
-        const pendingHit = recentCards.find(
-          (c) => c.status === 'pending' && Array.isArray(c.options) && (c.options as unknown[]).some(matchesText),
-        )
-        if (pendingHit) {
-          const chosen = (pendingHit.options as unknown[]).find(matchesText) as string
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          await (prisma as any).agentAskCard.update({
-            where: { id: pendingHit.id },
-            data: { status: 'answered', selectedOption: chosen },
-          }).catch(() => {})
-          matched = { ...pendingHit, status: 'answered', selectedOption: chosen }
-        }
-      }
-      if (matched?.selectedOption) {
-        const others = Array.isArray(matched.options)
-          ? (matched.options as unknown[]).filter((o): o is string => typeof o === 'string' && o !== matched!.selectedOption)
-          : []
-        // Phase 4 (AGENT-IOS-001, server-side): the matched card carries its
-        // workflowRunId — the owner's answer binds to the EXACT run, not prose.
-        const wfRef = matched.workflowRunId
-          ? workflowRuns.find((r) => r.id === matched!.workflowRunId)
-          : undefined
-        const wfLine = wfRef
-          ? ` এই উত্তরটা চলমান কাজ [${wfRef.kind}] "${wfRef.goal.slice(0, 80)}" (ধাপ: ${wfRef.state})-এর — ঠিক ওই ধাপ থেকেই এগোও।`
-          : ''
-        const answerNote =
-          `[ASK-CARD উত্তর] Boss-এর এই বার্তাটা তোমারই প্রশ্নের উত্তর — প্রশ্ন ছিল: "${matched.question}"। ` +
-          `Boss বেছে নিয়েছেন: "${matched.selectedOption}"।` + wfLine +
-          (others.length ? ` তিনি এগুলো বেছে নেননি: ${others.map((o) => `"${o}"`).join(', ')} — সেগুলোর অর্থ ধরে কাজ করবে না।` : '') +
-          ' এটা নতুন কাজ নয়: আগের চলমান কাজটা ঠিক যেখানে ছিলে সেখান থেকে চালিয়ে যাও (চেকপয়েন্ট নোট দেখো)। ' +
-          'ব্রাউজার-কাজ চললে আগে live_browser_look দিয়ে এখনকার পেজ দেখো — গোড়া থেকে navigate করা বা main view-এ ফেরত যাওয়া নিষেধ।'
-        volatileText = volatileText ? `${volatileText}\n\n${answerNote}` : answerNote
-      }
-    }
-  } catch { /* fail-open */ }
+  // re-derive. The matching itself moved BEFORE routing (Phase 5) — this block
+  // only builds the note from that match. Skipped in listen mode (a feelings
+  // message is never a card answer, and we must not pull prior work into it).
+  if (!listenMode && matchedAskCard?.selectedOption) {
+    const matched = matchedAskCard
+    const others = Array.isArray(matched.options)
+      ? (matched.options as unknown[]).filter((o): o is string => typeof o === 'string' && o !== matched.selectedOption)
+      : []
+    // Phase 4 (AGENT-IOS-001, server-side): the matched card carries its
+    // workflowRunId — the owner's answer binds to the EXACT run, not prose.
+    // workflowRuns was re-read after the Phase 5 advance, so the step shown
+    // here is the run's CURRENT step (e.g. post_draft after a confirmed image).
+    const wfRef = matched.workflowRunId
+      ? workflowRuns.find((r) => r.id === matched.workflowRunId)
+      : undefined
+    const wfLine = wfRef
+      ? ` এই উত্তরটা চলমান কাজ [${wfRef.kind}] "${wfRef.goal.slice(0, 80)}" (ধাপ: ${wfRef.state})-এর — ঠিক ওই ধাপ থেকেই এগোও।`
+      : ''
+    const answerNote =
+      `[ASK-CARD উত্তর] Boss-এর এই বার্তাটা তোমারই প্রশ্নের উত্তর — প্রশ্ন ছিল: "${matched.question}"। ` +
+      `Boss বেছে নিয়েছেন: "${matched.selectedOption}"।` + wfLine +
+      (others.length ? ` তিনি এগুলো বেছে নেননি: ${others.map((o) => `"${o}"`).join(', ')} — সেগুলোর অর্থ ধরে কাজ করবে না।` : '') +
+      ' এটা নতুন কাজ নয়: আগের চলমান কাজটা ঠিক যেখানে ছিলে সেখান থেকে চালিয়ে যাও (চেকপয়েন্ট নোট দেখো)। ' +
+      'ব্রাউজার-কাজ চললে আগে live_browser_look দিয়ে এখনকার পেজ দেখো — গোড়া থেকে navigate করা বা main view-এ ফেরত যাওয়া নিষেধ।'
+    volatileText = volatileText ? `${volatileText}\n\n${answerNote}` : answerNote
+  }
   if (volatileText) {
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i]
@@ -550,6 +567,23 @@ async function* runAlternateProviderTurn(
   // blind to each other (the multi-card and tool-spree incident class).
   const { packAllowsParallelToolCalls } = await import('@/agent/tools/capability-manifest')
   const packParallelToolCalls = packAllowsParallelToolCalls(neutralTools.map((t) => t.name))
+  // Phase 5 (roadmap §D): a deterministic mutating step binds the head's FIRST
+  // round to the template step's expected tool — exactly one active template
+  // run, its required facts present, and a continuation reply ("হ্যাঁ/করো") that
+  // carries no new intent. Later rounds return to auto so the model can speak.
+  // Guarded to tools actually present in this turn's pack (a bound name the
+  // provider can't see would 400 the request).
+  const stepBinding = !listenMode && workflowRuns.length > 0
+    ? workflowToolBinding(workflowRuns, {
+        // An ask-card answer bound to a run is as deterministic as "হ্যাঁ" — the
+        // owner just resolved THIS job's question (e.g. confirmed the preview).
+        continuation: isContinuationText(lastUserText) || Boolean(matchedAskCard?.workflowRunId),
+      })
+    : null
+  const boundToolName =
+    stepBinding && neutralTools.some((t) => t.name === stepBinding.toolName)
+      ? stepBinding.toolName
+      : null
   // Phase 1 route span: what this turn's head was actually given — groups, final
   // tool count (after controls gating, provider cap and listen mode), model and
   // behavior-artifact versions. The tool events say what the model CALLED; this
@@ -570,6 +604,7 @@ async function* runAlternateProviderTurn(
       signals: toolSelection.signals ?? null,
       trimmed: toolSelection.trimmed?.length ? toolSelection.trimmed : null,
       parallelToolCalls: packParallelToolCalls,
+      boundTool: boundToolName,
     },
   })
   const adapter = adapterFor(model.provider)
@@ -687,6 +722,13 @@ async function* runAlternateProviderTurn(
         thinking: model.thinking,
         signal,
         parallelToolCalls: iterationTools.length > 0 ? packParallelToolCalls : undefined,
+        // Phase 5 §D: bind the FIRST round of a deterministic mutating step to
+        // its named tool (sequential by policy above); every later round is
+        // auto so the model can verify, summarize, or ask.
+        toolChoice:
+          iteration === 0 && boundToolName && iterationTools.length > 0
+            ? { name: boundToolName }
+            : undefined,
       })) {
         if (ev.type === 'text_delta') {
           if (thinkingText && thinkingMs == null && thinkingStartedAt) {
@@ -922,12 +964,16 @@ async function* runAlternateProviderTurn(
             // Phase 4 — every staged card gets a canonical WorkflowRun (status
             // waiting_owner) the moment it exists, idempotent on the card id.
             // Never relies on the model tracking its own work. Fail-open.
+            // Phase 5: actionType drives the workflow-template mapping (an fb_post
+            // card joins the conversation's in-flight product_post run at its
+            // post_approval step instead of spawning a disconnected run).
             if (row) {
               const kind = packsForPendingActionType(String(row.type ?? ''))[0] ?? 'generic'
               void ensureWorkflowRunForPendingAction({
                 pendingActionId: d.pendingActionId,
                 conversationId,
                 businessId,
+                actionType: String(row.type ?? ''),
                 kind,
                 goal: String(row.summary ?? lastUserText ?? '').slice(0, 500) || `${row.type} card`,
               }).catch(() => {})

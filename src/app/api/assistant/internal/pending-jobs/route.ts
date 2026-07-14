@@ -44,5 +44,27 @@ export async function GET(req: NextRequest) {
     take: 20,
   })
 
-  return Response.json({ jobs })
+  // Phase 5 execution lease (roadmap §A leaseUntil): handing a job to the worker
+  // takes the lease on its WorkflowRun, so overlapping polls / a second worker
+  // instance cannot pick the SAME job up again mid-execution. A crashed worker
+  // just lets the lease expire and the job resurfaces. Jobs without a run
+  // (cron/legacy rows) pass through untouched — the lease narrows duplicates,
+  // it never blocks delivery.
+  const LEASE_TTL_MS: Record<string, number> = {
+    video_gen: 15 * 60_000, video_edit: 15 * 60_000, video_finish: 15 * 60_000,
+    long_agent_task: 15 * 60_000, browser_action: 15 * 60_000, workbench_run: 15 * 60_000,
+    seo_audit: 15 * 60_000,
+  }
+  try {
+    const { acquireWorkflowLease } = await import('@/agent/lib/workflow-run')
+    const handout: unknown[] = []
+    for (const job of jobs as Array<{ id: string; type: string }>) {
+      const lease = await acquireWorkflowLease(job.id, LEASE_TTL_MS[job.type] ?? 5 * 60_000)
+        .catch(() => 'no_run' as const)
+      if (lease !== 'held') handout.push(job)
+    }
+    return Response.json({ jobs: handout })
+  } catch {
+    return Response.json({ jobs }) // lease layer down → behave exactly as before
+  }
 }
