@@ -41,6 +41,7 @@ import { logCost } from '@/agent/lib/cost-events'
 import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact-detect'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
+import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
 import {
   buildVerificationReminder,
   detectMissingCardViolation,
@@ -1549,9 +1550,12 @@ export async function* runAgentTurn(
     // Deadline/abort salvage — mirrors run-owner-turn.ts: never persist an EMPTY
     // reply (strands the owner mid-task AND leaves a context hole in replayed
     // history so the next turn restarts the task from scratch).
-    const coreBrowserTurn = toolRecords.some((r: ToolRecord) => r.toolName.startsWith('live_browser_'))
     const coreDeadlineHit = Boolean(signal?.aborted) || deadlineNudgeSent
-    const coreTaskUnfinished = coreBrowserTurn && coreDeadlineHit && emittedAskCards.length === 0
+    const coreTaskUnfinished = shouldAutoContinueTurn({
+      deadlineHit: coreDeadlineHit,
+      hasAskCard: emittedAskCards.length > 0,
+      tools: toolRecords,
+    })
     if (!joinedText.trim()) {
       const okSteps = toolRecords.filter((r: ToolRecord) => r.status === 'success').length
       joinedText = [

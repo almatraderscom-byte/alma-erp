@@ -24,6 +24,7 @@ export interface TurnJobInput {
   files?: FileRefInput[]
   projectId?: string | null
   personalMode?: boolean
+  clientRequestId?: string | null
 }
 
 export interface TurnJobData {
@@ -33,6 +34,7 @@ export interface TurnJobData {
   files: FileRefInput[]
   projectId: string | null
   personalMode: boolean
+  clientRequestId: string | null
 }
 
 /**
@@ -62,6 +64,7 @@ export function buildTurnJobData(
     files,
     projectId: typeof body.projectId === 'string' ? body.projectId : null,
     personalMode: body.personalMode === true,
+    clientRequestId: typeof body.clientRequestId === 'string' ? body.clientRequestId : null,
   }
 }
 

@@ -2030,23 +2030,26 @@ model AgentConversation {
 
 /// Individual turn in a conversation. content stores full Anthropic content blocks.
 model AgentMessage {
-  id             String                       @id @default(uuid())
-  conversationId String
-  conversation   AgentConversation            @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  role           String
-  content        Json
-  tokensIn       Int?
-  tokensOut      Int?
-  costUsd        Decimal?                     @db.Decimal(10, 6)
-  usage          Json?
+  id              String                       @id @default(uuid())
+  conversationId  String
+  /// Stable browser-send id. Direct Vercel and VPS fallback paths share it so
+  /// one logical owner send can create at most one persisted user message.
+  clientRequestId String?                      @unique @map("client_request_id")
+  conversation    AgentConversation            @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role            String
+  content         Json
+  tokensIn        Int?
+  tokensOut       Int?
+  costUsd         Decimal?                     @db.Decimal(10, 6)
+  usage           Json?
   // B2: per-message embedding for semantic recall of OLD turns that have aged
   // out of the verbatim history window. Populated best-effort/async after the
   // row is written; `summary` is reserved for a future condensed form (B3).
-  embedding      Unsupported("vector(1536)")?
-  summary        String?                      @db.Text
-  createdAt      DateTime                     @default(now())
-  artifacts      AgentArtifact[]
-  toolCalls      AgentToolCall[]
+  embedding       Unsupported("vector(1536)")?
+  summary         String?                      @db.Text
+  createdAt       DateTime                     @default(now())
+  artifacts       AgentArtifact[]
+  toolCalls       AgentToolCall[]
 
   @@index([conversationId, createdAt])
   @@map("agent_messages")
@@ -2060,30 +2063,37 @@ model AgentMessage {
 /// instance than the running turn, so an in-memory AbortController can't reach it;
 /// the running loop polls this flag each iteration instead.
 model AgentTurn {
-  id              String    @id @default(uuid())
-  conversationId  String    @map("conversation_id")
-  status          String    @default("running") // running | done | error | canceled
-  cancelRequested Boolean   @default(false) @map("cancel_requested")
+  id                    String    @id @default(uuid())
+  conversationId        String    @map("conversation_id")
+  /// Stable logical request id shared by direct + worker fallback paths.
+  requestId             String?   @unique @map("request_id")
+  /// A structured continuation has exactly one predecessor; unique prevents
+  /// double-click/reconnect races from starting the same continuation twice.
+  continuationOfTurnId  String?   @unique @map("continuation_of_turn_id")
+  continuationNeeded    Boolean   @default(false) @map("continuation_needed")
+  continuationClaimedAt DateTime? @map("continuation_claimed_at")
+  status                String    @default("running") // running | done | error | canceled
+  cancelRequested       Boolean   @default(false) @map("cancel_requested")
   /// Behavior-artifact versions live when this turn ran (Roadmap Phase 0):
   /// { prompt, toolManifest, router, workflow } — see src/agent/lib/agent-versions.ts.
-  versions        Json?
-  startedAt       DateTime  @default(now()) @map("started_at")
-  finishedAt      DateTime? @map("finished_at")
+  versions              Json?
+  startedAt             DateTime  @default(now()) @map("started_at")
+  finishedAt            DateTime? @map("finished_at")
   /// Client-generated idempotency key (roadmap Phase 3): one clientMessageId maps
   /// to at most ONE owner message and ONE turn, however many times the client
   /// retries after a timeout/reconnect. Nullable — legacy clients keep working.
-  clientMessageId String?   @map("client_message_id")
+  clientMessageId       String?   @map("client_message_id")
   /// The persisted owner AgentMessage this turn executes (set once — an internal
   /// worker re-run of the same turn must NOT store the message again).
-  userMessageId   String?   @map("user_message_id")
+  userMessageId         String?   @map("user_message_id")
   /// The persisted assistant AgentMessage of the terminal reply — lets the client
   /// fetch the exact final row instead of re-reading the whole history.
   assistantMessageId String? @map("assistant_message_id")
   /// Highest agent_turn_events.seq written for this turn (-1 = none yet) — the
   /// client's replay cursor and the "stream quiet but alive" liveness signal.
-  lastSeq         Int       @default(-1) @map("last_seq")
-  executionMode   String?   @map("execution_mode") // inline | worker
-  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+  lastSeq               Int       @default(-1) @map("last_seq")
+  executionMode         String?   @map("execution_mode") // inline | worker
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at")
 
   @@unique([conversationId, clientMessageId])
   @@index([clientMessageId])
@@ -2219,6 +2229,9 @@ model AgentToolCall {
 model AgentPendingAction {
   id             String    @id @default(uuid())
   conversationId String?
+  /// Optional logical-task key for tools whose expensive side effect must be
+  /// exactly-once across model retries/continuations.
+  dedupeKey      String?   @unique @map("dedupe_key")
   type           String
   payload        Json
   summary        String    @db.Text

@@ -20,6 +20,10 @@ type Row = {
   cancelRequested: boolean
   startedAt: Date
   finishedAt: Date | null
+  requestId: string | null
+  continuationOfTurnId: string | null
+  continuationNeeded: boolean
+  continuationClaimedAt: Date | null
 }
 
 // Hoisted so the (hoisted) vi.mock factory can reference the same store/mock.
@@ -28,6 +32,12 @@ const h = vi.hoisted(() => {
   const state = { seq: 0 }
   const agentTurn = {
     create: vi.fn(async ({ data, select }: { data: Partial<Row>; select?: Record<string, boolean> }) => {
+      if (data.requestId && [...store.values()].some((r) => r.requestId === data.requestId)) {
+        throw Object.assign(new Error('unique request id'), { code: 'P2002' })
+      }
+      if (data.continuationOfTurnId && [...store.values()].some((r) => r.continuationOfTurnId === data.continuationOfTurnId)) {
+        throw Object.assign(new Error('unique continuation'), { code: 'P2002' })
+      }
       const id = `turn_${++state.seq}`
       const row: Row = {
         id,
@@ -36,12 +46,23 @@ const h = vi.hoisted(() => {
         cancelRequested: false,
         startedAt: new Date(),
         finishedAt: null,
+        requestId: data.requestId ?? null,
+        continuationOfTurnId: data.continuationOfTurnId ?? null,
+        continuationNeeded: data.continuationNeeded ?? false,
+        continuationClaimedAt: data.continuationClaimedAt ?? null,
       }
       store.set(id, row)
-      return select ? { id } : row
+      if (!select) return row
+      const out: Record<string, unknown> = {}
+      for (const k of Object.keys(select)) out[k] = (row as unknown as Record<string, unknown>)[k]
+      return out
     }),
-    findUnique: vi.fn(async ({ where, select }: { where: { id: string }; select?: Record<string, boolean> }) => {
-      const row = store.get(where.id)
+    findUnique: vi.fn(async ({ where, select }: { where: { id?: string; requestId?: string; continuationOfTurnId?: string }; select?: Record<string, boolean> }) => {
+      const row = where.id
+        ? store.get(where.id)
+        : [...store.values()].find((r) =>
+            (where.requestId && r.requestId === where.requestId)
+            || (where.continuationOfTurnId && r.continuationOfTurnId === where.continuationOfTurnId))
       if (!row) return null
       if (!select) return row
       const out: Record<string, unknown> = {}
@@ -53,10 +74,13 @@ const h = vi.hoisted(() => {
       rows.sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
       return rows[0] ?? null
     }),
-    updateMany: vi.fn(async ({ where, data }: { where: { id: string; status?: string }; data: Partial<Row> }) => {
+    updateMany: vi.fn(async ({ where, data }: { where: { id: string; status?: string; conversationId?: string; continuationNeeded?: boolean; continuationClaimedAt?: null }; data: Partial<Row> }) => {
       const row = store.get(where.id)
       if (!row) return { count: 0 }
       if (where.status && row.status !== where.status) return { count: 0 }
+      if (where.conversationId && row.conversationId !== where.conversationId) return { count: 0 }
+      if (where.continuationNeeded !== undefined && row.continuationNeeded !== where.continuationNeeded) return { count: 0 }
+      if (where.continuationClaimedAt === null && row.continuationClaimedAt !== null) return { count: 0 }
       Object.assign(row, data)
       return { count: 1 }
     }),
@@ -65,7 +89,12 @@ const h = vi.hoisted(() => {
 })
 const { store } = h
 
-vi.mock('@/lib/prisma', () => ({ prisma: { agentTurn: h.agentTurn } }))
+vi.mock('@/lib/prisma', () => ({
+  prisma: {
+    agentTurn: h.agentTurn,
+    $transaction: async (fn: (tx: { agentTurn: typeof h.agentTurn }) => unknown) => fn({ agentTurn: h.agentTurn }),
+  },
+}))
 
 import {
   createTurn,
@@ -73,6 +102,8 @@ import {
   isTurnCancelRequested,
   finalizeTurnIfRunning,
   getLatestTurn,
+  claimContinuationTurn,
+  claimTurnForRequest,
 } from '@/agent/lib/turn-status'
 
 beforeEach(() => {
@@ -125,5 +156,28 @@ describe('A1 — cancel flag is the signal the loop honors', () => {
     expect(await isTurnCancelRequested(null)).toBe(false)
     expect(await isTurnCancelRequested(undefined)).toBe(false)
     expect(await isTurnCancelRequested('nope')).toBe(false)
+  })
+})
+
+describe('exactly-once request and continuation claims', () => {
+  it('lets direct and worker paths share one logical request execution', async () => {
+    const direct = await claimTurnForRequest('conv5', 'request_123')
+    const worker = await claimTurnForRequest('conv5', 'request_123')
+    expect(direct.claimed).toBe(true)
+    expect(worker.claimed).toBe(false)
+    expect(worker.turnId).toBe(direct.turnId)
+    expect(store.size).toBe(1)
+  })
+
+  it('consumes a persisted continuation eligibility exactly once', async () => {
+    const predecessor = await createTurn('conv6')
+    await finalizeTurnIfRunning(predecessor, 'done', { continuationNeeded: true })
+
+    const first = await claimContinuationTurn('conv6', predecessor!)
+    const replay = await claimContinuationTurn('conv6', predecessor!)
+    expect(first.claimed).toBe(true)
+    expect(replay.claimed).toBe(false)
+    expect(replay.turnId).toBe(first.turnId)
+    expect(store.size).toBe(2)
   })
 })

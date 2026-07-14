@@ -5,7 +5,9 @@ import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import {
   cancelRunningTurnsForConversation,
+  claimTurnForRequest,
   createTurn,
+  finalizeTurnIfRunning,
   findOrCreateTurnByClientMessageId,
   findTurnByClientMessageId,
   type TurnSnapshot,
@@ -32,7 +34,9 @@ export const runtime = 'nodejs'
  *    re-dispatched to the worker under the SAME turnId — execution environments
  *    hand off the turn, the client never re-sends the prompt;
  *  - a fresh conversation is created here when the client has none yet.
- * Legacy bodies (no clientMessageId) keep the old cancel-then-recreate behavior.
+ * The web client also sends a `clientRequestId`; direct Vercel execution and the
+ * worker fallback race on that one durable key, so only one path can execute.
+ * Legacy bodies (neither idempotency key) keep the old cancel-then-recreate behavior.
  */
 export async function POST(req: NextRequest) {
   const disabled = requireAgentEnabled()
@@ -146,30 +150,47 @@ export async function POST(req: NextRequest) {
     conversationId = conv.id
   }
 
-  // ONE live turn per conversation: this enqueue is the client's fallback after
-  // it gave up on a direct serverless run — but that run is deliberately not tied
-  // to the client connection and may still be executing. Cancel it (the turn loop
-  // polls cancelRequested) before starting the worker run, so the same message
-  // can never execute twice in parallel.
-  const superseded = await cancelRunningTurnsForConversation(conversationId)
-  if (superseded > 0) {
-    console.warn(`[assistant/turn] superseded ${superseded} running turn(s) on conversation ${conversationId}`)
-  }
-
+  const clientRequestId = typeof body.clientRequestId === 'string' && /^[A-Za-z0-9_-]{8,100}$/.test(body.clientRequestId)
+    ? body.clientRequestId
+    : null
   let turnId: string | null
-  if (clientMessageId) {
+
+  if (clientRequestId) {
+    // Direct Vercel and VPS fallback race on one durable request id. If direct
+    // already owns it, observe that turn instead of canceling/re-running the work.
+    const claim = await claimTurnForRequest(conversationId, clientRequestId, 'worker')
+    if (!claim.claimed) {
+      return Response.json({
+        turnId: claim.turnId,
+        conversationId,
+        jobId: null,
+        alreadyRunning: claim.status === 'running',
+        status: claim.status,
+      })
+    }
+    turnId = claim.turnId
+  } else if (clientMessageId) {
     const r = await findOrCreateTurnByClientMessageId(conversationId, clientMessageId, 'worker')
     if (r && !r.created) return turnSummary(r.turn, { duplicate: true })
     turnId = r?.turn.id ?? null
   } else {
+    // Legacy client only: supersede a still-running turn before creating another.
+    // Modern clients never take this path; their durable key decides the winner.
+    const superseded = await cancelRunningTurnsForConversation(conversationId)
+    if (superseded > 0) {
+      console.warn(`[assistant/turn] superseded ${superseded} running turn(s) on conversation ${conversationId}`)
+    }
     turnId = await createTurn(conversationId, { executionMode: 'worker' })
   }
-
   const jobData = buildTurnJobData(turnId, conversationId, body as Parameters<typeof buildTurnJobData>[2])
-  if (!jobData) return Response.json({ error: 'message_required' }, { status: 400 })
+  if (!jobData) {
+    await finalizeTurnIfRunning(turnId, 'error')
+    return Response.json({ error: 'message_required' }, { status: 400 })
+  }
 
   const jobId = await enqueueTurnJob(jobData)
   if (!jobId) {
+    await finalizeTurnIfRunning(turnId, 'error')
     return Response.json({ error: 'enqueue_failed', message: 'Could not enqueue turn on the worker queue.' }, { status: 502 })
   }
 
