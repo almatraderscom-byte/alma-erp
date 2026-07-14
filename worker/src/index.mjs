@@ -997,6 +997,69 @@ longTaskWorker.on('failed', async (job, err) => {
   }
 })
 
+// ── Long-task Redis circuit breaker (2026-07-14 incident) ────────────────────
+// LONG_TASK_REDIS_URL is a metered CLOUD Redis (Upstash) — the ONLY queue not on
+// the worker's local Redis, because Vercel and the VPS must share it for A2
+// "finish my app/web task while I'm away". When its monthly request quota was
+// exhausted, every BullMQ poll returned "max requests limit exceeded" and the
+// poll loop retried with no backoff — ~10M errors, a 10GB log, and (worst) it
+// STARVED this single-threaded process's event loop. The Telegram bot and the
+// approve/reject callback handlers live in the SAME process, so a dependency the
+// owner never touches from Telegram froze the buttons he DOES use (this is the
+// answer to "Upstash has no link to Telegram, why did it break?"). On sustained
+// Redis-unavailable errors we PAUSE the long-task worker (stops the poll storm,
+// frees the loop) and retry after a cooldown; Telegram stays responsive, and the
+// away-task feature self-heals when the quota resets / is upgraded.
+let longTaskRedisErrs = 0
+let longTaskBreakerOpen = false
+const LONG_TASK_ERR_THRESHOLD = 20
+const LONG_TASK_COOLDOWN_MS = 15 * 60 * 1000
+function isRedisUnavailableErr(err) {
+  const m = String(err?.message ?? err ?? '')
+  return m.includes('max requests limit') ||
+    m.includes('max daily request') ||
+    m.includes('ECONNREFUSED') ||
+    m.includes('ETIMEDOUT') ||
+    m.includes('Connection is closed') ||
+    m.includes('enableOfflineQueue')
+}
+async function tripLongTaskBreaker(reason) {
+  if (longTaskBreakerOpen) return
+  longTaskBreakerOpen = true
+  console.error(`[long-task] Redis unhealthy (${reason}) — pausing worker ${LONG_TASK_COOLDOWN_MS / 60000}min to protect the shared event loop; Telegram stays live`)
+  try { await longTaskWorker.pause(true) } catch { /* already paused/closing */ }
+  setTimeout(async () => {
+    longTaskRedisErrs = 0
+    longTaskBreakerOpen = false
+    try {
+      await longTaskWorker.resume()
+      console.log('[long-task] worker resumed after cooldown — probing Redis health')
+    } catch (e) {
+      console.warn('[long-task] resume failed:', e.message)
+    }
+  }, LONG_TASK_COOLDOWN_MS)
+}
+// The 'error' listener also prevents an unhandled worker error from bubbling to
+// the process-level handler and re-spamming logs/Sentry.
+function noteLongTaskRedisError(err, source) {
+  longTaskRedisErrs++
+  // Throttle: 1 line per 500 errors so a dead Redis can never fill the disk.
+  if (longTaskRedisErrs % 500 === 1) {
+    console.error(`[long-task] redis unavailable x${longTaskRedisErrs} (${source}): ${String(err?.message ?? err).slice(0, 100)}`)
+  }
+  if (longTaskRedisErrs >= LONG_TASK_ERR_THRESHOLD) tripLongTaskBreaker('redis quota/connection errors')
+}
+longTaskWorker.on('error', (err) => {
+  if (isRedisUnavailableErr(err)) noteLongTaskRedisError(err, 'worker.error')
+  else console.error('[long-task] worker error:', err?.message)
+})
+// The 2026-07-14 storm surfaced as unhandledRejection (BullMQ's poll-loop command
+// rejections), NOT as worker 'error' — so trip the breaker from that source too.
+// Pausing the worker halts the poll loop that emits these, ending the storm.
+process.on('unhandledRejection', (reason) => {
+  if (isRedisUnavailableErr(reason)) noteLongTaskRedisError(reason, 'unhandledRejection')
+})
+
 // Turn-consumer heartbeat (2026-07-13 incident: this consumer sat dead for 11 days
 // while the HTTP poll loop looked healthy, so approval continuations silently hung).
 // Written ONLY while the BullMQ consumer is actually running — the app's
