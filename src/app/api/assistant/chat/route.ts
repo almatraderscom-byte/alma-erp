@@ -42,7 +42,11 @@ import {
 import { shouldPersistIncomingMessage } from '@/agent/lib/continuation-policy'
 
 export const runtime = 'nodejs'
-export const maxDuration = 300
+// 800s (Pro plan + Fluid compute; Vercel allows up to 1800s). Raised from 300s
+// on 2026-07-14 (owner confirmed Pro) so long browser/content turns stop dying
+// at the old ceiling. The effective turn deadline is still AGENT_TURN_HARD_CAP_MS
+// (default 280s) clamped ≥20s under this — set the env to 780000 to use the room.
+export const maxDuration = 800
 
 interface FileRef { bucket: string; path: string; mediaType: string }
 
