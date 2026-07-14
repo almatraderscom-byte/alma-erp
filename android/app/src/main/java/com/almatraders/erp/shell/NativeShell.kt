@@ -299,6 +299,9 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
                     }
                     Box(Modifier.weight(1f)) {
                         TabContent(tabIndex, pushCtx)
+                        // Claude top scroll-edge fade — content dissolves into the aura as
+                        // it scrolls up under the header (iOS ClaudeTopFade parity).
+                        ClaudeTopFade(dark)
                     }
                 }
                 // ── Pushed screen (top of stack) covers the tab, keeps its own header ──
@@ -317,6 +320,9 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
                                     )
                                     is StackEntry.Native -> top.content(pushCtx)
                                 }
+                                // Claude top scroll-edge fade over native pushed screens
+                                // (skip web pushes — the WebView paints its own chrome).
+                                if (top is StackEntry.Native) ClaudeTopFade(dark)
                             }
                         }
                     }
