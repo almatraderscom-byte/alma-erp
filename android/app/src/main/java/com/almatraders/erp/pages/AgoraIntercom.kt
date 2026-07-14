@@ -171,7 +171,10 @@ object AgoraIntercom {
             for (i in arr.length() - 1 downTo 0) {
                 val b = arr.optJSONObject(i) ?: continue
                 if (b.str("kind") != "call") continue
-                if (b.optJSONObject("mine") == null) continue
+                val mine = b.optJSONObject("mine") ?: continue
+                // Already answered/declined (here, the full-screen call, or the web office)
+                // → must not re-ring.
+                if (mine.str("confirmedAt") != null) continue
                 val id = b.str("id") ?: continue
                 if (handledCallIds.contains(id)) continue
                 return Pair(id, "itc_$id")
