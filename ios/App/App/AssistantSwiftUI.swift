@@ -34,6 +34,59 @@ import WebKit
 import AVFoundation
 import PhotosUI
 import ObjectiveC
+import os.signpost
+
+// MARK: - Turn diagnostics + transport classification (roadmap Phase 0 / 1.1)
+
+/// os_signpost timeline for the agent turn lifecycle (Instruments/log-visible).
+/// Carries lifecycle timing only — never prompt, reply or tool contents.
+enum AlmaTurnLog {
+    static let log = OSLog(subsystem: "com.almatraders.erp.agent", category: "AgentTurn")
+    static func event(_ name: StaticString, _ info: String = "") {
+        os_signpost(.event, log: log, name: name, "%{public}s", info)
+    }
+}
+
+/// Typed classification of a thrown stream/request error (roadmap Phase 1.1).
+/// A backgrounded/suspended SSE socket is an EXPECTED interruption while the
+/// server deliberately keeps the turn alive — it must never surface as a raw
+/// English failure toast. Only real terminal conditions may show an error.
+enum TurnFailureKind {
+    case transportInterrupted   // socket dropped/suspended/timed out — turn may still run
+    case offline                // no network path at all — turn may STILL be running server-side
+    case authentication
+    case server(status: Int)
+    case terminalAgentError     // the server itself reported the turn failed
+
+    static func classify(_ error: Error) -> TurnFailureKind {
+        if let api = error as? AlmaAPIError {
+            switch api {
+            case .notAuthenticated: return .authentication
+            case .http(let status, _): return .server(status: status)
+            case .decoding: return .transportInterrupted
+            case .transport(let inner): return classify(inner)
+            }
+        }
+        if let url = error as? URLError {
+            switch url.code {
+            case .notConnectedToInternet, .dataNotAllowed: return .offline
+            default: return .transportInterrupted   // connectionLost/cancelled/timedOut/suspension…
+            }
+        }
+        return .transportInterrupted
+    }
+
+    /// Owner-facing Bangla copy for REAL failures (transport interruptions never toast).
+    var banglaMessage: String {
+        switch self {
+        case .transportInterrupted: return "সংযোগে সমস্যা হয়েছে — আবার চেষ্টা করুন"
+        case .offline: return "ইন্টারনেট নেই — সংযোগ ফিরলে আবার চেষ্টা করুন"
+        case .authentication: return "লগইন লাগবে — আবার সাইন ইন করুন"
+        case .server(let s): return "সার্ভার সমস্যা (\(s)) — একটু পরে চেষ্টা করুন"
+        case .terminalAgentError: return "সমস্যা হয়েছে — আবার চেষ্টা করুন"
+        }
+    }
+}
 
 // MARK: - Palette (web token parity: globals.css / agent-ambient.css)
 
@@ -298,7 +351,7 @@ struct OkResponse: Decodable { let ok: Bool?; let success: Bool?; let message: S
 struct SignedURLResponse: Decodable { let url: String? }
 struct TranscribeResponse: Decodable { let text: String? }
 struct TurnEnqueueResponse: Decodable { let turnId: String; let conversationId: String? }
-struct TurnStatusResponse: Decodable { let status: String?; let turnId: String? }
+struct TurnStatusResponse: Decodable { let status: String?; let turnId: String?; let startedAt: String? }
 
 /// One SSE event — all fields optional, switch on `type`.
 struct AgentSSEEvent: Decodable {
@@ -831,6 +884,23 @@ final class AssistantVM {
     var justSettledId: String?
     var thinkingLive = false        // spinner row before the first text token
     var currentTurnId: String?
+    /// Transport lost while the server turn (presumably) still runs — drives the
+    /// truthful "কাজ চলছে — সংযোগ ফিরছে…" label instead of an error (Phase 1.1).
+    var reconnecting = false
+    /// Wall-clock of the last send — recovery uses it to tell OUR turn's terminal
+    /// status apart from a PREVIOUS turn's stale terminal row (until Phase 3's
+    /// clientMessageId gives exact identity).
+    private var lastSendAt: Date?
+    private var recoveryTask: Task<Void, Never>?
+    private var recoveryInFlight = false
+    /// Observer tokens live in a box whose own (nonisolated) deinit unregisters
+    /// them — a MainActor class deinit may not touch isolated stored state.
+    private final class NotificationTokenBox {
+        var tokens: [NSObjectProtocol] = []
+        deinit { for t in tokens { NotificationCenter.default.removeObserver(t) } }
+    }
+    private let lifecycleTokens = NotificationTokenBox()
+    private var backgroundedAt: Date?
     private var streamTask: Task<Void, Never>?
     private var understandingTask: Task<Void, Never>?
     private var requestedLiveMode = "thinking"
@@ -964,14 +1034,48 @@ final class AssistantVM {
     // ── Bootstrap + polling ────────────────────────────────────────────────
 
     func bootstrap() async {
-        NotificationCenter.default.addObserver(forName: AlmaAPI.authExpiredNotification,
-                                               object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.authExpired = true }
-        }
+        registerObserversOnce()
         await loadModels()
         await loadActiveConversation()
         await loadPlanDrive()
         startPolling()
+    }
+
+    /// One-time observer registration (bootstrap can re-run; observers must not
+    /// stack — roadmap Phase 1.2). Lifecycle recovery: a suspended SSE socket dies
+    /// while the server keeps working, so the moment the owner returns the app we
+    /// verify the turn NOW — never wait for the 12s quiet poll.
+    private func registerObserversOnce() {
+        guard lifecycleTokens.tokens.isEmpty else { return }
+        let nc = NotificationCenter.default
+        lifecycleTokens.tokens.append(nc.addObserver(forName: AlmaAPI.authExpiredNotification,
+                                              object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.authExpired = true }
+        })
+        lifecycleTokens.tokens.append(nc.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+                                              object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.backgroundedAt = Date()
+                AlmaTurnLog.event("turn.background", self.isStreaming ? "streaming" : "idle")
+                // Server work continues — nothing is cancelled here by design.
+            }
+        })
+        lifecycleTokens.tokens.append(nc.addObserver(forName: UIApplication.willEnterForegroundNotification,
+                                              object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                AlmaTurnLog.event("turn.foreground")
+                await self.recoverTurnState(trigger: "foreground")
+            }
+        })
+        lifecycleTokens.tokens.append(nc.addObserver(forName: UIApplication.didBecomeActiveNotification,
+                                              object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.backgroundedAt != nil else { return }   // skip launch activation
+                await self.recoverTurnState(trigger: "active")               // idempotent re-check
+            }
+        })
     }
 
     private func loadActiveConversation() async {
@@ -982,7 +1086,7 @@ final class AssistantVM {
                 modelId = ptr.modelId
                 await loadMessages(showSpinner: messages.isEmpty)
                 await loadArtifacts()
-                await resumeRunningTurnIfAny()
+                await recoverTurnState(trigger: "bootstrap")
             }
             authExpired = false
         } catch AlmaAPIError.notAuthenticated { authExpired = true } catch {
@@ -1065,6 +1169,7 @@ final class AssistantVM {
             incoming.append(kept)
         }
         messages = incoming
+        AlmaTurnLog.event("turn.messagesReconciled", "count=\(incoming.count)")
     }
 
     /// Stream ended: settle the tail in place FIRST (prose stays on screen), then
@@ -1098,7 +1203,7 @@ final class AssistantVM {
                 // continuation turns) shows the live spinner within one poll tick —
                 // not only on app-resume (owner ask 2026-07-13, Claude-Code parity:
                 // approve → "করছি বস" line + working animation until the reply lands).
-                if !self.isStreaming { await self.resumeRunningTurnIfAny() }
+                if !self.isStreaming { await self.recoverTurnState(trigger: "poll") }
                 tick += 1
                 if tick % 2 == 0 {
                     let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/presence",
@@ -1111,29 +1216,161 @@ final class AssistantVM {
         }
     }
 
-    /// If a turn was still running when the app was backgrounded/killed, show the
-    /// spinner and poll turn-status until it settles (web does the same on resume).
-    private func resumeRunningTurnIfAny() async {
+    /// Roadmap Phase 1.3 — immediate, idempotent turn recovery. Fetches turn-status
+    /// NOW (never waits for the 12s poll), keeps a VISIBLE streaming tail while the
+    /// server works, then reconciles the final message. Single-flight: concurrent
+    /// triggers (foreground + didBecomeActive + poll tick + transport-drop) share
+    /// one recovery loop. UI transport state is never treated as server turn state.
+    func recoverTurnState(trigger: String) async {
         guard let cid = conversationId else { return }
-        guard let st: TurnStatusResponse = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/turn-status"),
-              st.status == "running" else { return }
-        isStreaming = true
-        thinkingLive = true
-        requestLiveMode("thinking")
-        currentTurnId = st.turnId
-        streamTask = Task { [weak self] in
-            for _ in 0..<100 {
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
-                guard !Task.isCancelled else { return }
+        if isStreaming && !reconnecting { return }   // healthy live stream — nothing to recover
+        if recoveryInFlight { return }
+        recoveryInFlight = true
+        defer { recoveryInFlight = false }
+        AlmaTurnLog.event("turn.reconnectStarted", trigger)
+
+        // Transient status failures keep the truthful reconnect UI — never a false error.
+        var st: TurnStatusResponse?
+        for attempt in 0..<3 {
+            st = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/turn-status")
+            if st != nil { break }
+            try? await Task.sleep(nanoseconds: UInt64(500_000_000 * (attempt + 1)))
+        }
+        guard let status = st else { return }   // unreachable — next trigger retries
+
+        if status.status == "running" {
+            currentTurnId = status.turnId
+            isStreaming = true
+            ensureStreamingTail()               // P0-C fix: progress needs a row to live on
+            thinkingLive = true
+            requestLiveMode("thinking")
+            startRecoveryPolling(cid: cid)
+        } else if reconnecting || isStreaming {
+            // We believed a turn was live. Is this terminal row OUR turn, or a stale
+            // previous one (our send may have died before the server created a turn)?
+            if isTerminalForOurTurn(status) {
+                await finishRecovery(terminalStatus: status.status ?? "done")
+            } else if trigger == "transport-drop" {
+                // Bounded proof: turn creation can lag the send by a few seconds
+                // (auth, persistence, vision). Poll briefly before declaring failure.
+                startRecoveryPolling(cid: cid, awaitingTurnCreation: true)
+            } else {
+                await finishRecovery(terminalStatus: status.status ?? "done")
+            }
+        }
+    }
+
+    /// True when the latest turn's terminal status plausibly belongs to the turn we
+    /// were watching: it is the turn we hold an id for, or it started at/after our
+    /// last send (small clock slack). Phase 3 replaces this heuristic with
+    /// clientMessageId identity.
+    private func isTerminalForOurTurn(_ st: TurnStatusResponse) -> Bool {
+        if let tid = st.turnId, tid == currentTurnId { return true }
+        guard let sentAt = lastSendAt else { return true }   // resume path: any terminal is truth
+        guard let raw = st.startedAt else { return true }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let started = iso.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
+        guard let started else { return true }
+        return started >= sentAt.addingTimeInterval(-15)
+    }
+
+    /// Poll turn-status with 1s initial cadence, exponential backoff capped at 3s,
+    /// plus jitter (roadmap 1.3). `awaitingTurnCreation` = we are not yet sure the
+    /// server ever created our turn; if none appears within ~20s, the send truly
+    /// failed and the owner gets a Bangla error instead of a silent lost message.
+    private func startRecoveryPolling(cid: String, awaitingTurnCreation: Bool = false) {
+        recoveryTask?.cancel()
+        recoveryTask = Task { [weak self] in
+            var delay = 1.0
+            var elapsed = 0.0
+            var sawRunning = false
+            // ~7 min bound — far beyond any healthy turn gap; the server's own
+            // 30-min ghost timeout is the backstop of last resort.
+            while elapsed < 420 {
+                try? await Task.sleep(nanoseconds: UInt64((delay + Double.random(in: 0...0.25)) * 1_000_000_000))
+                guard let self, !Task.isCancelled else { return }
+                elapsed += delay
                 let s: TurnStatusResponse? = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/turn-status")
-                if s?.status != "running" { break }
+                guard !Task.isCancelled else { return }
+                if let s {
+                    if s.status == "running" {
+                        sawRunning = true
+                        self.currentTurnId = s.turnId
+                        if self.reconnecting { self.ensureStreamingTail() }
+                    } else if sawRunning || !awaitingTurnCreation || self.isTerminalForOurTurn(s) {
+                        await self.finishRecovery(terminalStatus: s.status ?? "done")
+                        return
+                    } else if elapsed > 20 {
+                        // No turn was ever created for our send — real failure.
+                        await self.failRecovery()
+                        return
+                    }
+                }
+                delay = min(3.0, delay * 1.6)
             }
             guard let self, !Task.isCancelled else { return }
-            self.isStreaming = false
-            self.thinkingLive = false
-            self.settleLiveMode()
-            await self.loadMessages()
+            await self.finishRecovery(terminalStatus: "timeout")
         }
+    }
+
+    /// Terminal: settle the tail, fold in server truth, and only then drop the
+    /// reconnect label (roadmap: remove it after the final row appears).
+    private func finishRecovery(terminalStatus: String) async {
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        isStreaming = false
+        thinkingLive = false
+        settleLiveMode()
+        // 1.5: never retain an empty placeholder tail; a partial tail's blocks are a
+        // strict prefix of the persisted reply — clear them so server truth renders
+        // whole (blocks-empty rows use the settled summary + full-prose path).
+        if let i = messages.lastIndex(where: { $0.isStreaming }) {
+            messages[i].isStreaming = false
+            if reconnecting {
+                if messages[i].text.isEmpty && messages[i].timeline.isEmpty && messages[i].blocks.isEmpty {
+                    messages.remove(at: i)
+                } else {
+                    messages[i].blocks = []
+                }
+            }
+        }
+        let lastAssistantBefore = messages.last(where: { $0.role == .assistant })?.id
+        await loadMessages()
+        // "Final content within 2s": persistence can trail the terminal status by a
+        // beat — one short retry before we surface whatever state we have.
+        if messages.last(where: { $0.role == .assistant })?.id == lastAssistantBefore {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            await loadMessages()
+        }
+        reconnecting = false
+        justSettledId = messages.last(where: { $0.role == .assistant })?.id
+        AlmaTurnLog.event("turn.terminal", "recovery:\(terminalStatus)")
+        if terminalStatus == "error" {
+            errorToast = "সমস্যা হয়েছে — আবার চেষ্টা করুন"
+        }
+    }
+
+    /// The send never became a server turn — keep the owner's message row, drop the
+    /// placeholder tail, and say so in Bangla (roadmap 1.1: bounded recovery proved
+    /// no turn exists — only now may a failure surface).
+    private func failRecovery() async {
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        isStreaming = false
+        thinkingLive = false
+        settleLiveMode()
+        reconnecting = false
+        if let i = messages.lastIndex(where: { $0.isStreaming }) {
+            if messages[i].text.isEmpty && messages[i].blocks.isEmpty {
+                messages.remove(at: i)
+            } else {
+                messages[i].isStreaming = false
+            }
+        }
+        AlmaTurnLog.event("turn.terminal", "recovery:failed-no-turn")
+        errorToast = "পাঠানো যায়নি — আবার চেষ্টা করুন"
+        UINotificationFeedbackGenerator().notificationOccurred(.error)
     }
 
     // ── Conversations + sidebar data (web AgentSidebar parity) ────────────
@@ -1241,6 +1478,7 @@ final class AssistantVM {
         stopStreaming(cancelServer: false)
         conversationId = id
         modelId = conversations.first { $0.id == id }?.modelId   // pinned model follows the chat
+        localIdByServerId = [:]   // 1.5: optimistic-ID maps never leak across conversations
         messages = []
         openTasks = []
         artifacts = []
@@ -1248,12 +1486,13 @@ final class AssistantVM {
         await loadArtifacts()
         let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/active-conversation",
                                                             body: ["conversationId": id])
-        await resumeRunningTurnIfAny()
+        await recoverTurnState(trigger: "openConversation")
     }
 
     func newChat() async {
         stopStreaming(cancelServer: false)
         conversationId = nil     // server creates one on the first send
+        localIdByServerId = [:]  // 1.5: optimistic-ID maps never leak across conversations
         // Owner rule 2026-07-12: a NEW chat always starts on Auto (router picks) —
         // it must not inherit the previous conversation's pinned model (the picker
         // was silently carrying over e.g. Sonnet 4.6 from the last-opened chat).
@@ -1409,6 +1648,10 @@ final class AssistantVM {
         thinkingLive = true
         beginUnderstanding()
         currentTurnId = nil
+        reconnecting = false
+        recoveryTask?.cancel(); recoveryTask = nil
+        lastSendAt = Date()
+        AlmaTurnLog.event("turn.submit")
         ensureStreamingTail()
 
         let body = ChatBody(conversationId: conversationId, message: text,
@@ -1419,11 +1662,14 @@ final class AssistantVM {
     }
 
     private func runTurn(body: ChatBody) async {
+        var handedToRecovery = false
         defer {
-            isStreaming = false
-            thinkingLive = false
-            settleLiveMode()
-            if let i = messages.lastIndex(where: { $0.isStreaming }) { messages[i].isStreaming = false }
+            if !handedToRecovery {
+                isStreaming = false
+                thinkingLive = false
+                settleLiveMode()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) { messages[i].isStreaming = false }
+            }
         }
         do {
             await AlmaAPI.shared.syncCookies()
@@ -1438,6 +1684,7 @@ final class AssistantVM {
                 // serverless run is handed to the VPS worker via /turn).
                 try await withFirstEventWatchdog(seconds: 15, sawEvent: { sawEvent }) {
                     try await AssistantNet.streamEvents(request: req) { [weak self] ev in
+                        if !sawEvent { AlmaTurnLog.event("turn.firstEvent", ev.type) }
                         sawEvent = true
                         self?.handle(ev)
                     }
@@ -1455,13 +1702,39 @@ final class AssistantVM {
             // Server truth (final card ids/statuses, tool rows, cost) merges into the
             // tail in place — never a wholesale replace (prose must not blink).
             await finalizeTurn()
+            AlmaTurnLog.event("turn.terminal", "stream-done")
         } catch is CancellationError {
             await finalizeTurn()
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
         } catch {
-            errorToast = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            let kind = TurnFailureKind.classify(error)
+            AlmaTurnLog.event("turn.transportDisconnected", "\(kind) turnId=\(currentTurnId ?? "nil")")
+            switch kind {
+            case .transportInterrupted, .offline:
+                // Roadmap Phase 1.1 — the server deliberately keeps the turn alive
+                // after a dropped client socket (chat route detaches from req.signal).
+                // Freeze the partial reply, show the truthful Bangla reconnect state
+                // and verify via turn-status; a raw English transport toast must
+                // never appear while the turn may still be running.
+                if conversationId != nil {
+                    handedToRecovery = true
+                    reconnecting = true
+                    ensureStreamingTail()
+                    thinkingLive = true
+                    requestLiveMode("thinking")
+                    Task { [weak self] in await self?.recoverTurnState(trigger: "transport-drop") }
+                } else {
+                    // No conversation was ever created — nothing recoverable exists.
+                    errorToast = kind.banglaMessage
+                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                }
+            case .authentication:
+                authExpired = true
+            case .server, .terminalAgentError:
+                errorToast = kind.banglaMessage
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+            }
         }
     }
 
@@ -1617,6 +1890,11 @@ final class AssistantVM {
     func stopStreaming(cancelServer: Bool = true) {
         streamTask?.cancel()
         streamTask = nil
+        // Conversation switch / Stop also ends any reconnect-recovery loop; server
+        // work is only cancelled when explicitly asked (roadmap invariant 9).
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        reconnecting = false
         if cancelServer, let tid = currentTurnId {
             Task {
                 let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/turn/\(tid)/cancel")
@@ -1626,6 +1904,69 @@ final class AssistantVM {
         thinkingLive = false
         settleLiveMode()
         if let i = messages.lastIndex(where: { $0.isStreaming }) { messages[i].isStreaming = false }
+    }
+
+    // ── Phase 0 stress fixture (roadmap) ───────────────────────────────────
+
+    /// Local reproduction fixture — ALMA_ASSISTANT_FIXTURE=1. Builds 40 mixed
+    /// rows (long/short Bangla + Banglish, interleaved thinking/tool/prose
+    /// blocks, one 2,000+ char reply), then streams 1,000 small deltas into a
+    /// live tail through the SAME mutation helpers the real SSE path uses — so
+    /// scroll-gap and per-delta MainActor cost reproduce without a server.
+    func loadDebugFixture() {
+        let bnShort = "ঠিক আছে Boss, এটা এখনই দেখছি।"
+        let bnLong = "আজকের সেলস রিপোর্ট অনুযায়ী ALMA Lifestyle-এর মোট বিক্রি ভালো হয়েছে। Facebook ক্যাম্পেইনের CTR বেড়েছে, আর নতুন কালেকশনের প্রি-অর্ডারও আসছে। কালকে সকালে স্টাফ মিটিংয়ে inventory নিয়ে কথা বলা দরকার — তিনটা প্রোডাক্টের স্টক কমে যাচ্ছে। "
+        var rows: [AgentChatMessage] = []
+        for i in 0..<38 {
+            if i % 2 == 0 {
+                var u = AgentChatMessage(id: "fix-u-\(i)", role: .user,
+                                         text: i % 4 == 0 ? "আজকের sales koto holo? আর কালকের plan টা দাও" : bnShort)
+                rows.append(u)
+            } else {
+                var a = AgentChatMessage(id: "fix-a-\(i)", role: .assistant,
+                                         text: i % 3 == 0 ? String(repeating: bnLong, count: 4) : bnLong)
+                a.thinking = "হিসাব করছি: অর্ডার টেবিল থেকে আজকের রো গুনে টাকার যোগফল বের করা দরকার।"
+                a.thinkingMs = 2300
+                if i % 5 == 0 {
+                    a.timeline = [.think("রিপোর্ট টানছি"),
+                                  .tool(id: "fix-t-\(i)", name: "get_sales_summary", ok: true,
+                                        live: false, inputPretty: nil, resultFull: nil)]
+                }
+                rows.append(a)
+            }
+        }
+        // The 2,000+ character interleaved reply the gap reproduces around.
+        var big = AgentChatMessage(id: "fix-a-big", role: .assistant, text: "")
+        big.thinking = "লম্বা রিপ্লাই টেস্ট।"
+        var blocks: [AgentChatMessage.TurnBlock] = []
+        blocks = AgentChatMessage.appendThinkBlock(blocks, chunk: "বিশ্লেষণ চলছে…", messageId: big.id)
+        blocks = AgentChatMessage.appendToolBlock(blocks, toolId: "fix-t-big", name: "get_orders", messageId: big.id)
+        blocks = AgentChatMessage.finalizeToolBlock(blocks, toolId: "fix-t-big", ok: true)
+        blocks = AgentChatMessage.appendProseBlock(blocks, chunk: String(repeating: bnLong, count: 14), messageId: big.id)
+        big.blocks = blocks
+        big.text = String(repeating: bnLong, count: 14)
+        rows.append(big)
+        messages = rows
+
+        // Live tail: 1,000 one-word deltas at ~5ms — token-rate MainActor stress.
+        isStreaming = true
+        thinkingLive = false
+        ensureStreamingTail()
+        streamTask = Task { [weak self] in
+            for n in 0..<1000 {
+                try? await Task.sleep(nanoseconds: 5_000_000)
+                guard let self, !Task.isCancelled else { return }
+                if let i = self.messages.lastIndex(where: { $0.isStreaming }) {
+                    let chunk = n % 12 == 11 ? "টেস্ট \(n)।\n" : "শব্দ\(n) "
+                    self.messages[i].text += chunk
+                    self.messages[i].blocks = AgentChatMessage.appendProseBlock(
+                        self.messages[i].blocks, chunk: chunk, messageId: self.messages[i].id)
+                }
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.isStreaming = false
+            if let i = self.messages.lastIndex(where: { $0.isStreaming }) { self.messages[i].isStreaming = false }
+        }
     }
 
     // ── Cards ──────────────────────────────────────────────────────────────
@@ -2412,7 +2753,7 @@ struct AgentMessageRow: View {
 
                     // Single starburst — bottom-left INSIDE the card while the turn runs.
                     if showWorkingIndicator {
-                        AgentThinkingRow(mode: vm.liveMode, pal: pal)
+                        AgentThinkingRow(mode: vm.liveMode, pal: pal, reconnecting: vm.reconnecting)
                             .padding(.top, 2)
                     }
 
@@ -3890,11 +4231,21 @@ struct AgentSettledSummaryRow: View {
 struct AgentThinkingRow: View {
     let mode: String
     let pal: AgentPalette
+    /// Transport dropped but the server turn is still running (roadmap Phase 1.1) —
+    /// truthful glyph/text-only state, never an error, never a background effect.
+    var reconnecting: Bool = false
 
     var body: some View {
         HStack(spacing: 8) {
             AlmaSpinnerView(mode: mode, size: 28, showVerb: false, haptics: true)
-            AlmaShimmerWordmark(size: 12.5, weight: .semibold, tracking: 2.1)
+            if reconnecting {
+                Text("কাজ চলছে — সংযোগ ফিরছে…")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(pal.muted)
+                    .transition(.opacity)
+            } else {
+                AlmaShimmerWordmark(size: 12.5, weight: .semibold, tracking: 2.1)
+            }
             Spacer()
         }
         .padding(.leading, 0)
@@ -5550,6 +5901,44 @@ private struct AgentArtifactsSheet: View {
 
 // MARK: - Screen
 
+/// Roadmap Phase 0 — debug-only row bounds. Launch with ALMA_DEBUG_ROWS=1 to draw
+/// each message row's measured height/role/id/block-count and log a
+/// `message.rowHeightChanged` signpost on every height change, so the giant-gap
+/// row can be identified on-device. Inert in production (flag never set).
+@available(iOS 17.0, *)
+struct AgentRowDebugOverlay: ViewModifier {
+    static let enabled = ProcessInfo.processInfo.environment["ALMA_DEBUG_ROWS"] == "1"
+        || ProcessInfo.processInfo.arguments.contains("ALMA_DEBUG_ROWS=1")
+    let message: AgentChatMessage
+    @State private var height: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        if Self.enabled {
+            content
+                .background(GeometryReader { g in
+                    Color.clear
+                        .onChange(of: g.size.height, initial: true) { _, h in
+                            guard abs(h - height) > 0.5 else { return }
+                            height = h
+                            AlmaTurnLog.event("message.rowHeightChanged",
+                                              "\(message.id.suffix(6)) \(message.role == .user ? "U" : "A") h=\(Int(h)) blocks=\(message.blocks.count) tl=\(message.timeline.count) chars=\(message.text.count) live=\(message.isStreaming)")
+                        }
+                })
+                .overlay(alignment: .topTrailing) {
+                    Text("\(message.id.suffix(5)) \(message.role == .user ? "U" : "A") h\(Int(height)) b\(message.blocks.count)\(message.isStreaming ? " ●" : "")")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 3).padding(.vertical, 1)
+                        .background(Color.red.opacity(0.65))
+                        .allowsHitTesting(false)
+                }
+                .border(Color.red.opacity(0.35), width: 0.5)
+        } else {
+            content
+        }
+    }
+}
+
 @available(iOS 17.0, *)
 struct AssistantScreen: View {
     @State private var vm = AssistantVM()
@@ -5607,6 +5996,7 @@ struct AssistantScreen: View {
                                     && msg.id == vm.messages.last(where: { $0.role == .assistant })?.id,
                                 onToolTap: { tool in toolSheet = tool },
                                 onActivitySheet: { activitySheet = $0 })
+                            .modifier(AgentRowDebugOverlay(message: msg))
                             .transition(.asymmetric(
                                 insertion: .opacity.combined(with: .offset(y: 12)),
                                 removal: .opacity))
@@ -5725,6 +6115,12 @@ struct AssistantScreen: View {
                     toolSheet = vm.messages.flatMap(\.phases).flatMap(\.tools)
                         .first { $0.inputPretty != nil || $0.resultFull != nil }
                 }
+            }
+            // Roadmap Phase 0 — local scroll/streaming stress fixture; skips the
+            // server entirely (no bootstrap) so layout is tested in isolation.
+            if argFlag("ALMA_ASSISTANT_FIXTURE") {
+                vm.loadDebugFixture()
+                return
             }
             await vm.bootstrap()
         }
