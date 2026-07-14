@@ -285,7 +285,7 @@ fun PortalExpenseScreen(ctx: PushCtx) {
         }
         vm.error?.let { item { ExpenseNoticeCard("⚠️ $it", PortalExpensePalette.red500, dark) } }
         vm.notice?.let { item { ExpenseNoticeCard("✓ $it", PortalExpensePalette.emerald600, dark) } }
-        item { ExpenseSummaryCards(vm, dark) { ctx.openWebForced("/portal", "My Desk") } }
+        item { ExpenseSummaryCards(vm, dark) { ctx.openSmart("/portal", "My Desk") } }
         item { ExpenseNewClaimButton(dark) { showSubmit = true } }
         if (vm.drafts.isNotEmpty()) {
             item {

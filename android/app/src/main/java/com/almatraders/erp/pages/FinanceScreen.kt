@@ -312,19 +312,20 @@ fun FinanceScreen(ctx: PushCtx) {
             item { FinCashflowCard(vm.cashflow, dark) }
             item { FinPayrollSnapshotCard(vm.kpis, dark) }
             item {
-                // Quick links (web header actions — all mutating flows live on the web).
+                // Quick links — every target has a full native screen, so route native
+                // (openSmart falls back to web only if a native screen is missing).
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FinQuickLink("Expenses", "খরচ যোগ ও তালিকা — ওয়েবে", Icons.Filled.Payments, dark) {
-                        ctx.openWebForced("/expenses", "Expenses")
+                    FinQuickLink("Expenses", "খরচ যোগ ও তালিকা — নেটিভ", Icons.Filled.Payments, dark) {
+                        ctx.openSmart("/expenses", "Expenses")
                     }
-                    FinQuickLink("Office Fund", "অফিস ফান্ড — ওয়েবে", Icons.Filled.AccountBalance, dark) {
-                        ctx.openWebForced("/finance/office-fund", "Office Fund")
+                    FinQuickLink("Office Fund", "অফিস ফান্ড — নেটিভ", Icons.Filled.AccountBalance, dark) {
+                        ctx.openSmart("/finance/office-fund", "Office Fund")
                     }
                     FinQuickLink("পাওনা-দেনা", "ব্যক্তিগত লেনদেনের খাতা — নেটিভ", Icons.Filled.Handshake, dark) {
                         ctx.openSmart("/finance/personal-ledger", "পাওনা-দেনা")
                     }
-                    FinQuickLink("Payroll", "বেতন ও অ্যাডভান্স — ওয়েবে", Icons.Filled.Group, dark) {
-                        ctx.openWebForced("/payroll", "Payroll")
+                    FinQuickLink("Payroll", "বেতন ও অ্যাডভান্স — নেটিভ", Icons.Filled.Group, dark) {
+                        ctx.openSmart("/payroll", "Payroll")
                     }
                 }
             }

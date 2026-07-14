@@ -641,7 +641,7 @@ fun AttendanceScreen(ctx: PushCtx) {
                     showIntegrity = !showIntegrity
                 }
                 AttControlChip("My Desk", Icons.Outlined.Work, false, dark, Modifier.weight(1f)) {
-                    ctx.openWebForced("/portal", "My Desk")
+                    ctx.openSmart("/portal", "My Desk")
                 }
             }
         }

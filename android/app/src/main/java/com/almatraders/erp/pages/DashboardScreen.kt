@@ -465,7 +465,7 @@ fun DashboardScreen(ctx: PushCtx) {
             }
             vm.error?.let { err -> item { DashNotice(err, dark) } }
             vm.data?.slaBreaches?.takeIf { it.isNotEmpty() }?.let { breaches ->
-                item { SlaBanner(breaches, dark) { ctx.openWebForced("/orders?status=sla", "Orders") } }
+                item { SlaBanner(breaches, dark) { ctx.openSmart("/orders?status=sla", "Orders") } }
             }
             item {
                 Row(

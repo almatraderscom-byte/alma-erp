@@ -247,7 +247,7 @@ fun DigitalHomeScreen(ctx: PushCtx) {
                     emptyDesc = "Projects will populate this chart",
                 )
             }
-            item { HomeQuickNav(dark, openWeb = { p, t -> ctx.openWebForced(p, t) }) }
+            item { HomeQuickNav(dark, openWeb = { p, t -> ctx.openSmart(p, t) }) }
         }
 
         item {
