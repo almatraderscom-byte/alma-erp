@@ -58,7 +58,7 @@ const run_browser_task: AgentTool = {
           required: ['action'],
         },
       },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['goal'],
   },

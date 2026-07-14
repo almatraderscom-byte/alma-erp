@@ -77,7 +77,7 @@ const run_browser_recipe: AgentTool = {
         type: 'object',
         description: 'Recipe params as key→value (e.g. {"query":"..."} or {"url":"..."})',
       },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['recipeId'],
   },

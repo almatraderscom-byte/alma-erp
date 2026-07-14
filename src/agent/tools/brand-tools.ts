@@ -23,7 +23,7 @@ const save_brand_asset: AgentTool = {
         type: 'string',
         description: 'storage path of the uploaded image (from the message attachment)',
       },
-      kind: { type: 'string', enum: ['logo', 'logo_transparent'] },
+      kind: { type: 'string', enum: ['logo', 'logo_transparent'], description: 'Which brand asset this upload is' },
     },
     required: ['imagePath', 'kind'],
   },

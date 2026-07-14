@@ -31,7 +31,7 @@ const confirm_oxylabs_spend: AgentTool = {
         type: 'object',
         description: 'Exact input you will pass to the research tool (mode/query/url/keyword/product etc.)',
       },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['tool', 'purpose', 'toolInput'],
   },

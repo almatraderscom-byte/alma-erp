@@ -59,7 +59,7 @@ const save_document: AgentTool = {
       type: { type: 'string', enum: DOC_TYPES, description: 'Optional type override (else from OCR)' },
       category: { type: 'string', description: 'Optional category override' },
       tags: { type: 'string', description: 'Optional comma-separated tags for search' },
-      notes: { type: 'string' },
+      notes: { type: 'string', description: 'Optional free-text note' },
     },
     required: ['file_path'],
   },
@@ -127,7 +127,7 @@ const search_documents: AgentTool = {
     type: 'object' as const,
     properties: {
       query: { type: 'string', description: 'Keyword to match in title/vendor/OCR text/tags' },
-      type: { type: 'string', enum: DOC_TYPES },
+      type: { type: 'string', enum: DOC_TYPES, description: 'Filter by document type' },
       limit: { type: 'number', description: 'Max rows (default 20)' },
     },
   },
@@ -194,7 +194,7 @@ const get_document: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      id: { type: 'string' },
+      id: { type: 'string', description: 'Document id from search_documents' },
       titleMatch: { type: 'string', description: 'Alternative to id — match a document by partial title/vendor' },
     },
   },
@@ -248,7 +248,7 @@ const delete_document: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      id: { type: 'string' },
+      id: { type: 'string', description: 'Document id from search_documents' },
     },
     required: ['id'],
   },

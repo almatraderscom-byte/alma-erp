@@ -10,7 +10,7 @@ const list_learned: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      businessId: { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING'] },
+      businessId: { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING'], description: 'Business — omit; the server fills it from the conversation' },
     },
   },
   handler: async (input) => {
@@ -43,7 +43,7 @@ const forget_rule: AgentTool = {
     type: 'object' as const,
     properties: {
       id: { type: 'string', description: 'Rule id from list_learned' },
-      kind: { type: 'string', enum: ['playbook', 'memory'] },
+      kind: { type: 'string', enum: ['playbook', 'memory'], description: 'What to forget: a playbook rule or a preference memory' },
     },
     required: ['id', 'kind'],
   },

@@ -23,7 +23,7 @@ const ask_user: AgentTool = {
         maxItems: 4,
         description: '2–4 specific answer options the owner can tap',
       },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['question', 'options'],
   },

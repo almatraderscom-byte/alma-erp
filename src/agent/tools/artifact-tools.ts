@@ -70,7 +70,7 @@ const save_artifact: AgentTool = {
       title: { type: 'string', description: 'Short Bangla file title the owner sees on the card, e.g. "Competitor বিশ্লেষণ — brandx.com".' },
       content: { type: 'string', description: 'The COMPLETE document body (markdown unless type says otherwise).' },
       type: { type: 'string', enum: ['markdown', 'html', 'svg', 'code'], description: 'Document kind (default markdown).' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['title', 'content'],
   },

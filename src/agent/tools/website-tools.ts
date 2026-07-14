@@ -154,7 +154,7 @@ const publish_product: AgentTool = {
     type: 'object' as const,
     properties: {
       slugOrId: { type: 'string', description: 'Product slug or UUID' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['slugOrId'],
   },
@@ -212,8 +212,8 @@ const unpublish_product: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      slugOrId: { type: 'string' },
-      conversationId: { type: 'string' },
+      slugOrId: { type: 'string', description: 'Product slug or UUID on almatraders.com' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['slugOrId'],
   },
@@ -266,9 +266,9 @@ const set_product_featured: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      slugOrId: { type: 'string' },
+      slugOrId: { type: 'string', description: 'Product slug or UUID on almatraders.com' },
       featured: { type: 'boolean', description: 'true = feature on homepage, false = remove' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['slugOrId', 'featured'],
   },
@@ -320,15 +320,15 @@ const update_product_web: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      slugOrId: { type: 'string' },
+      slugOrId: { type: 'string', description: 'Product slug or UUID on almatraders.com' },
       priceBdt: { type: 'number', description: 'New web price in BDT (whole taka)' },
-      description: { type: 'string' },
-      shortDescription: { type: 'string' },
+      description: { type: 'string', description: 'New full product description (Bangla)' },
+      shortDescription: { type: 'string', description: 'New short description shown in listings' },
       category: {
         type: 'string',
         description: 'Category slug: panjabi, electronics, accessories, home-decor, islamic',
       },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['slugOrId'],
   },

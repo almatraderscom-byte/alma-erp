@@ -187,7 +187,7 @@ const prepare_staff_task_proposal: AgentTool = {
       date: { type: 'string', description: 'YYYY-MM-DD (default: today Dhaka)' },
       saveProposal: { type: 'boolean', description: 'Save tasks as proposed (default true)' },
       createApprovalCard: { type: 'boolean', description: 'Create dispatch confirm card (default true)' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
   },
   handler: async (input) => {
@@ -1039,7 +1039,7 @@ const approve_and_dispatch_tasks: AgentTool = {
     type: 'object' as const,
     properties: {
       date:           { type: 'string', description: 'YYYY-MM-DD (default: today)' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
   },
   handler: async (input) => {
@@ -1119,9 +1119,9 @@ const add_staff_task_now: AgentTool = {
     properties: {
       staffId:        { type: 'string', description: 'Staff member ID' },
       title:          { type: 'string', description: 'Task title (Bangla preferred)' },
-      type:           { type: 'string', enum: ['ad_creative','product_content','stock_check','listing_update','order_followup','misc'] },
+      type:           { type: 'string', enum: ['ad_creative','product_content','stock_check','listing_update','order_followup','misc'], description: 'Task category (drives staff routing rules)' },
       detail:         { type: 'string', description: 'Optional task detail' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['staffId', 'title', 'type'],
   },
@@ -1383,7 +1383,7 @@ const update_staff_task_status: AgentTool = {
     type: 'object' as const,
     properties: {
       taskId:  { type: 'string', description: 'Task ID' },
-      status:  { type: 'string', enum: ['approved','sent','done','carried','cancelled'] },
+      status:  { type: 'string', enum: ['approved','sent','done','carried','cancelled'], description: 'New task status: done=সম্পন্ন, carried=পরের দিনে নেওয়া, cancelled=বাতিল' },
     },
     required: ['taskId', 'status'],
   },
@@ -1436,7 +1436,7 @@ const set_staff_task_due: AgentTool = {
       staffName:     { type: 'string', description: 'Staff name (fuzzy) — used with titleContains when taskId is unknown' },
       titleContains: { type: 'string', description: 'Substring of the task title to match' },
       dueAtIso:      { type: 'string', description: 'Full ISO datetime with +06:00 offset, or empty/null to clear' },
-      businessId:    { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING'] },
+      businessId:    { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING'], description: 'Business — omit; the server fills it from the conversation' },
     },
   },
   handler: async (input) => {
@@ -1696,11 +1696,11 @@ const set_staff_leave: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      staffName: { type: 'string' },
+      staffName: { type: 'string', description: 'Staff member name (as in get_all_staff)' },
       startDate: { type: 'string', description: 'YYYY-MM-DD' },
       endDate: { type: 'string', description: 'YYYY-MM-DD (same as start for one day)' },
-      type: { type: 'string', enum: ['leave', 'sick', 'half_day'] },
-      reason: { type: 'string' },
+      type: { type: 'string', enum: ['leave', 'sick', 'half_day'], description: 'Leave kind: full leave, sick day, or half day' },
+      reason: { type: 'string', description: 'Optional reason the owner gave' },
     },
     required: ['staffName', 'startDate', 'endDate'],
   },
@@ -2021,7 +2021,7 @@ const get_shift_handover: AgentTool = {
     type: 'object' as const,
     properties: {
       date: { type: 'string', description: 'Dhaka date YYYY-MM-DD. Defaults to today.' },
-      businessId: { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING'] },
+      businessId: { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING'], description: 'Business — omit; the server fills it from the conversation' },
     },
   },
   handler: async (input) => {
@@ -2090,7 +2090,7 @@ const get_weekly_report_card: AgentTool = {
     type: 'object' as const,
     properties: {
       current: { type: 'boolean', description: 'Report the running week so far instead of the just-finished week.' },
-      businessId: { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING'] },
+      businessId: { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING'], description: 'Business — omit; the server fills it from the conversation' },
     },
   },
   handler: async (input) => {

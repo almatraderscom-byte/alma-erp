@@ -51,9 +51,9 @@ const list_reference_library: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      source: { type: 'string', enum: ['competitor', 'own_winner', 'seed'] },
-      productType: { type: 'string' },
-      limit: { type: 'number' },
+      source: { type: 'string', enum: ['competitor', 'own_winner', 'seed'], description: 'Filter by where the reference came from' },
+      productType: { type: 'string', description: 'Filter by product type, e.g. panjabi' },
+      limit: { type: 'number', description: 'Max results to return' },
     },
   },
   handler: async (input) => {
@@ -81,7 +81,7 @@ const forget_reference: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      id: { type: 'string' },
+      id: { type: 'string', description: 'Reference id from list_reference_library' },
     },
     required: ['id'],
   },

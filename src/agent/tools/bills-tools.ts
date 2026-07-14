@@ -73,7 +73,7 @@ const add_bill: AgentTool = {
       dueDay: { type: 'number', description: 'Day of month it is due (1-31), for monthly/quarterly/yearly bills' },
       nextDueAt: { type: 'string', description: 'Explicit next due date yyyy-MM-dd (use for one_time or if known)' },
       remindDaysBefore: { type: 'number', description: 'How many days before due to start reminding (default 3)' },
-      notes: { type: 'string' },
+      notes: { type: 'string', description: 'Optional free-text note' },
     },
     required: ['name'],
   },
@@ -251,16 +251,16 @@ const update_bill: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      id: { type: 'string' },
+      id: { type: 'string', description: 'Bill id from list_bills' },
       nameMatch: { type: 'string', description: 'Alternative to id — match an active bill by partial name' },
-      name: { type: 'string' },
-      amount: { type: 'number' },
-      category: { type: 'string' },
-      cycle: { type: 'string', enum: CYCLES },
-      dueDay: { type: 'number' },
-      remindDaysBefore: { type: 'number' },
+      name: { type: 'string', description: 'New bill name' },
+      amount: { type: 'number', description: 'New amount per cycle (whole taka)' },
+      category: { type: 'string', description: 'New category, e.g. rent, internet' },
+      cycle: { type: 'string', enum: CYCLES, description: 'New billing cycle' },
+      dueDay: { type: 'number', description: 'New due day of month (1–31)' },
+      remindDaysBefore: { type: 'number', description: 'How many days before due to remind' },
       active: { type: 'boolean', description: 'Set false to stop tracking/reminding' },
-      notes: { type: 'string' },
+      notes: { type: 'string', description: 'Optional free-text note' },
     },
   },
   handler: async (input) => {
@@ -318,7 +318,7 @@ const delete_bill: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      id: { type: 'string' },
+      id: { type: 'string', description: 'Bill id from list_bills' },
       nameMatch: { type: 'string', description: 'Alternative to id — match a bill by partial name' },
     },
   },

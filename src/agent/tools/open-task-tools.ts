@@ -31,7 +31,7 @@ const track_open_task: AgentTool = {
         description:
           'Self-contained Bangla brief to resume the work from scratch: the request, progress so far, and the precise next action. No outside context needed.',
       },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['title', 'resumeNote'],
   },
@@ -72,7 +72,7 @@ const resolve_open_task: AgentTool = {
     properties: {
       openTaskId: { type: 'string', description: 'The id returned by track_open_task. Optional — omit to auto-pick the task being worked on / the only open one.' },
       status: { type: 'string', enum: ['done', 'cancelled'], description: 'done = finished · cancelled = dropped/deferred' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['status'],
   },
@@ -155,7 +155,7 @@ const save_task_checkpoint: AgentTool = {
       resumeHint: { type: 'string', description: 'Self-contained resume brief — a fresh context continues from this alone.' },
       question: { type: 'string', description: 'If waiting on the owner: the ONE thing you need from him (Bangla). Omit for a plain failure checkpoint.' },
       error: { type: 'string', description: 'If the task FAILED: the honest cause.' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['goal', 'summaryBn', 'currentStep', 'resumeHint'],
   },

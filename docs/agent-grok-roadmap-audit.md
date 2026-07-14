@@ -53,6 +53,16 @@
 
 Not yet measurable (needs Phase 1 telemetry): wrong-tool rate, duplicate actions/cards, restart-from-zero rate, exposed-tool p95. These get their baseline in the Phase 1 PR.
 
+## Phase 2 status (Tool Contract V2 — 2026-07-14)
+
+- ✅ **Single-source capability manifest**: `src/agent/tools/capability-classification.ts` (authored domain/mode/risk + defaults for approval/concurrency/idempotency/proof per tool, all **265** executable tools across owner/trading/personal/staff/customer surfaces) + `capability-manifest.ts` (joined view: classification × pools × TOOL_GROUPS, feeds tests and the Phase 3 router).
+- ✅ **Central strict validation** (`AGENT-TOOL-002`): Ajv Draft-7 in `tool-contract.ts`, wired into ONE shared executor path (`runRegisteredTool`) used by `executeTool` / `executePersonalTool` / `executeCsTool`. Root `additionalProperties:false` + explicit `required` on every schema (0 → 265), unknown fields rejected with an actionable allowed-fields message, invalid args never reach a handler. `coerceTypes:'array'` is deliberate: the Gemini adapter round-trips numeric enums as strings.
+- ✅ **Result envelope**: `ToolResult` gained stable `errorCode` + `retryable` (derived from Phase 1 `classifyErrorCode`, handler-overridable; retryable = timeout/rate_limited/network/provider_5xx). `classifyErrorCode` moved to `tool-contract.ts` (re-exported). Telemetry now records capability labels (domain/mode/risk) + `argsValidation` per call; personal + CS surfaces now log tool events too.
+- ✅ **Schema quality**: parameter descriptions **183 missing → 0** (all 737 params described; top-30 by prod usage hand-reviewed with enums), schemas without `required` 86 → 0 (explicit `[]` where genuinely all-optional — many are either/or patterns like `taskId` OR `staffName` that Draft-7 `required` cannot express).
+- ✅ **Routability**: `run_creative_studio` + `check_studio_job` joined the `content` group (were executable-but-ungrouped); `request_agent_action` declared `routing:'mcp'` (external co-worker bridge — exposing it to the owner head would be wrong, not a fix). Marketing head 193→195 tools (under the 200 cap); slim prod head unchanged at 201.
+- ✅ **Generated coverage tests**: `capability-manifest.test.ts` (exit gates: unclassified=0, orphans=0, exposed-but-unexecutable=0, executable-but-unroutable=0, surface isolation, Ajv compile-all, strictness invariants, 100% param descriptions) + `validated-executor.test.ts` (invalid args never reach handlers, Gemini coercion, envelope codes). Agent suite 639/639 green.
+- ⏳ **Deferred to later phases (deliberate)**: executor-level `before_execute` approval enforcement and idempotency-key/lease acquisition need `WorkflowRun` state (Phase 4) — Phase 2 classifies both so enforcement is a switch-flip, and today's staged-card tools already gate every high-risk effect. No behavior change to any handler.
+
 ## Recommended phase order (unchanged from roadmap)
 
 Phase 0 (this PR) → 1 Observability → 2 Tool Contract V2 → 3 Grok request controller + router → 4 WorkflowRun → 5 Workflow templates → 6 Prompt compiler + one turn engine → 7 Canary discipline. One phase per session/PR, exit gates as written, plus the corrections above.

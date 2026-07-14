@@ -119,7 +119,7 @@ const check_workbench_task: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      pendingActionId: { type: 'string' },
+      pendingActionId: { type: 'string', description: 'Id returned when the job was queued' },
     },
     required: ['pendingActionId'],
   },

@@ -79,10 +79,10 @@ const add_appointment: AgentTool = {
       title: { type: 'string', description: 'What the appointment is, e.g. "ডাক্তার appointment", "supplier meeting"' },
       startAt: { type: 'string', description: 'Start time — "yyyy-MM-dd HH:mm" (Dhaka) or ISO. Required.' },
       endAt: { type: 'string', description: 'Optional end time, same format.' },
-      location: { type: 'string' },
+      location: { type: 'string', description: 'Where the appointment happens (optional)' },
       type: { type: 'string', enum: APPT_TYPES, description: 'Default meeting' },
       remindMinutesBefore: { type: 'number', description: 'Minutes before to remind (default 60). 0 = no reminder.' },
-      notes: { type: 'string' },
+      notes: { type: 'string', description: 'Optional free-text note' },
     },
     required: ['title', 'startAt'],
   },
@@ -228,12 +228,12 @@ const update_appointment: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      id: { type: 'string' },
+      id: { type: 'string', description: 'Appointment id from list_appointments' },
       titleMatch: { type: 'string', description: 'Alternative to id — match an upcoming appointment by partial title' },
       startAt: { type: 'string', description: 'New start time to reschedule to' },
       status: { type: 'string', enum: ['scheduled', 'done', 'cancelled'], description: 'Set done/cancelled' },
-      location: { type: 'string' },
-      notes: { type: 'string' },
+      location: { type: 'string', description: 'Where the appointment happens (optional)' },
+      notes: { type: 'string', description: 'Optional free-text note' },
     },
   },
   handler: async (input) => {

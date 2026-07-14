@@ -13,10 +13,10 @@ export const add_family_contact: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      name: { type: 'string' },
+      name: { type: 'string', description: 'Family member name' },
       relation: { type: 'string', description: 'মা/স্ত্রী/বাবা/ভাই etc.' },
-      phone: { type: 'string' },
-      notes: { type: 'string' },
+      phone: { type: 'string', description: 'Phone number in international format (+8801…)' },
+      notes: { type: 'string', description: 'Optional free-text note' },
     },
     required: ['name', 'relation', 'phone'],
   },
@@ -70,7 +70,7 @@ export const call_family_member: AgentTool = {
     properties: {
       relationOrName: { type: 'string', description: 'e.g. "মা", "স্ত্রী", or a name' },
       message: { type: 'string', description: 'What to say (Bangla). Will be spoken via TTS.' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['relationOrName', 'message'],
   },
@@ -151,7 +151,7 @@ export const place_agent_call: AgentTool = {
       phone: { type: 'string', description: 'Raw number (01XXXXXXXXX or +880…). Optional if relationOrName resolves.' },
       purpose: { type: 'string', description: 'Why we are calling, in Bangla — steers the conversation (e.g. "কালকের ডেলিভারি কনফার্ম করো").' },
       firstMessage: { type: 'string', description: 'First Bangla line the agent speaks when picked up. Optional — sensible default used.' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['purpose'],
   },
