@@ -21,7 +21,7 @@
 | Phase 1.4 (PR 2) | Scroll/layout gap fix + single scroll-debounce task | ✅ DONE 2026-07-14 (100-round scroll stress clean) |
 | Phase 2 (PR 3) | Event parity + robust SSE parser + buffered reducer | ✅ DONE 2026-07-14 (split → PR 3b) |
 | Phase 3 (PR 4) | Idempotent durable turn backend (Prisma migration, command endpoint, durable events for inline, replay cursor, richer status) | ✅ DONE 2026-07-14 |
-| Phase 3 native (PR 5) | Native migration to canonical durable turn + recovery descriptor | ⬜ not started |
+| Phase 3 native (PR 5) | Native migration to canonical durable turn + recovery descriptor | ✅ DONE 2026-07-14 (kill/relaunch e2e proven) |
 | Phase 4 (PR 6) | Pagination, consolidated polling, metrics, tests, CI gates | ⬜ not started |
 
 ### Phase 0 + 1 completion notes (2026-07-14)
@@ -62,6 +62,15 @@
 - **3.6 Status:** turn-status returns `lastSeq`, `updatedAt`, `assistantMessageId`, `executionMode`.
 - **Tests:** publisher coalescing/chronology/oversize-flush/lastSeq + cursor deduper + fail-open replay (`turn-event-publisher.test.ts`); full agent-lib suite 268/268 green; `tsc --noEmit` clean.
 - **Note:** the web/native clients don't send `clientMessageId` yet — that's PR 5 (native migration). Until then the new paths are dormant-but-live: inline turns already write durable events and richer status.
+
+### Phase 3 native / PR 5 completion notes (2026-07-14)
+
+- **clientMessageId end-to-end:** every native send generates a UUID key (ChatBody + /turn TurnBody). Prod-verified: turn row carries the app's UUID, 1 turn + 1 user message per key.
+- **Resend race gone (P0-D closed):** the 15s watchdog fallback no longer re-POSTs the prompt as a new job — it asks /turn (idempotent) for THE turn and tails its durable stream; /chat's 202 duplicate-snapshot answer (`AssistantNet.DuplicateTurn`) is caught and observed, never re-executed.
+- **Durable-tail recovery:** `recoverTurnState` now attaches `/turn/:id/stream` (full replay + live) instead of blind status-polling — the missed activity timeline (thinking/tools/cards/prose) REPLAYS and continues live; status polling remains the fallback. Full replays rebuild the tail authoritatively (wipe fires on the stream's `turn_snapshot` hello, so a failed attach keeps the frozen partial). `turn_snapshot`/`replay_continue` handled; `id:<seq>` cursor tracked (SeqBox) and stamped into the descriptor on background.
+- **RecoverableTurn descriptor (roadmap 4.3):** persisted to UserDefaults on turn_id, cleared only on terminal reconcile/explicit cancel; `bootstrap()` follows it after relaunch — even into a different conversation than the active-pointer.
+- **Sim e2e proof (prod backend):** (1) normal send → DB row `client_message_id=230E72B6…`, inline, linked; (2) **KILL mid-turn → relaunch** → full activity timeline replayed + turn continued live (~১২৬ টোকেন counter) → settled with cost badge; DB: `turns_for_key=1`, `user_msgs_in_conv=1`, `last_seq=15`, assistant linked. Fresh-conversation recovery included (test ran on a new chat).
+- **Note:** a parallel session's turns (other code paths) show `execution_mode=null` — expected; only turns through the updated routes carry the new fields.
 
 ---
 
