@@ -435,16 +435,6 @@ fun TargetControlScreen(ctx: PushCtx) {
                 TCTab.SETTINGS -> item { TCSettingsCard(vm, scope, dark) { ctx.openWebForced("/trading/target-control", "Target control") } }
             }
 
-            item {
-                Text(
-                    "🌐 টার্গেট সেট / পেনাল্টি অ্যাকশন — ওয়েবে খুলুন",
-                    color = AlmaTheme.inkSecondary(dark).copy(alpha = 0.7f), fontSize = 11.sp,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                        .plainClick { ctx.openWebForced("/trading/target-control", "Target control") }
-                        .padding(vertical = 4.dp),
-                )
-            }
             item { Spacer(Modifier.height(8.dp)) }
         }
         }
