@@ -33,11 +33,47 @@ import {
 
 export const HEAD_TOOL_HARD_LIMIT = 24
 
+// ── Phase 7 — canary rollout modes (roadmap release discipline) ──────────────
+//   'on'                — router selects tools (preview default since Phase 3)
+//   'off'               — kill switch: legacy selector only, no prediction
+//   'shadow'            — legacy selector EXECUTES, router only PREDICTS and its
+//                         prediction is logged in the route span (rollout step 1;
+//                         production default from Phase 7)
+//   { canaryPct: N }    — AGENT_STATE_ROUTER=canary:N → a stable N% of
+//                         conversations (hash of conversationId) run the router,
+//                         the rest shadow. 10 → 25 → 50 → 100 per the runbook.
+export type StateRouterMode = 'on' | 'off' | 'shadow' | { canaryPct: number }
+
+export function resolveStateRouterMode(
+  flag = process.env.AGENT_STATE_ROUTER,
+  vercelEnv = process.env.VERCEL_ENV,
+): StateRouterMode {
+  if (flag === 'true') return 'on'
+  if (flag === 'false') return 'off'
+  if (flag === 'shadow') return 'shadow'
+  const canary = /^canary:(\d{1,3})$/.exec(flag ?? '')
+  if (canary) return { canaryPct: Math.max(0, Math.min(100, Number(canary[1]))) }
+  if (vercelEnv === 'preview') return 'on'
+  if (vercelEnv === 'production') return 'shadow'
+  return 'off'
+}
+
+/** Stable FNV-1a bucket — the same conversation always lands in the same cohort. */
+export function conversationInCanary(conversationId: string, pct: number): boolean {
+  if (pct >= 100) return true
+  if (pct <= 0) return false
+  let h = 2166136261
+  for (let i = 0; i < conversationId.length; i++) {
+    h ^= conversationId.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return (h >>> 0) % 100 < pct
+}
+
+/** @deprecated Phase 7 — use resolveStateRouterMode(); kept for external readers. */
 export const STATE_ROUTER_ENABLED = (() => {
-  const flag = process.env.AGENT_STATE_ROUTER
-  if (flag === 'true') return true // force ON anywhere
-  if (flag === 'false') return false // instant kill switch
-  return process.env.VERCEL_ENV === 'preview'
+  const mode = resolveStateRouterMode()
+  return mode === 'on'
 })()
 
 // ── Curated domain packs ─────────────────────────────────────────────────────
@@ -408,12 +444,25 @@ export interface OwnerToolSelection {
   packs?: string[]
   signals?: string[]
   trimmed?: string[]
+  /**
+   * Phase 7 shadow mode: what the state router WOULD have done while the legacy
+   * selector executed — logged in the route span, so real prod traffic scores
+   * the router's recall/precision before any canary percentage is turned on.
+   */
+  shadow?: {
+    wouldRoute: boolean
+    packs?: string[]
+    signals?: string[]
+    toolCount?: number
+    trimmed?: number
+  }
 }
 
 /**
- * The single owner-head selection entry point (run-owner-turn): state router
- * when enabled and confident, otherwise the existing selector — byte-identical
- * behavior when the flag is off.
+ * The single owner-head selection entry point (run-owner-turn).
+ * Phase 7 rollout ladder (AGENT_STATE_ROUTER): off → shadow (predict+log,
+ * legacy executes; prod default) → canary:N (stable N% of conversations run
+ * the router) → true (100%). Every mode fails open to the legacy selector.
  */
 export async function selectOwnerHeadTools(opts: {
   conversationId: string
@@ -422,7 +471,12 @@ export async function selectOwnerHeadTools(opts: {
   personalMode: boolean
   headTier?: HeadTier
 }): Promise<OwnerToolSelection> {
-  if (STATE_ROUTER_ENABLED) {
+  const mode = resolveStateRouterMode()
+  const routedLive =
+    mode === 'on'
+    || (typeof mode === 'object' && conversationInCanary(opts.conversationId, mode.canaryPct))
+
+  if (routedLive) {
     try {
       const routed = await selectStateRoutedTools(opts)
       if (routed) return routed
@@ -435,5 +489,26 @@ export async function selectOwnerHeadTools(opts: {
     businessId: opts.businessId,
     headTier: opts.headTier,
   })
+
+  // Shadow prediction (also for the non-canary cohort of a canary rollout):
+  // cheap indexed reads; a prediction failure must never touch the live turn.
+  if (mode === 'shadow' || (typeof mode === 'object' && !routedLive)) {
+    try {
+      const predicted = await selectStateRoutedTools(opts)
+      return {
+        ...legacy,
+        router: 'legacy',
+        shadow: predicted
+          ? {
+              wouldRoute: true,
+              packs: predicted.packs,
+              signals: predicted.signals,
+              toolCount: predicted.tools.length,
+              trimmed: predicted.trimmed.length,
+            }
+          : { wouldRoute: false },
+      }
+    } catch { /* prediction is telemetry only */ }
+  }
   return { ...legacy, router: 'legacy' }
 }

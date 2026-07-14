@@ -625,6 +625,9 @@ async function* runAlternateProviderTurn(
       parallelToolCalls: packParallelToolCalls,
       boundTool: boundToolName,
       turnAuthorization: turnAuthorization.reason,
+      // Phase 7 shadow: the router's prediction on legacy-executed turns —
+      // prod traffic scores recall/precision before any canary turns on.
+      shadow: toolSelection.shadow ?? null,
     },
   })
   const adapter = adapterFor(model.provider)

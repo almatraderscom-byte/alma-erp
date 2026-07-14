@@ -232,6 +232,8 @@ export async function checkWorkflowGuards(
   input: Record<string, unknown>,
   ctx: { conversationId?: string },
 ): Promise<WorkflowGuardBlock | null> {
+  // Phase 7 kill switch: guards stop BLOCKING (bookkeeping hooks keep running).
+  if (process.env.AGENT_WORKFLOW_GUARDS === 'false') return null
   const conversationId = ctx.conversationId
   if (!conversationId) return null
   try {
