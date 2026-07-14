@@ -71,6 +71,7 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -480,6 +481,25 @@ fun HeaderFadeScaffold(
         }
     }
 }
+
+/** Alpha-fade the TOP edge of a composable's content to transparent (revealing whatever is
+ *  behind it) — the Claude scroll-fade primitive. Use on a scroll container whose own header
+ *  is stacked (not the shell header), e.g. the Assistant chat. Pad the scroll's top by the
+ *  same [fadeEnd] so nothing is faded at rest. */
+fun Modifier.topFadeEdge(fadeEnd: Dp, fadeStart: Dp = 0.dp): Modifier = this
+    .graphicsLayer(compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen)
+    .drawWithContent {
+        drawContent()
+        drawRect(
+            brush = Brush.verticalGradient(
+                0f to Color.Transparent,
+                1f to Color.Black,
+                startY = fadeStart.toPx(),
+                endY = fadeEnd.toPx(),
+            ),
+            blendMode = androidx.compose.ui.graphics.BlendMode.DstIn,
+        )
+    }
 
 /** Slim centered-title header over the aurora (the iOS glass nav bar's Android twin).
  *  The header's OWN background is a soft vertical fade — the page colour holds under the

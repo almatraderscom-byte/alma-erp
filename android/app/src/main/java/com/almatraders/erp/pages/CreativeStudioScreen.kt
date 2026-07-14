@@ -951,7 +951,7 @@ private fun CsCreateTab(vm: CreativeStudioState, dark: Boolean, scope: Coroutine
     val pickGallery = rememberGalleryPick { it?.let { p -> picked = p } }
     val pickCamera = rememberCameraPick { it?.let { p -> picked = p } }
 
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp)) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp).padding(top = com.almatraders.erp.shell.LocalHeaderInset.current)) {
         CsHeader(dark, "নতুন জেনারেশন", "ক্রিয়েটিভ বানাও", onBack = null)
         Spacer(Modifier.height(16.dp))
         // Product photo picker / preview.

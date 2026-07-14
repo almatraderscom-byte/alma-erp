@@ -866,7 +866,7 @@ private fun MoreGroupPage(
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp)
-            .padding(top = 4.dp, bottom = 28.dp),
+            .padding(top = com.almatraders.erp.shell.LocalHeaderInset.current, bottom = 28.dp),
     ) {
         // In-screen back header (the shell header stays "More" — PushCtx cannot
         // retitle it for an internal push).

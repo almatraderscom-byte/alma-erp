@@ -109,6 +109,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.almatraders.erp.shell.topFadeEdge
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -1036,9 +1037,9 @@ fun AssistantScreen(ctx: PushCtx) {
             Box(Modifier.weight(1f)) {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().topFadeEdge(fadeEnd = 40.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                        start = 16.dp, end = 16.dp, top = 10.dp, bottom = 8.dp,
+                        start = 16.dp, end = 16.dp, top = 40.dp, bottom = 8.dp,
                     ),
                 ) {
                     if (vm.loadingHistory && vm.messages.isEmpty()) {
