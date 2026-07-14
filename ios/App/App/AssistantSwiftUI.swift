@@ -2286,6 +2286,35 @@ final class AssistantVM {
     /// blocks, one 2,000+ char reply), then streams 1,000 small deltas into a
     /// live tail through the SAME mutation helpers the real SSE path uses — so
     /// scroll-gap and per-delta MainActor cost reproduce without a server.
+    /// Parity roadmap visual fixture — ALMA_ASSISTANT_PARITY=1: ONLY the persisted
+    /// verification-retry turn (no stress stream), decoded through the real wire
+    /// path, so a screenshot shows the exact cold-load composition: progress prose →
+    /// tool rows → superseded draft (visible) → verify row → corrected final +
+    /// Σ/cache/ধাপ footer.
+    func loadParityFixture() {
+        var rows: [AgentChatMessage] = []
+        rows.append(AgentChatMessage(id: "fix-u-parity", role: .user,
+                                     text: "স্টকের কাজটা কি হয়েছে?"))
+        let parityJSON = #"""
+        {"id":"fix-a-parity","role":"assistant",
+         "content":[{"type":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"}],
+         "tokensIn":1200,"tokensOut":300,"cacheCreation":5000,"cacheRead":20000,
+         "apiRounds":4,"roundCostsUsd":[0.01,0.01,0.01,0.012],"costUsd":0.042,
+         "createdAt":"2026-07-14T10:00:00.000Z",
+         "timeline":[
+           {"t":"text","text":"আগে স্টকের অবস্থাটা দেখে নিচ্ছি…"},
+           {"t":"tool","name":"get_inventory_status","ok":true},
+           {"t":"text","text":"কাজটা করে দিয়েছি Boss!","state":"superseded"},
+           {"t":"verify","attempt":1,"max":2},
+           {"t":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"}]}
+        """#
+        if let d = parityJSON.data(using: .utf8),
+           let wire = try? JSONDecoder().decode(AgentMessageWire.self, from: d) {
+            rows.append(AgentChatMessage.from(wire))
+        }
+        messages = rows
+    }
+
     func loadDebugFixture() {
         let bnShort = "ঠিক আছে Boss, এটা এখনই দেখছি।"
         let bnLong = "আজকের সেলস রিপোর্ট অনুযায়ী ALMA Lifestyle-এর মোট বিক্রি ভালো হয়েছে। Facebook ক্যাম্পেইনের CTR বেড়েছে, আর নতুন কালেকশনের প্রি-অর্ডারও আসছে। কালকে সকালে স্টাফ মিটিংয়ে inventory নিয়ে কথা বলা দরকার — তিনটা প্রোডাক্টের স্টক কমে যাচ্ছে। "
@@ -2319,6 +2348,28 @@ final class AssistantVM {
         big.blocks = blocks
         big.text = String(repeating: bnLong, count: 14)
         rows.append(big)
+
+        // Parity roadmap — a PERSISTED (cold-load) verification-retry turn decoded
+        // through the real wire path: draft prose stays visible, truthful verify
+        // row between draft and corrected final, cache/rounds in the footer.
+        rows.append(AgentChatMessage(id: "fix-u-parity", role: .user,
+                                     text: "স্টকের কাজটা কি হয়েছে?"))
+        let parityJSON = #"""
+        {"id":"fix-a-parity","role":"assistant",
+         "content":[{"type":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"}],
+         "tokensIn":1200,"tokensOut":300,"cacheCreation":5000,"cacheRead":20000,
+         "apiRounds":4,"roundCostsUsd":[0.01,0.01,0.01,0.012],"costUsd":0.042,
+         "timeline":[
+           {"t":"text","text":"আগে স্টকের অবস্থাটা দেখে নিচ্ছি…"},
+           {"t":"tool","name":"get_inventory_status","ok":true},
+           {"t":"text","text":"কাজটা করে দিয়েছি Boss!","state":"superseded"},
+           {"t":"verify","attempt":1,"max":2},
+           {"t":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"}]}
+        """#
+        if let d = parityJSON.data(using: .utf8),
+           let wire = try? JSONDecoder().decode(AgentMessageWire.self, from: d) {
+            rows.append(AgentChatMessage.from(wire))
+        }
         messages = rows
 
         // Live tail: 1,000 one-word deltas at ~5ms — token-rate MainActor stress.
@@ -2365,6 +2416,10 @@ final class AssistantVM {
             "data: {\"type\":\"text_delta\",\"delta\":\"আজকের বিক্রি ভালো হয়েছে Boss।\"}", "",
             "data: {\"type\":\"text_delta\",",                              // multi-line data event
             "data: \"delta\":\" মাল্টি-লাইন ইভেন্টও ঠিকভাবে এসেছে।\"}", "",
+            // Parity roadmap RC-2 — the draft above must STAY visible (superseded in
+            // data), a truthful verify row follows, then the corrected final prose.
+            "data: {\"type\":\"verification_retry\",\"attempt\":1,\"maxAttempts\":2}", "",
+            "data: {\"type\":\"text_delta\",\"delta\":\"যাচাই শেষে ঠিক করা উত্তর: আজকের মোট বিক্রি ৳৬,০৫২।\"}", "",
             "data: {\"type\":\"ask_card\",\"askCardId\":\"a1\",\"question\":\"কোনটা আগে করব Boss?\",\"options\":[\"স্টক অর্ডার\",\"ক্যাম্পেইন\",\"পরে বলব\"]}", "",
             "data: {\"type\":\"done\",\"messageId\":\"evt-m1\",\"tokensIn\":1200,\"tokensOut\":86,\"cacheCreation\":0,\"cacheRead\":0,\"costUsd\":0.0123}",
             // no trailing blank line — exercises the flushTrailing() path
@@ -2431,6 +2486,54 @@ final class AssistantVM {
         if case .turnSnapshot(let tid, _, let st, let seq)? = decode(#"{"type":"turn_snapshot","turnId":"t9","status":"running","lastSeq":7}"#) {
             check("turn_snapshot", tid == "t9" && st == "running" && seq == 7)
         } else { check("turn_snapshot", false) }
+
+        // Presentation parity (roadmap RC-1/RC-3/RC-4) — persisted wire row must
+        // decode every prose/verify segment and rebuild the SAME interleaved
+        // TurnBlock composition the live stream shows, superseded marked in data.
+        let parityJSON = #"""
+        {"id":"m-parity","role":"assistant",
+         "content":[{"type":"text","text":"ঠিক করা উত্তর।"}],
+         "tokensIn":1200,"tokensOut":300,"cacheCreation":5000,"cacheRead":20000,
+         "apiRounds":4,"roundCostsUsd":[0.01,0.01,0.01,0.012],"costUsd":0.042,
+         "timeline":[
+           {"t":"text","text":"আগে দেখে নিচ্ছি…"},
+           {"t":"tool","name":"get_orders","ok":true},
+           {"t":"text","text":"কাজটা করে দিয়েছি Boss!","state":"superseded"},
+           {"t":"verify","attempt":1,"max":2},
+           {"t":"text","text":"ঠিক করা উত্তর।"}]}
+        """#
+        if let d = parityJSON.data(using: .utf8),
+           let wire = try? JSONDecoder().decode(AgentMessageWire.self, from: d) {
+            let m = AgentChatMessage.from(wire)
+            let textCount = m.timeline.reduce(0) { n, e in
+                if case .text = e { return n + 1 }; return n
+            }
+            check("RC-1 persisted prose decoded", textCount == 3)
+            check("RC-4 usage decoded", m.cacheCreation == 5000 && m.cacheRead == 20000
+                  && m.apiRounds == 4 && m.roundCostsUsd?.count == 4)
+            let fingerprint = m.blocks.map { b -> String in
+                switch b {
+                case .prose(let id, _): return m.supersededBlockIds.contains(id) ? "prose*" : "prose"
+                case .activity(let a):
+                    switch a.kind {
+                    case .thinking: return "think"
+                    case .search: return "search"
+                    case .tool: return "tool"
+                    }
+                case .file: return "file"
+                case .confirmCard: return "confirm"
+                case .askCard: return "ask"
+                }
+            }
+            check("RC-3 canonical block fingerprint",
+                  fingerprint == ["prose", "search", "tool", "prose*", "think", "prose"])
+            // Determinism: decoding the same wire twice yields the same composition.
+            let m2 = AgentChatMessage.from(wire)
+            check("RC-3 projection deterministic",
+                  m2.blocks == m.blocks && m2.supersededBlockIds == m.supersededBlockIds)
+        } else {
+            check("parity wire decode", false)
+        }
 
         // Transport classifier
         if case .offline = TurnFailureKind.classify(URLError(.notConnectedToInternet)) { check("offline classified", true) } else { check("offline classified", false) }
@@ -6804,6 +6907,11 @@ struct AssistantScreen: View {
             // server entirely (no bootstrap) so layout is tested in isolation.
             if argFlag("ALMA_ASSISTANT_FIXTURE") {
                 vm.loadDebugFixture()
+                return
+            }
+            // Parity roadmap — persisted verification-retry composition only.
+            if argFlag("ALMA_ASSISTANT_PARITY") {
+                vm.loadParityFixture()
                 return
             }
             // Roadmap Phase 2 — canned SSE wire through the real parser/reducer.
