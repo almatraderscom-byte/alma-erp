@@ -74,6 +74,10 @@ final class AgoraIntercom: NSObject {
     var remoteSpeaking = false        // someone else is publishing audio right now
     var localSpeaking = false         // WE are publishing voice right now (live orb animation)
     var micMuted = false
+    /// When a call is answered through CallKit (VoIP push), CallKit OWNS the audio
+    /// session: it activates/deactivates it and Agora must not fight that. Set by
+    /// CallKitVoIP around startCall/leave. Off = the in-app path manages the session.
+    var callKitManaged = false
     var callSeconds = 0
     var statusText = ""
     var error: String? = nil
@@ -179,6 +183,18 @@ final class AgoraIntercom: NSObject {
         engine?.muteLocalAudioStream(micMuted)
     }
 
+    /// Set mute explicitly (CallKit's mute button routes here so the two UIs agree).
+    @MainActor func setMuted(_ muted: Bool) {
+        micMuted = muted
+        engine?.muteLocalAudioStream(muted)
+    }
+
+    /// CallKit finished activating the shared audio session — make sure Agora routes
+    /// call audio to the loud speaker (CallKit already owns activation/teardown).
+    @MainActor func audioSessionActivated() {
+        engine?.setEnableSpeakerphone(true)
+    }
+
     @MainActor
     func leave() {
         engine?.leaveChannel(nil)
@@ -197,22 +213,32 @@ final class AgoraIntercom: NSObject {
     // ── App-wide incoming call (staff) ────────────────────────────────────────
     struct IncomingCall: Equatable { let broadcastId: String; let channel: String; let caller: String }
 
+    /// How long a placed call keeps "ringing" before it's a missed call. MUST match
+    /// the web side (intercom.tsx CALL_RING_MS) so a call rings for the same window
+    /// on every device — a shorter native window was why native missed cross-device calls.
+    static let ringWindow: TimeInterval = 60
+
     /// The freshest still-ringing call addressed to me that I haven't surfaced yet.
     /// FloatingChatHead polls this app-wide so a call rings on ANY screen.
     func pendingIncomingCall() async -> IncomingCall? {
         struct Mine: Decodable { let confirmedAt: String? }
         struct B: Decodable { let id: String; let kind: String; let createdAt: String; let mine: Mine? }
-        struct Feed: Decodable { let broadcasts: [B] }
+        struct Feed: Decodable { let broadcasts: [B]; let serverNow: String? }
         guard mode == .idle || mode == .listening,
               let feed: Feed = try? await AlmaAPI.shared.get("/api/assistant/office/intercom")
         else { return nil }
+        // Server-anchored "now": a staff phone with a wrong clock used to never ring
+        // because freshness was measured against the device clock. Mirror the web,
+        // which offsets by (serverNow − deviceNow) before the freshness check.
+        let skew: TimeInterval = feed.serverNow.flatMap(Self.parseISO)?.timeIntervalSinceNow ?? 0
+        let nowServer = Date().addingTimeInterval(skew)
         // Newest first — ring only the most recent live call. `mine != nil` means the
         // call is addressed to THIS staff (owner feeds have no `mine`, so the boss who
         // placed the call never rings himself). A call already confirmed (answered or
         // declined on another device, e.g. the web office) must not re-ring here.
         for b in feed.broadcasts.reversed() where b.kind == "call" && b.mine != nil {
             guard !handledCallIds.contains(b.id), b.mine?.confirmedAt == nil else { continue }
-            if let t = Self.parseISO(b.createdAt), Date().timeIntervalSince(t) < 45 {
+            if let t = Self.parseISO(b.createdAt), nowServer.timeIntervalSince(t) < Self.ringWindow {
                 return IncomingCall(broadcastId: b.id, channel: "itc_\(b.id)", caller: "বস — মারুফ")
             }
         }
@@ -343,6 +369,9 @@ final class AgoraIntercom: NSObject {
         let tok = try await token(for: ch)
         try configureAudioSession()
         let e = engineFor(appId: tok.appId)
+        // Under CallKit, don't let Agora deactivate the shared session on leave — CallKit
+        // owns the session lifecycle and would otherwise get its audio killed under it.
+        if callKitManaged { e.setAudioSessionOperationRestriction(.deactivateSession) }
         // Agora is single-channel per engine: if we were live-listening, leave that
         // channel before joining the call channel (otherwise joinChannel errors -17).
         if let prev = channel, prev != ch { e.leaveChannel(nil) }
@@ -376,7 +405,11 @@ final class AgoraIntercom: NSObject {
         let s = AVAudioSession.sharedInstance()
         try s.setCategory(.playAndRecord, mode: .voiceChat,
                           options: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP])
-        try s.setActive(true)
+        // Under CallKit, the framework activates the session in `didActivate` — us
+        // calling setActive(true) here races/​fights it, so skip when CallKit-managed.
+        if !callKitManaged {
+            try s.setActive(true)
+        }
     }
 
     private func ensureMicPermission() async throws {
@@ -395,10 +428,10 @@ final class AgoraIntercom: NSObject {
     }
     private func stopCallTimer() { callTimer?.invalidate(); callTimer = nil; callSeconds = 0 }
 
-    /// While ringing, give up after 45s if nobody answers.
+    /// While ringing, give up after the ring window if nobody answers (matches web).
     private func startRingTimeout() {
         stopRingTimeout()
-        ringTimer = Timer.scheduledTimer(withTimeInterval: 45, repeats: false) { [weak self] _ in
+        ringTimer = Timer.scheduledTimer(withTimeInterval: Self.ringWindow, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.mode == .ringing else { return }
                 self.error = "কেউ কল ধরেনি"

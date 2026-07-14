@@ -176,7 +176,12 @@ export const INTERCOM_CSS = `
 .itc-vb.urgent .vb-usub{font-size:11.5px;color:rgba(254,202,202,.78);margin-top:3px}
 
 /* ═══ staff full-screen takeover (walkie-talkie) ═══ */
-.itc-takeover{position:fixed;inset:0;z-index:90;display:flex;flex-direction:column;align-items:center;
+/* z-index must sit ABOVE every app chrome layer (desktop sidebar z-130/140,
+   command palette z-20050, pwa/loading z-210..240) — otherwise the nav/sidebar
+   stays tappable over the call/takeover and one stray tap navigates away from
+   /portal/office, unmounting the call and dropping it. Kept just below the
+   forced-update / biometric-lock gates (int max), which must still supersede. */
+.itc-takeover{position:fixed;inset:0;z-index:2147483400;display:flex;flex-direction:column;align-items:center;
   justify-content:center;text-align:center;
   padding:calc(30px + env(safe-area-inset-top,0px)) 26px calc(30px + env(safe-area-inset-bottom,0px));
   font-family:'Hind Siliguri','Noto Sans Bengali',Inter,system-ui,sans-serif;color:#F7F8FC;
@@ -262,7 +267,7 @@ export const INTERCOM_CSS = `
 .itc-callstat.miss{color:#fca5a5;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3)}
 
 /* ═══ full-screen live-call overlay (incoming ring + active call) ═══ */
-.itc-call{position:fixed;inset:0;z-index:95;display:flex;flex-direction:column;align-items:center;
+.itc-call{position:fixed;inset:0;z-index:2147483401;display:flex;flex-direction:column;align-items:center;
   justify-content:space-between;text-align:center;
   padding:calc(64px + env(safe-area-inset-top,0px)) 28px calc(48px + env(safe-area-inset-bottom,0px));
   font-family:'Hind Siliguri','Noto Sans Bengali',Inter,system-ui,sans-serif;color:#F7F8FC;

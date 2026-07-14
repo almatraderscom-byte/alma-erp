@@ -12,7 +12,10 @@
  * fills `transcript` asynchronously (Bangla STT) via the transcribe route.
  */
 import { prisma } from '@/lib/prisma'
-import { pushStaffPing } from '@/agent/lib/office-notify'
+import { pushStaffPing, pushStaffDevice } from '@/agent/lib/office-notify'
+import { getCallPushTargets } from '@/agent/lib/call-push'
+import { sendVoipCall } from '@/agent/lib/apns-voip'
+import { sendFcmCall } from '@/agent/lib/fcm-call'
 
 /** 'voice' = PTT audio · 'urgent' = full-volume text alert · 'call' = live VoIP ring (Agora channel = itc_<broadcastId>). */
 export type IntercomKind = 'voice' | 'urgent' | 'call'
@@ -56,6 +59,8 @@ export type IntercomFeed = {
   serverNow: string
 }
 
+const OFFICE_URL = `${(process.env.NEXT_PUBLIC_APP_URL || 'https://alma-erp-six.vercel.app').replace(/\/$/, '')}/portal/office`
+
 /** Everyone in a business shares one live-intercom Agora channel. */
 export function liveIntercomChannel(businessId: string): string {
   return `itc_live_${businessId}`.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64)
@@ -66,7 +71,7 @@ const FEED_HOURS = 24
 const FEED_LIMIT = 30
 
 /** Active staff of a business (receipt fan-out + owner roster). */
-async function activeStaff(businessId: string): Promise<{ id: string; name: string; telegramChatId: string | null; ntfyTopic: string | null; phone: string | null }[]> {
+async function activeStaff(businessId: string): Promise<{ id: string; name: string; telegramChatId: string | null; ntfyTopic: string | null; phone: string | null; userId: string | null }[]> {
   const rows = await prisma.agentStaff.findMany({
     where: { businessId, active: true },
     select: {
@@ -74,7 +79,9 @@ async function activeStaff(businessId: string): Promise<{ id: string; name: stri
       name: true,
       telegramChatId: true,
       ntfyTopic: true,
-      user: { select: { phone: true } },
+      // user.id = the OneSignal external_id the device registered with, so a
+      // call/alert can ring the installed app directly (not only Telegram/ntfy).
+      user: { select: { id: true, phone: true } },
     },
     orderBy: { createdAt: 'asc' },
   })
@@ -84,6 +91,7 @@ async function activeStaff(businessId: string): Promise<{ id: string; name: stri
     telegramChatId: r.telegramChatId,
     ntfyTopic: r.ntfyTopic,
     phone: r.user?.phone ?? null,
+    userId: r.user?.id ?? null,
   }))
 }
 
@@ -125,7 +133,45 @@ export async function createIntercomBroadcast(args: {
       : args.kind === 'call'
         ? 'এখনই অফিস অ্যাপ খুলে কল ধরুন।'
         : 'অফিস অ্যাপ খুলে শুনে কনফার্ম করুন।'
-  await Promise.allSettled(targets.map((t) => pushStaffPing(t, title, body)))
+  // A call/urgent ring must reach the installed app itself — not just Telegram.
+  // OneSignal push (high-priority for call/urgent) carries the broadcast id so
+  // the in-app listener can raise the incoming-call ring; Telegram/ntfy stay as
+  // the closed-app fallback. All best-effort, in parallel, never blocks.
+  const deviceUserIds = targets.map((t) => t.userId).filter((x): x is string => Boolean(x))
+  const highPriority = args.kind === 'call' || args.kind === 'urgent'
+  const callData =
+    args.kind === 'call'
+      ? { type: 'office_call', broadcastId: row.id, channel: `itc_${row.id}`, actionUrl: `${OFFICE_URL}` }
+      : { type: `office_${args.kind}`, broadcastId: row.id, actionUrl: `${OFFICE_URL}` }
+
+  const pushes: Promise<unknown>[] = [
+    ...targets.map((t) => pushStaffPing(t, title, body)),
+    pushStaffDevice(deviceUserIds, title, body, callData, highPriority),
+  ]
+
+  // A live call additionally fires the real wake layer: an APNs VoIP push (iOS
+  // CallKit) + an FCM high-priority data message (Android full-screen) so the
+  // callee's phone rings a native incoming call even when the app is closed.
+  // OneSignal/Telegram above stay as fallbacks. All best-effort, never blocks.
+  if (args.kind === 'call' && deviceUserIds.length > 0) {
+    const callerName = 'বস — মারুফ'
+    const voipPayload = { type: 'office_call' as const, broadcastId: row.id, channel: `itc_${row.id}`, caller: callerName }
+    pushes.push(
+      (async () => {
+        try {
+          const { voip, fcm } = await getCallPushTargets(deviceUserIds)
+          await Promise.allSettled([
+            voip.length ? sendVoipCall(voip, voipPayload) : Promise.resolve([]),
+            fcm.length ? sendFcmCall(fcm, voipPayload) : Promise.resolve([]),
+          ])
+        } catch (err) {
+          console.warn('[office-intercom] call wake push failed:', (err as Error)?.message)
+        }
+      })(),
+    )
+  }
+
+  await Promise.allSettled(pushes)
 
   return { id: row.id, createdAt: row.createdAt.toISOString() }
 }

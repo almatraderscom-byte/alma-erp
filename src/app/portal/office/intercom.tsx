@@ -20,6 +20,25 @@ import { INTERCOM_CSS } from './intercom-css'
 const POLL_MS = 6_000
 /** A call broadcast only "rings" this long; older = a missed call. */
 const CALL_RING_MS = 60_000
+
+/**
+ * True only inside the iOS native shell. There, the native FloatingChatHead +
+ * AgoraIntercom own the incoming-call ring and the call screen, so the web call
+ * UI (this file's IntercomCall + the dock's call button) must stay silent —
+ * otherwise a call double-rings (native ring + web ring). Android WebView has NO
+ * native call code, and plain browsers obviously don't, so both keep the web UI.
+ */
+function isIosNativeShell(): boolean {
+  if (typeof window === 'undefined') return false
+  const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string } }).Capacitor
+  return Boolean(cap?.isNativePlatform?.()) && cap?.getPlatform?.() === 'ios'
+}
+/** Mount-safe read of {@link isIosNativeShell} (avoids an SSR/hydration mismatch). */
+function useIsIosNative(): boolean {
+  const [ios, setIos] = useState(false)
+  useEffect(() => setIos(isIosNativeShell()), [])
+  return ios
+}
 /** The Agora channel for a call is derived from its broadcast id (no signaling column needed). */
 const callChannel = (broadcastId: string) => `itc_${broadcastId}`
 const MIN_HOLD_MS = 900
@@ -422,6 +441,33 @@ export function useIntercom(self: 'owner' | 'staff') {
     return () => clearTimeout(t)
   }, [activeCallId, callApi.remoteJoined, endCall])
 
+  // Deep-link auto-answer: Android's native full-screen "Accept" (Stage 1) opens
+  // the app at /portal/office?answerCall=<broadcastId>. Join that call as soon as
+  // it shows up in the feed, then strip the param so a refresh can't re-answer.
+  // (Skipped in the iOS native shell — CallKit already answered there.)
+  const autoAnsweredRef = useRef(false)
+  useEffect(() => {
+    if (autoAnsweredRef.current || activeCallId || self !== 'staff' || isIosNativeShell()) return
+    let wanted: string | null = null
+    try {
+      wanted = new URLSearchParams(window.location.search).get('answerCall')
+    } catch {
+      /* no window */
+    }
+    if (!wanted) return
+    const b = feed.broadcasts.find((x) => x.id === wanted && x.kind === 'call' && x.mine && !x.mine.confirmedAt)
+    if (!b) return
+    autoAnsweredRef.current = true
+    void answerCall(b)
+    try {
+      const u = new URL(window.location.href)
+      u.searchParams.delete('answerCall')
+      window.history.replaceState({}, '', u.toString())
+    } catch {
+      /* ignore */
+    }
+  }, [feed.broadcasts, activeCallId, self, answerCall])
+
   return {
     self,
     feed,
@@ -460,6 +506,9 @@ export type Intercom = ReturnType<typeof useIntercom>
 
 export function IntercomDock({ itc }: { itc: Intercom }) {
   const { feed, ptt, recSecs, target, setTarget, error, startPtt, stopPtt } = itc
+  // On iOS the owner calls staff from the native roster (FloatingChatHead → লাইভ
+  // কল); hide the web call button so the two paths don't fight.
+  const iosNative = useIsIosNative()
   const startYRef = useRef(0)
   const [cancelArmed, setCancelArmed] = useState(false)
   const live = ptt === 'live'
@@ -531,7 +580,7 @@ export function IntercomDock({ itc }: { itc: Intercom }) {
           </button>
         </div>
 
-        {targetStaff ? (
+        {iosNative ? null : targetStaff ? (
           <button
             className="itc-side call"
             disabled={itc.callStarting || !!itc.activeCallId || ptt === 'live'}
@@ -955,12 +1004,14 @@ const fmtClock = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:
 
 export function IntercomCall({ itc }: { itc: Intercom }) {
   const { self, feed, activeCallId, callPeer, callApi, endCall, answerCall, declineCall, nowMs } = itc
+  const iosNative = useIsIosNative()
 
   // Staff: a fresh, unconfirmed call broadcast addressed to me = an incoming ring
   // (unless I'm already in a call). Freshness uses server-skew-adjusted time so a
-  // phone with a wrong clock still rings.
+  // phone with a wrong clock still rings. Silent in the iOS native shell (native
+  // FloatingChatHead rings instead — see isIosNativeShell).
   const incoming = useMemo(() => {
-    if (self !== 'staff' || activeCallId) return null
+    if (self !== 'staff' || activeCallId || iosNative) return null
     return (
       feed.broadcasts.find(
         (b) =>
@@ -970,7 +1021,7 @@ export function IntercomCall({ itc }: { itc: Intercom }) {
           nowMs() - new Date(b.createdAt).getTime() < CALL_RING_MS,
       ) ?? null
     )
-  }, [self, activeCallId, feed.broadcasts, nowMs])
+  }, [self, activeCallId, iosNative, feed.broadcasts, nowMs])
 
   // Ring tone + vibration while an incoming call is pending.
   const ringRef = useRef<{ ctx: AudioContext; stop: () => void } | null>(null)
@@ -1039,7 +1090,8 @@ export function IntercomCall({ itc }: { itc: Intercom }) {
   }
 
   // ── active call (owner or staff, once we've joined) ──
-  if (!activeCallId) return null
+  // On iOS the native call screen renders this instead — keep the web one dark.
+  if (!activeCallId || iosNative) return null
   const st = callApi.state
   const connected = callApi.remoteJoined
   const failed = st === 'error'
