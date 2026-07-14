@@ -18,7 +18,16 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { selectOwnerHeadTools } from '@/agent/tools/state-router'
+import { selectOwnerHeadTools, packsForPendingActionType } from '@/agent/tools/state-router'
+import {
+  reconcileConversationWorkflows,
+  buildWorkflowSnapshotNote,
+  ensureWorkflowRunForPendingAction,
+  listActiveWorkflowRuns,
+  transitionWorkflowRun,
+  WorkflowVersionConflictError,
+  type WorkflowRunView,
+} from '@/agent/lib/workflow-run'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -327,6 +336,20 @@ async function* runAlternateProviderTurn(
     }
   }
 
+  // Phase 4 — resolve the CANONICAL workflow state BEFORE model routing:
+  // reconcile every non-terminal run against its pending action's real status
+  // (approvals executed via the per-type route branches close their runs here),
+  // then hand the surviving runs to the router + the snapshot note below.
+  // Fail-open: workflow bookkeeping must never block a turn.
+  let workflowRuns: WorkflowRunView[] = []
+  if (!suppressWork) {
+    try {
+      workflowRuns = await reconcileConversationWorkflows(conversationId)
+    } catch (err) {
+      console.warn('[run-owner-turn] workflow reconcile failed open:', err instanceof Error ? err.message : err)
+    }
+  }
+
   const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot, officePulse] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
     lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
@@ -401,6 +424,14 @@ async function* runAlternateProviderTurn(
   if (listenMode) {
     volatileText = `${LISTEN_MODE_NOTE}\n\n${volatileText}`.trim()
   }
+  // Phase 4 — the canonical WorkflowRun snapshot precedes everything else in the
+  // per-turn context: the head reads the EXACT in-flight job state (status, step,
+  // legal next tools) so "হ্যাঁ/continue" resumes the blocked step instead of
+  // restarting from zero. Skipped in listen mode like the checkpoint note.
+  if (!listenMode && workflowRuns.length > 0) {
+    const wfNote = buildWorkflowSnapshotNote(workflowRuns)
+    if (wfNote) volatileText = volatileText ? `${volatileText}\n\n${wfNote}` : wfNote
+  }
   // P0 resume fast-path: unresolved checkpoints ride the same transient per-turn
   // injection — the head resumes stalled work from the exact step with ZERO
   // history re-reading (the note is self-contained by contract). Fail-open.
@@ -427,12 +458,12 @@ async function* runAlternateProviderTurn(
       // DIFFERENT question — the head then bound the reply to the wrong question
       // (owner bug 2026-07-12: tapped "অন্য কিছু change চাই", head ran "Ok" approve).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const recentCards: Array<{ id: string; question: string; status: string; selectedOption: string | null; options: unknown }> =
+      const recentCards: Array<{ id: string; question: string; status: string; selectedOption: string | null; options: unknown; workflowRunId?: string | null }> =
         await (prisma as any).agentAskCard.findMany({
           where: { conversationId },
           orderBy: { createdAt: 'desc' },
           take: 5,
-          select: { id: true, question: true, status: true, selectedOption: true, options: true },
+          select: { id: true, question: true, status: true, selectedOption: true, options: true, workflowRunId: true },
         })
       const matchesText = (opt: unknown): boolean =>
         typeof opt === 'string' && !!opt.trim() && lastUserText.startsWith(opt.trim().slice(0, 40))
@@ -458,9 +489,17 @@ async function* runAlternateProviderTurn(
         const others = Array.isArray(matched.options)
           ? (matched.options as unknown[]).filter((o): o is string => typeof o === 'string' && o !== matched!.selectedOption)
           : []
+        // Phase 4 (AGENT-IOS-001, server-side): the matched card carries its
+        // workflowRunId — the owner's answer binds to the EXACT run, not prose.
+        const wfRef = matched.workflowRunId
+          ? workflowRuns.find((r) => r.id === matched!.workflowRunId)
+          : undefined
+        const wfLine = wfRef
+          ? ` এই উত্তরটা চলমান কাজ [${wfRef.kind}] "${wfRef.goal.slice(0, 80)}" (ধাপ: ${wfRef.state})-এর — ঠিক ওই ধাপ থেকেই এগোও।`
+          : ''
         const answerNote =
           `[ASK-CARD উত্তর] Boss-এর এই বার্তাটা তোমারই প্রশ্নের উত্তর — প্রশ্ন ছিল: "${matched.question}"। ` +
-          `Boss বেছে নিয়েছেন: "${matched.selectedOption}"।` +
+          `Boss বেছে নিয়েছেন: "${matched.selectedOption}"।` + wfLine +
           (others.length ? ` তিনি এগুলো বেছে নেননি: ${others.map((o) => `"${o}"`).join(', ')} — সেগুলোর অর্থ ধরে কাজ করবে না।` : '') +
           ' এটা নতুন কাজ নয়: আগের চলমান কাজটা ঠিক যেখানে ছিলে সেখান থেকে চালিয়ে যাও (চেকপয়েন্ট নোট দেখো)। ' +
           'ব্রাউজার-কাজ চললে আগে live_browser_look দিয়ে এখনকার পেজ দেখো — গোড়া থেকে navigate করা বা main view-এ ফেরত যাওয়া নিষেধ।'
@@ -878,8 +917,21 @@ async function* runAlternateProviderTurn(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const row = await (prisma as any).agentPendingAction.findUnique({
               where: { id: d.pendingActionId },
-              select: { status: true, summary: true, costEstimate: true },
+              select: { status: true, summary: true, costEstimate: true, type: true },
             })
+            // Phase 4 — every staged card gets a canonical WorkflowRun (status
+            // waiting_owner) the moment it exists, idempotent on the card id.
+            // Never relies on the model tracking its own work. Fail-open.
+            if (row) {
+              const kind = packsForPendingActionType(String(row.type ?? ''))[0] ?? 'generic'
+              void ensureWorkflowRunForPendingAction({
+                pendingActionId: d.pendingActionId,
+                conversationId,
+                businessId,
+                kind,
+                goal: String(row.summary ?? lastUserText ?? '').slice(0, 500) || `${row.type} card`,
+              }).catch(() => {})
+            }
             if (row?.status === 'pending') {
               yield {
                 type: 'confirm_card',
@@ -930,6 +982,62 @@ async function* runAlternateProviderTurn(
 
     // Owner canceled mid-turn: do not persist a partial reply or emit 'done'.
     if (canceled) return
+
+    // ── Phase 4 turn-end bookkeeping (all fail-open) ─────────────────────────
+    if (!personalMode) {
+      // Ask cards join the conversation's single in-flight workflow when that
+      // link is unambiguous — the structured reply resolution (server-side
+      // AGENT-IOS-001) then binds the owner's answer to the exact run.
+      if (emittedAskCards.length > 0) {
+        try {
+          const active = await listActiveWorkflowRuns(conversationId, 2)
+          if (active.length === 1) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (prisma as any).agentAskCard.updateMany({
+              where: { id: { in: emittedAskCards.map((c) => c.askCardId) } },
+              data: { workflowRunId: active[0].id },
+            })
+          }
+        } catch { /* fail-open */ }
+      }
+      // AUTO-CHECKPOINT (exit gate "restart-from-zero <1%"): a turn cut off by
+      // the serverless deadline mid-work freezes its state itself — never relies
+      // on the model calling save_task_checkpoint. One checkpoint per run/turn
+      // (writeCheckpoint dedupes on taskRef).
+      if (deadlineNudgeSent && toolRecords.length > 0) {
+        try {
+          const active = await listActiveWorkflowRuns(conversationId, 1)
+          const run = active[0]
+          const toolsUsed = [...new Set(toolRecords.map((r) => r.toolName))]
+          const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
+          await writeCheckpoint({
+            taskRef: run?.id ?? turnId ?? `turn_${Date.now()}`,
+            taskType: run?.kind ?? 'long_agent_task',
+            state: 'waiting_for_owner',
+            goal: run?.goal ?? lastUserText.slice(0, 200),
+            summaryBn: 'সার্ভার সময়সীমায় টার্নটা থেমেছে — কাজ যেখানে ছিল সেখান থেকে resume হবে।',
+            doneSteps: toolsUsed.slice(0, 10),
+            currentStep: `deadline_paused (last: ${toolRecords[toolRecords.length - 1]?.toolName ?? '?'})`,
+            artifacts: [],
+            nextActions: ['Boss "continue" বললে ঠিক এখান থেকে চালিয়ে যাও'],
+            resumeHint: `শেষ টুল: ${toolRecords[toolRecords.length - 1]?.toolName ?? '?'}। ${lastUserText.slice(0, 300)}`,
+            question: 'Continue করব?',
+            conversationId,
+            businessId,
+            workflowRunId: run?.id ?? null,
+          })
+          if (run) {
+            await transitionWorkflowRun({
+              runId: run.id, expectedVersion: run.stateVersion,
+              toState: 'deadline_paused', cause: 'auto',
+              detail: { turnId, tools: toolsUsed.slice(0, 10) },
+            }).catch((err: unknown) => {
+              if (!(err instanceof WorkflowVersionConflictError)) throw err
+            })
+          }
+        } catch { /* fail-open */ }
+      }
+    }
 
     // A turn that produced NOTHING (no text, no tool calls, no cards) must never
     // be saved as a blank owner reply — throw so the cheap-head fallback below
