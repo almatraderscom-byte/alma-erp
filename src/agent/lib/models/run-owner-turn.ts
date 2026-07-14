@@ -681,7 +681,8 @@ async function* runAlternateProviderTurn(
   // in usage.timeline; never replayed to the model, so it adds zero token cost.
   type TimelineEntry =
     | { t: 'think'; text: string }
-    | { t: 'text'; text: string }
+    | { t: 'text'; text: string; state?: 'superseded' }
+    | { t: 'verify'; attempt: number; max: number }
     | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; shot?: string }
     | { t: 'file'; id: string; name: string; kind?: string }
   const timeline: TimelineEntry[] = []
@@ -907,6 +908,15 @@ async function* runAlternateProviderTurn(
               categories: Array.from(new Set(violations.map((v) => v.category))),
               snippets: violations.map((v) => v.matchedSnippet),
             }
+            // Presentation parity: the draft stays visible in the timeline but is
+            // truthfully marked superseded, and the verification event itself is
+            // persisted — so reload shows the same draft → যাচাই → final composition
+            // the live stream showed, instead of silently deleting the draft.
+            for (let ti = timeline.length - 1; ti >= 0; ti--) {
+              const te = timeline[ti]
+              if (te.t === 'text') { te.state = 'superseded'; break }
+            }
+            timeline.push({ t: 'verify', attempt: verifyRetries, max: MAX_VERIFY_RETRIES })
             finalText = ''
             messages = [
               ...messages,
