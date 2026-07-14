@@ -56,6 +56,7 @@ enum AlmaNativeRouter {
         case "/expenses": return host(ExpensesScreen(openWeb: openWebForced), "Expenses")
         case "/payroll": return host(PayrollScreen(openWeb: openWebForced), "Payroll")
         case "/finance/office-fund": return host(OfficeFundScreen(openWeb: openWebForced), "Office fund")
+        case "/finance/personal-ledger": return host(PersonalLedgerScreen(), "পাওনা-দেনা")
         case "/activity": return host(ActivityScreen(openWeb: openWebForced), "Activity")
         case "/inventory": return host(InventoryScreen(openWeb: openWebForced), "Inventory")
         case "/employees": return host(EmployeesScreen(openWeb: openWebForced), "Employees")
