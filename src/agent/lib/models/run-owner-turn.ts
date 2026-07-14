@@ -4,7 +4,7 @@
  * Other providers use normalized adapters with the same tool handlers + claim-verifier.
  */
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET } from '@/agent/config'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { getOfficePulse } from '@/agent/lib/office-pulse'
@@ -460,6 +460,7 @@ async function* runAlternateProviderTurn(
     ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,
     staffActiveTasksBlock: staffActiveTasksBlock || undefined,
     activeGroups: listenMode ? [] : toolSelection.groups,
+    activeToolNames: listenMode ? [] : toolSelection.tools.map((t) => t.name),
     businessSnapshot,
     officePulse,
     headTier,
@@ -473,25 +474,28 @@ async function* runAlternateProviderTurn(
   // can actually reuse, and it keeps web/Telegram prefixes identical for a
   // conversation. The injection is transient (only the assistant reply is
   // persisted), so replayed history stays clean.
-  let volatileText = systemBlocksToText(volatile)
+  // Phase 6 — DETERMINISTIC per-turn context assembly (roadmap: core →
+  // workflow snapshot → scoped memory/context → compact history → latest turn).
+  // The canonical job state leads; memory/context blocks follow; the listen
+  // note, when present, overrides everything at the very top.
+  const volatileSections: string[] = []
+  // LISTEN MODE override — the empathy instruction leads and CANCELs the system
+  // prompt's action-pressure for this one turn. There are no business tools on
+  // a listen turn (assembled empty below), so the head physically cannot pivot
+  // to work; this note shapes the tone.
+  if (listenMode) volatileSections.push(LISTEN_MODE_NOTE)
+  // Owner-intent mutation gate note (origin/main "gate mutations by owner
+  // intent"): tells the head which mutation authorization this turn carries.
+  // Rides right after the listen override, before the job state.
   const authorizationNote = ownerTurnAuthorizationNote(turnAuthorization)
-  if (authorizationNote) {
-    volatileText = volatileText ? `${authorizationNote}\n\n${volatileText}` : authorizationNote
-  }
-  // LISTEN MODE override — prepend the empathy instruction and, crucially, CANCEL
-  // the system prompt's action-pressure for this one turn. There are no business
-  // tools on a listen turn (assembled empty below), so the head physically cannot
-  // pivot to work; this note shapes the tone. Placed first so it leads the turn.
-  if (listenMode) {
-    volatileText = `${LISTEN_MODE_NOTE}\n\n${volatileText}`.trim()
-  }
+  if (authorizationNote) volatileSections.push(authorizationNote)
   // Phase 4 — the canonical WorkflowRun snapshot precedes everything else in the
   // per-turn context: the head reads the EXACT in-flight job state (status, step,
   // legal next tools) so "হ্যাঁ/continue" resumes the blocked step instead of
   // restarting from zero. Skipped in listen mode like the checkpoint note.
   if (!listenMode && workflowRuns.length > 0) {
     const wfNote = buildWorkflowSnapshotNote(workflowRuns)
-    if (wfNote) volatileText = volatileText ? `${volatileText}\n\n${wfNote}` : wfNote
+    if (wfNote) volatileSections.push(wfNote)
   }
   // P0 resume fast-path: unresolved checkpoints ride the same transient per-turn
   // injection — the head resumes stalled work from the exact step with ZERO
@@ -502,7 +506,7 @@ async function* runAlternateProviderTurn(
     const { listUnresolvedCheckpoints, buildCheckpointSystemNote } = await import('@/agent/lib/checkpoint')
     const cps = await listUnresolvedCheckpoints(conversationId)
     const note = buildCheckpointSystemNote(cps)
-    if (note) volatileText = volatileText ? `${volatileText}\n\n${note}` : note
+    if (note) volatileSections.push(note)
   } catch { /* fail-open — never block the turn */ }
   // Ask-card answer framing: when the owner just tapped an option, the raw option
   // text arrives as a bare user message with zero context — heads treated it as a
@@ -532,8 +536,13 @@ async function* runAlternateProviderTurn(
       (others.length ? ` তিনি এগুলো বেছে নেননি: ${others.map((o) => `"${o}"`).join(', ')} — সেগুলোর অর্থ ধরে কাজ করবে না।` : '') +
       ' এটা নতুন কাজ নয়: আগের চলমান কাজটা ঠিক যেখানে ছিলে সেখান থেকে চালিয়ে যাও (চেকপয়েন্ট নোট দেখো)। ' +
       'ব্রাউজার-কাজ চললে আগে live_browser_look দিয়ে এখনকার পেজ দেখো — গোড়া থেকে navigate করা বা main view-এ ফেরত যাওয়া নিষেধ।'
-    volatileText = volatileText ? `${volatileText}\n\n${answerNote}` : answerNote
+    volatileSections.push(answerNote)
   }
+  // Scoped memory / business context (buildSystemPromptBlocks volatile) comes
+  // AFTER the canonical job state — deterministic order, cheap to reason about.
+  const systemVolatile = systemBlocksToText(volatile)
+  if (systemVolatile) volatileSections.push(systemVolatile)
+  const volatileText = volatileSections.filter(Boolean).join('\n\n').trim()
   if (volatileText) {
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i]
@@ -671,6 +680,11 @@ async function* runAlternateProviderTurn(
   // off to DeepSeek. After MARKETING_HEAD_TOOL_BUDGET tool ROUNDS it may no longer
   // call any tools (iterationTools = []) — it must wrap up and answer itself.
   const isMarketingHead = headTier === 'marketing'
+  // Phase 6 (one engine): the PREMIUM Claude head keeps its core.ts "Option A"
+  // cost guard here too — after HEAD_TOOL_BUDGET rounds only delegate remains,
+  // so an expensive head hands the spree to a cheap worker instead of billing on.
+  const isPremiumHead = model.provider === 'anthropic'
+  const delegateOnlyNeutral = neutralTools.filter((t) => t.name === 'delegate_to_specialist')
   let headToolRounds = 0
   let budgetNudgeSent = false
   let deadlineNudgeSent = false
@@ -715,14 +729,35 @@ async function* runAlternateProviderTurn(
       // Second empty-round retry also goes text-only: Gemini sometimes wedges
       // trying to emit another tool call — with no tools it must speak.
       const overBudget = isMarketingHead && headToolRounds >= MARKETING_HEAD_TOOL_BUDGET
+      // Premium Claude head over its (smaller) budget → delegate-only, per the
+      // core.ts Option A guard this loop now owns (Phase 6). Inert when the
+      // pack carries no delegate tool (narrow modes) — the normal caps apply.
+      const premiumOverBudget =
+        isPremiumHead && delegateOnlyNeutral.length > 0 && headToolRounds >= HEAD_TOOL_BUDGET
       // Models whose provider offers no tool-calling (e.g. Qwen 2.5 VL 72B on
       // OpenRouter) get a chat/vision-only turn — sending tool defs would 4xx
       // the request and bounce the owner to the cheap-head fallback.
       const iterationTools =
-        nearDeadline || overBudget || emptyRoundRetries >= 2 || !model.supportsTools ? [] : neutralTools
+        nearDeadline || overBudget || emptyRoundRetries >= 2 || !model.supportsTools
+          ? []
+          : premiumOverBudget
+            ? delegateOnlyNeutral
+            : neutralTools
       if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
+      }
+      if (!nearDeadline && premiumOverBudget && !budgetNudgeSent) {
+        budgetNudgeSent = true
+        messages = [
+          ...messages,
+          {
+            role: 'user',
+            content:
+              'তুমি এই টার্নে যথেষ্ট টুল-রাউন্ড ব্যবহার করেছ (দামি মডেল)। এখন হয় জানা তথ্য দিয়েই উত্তর শেষ করো, ' +
+              'নয়তো বাকি কাজটা delegate_to_specialist দিয়ে specialist worker-কে দাও — নিজে আর টুল spree কোরো না।',
+          },
+        ]
       }
 
       for await (const ev of adapter.streamTurn({
@@ -1528,7 +1563,13 @@ export async function* runOwnerTurn(
     yield { type: 'text_delta', delta: disabledSwitchNote }
   }
 
-  if (model.provider === 'anthropic') {
+  // Phase 6 — ONE turn engine: Anthropic heads run through the SAME neutral
+  // orchestrator as every other provider (adapters/anthropic.ts owns the
+  // request shaping). The old parallel native loop (core.ts) had to be patched
+  // twice for every behavior fix — Phase 4's missing WorkflowRun hooks were
+  // found exactly there. Kill switch: AGENT_NATIVE_ANTHROPIC_LOOP=true restores
+  // the native loop instantly (no deploy semantics change for other providers).
+  if (model.provider === 'anthropic' && process.env.AGENT_NATIVE_ANTHROPIC_LOOP === 'true') {
     yield* runAgentTurn(conversationId, {
       ...options,
       modelId: model.id,

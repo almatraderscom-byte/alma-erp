@@ -952,13 +952,15 @@ export async function* runAgentTurn(
   // Phase 4 parity with the alternate-provider path: reconcile the conversation's
   // canonical WorkflowRuns against their cards' live status, then put the exact
   // in-flight state in front of the head — "হ্যাঁ/continue" resumes THE step.
+  // Phase 6 deterministic order: the workflow snapshot LEADS the per-turn
+  // context (core → workflow → memory/context), matching run-owner-turn.
   // Fail-open; skipped in personal mode.
   if (!personalMode) {
     try {
       const wf = await import('@/agent/lib/workflow-run')
       const runs = await wf.reconcileConversationWorkflows(conversationId)
       const note = wf.buildWorkflowSnapshotNote(runs)
-      if (note) volatileText = volatileText ? `${volatileText}\n\n${note}` : note
+      if (note) volatileText = volatileText ? `${note}\n\n${volatileText}` : note
     } catch (err) {
       console.warn('[core] workflow reconcile failed open:', err instanceof Error ? err.message : err)
     }

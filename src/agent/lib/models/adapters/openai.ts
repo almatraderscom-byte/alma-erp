@@ -83,10 +83,19 @@ function toOpenAiMessages(
     }
 
     if (msg.role === 'tool') {
+      // Chat-completions tool messages are TEXT-ONLY — a vision result's base64
+      // `image` (now preserved by the neutral cap, Phase 6) would ship ~100KB of
+      // undecodable garbage here. Strip it; the textual result keeps the
+      // screenshotUrl, which is what these models can actually use.
+      let payload: unknown = msg.result
+      if (payload && typeof payload === 'object' && 'image' in (payload as Record<string, unknown>)) {
+        const { image: _omit, ...rest } = payload as Record<string, unknown>
+        payload = rest
+      }
       out.push({
         role: 'tool',
         tool_call_id: msg.toolCallId,
-        content: JSON.stringify(msg.result),
+        content: JSON.stringify(payload),
       })
     }
   }
