@@ -38,6 +38,21 @@
 - ✅ Baseline tooling: `scripts/agent-baseline-report.mjs` (tool fail rate, p95 latency, per-tool hotspots, turn terminal states, cost/day). Run against prod DB and attach output to the Phase 1 PR.
 - ⏳ Remaining Phase 0: export + review 100–200 real replay drafts into `fixtures/` (needs prod `DATABASE_URL`; run the exporter, review each for PII, fill `expected`). Behavior-instruction freeze is a process rule — in force from this commit: **every behavior fix must add/update a replay case first.**
 
+## Phase 0 baseline — production, last 14 days (measured 2026-07-14, read-only)
+
+| Metric | Value | Note |
+|---|---:|---|
+| Tool calls | 1,242 | excl. `__refusal__` |
+| Tool failure rate | 118 (9.5%) | `handler_error` 108, `unknown_tool` 5, `qc_vision_error` 5 |
+| `verified=true` | **0 (0%)** | confirms roadmap: proof flag never set by normal execution |
+| p95 tool latency | 10.4 s | |
+| Turn terminal states | done 318 · error 15 (4.4%) · canceled 4 · running 6 | |
+| Head cost | $32.68 / 14d (≈$2.33/day, 1,550 assistant msgs) | |
+| #1 hotspot | `live_browser_act`: 241 calls, **65 fails (27%)** | validates the roadmap's browser-state priority (§H) |
+| #2 volume | `live_browser_look` 141 (7 fails), `get_product` 74 (0), `auto_qc_inspect` 67 (5) | |
+
+Not yet measurable (needs Phase 1 telemetry): wrong-tool rate, duplicate actions/cards, restart-from-zero rate, exposed-tool p95. These get their baseline in the Phase 1 PR.
+
 ## Recommended phase order (unchanged from roadmap)
 
 Phase 0 (this PR) → 1 Observability → 2 Tool Contract V2 → 3 Grok request controller + router → 4 WorkflowRun → 5 Workflow templates → 6 Prompt compiler + one turn engine → 7 Canary discipline. One phase per session/PR, exit gates as written, plus the corrections above.
