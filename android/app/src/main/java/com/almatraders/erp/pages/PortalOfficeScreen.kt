@@ -2199,11 +2199,14 @@ private val CHATHEAD_VIOLET = Color(0xFF8B5CF6)  // iOS 0.545/0.361/0.965
 fun OfficeChatFloatingHead(dark: Boolean, onWeb: (String, String) -> Unit) {
     val vm = remember { OfficeState() }
     LaunchedEffect(Unit) { if (!vm.roleResolved) vm.loadHub() }
-    // Always-visible office chat head: show it optimistically the moment the user is
-    // logged in — do NOT wait on the /office/hub round-trip (a slow or failed network
-    // used to hide the bubble for up to 20s / entirely). Hide only when the session is
-    // genuinely expired, or once the hub has resolved the user as a non-office role.
-    if (vm.authExpired || (vm.roleResolved && vm.selfRole == "none")) return
+    // Always-visible office chat head: the native shell only renders once the user is
+    // logged in (the login gate covers it otherwise), so show the bubble UNCONDITIONALLY.
+    // loadHub() runs in the background to fill role/chat content — but its result must
+    // NEVER hide the bubble. A 401 or a missing "self" role on the SECONDARY /office/hub
+    // call is not a reason to remove the primary chat entry point; an earlier gate on
+    // authExpired/selfRole hid the bubble entirely on real devices where /office/hub
+    // 401s or returns role "none" (it only ever showed in the sim because the hub call
+    // timed out there and fell back to the owner sample-data path).
 
     val ctx = LocalContext.current
     val density = LocalDensity.current
