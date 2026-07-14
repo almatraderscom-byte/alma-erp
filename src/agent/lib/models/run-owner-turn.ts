@@ -49,6 +49,11 @@ import {
   shouldRestartHeadAfterFailure,
 } from '@/agent/lib/turn-loop-policy'
 import {
+  deriveOwnerTurnAuthorization,
+  filterToolsForOwnerTurn,
+  ownerTurnAuthorizationNote,
+} from '@/agent/lib/turn-authorization'
+import {
   verifyClaimsAgainstLedger,
   buildVerificationReminder,
   MAX_VERIFY_RETRIES,
@@ -302,6 +307,7 @@ async function* runAlternateProviderTurn(
     if (typeof m.content === 'string' && m.content.trim()) recentUserTexts.unshift(m.content.trim())
   }
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
+  const turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
 
   const now = new Date()
   // Salah conscience-nudge + nightly muhasaba must work on this cheap-head path too
@@ -478,6 +484,11 @@ async function* runAlternateProviderTurn(
   // a listen turn (assembled empty below), so the head physically cannot pivot
   // to work; this note shapes the tone.
   if (listenMode) volatileSections.push(LISTEN_MODE_NOTE)
+  // Owner-intent mutation gate note (origin/main "gate mutations by owner
+  // intent"): tells the head which mutation authorization this turn carries.
+  // Rides right after the listen override, before the job state.
+  const authorizationNote = ownerTurnAuthorizationNote(turnAuthorization)
+  if (authorizationNote) volatileSections.push(authorizationNote)
   // Phase 4 — the canonical WorkflowRun snapshot precedes everything else in the
   // per-turn context: the head reads the EXACT in-flight job state (status, step,
   // legal next tools) so "হ্যাঁ/continue" resumes the blocked step instead of
@@ -547,7 +558,7 @@ async function* runAlternateProviderTurn(
   const controlsNote = controlsPromptNote(agentControls)
   const systemText = systemBlocksToText(stable) + (controlsNote ? `\n\n${controlsNote}` : '')
   const selectedTools = filterToolDefsByControls(
-    toolSelection.tools,
+    filterToolsForOwnerTurn(toolSelection.tools, turnAuthorization),
     agentControls,
   )
   // xAI hard-caps tool definitions at 200 per request — the owner head carries 201,
@@ -613,6 +624,7 @@ async function* runAlternateProviderTurn(
       trimmed: toolSelection.trimmed?.length ? toolSelection.trimmed : null,
       parallelToolCalls: packParallelToolCalls,
       boundTool: boundToolName,
+      turnAuthorization: turnAuthorization.reason,
     },
   })
   const adapter = adapterFor(model.provider)
@@ -840,6 +852,7 @@ async function* runAlternateProviderTurn(
             text: iterationText,
             toolRecords,
             hasAskCard: emittedAskCards.length > 0,
+            ownerRequestedAction: turnAuthorization.allowMutations,
           })
         ) {
           intentNudges++
@@ -888,6 +901,7 @@ async function* runAlternateProviderTurn(
           !signal?.aborted
           && !memoryNudgeSent
           && lastUserText
+          && turnAuthorization.allowMutations
           && looksLikeDurableFact(lastUserText)
           && !toolRecords.some((r) => r.toolName === 'save_memory')
         ) {
@@ -926,8 +940,8 @@ async function* runAlternateProviderTurn(
         yield { type: 'tool_start', id: call.id, name: call.name, input: call.input }
         const started = Date.now()
         const result = personalMode
-          ? await executePersonalTool(call.name, call.input, { conversationId, businessId })
-          : await executeTool(call.name, call.input, { conversationId, businessId, modelId: model.id, turnId })
+          ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization })
+          : await executeTool(call.name, call.input, { conversationId, businessId, modelId: model.id, turnId, turnAuthorization })
         const durationMs = Date.now() - started
 
         if (!result.success) {

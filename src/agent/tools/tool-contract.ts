@@ -95,6 +95,7 @@ export const TOOL_ERROR_CODES = [
   'invalid_args', // rejected by central schema validation — handler never ran
   'unknown_tool',
   'wrong_business',
+  'turn_read_only', // original owner message did not authorize stage/write work
   'not_found',
   'auth',
   'timeout',

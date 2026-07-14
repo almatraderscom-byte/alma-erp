@@ -21,6 +21,22 @@ function fakeTool(overrides: Partial<AgentTool> & { handler: AgentTool['handler'
 }
 
 describe('validated executor (Phase 2)', () => {
+  it('server rejects a write even if a model somehow calls it on a read-only turn', async () => {
+    let handlerRan = false
+    const tool = fakeTool({
+      name: 'fake_unclassified_write',
+      handler: async () => {
+        handlerRan = true
+        return { success: true }
+      },
+    })
+    const res = await runRegisteredTool(tool, { count: 1 }, {}, {
+      turnAuthorization: { allowMutations: false, reason: 'information_only' },
+    })
+    expect(handlerRan).toBe(false)
+    expect(res).toMatchObject({ success: false, errorCode: 'turn_read_only', retryable: false })
+  })
+
   it('invalid args NEVER reach the handler — unknown field', async () => {
     let handlerRan = false
     clearValidatorCache()

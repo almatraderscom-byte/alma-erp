@@ -10,7 +10,12 @@ export interface TurnLoopToolRecord {
   status: 'success' | 'error'
 }
 
-const OWNER_QUESTION_TAIL_RE = /(?:কি|কী)\s*[?？!।.\s]*$/i
+// A permission question may be followed by a parenthetical detail, as in the
+// incident: "proposal ready করব কি? (Eyafi-কে ১০টা...)". It is still a handoff
+// to the owner, never a promise that the server should auto-execute.
+const OWNER_QUESTION_TAIL_RE = /[?？](?:\s*[\[(][\s\S]*[\])])?\s*$/i
+const OWNER_PERMISSION_QUESTION_RE =
+  /(?:করব(?:ো)?|পাঠাব|বানাব|শুরু\s*করব|এগোব|চান|অনুমতি|approve|should\s+i|shall\s+i|want\s+me\s+to)[^?？]{0,180}[?？]/i
 
 // These are terminal/reporting phrases, not promises to keep acting. Keep this
 // tool-agnostic so every task category gets the same protection.
@@ -26,14 +31,20 @@ const ZERO_TOOL_INTENT_RE =
 function isTerminalReply(text: string): boolean {
   const normalized = text.trim()
   if (!normalized) return true
-  return OWNER_QUESTION_TAIL_RE.test(normalized) || BLOCKED_OR_FAILED_RE.test(normalized)
+  return (
+    OWNER_QUESTION_TAIL_RE.test(normalized)
+    || OWNER_PERMISSION_QUESTION_RE.test(normalized.slice(-800))
+    || BLOCKED_OR_FAILED_RE.test(normalized)
+  )
 }
 
 export function shouldNudgeAdapterIntent(input: {
   text: string
   toolRecords: TurnLoopToolRecord[]
   hasAskCard?: boolean
+  ownerRequestedAction: boolean
 }): boolean {
+  if (!input.ownerRequestedAction) return false
   if (input.hasAskCard || isTerminalReply(input.text)) return false
   const latestTool = input.toolRecords.at(-1)
   if (latestTool?.status === 'error') return false
@@ -43,7 +54,9 @@ export function shouldNudgeAdapterIntent(input: {
 export function shouldNudgeZeroToolIntent(input: {
   text: string
   hasAskCard?: boolean
+  ownerRequestedAction: boolean
 }): boolean {
+  if (!input.ownerRequestedAction) return false
   if (input.hasAskCard || isTerminalReply(input.text)) return false
   return ZERO_TOOL_INTENT_RE.test(input.text)
 }
