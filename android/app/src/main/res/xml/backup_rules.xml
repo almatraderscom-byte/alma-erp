@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and below (fullBackupContent). Exclude live-session data from cloud
+     backup: the WebView auth cookies/session, app SharedPreferences, and databases.
+     An ERP session must not ride a Google backup to another device. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="database" path="." />
+    <exclude domain="file" path="app_webview" />
+    <exclude domain="file" path="app_textures" />
+</full-backup-content>

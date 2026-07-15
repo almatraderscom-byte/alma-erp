@@ -123,7 +123,7 @@ export async function runPayrollAccrual({
         priority: 'NORMAL',
         title: 'Salary added to wallet',
         message: `৳ ${salary.toLocaleString('en-BD')} salary was accrued for ${periodYm}.`,
-        actionUrl: '/portal',
+        actionUrl: '/portal/wallet',
       })
       enqueueSalaryReceivedSms({
         businessId,
@@ -270,7 +270,7 @@ async function recoverOutstandingAdvance({
         remaining > 0
           ? `এই মাসের বেতন থেকে ৳${recoverNow.toLocaleString('en-BD')} অগ্রিম কাটা হলো। এখনো বাকি ৳${remaining.toLocaleString('en-BD')}।`
           : `এই মাসের বেতন থেকে ৳${recoverNow.toLocaleString('en-BD')} অগ্রিম কাটা হলো। আপনার অগ্রিম সম্পূর্ণ পরিশোধ হয়েছে।`,
-      actionUrl: '/portal',
+      actionUrl: '/portal/wallet',
     }).catch(() => {})
   }
   return entry

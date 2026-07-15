@@ -5,7 +5,8 @@ import { fetchOrderById } from '@/lib/lifestyle/read'
 import { dispatchUpdateOrderStatus } from '@/lib/lifestyle/write-dispatch'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { sendOrderAlert } from '@/lib/resend'
-import { notifyRole, notifyUser } from '@/lib/notifications'
+import { notifyRoles, notifyUser } from '@/lib/notifications'
+import { NOTIFY_ROLES } from '@/lib/notification-routing'
 import { logEvent } from '@/lib/logger'
 import { handleOrderCommissionStatus, resolveOrderHandlerUser } from '@/lib/payroll-compensation'
 import { enqueueCourierUpdateSms } from '@/services/sms/events'
@@ -74,14 +75,15 @@ export async function POST(req: NextRequest) {
         dedupeKey: `order-status:${id}:${nextStatus}`,
         metadata: { orderId: id, previousStatus, status: nextStatus, result, commission, businessId },
       }),
-      notifyRole({
-        role: 'SUPER_ADMIN',
+      // Role matrix (notification-routing.ts) + the resolved handler; ?q= lands
+      // the tap on this order instead of the bare list.
+      notifyRoles(NOTIFY_ROLES.orderStatusChanged, {
         businessId,
         type: 'ORDER_ASSIGNED',
         priority,
         title,
         message,
-        actionUrl: '/orders',
+        actionUrl: `/orders?q=${encodeURIComponent(String(id))}`,
       }),
       notifyUser({
         userId: handler?.id,
@@ -90,7 +92,7 @@ export async function POST(req: NextRequest) {
         priority,
         title,
         message,
-        actionUrl: '/orders',
+        actionUrl: `/orders?q=${encodeURIComponent(String(id))}`,
       }),
     ])
     logEvent('info', 'orders.status_changed', {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildOpenAiRequestShaping, wantsAnthropicCacheControl } from '../openai'
+import { buildOpenAiRequestShaping, wantsAnthropicCacheControl, exactoSlug } from '../openai'
 import { buildGeminiToolConfig } from '../google'
 import type { NeutralTool } from '@/agent/lib/models/types'
 
@@ -58,5 +58,18 @@ describe('Gemini functionCallingConfig mapping (Phase 3)', () => {
     expect(buildGeminiToolConfig({ name: 'get_product' }, true)).toEqual({
       functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['get_product'] },
     })
+  })
+})
+
+describe('OpenRouter Exacto slug (quality routing for tool-call requests)', () => {
+  it('appends :exacto only when the request carries tools', () => {
+    expect(exactoSlug('deepseek/deepseek-v4-flash', true)).toBe('deepseek/deepseek-v4-flash:exacto')
+    expect(exactoSlug('deepseek/deepseek-v4-flash', false)).toBe('deepseek/deepseek-v4-flash')
+  })
+
+  it('never stacks onto a slug that already pins a variant', () => {
+    expect(exactoSlug('qwen/qwen3.7-max:nitro', true)).toBe('qwen/qwen3.7-max:nitro')
+    expect(exactoSlug('deepseek/deepseek-v4-flash:floor', true)).toBe('deepseek/deepseek-v4-flash:floor')
+    expect(exactoSlug('x-ai/grok-4.20:exacto', true)).toBe('x-ai/grok-4.20:exacto')
   })
 })

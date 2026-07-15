@@ -21,6 +21,7 @@ class AlmaBridgeViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(NativeIntelligenceBridgePlugin())
         bridge?.registerPluginInstance(NativeSpeechBridgePlugin())
         bridge?.registerPluginInstance(EntityCacheBridgePlugin())
+        bridge?.registerPluginInstance(AlmaNavBridgePlugin())
 
         // PHASE S1/S2: this Capacitor web view is now tab 0 of the native tab bar.
         // Set the native-shell flag (activates the ERP's embed mode), hide the web's

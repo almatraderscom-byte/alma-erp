@@ -29,6 +29,7 @@ android/capacitor-cordova-android-plugins/build/
 /public/companion/
 /public/companion-version.json
 /public/companion-updater.sh
+android/local.properties
 
 # Replay-case draft skeletons exported from real conversations (may carry PII
 # until reviewed) — only reviewed, anonymized cases go in src/agent/replay/fixtures/

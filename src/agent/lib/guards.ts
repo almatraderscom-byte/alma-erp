@@ -25,6 +25,11 @@ function isGeminiConfigured(): boolean {
   return Boolean(key && key.length >= 20 && !/^REPLACE_|YOUR_/i.test(key))
 }
 
+function isXaiConfigured(): boolean {
+  const key = process.env.XAI_API_KEY?.trim()
+  return Boolean(key && key.length >= 20 && !/^REPLACE_|YOUR_/i.test(key))
+}
+
 /** Returns 503 when the selected provider's API key is missing. */
 export function requireProviderApiKey(provider: Provider): Response | null {
   if (provider === 'anthropic') return requireAnthropicApiKey()
@@ -42,6 +47,15 @@ export function requireProviderApiKey(provider: Provider): Response | null {
       JSON.stringify({
         error: 'gemini_key_missing',
         message: 'GEMINI_API_KEY is not set on the server.',
+      }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } },
+    )
+  }
+  if (provider === 'xai' && !isXaiConfigured()) {
+    return new Response(
+      JSON.stringify({
+        error: 'xai_key_missing',
+        message: 'XAI_API_KEY is not set on the server.',
       }),
       { status: 503, headers: { 'Content-Type': 'application/json' } },
     )
