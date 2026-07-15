@@ -76,12 +76,53 @@ struct AlmaApproval: Decodable, Identifiable, Equatable {
     let payload: Payload?
     /// Last resolved audit source (telegram / attendance / erp) — the web's "via …".
     let auditSource: String?
+    /// PENALTY_APPEAL only — the fine being contested (which day, why, how much),
+    /// resolved server-side from the attendance record. Without this the card's
+    /// createdAt reads like "today's fine" (owner report 2026-07-15).
+    let penaltyAppeal: PenaltyAppeal?
 
     struct Requester: Decodable, Equatable {
         let id: String?
         let name: String?
         let role: String?
         let employeeIdGas: String?
+    }
+
+    struct PenaltyAppeal: Decodable, Equatable {
+        let fineDate: String?
+        let fineKind: String?
+        let lateMinutes: Int?
+        let earlyLeaveMinutes: Int?
+        let checkInAt: String?
+        let checkOutAt: String?
+        let originalPenaltyAmount: Int?
+        let requestedReductionAmount: Int?
+        let requestType: String?
+        let appealSubmittedAt: String?
+
+        private enum Keys: String, CodingKey {
+            case fineDate, fineKind, lateMinutes, earlyLeaveMinutes, checkInAt, checkOutAt
+            case originalPenaltyAmount, requestedReductionAmount, requestType, appealSubmittedAt
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: Keys.self)
+            fineDate = try? c.decodeIfPresent(String.self, forKey: .fineDate)
+            fineKind = try? c.decodeIfPresent(String.self, forKey: .fineKind)
+            lateMinutes = Self.flexInt(c, .lateMinutes)
+            earlyLeaveMinutes = Self.flexInt(c, .earlyLeaveMinutes)
+            checkInAt = try? c.decodeIfPresent(String.self, forKey: .checkInAt)
+            checkOutAt = try? c.decodeIfPresent(String.self, forKey: .checkOutAt)
+            originalPenaltyAmount = Self.flexInt(c, .originalPenaltyAmount)
+            requestedReductionAmount = Self.flexInt(c, .requestedReductionAmount)
+            requestType = try? c.decodeIfPresent(String.self, forKey: .requestType)
+            appealSubmittedAt = try? c.decodeIfPresent(String.self, forKey: .appealSubmittedAt)
+        }
+        private static func flexInt(_ c: KeyedDecodingContainer<Keys>, _ k: Keys) -> Int? {
+            if let i = try? c.decodeIfPresent(Int.self, forKey: k) { return i }
+            if let d = try? c.decodeIfPresent(Double.self, forKey: k) { return Int(d.rounded()) }
+            if let s = try? c.decodeIfPresent(String.self, forKey: k) { return Int(s) }
+            return nil
+        }
     }
 
     struct Payout: Decodable, Equatable {
@@ -139,7 +180,7 @@ struct AlmaApproval: Decodable, Identifiable, Equatable {
     private enum Keys: String, CodingKey {
         case id, module, type, businessId, entityId, entityLabel, status, priority, reason
         case actionUrl, createdAt, businessName, executable, linkageStatus, sourceStatus
-        case requestedBy, requester, payoutSummary, payloadSnapshot, auditHistory
+        case requestedBy, requester, payoutSummary, payloadSnapshot, auditHistory, penaltyAppeal
     }
     private struct AuditEntry: Decodable {
         let action: String?
@@ -167,6 +208,7 @@ struct AlmaApproval: Decodable, Identifiable, Equatable {
         requester = try? c.decodeIfPresent(Requester.self, forKey: .requester)
         payoutSummary = try? c.decodeIfPresent(Payout.self, forKey: .payoutSummary)
         payload = try? c.decodeIfPresent(Payload.self, forKey: .payloadSnapshot)
+        penaltyAppeal = try? c.decodeIfPresent(PenaltyAppeal.self, forKey: .penaltyAppeal)
         let audit = (try? c.decodeIfPresent([AuditEntry].self, forKey: .auditHistory)) ?? nil
         auditSource = audit?.reversed()
             .first { $0.action == "APPROVED" || $0.action == "REJECTED" }?.source
@@ -964,6 +1006,9 @@ private struct ApprovalCard: View {
                 if approval.type == "ATTENDANCE_LEAVE", let p = approval.payload {
                     LeaveInfoBox(payload: p)
                 }
+                if approval.type == "PENALTY_APPEAL", let pa = approval.penaltyAppeal {
+                    PenaltyAppealInfoBox(appeal: pa)
+                }
                 if let reason = approval.reason, !reason.isEmpty {
                     Text(reason).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
@@ -1034,12 +1079,7 @@ private struct ApprovalCard: View {
         let name = approval.requester?.name ?? approval.requestedBy ?? "—"
         let role = (approval.requester?.role ?? "Requester").replacingOccurrences(of: "_", with: " ")
         return HStack(spacing: 8) {
-            Text(ApprovalFormat.initials(name))
-                .font(.caption.weight(.bold))
-                .foregroundStyle(ApprovalPalette.accentText(colorScheme))
-                .frame(width: 30, height: 30)
-                .background(ApprovalPalette.coral.opacity(0.16), in: Circle())
-                .overlay(Circle().strokeBorder(ApprovalPalette.coral.opacity(0.35), lineWidth: 1))
+            ApprovalAvatarCircle(name: name, userId: approval.requester?.id, size: 30)
             VStack(alignment: .leading, spacing: 1) {
                 Text(name).font(.footnote.weight(.semibold))
                 Text(role).font(.caption2).foregroundStyle(.secondary)
@@ -1153,6 +1193,112 @@ private struct LeaveInfoBox: View {
         default:
             return "🗓️ \(payload.days ?? 1) দিন\(payload.kind == "DATE_RANGE" ? " (কয়েকদিন)" : "")"
         }
+    }
+}
+
+/// The fine behind a PENALTY_APPEAL: which day, why it was levied, how much,
+/// what relief the staff asked for, and when the appeal was submitted — so the
+/// reviewer never mistakes the appeal date for the fine date (owner report
+/// 2026-07-15: cards read like "today's fine" with no story).
+@available(iOS 17.0, *)
+private struct PenaltyAppealInfoBox: View {
+    let appeal: AlmaApproval.PenaltyAppeal
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Text("📅 জরিমানার দিন: \(ApprovalFormat.dateOnly(appeal.fineDate) ?? "—")")
+                    .font(.footnote.weight(.bold))
+                Text("(\(ApprovalFormat.timeAgo(appeal.fineDate)))")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            Text(fineStory)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(ApprovalPalette.amber500)
+            Text("জরিমানা \(ApprovalFormat.taka(appeal.originalPenaltyAmount ?? 0)) · চাওয়া: \(reliefLabel)")
+                .font(.caption.weight(.semibold))
+            if let submitted = ApprovalFormat.dateTime(appeal.appealSubmittedAt) {
+                Text("আপিল জমা: \(submitted)")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(ApprovalPalette.amber500.opacity(0.07),
+                    in: RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AlmaSwiftTheme.rControl, style: .continuous)
+            .strokeBorder(ApprovalPalette.amber500.opacity(0.25), lineWidth: 1))
+    }
+
+    private var fineStory: String {
+        switch appeal.fineKind {
+        case "LATE":
+            let mins = appeal.lateMinutes ?? 0
+            let checkIn = ApprovalFormat.timeOnly(appeal.checkInAt)
+            var s = "দেরিতে চেক-ইন"
+            if mins > 0 { s += " — \(mins) মিনিট দেরি" }
+            if let checkIn { s += " (চেক-ইন \(checkIn))" }
+            return s
+        case "EARLY_LEAVE":
+            let mins = appeal.earlyLeaveMinutes ?? 0
+            let out = ApprovalFormat.timeOnly(appeal.checkOutAt)
+            var s = "নির্ধারিত সময়ের আগে বের হওয়া"
+            if mins > 0 { s += " — \(mins) মিনিট আগে" }
+            if let out { s += " (চেক-আউট \(out))" }
+            return s
+        case "NO_CHECKOUT":
+            return "চেক-আউট দেওয়া হয়নি"
+        default:
+            return "অ্যাটেনডেন্স জরিমানা"
+        }
+    }
+
+    private var reliefLabel: String {
+        switch appeal.requestType {
+        case "PARTIAL_REDUCE":
+            return "\(ApprovalFormat.taka(appeal.requestedReductionAmount ?? 0)) কমানো"
+        case "RECONSIDERATION":
+            return "পুনর্বিবেচনা"
+        default:
+            return "পুরো মাফ"
+        }
+    }
+}
+
+/// Web EmployeeAvatar parity: photo via /api/users/{id}/profile-image with the
+/// old initials circle as fallback — URLSession.shared shares HTTPCookieStorage,
+/// so the cookies AlmaAPI bridges from the WKWebView reach AsyncImage too.
+@available(iOS 17.0, *)
+private struct ApprovalAvatarCircle: View {
+    let name: String
+    let userId: String?
+    var size: CGFloat = 30
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var photoURL: URL? {
+        guard let userId, !userId.isEmpty else { return nil }
+        let encoded = userId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? userId
+        return URL(string: "/api/users/\(encoded)/profile-image", relativeTo: AlmaAPI.baseURL)
+    }
+
+    var body: some View {
+        ZStack {
+            Text(ApprovalFormat.initials(name))
+                .font(.system(size: size * 0.36, weight: .bold))
+                .foregroundStyle(ApprovalPalette.accentText(colorScheme))
+                .frame(width: size, height: size)
+                .background(ApprovalPalette.coral.opacity(0.16), in: Circle())
+            if let url = photoURL {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFill()
+                            .frame(width: size, height: size)
+                            .clipShape(Circle())
+                    }
+                }
+            }
+        }
+        .overlay(Circle().strokeBorder(ApprovalPalette.coral.opacity(0.35), lineWidth: 1))
     }
 }
 
@@ -1439,12 +1585,7 @@ private struct ApprovalDetailSheet: View {
         let role = (approval.requester?.role ?? "Requester").replacingOccurrences(of: "_", with: " ")
         let gasId = approval.requester?.employeeIdGas ?? ""
         return HStack(spacing: 10) {
-            Text(ApprovalFormat.initials(name))
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(ApprovalPalette.accentText(colorScheme))
-                .frame(width: 42, height: 42)
-                .background(ApprovalPalette.coral.opacity(0.16), in: Circle())
-                .overlay(Circle().strokeBorder(ApprovalPalette.coral.opacity(0.35), lineWidth: 1))
+            ApprovalAvatarCircle(name: name, userId: approval.requester?.id, size: 42)
             VStack(alignment: .leading, spacing: 2) {
                 Text(name).font(.subheadline.weight(.bold))
                 Text(role).font(.caption).foregroundStyle(.secondary)
@@ -1483,6 +1624,13 @@ private struct ApprovalDetailSheet: View {
                         Text("ছুটির সময়কাল").font(.caption2.weight(.heavy))
                             .textCase(.uppercase).foregroundStyle(.secondary)
                         LeaveInfoBox(payload: p)
+                    }
+                }
+                if approval.type == "PENALTY_APPEAL", let pa = approval.penaltyAppeal {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("কোন জরিমানার আপিল").font(.caption2.weight(.heavy))
+                            .textCase(.uppercase).foregroundStyle(.secondary)
+                        PenaltyAppealInfoBox(appeal: pa)
                     }
                 }
                 infoRow("Reason", approval.reason ?? "—")
@@ -1771,6 +1919,33 @@ private enum ApprovalFormat {
         if let d = fractional.date(from: iso) { return d }
         let plain = ISO8601DateFormatter()
         return plain.date(from: iso)
+    }
+
+    /// fineDate → "12 Jul 2026 (Sat)" — date only, Dhaka calendar day.
+    static func dateOnly(_ iso: String?) -> String? {
+        guard let iso, let date = parse(iso) else { return nil }
+        let f = DateFormatter()
+        f.dateFormat = "d MMM yyyy (EEE)"
+        f.timeZone = TimeZone(identifier: "Asia/Dhaka") ?? .current
+        return f.string(from: date)
+    }
+
+    /// checkInAt → "9:45 AM" — time only, Dhaka clock.
+    static func timeOnly(_ iso: String?) -> String? {
+        guard let iso, let date = parse(iso) else { return nil }
+        let f = DateFormatter()
+        f.dateStyle = .none
+        f.timeStyle = .short
+        f.timeZone = TimeZone(identifier: "Asia/Dhaka") ?? .current
+        return f.string(from: date)
+    }
+
+    /// Whole-taka money: 500 → "৳৫০০"-style grouping (en-BD digits like the web).
+    static func taka(_ amount: Int) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.groupingSeparator = ","
+        return "৳" + (f.string(from: NSNumber(value: amount)) ?? "\(amount)")
     }
 
     /// Minutes-since-midnight → "2:00 PM" (web fmtLeaveTime).

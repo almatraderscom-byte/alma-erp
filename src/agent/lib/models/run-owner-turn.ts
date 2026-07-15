@@ -40,7 +40,6 @@ import { toolResultPreview, extractScreenshotUrl } from '@/agent/lib/tool-labels
 import { bumpPlaybookForTool, getActivePlaybook } from '@/agent/lib/playbook'
 import { captureAgentError } from '@/agent/lib/sentry'
 import { logCost } from '@/agent/lib/cost-events'
-import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact-detect'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { isTurnCancelRequested } from '@/agent/lib/turn-status'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
@@ -66,6 +65,14 @@ import { adapterFor } from '@/agent/lib/models/adapters'
 import { logRouteSpan } from '@/agent/lib/tool-telemetry'
 import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
 import { isRoutineGraphEnabled, runRoutineTurnGraph } from '@/agent/lib/graph/routine-turn-graph'
+import { buildOwnerRequirementNote, deriveOwnerTurnRequirements } from '@/agent/lib/owner-turn-requirements'
+import { contractToolFailureText, findContractToolFailure } from '@/agent/lib/contract-tool-failure'
+import {
+  clientSeoBatchProgressText,
+  ensureClientSeoBatchWorkflow,
+  getClientSeoBatchRequiredTool,
+  getClientSeoBatchStatus,
+} from '@/agent/lib/client-seo-batch'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { roundUsd } from '@/agent/lib/pricing'
 import {
@@ -312,6 +319,7 @@ async function* runAlternateProviderTurn(
   }
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
   let turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
+  const ownerRequirements = deriveOwnerTurnRequirements(lastUserText)
 
   const now = new Date()
   // Salah conscience-nudge + nightly muhasaba must work on this cheap-head path too
@@ -355,6 +363,14 @@ async function* runAlternateProviderTurn(
   let workflowRuns: WorkflowRunView[] = []
   if (!suppressWork) {
     try {
+      if (turnAuthorization.allowMutations && ownerRequirements.clientSeo) {
+        await ensureClientSeoBatchWorkflow({
+          conversationId,
+          businessId,
+          ownerText: lastUserText,
+          requirements: ownerRequirements,
+        })
+      }
       workflowRuns = await reconcileConversationWorkflows(conversationId)
     } catch (err) {
       console.warn('[run-owner-turn] workflow reconcile failed open:', err instanceof Error ? err.message : err)
@@ -460,6 +476,17 @@ async function* runAlternateProviderTurn(
       turnAuthorization = { allowMutations: true, reason: 'workflow_continuation' }
     }
   }
+  // An old in-flight job must never hijack a fresh, unrelated owner message.
+  // Drive the batch only on its original request, an explicit continuation, or
+  // the worker's private result-resume control note.
+  const driveClientSeoBatch =
+    !listenMode
+    && workflowRuns.some((r) => r.kind === 'client_seo_batch')
+    && (
+      ownerRequirements.clientSeo
+      || isContinuationText(lastUserText)
+      || Boolean(projectSystemInstructions?.includes('[INTERNAL SEO JOB RESULT]'))
+    )
 
   const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot, officePulse] = await Promise.all([
     loadPinnedMemories(personalMode, businessId),
@@ -544,6 +571,8 @@ async function* runAlternateProviderTurn(
   const authorizationNote =
     process.env.AGENT_OWNER_INTENT_GATE !== 'false' ? ownerTurnAuthorizationNote(turnAuthorization) : ''
   if (authorizationNote) volatileSections.push(authorizationNote)
+  const requirementNote = !listenMode ? buildOwnerRequirementNote(ownerRequirements) : ''
+  if (requirementNote) volatileSections.push(requirementNote)
   // Phase 4 — the canonical WorkflowRun snapshot precedes everything else in the
   // per-turn context: the head reads the EXACT in-flight job state (status, step,
   // legal next tools) so "হ্যাঁ/continue" resumes the blocked step instead of
@@ -703,7 +732,7 @@ async function* runAlternateProviderTurn(
   let emptyRoundRetries = 0
   // Announced-intent guard (global terminal/failure rules live in turn-loop-policy).
   let intentNudges = 0
-  let memoryNudgeSent = false
+  let requirementRetries = 0
   let finalText = ''
   let delegationAwaiting = false
   let delegationRoleLabel = ''
@@ -845,6 +874,22 @@ async function* runAlternateProviderTurn(
           : premiumOverBudget
             ? delegateOnlyNeutral
             : neutralTools
+      const batchRequiredTool = driveClientSeoBatch ? await getClientSeoBatchRequiredTool(conversationId) : null
+      const memoryRequiredTool = ownerRequirements.remember
+        && !toolRecords.some((r) => r.toolName === 'save_memory' && r.status === 'success')
+        ? 'save_memory'
+        : null
+      const requestedContractTool = memoryRequiredTool ?? batchRequiredTool
+      const contractFailure = requestedContractTool
+        ? [...toolRecords].reverse().find((r) => r.toolName === requestedContractTool && r.status === 'error')
+        : undefined
+      // A real tool failure is a blocker, not permission to hammer the same
+      // browser/action 20 more times. Stop and surface the exact error.
+      const contractToolName = contractFailure ? null : requestedContractTool
+      const roundBoundToolName =
+        contractToolName && iterationTools.some((t) => t.name === contractToolName)
+          ? contractToolName
+          : iteration === 0 ? boundToolName : null
       if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
@@ -874,8 +919,8 @@ async function* runAlternateProviderTurn(
         // its named tool (sequential by policy above); every later round is
         // auto so the model can verify, summarize, or ask.
         toolChoice:
-          iteration === 0 && boundToolName && iterationTools.length > 0
-            ? { name: boundToolName }
+          roundBoundToolName && iterationTools.length > 0
+            ? { name: roundBoundToolName }
             : undefined,
       })) {
         if (ev.type === 'text_delta') {
@@ -883,8 +928,6 @@ async function* runAlternateProviderTurn(
             thinkingMs = Date.now() - thinkingStartedAt
           }
           iterationText += ev.text
-          finalText += ev.text
-          yield { type: 'text_delta', delta: ev.text }
         } else if (ev.type === 'thinking_delta') {
           // Surface DeepSeek/Qwen reasoning as the same live "Thought for Ns" block
           // the native Claude head produces — the UI (AgentApp) already handles this.
@@ -915,6 +958,14 @@ async function* runAlternateProviderTurn(
       // Round's visible text joins the timeline too, so the persisted stream keeps
       // the true text↔step order after reload (ChronoFlow) — same as core.ts.
       if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
+      // Tool-round prose streams right away so the live view and reload both keep
+      // the narration between steps; final-round text is emitted AFTER the
+      // requirement-contract checks below (which may replace it).
+      if (iterationText.trim() && calls.length > 0) {
+        const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+        finalText += sep + iterationText
+        yield { type: 'text_delta', delta: sep + iterationText }
+      }
 
       if (calls.length === 0 || signal?.aborted) {
         // Fully empty round → nudge the model to continue instead of silently
@@ -1008,17 +1059,57 @@ async function* runAlternateProviderTurn(
           }
         }
 
-        if (
-          !signal?.aborted
-          && !memoryNudgeSent
-          && lastUserText
-          && turnAuthorization.allowMutations
-          && looksLikeDurableFact(lastUserText)
-          && !toolRecords.some((r) => r.toolName === 'save_memory')
-        ) {
-          memoryNudgeSent = true
-          messages = [...messages, { role: 'user', content: MEMORY_SAVE_NUDGE }]
-          continue
+        const preContractText = iterationText
+        const batchStatus = driveClientSeoBatch ? await getClientSeoBatchStatus(conversationId) : null
+        const explicitMemoryMissing = ownerRequirements.remember
+          && !toolRecords.some((r) => r.toolName === 'save_memory' && r.status === 'success')
+        const blockedRequirement = [...toolRecords].reverse().find((r) =>
+          r.status === 'error'
+          && r.toolName === (explicitMemoryMissing ? 'save_memory' : batchStatus?.requiredTool),
+        )
+        if (blockedRequirement) {
+          iterationText =
+            `⚠️ বাধ্যতামূলক ধাপ ${blockedRequirement.toolName} সফল হয়নি, তাই কাজ সম্পন্ন বলছি না। ` +
+            `কারণ: ${blockedRequirement.error ?? 'unknown error'}`
+        } else if (!signal?.aborted && !deadlineNudgeSent && (batchStatus?.requiredTool || explicitMemoryMissing)) {
+          const needed = explicitMemoryMissing ? 'save_memory' : batchStatus?.requiredTool
+          if (needed && neutralTools.some((t) => t.name === needed) && requirementRetries < 2) {
+            requirementRetries++
+            messages = [
+              ...messages,
+              ...(iterationText.trim() ? [{ role: 'assistant' as const, content: iterationText }] : []),
+              {
+                role: 'user',
+                content:
+                  `[INTERNAL CONTROL — this is NOT a new Boss message and must never be shown as one] ` +
+                  `The server requirement contract is incomplete. Call ${needed} now; do not write another owner-facing answer first.`,
+              },
+            ]
+            continue
+          }
+          iterationText = batchStatus
+            ? clientSeoBatchProgressText(batchStatus.facts)
+            : '⚠️ Boss-এর explicit memory request এখনো save হয়নি; তাই সম্পন্ন বলছি না।'
+        } else if (batchStatus && !batchStatus.requiredTool && !batchStatus.facts.packCompleted) {
+          // No legal tool means the VPS worker owns the current step. Never let
+          // the model fill that wait with unrelated prose.
+          iterationText = clientSeoBatchProgressText(batchStatus.facts)
+        }
+        // The contract replaced the model's draft → keep the persisted timeline
+        // truthful too: mark the draft superseded (same presentation as verify
+        // retries) and record what was actually said instead.
+        if (iterationText !== preContractText) {
+          if (preContractText.trim()) {
+            for (let ti = timeline.length - 1; ti >= 0; ti--) {
+              const te = timeline[ti]
+              if (te.t === 'text') { te.state = 'superseded'; break }
+            }
+          }
+          if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
+        }
+        if (iterationText) {
+          finalText += iterationText
+          yield { type: 'text_delta', delta: iterationText }
         }
         break
       }
@@ -1032,7 +1123,27 @@ async function* runAlternateProviderTurn(
       else headToolRounds++
 
       const toolResults: Array<{ id: string; name: string; result: unknown }> = []
+      let roundContractFailure: ToolRecord | undefined
       for (const call of calls) {
+        // A required-tool failure already happened in this same model round.
+        // Do not execute any queued follow-up calls: the failure is terminal for
+        // this owner turn, and a fresh owner message may retry it later.
+        if (roundContractFailure) {
+          const skipped = {
+            success: false,
+            error: `আগের বাধ্যতামূলক ধাপ ${roundContractFailure.toolName} ব্যর্থ হয়েছে — এই turn-এর বাকি tool call চালানো হয়নি।`,
+          }
+          toolRecords.push({
+            id: call.id, toolName: call.name, input: call.input,
+            output: null, status: 'error', durationMs: 0, error: skipped.error,
+          })
+          toolResults.push({ id: call.id, name: call.name, result: skipped })
+          yield {
+            type: 'tool_end', id: call.id, name: call.name,
+            success: false, error: skipped.error, resultPreview: skipped.error,
+          }
+          continue
+        }
         // Deadline check PER CALL, not just per round: one DeepSeek round can queue
         // 5-6 browser calls (~90s) that straddle the 45s wrap-up window, so the
         // wrap-up nudge never got a round to run in and the 280s abort killed the
@@ -1052,7 +1163,14 @@ async function* runAlternateProviderTurn(
         const started = Date.now()
         const result = personalMode
           ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization })
-          : await executeTool(call.name, call.input, { conversationId, businessId, modelId: model.id, turnId, turnAuthorization })
+          : await executeTool(call.name, call.input, {
+            conversationId,
+            businessId,
+            modelId: model.id,
+            turnId,
+            turnAuthorization,
+            driveClientSeoBatch,
+          })
         const durationMs = Date.now() - started
 
         if (!result.success) {
@@ -1062,7 +1180,7 @@ async function* runAlternateProviderTurn(
           })
         }
 
-        toolRecords.push({
+        const toolRecord: ToolRecord = {
           id: call.id,
           toolName: call.name,
           input: call.input,
@@ -1070,7 +1188,9 @@ async function* runAlternateProviderTurn(
           status: result.success ? 'success' : 'error',
           durationMs,
           error: result.error ?? null,
-        })
+        }
+        toolRecords.push(toolRecord)
+        if (call.name === contractToolName && !result.success) roundContractFailure = toolRecord
 
         timeline.push({
           t: 'tool', name: call.name, ok: result.success,
@@ -1172,6 +1292,21 @@ async function* runAlternateProviderTurn(
       }
 
       messages = appendToolExchange(messages, calls, toolResults)
+
+      // Never spend another expensive head round after a mandatory step failed.
+      // The previous code noticed the failure only AFTER letting the model run
+      // again; in the live SEO proof that extra round tried target #2 and wrote a
+      // checkpoint, adding cost and visible "same work again" behaviour.
+      const terminalContractFailure = roundContractFailure
+        ?? findContractToolFailure(contractToolName, toolRecords.slice(-calls.length))
+      if (terminalContractFailure) {
+        const note = contractToolFailureText(terminalContractFailure)
+        const sep = finalText ? '\n\n' : ''
+        finalText += sep + note
+        timeline.push({ t: 'text', text: note.slice(0, 6000) })
+        yield { type: 'text_delta', delta: sep + note }
+        break
+      }
 
       // Delegation pending approval → end the head's turn now. The owner picks
       // Worker (cheap) or Sonnet (direct) on the card; we must not generate the

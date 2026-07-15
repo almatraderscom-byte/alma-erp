@@ -823,6 +823,10 @@ struct EmployeesScreen: View {
     @State private var selected: EmployeeRosterItem? = nil
     @State private var showAdd = false
     let openWeb: (_ path: String, _ title: String) -> Void
+    /// Deep-link target: /employees/{empId} opens this employee's native detail
+    /// sheet as soon as the roster loads (approvals/payroll name taps used to
+    /// escape to the WEB profile — owner report 2026-07-15).
+    var focusEmpId: String? = nil
 
     var body: some View {
         ScrollView {
@@ -854,7 +858,13 @@ struct EmployeesScreen: View {
         .background(EmployeesAurora())
         .claudeTopFade()
         .refreshable { await vm.load() }
-        .task { await vm.load() }
+        .task {
+            await vm.load()
+            // Deep link: auto-open the focused employee once the roster is in.
+            if let fid = focusEmpId, selected == nil {
+                selected = vm.employees.first { $0.empId == fid }
+            }
+        }
         .sheet(item: $selected) { em in
             EmployeeDetailSheet(
                 employee: em,

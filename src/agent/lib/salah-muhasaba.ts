@@ -38,6 +38,24 @@ async function hasKv(key: string): Promise<boolean> {
   return Boolean(row?.value)
 }
 
+const MUHASABA_REPLY_WINDOW_MS = 6 * 60 * 60 * 1000
+
+async function pendingIsFresh(ymd: string, now: Date): Promise<boolean> {
+  const row = await prisma.agentKvSetting.findUnique({ where: { key: pendingKey(ymd) }, select: { value: true } })
+  if (!row?.value) return false
+  try {
+    const sentAt = Date.parse(String((JSON.parse(String(row.value)) as { sentAt?: unknown }).sentAt ?? ''))
+    if (!Number.isFinite(sentAt) || now.getTime() - sentAt > MUHASABA_REPLY_WINDOW_MS) {
+      await prisma.agentKvSetting.deleteMany({ where: { key: pendingKey(ymd) } })
+      return false
+    }
+  } catch {
+    // A legacy/unstructured marker cannot safely claim an arbitrary owner turn.
+    return false
+  }
+  return true
+}
+
 type DayTally = {
   onTime: number
   late: number
@@ -139,14 +157,19 @@ async function markResolved(ymd: string): Promise<void> {
 export async function isMuhasabaPending(now = new Date()): Promise<boolean> {
   const today = todayYmdDhaka(now)
   if (await hasKv(resolvedKey(today))) return false
-  return hasKv(pendingKey(today))
+  return pendingIsFresh(today, now)
 }
 
-function looksLikeReflection(text: string): boolean {
+/** Only a message that actually discusses Boss's salah can answer the prompt. */
+export function looksLikeMuhasabaReflection(text: string): boolean {
   const t = text.trim()
   if (t.length < 2) return false
   if (/^(ok|okay|hmm|hm|na|ha|haan|thik|tnx|thanks)$/i.test(t)) return false
-  return true
+  const businessIntent = /\b(?:seo|audit|website|customer|client|report|browser|chrome|task|staff|order|product|campaign|marketing)\b|(?:ওয়েবসাইট|অডিট|রিপোর্ট|ব্রাউজার|স্টাফ|অর্ডার|প্রোডাক্ট|কাস্টমার|ক্লায়েন্ট|টাস্ক)/i
+  if (businessIntent.test(t)) return false
+  const salahAnchor = /\b(?:salah|namaz|prayer|fajr|fojr|dhuhr|zuhr|asr|maghrib|isha|jamaat|jamat|qaza|waqt)\b|(?:নামাজ|নামায|ফজর|যোহর|জোহর|আসর|মাগরিব|ইশা|জামাত|কাযা|কাজা|ওয়াক্ত)/i
+  const reflection = /\b(?:miss|missed|late|delay|alone|on[ -]?time|porechi|porlam|parini|hoyni|bhalo|kharap)\b|(?:মিস|দেরি|সময়মতো|একা|পড়েছি|পড়লাম|পারি\s*নি|হয়নি|হয়নি|ভালো|খারাপ|যত্ন)/i
+  return salahAnchor.test(t) && reflection.test(t)
 }
 
 export type MuhasabaReplyResult = { contextBlock?: string }
@@ -164,7 +187,7 @@ export async function processMuhasabaReply(
   const trimmed = text.trim()
   if (!trimmed) return null
   if (!(await isMuhasabaPending(now))) return null
-  if (!looksLikeReflection(trimmed)) return null
+  if (!looksLikeMuhasabaReflection(trimmed)) return null
 
   const today = todayYmdDhaka(now)
   const reflection = trimmed.slice(0, 500)

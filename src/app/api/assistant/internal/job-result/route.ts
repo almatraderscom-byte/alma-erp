@@ -8,7 +8,7 @@ import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
 import { finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { buildOutboundDialMessage } from '@/agent/lib/outbound-call-tracking'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
-import { shouldEmitGenericJobSuccess } from '@/agent/lib/job-result-message-policy'
+import { shouldEmitGenericJobSuccess, shouldResumeAgentAfterJob } from '@/agent/lib/job-result-message-policy'
 import { prisma } from '@/lib/prisma'
 
 const IMAGE_SIGNED_URL_TTL_SEC = 3600
@@ -104,14 +104,15 @@ export async function POST(req: NextRequest) {
   // canonical WorkflowRun to the card's final status right away (turn-start
   // reconcile would catch it later; doing it here keeps the run's step honest
   // for anything reading it between now and the next turn). Fail-open.
-  void import('@/agent/lib/workflow-run')
-    .then(async (wf) => {
-      await wf.releaseWorkflowLease(pendingActionId)
-      await wf.syncWorkflowWithPendingAction(pendingActionId, 'worker')
-    })
-    .catch((err) => {
-      console.warn('[job-result] workflow sync failed open:', err instanceof Error ? err.message : err)
-    })
+  try {
+    const wf = await import('@/agent/lib/workflow-run')
+    await wf.releaseWorkflowLease(pendingActionId)
+    // Awaited: the continuation must read the post-worker state (report step),
+    // never race the old waiting-worker state and go silent.
+    await wf.syncWorkflowWithPendingAction(pendingActionId, 'worker')
+  } catch (err) {
+    console.warn('[job-result] workflow sync failed open:', err instanceof Error ? err.message : err)
+  }
 
   const payload = action.payload as Record<string, unknown>
 
@@ -181,6 +182,7 @@ export async function POST(req: NextRequest) {
   // content-pipeline gates and the video reel gate own their own follow-up, so they
   // stay false.
   let resumeAgentAfterImage = false
+  const resumeAgentAfterSeo = shouldResumeAgentAfterJob(action.type, status)
 
   if (action.type === 'outbound_call' && status === 'success') {
     const phone = String(payload.phone ?? '')
@@ -353,6 +355,24 @@ export async function POST(req: NextRequest) {
       })
     } catch (err) {
       console.warn('[job-result] agent continuation enqueue failed (result unaffected):', err instanceof Error ? err.message : err)
+    }
+  }
+
+  // SEO is also an async job. Its executed result is not the deliverable: the
+  // head must read the full report + links, then advance the durable ordered
+  // batch to the next site. Previously only images resumed, so site 1 completed
+  // in the worker while the owner conversation stayed permanently stranded.
+  if (resumeAgentAfterSeo && convId) {
+    try {
+      await enqueueAgentContinuation({
+        conversationId: convId,
+        message:
+          `[INTERNAL SEO JOB RESULT] Audit action ${pendingActionId} is now executed. ` +
+          'Resume the canonical client_seo_batch at its exact next tool. Read the full report and links; ' +
+          'then continue the next ordered target. Never rerun a completed audit and never ask Boss to type continue.',
+      })
+    } catch (err) {
+      console.warn('[job-result] SEO continuation enqueue failed (result remains durable):', err instanceof Error ? err.message : err)
     }
   }
 
