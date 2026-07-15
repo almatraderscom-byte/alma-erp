@@ -205,6 +205,10 @@ export function detectRoutineIntent(userText: string): RoutineIntent | null {
     // order_status is only confident WITH an extractable number — "order status
     // ki" (no number) needs the model loop's judgement about which orders.
     if (intent === 'order_status' && !extractOrderNumber(text)) continue
+    // LG-3 guard: an amount+currency token near "khoroch" is a LOG intent
+    // ("aj 500 taka khoroch holo"), never the read-summary — it belongs to the
+    // action graph / model loop even when the interrupt gate is off.
+    if (intent === 'expense_today' && /[০-৯\d][০-৯\d,]*\s*(taka|tk|টাকা|৳|aed)/i.test(text)) continue
     return intent
   }
   return null

@@ -133,6 +133,10 @@ const ROUTINE_RE = new RegExp(
     // order status by number ("order 1234 kothay", "#ALM-1234 status") — a
     // status word is REQUIRED so "order 500 pcs ano" (a command) never routes here
     '(order|অর্ডার|invoice|#)\\s*#?\\s*[A-Za-z]{0,6}-?\\d{3,12}[^\\n]{0,24}(status|স্ট্যাটাস|obostha|অবস্থা|kothay|কোথায়|koi|কই|update|আপডেট|hoise|হয়েছে|deliver|ডেলিভার|কতদূর)',
+    // LG-3: single expense log ("500 taka khoroch holo") — the cheap head owns
+    // this today (log_expense card); LG-3 makes it a deterministic light route.
+    '([০-৯\\d][০-৯\\d,]*)\\s*(taka|tk|টাকা|৳)[^\\n]{0,24}(khoroch|খরচ)',
+    '(khoroch|খরচ)[^\\n]{0,24}([০-৯\\d][০-৯\\d,]*)\\s*(taka|tk|টাকা|৳)',
   ].join('|'),
   'i',
 )
