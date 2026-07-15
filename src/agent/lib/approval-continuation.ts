@@ -67,19 +67,15 @@ async function workerTurnConsumerAlive(): Promise<boolean> {
  * then finalize the turn row so the app's resume spinner settles. Best-effort. */
 async function runContinuationInline(opts: { conversationId: string; message: string }, turnId: string | null): Promise<void> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (prisma as any).agentMessage.create({
-      data: {
-        conversationId: opts.conversationId,
-        role: 'user',
-        content: [{ type: 'text', text: opts.message }],
-      },
-    })
     const { runOwnerTurn } = await import('@/agent/lib/models/run-owner-turn')
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), INLINE_CONTINUATION_MAX_MS)
     try {
-      for await (const ev of runOwnerTurn(opts.conversationId, { signal: controller.signal })) {
+      for await (const ev of runOwnerTurn(opts.conversationId, {
+        signal: controller.signal,
+        projectSystemInstructions:
+          `[INTERNAL WORKFLOW CONTINUATION — NOT an owner-authored message and never display/quote it as one.]\n${opts.message}`,
+      })) {
         if (ev.type === 'error') {
           console.warn('[approval-continuation] inline turn error event:', ev.message)
         }
@@ -121,7 +117,10 @@ export async function enqueueAgentContinuation(opts: {
   const turnId = opts.turnId ?? (await createTurn(opts.conversationId))
 
   if (isTurnHandoffConfigured() && (await workerTurnConsumerAlive())) {
-    const jobData = buildTurnJobData(turnId ?? '', opts.conversationId, { message: opts.message })
+    const jobData = buildTurnJobData(turnId ?? '', opts.conversationId, {
+      message: opts.message,
+      internalControl: true,
+    })
     if (jobData && turnId) {
       const jobId = await enqueueTurnJob(jobData)
       if (jobId) return                          // worker will drain it

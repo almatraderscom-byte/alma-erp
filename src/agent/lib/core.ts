@@ -38,7 +38,6 @@ import { specialistLabel, type SpecialistRole } from '@/agent/lib/models/special
 import { notifyOwner } from '@/agent/lib/notify-owner'
 import { isTurnCancelRequested } from '@/agent/lib/turn-status'
 import { logCost } from '@/agent/lib/cost-events'
-import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact-detect'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
 import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
@@ -884,7 +883,6 @@ export async function* runAgentTurn(
   // Tracked alongside confirm cards so the card-detection rule knows whether ANY
   // card actually reached the owner before the head claimed one did.
   let askCardsEmitted = 0
-  let memoryNudgeSent = false
   let intentNudgeSent = false
   let verifyRetries = 0
 
@@ -1217,22 +1215,6 @@ export async function* runAgentTurn(
             ]
             continue
           }
-        }
-
-        if (
-          !signal?.aborted
-          && !memoryNudgeSent
-          && lastUserText
-          && turnAuthorization.allowMutations
-          && looksLikeDurableFact(lastUserText)
-          && !toolRecords.some((r) => r.toolName === 'save_memory')
-        ) {
-          memoryNudgeSent = true
-          messages = [
-            ...messages,
-            { role: 'user', content: [{ type: 'text', text: MEMORY_SAVE_NUDGE }] },
-          ]
-          continue
         }
 
         // Announced-intent-but-no-action safety net: the head said it would run a

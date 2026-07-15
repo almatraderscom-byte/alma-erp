@@ -25,6 +25,7 @@ export interface TurnJobInput {
   projectId?: string | null
   personalMode?: boolean
   clientRequestId?: string | null
+  internalControl?: boolean
 }
 
 export interface TurnJobData {
@@ -35,6 +36,7 @@ export interface TurnJobData {
   projectId: string | null
   personalMode: boolean
   clientRequestId: string | null
+  internalControl: boolean
 }
 
 /**
@@ -65,6 +67,7 @@ export function buildTurnJobData(
     projectId: typeof body.projectId === 'string' ? body.projectId : null,
     personalMode: body.personalMode === true,
     clientRequestId: typeof body.clientRequestId === 'string' ? body.clientRequestId : null,
+    internalControl: body.internalControl === true,
   }
 }
 

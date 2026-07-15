@@ -48,6 +48,9 @@ export const WORKFLOW_GUARDED_TOOLS = new Set([
   'generate_image',
   'delegate_to_specialist',
   'live_browser_act',
+  'run_website_seo_audit',
+  'check_website_seo_audit',
+  'complete_skill_pack_run',
 ])
 
 /** Tools whose SUCCESS feeds the workflow state (executor post-hook). */
@@ -230,13 +233,26 @@ async function guardRepeatedNavigation(
 export async function checkWorkflowGuards(
   toolName: string,
   input: Record<string, unknown>,
-  ctx: { conversationId?: string },
+  ctx: { conversationId?: string; driveClientSeoBatch?: boolean },
 ): Promise<WorkflowGuardBlock | null> {
   // Phase 7 kill switch: guards stop BLOCKING (bookkeeping hooks keep running).
   if (process.env.AGENT_WORKFLOW_GUARDS === 'false') return null
   const conversationId = ctx.conversationId
   if (!conversationId) return null
   try {
+    if (
+      ctx.driveClientSeoBatch
+      && (
+        toolName === 'live_browser_act'
+        || toolName === 'run_website_seo_audit'
+        || toolName === 'check_website_seo_audit'
+        || toolName === 'complete_skill_pack_run'
+      )
+    ) {
+      const { guardClientSeoBatchTool } = await import('./client-seo-batch')
+      const batchBlock = await guardClientSeoBatchTool(conversationId, toolName, input)
+      if (batchBlock) return { blocked: true, ...batchBlock }
+    }
     switch (toolName) {
       case 'post_to_facebook':
       case 'publish_to_instagram':

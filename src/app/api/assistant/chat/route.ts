@@ -69,6 +69,8 @@ interface ChatBody {
   clientRequestId?: string
   /** Structured, owner-session-only continuation. Never stored as a user message. */
   autoContinueFromTurnId?: string
+  /** Server/worker continuation note. Control context, never owner-authored chat. */
+  internalControl?: boolean
   /**
    * Model-upgrade approval resume: the previous turn paused on a
    * `model_switch_required` card. This re-runs the SAME turn (no new user message)
@@ -156,6 +158,7 @@ export async function POST(req: NextRequest) {
       : null
 
   const message = typeof body.message === 'string' ? body.message.trim() : ''
+  const internalControl = isInternalCall && body.internalControl === true
   // Attached files (image/PDF) make a caption-less turn valid — Claude.ai lets you
   // send an image with no text. Parse them up-front so the guard allows an
   // image-only message instead of rejecting it as `message_required`.
@@ -386,6 +389,7 @@ export async function POST(req: NextRequest) {
       && shouldPersistIncomingMessage({
         isResume: Boolean(resume),
         autoContinueFromTurnId: autoContinueFromTurnId || null,
+        internalControl,
       })
     ) {
       type StoredBlock = { type: string; [k: string]: unknown }
@@ -591,6 +595,9 @@ export async function POST(req: NextRequest) {
     projectSystemInstructions:
       [
         projectSystemInstructions,
+        internalControl
+          ? `[INTERNAL WORKFLOW CONTINUATION — this is server control state, NOT a new Boss/user message; never quote it as if Boss wrote it.]\n${message}`
+          : null,
         body.voice === true ? VOICE_TURN_INSTRUCTION : null,
         autoContinueFromTurnId ? AUTO_CONTINUE_INSTRUCTION : null,
       ].filter(Boolean).join('\n\n') || null,

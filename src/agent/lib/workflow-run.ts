@@ -340,6 +340,13 @@ export async function syncWorkflowWithPendingAction(pendingActionId: string, cau
   const s = String(action.status)
   const cardType = String(action.type ?? '')
   try {
+    if (run.kind === 'client_seo_batch' && cardType === 'seo_audit') {
+      if (s === 'executed' || s === 'failed') {
+        const { recordClientSeoAuditResult } = await import('./client-seo-batch')
+        await recordClientSeoAuditResult(run, pendingActionId, s === 'executed', cause)
+      }
+      return
+    }
     if (s === 'executed') {
       // Template runs advance to the CARD'S next step (an executed image card is
       // NOT the end of a product post — the run moves to preview_confirm). Facts

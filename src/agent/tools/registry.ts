@@ -642,6 +642,7 @@ interface ToolRunContext {
   turnId?: string
   surface?: 'owner' | 'cs' | 'scheduler'
   turnAuthorization?: OwnerTurnAuthorization
+  driveClientSeoBatch?: boolean
 }
 
 function classificationFor(name: string): ResolvedClassification {
@@ -756,6 +757,26 @@ export async function runRegisteredTool(
       // browser calls feed the workflow state machine (facts, session state,
       // doc_extraction run). Fire-and-forget, never blocks the reply.
       if (ctx.conversationId) {
+        // Ordered client-SEO is durable control state. Await this hook so the
+        // next model round sees the newly legal step; fire-and-forget created a
+        // race where report/site-2 routing read stale state.
+        if (
+          ctx.driveClientSeoBatch
+          && (
+            tool.name === 'live_browser_act'
+            || tool.name === 'live_browser_look'
+            || tool.name === 'run_website_seo_audit'
+            || tool.name === 'check_website_seo_audit'
+            || tool.name === 'complete_skill_pack_run'
+          )
+        ) {
+          try {
+            const batch = await import('@/agent/lib/client-seo-batch')
+            await batch.recordClientSeoBatchTool(ctx.conversationId, tool.name, input ?? {}, result.data)
+          } catch (err) {
+            console.warn('[registry] client SEO workflow hook failed:', err instanceof Error ? err.message : err)
+          }
+        }
         void import('@/agent/lib/workflow-guards')
           .then((wg) =>
             wg.WORKFLOW_HOOKED_TOOLS.has(tool.name)
@@ -830,6 +851,7 @@ export async function executeTool(
     businessId,
     turnId,
     turnAuthorization: serverContext.turnAuthorization as OwnerTurnAuthorization | undefined,
+    driveClientSeoBatch: serverContext.driveClientSeoBatch === true,
   })
 }
 
