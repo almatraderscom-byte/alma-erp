@@ -1575,6 +1575,43 @@ async function* runAlternateProviderTurn(
       }
       return
     }
+    // Model-error salvage (owner report 2026-07-15: an Alibaba content-filter
+    // error at minute 6 threw away 44 steps of live-browser work because ONLY
+    // the deadline-abort path persisted partial progress). If real work already
+    // streamed, persist it BEFORE surfacing a terminal error — a provider error
+    // makes the work no less real. Fail-open: worst case matches old behavior.
+    const salvagePartialWorkOnError = async (): Promise<void> => {
+      if (canceled || (!finalText.trim() && toolRecords.length === 0)) return
+      try {
+        const okSteps = toolRecords.filter((r) => r.status === 'success').length
+        const suffix =
+          `⚠️ মডেল-প্রোভাইডারের error-এ টার্নটা থেমেছে${okSteps > 0 ? ` — ${okSteps}টা ধাপের অগ্রগতি সেভ করা আছে` : ''}। ` +
+          'Boss, "continue" বললে ঠিক এখান থেকে চালিয়ে যাব।'
+        const text = [finalText.trim(), suffix].filter(Boolean).join('\n\n')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const savedMsg = await (prisma as any).agentMessage.create({
+          data: {
+            conversationId, role: 'assistant',
+            content: [{ type: 'text', text }, ...emittedAskCards],
+            tokensIn: totalInputTokens, tokensOut: totalOutputTokens,
+            costUsd: totalActualCostUsd != null
+              ? roundUsd(totalActualCostUsd)
+              : calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens }),
+            usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+          },
+        })
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (toolRecords.length > 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (prisma as any).agentToolCall.createMany({
+            data: toolRecords.map((r) => ({
+              messageId: savedMsg.id, toolName: r.toolName, input: r.input,
+              output: r.output, status: r.status, durationMs: r.durationMs, error: r.error,
+            })),
+          })
+        }
+      } catch { /* best-effort */ }
+    }
     // Phase 3 — PINNED-head identity guard (roadmap: "Grok identity never changes
     // silently"): when the owner explicitly pinned this model on the conversation
     // (tier 'explicit'), a pre-answer crash must NEVER silently switch models.
@@ -1596,6 +1633,7 @@ async function* runAlternateProviderTurn(
         return
       }
       await captureAgentError(err, 'agent.head.pinned_down', { conversationId, modelId: model.id })
+      await salvagePartialWorkOnError()
       const msg = err instanceof Error ? err.message : String(err)
       yield {
         type: 'error',
@@ -1637,6 +1675,7 @@ async function* runAlternateProviderTurn(
       }
     }
     await captureAgentError(err, 'agent.provider.error', { conversationId })
+    await salvagePartialWorkOnError()
     const msg = err instanceof Error ? err.message : String(err)
     yield { type: 'error', message: `Model error (${model.label}): ${msg}` }
   }
