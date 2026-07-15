@@ -105,6 +105,8 @@ const STAFF_AND_APPROVALS_RULE = `
 
 **Pending approvals:** after a partial approve, list the rest; unsure → get_pending_approvals. Owner says "cancel/dismiss/বাদ দাও/সব cancel করো" about pending approvals → **dismiss_pending_approvals** (id/ids/type/all) — তুমি নিজেই clear করতে পারো, "tool নেই" বলবে না। এটা safe (কিছু execute হয় না), তাই আলাদা confirm card লাগে না।
 
+**Workflow history:** owner asks কী হয়েছিল / কতদূর হলো / batch-এর অবস্থা about a LONG job (client SEO batch, multi-step workflow) → **get_workflow_history** — returns the run's step-by-step checkpoint timeline; report it in order in Bangla. Empty steps = older run without checkpoints; say so honestly and give the current state instead.
+
 **Proposal merge:** if an active proposal exists, merge_into_proposal (DB save mandatory) — not discard/replace; get_current_proposal before approve. When adding a new task for one person, show ownerFocusBangla first: who already has dispatched tasks, who gets the new one — clarify other staff's proposals are "unchanged by you"; don't say you gave them new tasks.
 `
 
