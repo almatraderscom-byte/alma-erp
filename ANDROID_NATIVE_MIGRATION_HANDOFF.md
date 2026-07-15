@@ -1,0 +1,141 @@
+# ANDROID NATIVE MIGRATION — HANDOFF (single source of truth)
+
+> Android twin of the iOS native program (`NATIVE_MIGRATION_HANDOFF.md`). Goal: the WHOLE
+> ALMA ERP app looks and works EXACTLY like native iOS **BUILD 66** — same design, same
+> colours, same blocks — in Kotlin + Jetpack Compose. The worktree's `ios/App/App/*.swift`
+> files ARE build 66 (checked out from `native/build-67-batch`, owner directive 2026-07-11:
+> base everything on the LATEST build, never an older one). Port each
+> `<Name>SwiftUI.swift` 1:1 to `android/.../pages/<Name>Screen.kt`.
+
+## 0. Architecture (locked — mirrors iOS)
+
+- **Shell:** `MainActivity` stays a Capacitor `BridgeActivity`. `NativeShell.install()`
+  (called after `super.onCreate`) lifts the Capacitor view out, keeps it MOUNTED at 1dp
+  (plugins/OneSignal/login keep running — the iOS DashboardHostController reason), and
+  wraps everything in a Compose shell: aurora background + 5-tab bottom bar
+  (Dashboard / Orders / Assistant / Approvals / More) + per-tab push stacks.
+- **Flag:** `alma-native-screens` (SharedPreferences, default ON). More → "Native স্ক্রিন"
+  OFF → `activity.recreate()` → the plain Capacitor app, exactly as before (escape hatch).
+- **Networking:** `shell/AlmaApi.kt` — HttpURLConnection + the app-global WebView
+  `CookieManager` session (Android needs no cookie copy dance), redirect-blocking
+  (307→/login = notAuthenticated), org.json + `flexInt/str/mapObjects` defensive readers.
+- **Theme:** `shell/AlmaTheme.kt` — the iOS `AlmaSwiftTheme` tokens verbatim (coral
+  #E07A5F, violet #a78bfa, sage #81B29A, cream #F2F0F8 / dark #0b0a12, card #171521,
+  radii 26/14/34, `takaShort`). Dark state in SharedPreferences `alma-theme-mode`,
+  pushed one-way native→web (cookie `alma-theme` + `applyJs()` on every live WebView).
+- **Aurora + glass:** `shell/Aurora.kt` — `AuroraBackground` (exact iOS gradient stops)
+  + `Modifier.almaGlass(dark, corner)` + `plainClick`. Android has no cheap backdrop
+  blur, so glass = translucent white wash + hairline ring (the iOS fallback look).
+- **Web fallback:** `shell/WebTab.kt` — `buildErpWebView()` injects the SAME embed flags
+  the iOS shell does (`window.__almaNative`, `__almaNativeHeader`, hide-chrome CSS,
+  `?native=1&nativehdr=1` belt-and-suspenders) so unmigrated pages render web-embedded
+  with native chrome. External links (tel:, wa.me) go to the system.
+- **Router:** `shell/AlmaNativeRouter.kt` — bare route path → native Compose screen; one
+  additive `when` case per migrated page; everything else = WebView. `PushCtx.openWebForced`
+  NEVER consults the router (recursion guard, same as iOS).
+- **Build:** Kotlin 1.9.22 + Compose BOM 2024.02.02 (compiler ext 1.5.8) on AGP 8.2.1,
+  jvmTarget 21. `google-services.json` is gitignored — copy it from the main worktree
+  into `android/app/` in every fresh worktree, and run `npx cap sync android` once
+  (generates `android/capacitor-cordova-android-plugins/`).
+
+## 1. PAGE REGISTRY (Android) — status per page
+
+Design source = the iOS Swift file. Endpoints/fields are already discovered there — do
+NOT re-derive from the web.
+
+| Page | Route | iOS source (design truth) | Android file | Status |
+|---|---|---|---|---|
+| Shell (tabs/theme/api/aurora/router/webtab) | — | SpikeNativeShell.swift + SwiftUIShell.swift | shell/*.kt | DONE (this session) |
+| Dashboard | `/` | DashboardSwiftUI.swift | pages/DashboardScreen.kt | DONE v1 (no assistive dock; todo panel ported) |
+| Orders list + detail + status actions | `/orders` | OrdersSwiftUI.swift | pages/OrdersScreen.kt | DONE v1 (create form = web escape) |
+| Order create (native form) | `/orders/new` | OrderCreateSwiftUI.swift | pages/OrderCreateScreen.kt | NOT_STARTED |
+| Approvals (business + agent + integrity) | `/approvals` | ApprovalsSwiftUI.swift | pages/ApprovalsScreen.kt | DONE v1 |
+| More menu | (native) | MoreMenuSwiftUI.swift | pages/MoreMenuScreen.kt | DONE v1 (Face ID lock row deferred — Android biometric later) |
+| Assistant | `/agent` | AssistantSwiftUI.swift | — | KEEP_WEB for now (web tab embeds; native chat is its own program) |
+| Finance | `/finance` | FinanceSwiftUI.swift | pages/FinanceScreen.kt | NOT_STARTED |
+| Office fund | `/finance/office-fund` | OfficeFundSwiftUI.swift | pages/OfficeFundScreen.kt | NOT_STARTED |
+| Expenses | `/expenses` | ExpensesSwiftUI.swift | pages/ExpensesScreen.kt | NOT_STARTED |
+| Payroll | `/payroll` | PayrollSwiftUI.swift | pages/PayrollScreen.kt | NOT_STARTED |
+| Invoices | `/invoice` | InvoicesSwiftUI.swift | pages/InvoicesScreen.kt | NOT_STARTED |
+| Inventory | `/inventory` | InventorySwiftUI.swift | pages/InventoryScreen.kt | NOT_STARTED |
+| Supplier import | `/inventory/supplier-import` | SupplierImportSwiftUI.swift | pages/SupplierImportScreen.kt | NOT_STARTED |
+| Activity | `/activity` | ActivitySwiftUI.swift | pages/ActivityScreen.kt | NOT_STARTED |
+| Task Spotlight | `/operations/task-spotlight` | TaskSpotlightSwiftUI.swift | pages/TaskSpotlightScreen.kt | NOT_STARTED |
+| Business archive | `/operations/business-archive` | BusinessArchiveSwiftUI.swift | pages/BusinessArchiveScreen.kt | NOT_STARTED |
+| System diagnostics | `/operations/system-diagnostics` | SystemDiagnosticsSwiftUI.swift | pages/SystemDiagnosticsScreen.kt | NOT_STARTED |
+| Employees (+detail) | `/employees` | EmployeesSwiftUI.swift | pages/EmployeesScreen.kt | NOT_STARTED |
+| Attendance | `/attendance` | AttendanceSwiftUI.swift | pages/AttendanceScreen.kt | NOT_STARTED |
+| CRM | `/crm` | CrmSwiftUI.swift | pages/CrmScreen.kt | NOT_STARTED |
+| Analytics | `/analytics` | AnalyticsSwiftUI.swift | pages/AnalyticsScreen.kt | NOT_STARTED |
+| Insights | `/insights` | InsightsSwiftUI.swift | pages/InsightsScreen.kt | NOT_STARTED |
+| Briefing | `/briefing` | BriefingSwiftUI.swift | pages/BriefingScreen.kt | NOT_STARTED |
+| Audit | `/audit` | AuditSwiftUI.swift | pages/AuditScreen.kt | NOT_STARTED |
+| My Desk | `/portal` | PortalSwiftUI.swift | pages/PortalScreen.kt | NOT_STARTED |
+| Portal expense | `/portal/expense` | PortalExpenseSwiftUI.swift | pages/PortalExpenseScreen.kt | NOT_STARTED |
+| Office | `/portal/office` | PortalOfficeSwiftUI.swift | pages/PortalOfficeScreen.kt | NOT_STARTED |
+| Payment accounts | `/portal/payment-accounts` | PaymentAccountsSwiftUI.swift | pages/PaymentAccountsScreen.kt | NOT_STARTED |
+| Settings pages | `/settings/*` | Settings*SwiftUI.swift | pages/Settings*Screen.kt | NOT_STARTED |
+
+Trading / CDIT: out of scope for this program (owner asked Lifestyle first).
+
+## 2. Porting recipe (per page)
+
+1. Read the iOS `<Name>SwiftUI.swift` — models (field names + wrapped/flat response
+   shape), VM logic, blocks, exact hexes. Copy its lessons (they cost real time on iOS).
+2. Write `pages/<Name>Screen.kt`: `@Composable fun <Name>Screen(ctx: PushCtx)` + a
+   plain state-holder class with `mutableStateOf` fields + suspend `load()`.
+   Parse JSON with `AlmaApi.getObject/send` + `flexInt/str/mapObjects`.
+3. Surfaces: `Modifier.almaGlass(dark, AlmaTheme.R_CARD)` cards on the shared aurora,
+   chips as capsules, sheets = `ModalBottomSheet(containerColor = AlmaTheme.rootBg(dark))`.
+4. Register the route in `AlmaNativeRouter.screen()` (one `when` case).
+5. Update this registry row, build `./gradlew assembleDebug` (JAVA_HOME = Android
+   Studio JBR), verify on the emulator, screenshot.
+
+## 3. Emulator self-test recipe
+
+- AVD `alma_test` (Pixel-class, `system-images;android-35;google_apis;arm64-v8a`).
+- Build: `cd android && JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ANDROID_HOME=~/Library/Android/sdk ./gradlew assembleDebug`
+- Run: `~/Library/Android/sdk/emulator/emulator -avd alma_test -no-snapshot &`,
+  `adb install -r app/build/outputs/apk/debug/app-debug.apk`,
+  `adb shell am start -n com.almatraders.erp/.MainActivity`,
+  screenshot: `adb exec-out screencap -p > /tmp/android-ss.png`.
+- Login: open any screen → "লগইন খুলুন" opens the web /login inside the shell; the owner
+  types credentials (never Claude). Cookies are app-global — native API calls work after.
+
+## 4. Known gaps / next steps
+
+- Native order-create form (OrderCreateSwiftUI port) — FAB currently opens the web form.
+- Assistive shortcut dock on Dashboard (iOS AgentAssistiveNav) — not ported yet.
+- Custom date range on Orders uses two sequential DatePicker picks — replace with a
+  proper range picker (Material3 DateRangePicker) in a polish pass.
+- Biometric app-lock row (More) — needs androidx.biometric, deferred.
+- Push-open deep links land on the Capacitor webview (1dp) — route notification taps
+  into the native shell in a later pass.
+
+## 5. RELEASE + SECURITY (2026-07-12)
+
+- **Status:** all 56 build-66 pages ported, compile clean (0 err), debug + RELEASE APKs build.
+- **Release keystore (KEEP FOREVER — losing it = can't update the app):**
+  `~/.alma-android/alma-release.jks` (alias `alma`), password in `~/.alma-android/alma-release.pw`.
+  NOT in git. Build release: set `ALMA_ANDROID_KEYSTORE_PATH/PASSWORD`, `ALMA_ANDROID_KEY_ALIAS=alma`,
+  `ALMA_ANDROID_KEY_PASSWORD` then `./gradlew assembleRelease`. Signer DN `CN=ALMA Traders…`.
+  Release signature ≠ debug → uninstall the debug build before installing release.
+- **Role gating (nav):** `shell/AlmaAccess.kt` — 1:1 Kotlin port of the web authority
+  `isPathAllowedForRole` (src/lib/roles.ts). `AlmaSession.effectiveRole` (owner=SUPER_ADMIN,
+  unknown/not-loaded=STAFF fail-closed) + `canSee(path)`. `NativeShell` filters the tab bar
+  (Dashboard/More always; Orders/Assistant/Approvals gated); `MoreMenu` filters items and drops
+  empty groups. Verified on-device for SUPER_ADMIN / ADMIN / HR / STAFF (force-role screenshots
+  reproduced the web precedence exactly, incl. Employees-hidden-for-ADMIN, Agent-super-only,
+  Audit/Branding hidden). Fresh install with no session → STAFF nav (fail-closed).
+- **The two "server gaps" from the prior note were VERIFIED NON-ISSUES (2026-07-12):**
+  1. `/api/digital/*` — `apiRoleDenied` in `src/middleware.ts:98` blocks ALL `/api/digital`
+     (every method, every role except SUPER_ADMIN/ADMIN) at the edge. Next.js middleware runs
+     server-side on EVERY request — native OkHttp does NOT bypass it. No route change needed.
+  2. `/api/trading/dashboard` — `tradingAccountWhereForContext` (`src/lib/trading.ts:103`) scopes
+     accounts to `assignedUserId === userId` for non-admins, and `getTradingContext` denies users
+     without trading access. A trading staffer sees only their OWN accounts' totals, not
+     business-wide. No leak.
+  The "login" text staff saw on admin sections was the SERVER correctly refusing; the real defect
+  was the client OFFERING those sections, fixed by the nav gate above. No live ERP server code
+  was modified.
+- **Distribution:** owner-triggered only. No mass force-download performed.

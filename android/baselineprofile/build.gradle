@@ -1,0 +1,36 @@
+apply plugin: 'com.android.test'
+apply plugin: 'kotlin-android'
+apply plugin: 'androidx.baselineprofile'
+
+android {
+    namespace 'com.almatraders.erp.baselineprofile'
+    compileSdk rootProject.ext.compileSdkVersion
+
+    defaultConfig {
+        // Baseline Profile generation runs on API 28+ (emulator is API 35).
+        minSdkVersion 28
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+    kotlinOptions { jvmTarget = '21' }
+    // Drive the app's release variant (what actually ships).
+    targetProjectPath = ':app'
+}
+
+// Run the generator on the connected device/emulator (Play images work for
+// profile GENERATION; only benchmark ACCURACY needs a rooted/AOSP image).
+baselineProfile {
+    managedDevices = []
+    useConnectedDevices = true
+}
+
+dependencies {
+    implementation 'androidx.test.ext:junit:1.1.5'
+    implementation 'androidx.test.espresso:espresso-core:3.5.1'
+    implementation 'androidx.test.uiautomator:uiautomator:2.3.0'
+    implementation 'androidx.benchmark:benchmark-macro-junit4:1.3.3'
+}
