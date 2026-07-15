@@ -65,6 +65,7 @@ import { adapterFor } from '@/agent/lib/models/adapters'
 import { logRouteSpan } from '@/agent/lib/tool-telemetry'
 import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
 import { buildOwnerRequirementNote, deriveOwnerTurnRequirements } from '@/agent/lib/owner-turn-requirements'
+import { contractToolFailureText, findContractToolFailure } from '@/agent/lib/contract-tool-failure'
 import {
   clientSeoBatchProgressText,
   ensureClientSeoBatchWorkflow,
@@ -1010,7 +1011,27 @@ async function* runAlternateProviderTurn(
       else headToolRounds++
 
       const toolResults: Array<{ id: string; name: string; result: unknown }> = []
+      let roundContractFailure: ToolRecord | undefined
       for (const call of calls) {
+        // A required-tool failure already happened in this same model round.
+        // Do not execute any queued follow-up calls: the failure is terminal for
+        // this owner turn, and a fresh owner message may retry it later.
+        if (roundContractFailure) {
+          const skipped = {
+            success: false,
+            error: `আগের বাধ্যতামূলক ধাপ ${roundContractFailure.toolName} ব্যর্থ হয়েছে — এই turn-এর বাকি tool call চালানো হয়নি।`,
+          }
+          toolRecords.push({
+            id: call.id, toolName: call.name, input: call.input,
+            output: null, status: 'error', durationMs: 0, error: skipped.error,
+          })
+          toolResults.push({ id: call.id, name: call.name, result: skipped })
+          yield {
+            type: 'tool_end', id: call.id, name: call.name,
+            success: false, error: skipped.error, resultPreview: skipped.error,
+          }
+          continue
+        }
         // Deadline check PER CALL, not just per round: one DeepSeek round can queue
         // 5-6 browser calls (~90s) that straddle the 45s wrap-up window, so the
         // wrap-up nudge never got a round to run in and the 280s abort killed the
@@ -1047,7 +1068,7 @@ async function* runAlternateProviderTurn(
           })
         }
 
-        toolRecords.push({
+        const toolRecord: ToolRecord = {
           id: call.id,
           toolName: call.name,
           input: call.input,
@@ -1055,7 +1076,9 @@ async function* runAlternateProviderTurn(
           status: result.success ? 'success' : 'error',
           durationMs,
           error: result.error ?? null,
-        })
+        }
+        toolRecords.push(toolRecord)
+        if (call.name === contractToolName && !result.success) roundContractFailure = toolRecord
 
         timeline.push({
           t: 'tool', name: call.name, ok: result.success,
@@ -1157,6 +1180,20 @@ async function* runAlternateProviderTurn(
       }
 
       messages = appendToolExchange(messages, calls, toolResults)
+
+      // Never spend another expensive head round after a mandatory step failed.
+      // The previous code noticed the failure only AFTER letting the model run
+      // again; in the live SEO proof that extra round tried target #2 and wrote a
+      // checkpoint, adding cost and visible "same work again" behaviour.
+      const terminalContractFailure = roundContractFailure
+        ?? findContractToolFailure(contractToolName, toolRecords.slice(-calls.length))
+      if (terminalContractFailure) {
+        const note = contractToolFailureText(terminalContractFailure)
+        const sep = finalText ? '\n\n' : ''
+        finalText += sep + note
+        yield { type: 'text_delta', delta: sep + note }
+        break
+      }
 
       // Delegation pending approval → end the head's turn now. The owner picks
       // Worker (cheap) or Sonnet (direct) on the card; we must not generate the
