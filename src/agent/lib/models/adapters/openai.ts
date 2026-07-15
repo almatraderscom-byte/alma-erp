@@ -227,7 +227,6 @@ export class OpenAiAdapter implements ProviderAdapter {
     const baseParams = {
       model: modelSlug,
       messages: toOpenAiMessages(args.system, args.messages, cachePrefix),
-      ...providerPrefs,
       tools: args.tools.length ? toOpenAiTools(args.tools) : undefined,
       stream: true as const,
       stream_options: { include_usage: true },
@@ -258,21 +257,24 @@ export class OpenAiAdapter implements ProviderAdapter {
       const raw = body?.metadata?.raw ?? body?.error?.metadata?.raw
       return raw ? `${base} | provider: ${String(raw).slice(0, 300)}` : base
     }
-    // Retry ladder: full request → without the reasoning extension → BARE
-    // (no reasoning, no cache_control, no stream_options). A provider that 400s
-    // on ANY optional extension must degrade the head to plain OpenAI-spec, never
-    // knock it over to the fallback model (Grok-4.20 was silently DeepSeek all
-    // day, 2026-07-13, because both extension-bearing attempts 400'd).
+    // Retry ladder: full request (require_parameters + reasoning) → exacto-only
+    // (BOTH dropped — 2026-07-15 preview logs: exacto+require_parameters over-
+    // constrained DeepSeek to "404 No endpoints found", so the old ladder fell
+    // all the way to bare and silently lost the exacto quality routing) → BARE
+    // (no exacto, no cache_control, no stream_options). A provider that 400s on
+    // ANY optional extension must degrade, never knock the head over to the
+    // fallback model (Grok-4.20 was silently DeepSeek all day, 2026-07-13).
     let stream
     try {
       stream = await this.client.chat.completions.create({
         ...baseParams,
+        ...providerPrefs,
         ...reasoningParam,
       } as ChatCompletionCreateParamsStreaming, reqOptions)
     } catch (err) {
       if (args.signal?.aborted) throw err
       console.warn(
-        `[openai-adapter] ${args.apiModel} rejected the full request — retrying without reasoning:`,
+        `[openai-adapter] ${modelSlug} rejected the full request — retrying without reasoning/require_parameters:`,
         errDetail(err),
       )
       try {
@@ -283,7 +285,7 @@ export class OpenAiAdapter implements ProviderAdapter {
       } catch (err2) {
         if (args.signal?.aborted) throw err2
         console.warn(
-          `[openai-adapter] ${args.apiModel} rejected the standard request too — final bare retry (no cache_control/stream_options):`,
+          `[openai-adapter] ${modelSlug} rejected the standard request too — final bare retry (no exacto/cache_control/stream_options):`,
           errDetail(err2),
         )
         const bareParams = {
