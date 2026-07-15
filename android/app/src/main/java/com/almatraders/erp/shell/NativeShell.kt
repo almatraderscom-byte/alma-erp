@@ -366,6 +366,12 @@ private fun ShellRoot(activity: BridgeActivity, capacitorRoot: View) {
         // walkie-talkie intercom. Self-hides when there's no office session.
         com.almatraders.erp.pages.OfficeChatFloatingHead(dark = dark) { p, t -> pushWebForced(p, t) }
 
+        // ── Minimised call bar (WhatsApp parity) ──
+        // The full-screen call screen can be minimised; the call itself keeps running in
+        // the foreground service. This bar is the way back in — and the proof to the user
+        // that the call did NOT drop.
+        ActiveCallBar()
+
         // ── Native forced-update gate ──
         // The web <ForcedUpdateGate> can't reach a native-first owner (WebView is 1dp).
         // This native twin covers the whole shell with a blocking download prompt when

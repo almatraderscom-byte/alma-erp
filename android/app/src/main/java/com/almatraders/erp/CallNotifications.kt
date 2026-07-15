@@ -34,20 +34,38 @@ object CallNotifications {
     /** Outgoing only: the AgentStaff.id to ring (the screen creates the broadcast). */
     const val EXTRA_STAFF_ID = "staffId"
 
+    /** Peer's profile photo URL — the call screen shows a face, not just an initial. */
+    const val EXTRA_CALLER_IMAGE = "callerImage"
+
     /**
      * Open the full-screen call screen for an OUTGOING call. The owner's call used to
      * live in a bottom sheet, which left the page visible behind it — one stray tap on
      * that scrim closed the call UI. A full-screen activity has no "outside" to tap.
      */
-    fun startOutgoing(context: Context, staffId: String, peerName: String) {
+    fun startOutgoing(context: Context, staffId: String, peerName: String, peerImage: String? = null) {
         val i = Intent(context, IncomingCallActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             putExtra(EXTRA_OUTGOING, true)
             putExtra(EXTRA_STAFF_ID, staffId)
             putExtra(EXTRA_CALLER, peerName)
+            putExtra(EXTRA_CALLER_IMAGE, peerImage)
         }
         context.startActivity(i)
     }
+
+    /** Re-open the full-screen screen for the call that is already running (the
+     *  minimised call bar taps back in). No state is passed — AgoraIntercom has it. */
+    fun reopenActive(context: Context, outgoing: Boolean) {
+        val i = Intent(context, IncomingCallActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra(EXTRA_OUTGOING, outgoing)
+            putExtra(EXTRA_REOPEN, true)
+        }
+        context.startActivity(i)
+    }
+
+    /** true → the screen is being re-opened for a live call; don't dial again. */
+    const val EXTRA_REOPEN = "reopen"
 
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return

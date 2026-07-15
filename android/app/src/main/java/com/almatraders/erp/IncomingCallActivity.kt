@@ -10,8 +10,10 @@
 package com.almatraders.erp
 
 import android.app.KeyguardManager
+import android.webkit.CookieManager
 import android.content.Context
 import android.os.Build
+import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -35,6 +37,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -48,13 +51,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.almatraders.erp.pages.AgoraIntercom
+import com.almatraders.erp.shell.AlmaTheme
 import com.almatraders.erp.shell.AlmaApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -68,6 +76,9 @@ class IncomingCallActivity : ComponentActivity() {
     /** true → we placed this call (dial out), false → someone is ringing us. */
     private var outgoing = false
     private var staffId = ""
+    private var callerImage: String? = null
+    /** true → the call is already running; we are just re-showing the screen. */
+    private var reopen = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -77,6 +88,13 @@ class IncomingCallActivity : ComponentActivity() {
         caller = intent.getStringExtra(CallNotifications.EXTRA_CALLER) ?: "বস — মারুফ"
         outgoing = intent.getBooleanExtra(CallNotifications.EXTRA_OUTGOING, false)
         staffId = intent.getStringExtra(CallNotifications.EXTRA_STAFF_ID) ?: ""
+        callerImage = intent.getStringExtra(CallNotifications.EXTRA_CALLER_IMAGE)
+        reopen = intent.getBooleanExtra(CallNotifications.EXTRA_REOPEN, false)
+        // Re-opened from the minimised bar: the call is live, keep its name/photo.
+        if (reopen) {
+            caller = AgoraIntercom.callPeer
+            callerImage = AgoraIntercom.callPeerImage
+        }
 
         // Own the WHOLE screen. The activity inherits the launch theme, whose window
         // background showed through the status-bar inset as a white strip above the
@@ -109,12 +127,29 @@ class IncomingCallActivity : ComponentActivity() {
             // We are dialling: no incoming ringtone, no Accept/Decline. ownerCall
             // creates the broadcast (which pushes the callee) and then joins the
             // channel — AgoraIntercom drives RINGING → CALLING → IDLE from there.
-            if (staffId.isNotEmpty()) lifecycleScope.launch { AgoraIntercom.ownerCall(staffId) }
-        } else {
+            // On a re-open the call is ALREADY live — dialling again would place a
+            // second call, so only dial on a fresh launch.
+            if (!reopen && staffId.isNotEmpty()) lifecycleScope.launch { AgoraIntercom.ownerCall(staffId) }
+        } else if (!reopen) {
             AgoraIntercom.ringIncoming()
         }
 
         setContent { MaterialTheme { CallScreen() } }
+    }
+
+    /**
+     * This activity is singleInstance, so a SECOND call push is delivered here as a new
+     * intent instead of a fresh activity — and the Compose state (answered/wasLive) from
+     * the previous call survived, which showed the old call's UI for the new caller.
+     * Rebuild from the new extras. A re-delivery of the SAME call is ignored so an
+     * OneSignal retry can't restart the ring.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val newId = intent.getStringExtra(CallNotifications.EXTRA_BROADCAST_ID) ?: ""
+        if (newId.isNotEmpty() && newId == broadcastId) return
+        setIntent(intent)
+        recreate()
     }
 
     private fun confirmReceipt() {
@@ -225,6 +260,29 @@ class IncomingCallActivity : ComponentActivity() {
                 ),
             contentAlignment = Alignment.Center,
         ) {
+            // Minimise (WhatsApp parity): just close the SCREEN — the call keeps running
+            // in the foreground service and the shell's call bar taps back in. Only the
+            // red button ends a call. Not shown while an incoming call is still ringing
+            // (there is nothing to go back to until it's answered).
+            if (!ringing) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .padding(start = 14.dp, top = 52.dp)
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.10f))
+                        .clickable { finish() },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.KeyboardArrowDown,
+                        contentDescription = "ছোট করুন",
+                        tint = Color.White,
+                        modifier = Modifier.size(26.dp),
+                    )
+                }
+            }
             Column(
                 Modifier.fillMaxSize().padding(28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -241,7 +299,33 @@ class IncomingCallActivity : ComponentActivity() {
                             ),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("M", color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Bold)
+                        // The initial is ALWAYS drawn underneath: if the photo is missing,
+                        // still loading, or fails to load, the circle must never come up
+                        // empty (an "if photo != null" swap showed a blank circle instead).
+                        // A successful photo simply paints over it.
+                        Text(
+                            caller.trim().take(1).uppercase().ifEmpty { "?" },
+                            color = Color.White, fontSize = 44.sp, fontWeight = FontWeight.Bold,
+                        )
+                        val img = callerImage
+                        if (!img.isNullOrBlank()) {
+                            // The server sends a RELATIVE path (/api/users/<id>/profile-image)
+                            // and that endpoint is session-gated — a bare Coil load would 401
+                            // and silently show nothing. Same recipe as EmployeesScreen's
+                            // avatar: absolute BASE_URL + the WebView's session cookie.
+                            val full = if (img.startsWith("/")) "${AlmaTheme.BASE_URL}$img" else img
+                            val cookie = CookieManager.getInstance().getCookie(AlmaTheme.BASE_URL)
+                            AsyncImage(
+                                model = ImageRequest.Builder(LocalContext.current)
+                                    .data(full)
+                                    .apply { if (!cookie.isNullOrEmpty()) setHeader("Cookie", cookie) }
+                                    .crossfade(true)
+                                    .build(),
+                                contentDescription = caller,
+                                modifier = Modifier.fillMaxSize().clip(CircleShape),
+                                contentScale = ContentScale.Crop,
+                            )
+                        }
                     }
                     Spacer(Modifier.height(20.dp))
                     Text(caller, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)

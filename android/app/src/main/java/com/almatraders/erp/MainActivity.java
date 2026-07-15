@@ -20,6 +20,15 @@ public class MainActivity extends BridgeActivity {
         ReminderRefresh.INSTANCE.enqueue(this);
         super.onCreate(savedInstanceState);
 
+        // Bring up OneSignal from NATIVE code. It used to be initialised only by a React
+        // component inside the WebView, which a native-first shell never renders — so the
+        // SDK logged "no appId provided", never registered, and every Android push was
+        // dropped. See NativePush for the full story.
+        com.almatraders.erp.shell.NativePush.INSTANCE.init(this);
+        com.almatraders.erp.shell.AlmaSession.INSTANCE.attach(this);
+        // Android 14+ needs a separate grant before a call can take over the screen.
+        com.almatraders.erp.shell.NativePush.INSTANCE.ensureFullScreenCallAccess(this);
+
         // ALMA native shell (Compose tab bar + native Lifestyle screens wrapping the
         // Capacitor app — Android twin of the iOS SwiftUI program). Behind the
         // "Native স্ক্রিন" flag (default ON); OFF = the plain Capacitor app as before.

@@ -45,7 +45,8 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 
-class IntercomStaff(val id: String, val name: String, val phone: String?)
+/** imageUrl = the staff's User.profileImageUrl — the call screen shows a real face. */
+class IntercomStaff(val id: String, val name: String, val phone: String?, val imageUrl: String? = null)
 
 object AgoraIntercom {
 
@@ -63,6 +64,10 @@ object AgoraIntercom {
     var error by mutableStateOf<String?>(null); private set
     var roster by mutableStateOf<List<IntercomStaff>>(emptyList()); private set
     var callPeer by mutableStateOf("স্টাফ"); private set
+    /** Photo of the person on the other end of the current call (null → initial avatar). */
+    var callPeerImage by mutableStateOf<String?>(null); private set
+    /** Did WE place the current call? The minimised call bar re-opens the right screen. */
+    var callOutgoing by mutableStateOf(false); private set
 
     private val main = Handler(Looper.getMainLooper())
     private var appContext: Context? = null
@@ -88,7 +93,7 @@ object AgoraIntercom {
         try {
             val root = AlmaApi.getObject("/api/assistant/office/intercom")
             val staff = root.optJSONArray("staff")?.mapObjects {
-                IntercomStaff(it.str("id") ?: return@mapObjects null, it.str("name") ?: "স্টাফ", it.str("phone"))
+                IntercomStaff(it.str("id") ?: return@mapObjects null, it.str("name") ?: "স্টাফ", it.str("phone"), it.str("imageUrl"))
             } ?: emptyList()
             post { roster = staff }
         } catch (_: Exception) { }
@@ -98,7 +103,7 @@ object AgoraIntercom {
         return try {
             val root = AlmaApi.getObject("/api/assistant/office/intercom")
             root.optJSONArray("staff")?.mapObjects {
-                IntercomStaff(it.str("id") ?: return@mapObjects null, it.str("name") ?: "স্টাফ", it.str("phone"))
+                IntercomStaff(it.str("id") ?: return@mapObjects null, it.str("name") ?: "স্টাফ", it.str("phone"), it.str("imageUrl"))
             }?.let { s -> post { roster = s } }
             root.str("liveChannel")?.takeIf { it.isNotEmpty() } ?: "itc_live_ALMA_LIFESTYLE"
         } catch (_: Exception) {
@@ -139,7 +144,12 @@ object AgoraIntercom {
 
     // ── 1:1 call ────────────────────────────────────────────────────────────────
     suspend fun ownerCall(staffId: String) {
-        post { error = null; statusText = "কল দিচ্ছি…"; callPeer = roster.firstOrNull { it.id == staffId }?.name ?: "স্টাফ" }
+        val target = roster.firstOrNull { it.id == staffId }
+        post {
+            error = null; statusText = "কল দিচ্ছি…"
+            callPeer = target?.name ?: "স্টাফ"
+            callPeerImage = target?.imageUrl
+        }
         try {
             val resp = AlmaApi.send(
                 "POST", "/api/assistant/office/intercom",
@@ -183,7 +193,7 @@ object AgoraIntercom {
             post { error = MIC_DENIED_MSG; mode = Mode.IDLE; statusText = "" }
             return
         }
-        post { error = null; mode = Mode.RINGING; callSeconds = 0; statusText = if (outgoing) "রিং হচ্ছে…" else "কল ধরছেন…" }
+        post { error = null; mode = Mode.RINGING; callSeconds = 0; callOutgoing = outgoing; statusText = if (outgoing) "রিং হচ্ছে…" else "কল ধরছেন…" }
         remoteUids.clear()
         ringtone.stop()
         try {

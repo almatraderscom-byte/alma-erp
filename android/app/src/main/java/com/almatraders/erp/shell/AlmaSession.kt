@@ -27,11 +27,22 @@ object AlmaSession {
     var isOwner by mutableStateOf(false)
         private set
 
+    /** Our ERP User.id — the OneSignal external_id every push is addressed to.
+     *  Without it OneSignal has no identity to attach this device to. */
+    var userId by mutableStateOf<String?>(null)
+        private set
+
     /** Business ids the user may access (ERP businessAccess). */
     var businessAccess by mutableStateOf(listOf<String>())
         private set
 
     @Volatile private var loaded = false
+
+    /** App context (set once by the shell) so the session can drive NativePush.login. */
+    @Volatile private var appContext: android.content.Context? = null
+    fun attach(context: android.content.Context) {
+        if (appContext == null) appContext = context.applicationContext
+    }
 
     /** Bumps after every COMPLETED load. Screens key their fetch on this so a fresh
      *  login (which force-reloads the session) makes them re-fetch automatically —
@@ -79,6 +90,7 @@ object AlmaSession {
         try {
             val me = AlmaApi.getObject("/api/users/me")
             val u = me.optJSONObject("user") ?: me.optJSONObject("data") ?: me
+            u.str("id")?.let { userId = it }
             u.str("role")?.let { role = it }
             u.flexBool("isSystemOwner")?.let { if (it) isOwner = true }
             authed = true
@@ -94,6 +106,10 @@ object AlmaSession {
                 businessAccess = (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotEmpty() } }
             }
         } catch (_: Exception) { }
+        // Attach this device to our user in OneSignal the moment we know who we are.
+        // Push is addressed to this external_id; without the login the device is
+        // anonymous and every targeted push (calls included) misses it.
+        appContext?.let { ctx -> userId?.let { NativePush.login(ctx, it) } }
         loaded = true
         authVersion++          // signal every screen keyed on authVersion to re-fetch
     }
