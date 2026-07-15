@@ -32,7 +32,33 @@ import type { OwnerTurnAuthorization } from '@/agent/lib/turn-authorization'
 
 export type RoutineIntent = 'sales_today' | 'attendance' | 'stock' | 'orders_pending'
 
-/** intent → the ONE read tool that answers it. All four accept {} (defaults = today). */
+/** YYYY-MM-DD in Asia/Dhaka (same helper shape as staff-tools). */
+function dhakaToday(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Dhaka' })
+}
+
+/**
+ * intent → the ONE read tool + exact args that answer it. Args must satisfy each
+ * tool's strict schema — get_sales_summary REQUIRES from/to (2026-07-15 preview
+ * incident: the graph sent {} for it, Ajv rejected, and every sales lookup
+ * silently fell open to the normal loop; the other three genuinely default).
+ */
+export function routineIntentCall(intent: RoutineIntent): { toolName: string; args: Record<string, unknown> } {
+  switch (intent) {
+    case 'sales_today': {
+      const today = dhakaToday()
+      return { toolName: 'get_sales_summary', args: { from: today, to: today } }
+    }
+    case 'attendance':
+      return { toolName: 'get_attendance', args: {} }
+    case 'stock':
+      return { toolName: 'get_inventory_status', args: {} }
+    case 'orders_pending':
+      return { toolName: 'get_dashboard_snapshot', args: {} }
+  }
+}
+
+/** intent → tool name (kept for tests/telemetry). */
 export const ROUTINE_INTENT_TOOL: Record<RoutineIntent, string> = {
   sales_today: 'get_sales_summary',
   attendance: 'get_attendance',
@@ -104,6 +130,7 @@ const RoutineState = Annotation.Root({
   userText: Annotation<string>,
   intent: Annotation<RoutineIntent | null>({ reducer: (_a, b) => b, default: () => null }),
   toolName: Annotation<string>({ reducer: (_a, b) => b, default: () => '' }),
+  toolArgs: Annotation<Record<string, unknown>>({ reducer: (_a, b) => b, default: () => ({}) }),
   toolOutput: Annotation<Record<string, unknown> | null>({ reducer: (_a, b) => b, default: () => null }),
   toolSuccess: Annotation<boolean>({ reducer: (_a, b) => b, default: () => false }),
   toolError: Annotation<string | null>({ reducer: (_a, b) => b, default: () => null }),
@@ -141,9 +168,9 @@ export async function runRoutineTurnGraph(
     const graph = new StateGraph(RoutineState)
       .addNode('detect_intent', (s) => ({ intent: detectRoutineIntent(s.userText) }))
       .addNode('run_tool', async (s) => {
-        const toolName = ROUTINE_INTENT_TOOL[s.intent as RoutineIntent]
+        const { toolName, args } = routineIntentCall(s.intent as RoutineIntent)
         const started = Date.now()
-        const result = await executeTool(toolName, {}, {
+        const result = await executeTool(toolName, args, {
           conversationId: deps.conversationId,
           businessId: deps.businessId,
           modelId: deps.model.id,
@@ -153,6 +180,7 @@ export async function runRoutineTurnGraph(
         const out = (result ?? {}) as unknown as Record<string, unknown>
         return {
           toolName,
+          toolArgs: args,
           toolOutput: out,
           toolSuccess: out.success !== false,
           toolError: typeof out.error === 'string' ? out.error : null,
@@ -213,7 +241,7 @@ export async function runRoutineTurnGraph(
       toolRecord: {
         id: `graph_${s.toolName}_${Date.now()}`,
         toolName: s.toolName,
-        input: {},
+        input: s.toolArgs,
         output: s.toolOutput,
         status: 'success',
         durationMs: s.toolDurationMs,

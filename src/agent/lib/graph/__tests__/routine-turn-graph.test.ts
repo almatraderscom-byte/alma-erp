@@ -89,7 +89,11 @@ describe('runRoutineTurnGraph', () => {
     expect(r.intent).toBe('sales_today')
     expect(executeToolMock).toHaveBeenCalledTimes(1)
     expect(executeToolMock.mock.calls[0][0]).toBe(ROUTINE_INTENT_TOOL.sales_today)
-    expect(executeToolMock.mock.calls[0][1]).toEqual({})
+    // get_sales_summary REQUIRES from/to (2026-07-15: {} was Ajv-rejected and
+    // every sales lookup silently fell open) — the graph must send today/today.
+    const args = executeToolMock.mock.calls[0][1] as { from?: string; to?: string }
+    expect(args.from).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(args.to).toBe(args.from)
     expect(r.replyText).toContain('Boss')
     expect(r.toolRecord).toMatchObject({ toolName: 'get_sales_summary', status: 'success' })
     expect(r.usage).toEqual({ inputTokens: 120, outputTokens: 40 })
