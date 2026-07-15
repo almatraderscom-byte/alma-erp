@@ -860,6 +860,9 @@ final class AssistantVM {
     var personalMode = false
     /// done.needContinue arrived — fire one bounded machine "continue" after settle.
     private var pendingAutoContinue = false
+    /// The durable predecessor turn that the server marked as continuation-eligible.
+    /// This must be sent as control state, never as a visible owner message.
+    private var pendingAutoContinueTurnId: String?
     private var autoContinueCount = 0
 
     // ── PR 5: durable-turn client state ─────────────────────────────────────
@@ -1818,6 +1821,10 @@ final class AssistantVM {
         /// premium model (approve) or the cheap fallback (decline). No new message.
         struct Resume: Encodable { let approve: Bool; var fallbackModelId: String? = nil }
         var resume: Resume? = nil
+        /// Server-claimed continuation of a completed turn. When present, the
+        /// route creates no owner message and atomically consumes the predecessor
+        /// continuation flag (web parity).
+        var autoContinueFromTurnId: String? = nil
     }
 
     /// PR 3b — owner tapped the model-switch card: resume the paused turn on the
@@ -1848,20 +1855,29 @@ final class AssistantVM {
         }
     }
 
-    func send(_ raw: String, isAutoContinue: Bool = false, askCardId: String? = nil) {
-        if !isAutoContinue { autoContinueCount = 0 }   // manual message resets the budget
+    func send(_ raw: String, isAutoContinue: Bool = false, askCardId: String? = nil, autoContinueFromTurnId: String? = nil) {
+        if !isAutoContinue {
+            autoContinueCount = 0
+            pendingAutoContinue = false
+            pendingAutoContinueTurnId = nil
+        }   // manual message resets the budget and cancels a queued machine turn
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let structuredAutoContinue = isAutoContinue && autoContinueFromTurnId != nil
         let readyFiles: [AgentFileRef] = pendingFiles.compactMap {
             if case .ready(let ref) = $0.state { return ref } else { return nil }
         }
-        guard !text.isEmpty || !readyFiles.isEmpty, !isStreaming else { return }
+        guard !text.isEmpty || !readyFiles.isEmpty || structuredAutoContinue, !isStreaming else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
 
-        var userMsg = AgentChatMessage(id: "local-\(UUID().uuidString)", role: .user, text: text)
-        userMsg.localImages = pendingFiles.compactMap {
-            if case .failed = $0.state { return nil } else { return $0.image }
+        // A structured continuation is server control state, not a new owner
+        // message. Rendering a bubble here was the native-only duplicate-turn bug.
+        if !structuredAutoContinue {
+            var userMsg = AgentChatMessage(id: "local-\(UUID().uuidString)", role: .user, text: text)
+            userMsg.localImages = pendingFiles.compactMap {
+                if case .failed = $0.state { return nil } else { return $0.image }
+            }
+            messages.append(userMsg)
         }
-        messages.append(userMsg)
         pendingFiles = []
         isStreaming = true
         thinkingLive = true
@@ -1873,16 +1889,19 @@ final class AssistantVM {
         ownSendTick += 1
         // PR 5 — idempotency key: however transport fails, THIS send can only ever
         // become one server message + one turn + one execution.
-        let clientMessageId = UUID().uuidString
+        let clientMessageId = structuredAutoContinue ? nil : UUID().uuidString
         currentClientMessageId = clientMessageId
         seqBox.value = -1
         sawTerminalEvent = false
-        AlmaTurnLog.event("turn.submit", clientMessageId)
+        AlmaTurnLog.event("turn.submit", structuredAutoContinue
+                          ? "auto-continuation:\(autoContinueFromTurnId!)"
+                          : (clientMessageId ?? "manual"))
         ensureStreamingTail()
 
         let body = ChatBody(conversationId: conversationId, message: text,
                             files: readyFiles, modelId: modelId ?? "auto",
-                            clientMessageId: clientMessageId, askCardId: askCardId)
+                            clientMessageId: clientMessageId, askCardId: askCardId,
+                            autoContinueFromTurnId: autoContinueFromTurnId)
         streamTask = Task { [weak self] in
             await self?.runTurn(body: body)
         }
@@ -1917,6 +1936,13 @@ final class AssistantVM {
                     try await AssistantNet.streamEvents(request: req, buffer: buffer, firstEvent: firstEvent)
                 }
             } catch is WatchdogTimeout {
+                // A continuation has already been atomically claimed by the
+                // direct /chat route. The legacy worker handoff requires a
+                // user message and would turn this control action into a second
+                // owner-authored job, so never fall back by inventing one.
+                if body.autoContinueFromTurnId != nil {
+                    throw WatchdogTimeout()
+                }
                 try await runWorkerFallback(body: body, buffer: buffer)
             } catch AlmaAPIError.notAuthenticated {
                 // One cookie refresh + retry, mirroring AlmaAPI.perform. The retry
@@ -2236,7 +2262,17 @@ final class AssistantVM {
                     if let roundCostsUsd { messages[i].roundCostsUsd = roundCostsUsd }
                     if let costUsd, costUsd > 0 { messages[i].costUsd = String(format: "%.4f", costUsd) }
                 }
-                if needContinue { pendingAutoContinue = true }
+                if needContinue {
+                    // The server emits turn_id before done. Refuse to schedule a
+                    // continuation without that durable predecessor id: a plain
+                    // "continue" message is never a safe fallback.
+                    if let predecessor = currentTurnId {
+                        pendingAutoContinue = true
+                        pendingAutoContinueTurnId = predecessor
+                    } else {
+                        AlmaTurnLog.event("turn.autoContinueSkipped", "missing-predecessor-turn-id")
+                    }
+                }
                 sawTerminalEvent = true
                 thinkingLive = false
                 settleLiveMode()
@@ -2284,6 +2320,11 @@ final class AssistantVM {
     private func fireAutoContinueIfNeeded() {
         guard pendingAutoContinue else { return }
         pendingAutoContinue = false
+        guard let predecessor = pendingAutoContinueTurnId else {
+            AlmaTurnLog.event("turn.autoContinueSkipped", "missing-predecessor-turn-id")
+            return
+        }
+        pendingAutoContinueTurnId = nil
         guard autoContinueCount < Self.maxAutoContinues else {
             errorToast = "কাজটা লম্বা — অটো-continue সীমা শেষ। \"continue\" লিখলে বাকিটা এগোবে।"
             return
@@ -2293,7 +2334,8 @@ final class AssistantVM {
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             guard let self, !self.isStreaming else { return }
-            self.send(Self.autoContinueText, isAutoContinue: true)
+            self.send(Self.autoContinueText, isAutoContinue: true,
+                      autoContinueFromTurnId: predecessor)
         }
     }
 
