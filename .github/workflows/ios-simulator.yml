@@ -19,6 +19,12 @@ on:
       - 'src/agent/lib/turn-events.ts'
       - 'src/app/api/assistant/turn/**'
       - 'prisma/schema.prisma'
+      # Presentation-parity roadmap (stage 5): the native client renders what these
+      # produce — server presentation/timeline drift must also compile-check iOS.
+      - 'src/agent/lib/presentation/**'
+      - 'src/app/api/assistant/conversations/**'
+      - 'src/agent/lib/models/run-owner-turn.ts'
+      - 'src/agent/lib/core.ts'
 
 concurrency:
   group: ios-simulator-${{ github.ref }}
