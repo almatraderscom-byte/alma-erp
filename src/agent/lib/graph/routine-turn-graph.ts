@@ -200,6 +200,9 @@ export async function runRoutineTurnGraph(
       { signal: deps.signal, recursionLimit: 8 },
     )
 
+    console.log(
+      `[routine-graph] intent=${s.intent ?? 'none'} tool=${s.toolName || '-'} toolOk=${s.toolSuccess} replyLen=${s.replyText.length}`,
+    )
     if (!s.intent || !s.toolSuccess || !s.replyText) return { ...miss, intent: s.intent ?? null }
 
     return {

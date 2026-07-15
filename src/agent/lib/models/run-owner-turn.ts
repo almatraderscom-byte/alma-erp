@@ -761,7 +761,16 @@ async function* runAlternateProviderTurn(
   // invented numbers" class can't happen), the model only words the Bangla
   // answer. Any miss or failure falls open to the normal loop below untouched.
   // Rollout: AGENT_LANGGRAPH_ROUTINE=true/false; default ON in preview only.
-  if (!listenMode && headTier === 'light' && isRoutineGraphEnabled()) {
+  const routineGraphOn = isRoutineGraphEnabled()
+  if (!listenMode && headTier === 'light') {
+    // One line per light turn so "why didn't the graph run?" is answerable from
+    // runtime logs instead of guesswork (2026-07-15 preview debugging session:
+    // VERCEL_ENV visibility couldn't be confirmed any other way).
+    console.log(
+      `[routine-graph] gate: enabled=${routineGraphOn} flag=${process.env.AGENT_LANGGRAPH_ROUTINE ?? 'unset'} vercelEnv=${process.env.VERCEL_ENV ?? 'unset'} textLen=${lastUserText.length}`,
+    )
+  }
+  if (!listenMode && headTier === 'light' && routineGraphOn) {
     const g = await runRoutineTurnGraph(lastUserText, {
       model,
       businessId,
