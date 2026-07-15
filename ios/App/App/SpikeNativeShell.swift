@@ -1232,6 +1232,11 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
         NotificationCenter.default.addObserver(self, selector: #selector(refreshApprovalsBadge),
                                                name: .almaApprovalsChanged, object: nil)
 
+        // Notification-tap deep link: the web click handler forwards the target ERP
+        // path via AlmaNavBridge; land it on the exact native page (SwiftUIShell.swift).
+        NotificationCenter.default.addObserver(self, selector: #selector(onOpenPath(_:)),
+                                               name: .almaOpenPath, object: nil)
+
         delegate = self
         applyDarkAppearance()
         selection.prepare()
@@ -1246,6 +1251,7 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
 
     private var didRunCompanionSelfTest = false
+    private var didRunNotifTapSelfTest = false
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         // The window doesn't exist during init-time applyTheme — re-assert here so the
@@ -1280,6 +1286,22 @@ final class AlmaTabBarController: UITabBarController, UITabBarControllerDelegate
             // first appearance — re-assert once the launch dust settles.
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
                 self?.selectedIndex = i
+            }
+        }
+        // DEBUG self-test hook: ALMA_NOTIF_TAP=/path simulates a notification-tap
+        // deep link (env or simctl launch argv) once the shell settles, so sim
+        // proofs can exercise routeNotificationTap without APNs. No effect on a
+        // real launch.
+        let notifTapRaw = ProcessInfo.processInfo.environment["ALMA_NOTIF_TAP"]
+            ?? ProcessInfo.processInfo.arguments.first { $0.hasPrefix("ALMA_NOTIF_TAP=") }?
+                .split(separator: "=", maxSplits: 1, omittingEmptySubsequences: true)
+                .last.map(String.init)
+        if let p = notifTapRaw, p.hasPrefix("/"), !didRunNotifTapSelfTest {
+            didRunNotifTapSelfTest = true
+            // 6s: past the launch reparent/lock dust — a real tap arrives even later
+            // (after the webview + OneSignal JS boot), so this mirrors reality.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { [weak self] in
+                self?.routeNotificationTap(to: p)
             }
         }
         // DEBUG self-test hook (never fires in production): when launched with

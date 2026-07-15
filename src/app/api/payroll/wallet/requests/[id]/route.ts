@@ -101,7 +101,7 @@ export async function PATCH(
         priority: 'HIGH',
         title: `${request.type} request rejected`,
         message: body.note?.slice(0, 240) || 'Your wallet request was reviewed and rejected.',
-        actionUrl: '/portal',
+        actionUrl: '/portal/wallet',
       })
       await sendPayrollAlert({
         businessId: request.businessId,
@@ -216,7 +216,7 @@ export async function PATCH(
       priority: 'HIGH',
       title: `${request.type} request approved`,
       message: `Approved amount: ৳ ${approvedAmount.toLocaleString('en-BD')}. Your wallet ledger was updated.`,
-      actionUrl: '/portal',
+      actionUrl: '/portal/wallet',
     })
     await sendPayrollAlert({
       businessId: request.businessId,

@@ -511,7 +511,7 @@ export async function notifyEarlyLeavePenalty(
       priority: 'HIGH',
       title: 'Early checkout penalty applied',
       message: `Left ${record.earlyLeaveMinutes || 0} minutes early. Penalty: ৳ ${amount.toLocaleString('en-BD')}.`,
-      actionUrl: '/portal',
+      actionUrl: '/portal/wallet',
     }),
     notifyRole({
       role: 'SUPER_ADMIN',

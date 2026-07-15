@@ -18,11 +18,37 @@ type Stats = {
 
 type UserOption = { id: string; name: string; email: string }
 
+type PushHealthUser = {
+  userId: string
+  name: string
+  role: string
+  devices: Array<{ type: string; enabled: boolean; notificationTypes: number | null; deviceModel: string | null; deviceOs: string | null }>
+  enabledCount: number
+  nativeEnabled: boolean
+  verdict: 'OK' | 'WEB_ONLY' | 'DEAD' | 'NEVER_REGISTERED'
+}
+
+const VERDICT_BADGE: Record<PushHealthUser['verdict'], { label: string; className: string }> = {
+  OK: { label: '✅ Push পাবে', className: 'bg-emerald-500/15 text-emerald-300 border-emerald-400/30' },
+  WEB_ONLY: { label: '⚠️ শুধু ব্রাউজারে', className: 'bg-amber-500/15 text-amber-300 border-amber-400/30' },
+  DEAD: { label: '❌ Push বন্ধ', className: 'bg-red-500/15 text-red-300 border-red-400/30' },
+  NEVER_REGISTERED: { label: '❌ Register হয়নি', className: 'bg-red-500/15 text-red-300 border-red-400/30' },
+}
+
+const VERDICT_FIX: Record<PushHealthUser['verdict'], string | null> = {
+  OK: null,
+  WEB_ONLY: 'Alma ERP অ্যাপ install করে notification Allow করতে বলুন।',
+  DEAD: 'ফোনের Settings → Apps → Alma ERP → Notifications → Allow করে অ্যাপ একবার খুলতে বলুন।',
+  NEVER_REGISTERED: 'অ্যাপে লগইন করে notification prompt-এ Allow চাপতে বলুন (নতুন APK: /app/download)।',
+}
+
 export default function NotificationSettingsPage() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [users, setUsers] = useState<UserOption[]>([])
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
+  const [health, setHealth] = useState<PushHealthUser[] | null>(null)
+  const [healthLoading, setHealthLoading] = useState(false)
   const [form, setForm] = useState({
     title: '',
     message: '',
@@ -49,8 +75,22 @@ export default function NotificationSettingsPage() {
     setLoading(false)
   }
 
+  async function loadHealth() {
+    setHealthLoading(true)
+    try {
+      const res = await fetch('/api/notifications/push-health?scope=all', { cache: 'no-store' })
+      if (res.ok) {
+        const json = await res.json()
+        setHealth(json.users ?? [])
+      }
+    } finally {
+      setHealthLoading(false)
+    }
+  }
+
   useEffect(() => {
     void load()
+    void loadHealth()
   }, [])
 
   async function send() {
@@ -97,6 +137,51 @@ export default function NotificationSettingsPage() {
 
         <motion.div variants={fadeUp}>
           <BiometricLockToggle />
+        </motion.div>
+
+        <motion.div variants={fadeUp}>
+          <Card className="p-5">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-cream">Device push health</p>
+                <p className="text-[11px] text-muted mt-1">
+                  OneSignal থেকে LIVE অবস্থা — কে আসলে ফোনে push পাবে, কে পাবে না।
+                </p>
+              </div>
+              <Button size="xs" variant="secondary" onClick={() => void loadHealth()} disabled={healthLoading}>
+                {healthLoading ? 'Checking…' : 'Re-check'}
+              </Button>
+            </div>
+            {healthLoading && !health ? <Skeleton className="h-40" /> : !health?.length ? (
+              <p className="text-xs text-muted">Push health তথ্য পাওয়া যায়নি (OneSignal key config দেখুন)।</p>
+            ) : (
+              <div className="space-y-2">
+                {health.map(u => (
+                  <div key={u.userId} className="rounded-xl border border-white/[0.06] bg-white/[0.02] px-3 py-2.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-semibold text-cream">{u.name}</span>
+                      <span className="text-[10px] uppercase tracking-wide text-muted">{u.role}</span>
+                      <span className={`ml-auto rounded-full border px-2 py-0.5 text-[10px] font-bold ${VERDICT_BADGE[u.verdict].className}`}>
+                        {VERDICT_BADGE[u.verdict].label}
+                      </span>
+                    </div>
+                    {u.devices.length > 0 && (
+                      <p className="mt-1 text-[10px] text-muted">
+                        {u.devices.map((d, i) => (
+                          <span key={i} className="mr-2 inline-block">
+                            {d.enabled ? '🟢' : '⚫️'} {d.type.replace('Push', '')} {d.deviceModel || ''}
+                          </span>
+                        ))}
+                      </p>
+                    )}
+                    {VERDICT_FIX[u.verdict] && (
+                      <p className="mt-1 text-[10px] font-medium text-amber-200/90">{VERDICT_FIX[u.verdict]}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
         </motion.div>
 
         <motion.div variants={fadeUp} className="grid lg:grid-cols-[420px_1fr] gap-4">

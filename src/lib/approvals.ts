@@ -251,7 +251,8 @@ export async function notifyApprovalResolved(
     priority: 'NORMAL',
     title: status === 'APPROVED' ? 'Approval request approved' : 'Approval request rejected',
     message: `${approval.module} ${approval.type} was ${status.toLowerCase()}.${reason ? ` Reason: ${reason}` : ''}`,
-    actionUrl: approval.actionUrl || undefined,
+    // No per-record URL → land on the approvals page, not the dashboard root.
+    actionUrl: approval.actionUrl || '/approvals',
     createdById: actorUserId,
     metadata: { approvalId: approval.id, module: approval.module, type: approval.type, status },
   })

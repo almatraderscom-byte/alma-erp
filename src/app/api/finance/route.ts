@@ -3,7 +3,8 @@ import { serverGet } from '@/lib/server-api'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { sendFinanceAlert } from '@/lib/resend'
 import { prisma } from '@/lib/prisma'
-import { notifyRole } from '@/lib/notifications'
+import { notifyRoles } from '@/lib/notifications'
+import { NOTIFY_ROLES } from '@/lib/notification-routing'
 import { logEvent } from '@/lib/logger'
 import { apiFailure } from '@/lib/safe-api-response'
 import { TRADING_BUSINESS_ID, numberFromDecimal } from '@/lib/trading'
@@ -116,8 +117,7 @@ export async function POST(req: NextRequest) {
     const amount = Number(raw.amount || 0)
     const category = String(raw.category || 'Expense')
     void Promise.all([
-      notifyRole({
-        role: 'SUPER_ADMIN',
+      notifyRoles(NOTIFY_ROLES.expenseAdded, {
         businessId,
         type: 'EXPENSE_ADDED',
         priority: amount >= 10000 ? 'HIGH' : 'NORMAL',
