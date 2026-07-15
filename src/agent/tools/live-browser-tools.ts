@@ -75,6 +75,20 @@ function splitDataUrl(
   return { data, mediaType }
 }
 
+/** Capture a screenshot with ONE settle-beat retry. A heavy page mid-navigate
+ *  regularly times out the first capture (2026-07-15: seven consecutive
+ *  `step_timeout: screenshot (35000ms)` stripped the shots from a whole stretch
+ *  of the owner's browser turn — the very next steps captured fine). The retry
+ *  costs one extra command ONLY on failure. */
+async function captureScreenshotWithRetry(
+  deviceId: string,
+): Promise<Awaited<ReturnType<typeof runCommand>>> {
+  const first = await runCommand(deviceId, 'screenshot')
+  if (first.ok) return first
+  await new Promise((r) => setTimeout(r, 1500))
+  return runCommand(deviceId, 'screenshot')
+}
+
 /** Persist a companion screenshot dataURL → signed URL the OWNER can open in chat. */
 async function persistScreenshot(dataUrl: string | null | undefined): Promise<string | null> {
   if (!dataUrl || !dataUrl.startsWith('data:image')) return null
@@ -447,7 +461,7 @@ const live_browser_look: AgentTool = {
       }
       let visionImage: { data: string; mediaType: 'image/jpeg' | 'image/png' } | null = null
       if (input.screenshot !== false) {
-        const shot = await runCommand(dev.deviceId, 'screenshot')
+        const shot = await captureScreenshotWithRetry(dev.deviceId)
         if (shot.ok) {
           out.screenshotUrl = await persistScreenshot(shot.screenshot)
           visionImage = splitDataUrl(shot.screenshot)
@@ -694,7 +708,7 @@ const live_browser_act: AgentTool = {
       // image) see the effect of the action (skip for plain waits).
       let visionImage: { data: string; mediaType: 'image/jpeg' | 'image/png' } | null = null
       if (res.ok && action !== 'wait') {
-        const shot = await runCommand(dev.deviceId, 'screenshot')
+        const shot = await captureScreenshotWithRetry(dev.deviceId)
         if (shot.ok) {
           out.screenshotUrl = await persistScreenshot(shot.screenshot)
           visionImage = splitDataUrl(shot.screenshot)
