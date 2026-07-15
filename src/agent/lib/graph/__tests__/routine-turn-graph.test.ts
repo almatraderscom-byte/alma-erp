@@ -28,6 +28,8 @@ vi.mock('@/agent/lib/models/adapters', () => ({
 
 import {
   detectRoutineIntent,
+  extractOrderNumber,
+  routineIntentCall,
   runRoutineTurnGraph,
   isRoutineGraphEnabled,
   ROUTINE_INTENT_TOOL,
@@ -56,8 +58,29 @@ describe('detectRoutineIntent', () => {
     ['attendance dao', 'attendance'],
     ['stock koto ase', 'stock'],
     ['koto order pending', 'orders_pending'],
+    // ── LG-1 intents ──
+    ['aj koto khoroch holo', 'expense_today'],
+    ['আজকের খরচ কত?', 'expense_today'],
+    ['Eyafi ke ki task dise', 'staff_tasks'],
+    ['task gulo r status ki', 'staff_tasks'],
+    ['namaz er somoy koto', 'salah_today'],
+    ['আজ আসরের সময় কখন?', 'salah_today'],
+    ['koto approval pending ase', 'approvals_pending'],
+    ['pending approval ache?', 'approvals_pending'],
+    ['order 1234 er status ki', 'order_status'],
+    ['#ALM-1234 order kothay', 'order_status'],
   ] as const)('maps "%s" → %s', (text, intent) => {
     expect(detectRoutineIntent(text)).toBe(intent)
+  })
+
+  it.each([
+    'ei mash e koto khoroch holo', // period ≠ today — model loop picks the period
+    'Eyafi ke ei task dao: delivery', // assignment command, not a status lookup
+    'namaz porsi ekhon', // salah log talk, no time word
+    'order status ki', // order_status without a number — needs model judgement
+    'ki ki baki ase', // ambiguous (orders? tasks?) — no approval word
+  ])('LG-1 near-miss stays with the model loop: %s', (text) => {
+    expect(detectRoutineIntent(text)).toBeNull()
   })
 
   it.each([
@@ -122,6 +145,83 @@ describe('runRoutineTurnGraph', () => {
     executeToolMock.mockRejectedValue(new Error('boom'))
     const r = await runRoutineTurnGraph('aj koto sale holo', DEPS)
     expect(r.handled).toBe(false)
+    expect(r.missReason).toBe('graph_error')
+  })
+
+  // ── LG-1 ──
+
+  it('retryPolicy: a transient (retryable-code) tool failure is retried and then succeeds', async () => {
+    executeToolMock
+      .mockResolvedValueOnce({ success: false, error: 'fetch failed', errorCode: 'network', retryable: true })
+      .mockResolvedValueOnce({ success: true, data: { revenue: 999 } })
+    const r = await runRoutineTurnGraph('aj koto sale holo', DEPS)
+    expect(r.handled).toBe(true)
+    expect(executeToolMock).toHaveBeenCalledTimes(2)
+  }, 15_000)
+
+  it('retryPolicy: a deterministic failure is NOT retried — one call, fail open', async () => {
+    // malformed_args carries retryable=true in the envelope (a MODEL nudge) but
+    // the graph's args are code-built constants — retrying verbatim can't help.
+    executeToolMock.mockResolvedValue({ success: false, error: 'bad', errorCode: 'malformed_args', retryable: true })
+    const r = await runRoutineTurnGraph('aj koto sale holo', DEPS)
+    expect(r.handled).toBe(false)
+    expect(r.missReason).toBe('tool_failed')
+    expect(executeToolMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('retryPolicy: still-failing transient error exhausts retries and fails open', async () => {
+    executeToolMock.mockResolvedValue({ success: false, error: 'timeout', errorCode: 'timeout', retryable: true })
+    const r = await runRoutineTurnGraph('aj koto sale holo', DEPS)
+    expect(r.handled).toBe(false)
+    expect(executeToolMock).toHaveBeenCalledTimes(3) // maxAttempts
+  }, 15_000)
+
+  it('order_status: found order → handled, single-order args sent to get_orders', async () => {
+    executeToolMock.mockResolvedValue({
+      success: true,
+      data: { orders: [{ orderNumber: '1234', status: 'shipped' }], meta: {} },
+    })
+    const r = await runRoutineTurnGraph('order 1234 er status ki', DEPS)
+    expect(r.handled).toBe(true)
+    expect(r.intent).toBe('order_status')
+    expect(executeToolMock.mock.calls[0][0]).toBe('get_orders')
+    expect(executeToolMock.mock.calls[0][1]).toMatchObject({ orderNumber: '1234', limit: 100 })
+  })
+
+  it('order_status: number not in the recent window → intent-level miss, falls open (never bluffs "নেই")', async () => {
+    executeToolMock.mockResolvedValue({ success: true, data: { orders: [], meta: {} } })
+    const r = await runRoutineTurnGraph('order 1234 er status ki', DEPS)
+    expect(r.handled).toBe(false)
+    expect(r.missReason).toBe('intent_miss')
+  })
+})
+
+describe('LG-1 slot + args mapping', () => {
+  it.each([
+    ['order 1234 status', '1234'],
+    ['#ALM-1234 kothay', 'ALM-1234'],
+    ['অর্ডার 5678 er update', '5678'],
+    ['order ta kothay', null],
+  ] as const)('extractOrderNumber("%s") → %s', (text, want) => {
+    expect(extractOrderNumber(text)).toBe(want)
+  })
+
+  it('expense_today calls get_expense_summary with a today window', () => {
+    expect(routineIntentCall('expense_today', 'aj koto khoroch')).toEqual({
+      toolName: 'get_expense_summary',
+      args: { period: 'today', groupBy: 'category' },
+    })
+  })
+
+  it('staff_tasks sends NO fuzzy staffName (whole-office view; wrong-person answers impossible)', () => {
+    expect(routineIntentCall('staff_tasks', 'Eyafi ke ki task dise')).toEqual({
+      toolName: 'get_staff_tasks',
+      args: {},
+    })
+  })
+
+  it('order_status without an extractable number returns null (slot miss)', () => {
+    expect(routineIntentCall('order_status', 'order status ki')).toBeNull()
   })
 })
 

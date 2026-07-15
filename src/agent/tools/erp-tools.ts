@@ -255,7 +255,8 @@ const get_orders: AgentTool = {
     'Lists individual orders with optional status and date filters. ' +
     'status: "pending" | "confirmed" | "processing" | "shipped" | "delivered" | "cancelled" | "refunded" | "unknown". ' +
     'Counts use mapped status from the synced sheet (meta.sheetSyncedAt). If meta.pendingCrossCheck.mismatch is true, mention sync delay — do not assert pending count as ERP fact. ' +
-    'from/to: YYYY-MM-DD. limit: max 100 (default 20).',
+    'from/to: YYYY-MM-DD. limit: max 100 (default 20). ' +
+    'orderNumber: exact single-order lookup by order/invoice number — searches the most recent 100 orders only; an empty result means "not among recent orders", NOT "does not exist".',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -264,12 +265,15 @@ const get_orders: AgentTool = {
       from: { type: 'string', description: 'Start date YYYY-MM-DD (inclusive)' },
       to: { type: 'string', description: 'End date YYYY-MM-DD (inclusive)' },
       limit: { type: 'number', description: 'Max orders to return (max 100, default 20)' },
+      orderNumber: { type: 'string', description: 'Order/invoice number for a single-order status lookup (e.g. "1234", "#ALM-1234")' },
     },
     required: [],
   },
   handler: async (input) => {
     try {
-      const limit = Math.min(Number(input.limit ?? 20), 100)
+      // orderNumber lookup scans the widest window the API allows (100) —
+      // the number could be anywhere in the recent list.
+      const limit = input.orderNumber ? 100 : Math.min(Number(input.limit ?? 20), 100)
       const from = input.from ? String(input.from) : undefined
       const to = input.to ? String(input.to) : undefined
       const { orders, meta } = await listAgentOrders({
@@ -280,11 +284,29 @@ const get_orders: AgentTool = {
         toIso: to ? ymdToIso(to) : undefined,
         limit,
       })
+      // LG-1 single-order lookup: filter AFTER fetch (the orders API has no
+      // number filter). Digits-only equality absorbs "#", "ALM-" prefixes and
+      // case on either side; falls back to case-insensitive exact match for
+      // purely alphanumeric numbers.
+      let matched = orders
+      if (input.orderNumber) {
+        const want = String(input.orderNumber).trim()
+        const wantDigits = want.replace(/\D/g, '')
+        matched = orders.filter((o) => {
+          const have = (o.orderNumber ?? o.id ?? '').toString().trim()
+          if (!have) return false
+          if (have.toLowerCase() === want.toLowerCase()) return true
+          const haveDigits = have.replace(/\D/g, '')
+          return wantDigits.length >= 3 && haveDigits === wantDigits
+        })
+      }
       return {
         success: true,
         data: {
-          orders: orders.map((o) => ({ ...o, totalAmount: roundMoney(o.totalAmount) })),
-          meta,
+          orders: matched.map((o) => ({ ...o, totalAmount: roundMoney(o.totalAmount) })),
+          meta: input.orderNumber
+            ? { ...meta, orderNumberLookup: { query: String(input.orderNumber), searchedRecent: orders.length, found: matched.length } }
+            : meta,
         },
       }
     } catch (err) {
