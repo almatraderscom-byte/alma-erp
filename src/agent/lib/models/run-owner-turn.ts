@@ -66,6 +66,7 @@ import { logRouteSpan } from '@/agent/lib/tool-telemetry'
 import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
 import { isRoutineGraphEnabled, runRoutineTurnGraph, type RoutineGraphResult } from '@/agent/lib/graph/routine-turn-graph'
 import { isActionGraphEnabled, stageExpenseActionGraph, type StageExpenseResult } from '@/agent/lib/graph/action-turn-graph'
+import { runTurnGraphShadow } from '@/agent/lib/graph/turn-graph-shadow'
 import { buildOwnerRequirementNote, deriveOwnerTurnRequirements } from '@/agent/lib/owner-turn-requirements'
 import { contractToolFailureText, findContractToolFailure } from '@/agent/lib/contract-tool-failure'
 import {
@@ -237,6 +238,8 @@ async function* runAlternateProviderTurn(
   headTier?: HeadTier,
   /** Phase 3: same-model retry counter for owner-PINNED heads (never recurses past 1). */
   sameModelAttempt = 0,
+  /** LG-4 shadow: the live HeadDecision's `via` — scored against the shadow graph. */
+  headVia = 'unknown',
 ): AsyncGenerator<AgentEvent> {
   const model = getModel(modelId)
   const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false, deadlineAt = null } = options
@@ -742,6 +745,23 @@ async function* runAlternateProviderTurn(
     }
   }
 
+  // ── LG-4 shadow: the turn's decision pipeline replayed as a graph ──────────
+  // Pure over values already computed above (fast-path regexes, live head
+  // decision, tool selection, loop cap) — zero extra spend. The record lands on
+  // the route span; disagreements warn. Legacy executes regardless (roadmap:
+  // shadow → canary → on).
+  const turnGraphShadow = await runTurnGraphShadow({
+    lastUserText,
+    headTier: headTier ?? 'heavy',
+    headVia,
+    listenMode,
+    toolGroups: listenMode ? [] : toolSelection.groups,
+    toolCount: neutralTools.length,
+    toolRouter: toolSelection.router ?? null,
+    // The PLANNED loop cap — the graph paths may still zero it later this turn.
+    maxIterations: MAX_TOOL_ITERATIONS,
+  })
+
   // Phase 1 route span: what this turn's head was actually given — groups, final
   // tool count (after controls gating, provider cap and listen mode), model and
   // behavior-artifact versions. The tool events say what the model CALLED; this
@@ -771,6 +791,8 @@ async function* runAlternateProviderTurn(
       // light turn), 'handled' or 'miss'. Dashboard: handled share + the tiny
       // graph token usage vs the loop's normal spend = saved tokens.
       // LG-3: same for the action (interrupt) graph.
+      // LG-4: shadow decision-graph record (fastPath, agree, legacy via/tier).
+      turnGraph: turnGraphShadow ?? null,
       actionGraph: actionGraph ? (actionGraph.staged ? 'staged' : 'miss') : 'off',
       routineGraph: routineGraph ? (routineGraph.handled ? 'handled' : 'miss') : 'off',
       routineIntent: routineGraph?.intent ?? null,
@@ -1689,7 +1711,7 @@ async function* runAlternateProviderTurn(
           `[run-owner-turn] pinned head ${model.id} failed pre-answer → same-model retry:`,
           err instanceof Error ? err.message : err,
         )
-        yield* runAlternateProviderTurn(conversationId, model.id, options, headTier, 1)
+        yield* runAlternateProviderTurn(conversationId, model.id, options, headTier, 1, headVia)
         return
       }
       await captureAgentError(err, 'agent.head.pinned_down', { conversationId, modelId: model.id })
@@ -1730,7 +1752,7 @@ async function* runAlternateProviderTurn(
           variant: modelVariant(cheap),
           tier: 'light',
         }
-        yield* runAlternateProviderTurn(conversationId, cheapId, options, 'light')
+        yield* runAlternateProviderTurn(conversationId, cheapId, options, 'light', 0, 'cheap_fallback')
         return
       }
     }
@@ -1922,5 +1944,5 @@ export async function* runOwnerTurn(
     return
   }
 
-  yield* runAlternateProviderTurn(conversationId, model.id, options, decision.tier)
+  yield* runAlternateProviderTurn(conversationId, model.id, options, decision.tier, 0, decision.via)
 }
