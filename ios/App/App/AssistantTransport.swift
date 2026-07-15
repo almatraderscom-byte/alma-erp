@@ -67,7 +67,14 @@ enum TurnFailureKind {
 }
 
 struct TurnEnqueueResponse: Decodable { let turnId: String; let conversationId: String? }
-struct TurnStatusResponse: Decodable { let status: String?; let turnId: String?; let startedAt: String? }
+struct TurnStatusResponse: Decodable {
+    let status: String?
+    let turnId: String?
+    let startedAt: String?
+    /// Terminal turn ended continuation-eligible — the ONLY signal left when both
+    /// the direct SSE and the durable tail are gone and polling finds the terminal.
+    let continuationNeeded: Bool?
+}
 
 struct AgentSSEEvent: Decodable {
     let type: String

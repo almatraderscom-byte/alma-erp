@@ -1388,6 +1388,14 @@ final class AssistantVM {
             // We believed a turn was live. Is this terminal row OUR turn, or a stale
             // previous one (our send may have died before the server created a turn)?
             if isTerminalForOurTurn(status) {
+                // Polling is the LAST discovery path — the done event (needContinue +
+                // predecessor) never reached apply() here, so arm the structured
+                // continuation from the server's own snapshot. claimContinuationTurn
+                // keeps the claim exactly-once even if the event path also armed it.
+                if status.continuationNeeded == true, status.status == "done", let tid = status.turnId {
+                    pendingAutoContinue = true
+                    pendingAutoContinueTurnId = tid
+                }
                 await finishRecovery(terminalStatus: status.status ?? "done")
             } else if trigger == "transport-drop" {
                 // Bounded proof: turn creation can lag the send by a few seconds
