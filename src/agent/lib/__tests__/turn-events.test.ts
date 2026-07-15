@@ -36,7 +36,15 @@ describe('A2 — enqueue payload (buildTurnJobData)', () => {
       projectId: 'proj_9',
       personalMode: true,
       clientRequestId: 'request_123',
+      askCardId: null,
     })
+  })
+
+  it('carries a well-formed askCardId and drops a malformed one (AGENT-IOS-001)', () => {
+    const ok = buildTurnJobData('turn_1', 'conv_1', { message: 'হ্যাঁ', askCardId: 'card_abc12345' })
+    expect(ok?.askCardId).toBe('card_abc12345')
+    const bad = buildTurnJobData('turn_1', 'conv_1', { message: 'হ্যাঁ', askCardId: 'x y; drop' })
+    expect(bad?.askCardId).toBeNull()
   })
 
   it('refuses to build a job without a turnId, conversation, or message', () => {

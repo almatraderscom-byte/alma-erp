@@ -131,8 +131,8 @@ enum AgentTurnEvent: Sendable {
     case textDelta(String)
     case toolStart(id: String, name: String, inputPretty: String?)
     case toolEnd(id: String, ok: Bool, resultPreview: String?, screenshot: String?)
-    case subagentStart(id: String, roleLabel: String, task: String?)
-    case subagentEnd(id: String, ok: Bool, summary: String?)
+    case subagentStart(id: String, role: String, roleLabel: String, task: String?)
+    case subagentEnd(id: String, ok: Bool, summary: String?, toolsUsed: [String]?)
     case artifactSaved(id: String, title: String)
     case confirmCard(pendingActionId: String, summary: String, actionType: String?, costEstimate: Double?)
     case askCard(id: String, question: String, options: [String])
@@ -181,10 +181,12 @@ enum AgentTurnEvent: Sendable {
                             resultPreview: ev.resultPreview, screenshot: ev.screenshot)
         case "subagent_start":
             self = .subagentStart(id: ev.id ?? UUID().uuidString,
+                                  role: ev.role ?? "",
                                   roleLabel: ev.roleLabel ?? ev.role ?? "সহকারী",
                                   task: ev.task)
         case "subagent_end":
-            self = .subagentEnd(id: ev.id ?? "", ok: ev.success ?? true, summary: ev.summary)
+            self = .subagentEnd(id: ev.id ?? "", ok: ev.success ?? true, summary: ev.summary,
+                                toolsUsed: ev.toolsUsed)
         case "artifact_saved":
             self = ev.id.map { .artifactSaved(id: $0, title: ev.title ?? "ডকুমেন্ট") }
                 ?? .unknown(type: "artifact_saved/noid")

@@ -49,6 +49,9 @@ export type AgentPresentationV1 = {
   messageId: string
   blocks: AgentPresentationBlockV1[]
   usage?: AgentPresentationUsageV1
+  /** The honesty guard superseded a draft and rewrote the answer this turn —
+   *  clients render the "🔁 নিজে যাচাই করে ঠিক করেছে" badge from this. */
+  selfCorrected?: true
 }
 
 /** Raw persisted timeline entry (usage.timeline) — lenient by design. */
@@ -258,6 +261,12 @@ export function buildAgentPresentationV1(input: BuildPresentationInput): AgentPr
     }
   }
 
+  // Self-correction marker: the verification guard ran (verify entry) or a draft
+  // was superseded — either one means the visible answer was rewritten mid-turn.
+  const selfCorrected = timeline.some(
+    (e) => e.t === 'verify' || (e.t === 'text' && e.state === 'superseded'),
+  )
+
   const tokensIn = input.tokensIn ?? 0
   const tokensOut = input.tokensOut ?? 0
   const cacheCreation = input.cacheCreation ?? 0
@@ -270,6 +279,7 @@ export function buildAgentPresentationV1(input: BuildPresentationInput): AgentPr
     version: 1,
     messageId: input.messageId,
     blocks,
+    ...(selfCorrected ? { selfCorrected: true as const } : {}),
     ...(hasUsage
       ? {
           usage: {

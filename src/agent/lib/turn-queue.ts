@@ -25,6 +25,8 @@ export interface TurnJobInput {
   projectId?: string | null
   personalMode?: boolean
   clientRequestId?: string | null
+  /** AGENT-IOS-001 — tapped ask-card id; rides to the worker's internal chat call. */
+  askCardId?: string | null
 }
 
 export interface TurnJobData {
@@ -35,6 +37,7 @@ export interface TurnJobData {
   projectId: string | null
   personalMode: boolean
   clientRequestId: string | null
+  askCardId: string | null
 }
 
 /**
@@ -65,6 +68,10 @@ export function buildTurnJobData(
     projectId: typeof body.projectId === 'string' ? body.projectId : null,
     personalMode: body.personalMode === true,
     clientRequestId: typeof body.clientRequestId === 'string' ? body.clientRequestId : null,
+    askCardId:
+      typeof body.askCardId === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(body.askCardId.trim())
+        ? body.askCardId.trim()
+        : null,
   }
 }
 

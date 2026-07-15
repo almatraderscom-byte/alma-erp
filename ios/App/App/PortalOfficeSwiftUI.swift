@@ -1916,12 +1916,19 @@ struct PortalImagePreview: Identifiable {
 @available(iOS 17.0, *)
 struct PortalImageViewer: View {
     let preview: PortalImagePreview
+    /// Agent-chat images pass true — a ⬇ button saves the ACTUAL bytes to Photos
+    /// (web ImageWithDownload parity, owner ask 2026-07-15). Portal proof photos
+    /// keep the plain viewer.
+    var showsSave = false
     @Environment(\.dismiss) private var dismiss
     @State private var selection: Int
     @State private var scale: CGFloat = 1
+    @State private var saveState: SaveState = .idle
+    private enum SaveState: Equatable { case idle, busy, done, failed }
 
-    init(preview: PortalImagePreview) {
+    init(preview: PortalImagePreview, showsSave: Bool = false) {
         self.preview = preview
+        self.showsSave = showsSave
         _selection = State(initialValue: preview.index)
     }
 
@@ -1957,6 +1964,46 @@ struct PortalImageViewer: View {
             }
             .padding(.horizontal, 18).padding(.top, 8)
         }
+        .overlay(alignment: .bottom) {
+            if showsSave { saveButton.padding(.bottom, 26) }
+        }
+    }
+
+    private var saveButton: some View {
+        Button {
+            guard saveState != .busy, let u = URL(string: preview.urls[min(selection, preview.urls.count - 1)]) else { return }
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            saveState = .busy
+            Task {
+                if let data = try? await CSMediaSaver.fetch(u),
+                   await CSMediaSaver.saveToPhotos(data, ext: CSMediaSaver.ext(u, isVideo: false), isVideo: false) {
+                    saveState = .done
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                } else {
+                    saveState = .failed
+                }
+                try? await Task.sleep(nanoseconds: 2_200_000_000)
+                saveState = .idle
+            }
+        } label: {
+            HStack(spacing: 6) {
+                switch saveState {
+                case .busy: ProgressView().controlSize(.small).tint(.white)
+                case .done: Image(systemName: "checkmark").font(.system(size: 13, weight: .bold))
+                case .failed: Image(systemName: "exclamationmark.triangle").font(.system(size: 13, weight: .semibold))
+                case .idle: Image(systemName: "arrow.down.to.line").font(.system(size: 13, weight: .semibold))
+                }
+                Text(saveState == .done ? "Photos-এ সেভ হয়েছে"
+                     : saveState == .failed ? "সেভ করা গেল না"
+                     : "ডাউনলোড")
+                    .font(.system(size: 13.5, weight: .semibold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.25), lineWidth: 1))
+        }
+        .disabled(saveState == .busy)
     }
 }
 
