@@ -2352,8 +2352,8 @@ final class AssistantVM {
         let parityJSON = #"""
         {"id":"fix-a-parity","role":"assistant",
          "content":[{"type":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"}],
-         "tokensIn":1200,"tokensOut":300,"cacheCreation":5000,"cacheRead":20000,
-         "apiRounds":4,"roundCostsUsd":[0.01,0.01,0.01,0.012],"costUsd":0.042,
+         "tokensIn":105300,"tokensOut":2100,"cacheCreation":41000,"cacheRead":960000,
+         "apiRounds":6,"roundCostsUsd":[0.03,0.03,0.03,0.03,0.03,0.033],"costUsd":0.183,
          "createdAt":"2026-07-14T10:00:00.000Z",
          "timeline":[
            {"t":"text","text":"আগে স্টকের অবস্থাটা দেখে নিচ্ছি…"},
@@ -2378,6 +2378,11 @@ final class AssistantVM {
             ]
             rows.append(wireRow)
         }
+        // Footer-focused shot (ALMA_FEEDBACK_OPEN=1): stop at the first turn so
+        // its actions/cost footer is the bottom-most content on screen.
+        let footerShot = ProcessInfo.processInfo.environment["ALMA_FEEDBACK_OPEN"] == "1"
+            || ProcessInfo.processInfo.arguments.contains("ALMA_FEEDBACK_OPEN=1")
+        if footerShot { messages = rows; return }
         // A long structured-markdown reply — proves the manual "সংরক্ষণ" footer
         // action (detectArtifact ≥800 chars + headings) in the same fixture shot.
         rows.append(AgentChatMessage(id: "fix-u-doc", role: .user,
@@ -4413,7 +4418,21 @@ struct AgentMessageActions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            actionsRow
+            // Owner report 2026-07-15: with the feedback buttons added, a long
+            // token/cost figure got pushed off-screen. One line when it fits;
+            // otherwise the cost drops to its OWN full-width line below.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    actionButtons
+                    Spacer(minLength: 10)
+                    costText
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) { actionButtons; Spacer(minLength: 0) }
+                    costText
+                }
+            }
+            .padding(.top, 2)
             if reasonsOpen && !feedbackSent {
                 feedbackReasonsRow
             }
@@ -4450,8 +4469,9 @@ struct AgentMessageActions: View {
         }
     }
 
-    private var actionsRow: some View {
-        HStack(spacing: 6) {
+    /// Wordmark + time + copy/TTS/feedback/সংরক্ষণ — everything EXCEPT the cost
+    /// figure, so the ViewThatFits above can reflow the cost to its own line.
+    @ViewBuilder private var actionButtons: some View {
             AgentBrandWordmark(
                 animateReveal: vm.justSettledId == message.id,
                 isCurrent: vm.messages.last(where: {
@@ -4537,27 +4557,27 @@ struct AgentMessageActions: View {
                     }
                 }
             }
-            Spacer()
-            if let tin = message.tokensIn {
-                // Web-footer parity (RC-4): Σ total (incl. cache) · ↑input ⚡cache-write
-                // ♻cache-read ↓output $cost · N ধাপ — N = actual provider API rounds,
-                // the same number the web cost badge shows, never UI phase count.
-                let tout = message.tokensOut ?? 0
-                let cw = message.cacheCreation ?? 0
-                let cr = message.cacheRead ?? 0
-                let total = tin + tout + cw + cr
-                let rounds = (message.apiRounds ?? 0) > 1 ? " · \(almaBn(message.apiRounds!)) ধাপ" : ""
-                Text("Σ\(almaBnCompact(total)) · ↑\(almaBnCompact(tin))"
-                     + (cw > 0 ? " ⚡\(almaBnCompact(cw))" : "")
-                     + (cr > 0 ? " ♻\(almaBnCompact(cr))" : "")
-                     + " ↓\(almaBnCompact(tout))"
-                     + (message.costUsd.map { " $\($0)\(rounds)" } ?? ""))
-                    .font(.system(size: 9.5, design: .monospaced))
-                    .foregroundStyle(pal.muted.opacity(0.8))
-                    .lineLimit(1)
-            }
+    }
+
+    /// Web-footer parity (RC-4): Σ total (incl. cache) · ↑input ⚡cache-write
+    /// ♻cache-read ↓output $cost · N ধাপ — N = actual provider API rounds,
+    /// the same number the web cost badge shows, never UI phase count.
+    @ViewBuilder private var costText: some View {
+        if let tin = message.tokensIn {
+            let tout = message.tokensOut ?? 0
+            let cw = message.cacheCreation ?? 0
+            let cr = message.cacheRead ?? 0
+            let total = tin + tout + cw + cr
+            let rounds = (message.apiRounds ?? 0) > 1 ? " · \(almaBn(message.apiRounds!)) ধাপ" : ""
+            Text("Σ\(almaBnCompact(total)) · ↑\(almaBnCompact(tin))"
+                 + (cw > 0 ? " ⚡\(almaBnCompact(cw))" : "")
+                 + (cr > 0 ? " ♻\(almaBnCompact(cr))" : "")
+                 + " ↓\(almaBnCompact(tout))"
+                 + (message.costUsd.map { " $\($0)\(rounds)" } ?? ""))
+                .font(.system(size: 9.5, design: .monospaced))
+                .foregroundStyle(pal.muted.opacity(0.8))
+                .lineLimit(1)
         }
-        .padding(.top, 2)
     }
 
     private func relativeTime(_ iso: String?) -> String? {
@@ -5124,7 +5144,7 @@ struct AgentToolScreenshotThumb: View {
                     .strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
             }
             .buttonStyle(.plain)
-            .fullScreenCover(item: $preview) { PortalImageViewer(preview: $0) }
+            .fullScreenCover(item: $preview) { PortalImageViewer(preview: $0, showsSave: true) }
         }
     }
 }
@@ -7186,6 +7206,9 @@ struct AssistantScreen: View {
     /// generation-counter fan-out left every superseded task alive on MainActor).
     @State private var scrollDebounceTask: Task<Void, Never>?
     @State private var showArtifacts = false
+    /// DEBUG self-test hook (ALMA_ASSISTANT_VIEWERTEST=1) — presents the zoomable
+    /// image viewer with its সংরক্ষণ button for a headless fixture screenshot.
+    @State private var debugViewer: PortalImagePreview?
 
     let openWeb: (_ path: String, _ title: String) -> Void
     /// Wired by makeAssistantTab so the native bar buttons drive this screen.
@@ -7425,6 +7448,13 @@ struct AssistantScreen: View {
                 vm.loadParityFixture()
                 return
             }
+            // Chat-parity batch — full-screen image viewer incl. the ⬇ save button.
+            if argFlag("ALMA_ASSISTANT_VIEWERTEST") {
+                vm.loadParityFixture()
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                debugViewer = PortalImagePreview(urls: ["https://picsum.photos/seed/alma/900/560"], index: 0)
+                return
+            }
             // Roadmap Phase 2 — canned SSE wire through the real parser/reducer.
             if argFlag("ALMA_ASSISTANT_EVENTTEST") {
                 vm.runDebugEventTest()
@@ -7444,6 +7474,7 @@ struct AssistantScreen: View {
         .fullScreenCover(isPresented: $vm.showVoice) {
             AlmaVoiceConsoleView(vm: vm)
         }
+        .fullScreenCover(item: $debugViewer) { PortalImageViewer(preview: $0, showsSave: true) }
         .sheet(item: $toolSheet) { tool in
             AgentToolIOSheet(tool: tool)
         }
