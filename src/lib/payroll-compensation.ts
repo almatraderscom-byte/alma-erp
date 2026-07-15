@@ -116,7 +116,7 @@ async function notifyForCompensation(entryId: string, input: Omit<CompensationIn
     priority: input.type === 'PENALTY' ? 'HIGH' : 'NORMAL',
     title,
     message: `${title}: ${movement >= 0 ? '+' : '-'}৳ ${Math.abs(movement).toLocaleString('en-BD')}${input.note ? ` · ${input.note}` : ''}`,
-    actionUrl: '/portal',
+    actionUrl: '/portal/wallet',
   })
 
   const setting = await getCompensationSetting(input.businessId)
@@ -224,15 +224,32 @@ async function reverseDeliveredOrderCommission(businessId: string, orderId: stri
       source: COMMISSION_SOURCE,
       sourceRef: commissionReversalSourceRef(businessId, orderId),
     })
-    await notifyRole({
-      role: 'SUPER_ADMIN',
-      businessId,
-      type: 'PAYROLL_ALERT',
-      priority: 'HIGH',
-      title: 'Commission reversed',
-      message: `Order ${orderId} commission was reversed for ${original.employeeId}.`,
-      actionUrl: '/payroll',
+    const affected = await prisma.user.findFirst({
+      where: { employeeIdGas: original.employeeId, active: true },
+      select: { id: true },
     })
+    await Promise.all([
+      notifyRole({
+        role: 'SUPER_ADMIN',
+        businessId,
+        type: 'PAYROLL_ALERT',
+        priority: 'HIGH',
+        title: 'Commission reversed',
+        message: `Order ${orderId} commission was reversed for ${original.employeeId}.`,
+        actionUrl: '/payroll',
+      }),
+      // The staff member loses money here — they must hear about it too (audit
+      // gap: only SUPER_ADMIN was told, unlike every other ledger entry).
+      notifyUser({
+        userId: affected?.id,
+        businessId,
+        type: 'PAYROLL_ALERT',
+        priority: 'HIGH',
+        title: 'Commission reversed',
+        message: `Order ${orderId} was returned/cancelled — its delivery commission was reversed.`,
+        actionUrl: '/portal/wallet',
+      }),
+    ])
     return { ok: true, entryId: reversal.id, reversedEntryId: original.id }
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {

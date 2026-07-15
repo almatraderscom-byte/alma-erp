@@ -45,6 +45,10 @@ const NotificationSoundBridge = dynamic(
   () => import('@/components/notifications/NotificationSoundBridge').then(mod => mod.NotificationSoundBridge),
   { ssr: false, loading: () => null },
 )
+const NativeUpdateNudge = dynamic(
+  () => import('@/components/notifications/NativeUpdateNudge').then(mod => mod.NativeUpdateNudge),
+  { ssr: false, loading: () => null },
+)
 
 function RoutePrefetcher() {
   const router = useRouter()
@@ -131,6 +135,7 @@ function ErpChrome({ children }: { children: ReactNode }) {
         <RoutePrefetcher />
         <OneSignalPushManager />
         <NotificationSoundBridge />
+        <NativeUpdateNudge />
       </NotificationShellProvider>
     </ApprovalCountProvider>
   )

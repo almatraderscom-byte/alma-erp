@@ -7,6 +7,7 @@ import {
   ANDROID_NOTIFICATION_SOUND_RAW,
   notificationSoundUrl,
 } from '@/lib/notification-sound'
+import { DEFAULT_ACTION_URL } from '@/lib/notification-routing'
 
 type NotifyInput = {
   userId?: string | null
@@ -47,12 +48,15 @@ async function resolveRecipients(input: NotifyInput) {
   })
 }
 
-function absoluteActionUrl(actionUrl?: string | null) {
+function absoluteActionUrl(actionUrl?: string | null, type?: NotificationType) {
   const base = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_PROJECT_PRODUCTION_URL || 'https://alma-erp-six.vercel.app'
   const normalizedBase = base.startsWith('http') ? base : `https://${base}`
-  if (!actionUrl) return normalizedBase
-  if (/^https?:\/\//i.test(actionUrl)) return actionUrl
-  return `${normalizedBase.replace(/\/$/, '')}/${actionUrl.replace(/^\//, '')}`
+  // No explicit target → the type's home page (notification-routing.ts), not
+  // the dashboard root — a tap should never silently dead-end.
+  const effective = actionUrl || (type ? DEFAULT_ACTION_URL[type] : null)
+  if (!effective) return normalizedBase
+  if (/^https?:\/\//i.test(effective)) return effective
+  return `${normalizedBase.replace(/\/$/, '')}/${effective.replace(/^\//, '')}`
 }
 
 function oneSignalResponseHasErrors(errors: unknown) {
@@ -60,6 +64,24 @@ function oneSignalResponseHasErrors(errors: unknown) {
   if (Array.isArray(errors)) return errors.length > 0
   if (typeof errors === 'object') return Object.keys(errors).length > 0
   return true
+}
+
+/**
+ * External user ids OneSignal rejected ("invalid_aliases") — users with no
+ * usable subscription. Both response shapes are handled:
+ * `{errors: {invalid_aliases: {external_id: [...]}}}` and a top-level
+ * `{invalid_aliases: {external_id: [...]}}`.
+ */
+function extractInvalidExternalIds(body: Record<string, unknown>): string[] {
+  const candidates = [
+    (body.errors as Record<string, unknown> | undefined)?.invalid_aliases,
+    body.invalid_aliases,
+  ]
+  for (const candidate of candidates) {
+    const ids = (candidate as { external_id?: unknown } | undefined)?.external_id
+    if (Array.isArray(ids)) return ids.filter((id): id is string => typeof id === 'string')
+  }
+  return []
 }
 
 /** OneSignal dashboard channel UUID vs native Android channel id (see AlmaPushChannels.java). */
@@ -86,7 +108,7 @@ async function sendOneSignal(
   const apiKey = process.env.ONESIGNAL_REST_API_KEY
   if (!appId || !apiKey || !userIds.length) return { configured: false, ok: false }
 
-  const url = absoluteActionUrl(actionUrl)
+  const url = absoluteActionUrl(actionUrl, meta.type)
   const usesV2Key = apiKey.startsWith('os_v2_')
 
   const payload: Record<string, unknown> = {
@@ -154,6 +176,7 @@ async function sendOneSignal(
   }
 
   if (oneSignalResponseHasErrors(responseBody.errors)) {
+    const invalidExternalIds = extractInvalidExternalIds(responseBody as Record<string, unknown>)
     logEvent('warn', 'onesignal_send_partial_failure', {
       errors: responseBody.errors,
       recipients: responseBody.recipients,
@@ -161,10 +184,10 @@ async function sendOneSignal(
       targetedUserIds: userIds,
       invalidAliases: (responseBody as Record<string, unknown>).invalid_aliases || null,
     })
-    return { configured: true, ok: Boolean(responseBody.id), partialFailure: true }
+    return { configured: true, ok: Boolean(responseBody.id), partialFailure: true, invalidExternalIds }
   }
 
-  return { configured: true, ok: true }
+  return { configured: true, ok: true, invalidExternalIds: [] as string[] }
 }
 
 export async function createNotification(input: NotifyInput) {
@@ -208,10 +231,20 @@ export async function createNotification(input: NotifyInput) {
     { notificationId: notification.id, businessId: input.businessId, type: input.type },
   )
   if (push.configured) {
+    // Per-user truth: users OneSignal rejected (no usable subscription) are
+    // FAILED even when the send as a whole succeeded — before this, one
+    // aggregate flag marked everyone SENT and dead devices stayed invisible.
+    const invalid = 'invalidExternalIds' in push ? push.invalidExternalIds || [] : []
     await prisma.notificationRecipient.updateMany({
-      where: { notificationId: notification.id },
+      where: { notificationId: notification.id, ...(invalid.length ? { userId: { notIn: invalid } } : {}) },
       data: { pushStatus: push.ok ? 'SENT' : 'FAILED' },
     })
+    if (invalid.length) {
+      await prisma.notificationRecipient.updateMany({
+        where: { notificationId: notification.id, userId: { in: invalid } },
+        data: { pushStatus: 'FAILED' },
+      })
+    }
   }
   if (input.priority === 'HIGH' || input.priority === 'CRITICAL') {
     await Promise.all(recipients.map(async user => {
@@ -261,6 +294,22 @@ export async function notifyRole(input: {
   actionUrl?: string | null
 }) {
   return createNotification(input)
+}
+
+/**
+ * Fan one event out to several roles (see NOTIFY_ROLES in
+ * notification-routing.ts). Same behaviour as N notifyRole calls — one
+ * Notification row per role, so per-role delivery stays independently tracked.
+ */
+export async function notifyRoles(roles: UserRole[], input: {
+  businessId?: string | null
+  type: NotificationType
+  priority?: NotificationPriority
+  title: string
+  message: string
+  actionUrl?: string | null
+}) {
+  return Promise.all(roles.map(role => createNotification({ ...input, role })))
 }
 
 export async function notifyAdminsFailure(businessId: string, message: string) {

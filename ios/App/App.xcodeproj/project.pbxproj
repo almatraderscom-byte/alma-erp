@@ -58,6 +58,7 @@
 		D1AA4400000000000000B001 /* NativeIntelligenceBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */; };
 		DD1E6C29144CBD386AB459B8 /* DigitalClientsSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97A60B31F639A640D07DCF08 /* DigitalClientsSwiftUI.swift */; };
 		E1AA5500000000000000B001 /* NativeSpeechBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1AA5500000000000000A001 /* NativeSpeechBridge.swift */; };
+		E2AA7700000000000000B001 /* AlmaNavBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2AA7700000000000000A001 /* AlmaNavBridge.swift */; };
 		E989B990E9C1E99742CD7724 /* cs_sample_7.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 8A25C75E224B4CF47FA32650 /* cs_sample_7.jpg */; };
 		EF0CA1B4340D6D66FF679402 /* cs_sample_8.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 3E78CDE7CC98B69EE283C2EF /* cs_sample_8.jpg */; };
 		F02ED3B33AB9140D0B84FC29 /* cs_model_1.jpg in Resources */ = {isa = PBXBuildFile; fileRef = B1D01ED2FC780CBB465AC9E2 /* cs_model_1.jpg */; };
@@ -209,6 +210,7 @@
 		C1AA3300000000000000A006 /* PulseRestore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseRestore.swift; sourceTree = "<group>"; };
 		D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeIntelligenceBridge.swift; sourceTree = "<group>"; };
 		E1AA5500000000000000A001 /* NativeSpeechBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpeechBridge.swift; sourceTree = "<group>"; };
+		E2AA7700000000000000A001 /* AlmaNavBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaNavBridge.swift; sourceTree = "<group>"; };
 		E4D7D31FF1297D19D3B7C7F2 /* CreativeStudioSwiftUI.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CreativeStudioSwiftUI.swift; sourceTree = "<group>"; };
 		F1AA6600000000000000A001 /* AlmaEntities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaEntities.swift; sourceTree = "<group>"; };
 		F1AA6600000000000000A002 /* EntityCacheBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EntityCacheBridge.swift; sourceTree = "<group>"; };
@@ -342,6 +344,7 @@
 				A3CC8800000000000000A002 /* VoiceLiveActivityController.swift */,
 				D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */,
 				E1AA5500000000000000A001 /* NativeSpeechBridge.swift */,
+				E2AA7700000000000000A001 /* AlmaNavBridge.swift */,
 				B2CC8800000000000000A001 /* AlmaCompanion.swift */,
 				F1AA6600000000000000A001 /* AlmaEntities.swift */,
 				F1AA6600000000000000A002 /* EntityCacheBridge.swift */,
@@ -649,6 +652,7 @@
 				A3CC8800000000000000B002 /* VoiceLiveActivityController.swift in Sources */,
 				D1AA4400000000000000B001 /* NativeIntelligenceBridge.swift in Sources */,
 				E1AA5500000000000000B001 /* NativeSpeechBridge.swift in Sources */,
+				E2AA7700000000000000B001 /* AlmaNavBridge.swift in Sources */,
 				B2CC8800000000000000B001 /* AlmaCompanion.swift in Sources */,
 				F1AA6600000000000000B001 /* AlmaEntities.swift in Sources */,
 				F1AA6600000000000000B002 /* EntityCacheBridge.swift in Sources */,

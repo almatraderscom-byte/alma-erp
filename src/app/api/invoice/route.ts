@@ -4,7 +4,8 @@ import { Prisma } from '@prisma/client'
 import { peekNextInvoiceNumber, reserveNextInvoiceNumber } from '@/lib/lifestyle/invoice-sequence'
 import { serverGet, serverPost, INVOICE_SERVER_TIMEOUT_MS } from '@/lib/server-api'
 import { mergeActorPayload } from '@/lib/api-route-actor'
-import { notifyRole } from '@/lib/notifications'
+import { notifyRoles } from '@/lib/notifications'
+import { NOTIFY_ROLES } from '@/lib/notification-routing'
 import { sendFinanceAlert } from '@/lib/resend'
 import { errorMeta, logEvent } from '@/lib/logger'
 import { prisma } from '@/lib/prisma'
@@ -164,17 +165,7 @@ export async function POST(req: NextRequest) {
       orderId: id,
     })
     void Promise.all([
-      notifyRole({
-        role: 'SUPER_ADMIN',
-        businessId,
-        type: 'INVOICE_CREATED',
-        priority: 'NORMAL',
-        title: 'Invoice created',
-        message: `Invoice ${String(result.invoice_number || id)} was generated successfully.`,
-        actionUrl: '/invoice',
-      }),
-      notifyRole({
-        role: 'ADMIN',
+      notifyRoles(NOTIFY_ROLES.invoiceCreated, {
         businessId,
         type: 'INVOICE_CREATED',
         priority: 'NORMAL',
