@@ -27,6 +27,7 @@ describe('A2 — enqueue payload (buildTurnJobData)', () => {
       projectId: 'proj_9',
       personalMode: true,
       clientRequestId: 'request_123',
+      internalControl: false,
     })
     expect(data).toEqual({
       turnId: 'turn_1',
@@ -37,6 +38,7 @@ describe('A2 — enqueue payload (buildTurnJobData)', () => {
       personalMode: true,
       clientRequestId: 'request_123',
       askCardId: null,
+      internalControl: false,
     })
   })
 
