@@ -210,6 +210,25 @@ export async function stageExpenseActionGraph(
     const occurredAt = new Date()
     const money = slots.currency === 'BDT' ? `৳${slots.amount}` : `${slots.amount} AED`
     const summary = `খরচ: ${money}${slots.note ? ` — ${slots.note}` : ''}`.slice(0, 200)
+
+    // Dedupe (defense-in-depth for the 2026-07-16 continuation incident): an
+    // identical expense card in this conversation within 15 minutes — pending
+    // OR just resolved — means this detection is a replay of the same message,
+    // not a new expense. Miss → the model loop judges (it can see history).
+    const dupe = await db.agentPendingAction.findFirst({
+      where: {
+        conversationId: deps.conversationId ?? null,
+        type: 'log_expense',
+        summary,
+        createdAt: { gt: new Date(Date.now() - 15 * 60 * 1000) },
+      },
+      select: { id: true },
+    })
+    if (dupe) {
+      console.log(`[action-graph] duplicate expense card ${dupe.id} within 15m → normal loop`)
+      return miss
+    }
+
     const action = await db.agentPendingAction.create({
       data: {
         conversationId: deps.conversationId ?? null,

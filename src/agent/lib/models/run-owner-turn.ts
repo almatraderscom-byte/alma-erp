@@ -699,19 +699,31 @@ async function* runAlternateProviderTurn(
   // Runs BEFORE the route span (LG-1) so the span records the graph outcome —
   // the cost dashboard reads graph-handled share + saved tokens from it.
   // Rollout: AGENT_LANGGRAPH_ROUTINE=true/false; default ON in preview only.
+  // Internal/continuation turns (approval continuation, auto-continue, job
+  // results) carry a server directive in projectSystemInstructions and persist
+  // NO new owner message — lastUserText is the PREVIOUS owner message. The
+  // deterministic graphs must never re-detect on that stale text: 2026-07-16
+  // preview incident — approve → continuation turn re-staged the SAME expense
+  // card the owner had just approved. The model loop reads the directive and
+  // knows not to redo the work; the graphs are blind to it, so they sit out.
+  const internalTurn = Boolean(
+    projectSystemInstructions
+      && /\[(INTERNAL WORKFLOW CONTINUATION|SYSTEM CONTINUATION|INTERNAL SEO JOB RESULT)/.test(projectSystemInstructions),
+  )
+
   // ── LG-3: fixed WRITE intents stage their card as a paused graph thread ────
   // (interrupt pilot: log_expense only). Runs BEFORE the routine READ graph so
   // "500 taka khoroch holo" stages a card instead of reading today's summary.
   // Any miss falls through to the routine graph, then the normal loop.
   const actionGraphOn = isActionGraphEnabled()
   let actionGraph: StageExpenseResult | null = null
-  if (!listenMode && headTier === 'light' && actionGraphOn) {
+  if (!listenMode && headTier === 'light' && actionGraphOn && !internalTurn) {
     actionGraph = await stageExpenseActionGraph(lastUserText, { conversationId, turnId })
   }
 
   const routineGraphOn = isRoutineGraphEnabled()
   let routineGraph: RoutineGraphResult | null = null
-  if (!listenMode && headTier === 'light' && !actionGraph?.staged) {
+  if (!listenMode && headTier === 'light' && !actionGraph?.staged && !internalTurn) {
     // One line per light turn so "why didn't the graph run?" is answerable from
     // runtime logs instead of guesswork (2026-07-15 preview debugging session:
     // VERCEL_ENV visibility couldn't be confirmed any other way).

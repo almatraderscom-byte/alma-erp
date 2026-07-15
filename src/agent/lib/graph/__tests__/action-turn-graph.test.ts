@@ -17,6 +17,7 @@ const createMock = vi.fn()
 const updateMock = vi.fn()
 const updateManyMock = vi.fn()
 const findUniqueMock = vi.fn()
+const findFirstMock = vi.fn()
 const expenseCreateMock = vi.fn()
 const tx = {
   agentPendingAction: { updateMany: updateManyMock, findUnique: findUniqueMock, update: updateMock },
@@ -27,6 +28,7 @@ vi.mock('@/lib/prisma', () => ({
     agentPendingAction: {
       create: (...a: unknown[]) => createMock(...a),
       update: (...a: unknown[]) => updateMock(...a),
+      findFirst: (...a: unknown[]) => findFirstMock(...a),
     },
     $transaction: async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx),
   },
@@ -57,6 +59,7 @@ beforeEach(() => {
   process.env.AGENT_LANGGRAPH_INTERRUPT = 'true'
   createMock.mockResolvedValue({ id: 'act-1' })
   updateMock.mockResolvedValue({})
+  findFirstMock.mockResolvedValue(null) // no duplicate card by default
 })
 
 describe('isActionGraphEnabled (rollout discipline)', () => {
@@ -142,6 +145,13 @@ describe('stage → interrupt → resume round-trip', () => {
   it('no checkpointer → staging fails open, no card row created', async () => {
     saver = null
     const staged = await stageExpenseActionGraph('500 taka khoroch holo', { conversationId: 'c' })
+    expect(staged.staged).toBe(false)
+    expect(createMock).not.toHaveBeenCalled()
+  })
+
+  it('duplicate card within 15m → miss, NO new card (2026-07-16 continuation incident)', async () => {
+    findFirstMock.mockResolvedValue({ id: 'act-old' })
+    const staged = await stageExpenseActionGraph('500 taka khoroch holo lunch e', { conversationId: 'conv-1' })
     expect(staged.staged).toBe(false)
     expect(createMock).not.toHaveBeenCalled()
   })
