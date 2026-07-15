@@ -23,7 +23,7 @@ export const AGENT_VERSIONS = {
   prompt: 'p2026.07.14.3',
   toolManifest: 't2026.07.15.1',
   router: 'r2026.07.15',
-  workflow: 'w2026.07.15.1',
+  workflow: 'w2026.07.15.2',
 } as const
 
 export type AgentVersionStamp = typeof AGENT_VERSIONS
