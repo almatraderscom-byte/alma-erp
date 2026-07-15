@@ -63,6 +63,8 @@ export type IntercomStaffInfo = {
   name: string
   /** Linked User.phone when present — enables the owner's native tel: live call. */
   phone: string | null
+  /** Linked User.profileImageUrl — the call screen shows a real face, not an initial. */
+  imageUrl: string | null
 }
 
 export type IntercomFeed = {
@@ -86,7 +88,7 @@ const FEED_HOURS = 24
 const FEED_LIMIT = 30
 
 /** Active staff of a business (receipt fan-out + owner roster). */
-async function activeStaff(businessId: string): Promise<{ id: string; name: string; telegramChatId: string | null; ntfyTopic: string | null; phone: string | null; userId: string | null }[]> {
+async function activeStaff(businessId: string): Promise<{ id: string; name: string; telegramChatId: string | null; ntfyTopic: string | null; phone: string | null; userId: string | null; imageUrl: string | null }[]> {
   const rows = await prisma.agentStaff.findMany({
     where: { businessId, active: true },
     select: {
@@ -96,7 +98,7 @@ async function activeStaff(businessId: string): Promise<{ id: string; name: stri
       ntfyTopic: true,
       // user.id = the OneSignal external_id the device registered with, so a
       // call/alert can ring the installed app directly (not only Telegram/ntfy).
-      user: { select: { id: true, phone: true } },
+      user: { select: { id: true, phone: true, profileImageUrl: true } },
     },
     orderBy: { createdAt: 'asc' },
   })
@@ -107,6 +109,7 @@ async function activeStaff(businessId: string): Promise<{ id: string; name: stri
     ntfyTopic: r.ntfyTopic,
     phone: r.user?.phone ?? null,
     userId: r.user?.id ?? null,
+    imageUrl: r.user?.profileImageUrl ?? null,
   }))
 }
 
@@ -412,7 +415,7 @@ export async function getIntercomFeed(
     broadcasts,
     staff:
       viewer.role === 'owner'
-        ? staff.map((s) => ({ id: s.id, name: s.name, phone: s.phone }))
+        ? staff.map((s) => ({ id: s.id, name: s.name, phone: s.phone, imageUrl: s.imageUrl }))
         : [],
     liveChannel: liveIntercomChannel(businessId),
     serverNow: new Date().toISOString(),
