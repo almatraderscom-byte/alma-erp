@@ -84,6 +84,12 @@ jobs:
           if [ -n "$MARKETING_VERSION_INPUT" ]; then
             EXTRA="MARKETING_VERSION=$MARKETING_VERSION_INPUT"
           fi
+          # CODE_SIGN_IDENTITY override is REQUIRED, not cosmetic: the project's
+          # Release config pins "Apple Distribution" while the targets sign
+          # automatically, and xcodebuild refuses that combination ("conflicting
+          # provisioning settings", run 29444190492). Archive with a development
+          # identity; -exportArchive below distribution-signs in the cloud via the
+          # ASC key. This is the same override that produced builds 71 and 72.
           xcodebuild archive \
             -workspace App.xcworkspace \
             -scheme App \
@@ -95,6 +101,7 @@ jobs:
             -authenticationKeyID "${{ secrets.ASC_KEY_ID }}" \
             -authenticationKeyIssuerID "${{ secrets.ASC_ISSUER_ID }}" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_IDENTITY="Apple Development" \
             $EXTRA
 
       - name: Write export options
