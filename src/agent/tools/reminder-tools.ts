@@ -40,13 +40,13 @@ const set_reminder: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      title: { type: 'string' },
-      body: { type: 'string' },
+      title: { type: 'string', description: 'Short reminder title (Bangla)' },
+      body: { type: 'string', description: 'Optional longer detail spoken/shown with the reminder' },
       dueAt: { type: 'string', description: 'ISO 8601 datetime (future)' },
       recurrenceRrule: { type: 'string', description: 'e.g. FREQ=DAILY' },
       tier: { type: 'number', description: '1, 2, or 3 (default 1)' },
-      voice: { type: 'boolean' },
-      conversationId: { type: 'string' },
+      voice: { type: 'boolean', description: 'true → also speak it as Bangla TTS voice' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['title', 'dueAt'],
   },
@@ -151,7 +151,7 @@ const cancel_reminder: AgentTool = {
   description: 'Cancels a reminder by id.',
   input_schema: {
     type: 'object' as const,
-    properties: { id: { type: 'string' } },
+    properties: { id: { type: 'string', description: 'Reminder id from list_reminders' } },
     required: ['id'],
   },
   handler: async (input) => {
@@ -173,7 +173,7 @@ const snooze_reminder: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      id: { type: 'string' },
+      id: { type: 'string', description: 'Reminder id from list_reminders' },
       minutes: { type: 'number', description: 'Default 30' },
     },
     required: ['id'],
@@ -202,11 +202,11 @@ const send_urgent_alert: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      title: { type: 'string' },
-      message: { type: 'string' },
-      tier: { type: 'number', enum: [2, 3] },
-      voice: { type: 'boolean' },
-      conversationId: { type: 'string' },
+      title: { type: 'string', description: 'Short alert title (Bangla)' },
+      message: { type: 'string', description: 'The alert body the owner will read/hear' },
+      tier: { type: 'number', enum: [2, 3], description: '2=critical ntfy push, 3=phone call (confirm card required)' },
+      voice: { type: 'boolean', description: 'true → also speak it as Bangla TTS voice' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['title', 'message', 'tier'],
   },
@@ -262,7 +262,7 @@ const get_outbound_call_status: AgentTool = {
     type: 'object' as const,
     properties: {
       phone: { type: 'string', description: 'Filter by number (01… or +880…). Recommended.' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
   },
   handler: async (input) => {
@@ -323,7 +323,7 @@ const outbound_phone_call: AgentTool = {
         enum: ['male', 'female'],
         description: 'Only when ttsProvider=elevenlabs. male=Charlie, female=River. Default male.',
       },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['phone', 'message'],
   },

@@ -1,5 +1,6 @@
 import { dispatchCreateOrder } from '@/lib/lifestyle/write-dispatch'
-import { notifyRole } from '@/lib/notifications'
+import { notifyRoles } from '@/lib/notifications'
+import { NOTIFY_ROLES } from '@/lib/notification-routing'
 import { sendOrderAlert } from '@/lib/resend'
 import { errorMeta, logEvent } from '@/lib/logger'
 import { enqueueOrderConfirmationSms } from '@/services/sms/events'
@@ -129,23 +130,15 @@ export async function ingestWebsiteOrder(input: WebsiteOrderPayload) {
   })
 
   void Promise.all([
-    notifyRole({
-      role: 'ADMIN',
+    // Role matrix (notification-routing.ts) — staff fulfil website orders too;
+    // ?q= lands the tap on the order itself.
+    notifyRoles(NOTIFY_ROLES.orderCreated, {
       businessId: 'ALMA_LIFESTYLE',
       type: 'ORDER_ASSIGNED',
       priority: 'NORMAL',
       title: 'New website order',
       message: `Order ${erpOrderId || input.website_order_id} from ${input.customer_name} (${input.website_order_id}).`,
-      actionUrl: '/orders',
-    }),
-    notifyRole({
-      role: 'SUPER_ADMIN',
-      businessId: 'ALMA_LIFESTYLE',
-      type: 'ORDER_ASSIGNED',
-      priority: 'NORMAL',
-      title: 'New website order',
-      message: `Order ${erpOrderId || input.website_order_id} from ${input.customer_name} (${input.website_order_id}).`,
-      actionUrl: '/orders',
+      actionUrl: `/orders?q=${encodeURIComponent(String(erpOrderId || input.website_order_id))}`,
     }),
     sendOrderAlert({
       businessId: 'ALMA_LIFESTYLE',

@@ -3,11 +3,11 @@
  */
 import type Anthropic from '@anthropic-ai/sdk'
 import { CS_CUSTOMER_TOOLS, CS_CUSTOMER_TOOL_NAMES } from './cs-tools'
-import type { AgentTool, ToolResult } from './registry'
+import { hardenToolSchemas, runRegisteredTool, type AgentTool, type ToolResult } from './registry'
 
 export { CS_CUSTOMER_TOOL_NAMES }
 
-export const CUSTOMER_SAFE_TOOLS: AgentTool[] = [...CS_CUSTOMER_TOOLS]
+export const CUSTOMER_SAFE_TOOLS: AgentTool[] = hardenToolSchemas([...CS_CUSTOMER_TOOLS])
 
 /** Exact allowed set for unit tests. */
 export const CUSTOMER_SAFE_TOOL_NAMES: readonly string[] = CS_CUSTOMER_TOOL_NAMES
@@ -31,10 +31,13 @@ export async function executeCsTool(
   serverContext: Record<string, unknown> = {},
 ): Promise<ToolResult> {
   const tool = CUSTOMER_SAFE_TOOLS.find((t) => t.name === name)
-  if (!tool) return { success: false, error: `Unknown CS tool: ${name}` }
-  try {
-    return await tool.handler({ ...input, ...serverContext })
-  } catch (err) {
-    return { success: false, error: String(err) }
+  if (!tool) {
+    return { success: false, error: `Unknown CS tool: ${name}`, errorCode: 'unknown_tool', retryable: false }
   }
+  return runRegisteredTool(tool, input, serverContext, {
+    surface: 'cs',
+    conversationId: serverContext.conversationId as string | undefined,
+    businessId: (serverContext.businessId as string | undefined) ?? 'ALMA_LIFESTYLE',
+    turnId: serverContext.turnId as string | undefined,
+  })
 }

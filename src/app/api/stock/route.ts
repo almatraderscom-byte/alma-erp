@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getLifestyleStock } from '@/lib/lifestyle/read'
 import { dispatchInventoryAction } from '@/lib/lifestyle/write-dispatch'
 import { prisma } from '@/lib/prisma'
-import { notifyRole } from '@/lib/notifications'
+import { notifyRoles } from '@/lib/notifications'
+import { NOTIFY_ROLES } from '@/lib/notification-routing'
 import { mergeActorPayload } from '@/lib/api-route-actor'
 import { enqueueLowStockAlertSms } from '@/services/sms/events'
 import { logEvent } from '@/lib/logger'
@@ -26,8 +27,7 @@ export async function GET(req: NextRequest) {
       if (!existing) {
         void Promise.all([
           enqueueLowStockAlertSms({ businessId: 'ALMA_LIFESTYLE', product: out ? 'out-of-stock inventory' : 'low-stock inventory' }),
-          notifyRole({
-            role: 'ADMIN',
+          notifyRoles(NOTIFY_ROLES.lowStock, {
             businessId: 'ALMA_LIFESTYLE',
             type: 'LOW_STOCK',
             priority: out ? 'HIGH' : 'NORMAL',

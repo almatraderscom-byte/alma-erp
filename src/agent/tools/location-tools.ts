@@ -84,7 +84,7 @@ const get_staff_location_history: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      staff: { type: 'string' },
+      staff: { type: 'string', description: 'Staff member name (optional — omit for all staff)' },
       date: { type: 'string', description: 'YYYY-MM-DD (default: today Dhaka)' },
     },
     required: ['staff'],

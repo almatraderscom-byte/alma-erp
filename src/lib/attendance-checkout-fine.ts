@@ -231,7 +231,7 @@ export async function processNoCheckoutFine(input: {
       priority: 'NORMAL',
       title: 'চেক-আউট জরিমানা মাফ',
       message: `${dateLabel} তারিখে চেক-আউট না করার জরিমানা মালিক মাফ করে দিয়েছেন। কোনো টাকা কাটা হয়নি।`,
-      actionUrl: '/portal',
+      actionUrl: '/portal/wallet',
     }).catch(() => {})
     dispatchApprovalsUpdated()
     return { ok: true, approval, fineAmount: 0, ledgerEntryId: null, rejected: true }
@@ -308,7 +308,7 @@ export async function processNoCheckoutFine(input: {
     priority: 'HIGH',
     title: 'চেক-আউট না করার জরিমানা',
     message: `${dateLabel} তারিখে চেক-আউট না করায় ৳${NO_CHECKOUT_FINE_AMOUNT.toLocaleString('en-BD')} জরিমানা কাটা হয়েছে। ভুল মনে হলে পোর্টাল থেকে আপিল করতে পারেন।`,
-    actionUrl: '/portal',
+    actionUrl: '/portal/wallet',
   }).catch(() => {})
 
   dispatchApprovalsUpdated()

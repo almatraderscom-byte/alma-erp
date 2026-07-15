@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getLifestyleOrder, getLifestyleOrders } from '@/lib/lifestyle/read'
 import { dispatchCreateOrder } from '@/lib/lifestyle/write-dispatch'
 import { mergeActorPayload } from '@/lib/api-route-actor'
-import { notifyRole } from '@/lib/notifications'
+import { notifyRoles } from '@/lib/notifications'
+import { NOTIFY_ROLES } from '@/lib/notification-routing'
 import { sendOrderAlert } from '@/lib/resend'
 import { errorMeta, logEvent } from '@/lib/logger'
 import { enqueueOrderConfirmationSms } from '@/services/sms/events'
@@ -60,24 +61,19 @@ export async function POST(req: NextRequest) {
       invoice: String((result as { invoice_num?: string; invoice_number?: string; order_id?: string }).invoice_num || (result as { invoice_number?: string }).invoice_number || (result as { order_id?: string }).order_id || ''),
       orderId: String((result as { order_id?: string }).order_id || payload.id || ''),
     })
+    const createdOrderId = String((result as { order_id?: string }).order_id || '')
     void Promise.all([
-      notifyRole({
-        role: 'ADMIN',
+      // Role matrix (notification-routing.ts): staff fulfil orders, so they get
+      // this too — the audit found "New order assigned" reached only admins.
+      // ?q= is the orders page's existing search deep link — the tap lands ON
+      // the order, not the bare list.
+      notifyRoles(NOTIFY_ROLES.orderCreated, {
         businessId: String(payload.business_id || 'ALMA_LIFESTYLE'),
         type: 'ORDER_ASSIGNED',
         priority: 'NORMAL',
         title: 'New order assigned',
-        message: `Order ${String((result as { order_id?: string }).order_id || '')} was created for ${String(payload.customer || payload.customer_name || 'customer')}.`,
-        actionUrl: '/orders',
-      }),
-      notifyRole({
-        role: 'SUPER_ADMIN',
-        businessId: String(payload.business_id || 'ALMA_LIFESTYLE'),
-        type: 'ORDER_ASSIGNED',
-        priority: 'NORMAL',
-        title: 'New order assigned',
-        message: `Order ${String((result as { order_id?: string }).order_id || '')} was created for ${String(payload.customer || payload.customer_name || 'customer')}.`,
-        actionUrl: '/orders',
+        message: `Order ${createdOrderId} was created for ${String(payload.customer || payload.customer_name || 'customer')}.`,
+        actionUrl: createdOrderId ? `/orders?q=${encodeURIComponent(createdOrderId)}` : '/orders',
       }),
       sendOrderAlert({
         businessId: String(payload.business_id || 'ALMA_LIFESTYLE'),

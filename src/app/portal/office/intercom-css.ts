@@ -176,7 +176,12 @@ export const INTERCOM_CSS = `
 .itc-vb.urgent .vb-usub{font-size:11.5px;color:rgba(254,202,202,.78);margin-top:3px}
 
 /* ═══ staff full-screen takeover (walkie-talkie) ═══ */
-.itc-takeover{position:fixed;inset:0;z-index:90;display:flex;flex-direction:column;align-items:center;
+/* z-index must sit ABOVE every app chrome layer (desktop sidebar z-130/140,
+   command palette z-20050, pwa/loading z-210..240) — otherwise the nav/sidebar
+   stays tappable over the call/takeover and one stray tap navigates away from
+   /portal/office, unmounting the call and dropping it. Kept just below the
+   forced-update / biometric-lock gates (int max), which must still supersede. */
+.itc-takeover{position:fixed;inset:0;z-index:2147483400;display:flex;flex-direction:column;align-items:center;
   justify-content:center;text-align:center;
   padding:calc(30px + env(safe-area-inset-top,0px)) 26px calc(30px + env(safe-area-inset-bottom,0px));
   font-family:'Hind Siliguri','Noto Sans Bengali',Inter,system-ui,sans-serif;color:#F7F8FC;
@@ -262,7 +267,7 @@ export const INTERCOM_CSS = `
 .itc-callstat.miss{color:#fca5a5;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3)}
 
 /* ═══ full-screen live-call overlay (incoming ring + active call) ═══ */
-.itc-call{position:fixed;inset:0;z-index:95;display:flex;flex-direction:column;align-items:center;
+.itc-call{position:fixed;inset:0;z-index:2147483401;display:flex;flex-direction:column;align-items:center;
   justify-content:space-between;text-align:center;
   padding:calc(64px + env(safe-area-inset-top,0px)) 28px calc(48px + env(safe-area-inset-bottom,0px));
   font-family:'Hind Siliguri','Noto Sans Bengali',Inter,system-ui,sans-serif;color:#F7F8FC;
@@ -294,6 +299,24 @@ export const INTERCOM_CSS = `
   -webkit-tap-highlight-color:transparent}
 .itc-call-mute.on{background:rgba(245,158,11,.16);border-color:rgba(245,158,11,.4);color:#fcd34d}
 .itc-call-end-lbl{font-size:11.5px;color:#AEB2C0}
+/* minimize (⌄) — collapse the full call to a pill */
+.itc-call-min{position:absolute;top:14px;right:14px;width:40px;height:40px;border-radius:9999px;border:1px solid rgba(255,255,255,.16);
+  background:rgba(255,255,255,.08);color:#F7F8FC;font-size:20px;line-height:1;cursor:pointer;-webkit-tap-highlight-color:transparent}
+/* minimized pill — floats bottom-right; page behind stays interactive */
+.itc-call-mini{position:fixed;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 88px);z-index:2147483401;
+  display:flex;align-items:center;gap:9px;padding:10px 12px 10px 14px;border-radius:9999px;cursor:pointer;
+  font-family:inherit;font-size:13.5px;font-weight:700;color:#F7F8FC;border:1px solid rgba(255,255,255,.16);
+  background:rgba(17,19,28,.96);box-shadow:0 10px 30px rgba(0,0,0,.5);-webkit-tap-highlight-color:transparent;
+  backdrop-filter:blur(10px)}
+.itc-call-mini.live{border-color:rgba(34,197,94,.4)}
+.itc-mini-dot{width:9px;height:9px;border-radius:50%;background:#f59e0b;flex:none}
+.itc-call-mini.live .itc-mini-dot{background:#22c55e;animation:itcpulse 1.6s ease-in-out infinite}
+.itc-mini-txt{font-variant-numeric:tabular-nums;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.itc-mini-mute,.itc-mini-end{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:13px;flex:none;background:rgba(255,255,255,.1)}
+.itc-mini-end{background:rgba(239,68,68,.9);color:#fff;font-weight:800}
+.itc-mini-mute.on{background:rgba(245,158,11,.22)}
+@keyframes itcpulse{0%,100%{opacity:1}50%{opacity:.35}}
 
 @media(prefers-reduced-motion:reduce){
   .itc-eq i,.itc-tk-wave.playing i,.itc-ptt-wrap.live .itc-ring,.itc-tk-av .ring,.itc-dock-h .t .dot,

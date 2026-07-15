@@ -55,7 +55,7 @@ const add_owner_todo: AgentTool = {
           'time first). Sets the todo due date AND auto-creates a reminder at that moment.',
       },
       dueHint: { type: 'string', description: 'Optional free-text timing hint, e.g. "এই সপ্তাহে" (not a hard timer)' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['title'],
   },
@@ -178,10 +178,10 @@ const update_owner_todo: AgentTool = {
     properties: {
       id: { type: 'string', description: 'Todo id' },
       titleMatch: { type: 'string', description: 'Alternative to id — match an open todo by partial title' },
-      status: { type: 'string', enum: ['open', 'done', 'dropped'] },
-      priority: { type: 'string', enum: ['low', 'normal', 'high'] },
-      detail: { type: 'string' },
-      conversationId: { type: 'string' },
+      status: { type: 'string', enum: ['open', 'done', 'dropped'], description: 'New todo status' },
+      priority: { type: 'string', enum: ['low', 'normal', 'high'], description: 'New priority' },
+      detail: { type: 'string', description: 'Updated todo text/detail' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
   },
   handler: async (input) => {

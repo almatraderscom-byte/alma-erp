@@ -115,6 +115,20 @@ export async function POST(
 
   const businessId = (action.businessId as AgentBusinessId) ?? ('ALMA_LIFESTYLE' as AgentBusinessId)
 
+  // Phase 1 approval span: a revision carries the owner's correction TEXT — the
+  // roadmap's "link approval-card revision feedback to the originating tool call".
+  // The span joins this card + feedback into the conversation trace (fail-open).
+  void import('@/agent/lib/tool-telemetry').then((m) =>
+    m.logToolEvent({
+      toolName: '__approval__',
+      phase: 'approval',
+      success: true,
+      conversationId,
+      businessId,
+      detail: { actionId, actionType: action.type, decision: 'revised', feedback: feedback.slice(0, 500) },
+    }),
+  ).catch(() => {})
+
   // Persist Boss's opinion as an owner turn so the head picks it up as the latest
   // message (and it leaves an auditable trail in the conversation).
   await db.agentMessage.create({

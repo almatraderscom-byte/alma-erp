@@ -22,7 +22,7 @@ const add_product_asset: AgentTool = {
     properties: {
       productCode: { type: 'string', description: 'SKU / product code, e.g. FM-1234' },
       imagePath: { type: 'string', description: 'agent-files path of flat product photo' },
-      name: { type: 'string' },
+      name: { type: 'string', description: 'Product display name for the content library' },
       category: { type: 'string', description: 'panjabi / family_set / saree / ...' },
       fabric: { type: 'string', description: 'Fabric + design details (Bangla or English)' },
       familyMatch: { type: 'boolean', description: 'True if this has a family-matching set' },
@@ -220,7 +220,7 @@ const run_content_post: AgentTool = {
     properties: {
       productCode: { type: 'string', description: 'Optional — omit to auto-pick next product' },
       page: { type: 'string', enum: ['lifestyle', 'onlineshop'], description: 'Default lifestyle' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
       variants: {
         type: 'array',
         items: {

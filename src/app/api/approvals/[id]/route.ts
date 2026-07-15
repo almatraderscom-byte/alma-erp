@@ -121,6 +121,8 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
     approvedAmount?: number
     transactionId?: string
     operation_id?: string
+    /** EXPENSE_REIMBURSEMENT only: 'wallet' (default, credit staff wallet) or 'instant' (owner already paid cash/bKash). */
+    payoutMode?: 'wallet' | 'instant'
   }
   if (body.action !== 'APPROVE' && body.action !== 'REJECT') {
     return NextResponse.json({ error: 'action APPROVE|REJECT required' }, { status: 400 })
@@ -314,7 +316,13 @@ export const PATCH = withApiRoute('approvals.action', async (req: NextRequest, r
     } else if (approval.module === APPROVAL_MODULES.FINANCE && approval.type === APPROVAL_TYPES.EXPENSE_ADD) {
       response = await processExpenseAdd(approval, body.action, token.sub, body.note)
     } else if (approval.module === APPROVAL_MODULES.FINANCE && approval.type === APPROVAL_TYPES.EXPENSE_REIMBURSEMENT) {
-      response = await processReimbursementApproval(approval, body.action, token.sub, body.note)
+      response = await processReimbursementApproval(
+        approval,
+        body.action,
+        token.sub,
+        body.note,
+        body.payoutMode === 'instant' ? 'instant' : 'wallet',
+      )
     } else if (approval.module === APPROVAL_MODULES.FINANCE && approval.type === APPROVAL_TYPES.OFFICE_FUND_ADVANCE) {
       response = await processOfficeAdvanceApproval(approval, body.action, token.sub, body.note)
     } else if (approval.module === APPROVAL_MODULES.FINANCE && approval.type === APPROVAL_TYPES.OFFICE_FUND_RECONCILE) {

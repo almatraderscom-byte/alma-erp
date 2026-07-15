@@ -21,7 +21,7 @@ const update_setting: AgentTool = {
     properties: {
       key:            { type: 'string', description: 'Setting key (e.g. salah_escalation_level)' },
       value:          { type: 'string', description: 'New value' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['key', 'value'],
   },
@@ -106,7 +106,7 @@ const set_salah_override: AgentTool = {
       delayUntil:     { type: 'string', description: 'ISO datetime: delay reminders until this time' },
       skip:           { type: 'boolean', description: 'true = skip reminders entirely (e.g. travel, illness)' },
       reason:         { type: 'string', description: 'Reason for override (stored for audit)' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['waqt'],
   },

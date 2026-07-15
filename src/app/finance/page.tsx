@@ -35,6 +35,7 @@ export default function FinanceHubPage() {
         <div className="flex flex-wrap gap-2">
           <Link href="/expenses"><Button size="xs">Expenses</Button></Link>
           <Link href="/finance/office-fund"><Button size="xs">Office Fund</Button></Link>
+          <Link href="/finance/personal-ledger"><Button size="xs">পাওনা-দেনা</Button></Link>
           <Link href="/payroll"><Button size="xs">Payroll</Button></Link>
         </div>
       )}

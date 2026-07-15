@@ -1,6 +1,22 @@
 import { GoogleGenerativeAI, type Content, type Part } from '@google/generative-ai'
-import type { NeutralMsg, NeutralTool, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
+import type { NeutralMsg, NeutralTool, NeutralToolChoice, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
 import { sanitizeSchemaForGemini } from '@/agent/lib/models/adapters/gemini-schema'
+
+/**
+ * Phase 3 request shaping (pure, unit-tested): map the neutral tool_choice to
+ * Gemini's `functionCallingConfig`. Gemini has no parallel_tool_calls dial —
+ * that control is OpenAI-dialect only. Returns undefined for 'auto'/absent so
+ * existing requests stay byte-identical.
+ */
+export function buildGeminiToolConfig(
+  toolChoice: NeutralToolChoice | undefined,
+  hasTools: boolean,
+): { functionCallingConfig: { mode: string; allowedFunctionNames?: string[] } } | undefined {
+  if (!hasTools || toolChoice === undefined || toolChoice === 'auto') return undefined
+  if (toolChoice === 'none') return { functionCallingConfig: { mode: 'NONE' } }
+  if (toolChoice === 'required') return { functionCallingConfig: { mode: 'ANY' } }
+  return { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: [toolChoice.name] } }
+}
 
 export function toGeminiContents(messages: NeutralMsg[]): Content[] {
   const out: Content[] = []
@@ -80,6 +96,8 @@ export class GoogleAdapter implements ProviderAdapter {
     tools: NeutralTool[]
     signal?: AbortSignal
     thinking?: 'adaptive' | 'level' | 'none'
+    toolChoice?: NeutralToolChoice
+    parallelToolCalls?: boolean
   }): AsyncGenerator<TurnEvent> {
     // Gemini 3.x Pro is a THINKING model: left to its defaults it reasons
     // SILENTLY (no streamed parts) for ~10s before emitting the first answer
@@ -101,6 +119,9 @@ export class GoogleAdapter implements ProviderAdapter {
 
     // Build the streaming call with an optional `includeThoughts`. Returned as a
     // thunk so we can retry WITHOUT thoughts if the preview model rejects the key.
+    // Phase 3 request controller — 'none'/'required'/named tool map to Gemini's
+    // functionCallingConfig; absent/'auto' leaves the request untouched.
+    const toolConfig = buildGeminiToolConfig(args.toolChoice, Boolean(functionDeclarations))
     const open = (withThoughts: boolean) => {
       const genModel = this.client.getGenerativeModel({
         model: args.apiModel,
@@ -111,6 +132,8 @@ export class GoogleAdapter implements ProviderAdapter {
           : undefined) as any,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         tools: (functionDeclarations ? [{ functionDeclarations }] : undefined) as any,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        toolConfig: toolConfig as any,
       })
       // Signal must reach the fetch itself — a stalled stream otherwise hangs
       // past the 280s turn abort until the 300s serverless kill (no salvage).

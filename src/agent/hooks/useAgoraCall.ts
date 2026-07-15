@@ -44,6 +44,14 @@ type AnyRemoteUser = {
 
 export type AgoraCallState = 'idle' | 'connecting' | 'in-call' | 'ended' | 'error'
 
+/**
+ * A remote `user-left` may be a transient blip (network hiccup, brief
+ * renegotiation), not a real hang-up. Like WhatsApp, we hold the call for a
+ * short grace window before declaring the peer gone — if they rejoin within it,
+ * nothing drops. Only a still-absent peer after this flips `remoteJoined` false.
+ */
+const REMOTE_LEFT_GRACE_MS = 5_000
+
 export type UseAgoraCall = {
   state: AgoraCallState
   join: (channel: string) => Promise<void>
@@ -65,6 +73,8 @@ export function useAgoraCall(): UseAgoraCall {
   const clientRef = useRef<AnyClient | null>(null)
   const localTrackRef = useRef<AnyLocalAudioTrack | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Pending "peer really gone" timer — armed on user-left, cancelled on rejoin.
+  const remoteGraceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Guards against setState after unmount (the hook must be safe to tear down).
   const mountedRef = useRef(true)
 
@@ -79,9 +89,17 @@ export function useAgoraCall(): UseAgoraCall {
     }
   }, [])
 
+  const clearRemoteGrace = useCallback(() => {
+    if (remoteGraceRef.current) {
+      clearTimeout(remoteGraceRef.current)
+      remoteGraceRef.current = null
+    }
+  }, [])
+
   /** Tear down everything. Idempotent — safe to call repeatedly and on unmount. */
   const teardown = useCallback(async () => {
     clearTimer()
+    clearRemoteGrace()
     const client = clientRef.current
     const track = localTrackRef.current
     clientRef.current = null
@@ -107,7 +125,7 @@ export function useAgoraCall(): UseAgoraCall {
         /* already left / never joined */
       }
     }
-  }, [clearTimer])
+  }, [clearTimer, clearRemoteGrace])
 
   const leave = useCallback(async () => {
     await teardown()
@@ -167,19 +185,27 @@ export function useAgoraCall(): UseAgoraCall {
         // muteLocalAudioStream) fires user-unpublished on the peer, and treating
         // that as "left" used to hang up the whole call the moment anyone muted.
         client.on('user-joined', () => {
+          clearRemoteGrace() // peer (re)appeared — cancel any pending "gone" timer
           if (mountedRef.current) {
             setRemoteJoined(true)
             setState('in-call')
           }
         })
         client.on('user-left', () => {
-          safeSet(setRemoteJoined, false)
+          // Don't hang up on a transient leave — hold for a grace window and only
+          // flip `remoteJoined` false if the peer is still absent (real hang-up).
+          clearRemoteGrace()
+          remoteGraceRef.current = setTimeout(() => {
+            remoteGraceRef.current = null
+            safeSet(setRemoteJoined, false)
+          }, REMOTE_LEFT_GRACE_MS)
         })
         // Remote audio → subscribe + play (re-fires after an unmute too).
         client.on('user-published', async (...args: unknown[]) => {
           const user = args[0] as AnyRemoteUser
           const mediaType = args[1] as string
           if (mediaType !== 'audio') return
+          clearRemoteGrace() // audio flowing again — peer is present
           try {
             await client.subscribe(user, 'audio')
             user.audioTrack?.play()
@@ -220,7 +246,7 @@ export function useAgoraCall(): UseAgoraCall {
         safeSet(setState, 'error')
       }
     },
-    [teardown, safeSet],
+    [teardown, safeSet, clearRemoteGrace],
   )
 
   const toggleMute = useCallback(async () => {

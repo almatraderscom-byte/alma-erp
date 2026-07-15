@@ -47,12 +47,12 @@ const log_expense: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      amount: { type: 'number' },
-      currency: { type: 'string', enum: ['BDT', 'AED'] },
-      category: { type: 'string' },
-      note: { type: 'string' },
-      occurredAt: { type: 'string' },
-      conversationId: { type: 'string' },
+      amount: { type: 'number', description: 'Whole-taka amount (no decimals)' },
+      currency: { type: 'string', enum: ['BDT', 'AED'], description: 'Currency (default BDT)' },
+      category: { type: 'string', description: 'Expense category, e.g. খাবার, যাতায়াত, বাজার' },
+      note: { type: 'string', description: 'What this was for (short Bangla/English note)' },
+      occurredAt: { type: 'string', description: 'When it happened, YYYY-MM-DD (default today)' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['amount', 'note'],
   },
@@ -96,13 +96,13 @@ const log_ledger_entry: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      personName: { type: 'string' },
-      direction: { type: 'string', enum: ['lent', 'borrowed', 'repaid_to_me', 'repaid_by_me'] },
-      amount: { type: 'number' },
-      currency: { type: 'string', enum: ['BDT', 'AED'] },
-      note: { type: 'string' },
-      occurredAt: { type: 'string' },
-      conversationId: { type: 'string' },
+      personName: { type: 'string', description: 'Who the debt/lending is with' },
+      direction: { type: 'string', enum: ['lent', 'borrowed', 'repaid_to_me', 'repaid_by_me'], description: 'lent=টাকা দিলাম, borrowed=নিলাম, repaid_to_me=ফেরত পেলাম, repaid_by_me=ফেরত দিলাম' },
+      amount: { type: 'number', description: 'Whole-taka amount (no decimals)' },
+      currency: { type: 'string', enum: ['BDT', 'AED'], description: 'Currency (default BDT)' },
+      note: { type: 'string', description: 'What this was for (short Bangla/English note)' },
+      occurredAt: { type: 'string', description: 'When it happened, YYYY-MM-DD (default today)' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['personName', 'direction', 'amount'],
   },
@@ -146,9 +146,9 @@ const get_expense_summary: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      period: { type: 'string', enum: ['today', 'week', 'month', 'all'] },
-      groupBy: { type: 'string', enum: ['category', 'currency', 'day'] },
-      currency: { type: 'string', enum: ['BDT', 'AED'] },
+      period: { type: 'string', enum: ['today', 'week', 'month', 'all'], description: 'Summary window (default month)' },
+      groupBy: { type: 'string', enum: ['category', 'currency', 'day'], description: 'Group the summary by this dimension' },
+      currency: { type: 'string', enum: ['BDT', 'AED'], description: 'Currency (default BDT)' },
     },
   },
   handler: async (input) => {
@@ -247,10 +247,10 @@ const get_ledger_balances: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      person: { type: 'string' },
-      currency: { type: 'string', enum: ['BDT', 'AED'] },
-      order: { type: 'string', enum: ['oldest_first', 'newest_first'] },
-      maxEntries: { type: 'number' },
+      person: { type: 'string', description: 'Filter to one person (optional)' },
+      currency: { type: 'string', enum: ['BDT', 'AED'], description: 'Currency (default BDT)' },
+      order: { type: 'string', enum: ['oldest_first', 'newest_first'], description: 'History sort order' },
+      maxEntries: { type: 'number', description: 'Max history entries to return' },
     },
   },
   handler: async (input) => {
@@ -326,25 +326,26 @@ const log_ledger_entries_batch: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      title: { type: 'string' },
+      title: { type: 'string', description: 'Short title for the batch confirm card' },
       entries: {
         type: 'array',
         minItems: 2,
+        description: 'The individual records for one combined confirm card (2+)',
         maxItems: 30,
         items: {
           type: 'object',
           properties: {
-            personName: { type: 'string' },
-            direction: { type: 'string', enum: ['lent', 'borrowed', 'repaid_to_me', 'repaid_by_me'] },
-            amount: { type: 'number' },
-            currency: { type: 'string', enum: ['BDT', 'AED'] },
-            note: { type: 'string' },
-            occurredAt: { type: 'string' },
+            personName: { type: 'string', description: 'Who the debt/lending is with' },
+            direction: { type: 'string', enum: ['lent', 'borrowed', 'repaid_to_me', 'repaid_by_me'], description: 'lent=টাকা দিলাম, borrowed=নিলাম, repaid_to_me=ফেরত পেলাম, repaid_by_me=ফেরত দিলাম' },
+            amount: { type: 'number', description: 'Whole-taka amount (no decimals)' },
+            currency: { type: 'string', enum: ['BDT', 'AED'], description: 'Currency (default BDT)' },
+            note: { type: 'string', description: 'What this was for (short Bangla/English note)' },
+            occurredAt: { type: 'string', description: 'When it happened, YYYY-MM-DD (default today)' },
           },
           required: ['personName', 'direction', 'amount'],
         },
       },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['entries'],
   },
@@ -402,24 +403,25 @@ const log_expenses_batch: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      title: { type: 'string' },
+      title: { type: 'string', description: 'Short title for the batch confirm card' },
       entries: {
         type: 'array',
         minItems: 2,
+        description: 'The individual records for one combined confirm card (2+)',
         maxItems: 30,
         items: {
           type: 'object',
           properties: {
-            amount: { type: 'number' },
-            currency: { type: 'string', enum: ['BDT', 'AED'] },
-            category: { type: 'string' },
-            note: { type: 'string' },
-            occurredAt: { type: 'string' },
+            amount: { type: 'number', description: 'Whole-taka amount (no decimals)' },
+            currency: { type: 'string', enum: ['BDT', 'AED'], description: 'Currency (default BDT)' },
+            category: { type: 'string', description: 'Expense category, e.g. খাবার, যাতায়াত, বাজার' },
+            note: { type: 'string', description: 'What this was for (short Bangla/English note)' },
+            occurredAt: { type: 'string', description: 'When it happened, YYYY-MM-DD (default today)' },
           },
           required: ['amount', 'note'],
         },
       },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['entries'],
   },
@@ -577,9 +579,9 @@ const delete_finance_entry: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      type: { type: 'string', enum: ['expense', 'ledger'] },
+      type: { type: 'string', enum: ['expense', 'ledger'], description: 'Record type: expense or ledger entry' },
       id: { type: 'string', description: 'Record UUID from list_recent_transactions' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['type', 'id'],
   },
@@ -644,11 +646,11 @@ const edit_finance_entry: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      type: { type: 'string', enum: ['expense', 'ledger'] },
-      id: { type: 'string' },
+      type: { type: 'string', enum: ['expense', 'ledger'], description: 'Record type: expense or ledger entry' },
+      id: { type: 'string', description: 'Record id from list_recent_transactions' },
       field: { type: 'string', description: 'amount | currency | note | personName | category | direction' },
       newValue: { description: 'New value for the field' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['type', 'id', 'field', 'newValue'],
   },

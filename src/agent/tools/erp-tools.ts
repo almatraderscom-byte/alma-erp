@@ -7,7 +7,7 @@ import {
 } from '@/lib/agent-api/orders.service'
 import { listInventory } from '@/lib/agent-api/services/inventory.service'
 import { listLowStock, listProducts } from '@/lib/agent-api/services/products.service'
-import { getPrimaryImageUrl, listProductImages } from '@/agent/lib/catalog/product-images'
+import { getPrimaryImageUrl, listProductImages, listCatalogForImages } from '@/agent/lib/catalog/product-images'
 import { listCustomers } from '@/lib/agent-api/services/customers.service'
 import { listEmployees } from '@/lib/agent-api/services/employees.service'
 import { getAttendanceHistory } from '@/lib/agent-api/services/attendance.service'
@@ -259,11 +259,11 @@ const get_orders: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      business: { type: 'string' },
-      status: { type: 'string' },
-      from: { type: 'string' },
-      to: { type: 'string' },
-      limit: { type: 'number' },
+      business: { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING', 'CDIT'], description: 'Business to query (default: current conversation business)' },
+      status: { type: 'string', enum: ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded', 'unknown'], description: 'Filter by order status' },
+      from: { type: 'string', description: 'Start date YYYY-MM-DD (inclusive)' },
+      to: { type: 'string', description: 'End date YYYY-MM-DD (inclusive)' },
+      limit: { type: 'number', description: 'Max orders to return (max 100, default 20)' },
     },
     required: [],
   },
@@ -304,8 +304,8 @@ const get_inventory_status: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      business: { type: 'string' },
-      lowStockOnly: { type: 'boolean' },
+      business: { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING', 'CDIT'], description: 'Business to query (default: current conversation business)' },
+      lowStockOnly: { type: 'boolean', description: 'true → only items at or below their reorder level' },
       deadStockDays: { type: 'number', description: 'Minimum days with no reorder signal to flag' },
     },
     required: [],
@@ -343,14 +343,17 @@ const get_inventory_status: AgentTool = {
 const get_product: AgentTool = {
   name: 'get_product',
   description:
-    'Search products by name or SKU keyword. Returns matching products with price, stock, ' +
-    'a primary catalog image URL and the total image count per product. ' +
-    'When exactly one product matches, ALL its catalog images (4-5) are returned in `images` ' +
-    'so the agent can actually SEE the product to understand or verify a visual task.',
+    'Search products by name or SKU keyword — checks the ERP product sheet AND the owner\'s ' +
+    'Product Images catalog (stock groups + uploads), so a photographed product is ALWAYS ' +
+    'findable here. Returns matching products with price/stock where known, and each product\'s ' +
+    'REAL catalog images with their `storagePath`. Family sets live under VARIANT SKUs ' +
+    '(e.g. code 720 → 720-ADULT / 720T-ORNA): search the BASE code ("720"), never conclude ' +
+    '"product missing" without trying it. To render a creative from the REAL product, pass an ' +
+    'image\'s `storagePath` as generate_image `referenceImageId` — never invent the product\'s look.',
   input_schema: {
     type: 'object' as const,
     properties: {
-      query: { type: 'string', description: 'Name or SKU search term' },
+      query: { type: 'string', description: 'Name or SKU search term (base code like "720" matches its variants)' },
     },
     required: ['query'],
   },
@@ -367,11 +370,68 @@ const get_product: AgentTool = {
           primaryImageUrl: await getPrimaryImageUrl(p.sku).catch(() => null),
         })),
       )
-      // When a single product matches, return its full image set so the agent can see it.
-      let images: Array<{ url: string | null; isPrimary: boolean }> | undefined
-      if (enriched.length === 1) {
-        const all = await listProductImages(enriched[0].sku).catch(() => [])
-        images = all.map((i) => ({ url: i.url, isPrimary: i.isPrimary }))
+      // Small result set (a single product or a family's variants) → return every
+      // catalog image WITH its storagePath, so the head can SEE the product and
+      // feed the real photo to generate_image as referenceImageId (owner incident
+      // 2026-07-13: the head invented a fake 720 because paths were unreachable).
+      let images: Array<{ productCode: string; url: string | null; storagePath: string; isPrimary: boolean }> | undefined
+      if (enriched.length >= 1 && enriched.length <= 8) {
+        const sets = await Promise.all(
+          enriched.map(async (p) => {
+            const all = await listProductImages(p.sku).catch(() => [])
+            return all.map((i) => ({
+              productCode: p.sku,
+              url: i.url,
+              storagePath: i.storagePath,
+              isPrimary: i.isPrimary,
+            }))
+          }),
+        )
+        images = sets.flat()
+      }
+      // IMAGE-CATALOG fallback (owner round 7, 2026-07-13): the ERP products
+      // sheet does NOT carry every catalog code — the owner's "Product Images"
+      // screen groups STOCK rows + uploaded images (720/133 live THERE). When the
+      // sheet search misses, search that catalog so the agent sees exactly what
+      // the owner sees, and never again claims a photographed product "নেই".
+      if (enriched.length === 0) {
+        const { groups } = await listCatalogForImages().catch(() => ({ groups: [] as Awaited<ReturnType<typeof listCatalogForImages>>['groups'] }))
+        const ql = String(input.query).toLowerCase()
+        const hits = groups
+          .filter((g) => g.code.toLowerCase().includes(ql) || g.name.toLowerCase().includes(ql))
+          .slice(0, 8)
+        if (hits.length > 0) {
+          const sets = await Promise.all(
+            hits.flatMap((g) =>
+              g.members.map(async (m) => {
+                const all = await listProductImages(m).catch(() => [])
+                return all.map((i) => ({
+                  productCode: m,
+                  url: i.url,
+                  storagePath: i.storagePath,
+                  isPrimary: i.isPrimary,
+                }))
+              }),
+            ),
+          )
+          return {
+            success: true,
+            data: {
+              products: hits.map((g) => ({
+                sku: g.code,
+                name: g.name,
+                category: g.category,
+                kind: g.kind,
+                members: g.members,
+                imageCount: g.imageCount,
+                primaryImageUrl: g.primaryImageUrl,
+                source: 'image-catalog',
+              })),
+              images: sets.flat(),
+              meta: { count: hits.length, source: 'image-catalog' },
+            },
+          }
+        }
       }
       return { success: true, data: { products: enriched, images, meta } }
     } catch (err) {
@@ -390,7 +450,7 @@ const get_customer_summary: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      query: { type: 'string' },
+      query: { type: 'string', description: 'Optional customer name or phone search' },
       topN: { type: 'number', description: 'Top N customers by total spend (default 20)' },
     },
     required: [],

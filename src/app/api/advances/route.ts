@@ -4,7 +4,8 @@ import { getJwt, forbidViewerWrite, validateMutationBusiness } from '@/lib/api-g
 import { parseBusinessAccess } from '@/lib/business-access'
 import { normalizeAlmaRole } from '@/lib/roles'
 import { sendPayrollAlert } from '@/lib/resend'
-import { notifyRole } from '@/lib/notifications'
+import { notifyRoles, notifyUser } from '@/lib/notifications'
+import { NOTIFY_ROLES } from '@/lib/notification-routing'
 import { enqueuePayrollAdvanceAlertSms } from '@/services/sms/events'
 import { createApprovalRequest } from '@/lib/approvals'
 
@@ -79,8 +80,8 @@ export async function POST(req: NextRequest) {
       payloadSnapshot: { amount, businessId: row.businessId, requestId: row.id },
     })
     void Promise.all([
-      notifyRole({
-        role: 'SUPER_ADMIN',
+      // Approvers per the role matrix (now includes ADMIN — audit gap).
+      notifyRoles(NOTIFY_ROLES.advanceRequested, {
         businessId: row.businessId,
         type: 'PAYROLL_ALERT',
         priority: 'HIGH',
@@ -88,14 +89,16 @@ export async function POST(req: NextRequest) {
         message: `Advance request for ৳${amount.toLocaleString('en-BD')}: ${reason}`,
         actionUrl: '/payroll',
       }),
-      notifyRole({
-        role: 'HR',
+      // Confirmation bell for the requester — they previously heard nothing
+      // until an approval/rejection arrived.
+      notifyUser({
+        userId: token.sub,
         businessId: row.businessId,
         type: 'PAYROLL_ALERT',
-        priority: 'HIGH',
-        title: 'Salary advance request',
-        message: `Advance request for ৳${amount.toLocaleString('en-BD')}: ${reason}`,
-        actionUrl: '/payroll',
+        priority: 'NORMAL',
+        title: 'Advance request submitted',
+        message: `আপনার ৳${amount.toLocaleString('en-BD')} অগ্রিম বেতনের আবেদন জমা হয়েছে — অনুমোদনের অপেক্ষায়।`,
+        actionUrl: '/portal/wallet',
       }),
       sendPayrollAlert({
       businessId: row.businessId,

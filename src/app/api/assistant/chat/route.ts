@@ -14,7 +14,19 @@ import { embedMessageInBackground } from '@/agent/lib/message-recall'
 import { ASSISTANT_CHAT_RATE_LIMIT_PER_MIN } from '@/agent/lib/constants'
 import { checkAssistantChatRateLimit } from '@/lib/assistant-rate-limit'
 import { captureAgentError } from '@/agent/lib/sentry'
-import { createTurn, finalizeTurnIfRunning, isRunningTurnForConversation } from '@/agent/lib/turn-status'
+import {
+  claimContinuationTurn,
+  claimTurnForRequest,
+  createTurn,
+  finalizeTurnIfRunning,
+  isRunningTurnForConversation,
+  findOrCreateTurnByClientMessageId,
+  findTurnByClientMessageId,
+  getTurnSnapshot,
+  linkTurnUserMessage,
+  linkTurnAssistantMessage,
+} from '@/agent/lib/turn-status'
+import { createTurnEventPublisher } from '@/agent/lib/turn-events'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
 import { notifyOwnerIfAway } from '@/agent/lib/notify-owner'
 import { ensurePersonalProject, isPersonalProject } from '@/lib/personal-space'
@@ -27,9 +39,14 @@ import {
   isAgentBusinessId,
   type AgentBusinessId,
 } from '@/lib/agent-api/business-context'
+import { shouldPersistIncomingMessage } from '@/agent/lib/continuation-policy'
 
 export const runtime = 'nodejs'
-export const maxDuration = 300
+// 800s (Pro plan + Fluid compute; Vercel allows up to 1800s). Raised from 300s
+// on 2026-07-14 (owner confirmed Pro) so long browser/content turns stop dying
+// at the old ceiling. The effective turn deadline is still AGENT_TURN_HARD_CAP_MS
+// (default 280s) clamped ≥20s under this — set the env to 780000 to use the room.
+export const maxDuration = 800
 
 interface FileRef { bucket: string; path: string; mediaType: string }
 
@@ -49,6 +66,13 @@ interface ChatBody {
    * enqueue route already created. Reused instead of creating a second one, and
    * (for a web conversation) it authorizes the internal call. */
   turnId?: string
+  /** Phase 3 idempotency key (client-generated UUID): one key → at most one
+   * stored owner message and one turn, however many times the client retries. */
+  clientMessageId?: string
+  /** Stable id shared by the direct web send and its VPS fallback. */
+  clientRequestId?: string
+  /** Structured, owner-session-only continuation. Never stored as a user message. */
+  autoContinueFromTurnId?: string
   /**
    * Model-upgrade approval resume: the previous turn paused on a
    * `model_switch_required` card. This re-runs the SAME turn (no new user message)
@@ -124,6 +148,16 @@ export async function POST(req: NextRequest) {
     !isInternalCall && body.resume && typeof body.conversationId === 'string'
       ? body.resume
       : null
+  const autoContinueFromTurnId =
+    !isInternalCall
+    && typeof body.conversationId === 'string'
+    && typeof body.autoContinueFromTurnId === 'string'
+      ? body.autoContinueFromTurnId.trim()
+      : ''
+  const clientRequestId =
+    typeof body.clientRequestId === 'string' && /^[A-Za-z0-9_-]{8,100}$/.test(body.clientRequestId.trim())
+      ? body.clientRequestId.trim()
+      : null
 
   const message = typeof body.message === 'string' ? body.message.trim() : ''
   // Attached files (image/PDF) make a caption-less turn valid — Claude.ai lets you
@@ -132,7 +166,7 @@ export async function POST(req: NextRequest) {
   const files: FileRef[] = Array.isArray(body.files)
     ? body.files.filter((f) => f && typeof f.path === 'string' && typeof f.mediaType === 'string')
     : []
-  if (!message && !resume && files.length === 0) {
+  if (!message && !resume && !autoContinueFromTurnId && files.length === 0) {
     return Response.json({ error: 'message_required' }, { status: 400 })
   }
 
@@ -175,6 +209,29 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // Roadmap Phase 3 — client idempotency key. A retry (timeout / reconnect /
+  // watchdog fallback) with the same clientMessageId must OBSERVE the existing
+  // turn, never store the message or execute the work again. Checked before
+  // conversation creation so a fresh-chat retry can't orphan a new conversation.
+  const clientMessageId =
+    !isInternalCall && typeof body.clientMessageId === 'string' && body.clientMessageId.trim()
+      ? body.clientMessageId.trim().slice(0, 64)
+      : null
+  if (clientMessageId) {
+    const dup = await findTurnByClientMessageId(clientMessageId)
+    if (dup) {
+      return Response.json({
+        duplicate: true,
+        turnId: dup.id,
+        conversationId: dup.conversationId,
+        status: dup.status,
+        lastSeq: dup.lastSeq,
+        userMessageId: dup.userMessageId,
+        assistantMessageId: dup.assistantMessageId,
+      }, { status: 202 })
+    }
+  }
+
   let conversationId = typeof body.conversationId === 'string' ? body.conversationId : null
   let convSource: string | null = null
   let convProjectId: string | null = null
@@ -184,6 +241,7 @@ export async function POST(req: NextRequest) {
   // Business scope for the turn — resolved from project or conversation row.
   let businessId: AgentBusinessId | null = null
   let conversationModelId: string = DEFAULT_MODEL_ID
+  let claimedRequestTurnId: string | null = null
 
   if (requestedProjectId && !personalMode) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -200,6 +258,10 @@ export async function POST(req: NextRequest) {
   if (personalMode && !requestedProjectId) {
     requestedProjectId = await ensurePersonalProject()
   }
+
+  // Set inside the persistence block; linked onto the turn row after creation.
+  let savedUserMessageId: string | null = null
+  let alreadyStoredUserMessageId: string | null = null
 
   try {
     if (conversationId) {
@@ -298,9 +360,38 @@ export async function POST(req: NextRequest) {
       projectSystemInstructions = null
     }
 
+    // Internal worker run of an EXISTING turn whose owner message was already
+    // stored by the direct attempt: do not store it again (roadmap invariant 1 —
+    // one clientMessageId → one owner message, whatever path re-runs the turn).
+    if (isInternalCall && typeof body.turnId === 'string' && body.turnId) {
+      const snap = await getTurnSnapshot(body.turnId)
+      if (snap?.userMessageId) alreadyStoredUserMessageId = snap.userMessageId
+    }
+
+    // Exactly-once claim BEFORE persisting the owner message or executing tools.
+    // If the 15s VPS fallback already won this request id, this direct path exits
+    // without creating another user row or running the task a second time.
+    if (!isInternalCall && !resume && !autoContinueFromTurnId && clientRequestId) {
+      const claim = await claimTurnForRequest(conversationId, clientRequestId)
+      if (!claim.claimed) {
+        return Response.json(
+          { error: 'request_already_claimed', turnId: claim.turnId, status: claim.status, conversationId },
+          { status: 409 },
+        )
+      }
+      claimedRequestTurnId = claim.turnId
+    }
+
     // Resume (model-upgrade approval) re-runs the SAME turn already in the thread —
     // the owner's question is already stored, so we DON'T persist another user message.
-    if (!resume) {
+    // Structured auto-continuation is also server state, never owner-authored text.
+    if (
+      !alreadyStoredUserMessageId
+      && shouldPersistIncomingMessage({
+        isResume: Boolean(resume),
+        autoContinueFromTurnId: autoContinueFromTurnId || null,
+      })
+    ) {
       type StoredBlock = { type: string; [k: string]: unknown }
       const userContent: StoredBlock[] = [
         ...files.map((f) => ({ type: 'file_ref', bucket: f.bucket, path: f.path, mediaType: f.mediaType })),
@@ -339,10 +430,12 @@ export async function POST(req: NextRequest) {
       const savedUserMsg = await prisma.agentMessage.create({
         data: {
           conversationId,
+          clientRequestId,
           role: 'user',
           content: userContent as unknown as Parameters<typeof prisma.agentMessage.create>[0]['data']['content'],
         },
       })
+      savedUserMessageId = savedUserMsg.id
       // B2: embed the owner turn for later semantic recall (best-effort; the SSE
       // turn keeps the lambda alive long enough for this to finish).
       embedMessageInBackground(savedUserMsg.id, userContent)
@@ -369,6 +462,7 @@ export async function POST(req: NextRequest) {
     }
   } catch (err) {
     console.error('[assistant/chat] persistence failed', err)
+    await finalizeTurnIfRunning(claimedRequestTurnId, 'error')
     if (isAgentDbError(err)) {
       return Response.json({
         error: 'agent_db_not_migrated',
@@ -385,7 +479,10 @@ export async function POST(req: NextRequest) {
     // 'auto' resolves to a concrete model only inside the turn (head-router), so its
     // provider key is checked there; for a pinned model we can validate up-front.
     const providerKeyMissing = requireModelProviderKey(conversationModelId)
-    if (providerKeyMissing) return providerKeyMissing
+    if (providerKeyMissing) {
+      await finalizeTurnIfRunning(claimedRequestTurnId, 'error')
+      return providerKeyMissing
+    }
   }
 
   const telegramFastPath =
@@ -400,10 +497,18 @@ export async function POST(req: NextRequest) {
   // controller instead and always persists the reply; the client just re-syncs the
   // conversation when it returns to the foreground (it polls the AgentTurn status).
   //
-  // The server controller has a 280s hard cap — under Vercel maxDuration (300s) so
+  // The server controller has a hard cap held safely under Vercel maxDuration so
   // the function returns cleanly instead of being killed mid-write. This covers the
-  // ~95% case (turns <= ~280s) surviving a background/close without new infra.
-  const TURN_HARD_CAP_MS = 280_000
+  // ~95% case (turns <= cap) surviving a background/close without new infra.
+  // Owner-tunable via AGENT_TURN_HARD_CAP_MS: on a Pro plan with Fluid compute,
+  // raise `maxDuration` above (Vercel now allows up to 1800s) and set the env to
+  // match — long browser/content turns stop dying at the old 280s ceiling. The
+  // Math.min guard keeps a mismatched env from ever exceeding the function's
+  // real budget (cap always ≥20s under maxDuration for the final persist).
+  const TURN_HARD_CAP_MS = Math.min(
+    Number(process.env.AGENT_TURN_HARD_CAP_MS) || 280_000,
+    (maxDuration - 20) * 1000,
+  )
   const turnAbort = new AbortController()
   const turnCapTimer = setTimeout(() => turnAbort.abort(), TURN_HARD_CAP_MS)
 
@@ -411,10 +516,42 @@ export async function POST(req: NextRequest) {
   // Stop button a cross-instance cancel target. Fail-open (null id) if it can't write.
   // A2: a worker-run turn reuses the row the enqueue route already created, so the
   // same turnId flows through the worker's event log and the client's stream.
-  const turnId =
-    isInternalCall && typeof body.turnId === 'string' && body.turnId
-      ? body.turnId
-      : await createTurn(conversationId!)
+  // Phase 3: with a clientMessageId the create is idempotent — the DB uniqueness
+  // constraint is the guarantee; a concurrent duplicate observes, never re-runs.
+  let turnId: string | null
+  if (isInternalCall && typeof body.turnId === 'string' && body.turnId) {
+    turnId = body.turnId
+  } else if (autoContinueFromTurnId) {
+    const claim = await claimContinuationTurn(conversationId!, autoContinueFromTurnId)
+    if (!claim.claimed || !claim.turnId) {
+      clearTimeout(turnCapTimer)
+      return Response.json(
+        { error: 'continuation_not_eligible', turnId: claim.turnId, status: claim.status },
+        { status: 409 },
+      )
+    }
+    turnId = claim.turnId
+  } else if (claimedRequestTurnId) {
+    turnId = claimedRequestTurnId
+  } else if (clientMessageId) {
+    const r = await findOrCreateTurnByClientMessageId(conversationId!, clientMessageId, 'inline')
+    if (r && !r.created) {
+      clearTimeout(turnCapTimer)
+      return Response.json({
+        duplicate: true,
+        turnId: r.turn.id,
+        conversationId: r.turn.conversationId,
+        status: r.turn.status,
+        lastSeq: r.turn.lastSeq,
+        userMessageId: r.turn.userMessageId,
+        assistantMessageId: r.turn.assistantMessageId,
+      }, { status: 202 })
+    }
+    turnId = r?.turn.id ?? null
+  } else {
+    turnId = await createTurn(conversationId!, { executionMode: 'inline' })
+  }
+  if (savedUserMessageId) await linkTurnUserMessage(turnId, savedUserMessageId)
 
   // Model-upgrade approval resume: re-run the same turn either on the premium model
   // (approve → router re-resolves and approveModelSwitch skips the gate) or pinned to
@@ -459,11 +596,16 @@ export async function POST(req: NextRequest) {
     '- টাকা বা অপরিবর্তনীয় কাজের জন্য confirm card আগের মতোই বানাও, কিন্তু বলো এক লাইনে: "অ্যাপে Approve-এ ট্যাপ করুন" — মুখের "হ্যাঁ" কখনো টাকার কাজ approve বলে ধরে নিও না; ' +
     'অস্পষ্ট শোনা টাকার অংক/পরিমাণ নিজে অনুমান করে বসিও না — আগে নিশ্চিত হও।\n' +
     '- বাক্য এমনভাবে শেষ করো যেন শুনতে স্বাভাবিক লাগে।'
+  const AUTO_CONTINUE_INSTRUCTION =
+    '[SYSTEM CONTINUATION — Boss নতুন কোনো message পাঠাননি। আগের turn সত্যিই server deadline-এ থেমেছে এবং persisted continuation claim এই turn-কে একবারের জন্য চালু করেছে।] ' +
+    'Unresolved checkpoint থেকে ঠিক পরের ধাপটি ধরো; completed tool/action/artifact আবার চালাবে না। কাজ ইতিমধ্যে complete হলে কোনো tool rerun না করে শুধু স্থির final status দাও।'
   const turnOptions = {
     projectSystemInstructions:
-      body.voice === true
-        ? [projectSystemInstructions, VOICE_TURN_INSTRUCTION].filter(Boolean).join('\n\n')
-        : projectSystemInstructions,
+      [
+        projectSystemInstructions,
+        body.voice === true ? VOICE_TURN_INSTRUCTION : null,
+        autoContinueFromTurnId ? AUTO_CONTINUE_INSTRUCTION : null,
+      ].filter(Boolean).join('\n\n') || null,
     personalMode,
     telegramFastPath,
     businessId,
@@ -508,6 +650,7 @@ export async function POST(req: NextRequest) {
     const askCards: Array<{ askCardId: string; question: string; options: string[] }> = []
     let newConversationId: string | null = null
     let compactedFromCost: number | null = null
+    let continuationNeeded = false
     try {
       for await (const event of runTurn()) {
         if (event.type === 'text_delta') finalText += event.delta
@@ -532,6 +675,9 @@ export async function POST(req: NextRequest) {
         else if (event.type === 'ask_card') askCards.push({ askCardId: event.askCardId, question: event.question, options: event.options })
         else if (event.type === 'error') { errorMsg = event.message; break }
         else if (event.type === 'done') {
+          const doneMessageId = (event as { messageId?: string }).messageId
+          if (doneMessageId && turnId) await linkTurnAssistantMessage(turnId, doneMessageId)
+          continuationNeeded = event.needContinue === true
           const turnCost = (event as { costUsd?: number }).costUsd ?? 0
           if (turnCost > 0 && conversationId) {
             try {
@@ -567,7 +713,7 @@ export async function POST(req: NextRequest) {
     } finally {
       clearTimeout(turnCapTimer)
     }
-    await finalizeTurnIfRunning(turnId, errorMsg ? 'error' : 'done')
+    await finalizeTurnIfRunning(turnId, errorMsg ? 'error' : 'done', { continuationNeeded })
     if (errorMsg) return Response.json({ error: errorMsg }, { status: 500 })
     const turnMs = Date.now() - turnStarted
     if (telegramFastPath && turnMs > 30_000) {
@@ -600,6 +746,11 @@ export async function POST(req: NextRequest) {
 
   const encoder = new TextEncoder()
   let streamClosed = false
+  // Roadmap 3.4 — inline turns write the SAME durable event log the worker does
+  // (agent_turn_events + Redis live channel + AgentTurn.lastSeq), so a client that
+  // reconnects mid-turn replays from its cursor instead of waiting for polls.
+  // Internal (worker-driven) calls skip it: the worker mirrors events itself.
+  const durable = !isInternalCall && turnId ? createTurnEventPublisher(turnId) : null
   const stream = new ReadableStream({
     async start(controller) {
       // CRITICAL (owner bug 2026-07-12, "app close = kaj theme jay"): once the
@@ -617,6 +768,13 @@ export async function POST(req: NextRequest) {
           clientConnected = false
         }
       }
+      // Live wire + durable log together. The durable write keeps going after the
+      // client disconnects — that's the point: replay must have what the dropped
+      // socket never delivered.
+      const emit = (evt: unknown) => {
+        enqueue(evt)
+        durable?.emit(evt as { type: string })
+      }
 
       // SSE keepalive — a long tool/sub-agent step can run 30–60s without yielding
       // any event; without traffic an idle proxy/CDN may drop the stream and the
@@ -627,14 +785,14 @@ export async function POST(req: NextRequest) {
         try { controller.enqueue(encoder.encode(`: ping\n\n`)) } catch { /* stream closed — expected */ }
       }, 10_000)
 
-      enqueue({ type: 'conversation_id', id: conversationId })
-      enqueue({ type: 'personal_mode', active: personalMode })
+      emit({ type: 'conversation_id', id: conversationId })
+      emit({ type: 'personal_mode', active: personalMode })
       // Give the client the durable turn id so its Stop button can issue a real
       // server-side cancel, and so it can poll this turn's status after re-open.
-      if (turnId) enqueue({ type: 'turn_id', id: turnId })
+      if (turnId) emit({ type: 'turn_id', id: turnId })
       try {
         for await (const event of runTurn()) {
-          enqueue(event)
+          emit(event)
           // App-style push (ntfy) ONLY when the owner is away — suppressed while
           // he's in the app (notifyOwnerIfAway checks app-presence). Telegram turns
           // already push via Telegram, so skip them here.
@@ -652,7 +810,11 @@ export async function POST(req: NextRequest) {
           }
           if (event.type === 'done') {
             doneTurnMs = Date.now() - turnStartedAt
-            await finalizeTurnIfRunning(turnId, 'done')
+            // Terminal linkage (roadmap 3.6): the exact persisted assistant row,
+            // so a recovering client fetches one message, not the whole history.
+            const doneMessageId = (event as { messageId?: string }).messageId
+            if (doneMessageId && turnId) await linkTurnAssistantMessage(turnId, doneMessageId)
+            await finalizeTurnIfRunning(turnId, 'done', { continuationNeeded: event.needContinue === true })
             const turnCost = (event as { costUsd?: number }).costUsd ?? 0
             if (turnCost > 0 && conversationId) {
               try {
@@ -677,7 +839,7 @@ export async function POST(req: NextRequest) {
             const compacted = await compactConversationIfNeeded(conversationId, COMPACT_THRESHOLD_USD)
             if (compacted) {
               conversationId = compacted.newConversationId
-              enqueue({
+              emit({
                 type: 'conversation_compacted',
                 previousConversationId: compacted.previousConversationId,
                 conversationId: compacted.newConversationId,
@@ -693,12 +855,14 @@ export async function POST(req: NextRequest) {
           // Also log to stdout so the cause is visible in Vercel runtime logs, not only Sentry.
           console.error('[assistant/chat] stream turn failed:', err instanceof Error ? err.stack ?? err.message : String(err))
           void captureAgentError(err, 'agent.chat.stream_error', { conversationId: conversationId ?? undefined })
-          enqueue({ type: 'error', message: err instanceof Error ? err.message : String(err) })
+          emit({ type: 'error', message: err instanceof Error ? err.message : String(err) })
         }
       } finally {
         streamClosed = true
         clearInterval(keepAlive)
         clearTimeout(turnCapTimer)
+        // Flush the durable log before the function freezes (replay completeness).
+        try { await durable?.finish() } catch { /* advisory — rows already best-effort */ }
         req.signal.removeEventListener('abort', markDisconnected)
         // Safety net: if the turn ended without done/error (hard-cap timeout or a
         // crash), leave it marked error rather than stuck 'running'. No-op if the

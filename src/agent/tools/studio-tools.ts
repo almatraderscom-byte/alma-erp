@@ -60,6 +60,7 @@ const run_creative_studio: AgentTool = {
       action: {
         type: 'string',
         enum: ['family_set', 'reel', 'edit_video', 'music', 'wish_song', 'owner_voice', 'sfx', 'get_brand_recipe', 'set_brand_recipe'],
+        description: 'Which Studio engine to run',
       },
       productImagePath: { type: 'string', description: 'agent-files path of the product/source image (family_set, reel)' },
       familyPreset: {
@@ -74,9 +75,9 @@ const run_creative_studio: AgentTool = {
       voiceoverText: { type: 'string', description: 'edit_video: owner-approved line (never write one yourself without telling him)' },
       text: { type: 'string', description: 'owner_voice / sfx: the exact text' },
       styleId: { type: 'string', enum: MUSIC_STYLES.map((s) => s.id), description: 'music: omit → Brand Recipe default' },
-      occasionId: { type: 'string', enum: ['birthday', 'anniversary', 'eid'] },
+      occasionId: { type: 'string', enum: ['birthday', 'anniversary', 'eid'], description: 'wish_song: which occasion template' },
       name: { type: 'string', description: 'wish_song: the person\'s name (goes into the FIXED lyric template)' },
-      seconds: { type: 'number' },
+      seconds: { type: 'number', description: 'music/sfx: clip length in seconds' },
       recipe: { type: 'object', description: 'set_brand_recipe: {defaultFamilyPreset?, defaultVideoRecipe?, defaultMusicStyle?, defaultAspect?}' },
     },
     required: ['action'],
@@ -226,7 +227,7 @@ const check_studio_job: AgentTool = {
     'NEVER tell the owner a studio job is done without an executed status + artifact from THIS tool.',
   input_schema: {
     type: 'object' as const,
-    properties: { pendingActionId: { type: 'string' } },
+    properties: { pendingActionId: { type: 'string', description: 'Id returned when the job was queued' } },
     required: ['pendingActionId'],
   },
   handler: async (input) => {

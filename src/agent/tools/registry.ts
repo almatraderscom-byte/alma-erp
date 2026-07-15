@@ -2,6 +2,20 @@ import type Anthropic from '@anthropic-ai/sdk'
 import { prisma } from '@/lib/prisma'
 import { embed, vectorLiteral } from '@/agent/lib/embeddings'
 import { logToolEvent } from '@/agent/lib/tool-telemetry'
+import {
+  classifyErrorCode,
+  isRetryableErrorCode,
+  malformedRawArgsError,
+  resolveClassification,
+  strictenSchema,
+  validateToolInput,
+  type ResolvedClassification,
+} from './tool-contract'
+import { TOOL_CLASSIFICATION } from './capability-classification'
+import {
+  isToolAllowedForOwnerTurn,
+  type OwnerTurnAuthorization,
+} from '@/agent/lib/turn-authorization'
 import { attachMemoryEmbedding, createOrUpdateAgentMemory } from '@/agent/lib/agent-memory'
 import { ERP_TOOLS } from './erp-tools'
 import { CONFIRM_TOOLS } from './confirm-tools'
@@ -73,6 +87,19 @@ export interface ToolResult {
   success: boolean
   data?: unknown
   error?: string
+  /**
+   * Phase 2 result envelope — stable machine error code (see tool-contract.ts
+   * TOOL_ERROR_CODES). Handlers may set it themselves; the executor fills it
+   * from classifyErrorCode(error) otherwise. Never parse `error` text to decide
+   * behavior — key on this.
+   */
+  errorCode?: string
+  /**
+   * Phase 2 result envelope — true when the SAME call may succeed if simply
+   * retried (timeout / rate-limit / network / provider 5xx). The executor
+   * derives it from errorCode unless the handler set it explicitly.
+   */
+  retryable?: boolean
   /**
    * Optional screenshot/image to hand the head model as a REAL vision block
    * (not a URL string). The core loop strips this out of the JSON text payload
@@ -413,6 +440,22 @@ export const PERSONAL_SAFE_TOOLS: AgentTool[] = [
 
 export const PERSONAL_SAFE_TOOL_NAMES = PERSONAL_SAFE_TOOLS.map((t) => t.name)
 
+/**
+ * Phase 2 Tool Contract: harden every tool's input schema IN PLACE (root
+ * `additionalProperties: false`) before any model-facing definitions are derived,
+ * so the model is shown exactly the strict contract the executor enforces.
+ * Tool objects are shared across pools/groups, so hardening a pool also hardens
+ * its tools everywhere else; strictenSchema is idempotent.
+ */
+export function hardenToolSchemas(tools: AgentTool[]): AgentTool[] {
+  for (const t of tools) {
+    t.input_schema = strictenSchema(t.input_schema) as AgentTool['input_schema']
+  }
+  return tools
+}
+
+hardenToolSchemas(PERSONAL_SAFE_TOOLS)
+
 export const PERSONAL_TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = PERSONAL_SAFE_TOOLS.map((t) => ({
   name: t.name,
   description: t.description,
@@ -425,12 +468,15 @@ export async function executePersonalTool(
   serverContext: Record<string, unknown> = {},
 ): Promise<ToolResult> {
   const tool = PERSONAL_SAFE_TOOLS.find((t) => t.name === name)
-  if (!tool) return { success: false, error: `Unknown personal tool: ${name}` }
-  try {
-    return await tool.handler({ ...input, ...serverContext })
-  } catch (err) {
-    return { success: false, error: String(err) }
+  if (!tool) {
+    return { success: false, error: `Unknown personal tool: ${name}`, errorCode: 'unknown_tool', retryable: false }
   }
+  return runRegisteredTool(tool, input, serverContext, {
+    conversationId: serverContext.conversationId as string | undefined,
+    businessId: (serverContext.businessId as string | undefined) ?? 'ALMA_LIFESTYLE',
+    turnId: serverContext.turnId as string | undefined,
+    turnAuthorization: serverContext.turnAuthorization as OwnerTurnAuthorization | undefined,
+  })
 }
 
 export const CORE_AGENT_TOOLS: AgentTool[] = [
@@ -572,6 +618,10 @@ export const STAFF_SAFE_TOOLS: AgentTool[] = [
 /** Tool names exposed to staff-scoped agent contexts (for audits/tests). */
 export const STAFF_SAFE_TOOL_NAMES = STAFF_SAFE_TOOLS.map((t) => t.name)
 
+hardenToolSchemas(TOOLS)
+hardenToolSchemas(TRADING_TOOLS)
+hardenToolSchemas(STAFF_SAFE_TOOLS)
+
 export const TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = TOOLS.map((t) => ({
   name: t.name,
   description: t.description,
@@ -586,6 +636,187 @@ export const TRADING_TOOL_DEFINITIONS: Anthropic.Messages.Tool[] = TRADING_TOOLS
   input_schema: t.input_schema,
 }))
 
+/** Telemetry context for one tool execution. */
+interface ToolRunContext {
+  conversationId?: string
+  businessId?: string
+  turnId?: string
+  surface?: 'owner' | 'cs' | 'scheduler'
+  turnAuthorization?: OwnerTurnAuthorization
+}
+
+function classificationFor(name: string): ResolvedClassification {
+  // Unclassified = treated as a medium-risk write until an entry is authored
+  // (capability-manifest.test.ts fails CI on any missing entry, so this fallback
+  // only ever runs for a tool added in the same commit that forgot the manifest).
+  const authored = TOOL_CLASSIFICATION[name] ?? { domain: 'unclassified', mode: 'write' as const, risk: 'medium' as const }
+  return resolveClassification(authored)
+}
+
+/**
+ * Phase 2 validated executor — the ONE path every registered tool call goes
+ * through (owner, trading, personal, and CS surfaces):
+ *
+ *   1. Validate model-generated args against the tool's strict schema (Ajv,
+ *      Draft-7, root additionalProperties:false). Invalid args NEVER reach the
+ *      handler — the model gets an actionable `invalid_args` envelope instead.
+ *   2. Run the handler with server context merged in (server context wins on
+ *      key collisions and is deliberately NOT part of the validated surface).
+ *   3. Finalize the result envelope: stable `errorCode` (handler-declared or
+ *      classified from the error text) + `retryable`.
+ *   4. Log the telemetry span with capability labels.
+ */
+export async function runRegisteredTool(
+  tool: AgentTool,
+  input: Record<string, unknown>,
+  serverContext: Record<string, unknown>,
+  ctx: ToolRunContext,
+): Promise<ToolResult> {
+  const started = Date.now()
+  const cap = classificationFor(tool.name)
+  const baseEvent = {
+    surface: ctx.surface,
+    toolName: tool.name,
+    conversationId: ctx.conversationId,
+    businessId: ctx.businessId,
+    turnId: ctx.turnId,
+  }
+  const capDetail = { domain: cap.domain, mode: cap.mode, risk: cap.risk }
+
+  if (!isToolAllowedForOwnerTurn(tool.name, ctx.turnAuthorization)) {
+    void logToolEvent({
+      ...baseEvent,
+      success: false,
+      errorClass: 'turn_authorization',
+      errorCode: 'turn_read_only',
+      latencyMs: Date.now() - started,
+      detail: { ...capDetail, authorization: ctx.turnAuthorization?.reason, execution: 'rejected' },
+    })
+    return {
+      success: false,
+      error:
+        'Boss-এর original message শুধু তথ্য/স্ট্যাটাস চেয়েছে—কোনো পরিবর্তনের অনুমতি দেয়নি। ' +
+        `তাই ${tool.name} server থেকে block করা হয়েছে। read tool দিয়ে উত্তর দিন; পরিবর্তন দরকার হলে Boss-এর explicit instruction চান।`,
+      errorCode: 'turn_read_only',
+      retryable: false,
+    }
+  }
+
+  // Streamed tool args that failed JSON.parse arrive as the `{ _raw }` marker.
+  // Short-circuit with a self-repair error that ECHOES the broken text back, so
+  // the model fixes its own emission — instead of the misleading schema error
+  // (`unknown field "_raw"`) this used to fall through to. retryable: the model
+  // gets another loop round to re-call correctly.
+  const malformed = malformedRawArgsError(input)
+  if (malformed) {
+    void logToolEvent({
+      ...baseEvent,
+      success: false,
+      errorClass: 'malformed_args',
+      errorCode: 'malformed_args',
+      latencyMs: Date.now() - started,
+      detail: { ...capDetail, argsValidation: 'unparseable' },
+    })
+    return { success: false, error: malformed, errorCode: 'malformed_args', retryable: true }
+  }
+
+  const validation = validateToolInput(tool.name, tool.input_schema, input ?? {})
+  if (!validation.ok) {
+    void logToolEvent({
+      ...baseEvent,
+      success: false,
+      errorClass: 'invalid_args',
+      errorCode: 'invalid_args',
+      latencyMs: Date.now() - started,
+      detail: { ...capDetail, argsValidation: 'rejected' },
+    })
+    return { success: false, error: validation.error, errorCode: 'invalid_args', retryable: false }
+  }
+
+  // Phase 5 workflow guards — the incident HARD RULEs enforced in code (preview
+  // confirm before post, real product reference, no delegate mid-pipeline,
+  // repeated-navigation protection). Small named tool set; fails open on errors,
+  // blocks only on a POSITIVE invariant violation with a self-recoverable
+  // Bangla instruction. Dynamic import keeps the lib→tools layering acyclic.
+  if (ctx.conversationId) {
+    try {
+      const wg = await import('@/agent/lib/workflow-guards')
+      if (wg.WORKFLOW_GUARDED_TOOLS.has(tool.name)) {
+        const block = await wg.checkWorkflowGuards(tool.name, input ?? {}, ctx)
+        if (block) {
+          void logToolEvent({
+            ...baseEvent,
+            success: false,
+            errorClass: 'workflow_blocked',
+            errorCode: 'workflow_blocked',
+            latencyMs: Date.now() - started,
+            detail: { ...capDetail, argsValidation: 'passed', guard: block.guard },
+          })
+          return { success: false, error: block.error, errorCode: 'workflow_blocked', retryable: false }
+        }
+      }
+    } catch (err) {
+      console.warn('[registry] workflow guard failed open:', err instanceof Error ? err.message : err)
+    }
+  }
+
+  try {
+    const handlerContext = { ...serverContext }
+    delete handlerContext.turnAuthorization
+    const result = await tool.handler({ ...input, ...handlerContext })
+    if (result.success) {
+      void logToolEvent({
+        ...baseEvent,
+        success: true,
+        latencyMs: Date.now() - started,
+        detail: { ...capDetail, argsValidation: 'passed' },
+      })
+      // Phase 5 post-hook: successful get_product / extract_invoice / live
+      // browser calls feed the workflow state machine (facts, session state,
+      // doc_extraction run). Fire-and-forget, never blocks the reply.
+      if (ctx.conversationId) {
+        void import('@/agent/lib/workflow-guards')
+          .then((wg) =>
+            wg.WORKFLOW_HOOKED_TOOLS.has(tool.name)
+              ? wg.onWorkflowToolExecuted(tool.name, input ?? {}, result.data, ctx)
+              : undefined,
+          )
+          .catch(() => {})
+      }
+      return result
+    }
+    // Failed live-browser act → record it so the §H navigation guard permits a
+    // retry of the same target (fail-open bookkeeping).
+    if (ctx.conversationId && tool.name === 'live_browser_act') {
+      void import('@/agent/lib/workflow-guards')
+        .then((wg) => wg.onWorkflowToolFailed(tool.name, input ?? {}, ctx))
+        .catch(() => {})
+    }
+    const errorCode = result.errorCode ?? classifyErrorCode(result.error)
+    const retryable = result.retryable ?? isRetryableErrorCode(errorCode)
+    void logToolEvent({
+      ...baseEvent,
+      success: false,
+      errorClass: 'handler_error',
+      errorCode,
+      latencyMs: Date.now() - started,
+      detail: { ...capDetail, argsValidation: 'passed' },
+    })
+    return { ...result, errorCode, retryable }
+  } catch (err) {
+    const errorCode = classifyErrorCode(String(err))
+    void logToolEvent({
+      ...baseEvent,
+      success: false,
+      errorClass: 'uncaught_exception',
+      errorCode,
+      latencyMs: Date.now() - started,
+      detail: { ...capDetail, argsValidation: 'passed' },
+    })
+    return { success: false, error: String(err), errorCode, retryable: isRetryableErrorCode(errorCode) }
+  }
+}
+
 export async function executeTool(
   name: string,
   input: Record<string, unknown>,
@@ -593,32 +824,33 @@ export async function executeTool(
 ): Promise<ToolResult> {
   const businessId = (serverContext.businessId as string | undefined) ?? 'ALMA_LIFESTYLE'
   const conversationId = serverContext.conversationId as string | undefined
-  const started = Date.now()
+  const turnId = serverContext.turnId as string | undefined
   const pool = businessId === 'ALMA_TRADING' ? TRADING_TOOLS : TOOLS
-  const tool = pool.find((t) => t.name === name)
+  let tool = pool.find((t) => t.name === name)
   if (!tool) {
     const anyTool = TOOLS.find((t) => t.name === name)
     if (!anyTool) {
-      void logToolEvent({ toolName: name, success: false, errorClass: 'unknown_tool', latencyMs: Date.now() - started, conversationId, businessId })
-      return { success: false, error: `Unknown tool: ${name}` }
+      void logToolEvent({ toolName: name, success: false, errorClass: 'unknown_tool', errorCode: 'unknown_tool', latencyMs: 0, conversationId, businessId, turnId })
+      return { success: false, error: `Unknown tool: ${name}`, errorCode: 'unknown_tool', retryable: false }
     }
     if (businessId === 'ALMA_TRADING') {
-      void logToolEvent({ toolName: name, success: false, errorClass: 'wrong_business', latencyMs: Date.now() - started, conversationId, businessId })
+      void logToolEvent({ toolName: name, success: false, errorClass: 'wrong_business', errorCode: 'wrong_business', latencyMs: 0, conversationId, businessId, turnId })
       return {
         success: false,
         error: `Tool "${name}" Trading registry-এ available নয় — Lifestyle conversation এ চেষ্টা করুন।`,
+        errorCode: 'wrong_business',
+        retryable: false,
       }
     }
-    const result = await anyTool.handler({ ...input, ...serverContext })
-    void logToolEvent({ toolName: name, success: result.success, errorClass: result.success ? undefined : 'handler_error', latencyMs: Date.now() - started, conversationId, businessId })
-    return result
+    tool = anyTool
   }
-  try {
-    const result = await tool.handler({ ...input, ...serverContext })
-    void logToolEvent({ toolName: name, success: result.success, errorClass: result.success ? undefined : 'handler_error', latencyMs: Date.now() - started, conversationId, businessId })
-    return result
-  } catch (err) {
-    void logToolEvent({ toolName: name, success: false, errorClass: 'uncaught_exception', latencyMs: Date.now() - started, conversationId, businessId })
-    return { success: false, error: String(err) }
-  }
+  return runRegisteredTool(tool, input, serverContext, {
+    conversationId,
+    businessId,
+    turnId,
+    turnAuthorization: serverContext.turnAuthorization as OwnerTurnAuthorization | undefined,
+  })
 }
+
+// Back-compat re-exports — the contract layer now owns these (tool-contract.ts).
+export { classifyErrorCode, isRetryableErrorCode } from './tool-contract'

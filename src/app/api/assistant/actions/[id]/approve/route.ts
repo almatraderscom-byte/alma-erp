@@ -5,6 +5,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
+import { finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { createPagePost, verifyPost, resolvePageId } from '@/agent/lib/meta'
 import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
 import { pauseCampaign, updateCampaignBudget } from '@/agent/lib/meta-ads'
@@ -97,6 +98,19 @@ async function runApprove(
     })
     return Response.json({ error: 'expired' }, { status: 410 })
   }
+
+  // Phase 1 approval span: ties the owner's decision to the conversation trace,
+  // so approvals/revisions join the turn → route → tool timeline (fail-open).
+  void import('@/agent/lib/tool-telemetry').then((m) =>
+    m.logToolEvent({
+      toolName: '__approval__',
+      phase: 'approval',
+      success: true,
+      conversationId: (action.conversationId as string | null) ?? null,
+      businessId: (action.businessId as string) ?? 'ALMA_LIFESTYLE',
+      detail: { actionId, actionType: action.type, decision: 'approved' },
+    }),
+  ).catch(() => {})
 
   // Record trust approval (non-blocking)
   const trustDomain = action.type.startsWith('staff_') ? 'staff' :
@@ -2093,17 +2107,94 @@ export async function POST(
   req: NextRequest,
   ctx: { params: { id: string } },
 ) {
+  // Live progress from the FIRST second (owner ask 2026-07-13, Claude-Code
+  // parity): before the action executes, drop a "করছি বস" line + open a running
+  // turn — the app's 12s poll surfaces both, so the owner watches the work
+  // instead of a minute of silence followed by a surprise "done" message.
+  // Phase 4 execution guard: approving a card whose canonical WorkflowRun the
+  // owner already cancelled/finished must NOT execute (stale card). Fail-open
+  // on lookup errors — blocks only on a positive terminal finding.
+  try {
+    const { workflowBlocksApproval } = await import('@/agent/lib/workflow-run')
+    const guard = await workflowBlocksApproval(ctx.params.id)
+    if (guard.blocked) {
+      return Response.json({ error: 'workflow_outdated', message: guard.reason }, { status: 409 })
+    }
+  } catch { /* fail-open */ }
+
+  const progress = await beginApprovalProgress(ctx.params.id)
   const res = await runApprove(req, ctx)
+  // Phase 4 sync: transition the linked WorkflowRun to the card's REAL status
+  // (executed→done+proof, approved→waiting_worker …). Awaited but tiny; a sync
+  // failure never affects the approval response.
+  try {
+    const { syncWorkflowWithPendingAction } = await import('@/agent/lib/workflow-run')
+    await syncWorkflowWithPendingAction(ctx.params.id, 'approval')
+  } catch (err) {
+    console.warn('[approve] workflow sync failed (approval unaffected):', err instanceof Error ? err.message : err)
+  }
   try {
     if (res.status >= 200 && res.status < 300) {
-      await enqueueApprovalContinuation(ctx.params.id)
+      await enqueueApprovalContinuation(ctx.params.id, progress?.turnId ?? null)
+    } else if (progress?.turnId) {
+      await finalizeTurnIfRunning(progress.turnId, 'error')
     }
   } catch (err) {
     // The approval already succeeded and was returned to the caller; a continuation
     // hiccup must never surface as an approval failure.
     console.warn('[approve] continuation enqueue failed (approval unaffected):', err instanceof Error ? err.message : err)
+    if (progress?.turnId) await finalizeTurnIfRunning(progress.turnId, 'done')
   }
   return res
+}
+
+/**
+ * Pre-execution progress presence: an instant assistant line + a running turn row
+ * on the action's conversation. The turn is REUSED by the follow-up continuation
+ * (sync actions) or by /internal/job-result (async image/video renders, which find
+ * it via payload.progressTurnId) and finalized there — the ghost-heal in
+ * turn-status.ts is the crash backstop. Best-effort: an approval must never fail
+ * because the progress note couldn't be written.
+ */
+async function beginApprovalProgress(actionId: string): Promise<{ turnId: string } | null> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = prisma as any
+    const action = await db.agentPendingAction.findUnique({
+      where: { id: actionId },
+      select: { conversationId: true, status: true, type: true, payload: true, summary: true },
+    })
+    if (!action || action.status !== 'pending') return null
+    const conversationId = resolveConversationId(action)
+    if (!conversationId) return null
+
+    const isRender = action.type === 'image_gen' || action.type === 'video_gen'
+    // Contextual, not canned (owner ask 2026-07-13 round 2): acknowledge the
+    // SPECIFIC job like a person would, then keep the thread visibly working.
+    const summaryLine = String(action.summary ?? '').split('\n')[0].slice(0, 80).trim()
+    await appendConversationNote(
+      db,
+      action,
+      isRender
+        ? '🎨 ঠিক আছে বস — ছবিটা বানানো শুরু করলাম (সাধারণত ৩০–৯০ সেকেন্ড)। রেডি হলেই এখানে preview দেখাব।'
+        : `⏳ অনুমোদন পেলাম বস${summaryLine ? ` — "${summaryLine}"` : ''} — এখনই করছি, শেষ করে ফলাফল জানাচ্ছি…`,
+    )
+    const { createTurn } = await import('@/agent/lib/turn-status')
+    const turnId = await createTurn(conversationId)
+    if (!turnId) return null
+
+    if (isRender) {
+      // The render finishes in /internal/job-result — hand it the turn to close.
+      await db.agentPendingAction.update({
+        where: { id: actionId },
+        data: { payload: { ...(action.payload as Record<string, unknown>), progressTurnId: turnId } },
+      })
+    }
+    return { turnId }
+  } catch (err) {
+    console.warn('[approve] progress presence failed (approval unaffected):', err instanceof Error ? err.message : err)
+    return null
+  }
 }
 
 /**
@@ -2114,7 +2205,15 @@ export async function POST(
  * No infinite loop: a continuation only ever fires from a human approval, and the turn
  * is told not to redo the action.
  */
-async function enqueueApprovalContinuation(actionId: string): Promise<void> {
+async function enqueueApprovalContinuation(actionId: string, reuseTurnId: string | null = null): Promise<void> {
+  // Whatever early-return path we take below, a progress turn opened at approve
+  // time must not stay 'running' forever — except for renders, whose turn is
+  // closed by /internal/job-result once the artifact lands.
+  const settleProgress = async (actionType?: string) => {
+    if (reuseTurnId && actionType !== 'image_gen' && actionType !== 'video_gen') {
+      await finalizeTurnIfRunning(reuseTurnId, 'done')
+    }
+  }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = prisma as any
   const action = await db.agentPendingAction.findUnique({
@@ -2122,10 +2221,10 @@ async function enqueueApprovalContinuation(actionId: string): Promise<void> {
     select: { conversationId: true, status: true, summary: true, type: true },
   })
   const conversationId: string | null = action?.conversationId ?? null
-  if (!conversationId) return
+  if (!conversationId) { await settleProgress(action?.type); return }
   // Only continue once the action genuinely resolved (guards against a 2xx that
   // wasn't an approval, e.g. an idempotent no-op).
-  if (action.status !== 'approved' && action.status !== 'executed') return
+  if (action.status !== 'approved' && action.status !== 'executed') { await settleProgress(action.type); return }
 
   // Async generation jobs (image/video) are NOT finished at approval time — the VPS
   // worker produces the artifact 30–60s later and reports via /internal/job-result,
@@ -2141,5 +2240,5 @@ async function enqueueApprovalContinuation(actionId: string): Promise<void> {
     '। এখন থেমে যেও না — তোমার চলমান কাজের পরের ধাপে নিজে থেকে এগোও, অথবা সব শেষ হলে সংক্ষেপে Boss-কে জানাও। ' +
     'যে কাজটা এইমাত্র approve হয়ে সম্পন্ন হয়েছে সেটা আর নতুন করে কোরো না।'
 
-  await enqueueAgentContinuation({ conversationId, message })
+  await enqueueAgentContinuation({ conversationId, message, turnId: reuseTurnId })
 }

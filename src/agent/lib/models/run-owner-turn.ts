@@ -4,7 +4,7 @@
  * Other providers use normalized adapters with the same tool handlers + claim-verifier.
  */
 import { prisma } from '@/lib/prisma'
-import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET } from '@/agent/config'
+import { MAX_TOOL_ITERATIONS, BROWSER_TURN_MAX_ITERATIONS, MARKETING_HEAD_TOOL_BUDGET, HEAD_TOOL_BUDGET } from '@/agent/config'
 import { runAgentTurn, type AgentEvent, type RunAgentTurnOptions } from '@/agent/lib/core'
 import { buildSystemPromptBlocks, type PinnedMemory, type OutcomeLearning, type OwnerDecision } from '@/agent/lib/system-prompt'
 import { getOfficePulse } from '@/agent/lib/office-pulse'
@@ -18,7 +18,17 @@ import { applySalahAutoMarkFromUserTexts } from '@/agent/lib/salah-auto-mark'
 import { isPrayerTimeInquiry, isSalahStatusInquiry } from '@/agent/lib/salah-times'
 import { isStaffTaskPlanningInquiry, isStaffTaskStatusInquiry } from '@/agent/lib/staff-task-intent'
 import { loadRecentOtherConversations } from '@/agent/lib/cross-surface'
-import { selectToolsAndGroupsForTurnAsync } from '@/agent/tools/select-tools'
+import { selectOwnerHeadTools, packsForPendingActionType, isContinuationText } from '@/agent/tools/state-router'
+import { workflowToolBinding } from '@/agent/lib/workflow-templates'
+import {
+  reconcileConversationWorkflows,
+  buildWorkflowSnapshotNote,
+  ensureWorkflowRunForPendingAction,
+  listActiveWorkflowRuns,
+  transitionWorkflowRun,
+  WorkflowVersionConflictError,
+  type WorkflowRunView,
+} from '@/agent/lib/workflow-run'
 import { getAgentControls, filterToolDefsByControls, controlsPromptNote } from '@/agent/lib/agent-controls'
 import { executeTool, executePersonalTool } from '@/agent/tools/registry'
 import { normalizeBusinessId, type AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -33,6 +43,16 @@ import { logCost } from '@/agent/lib/cost-events'
 import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact-detect'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { isTurnCancelRequested } from '@/agent/lib/turn-status'
+import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
+import {
+  shouldNudgeAdapterIntent,
+  shouldRestartHeadAfterFailure,
+} from '@/agent/lib/turn-loop-policy'
+import {
+  deriveOwnerTurnAuthorization,
+  filterToolsForOwnerTurn,
+  ownerTurnAuthorizationNote,
+} from '@/agent/lib/turn-authorization'
 import {
   verifyClaimsAgainstLedger,
   buildVerificationReminder,
@@ -43,7 +63,10 @@ import { getModel, isKnownModelId } from '@/agent/lib/models/registry'
 import { resolveHeadModelId, loadStickyHeadModelId, type HeadTier } from '@/agent/lib/models/head-router'
 import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 import { adapterFor } from '@/agent/lib/models/adapters'
+import { logRouteSpan } from '@/agent/lib/tool-telemetry'
+import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
+import { roundUsd } from '@/agent/lib/pricing'
 import {
   anthropicToolsToNeutral,
   appendToolExchange,
@@ -94,7 +117,10 @@ async function conversationAutoApprovesUpgrade(conversationId: string): Promise<
 function providerToCostProvider(provider: string): CostProvider {
   if (provider === 'google') return 'gemini'
   if (provider === 'openrouter') return 'openrouter'
-  if (provider === 'openai') return 'openai'
+  // xAI direct is OpenAI-compatible and priced from the same registry rates —
+  // tag its spend under 'openai' (CostProvider has no xai bucket; adding one
+  // would ripple through the cost dashboards for no accounting gain).
+  if (provider === 'openai' || provider === 'xai') return 'openai'
   return 'anthropic'
 }
 
@@ -113,11 +139,7 @@ const MARKETING_HEAD_WRAPUP_NUDGE =
 // doing it — the owner had to say "continue" after every round (2026-07-12
 // Ads Manager incident). core.ts has this net only for zero-tool Claude turns;
 // here we check the TAIL of the final text so a turn that already ran tools but
-// signs off with a future promise gets pushed to actually act. Bounded 2×.
-// NOTE: no \b after Bangla letters — JS ASCII \b never matches next to them
-// (the first version silently never fired on "সিলেক্ট করব।").
-const INTENT_TAIL_RE =
-  /(করা\s*হবে|করব(ো)?(?![ঀ-ৼ])|করে\s*দিচ্ছি|করে\s*দেব|নির্বাচন\s*কর|সিলেক্ট\s*কর(ব|ছি|া\s*হবে)|ক্লিক\s*কর(ব|ছি|া\s*হবে)|পরের\s*ধাপে|খুলছি|খুলব(?![ঀ-ৼ])|খুলে\s*দিচ্ছ|যাচ্ছি|চালাচ্ছি|শুরু\s*কর(ছি|ব)(?![ঀ-ৼ])|চেষ্টা\s*কর(ছি|ব)(?![ঀ-ৼ])|নেভিগেট\s*কর|ওপেন\s*কর|দেখি(?![ঀ-ৼ])|দেখছি|দেখে\s*নিচ্ছি|দেখব(?![ঀ-ৼ])|স্ক্র(ো|)ল\s*কর|খুঁজ(ছি|ব)|opening\s|navigating\s|scrolling\s|let me\s|i('|’)?ll\s|now i (will|am)|going to\s)/i
+// signs off with a future promise gets pushed to actually act. Bounded once.
 const ADAPTER_ACT_NOW_NUDGE =
   'তুমি বললে পরের ধাপটা করবে, কিন্তু না করেই টার্ন শেষ করে দিয়েছ। ঘোষণা নয় — কাজ। ' +
   'এখনই, এই একই টার্নে, যে ধাপটার কথা বললে সেটা live_browser_act/দরকারি টুল দিয়ে আসলে করো, ' +
@@ -186,11 +208,26 @@ async function loadOwnerDecisions(businessId: AgentBusinessId): Promise<OwnerDec
   }
 }
 
+// Injected at the FRONT of a listen-mode turn (router tier 'personal'). It reframes
+// the turn as pure emotional support and explicitly cancels the system prompt's
+// "always act / never just announce / finish the task" pressure for this one message.
+const LISTEN_MODE_NOTE =
+  '[LISTEN MODE — Boss তার নিজের মনের কথা / ব্যক্তিগত অনুভূতি শেয়ার করছেন, এটা কোনো কাজের নির্দেশ নয়।]\n' +
+  'এই টার্নে তোমার একমাত্র কাজ: মন দিয়ে শোনা আর সত্যিকারের সহানুভূতি দেখানো — যেন একজন কাছের বন্ধু।\n' +
+  '- আগে তার অনুভূতিটা কোমলভাবে স্বীকার করো ("বুঝতে পারছি", "খারাপ লাগছে শুনে")। ঠিক করার তাড়া নয়, আগে শোনো।\n' +
+  '- ব্যবসা / অর্ডার / মার্কেটিং / ছবি / অ্যাড / স্টাফ / todo / কোনো কাজের কথা এই মেসেজে একদম তুলবে না।\n' +
+  '- কোনো tool চালাবে না, কোনো কাজ resume করবে না, তাকে কিছু করতে বলবে না, "Chrome খুলুন" জাতীয় তাগাদা নয়।\n' +
+  '- "একই টার্নে action করো / শুধু ঘোষণা নয় / কাজ শেষ করো / proactive হও" — এই সব নিয়ম এই মেসেজের জন্য প্রযোজ্য নয়; এখানে কোনো task নেই।\n' +
+  '- ছোট, আন্তরিক, উষ্ণ বাংলায় উত্তর দাও। সম্বোধন শুধু "Boss" (কখনো Sir/স্যার নয়)। চাইলে আলতো করে জিজ্ঞেস করো কী হয়েছে — শুধু শুনতে চাও।\n' +
+  'পরে Boss স্পষ্টভাবে কোনো কাজ চাইলে তখন স্বাভাবিক কাজের mode-এ ফিরে যেও।'
+
 async function* runAlternateProviderTurn(
   conversationId: string,
   modelId: string,
   options: RunOwnerTurnOptions,
   headTier?: HeadTier,
+  /** Phase 3: same-model retry counter for owner-PINNED heads (never recurses past 1). */
+  sameModelAttempt = 0,
 ): AsyncGenerator<AgentEvent> {
   const model = getModel(modelId)
   const { projectSystemInstructions, personalMode = false, signal, turnId, telegramFastPath = false, deadlineAt = null } = options
@@ -198,10 +235,33 @@ async function* runAlternateProviderTurn(
     ? 'ALMA_LIFESTYLE'
     : normalizeBusinessId(options.businessId)
 
+  // LISTEN MODE — the owner just shared his OWN feelings in a work chat (router
+  // tier 'personal'). Deterministically withhold ALL business tools + work-pull
+  // context and inject an empathy override, so the head listens instead of running
+  // generate_image/ads/todos (the 2026-07-14 incident). Prompt rules alone don't
+  // hold the cheap heads back — withholding the tools does.
+  const listenMode = headTier === 'personal'
+  // Suppress the work-pulling context blocks on a listen turn exactly like the
+  // personal project already does — reusing the same gates keeps behaviour proven.
+  const suppressWork = personalMode || listenMode
+
   let totalInputTokens = 0
   let totalOutputTokens = 0
   let totalCacheCreationTokens = 0
   let totalCacheReadTokens = 0
+  // OpenRouter's ACTUAL billed cost, summed across every tool-loop turn. Stays
+  // null for providers that don't report it (native Gemini/Anthropic) — those
+  // keep the local token×rate estimate, which is accurate since we control the
+  // exact model+rate. When non-null it overrides the estimate so the per-message
+  // cost matches the OpenRouter dashboard.
+  let totalActualCostUsd: number | null = null
+  // One reply = several provider API calls (one per tool round), which appear as
+  // SEPARATE rows on the OpenRouter Logs page. Count the rounds and keep each
+  // round's billed cost so the badge can show "$0.0787 · ৫ ধাপ" with a per-step
+  // breakdown — reconciling one-badge-vs-many-dashboard-rows at a glance
+  // (owner ask 2026-07-14).
+  let apiRounds = 0
+  const roundCostsUsd: number[] = []
 
   const allRows = await prisma.agentMessage.findMany({
     where: { conversationId },
@@ -250,12 +310,13 @@ async function* runAlternateProviderTurn(
     if (typeof m.content === 'string' && m.content.trim()) recentUserTexts.unshift(m.content.trim())
   }
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
+  let turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
 
   const now = new Date()
   // Salah conscience-nudge + nightly muhasaba must work on this cheap-head path too
   // (short salah replies like "porechi" can be triaged here, not only to the Claude head).
   let intakeContextBlock: string | undefined
-  if (!personalMode) {
+  if (!suppressWork) {
     const autoMark = await applySalahAutoMarkFromUserTexts(lastUserText ? [lastUserText] : [], now)
     if (autoMark.marked.length) {
       const fresh = autoMark.marked[autoMark.marked.length - 1]
@@ -285,104 +346,43 @@ async function* runAlternateProviderTurn(
     }
   }
 
-  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot, officePulse] = await Promise.all([
-    loadPinnedMemories(personalMode, businessId),
-    lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
-    lastUserText ? retrieveRelevantOldTurns(conversationId, lastUserText) : Promise.resolve([]),
-    personalMode ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
-    personalMode || telegramFastPath
-      ? Promise.resolve([])
-      : loadRecentOtherConversations(conversationId, 5),
-    personalMode ? Promise.resolve([]) : getActivePlaybook(businessId),
-    personalMode ? Promise.resolve([] as OutcomeLearning[]) : getRecentOutcomeLearnings({ limit: 5 }).catch(() => [] as OutcomeLearning[]),
-    personalMode ? Promise.resolve([] as OwnerDecision[]) : loadOwnerDecisions(businessId),
-    (personalMode || !lastUserText) ? Promise.resolve([]) : detectInstructionConflicts(lastUserText, businessId).catch(() => []),
-    personalMode ? Promise.resolve('') : buildBusinessContext(businessId).catch(() => ''),
-    personalMode ? Promise.resolve('') : buildOwnerActiveTasksContextBlock(businessId).catch(() => ''),
-    personalMode ? Promise.resolve('') : buildStaffActiveTasksContextBlock(businessId).catch(() => ''),
-    selectToolsAndGroupsForTurnAsync(lastUserText, { personalMode, businessId, headTier }),
-    personalMode || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
-    // LIVE office pulse (owner decision 2026-07-08) — shared rolling summary of
-    // today's office/staff/agent-work state, delta-refreshed ≤10 min. Lets
-    // office questions and autonomous wakes answer in ONE round instead of
-    // paying tool round-trips that re-bill the whole context.
-    personalMode || businessId === 'ALMA_TRADING'
-      ? Promise.resolve(null)
-      : getOfficePulse().catch(() => null),
-  ])
-
-  const promptArgs = {
-    projectInstructions: projectSystemInstructions,
-    pinnedMemories,
-    relevantMemories,
-    recalledTurns,
-    salahContext: salahContext ?? undefined,
-    prayerTimeOnlyTurn: personalMode
-      ? false
-      : !isSalahStatusInquiry(lastUserText) && isPrayerTimeInquiry(lastUserText),
-    staffTaskPlanningTurn: personalMode ? false : isStaffTaskPlanningInquiry(lastUserText),
-    staffTaskStatusTurn: personalMode ? false : isStaffTaskStatusInquiry(lastUserText),
-    crossSurface,
-    salahStatusTurn: personalMode ? false : isSalahStatusInquiry(lastUserText),
-    personalMode,
-    businessId,
-    activePlaybook,
-    intakeContextBlock,
-    outcomeLearnings,
-    ownerDecisions,
-    conflictSignals,
-    businessContext,
-    ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,
-    staffActiveTasksBlock: staffActiveTasksBlock || undefined,
-    activeGroups: toolSelection.groups,
-    businessSnapshot,
-    officePulse,
-    headTier,
-    tailSummary,
+  // Phase 4 — resolve the CANONICAL workflow state BEFORE model routing:
+  // reconcile every non-terminal run against its pending action's real status
+  // (approvals executed via the per-type route branches close their runs here),
+  // then hand the surviving runs to the router + the snapshot note below.
+  // Fail-open: workflow bookkeeping must never block a turn.
+  let workflowRuns: WorkflowRunView[] = []
+  if (!suppressWork) {
+    try {
+      workflowRuns = await reconcileConversationWorkflows(conversationId)
+    } catch (err) {
+      console.warn('[run-owner-turn] workflow reconcile failed open:', err instanceof Error ? err.message : err)
+    }
   }
 
-  const { stable, volatile } = buildSystemPromptBlocks(promptArgs)
-  // Volatile per-turn context goes INTO the current owner user turn, not the
-  // system text — same rationale as the native Claude path (core.ts): a stable
-  // system prefix is what prefix-caching (native + Gemini/OpenRouter implicit)
-  // can actually reuse, and it keeps web/Telegram prefixes identical for a
-  // conversation. The injection is transient (only the assistant reply is
-  // persisted), so replayed history stays clean.
-  let volatileText = systemBlocksToText(volatile)
-  // P0 resume fast-path: unresolved checkpoints ride the same transient per-turn
-  // injection — the head resumes stalled work from the exact step with ZERO
-  // history re-reading (the note is self-contained by contract). Fail-open.
-  try {
-    const { listUnresolvedCheckpoints, buildCheckpointSystemNote } = await import('@/agent/lib/checkpoint')
-    const cps = await listUnresolvedCheckpoints(conversationId)
-    const note = buildCheckpointSystemNote(cps)
-    if (note) volatileText = volatileText ? `${volatileText}\n\n${note}` : note
-  } catch { /* fail-open — never block the turn */ }
-  // Ask-card answer framing: when the owner just tapped an option, the raw option
-  // text arrives as a bare user message with zero context — heads treated it as a
-  // brand-new request and RESTARTED the task from scratch (2026-07-12 carousel
-  // incident). Anchor it: this is the ANSWER to your own question — resume, don't
-  // re-derive. Fail-open.
-  try {
-    if (lastUserText) {
-      // Find the card this exact message answers — match by OPTION TEXT across the
-      // recent cards, never "latest answered by createdAt" (the old lookup): the
-      // web client fires the turn without awaiting the answer write, so the tapped
-      // card can still be 'pending' here, and the latest-answered card could be a
-      // DIFFERENT question — the head then bound the reply to the wrong question
-      // (owner bug 2026-07-12: tapped "অন্য কিছু change চাই", head ran "Ok" approve).
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const recentCards: Array<{ id: string; question: string; status: string; selectedOption: string | null; options: unknown }> =
+  // Ask-card answer matching — MOVED BEFORE routing (Phase 5): when the owner's
+  // message is the tapped option of a recent ask card, we must know it now, so
+  // (a) a card bound to a workflow run advances the template step BEFORE tool
+  // selection (else the turn Boss confirms the image still can't see the post
+  // tool), and (b) the answer-anchoring note below reuses the same match.
+  // Match by OPTION TEXT across recent cards, never "latest answered by
+  // createdAt" (2026-07-12: the head bound the reply to the wrong question).
+  type MatchedAskCard = { id: string; question: string; status: string; selectedOption: string | null; options: unknown; workflowRunId?: string | null }
+  let matchedAskCard: MatchedAskCard | undefined
+  if (!suppressWork && !listenMode && lastUserText) {
+    try {
+      const recentCards: MatchedAskCard[] =
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (prisma as any).agentAskCard.findMany({
           where: { conversationId },
           orderBy: { createdAt: 'desc' },
           take: 5,
-          select: { id: true, question: true, status: true, selectedOption: true, options: true },
+          select: { id: true, question: true, status: true, selectedOption: true, options: true, workflowRunId: true },
         })
       const matchesText = (opt: unknown): boolean =>
         typeof opt === 'string' && !!opt.trim() && lastUserText.startsWith(opt.trim().slice(0, 40))
-      let matched = recentCards.find((c) => matchesText(c.selectedOption))
-      if (!matched) {
+      matchedAskCard = recentCards.find((c) => matchesText(c.selectedOption))
+      if (!matchedAskCard) {
         // Race self-heal: the tapped option arrived as the message but the answer
         // write hasn't landed (or failed) — the card is still pending. Record it
         // ourselves so the durable row and the anchoring note agree.
@@ -396,23 +396,170 @@ async function* runAlternateProviderTurn(
             where: { id: pendingHit.id },
             data: { status: 'answered', selectedOption: chosen },
           }).catch(() => {})
-          matched = { ...pendingHit, status: 'answered', selectedOption: chosen }
+          matchedAskCard = { ...pendingHit, status: 'answered', selectedOption: chosen }
         }
       }
-      if (matched?.selectedOption) {
-        const others = Array.isArray(matched.options)
-          ? (matched.options as unknown[]).filter((o): o is string => typeof o === 'string' && o !== matched!.selectedOption)
-          : []
-        const answerNote =
-          `[ASK-CARD উত্তর] Boss-এর এই বার্তাটা তোমারই প্রশ্নের উত্তর — প্রশ্ন ছিল: "${matched.question}"। ` +
-          `Boss বেছে নিয়েছেন: "${matched.selectedOption}"।` +
-          (others.length ? ` তিনি এগুলো বেছে নেননি: ${others.map((o) => `"${o}"`).join(', ')} — সেগুলোর অর্থ ধরে কাজ করবে না।` : '') +
-          ' এটা নতুন কাজ নয়: আগের চলমান কাজটা ঠিক যেখানে ছিলে সেখান থেকে চালিয়ে যাও (চেকপয়েন্ট নোট দেখো)। ' +
-          'ব্রাউজার-কাজ চললে আগে live_browser_look দিয়ে এখনকার পেজ দেখো — গোড়া থেকে navigate করা বা main view-এ ফেরত যাওয়া নিষেধ।'
-        volatileText = volatileText ? `${volatileText}\n\n${answerNote}` : answerNote
+      // Phase 5: a bound answer moves the template state machine NOW (e.g. image
+      // preview confirm unlocks the post step) — then re-read the runs so the
+      // router, snapshot note and tool_choice binding all see the NEW step.
+      if (matchedAskCard?.workflowRunId && matchedAskCard.selectedOption) {
+        const { advanceWorkflowOnAskAnswer, listActiveWorkflowRuns: relist } = await import('@/agent/lib/workflow-run')
+        await advanceWorkflowOnAskAnswer(matchedAskCard.workflowRunId, matchedAskCard.selectedOption, 'turn')
+        workflowRuns = await relist(conversationId)
       }
+    } catch { /* fail-open — the note/advance are aids, never blockers */ }
+  }
+
+  // Owner-approved gate fix (2026-07-14, layer 3): STRUCTURED STATE upgrades a
+  // text-guessed read-only turn. An ask-card answer, or a continuation reply
+  // ("হ্যাঁ/ok") while canonical runs are in flight, continues work the owner
+  // already authorized — the intent regex must not strand it tool-less.
+  if (!turnAuthorization.allowMutations) {
+    const continuesInFlightWork =
+      Boolean(matchedAskCard?.selectedOption)
+      || (workflowRuns.length > 0 && isContinuationText(lastUserText))
+    if (continuesInFlightWork) {
+      turnAuthorization = { allowMutations: true, reason: 'workflow_continuation' }
     }
-  } catch { /* fail-open */ }
+  }
+
+  const [pinnedMemories, relevantMemories, recalledTurns, salahContext, crossSurface, activePlaybook, outcomeLearnings, ownerDecisions, conflictSignals, businessContext, ownerActiveTasksBlock, staffActiveTasksBlock, toolSelection, businessSnapshot, officePulse] = await Promise.all([
+    loadPinnedMemories(personalMode, businessId),
+    lastUserText ? retrieveRelevantMemories(lastUserText, personalMode, businessId) : Promise.resolve([]),
+    lastUserText ? retrieveRelevantOldTurns(conversationId, lastUserText) : Promise.resolve([]),
+    suppressWork ? Promise.resolve(null) : loadSalahAccountabilityContext(now, lastUserText),
+    suppressWork || telegramFastPath
+      ? Promise.resolve([])
+      : loadRecentOtherConversations(conversationId, 5),
+    suppressWork ? Promise.resolve([]) : getActivePlaybook(businessId),
+    suppressWork ? Promise.resolve([] as OutcomeLearning[]) : getRecentOutcomeLearnings({ limit: 5 }).catch(() => [] as OutcomeLearning[]),
+    suppressWork ? Promise.resolve([] as OwnerDecision[]) : loadOwnerDecisions(businessId),
+    (suppressWork || !lastUserText) ? Promise.resolve([]) : detectInstructionConflicts(lastUserText, businessId).catch(() => []),
+    suppressWork ? Promise.resolve('') : buildBusinessContext(businessId).catch(() => ''),
+    suppressWork ? Promise.resolve('') : buildOwnerActiveTasksContextBlock(businessId).catch(() => ''),
+    suppressWork ? Promise.resolve('') : buildStaffActiveTasksContextBlock(businessId).catch(() => ''),
+    // Phase 3: state-aware router first (pending cards / checkpoints / plans
+    // precede text routing, ≤24 tools) — falls back to the legacy selector when
+    // the flag is off or no confident signal exists.
+    selectOwnerHeadTools({ conversationId, text: lastUserText, personalMode, businessId, headTier }),
+    suppressWork || businessId === 'ALMA_TRADING' ? Promise.resolve(null) : getBusinessSnapshot(),
+    // LIVE office pulse (owner decision 2026-07-08) — shared rolling summary of
+    // today's office/staff/agent-work state, delta-refreshed ≤10 min. Lets
+    // office questions and autonomous wakes answer in ONE round instead of
+    // paying tool round-trips that re-bill the whole context.
+    suppressWork || businessId === 'ALMA_TRADING'
+      ? Promise.resolve(null)
+      : getOfficePulse().catch(() => null),
+  ])
+
+  const promptArgs = {
+    projectInstructions: projectSystemInstructions,
+    pinnedMemories,
+    relevantMemories,
+    recalledTurns,
+    salahContext: salahContext ?? undefined,
+    prayerTimeOnlyTurn: suppressWork
+      ? false
+      : !isSalahStatusInquiry(lastUserText) && isPrayerTimeInquiry(lastUserText),
+    staffTaskPlanningTurn: suppressWork ? false : isStaffTaskPlanningInquiry(lastUserText),
+    staffTaskStatusTurn: suppressWork ? false : isStaffTaskStatusInquiry(lastUserText),
+    crossSurface,
+    salahStatusTurn: suppressWork ? false : isSalahStatusInquiry(lastUserText),
+    personalMode,
+    businessId,
+    activePlaybook,
+    intakeContextBlock,
+    outcomeLearnings,
+    ownerDecisions,
+    conflictSignals,
+    businessContext,
+    ownerActiveTasksBlock: ownerActiveTasksBlock || undefined,
+    staffActiveTasksBlock: staffActiveTasksBlock || undefined,
+    activeGroups: listenMode ? [] : toolSelection.groups,
+    activeToolNames: listenMode ? [] : toolSelection.tools.map((t) => t.name),
+    businessSnapshot,
+    officePulse,
+    headTier,
+    tailSummary,
+  }
+
+  const { stable, volatile } = buildSystemPromptBlocks(promptArgs)
+  // Volatile per-turn context goes INTO the current owner user turn, not the
+  // system text — same rationale as the native Claude path (core.ts): a stable
+  // system prefix is what prefix-caching (native + Gemini/OpenRouter implicit)
+  // can actually reuse, and it keeps web/Telegram prefixes identical for a
+  // conversation. The injection is transient (only the assistant reply is
+  // persisted), so replayed history stays clean.
+  // Phase 6 — DETERMINISTIC per-turn context assembly (roadmap: core →
+  // workflow snapshot → scoped memory/context → compact history → latest turn).
+  // The canonical job state leads; memory/context blocks follow; the listen
+  // note, when present, overrides everything at the very top.
+  const volatileSections: string[] = []
+  // LISTEN MODE override — the empathy instruction leads and CANCELs the system
+  // prompt's action-pressure for this one turn. There are no business tools on
+  // a listen turn (assembled empty below), so the head physically cannot pivot
+  // to work; this note shapes the tone.
+  if (listenMode) volatileSections.push(LISTEN_MODE_NOTE)
+  // Owner-intent mutation gate note (origin/main "gate mutations by owner
+  // intent"): tells the head which mutation authorization this turn carries.
+  // Rides right after the listen override, before the job state.
+  const authorizationNote =
+    process.env.AGENT_OWNER_INTENT_GATE !== 'false' ? ownerTurnAuthorizationNote(turnAuthorization) : ''
+  if (authorizationNote) volatileSections.push(authorizationNote)
+  // Phase 4 — the canonical WorkflowRun snapshot precedes everything else in the
+  // per-turn context: the head reads the EXACT in-flight job state (status, step,
+  // legal next tools) so "হ্যাঁ/continue" resumes the blocked step instead of
+  // restarting from zero. Skipped in listen mode like the checkpoint note.
+  if (!listenMode && workflowRuns.length > 0) {
+    const wfNote = buildWorkflowSnapshotNote(workflowRuns)
+    if (wfNote) volatileSections.push(wfNote)
+  }
+  // P0 resume fast-path: unresolved checkpoints ride the same transient per-turn
+  // injection — the head resumes stalled work from the exact step with ZERO
+  // history re-reading (the note is self-contained by contract). Fail-open.
+  // Skipped in listen mode: a personal/emotional message must NOT drag a stalled
+  // ads/browser task back into context (a top cause of the work-pivot incident).
+  if (!listenMode) try {
+    const { listUnresolvedCheckpoints, buildCheckpointSystemNote } = await import('@/agent/lib/checkpoint')
+    const cps = await listUnresolvedCheckpoints(conversationId)
+    const note = buildCheckpointSystemNote(cps)
+    if (note) volatileSections.push(note)
+  } catch { /* fail-open — never block the turn */ }
+  // Ask-card answer framing: when the owner just tapped an option, the raw option
+  // text arrives as a bare user message with zero context — heads treated it as a
+  // brand-new request and RESTARTED the task from scratch (2026-07-12 carousel
+  // incident). Anchor it: this is the ANSWER to your own question — resume, don't
+  // re-derive. The matching itself moved BEFORE routing (Phase 5) — this block
+  // only builds the note from that match. Skipped in listen mode (a feelings
+  // message is never a card answer, and we must not pull prior work into it).
+  if (!listenMode && matchedAskCard?.selectedOption) {
+    const matched = matchedAskCard
+    const others = Array.isArray(matched.options)
+      ? (matched.options as unknown[]).filter((o): o is string => typeof o === 'string' && o !== matched.selectedOption)
+      : []
+    // Phase 4 (AGENT-IOS-001, server-side): the matched card carries its
+    // workflowRunId — the owner's answer binds to the EXACT run, not prose.
+    // workflowRuns was re-read after the Phase 5 advance, so the step shown
+    // here is the run's CURRENT step (e.g. post_draft after a confirmed image).
+    const wfRef = matched.workflowRunId
+      ? workflowRuns.find((r) => r.id === matched.workflowRunId)
+      : undefined
+    const wfLine = wfRef
+      ? ` এই উত্তরটা চলমান কাজ [${wfRef.kind}] "${wfRef.goal.slice(0, 80)}" (ধাপ: ${wfRef.state})-এর — ঠিক ওই ধাপ থেকেই এগোও।`
+      : ''
+    const answerNote =
+      `[ASK-CARD উত্তর] Boss-এর এই বার্তাটা তোমারই প্রশ্নের উত্তর — প্রশ্ন ছিল: "${matched.question}"। ` +
+      `Boss বেছে নিয়েছেন: "${matched.selectedOption}"।` + wfLine +
+      (others.length ? ` তিনি এগুলো বেছে নেননি: ${others.map((o) => `"${o}"`).join(', ')} — সেগুলোর অর্থ ধরে কাজ করবে না।` : '') +
+      ' এটা নতুন কাজ নয়: আগের চলমান কাজটা ঠিক যেখানে ছিলে সেখান থেকে চালিয়ে যাও (চেকপয়েন্ট নোট দেখো)। ' +
+      'ব্রাউজার-কাজ চললে আগে live_browser_look দিয়ে এখনকার পেজ দেখো — গোড়া থেকে navigate করা বা main view-এ ফেরত যাওয়া নিষেধ।'
+    volatileSections.push(answerNote)
+  }
+  // Scoped memory / business context (buildSystemPromptBlocks volatile) comes
+  // AFTER the canonical job state — deterministic order, cheap to reason about.
+  const systemVolatile = systemBlocksToText(volatile)
+  if (systemVolatile) volatileSections.push(systemVolatile)
+  const volatileText = volatileSections.filter(Boolean).join('\n\n').trim()
   if (volatileText) {
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i]
@@ -427,11 +574,82 @@ async function* runAlternateProviderTurn(
   const agentControls = await getAgentControls()
   const controlsNote = controlsPromptNote(agentControls)
   const systemText = systemBlocksToText(stable) + (controlsNote ? `\n\n${controlsNote}` : '')
+  // Phase 7 kill switch: AGENT_OWNER_INTENT_GATE=false disables the owner-intent
+  // mutation filter (and its note) without a deploy.
+  const intentGateOn = process.env.AGENT_OWNER_INTENT_GATE !== 'false'
   const selectedTools = filterToolDefsByControls(
-    toolSelection.tools,
+    intentGateOn ? filterToolsForOwnerTurn(toolSelection.tools, turnAuthorization) : [...toolSelection.tools],
     agentControls,
   )
-  const neutralTools = anthropicToolsToNeutral(selectedTools)
+  // xAI hard-caps tool definitions at 200 per request — the owner head carries 201,
+  // so EVERY Grok-4.20 turn 400'd ("Maximum tools limit reached") and silently fell
+  // back to DeepSeek (2026-07-13 outage, diagnosed via error.metadata.raw). Keep the
+  // earliest tools (core ERP + confirm/ask flows sit at the front of the registry)
+  // and drop the tail with a visible note.
+  const toolCap = model.apiModel.startsWith('x-ai/') ? 200 : Infinity
+  let cappedTools = selectedTools
+  if (selectedTools.length > toolCap) {
+    const dropped = selectedTools.slice(toolCap).map((t) => t.name)
+    console.warn(
+      `[run-owner-turn] ${model.apiModel} caps tools at ${toolCap} — dropping ${dropped.length}: ${dropped.join(', ')}`,
+    )
+    cappedTools = selectedTools.slice(0, toolCap)
+  }
+  // Listen mode: withhold ALL business tools. This is the deterministic guarantee
+  // (prompt rules alone don't hold the cheap heads back) that a feelings message
+  // can't be answered with generate_image / ads / list_owner_todos etc. — the head
+  // has nothing to call, so it must simply respond in words.
+  const neutralTools = listenMode ? [] : anthropicToolsToNeutral(cappedTools)
+  // Phase 3 request controller: parallel tool calls are legal ONLY when the whole
+  // pack is pure reads (capability manifest). Any stage/write tool in the pack →
+  // sequential, so the provider can never emit two confirm cards / writes chosen
+  // blind to each other (the multi-card and tool-spree incident class).
+  const { packAllowsParallelToolCalls } = await import('@/agent/tools/capability-manifest')
+  const packParallelToolCalls = packAllowsParallelToolCalls(neutralTools.map((t) => t.name))
+  // Phase 5 (roadmap §D): a deterministic mutating step binds the head's FIRST
+  // round to the template step's expected tool — exactly one active template
+  // run, its required facts present, and a continuation reply ("হ্যাঁ/করো") that
+  // carries no new intent. Later rounds return to auto so the model can speak.
+  // Guarded to tools actually present in this turn's pack (a bound name the
+  // provider can't see would 400 the request).
+  const stepBinding = !listenMode && workflowRuns.length > 0
+    ? workflowToolBinding(workflowRuns, {
+        // An ask-card answer bound to a run is as deterministic as "হ্যাঁ" — the
+        // owner just resolved THIS job's question (e.g. confirmed the preview).
+        continuation: isContinuationText(lastUserText) || Boolean(matchedAskCard?.workflowRunId),
+      })
+    : null
+  const boundToolName =
+    stepBinding && neutralTools.some((t) => t.name === stepBinding.toolName)
+      ? stepBinding.toolName
+      : null
+  // Phase 1 route span: what this turn's head was actually given — groups, final
+  // tool count (after controls gating, provider cap and listen mode), model and
+  // behavior-artifact versions. The tool events say what the model CALLED; this
+  // span says what it had to CHOOSE from — the missing half of every wrong-tool
+  // investigation.
+  void logRouteSpan({
+    conversationId,
+    turnId,
+    businessId,
+    groups: listenMode ? [] : toolSelection.groups,
+    toolCount: neutralTools.length,
+    modelId: model.id,
+    headTier,
+    versions: AGENT_VERSIONS,
+    extras: {
+      router: toolSelection.router,
+      packs: toolSelection.packs ?? null,
+      signals: toolSelection.signals ?? null,
+      trimmed: toolSelection.trimmed?.length ? toolSelection.trimmed : null,
+      parallelToolCalls: packParallelToolCalls,
+      boundTool: boundToolName,
+      turnAuthorization: turnAuthorization.reason,
+      // Phase 7 shadow: the router's prediction on legacy-executed turns —
+      // prod traffic scores recall/precision before any canary turns on.
+      shadow: toolSelection.shadow ?? null,
+    },
+  })
   const adapter = adapterFor(model.provider)
 
   type ToolRecord = {
@@ -445,7 +663,7 @@ async function* runAlternateProviderTurn(
   // Gemini does this occasionally and ending the turn there strands the owner
   // with a blank reply (2026-07-12: WhatsApp-fix turn died after one navigate).
   let emptyRoundRetries = 0
-  // Announced-intent guard (see INTENT_TAIL_RE above).
+  // Announced-intent guard (global terminal/failure rules live in turn-loop-policy).
   let intentNudges = 0
   let memoryNudgeSent = false
   let finalText = ''
@@ -466,7 +684,8 @@ async function* runAlternateProviderTurn(
   // in usage.timeline; never replayed to the model, so it adds zero token cost.
   type TimelineEntry =
     | { t: 'think'; text: string }
-    | { t: 'text'; text: string }
+    | { t: 'text'; text: string; state?: 'superseded' }
+    | { t: 'verify'; attempt: number; max: number }
     | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; shot?: string }
     | { t: 'file'; id: string; name: string; kind?: string }
   const timeline: TimelineEntry[] = []
@@ -485,6 +704,11 @@ async function* runAlternateProviderTurn(
   // off to DeepSeek. After MARKETING_HEAD_TOOL_BUDGET tool ROUNDS it may no longer
   // call any tools (iterationTools = []) — it must wrap up and answer itself.
   const isMarketingHead = headTier === 'marketing'
+  // Phase 6 (one engine): the PREMIUM Claude head keeps its core.ts "Option A"
+  // cost guard here too — after HEAD_TOOL_BUDGET rounds only delegate remains,
+  // so an expensive head hands the spree to a cheap worker instead of billing on.
+  const isPremiumHead = model.provider === 'anthropic'
+  const delegateOnlyNeutral = neutralTools.filter((t) => t.name === 'delegate_to_specialist')
   let headToolRounds = 0
   let budgetNudgeSent = false
   let deadlineNudgeSent = false
@@ -529,14 +753,35 @@ async function* runAlternateProviderTurn(
       // Second empty-round retry also goes text-only: Gemini sometimes wedges
       // trying to emit another tool call — with no tools it must speak.
       const overBudget = isMarketingHead && headToolRounds >= MARKETING_HEAD_TOOL_BUDGET
+      // Premium Claude head over its (smaller) budget → delegate-only, per the
+      // core.ts Option A guard this loop now owns (Phase 6). Inert when the
+      // pack carries no delegate tool (narrow modes) — the normal caps apply.
+      const premiumOverBudget =
+        isPremiumHead && delegateOnlyNeutral.length > 0 && headToolRounds >= HEAD_TOOL_BUDGET
       // Models whose provider offers no tool-calling (e.g. Qwen 2.5 VL 72B on
       // OpenRouter) get a chat/vision-only turn — sending tool defs would 4xx
       // the request and bounce the owner to the cheap-head fallback.
       const iterationTools =
-        nearDeadline || overBudget || emptyRoundRetries >= 2 || !model.supportsTools ? [] : neutralTools
+        nearDeadline || overBudget || emptyRoundRetries >= 2 || !model.supportsTools
+          ? []
+          : premiumOverBudget
+            ? delegateOnlyNeutral
+            : neutralTools
       if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
+      }
+      if (!nearDeadline && premiumOverBudget && !budgetNudgeSent) {
+        budgetNudgeSent = true
+        messages = [
+          ...messages,
+          {
+            role: 'user',
+            content:
+              'তুমি এই টার্নে যথেষ্ট টুল-রাউন্ড ব্যবহার করেছ (দামি মডেল)। এখন হয় জানা তথ্য দিয়েই উত্তর শেষ করো, ' +
+              'নয়তো বাকি কাজটা delegate_to_specialist দিয়ে specialist worker-কে দাও — নিজে আর টুল spree কোরো না।',
+          },
+        ]
       }
 
       for await (const ev of adapter.streamTurn({
@@ -546,6 +791,14 @@ async function* runAlternateProviderTurn(
         tools: iterationTools,
         thinking: model.thinking,
         signal,
+        parallelToolCalls: iterationTools.length > 0 ? packParallelToolCalls : undefined,
+        // Phase 5 §D: bind the FIRST round of a deterministic mutating step to
+        // its named tool (sequential by policy above); every later round is
+        // auto so the model can verify, summarize, or ask.
+        toolChoice:
+          iteration === 0 && boundToolName && iterationTools.length > 0
+            ? { name: boundToolName }
+            : undefined,
       })) {
         if (ev.type === 'text_delta') {
           if (thinkingText && thinkingMs == null && thinkingStartedAt) {
@@ -571,6 +824,11 @@ async function* runAlternateProviderTurn(
           totalOutputTokens += ev.outputTokens
           totalCacheCreationTokens += ev.cacheWrite ?? 0
           totalCacheReadTokens += ev.cacheRead ?? 0
+          apiRounds++
+          if (ev.costUsd != null) {
+            totalActualCostUsd = (totalActualCostUsd ?? 0) + ev.costUsd
+            roundCostsUsd.push(roundUsd(ev.costUsd))
+          }
         }
       }
 
@@ -612,9 +870,14 @@ async function* runAlternateProviderTurn(
         if (
           !signal?.aborted
           && !deadlineNudgeSent
-          && intentNudges < 2
+          && intentNudges < 1
           && iterationText.trim()
-          && INTENT_TAIL_RE.test(iterationText.trim().slice(-600))
+          && shouldNudgeAdapterIntent({
+            text: iterationText,
+            toolRecords,
+            hasAskCard: emittedAskCards.length > 0,
+            ownerRequestedAction: turnAuthorization.allowMutations,
+          })
         ) {
           intentNudges++
           messages = [
@@ -648,6 +911,15 @@ async function* runAlternateProviderTurn(
               categories: Array.from(new Set(violations.map((v) => v.category))),
               snippets: violations.map((v) => v.matchedSnippet),
             }
+            // Presentation parity: the draft stays visible in the timeline but is
+            // truthfully marked superseded, and the verification event itself is
+            // persisted — so reload shows the same draft → যাচাই → final composition
+            // the live stream showed, instead of silently deleting the draft.
+            for (let ti = timeline.length - 1; ti >= 0; ti--) {
+              const te = timeline[ti]
+              if (te.t === 'text') { te.state = 'superseded'; break }
+            }
+            timeline.push({ t: 'verify', attempt: verifyRetries, max: MAX_VERIFY_RETRIES })
             finalText = ''
             messages = [
               ...messages,
@@ -662,6 +934,7 @@ async function* runAlternateProviderTurn(
           !signal?.aborted
           && !memoryNudgeSent
           && lastUserText
+          && turnAuthorization.allowMutations
           && looksLikeDurableFact(lastUserText)
           && !toolRecords.some((r) => r.toolName === 'save_memory')
         ) {
@@ -700,8 +973,8 @@ async function* runAlternateProviderTurn(
         yield { type: 'tool_start', id: call.id, name: call.name, input: call.input }
         const started = Date.now()
         const result = personalMode
-          ? await executePersonalTool(call.name, call.input, { conversationId, businessId })
-          : await executeTool(call.name, call.input, { conversationId, businessId, modelId: model.id })
+          ? await executePersonalTool(call.name, call.input, { conversationId, businessId, turnAuthorization })
+          : await executeTool(call.name, call.input, { conversationId, businessId, modelId: model.id, turnId, turnAuthorization })
         const durationMs = Date.now() - started
 
         if (!result.success) {
@@ -767,8 +1040,25 @@ async function* runAlternateProviderTurn(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const row = await (prisma as any).agentPendingAction.findUnique({
               where: { id: d.pendingActionId },
-              select: { status: true, summary: true, costEstimate: true },
+              select: { status: true, summary: true, costEstimate: true, type: true },
             })
+            // Phase 4 — every staged card gets a canonical WorkflowRun (status
+            // waiting_owner) the moment it exists, idempotent on the card id.
+            // Never relies on the model tracking its own work. Fail-open.
+            // Phase 5: actionType drives the workflow-template mapping (an fb_post
+            // card joins the conversation's in-flight product_post run at its
+            // post_approval step instead of spawning a disconnected run).
+            if (row) {
+              const kind = packsForPendingActionType(String(row.type ?? ''))[0] ?? 'generic'
+              void ensureWorkflowRunForPendingAction({
+                pendingActionId: d.pendingActionId,
+                conversationId,
+                businessId,
+                actionType: String(row.type ?? ''),
+                kind,
+                goal: String(row.summary ?? lastUserText ?? '').slice(0, 500) || `${row.type} card`,
+              }).catch(() => {})
+            }
             if (row?.status === 'pending') {
               yield {
                 type: 'confirm_card',
@@ -820,6 +1110,62 @@ async function* runAlternateProviderTurn(
     // Owner canceled mid-turn: do not persist a partial reply or emit 'done'.
     if (canceled) return
 
+    // ── Phase 4 turn-end bookkeeping (all fail-open) ─────────────────────────
+    if (!personalMode) {
+      // Ask cards join the conversation's single in-flight workflow when that
+      // link is unambiguous — the structured reply resolution (server-side
+      // AGENT-IOS-001) then binds the owner's answer to the exact run.
+      if (emittedAskCards.length > 0) {
+        try {
+          const active = await listActiveWorkflowRuns(conversationId, 2)
+          if (active.length === 1) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (prisma as any).agentAskCard.updateMany({
+              where: { id: { in: emittedAskCards.map((c) => c.askCardId) } },
+              data: { workflowRunId: active[0].id },
+            })
+          }
+        } catch { /* fail-open */ }
+      }
+      // AUTO-CHECKPOINT (exit gate "restart-from-zero <1%"): a turn cut off by
+      // the serverless deadline mid-work freezes its state itself — never relies
+      // on the model calling save_task_checkpoint. One checkpoint per run/turn
+      // (writeCheckpoint dedupes on taskRef).
+      if (deadlineNudgeSent && toolRecords.length > 0) {
+        try {
+          const active = await listActiveWorkflowRuns(conversationId, 1)
+          const run = active[0]
+          const toolsUsed = [...new Set(toolRecords.map((r) => r.toolName))]
+          const { writeCheckpoint } = await import('@/agent/lib/checkpoint')
+          await writeCheckpoint({
+            taskRef: run?.id ?? turnId ?? `turn_${Date.now()}`,
+            taskType: run?.kind ?? 'long_agent_task',
+            state: 'waiting_for_owner',
+            goal: run?.goal ?? lastUserText.slice(0, 200),
+            summaryBn: 'সার্ভার সময়সীমায় টার্নটা থেমেছে — কাজ যেখানে ছিল সেখান থেকে resume হবে।',
+            doneSteps: toolsUsed.slice(0, 10),
+            currentStep: `deadline_paused (last: ${toolRecords[toolRecords.length - 1]?.toolName ?? '?'})`,
+            artifacts: [],
+            nextActions: ['Boss "continue" বললে ঠিক এখান থেকে চালিয়ে যাও'],
+            resumeHint: `শেষ টুল: ${toolRecords[toolRecords.length - 1]?.toolName ?? '?'}। ${lastUserText.slice(0, 300)}`,
+            question: 'Continue করব?',
+            conversationId,
+            businessId,
+            workflowRunId: run?.id ?? null,
+          })
+          if (run) {
+            await transitionWorkflowRun({
+              runId: run.id, expectedVersion: run.stateVersion,
+              toState: 'deadline_paused', cause: 'auto',
+              detail: { turnId, tools: toolsUsed.slice(0, 10) },
+            }).catch((err: unknown) => {
+              if (!(err instanceof WorkflowVersionConflictError)) throw err
+            })
+          }
+        } catch { /* fail-open */ }
+      }
+    }
+
     // A turn that produced NOTHING (no text, no tool calls, no cards) must never
     // be saved as a blank owner reply — throw so the cheap-head fallback below
     // answers instead (2026-07-12: gemini-2.5-flash 60k-in/0-out empty turn).
@@ -832,9 +1178,12 @@ async function* runAlternateProviderTurn(
     // never save an EMPTY message (context hole → next turn restarts the task),
     // persist a compact progress footer into replayed history, and auto-write a
     // resume checkpoint + signal the client to auto-continue.
-    const browserTurn = toolRecords.some((r) => r.toolName.startsWith('live_browser_'))
     const deadlineHit = Boolean(signal?.aborted) || deadlineNudgeSent
-    const taskUnfinished = browserTurn && deadlineHit && emittedAskCards.length === 0
+    const taskUnfinished = shouldAutoContinueTurn({
+      deadlineHit,
+      hasAskCard: emittedAskCards.length > 0,
+      tools: toolRecords,
+    })
     const browserSteps = toolRecords
       .filter((r) => r.toolName.startsWith('live_browser_') && r.status === 'success')
       .map((r) => {
@@ -889,12 +1238,16 @@ async function* runAlternateProviderTurn(
       } catch { /* best-effort — the saved reply already carries the progress */ }
     }
 
-    const costUsd = calcModelTurnCostUsd(model, {
-      inputTokens: totalInputTokens,
-      outputTokens: totalOutputTokens,
-      cacheRead: totalCacheReadTokens,
-      cacheWrite: totalCacheCreationTokens,
-    })
+    // Prefer OpenRouter's actual billed cost; fall back to the local estimate only
+    // when the provider didn't report one (native Gemini/Anthropic).
+    const costUsd = totalActualCostUsd != null
+      ? roundUsd(totalActualCostUsd)
+      : calcModelTurnCostUsd(model, {
+          inputTokens: totalInputTokens,
+          outputTokens: totalOutputTokens,
+          cacheRead: totalCacheReadTokens,
+          cacheWrite: totalCacheCreationTokens,
+        })
 
     // Ask-card breadcrumbs are appended after the text block — same reload-survival
     // pattern as the confirm-card breadcrumbs on the native Claude path (core.ts).
@@ -916,7 +1269,7 @@ async function* runAlternateProviderTurn(
         // Persist the reasoning trace in usage metadata (display-only) so the
         // "Thought for Ns" block survives reload. The GET messages route surfaces
         // it as `thinking`/`thinkingMs`; history replay never sees it.
-        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+        usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, cache_creation_input_tokens: totalCacheCreationTokens, cache_read_input_tokens: totalCacheReadTokens, model: model.id, apiModel: model.apiModel, provider: model.provider, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, reasoning: thinkingText.trim() ? thinkingText.trim().slice(0, 12000) : undefined, reasoningMs: thinkingMs ?? undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
       },
     })
     embedMessageInBackground(savedMsg.id, [{ type: 'text', text: finalText }])
@@ -967,6 +1320,7 @@ async function* runAlternateProviderTurn(
         model: model.id,
         apiModel: model.apiModel,
         provider: model.provider,
+        cost_source: totalActualCostUsd != null ? 'openrouter_actual' : 'estimate',
       },
       costUsd,
       conversationId,
@@ -974,13 +1328,7 @@ async function* runAlternateProviderTurn(
       dedupKey: `chat:msg:${savedMsg.id}`,
     })
 
-    // A browser turn that ENDS on an announced next step (the intent guard is
-    // bounded 2× and stubborn flash heads outlast it) also signals the client
-    // to auto-continue — otherwise the task stalls until the owner pokes it
-    // ("স্ক্রোল করে Format সেকশনটা পুরো দেখি।" then silence, 2026-07-12).
-    const endedWithPromise =
-      browserTurn && emittedAskCards.length === 0 && INTENT_TAIL_RE.test(finalText.trim().slice(-600))
-    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished || endedWithPromise }
+    yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd, needContinue: taskUnfinished, apiRounds: apiRounds > 0 ? apiRounds : undefined, roundCostsUsd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined }
   } catch (err) {
     if (signal?.aborted) {
       // The 280s cap aborted mid-round (the adapter stream throws). Salvage what
@@ -1002,13 +1350,46 @@ async function* runAlternateProviderTurn(
               conversationId, role: 'assistant',
               content: [{ type: 'text', text: salvageText }, ...emittedAskCards],
               tokensIn: totalInputTokens, tokensOut: totalOutputTokens,
-              costUsd: calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens }),
-              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
+              costUsd: totalActualCostUsd != null
+                ? roundUsd(totalActualCostUsd)
+                : calcModelTurnCostUsd(model, { inputTokens: totalInputTokens, outputTokens: totalOutputTokens, cacheRead: totalCacheReadTokens, cacheWrite: totalCacheCreationTokens }),
+              usage: { input_tokens: totalInputTokens, output_tokens: totalOutputTokens, model: model.id, api_rounds: apiRounds > 0 ? apiRounds : undefined, round_costs_usd: roundCostsUsd.length > 0 ? roundCostsUsd : undefined, timeline: timeline.length > 0 ? timeline.slice(0, 60) : undefined },
             },
           })
           const abortedBrowserTurn = toolRecords.some((r) => r.toolName.startsWith('live_browser_'))
           yield { type: 'done', messageId: savedMsg.id, tokensIn: totalInputTokens, tokensOut: totalOutputTokens, cacheCreation: totalCacheCreationTokens, cacheRead: totalCacheReadTokens, costUsd: 0, needContinue: abortedBrowserTurn && emittedAskCards.length === 0 }
         } catch { /* best-effort — worst case matches the old silent return */ }
+      }
+      return
+    }
+    // Phase 3 — PINNED-head identity guard (roadmap: "Grok identity never changes
+    // silently"): when the owner explicitly pinned this model on the conversation
+    // (tier 'explicit'), a pre-answer crash must NEVER silently switch models.
+    // Retry the SAME model once (transient provider blips — the adapter's request
+    // ladder already handles shape rejections), then surface a clear incident so
+    // the owner knows his pinned model is down and chooses what to do.
+    const canRestartHead = shouldRestartHeadAfterFailure({
+      text: finalText,
+      toolRecords,
+      hasAskCard: emittedAskCards.length > 0,
+    })
+    if (headTier === 'explicit' && canRestartHead) {
+      if (sameModelAttempt === 0) {
+        console.warn(
+          `[run-owner-turn] pinned head ${model.id} failed pre-answer → same-model retry:`,
+          err instanceof Error ? err.message : err,
+        )
+        yield* runAlternateProviderTurn(conversationId, model.id, options, headTier, 1)
+        return
+      }
+      await captureAgentError(err, 'agent.head.pinned_down', { conversationId, modelId: model.id })
+      const msg = err instanceof Error ? err.message : String(err)
+      yield {
+        type: 'error',
+        message:
+          `⚠️ Boss, এই চ্যাটটা **${model.label}**-এ পিন করা, কিন্তু মডেলটা এখন সাড়া দিচ্ছে না — ` +
+          `২ বার চেষ্টা করেছি, আর আপনার অনুমতি ছাড়া চুপচাপ অন্য মডেলে যাইনি। ` +
+          `একটু পরে আবার মেসেজ করুন, অথবা মডেল-পিকার থেকে অন্য মডেল বেছে নিন। (${msg.slice(0, 200)})`,
       }
       return
     }
@@ -1018,7 +1399,7 @@ async function* runAlternateProviderTurn(
     // to Sonnet (the expensive rescue that spiked cost). Guards: only when no answer
     // was streamed yet, and not already on the cheap head (prevents recursion loop).
     const cheapId = process.env.CHEAP_HEAD_MODEL_ID?.trim() || 'or-deepseek-v4-flash'
-    if (!finalText.trim() && model.id !== cheapId && isKnownModelId(cheapId)) {
+    if (canRestartHead && model.id !== cheapId && isKnownModelId(cheapId)) {
       const cheap = getModel(cheapId)
       if (cheap.provider !== 'anthropic' && cheap.supportsTools) {
         console.warn(
@@ -1139,7 +1520,7 @@ export async function* runOwnerTurn(
   // sim ≥ 0.95, TTL) — any doubt falls through to the normal agent. Cheap heads
   // (DeepSeek-class) and explicit owner pins bypass entirely; a miss costs one
   // embedding (~$0.000002).
-  if (!options.approveModelSwitch && decision.tier !== 'explicit' && lastUserText) {
+  if (!options.approveModelSwitch && decision.tier !== 'explicit' && decision.tier !== 'personal' && lastUserText) {
     try {
       const { ANSWER_GATE_ENABLED, isExpensiveHead, tryAnswerGate, recordGateServe } = await import('@/agent/lib/answer-gate')
       if (ANSWER_GATE_ENABLED && isExpensiveHead(model)) {
@@ -1215,7 +1596,13 @@ export async function* runOwnerTurn(
     yield { type: 'text_delta', delta: disabledSwitchNote }
   }
 
-  if (model.provider === 'anthropic') {
+  // Phase 6 — ONE turn engine: Anthropic heads run through the SAME neutral
+  // orchestrator as every other provider (adapters/anthropic.ts owns the
+  // request shaping). The old parallel native loop (core.ts) had to be patched
+  // twice for every behavior fix — Phase 4's missing WorkflowRun hooks were
+  // found exactly there. Kill switch: AGENT_NATIVE_ANTHROPIC_LOOP=true restores
+  // the native loop instantly (no deploy semantics change for other providers).
+  if (model.provider === 'anthropic' && process.env.AGENT_NATIVE_ANTHROPIC_LOOP === 'true') {
     yield* runAgentTurn(conversationId, {
       ...options,
       modelId: model.id,

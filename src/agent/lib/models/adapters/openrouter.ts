@@ -19,5 +19,17 @@ export function createOpenRouterAdapter(): OpenAiAdapter {
     // it reasons) live thinking block — the owner wants the same "thinking" feel the
     // DeepSeek/Claude apps show. Non-reasoning models simply emit nothing here.
     reasoning: true,
+    // Ask OpenRouter for the ACTUAL billed cost per turn so the per-message cost
+    // (and the Logs/Summary dashboards that read the same rows) match the
+    // OpenRouter dashboard exactly, instead of a local token×rate estimate that
+    // drifted 1.5–4× high (stale registry rates + guessed cache discounts).
+    includeCostUsage: true,
+    // Exacto quality routing + require_parameters on tool-bearing requests:
+    // route only to hosts with proven tool-call parsers instead of the default
+    // price-first "Balanced" pick (OpenRouter measured ~8%→~1% tool-call error
+    // from this alone). Owner kill switches: ENABLE_OPENROUTER_EXACTO /
+    // OPENROUTER_REQUIRE_PARAMETERS.
+    exacto: true,
+    requireParameters: true,
   })
 }

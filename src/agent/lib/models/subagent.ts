@@ -11,6 +11,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { getModel, DEFAULT_MODEL_ID, type ModelEntry } from '@/agent/lib/models/registry'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
+import { roundUsd } from '@/agent/lib/pricing'
 import { logCost } from '@/agent/lib/cost-events'
 import { assembleSelectedTools, toolsToDefinitions } from '@/agent/tools/select-tools'
 import { executeTool } from '@/agent/tools/registry'
@@ -162,6 +163,9 @@ async function runWithModel(
   /** Cached-prompt tokens (adapter path reports inputTokens as uncached-only). */
   cacheRead: number
   cacheWrite: number
+  /** OpenRouter's actual billed cost (USD), or null when not reported (native
+   *  Anthropic / a provider that omits it) — caller then estimates from tokens. */
+  actualCostUsd: number | null
 }> {
   const system = buildSystemPrompt(def)
   const rawTools = assembleSelectedTools(def.toolGroups).filter((t) => t.name !== 'delegate_to_specialist')
@@ -178,7 +182,7 @@ async function runWithModel(
       businessId: params.businessId,
       conversationId: params.conversationId,
       signal: params.signal,
-    }).then((r) => ({ ...r, cacheRead: 0, cacheWrite: 0 }))
+    }).then((r) => ({ ...r, cacheRead: 0, cacheWrite: 0, actualCostUsd: null }))
   }
 
   if (!model.supportsTools) {
@@ -202,6 +206,7 @@ async function runWithModel(
     outputTokens: r.outputTokens,
     cacheRead: r.cacheRead,
     cacheWrite: r.cacheWrite,
+    actualCostUsd: r.actualCostUsd,
   }))
 }
 
@@ -250,12 +255,14 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
       summary = gateCheapModelBanglaOutput(summary, { customerFacing: true })
     }
 
-    const costUsd = calcModelTurnCostUsd(model, {
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
-      cacheRead: result.cacheRead,
-      cacheWrite: result.cacheWrite,
-    })
+    const costUsd = result.actualCostUsd != null
+      ? roundUsd(result.actualCostUsd)
+      : calcModelTurnCostUsd(model, {
+          inputTokens: result.inputTokens,
+          outputTokens: result.outputTokens,
+          cacheRead: result.cacheRead,
+          cacheWrite: result.cacheWrite,
+        })
 
     void logCost({
       provider: costProviderForModel(model),
@@ -273,6 +280,7 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
         via: model.provider === 'openrouter' ? 'openrouter' : model.provider,
         task_snippet: params.task.slice(0, 160),
         fallback: fallbackUsed ? '1' : '0',
+        cost_source: result.actualCostUsd != null ? 'openrouter_actual' : 'estimate',
       },
       costUsd,
       conversationId: params.conversationId ?? null,
@@ -308,12 +316,14 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
         if (isOpenRouterProvider(model.provider) && needsCustomerFacingBanglaGate(params.role, tier)) {
           fbSummary = gateCheapModelBanglaOutput(fbSummary, { customerFacing: true })
         }
-        const costUsd = calcModelTurnCostUsd(model, {
-          inputTokens: result.inputTokens,
-          outputTokens: result.outputTokens,
-          cacheRead: result.cacheRead,
-          cacheWrite: result.cacheWrite,
-        })
+        const costUsd = result.actualCostUsd != null
+          ? roundUsd(result.actualCostUsd)
+          : calcModelTurnCostUsd(model, {
+              inputTokens: result.inputTokens,
+              outputTokens: result.outputTokens,
+              cacheRead: result.cacheRead,
+              cacheWrite: result.cacheWrite,
+            })
         void logCost({
           provider: costProviderForModel(model),
           kind: 'chat',
@@ -331,6 +341,7 @@ export async function runSubAgent(params: RunSubAgentParams): Promise<SubAgentRe
                   ? 'fallback-claude'
                   : 'fallback',
             task_snippet: params.task.slice(0, 160),
+            cost_source: result.actualCostUsd != null ? 'openrouter_actual' : 'estimate',
           },
           costUsd,
           conversationId: params.conversationId ?? null,

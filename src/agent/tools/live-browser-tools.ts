@@ -118,11 +118,19 @@ async function requireActiveDevice(
   const devices = await listOwnerDevices()
   const online = devices.filter((d) => d.online)
   if (online.length === 0) {
+    const newestHeartbeat = devices
+      .map((d) => d.lastSeenAt?.getTime() ?? 0)
+      .sort((a, b) => b - a)[0] ?? 0
+    const heartbeatNote = newestHeartbeat > 0
+      ? `Server সর্বশেষ heartbeat পেয়েছে ${formatHeartbeatAge(Date.now() - newestHeartbeat)} আগে। `
+      : 'Server এখনো কোনো heartbeat পায়নি। '
     return {
       ok: false,
       error:
-        'আপনার কোনো Chrome এখন অনলাইনে যুক্ত নেই, Boss। Chrome খুলুন এবং ALMA Companion এক্সটেনশনে ' +
-        '"থামান" করা থাকলে চালু করুন — তারপর আবার বলুন।',
+        `STATUS_FACT=server_heartbeat_missing. ALMA server এখন কোনো Chrome-এর live heartbeat পাচ্ছে না। ${heartbeatNote}` +
+        'Companion popup-এর local switch ON/OFF অবস্থা server জানে না। FORBIDDEN CLAIM: Chrome, browser, extension ' +
+        'বা device “offline/বন্ধ” বলা যাবে না। Boss-কে হুবহু সত্যটা বলুন: “Server Companion heartbeat পাচ্ছে না; ' +
+        'আপনার extension ON/OFF অবস্থা আমি এখান থেকে জানি না।”',
     }
   }
 
@@ -152,6 +160,14 @@ async function requireActiveDevice(
     }
   }
   return { ok: true, deviceId: online[0].id, name: online[0].name }
+}
+
+function formatHeartbeatAge(ageMs: number): string {
+  const seconds = Math.max(0, Math.floor(ageMs / 1000))
+  if (seconds < 60) return `${seconds} সেকেন্ড`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} মিনিট`
+  return `${Math.floor(minutes / 60)} ঘণ্টা`
 }
 
 const set_live_browser: AgentTool = {
@@ -250,12 +266,22 @@ const live_browser_status: AgentTool = {
         success: true,
         data: {
           enabled,
-          devices: devices.map((d) => ({ name: d.name, online: d.online, lastSeenAt: d.lastSeenAt })),
+          devices: devices.map((d) => ({
+            name: d.name,
+            online: d.online,
+            lastSeenAt: d.lastSeenAt,
+            heartbeatAgeSeconds: d.lastSeenAt
+              ? Math.max(0, Math.floor((Date.now() - d.lastSeenAt.getTime()) / 1000))
+              : null,
+          })),
           summary: !enabled
             ? 'লাইভ ব্রাউজার বন্ধ আছে, Boss।'
             : devices.length === 0
               ? 'কোনো Chrome এখনো যুক্ত করা হয়নি, Boss — "pair code দাও" বললে কোড দিই।'
-              : `${devices.length}টি Chrome যুক্ত, এখন অনলাইন ${online}টি, Boss।`,
+              : online > 0
+                ? `${devices.length}টি Chrome paired; server এখন ${online}টি থেকে live heartbeat পাচ্ছে, Boss।`
+                : `${devices.length}টি Chrome paired, কিন্তু server এখন কোনোটির live heartbeat পাচ্ছে না, Boss। ` +
+                  'Popup-এর local switch ON থাকা আর server-connected থাকা এক জিনিস নয়।',
         },
       }
     } catch (err) {

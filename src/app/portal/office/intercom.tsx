@@ -20,6 +20,25 @@ import { INTERCOM_CSS } from './intercom-css'
 const POLL_MS = 6_000
 /** A call broadcast only "rings" this long; older = a missed call. */
 const CALL_RING_MS = 60_000
+
+/**
+ * True only inside the iOS native shell. There, the native FloatingChatHead +
+ * AgoraIntercom own the incoming-call ring and the call screen, so the web call
+ * UI (this file's IntercomCall + the dock's call button) must stay silent —
+ * otherwise a call double-rings (native ring + web ring). Android WebView has NO
+ * native call code, and plain browsers obviously don't, so both keep the web UI.
+ */
+function isIosNativeShell(): boolean {
+  if (typeof window === 'undefined') return false
+  const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string } }).Capacitor
+  return Boolean(cap?.isNativePlatform?.()) && cap?.getPlatform?.() === 'ios'
+}
+/** Mount-safe read of {@link isIosNativeShell} (avoids an SSR/hydration mismatch). */
+function useIsIosNative(): boolean {
+  const [ios, setIos] = useState(false)
+  useEffect(() => setIos(isIosNativeShell()), [])
+  return ios
+}
 /** The Agora channel for a call is derived from its broadcast id (no signaling column needed). */
 const callChannel = (broadcastId: string) => `itc_${broadcastId}`
 const MIN_HOLD_MS = 900
@@ -51,6 +70,7 @@ export type ItcReceipt = {
   playedAt: string | null
   confirmedAt: string | null
 }
+export type CallEndReason = 'cancelled' | 'declined' | 'missed' | 'completed'
 export type ItcBroadcast = {
   id: string
   kind: 'voice' | 'urgent' | 'call'
@@ -60,6 +80,13 @@ export type ItcBroadcast = {
   transcript: string | null
   targetStaffId: string | null
   createdAt: string
+  callerName: string | null
+  endedAt: string | null
+  endedReason: CallEndReason | null
+  /** This call is an incoming ring for me (I'm the callee). Server-computed. */
+  incomingForMe: boolean
+  /** I placed this call (I'm the caller). Server-computed. */
+  outgoingByMe: boolean
   receipts: ItcReceipt[]
   mine: { deliveredAt: string | null; playedAt: string | null; confirmedAt: string | null } | null
 }
@@ -331,6 +358,19 @@ export function useIntercom(self: 'owner' | 'staff') {
   )
 
   /* ── live call (Agora) ── */
+  // True once the peer has actually joined — distinguishes "cancelled before
+  // answer" from "completed after talking" when we tear a call down.
+  const everConnectedRef = useRef(false)
+
+  /** Tell the server a call is over so the OTHER side stops ringing instantly. */
+  const postEnd = useCallback((broadcastId: string, reason: CallEndReason) => {
+    void fetch('/api/assistant/office/intercom/end', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ broadcastId, reason }),
+    }).catch(() => {})
+  }, [])
+
   // Owner rings ONE staff: create a call broadcast, then join its channel.
   const startCall = useCallback(
     async (staffId: string, staffName: string) => {
@@ -350,6 +390,7 @@ export function useIntercom(self: 'owner' | 'staff') {
         }
         const { id } = (await res.json()) as { id: string }
         setCallPeer(staffName)
+        everConnectedRef.current = false
         setActiveCallId(id)
         await callApi.join(callChannel(id))
         void load()
@@ -360,33 +401,73 @@ export function useIntercom(self: 'owner' | 'staff') {
     [callStarting, activeCallId, callApi, load],
   )
 
-  // Staff answers an incoming call: stop the ring (confirm) + join the channel.
+  // Staff rings the owner (bidirectional calling). No targetStaffId → the server
+  // routes it to the owner's devices; the owner's app rings just like WhatsApp.
+  const callOwner = useCallback(async () => {
+    if (callStarting || activeCallId) return
+    setCallStarting(true)
+    setError(null)
+    tapHaptic()
+    try {
+      const res = await fetch('/api/assistant/office/intercom', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'call' }),
+      })
+      if (!res.ok) {
+        setError('কল শুরু করা যায়নি')
+        return
+      }
+      const { id } = (await res.json()) as { id: string }
+      setCallPeer('বস — মারুফ')
+      everConnectedRef.current = false
+      setActiveCallId(id)
+      await callApi.join(callChannel(id))
+      void load()
+    } finally {
+      setCallStarting(false)
+    }
+  }, [callStarting, activeCallId, callApi, load])
+
+  // Answer an incoming call (owner or staff): stop the ring + join the channel.
   const answerCall = useCallback(
     async (b: ItcBroadcast) => {
       if (activeCallId) return
       successHaptic()
-      setCallPeer('বস')
+      setCallPeer(b.callerName ?? 'বস — মারুফ')
+      everConnectedRef.current = false
       setActiveCallId(b.id)
-      void confirm(b.id)
+      if (b.mine) void confirm(b.id) // owner→staff answer receipt (staff→owner has none)
       await callApi.join(callChannel(b.id))
     },
     [activeCallId, callApi, confirm],
   )
 
-  // Staff declines: just stop the ring (never joins). Owner will time out.
+  // Decline an incoming call: never joins. Tell the server → caller's ring stops
+  // and the row is recorded as a declined/missed call in both feeds.
   const declineCall = useCallback(
     (b: ItcBroadcast) => {
       warningHaptic()
-      void confirm(b.id)
+      if (b.mine) void confirm(b.id) // reflect on the owner's receipt view
+      postEnd(b.id, 'declined')
     },
-    [confirm],
+    [confirm, postEnd],
   )
 
-  const endCall = useCallback(() => {
-    void callApi.leave()
-    setActiveCallId(null)
-    setCallPeer('')
-  }, [callApi])
+  // End the active call. reason defaults to completed (talked) vs cancelled (never
+  // connected) so the history shows "মিসড কল" only when nobody actually answered.
+  const endCall = useCallback(
+    (reason?: CallEndReason) => {
+      const id = activeCallId
+      const connected = everConnectedRef.current
+      void callApi.leave()
+      setActiveCallId(null)
+      setCallPeer('')
+      everConnectedRef.current = false
+      if (id) postEnd(id, reason ?? (connected ? 'completed' : 'cancelled'))
+    },
+    [callApi, activeCallId, postEnd],
+  )
 
   /* ── staff: live listen toggle (the tap unlocks audio for auto-play) ── */
   const toggleLiveListen = useCallback(() => {
@@ -399,16 +480,36 @@ export function useIntercom(self: 'owner' | 'staff') {
   // Keep listening across office hours; drop the channel if the tab is hidden a
   // long time is handled by Agora itself. Nothing to do here beyond unmount.
 
+  // Tear down our side WITHOUT telling the server — used when the server already
+  // recorded the end (the peer hung up and its endedAt reached us via the poll).
+  const silentEnd = useCallback(() => {
+    void callApi.leave()
+    setActiveCallId(null)
+    setCallPeer('')
+    everConnectedRef.current = false
+  }, [callApi])
+
   // If the remote hangs up (Agora user-left → remoteJoined flips false after
-  // having been true), close our side too.
+  // having been true), close our side too — we WERE connected, so 'completed'.
   const wasConnectedRef = useRef(false)
   useEffect(() => {
-    if (callApi.remoteJoined) wasConnectedRef.current = true
-    else if (wasConnectedRef.current && activeCallId) {
+    if (callApi.remoteJoined) {
+      wasConnectedRef.current = true
+      everConnectedRef.current = true
+    } else if (wasConnectedRef.current && activeCallId) {
       wasConnectedRef.current = false
-      endCall()
+      endCall('completed')
     }
   }, [callApi.remoteJoined, activeCallId, endCall])
+
+  // The peer ended the call (cancelled before answer / declined / hung up): the
+  // server stamped endedAt + pushed a cancel, and our poll picked it up. Close
+  // locally without re-posting (WhatsApp: the other side's screen just closes).
+  useEffect(() => {
+    if (!activeCallId) return
+    const row = feed.broadcasts.find((b) => b.id === activeCallId)
+    if (row?.endedAt) silentEnd()
+  }, [feed.broadcasts, activeCallId, silentEnd])
 
   // Nobody answered within the ring window → give up (WhatsApp-style), instead
   // of sitting on "রিং হচ্ছে…" forever. The effect re-arms only while a call is
@@ -417,10 +518,37 @@ export function useIntercom(self: 'owner' | 'staff') {
     if (!activeCallId || callApi.remoteJoined) return
     const t = setTimeout(() => {
       setError('কেউ কল ধরেনি')
-      endCall()
+      endCall('missed')
     }, CALL_RING_MS)
     return () => clearTimeout(t)
   }, [activeCallId, callApi.remoteJoined, endCall])
+
+  // Deep-link auto-answer: Android's native full-screen "Accept" (Stage 1) opens
+  // the app at /portal/office?answerCall=<broadcastId>. Join that call as soon as
+  // it shows up in the feed, then strip the param so a refresh can't re-answer.
+  // (Skipped in the iOS native shell — CallKit already answered there.)
+  const autoAnsweredRef = useRef(false)
+  useEffect(() => {
+    if (autoAnsweredRef.current || activeCallId || isIosNativeShell()) return
+    let wanted: string | null = null
+    try {
+      wanted = new URLSearchParams(window.location.search).get('answerCall')
+    } catch {
+      /* no window */
+    }
+    if (!wanted) return
+    const b = feed.broadcasts.find((x) => x.id === wanted && x.kind === 'call' && x.incomingForMe && !x.endedAt)
+    if (!b) return
+    autoAnsweredRef.current = true
+    void answerCall(b)
+    try {
+      const u = new URL(window.location.href)
+      u.searchParams.delete('answerCall')
+      window.history.replaceState({}, '', u.toString())
+    } catch {
+      /* ignore */
+    }
+  }, [feed.broadcasts, activeCallId, self, answerCall])
 
   return {
     self,
@@ -444,6 +572,7 @@ export function useIntercom(self: 'owner' | 'staff') {
     callPeer,
     callStarting,
     startCall,
+    callOwner,
     answerCall,
     declineCall,
     endCall,
@@ -460,6 +589,9 @@ export type Intercom = ReturnType<typeof useIntercom>
 
 export function IntercomDock({ itc }: { itc: Intercom }) {
   const { feed, ptt, recSecs, target, setTarget, error, startPtt, stopPtt } = itc
+  // On iOS the owner calls staff from the native roster (FloatingChatHead → লাইভ
+  // কল); hide the web call button so the two paths don't fight.
+  const iosNative = useIsIosNative()
   const startYRef = useRef(0)
   const [cancelArmed, setCancelArmed] = useState(false)
   const live = ptt === 'live'
@@ -531,7 +663,7 @@ export function IntercomDock({ itc }: { itc: Intercom }) {
           </button>
         </div>
 
-        {targetStaff ? (
+        {iosNative ? null : targetStaff ? (
           <button
             className="itc-side call"
             disabled={itc.callStarting || !!itc.activeCallId || ptt === 'live'}
@@ -680,12 +812,27 @@ export function IntercomBubble({ b, itc }: { b: ItcBroadcast; itc: Intercom }) {
   // A live call leaves a compact log line in the chat (the actual ring/audio is
   // handled by the takeover + call overlay, not a playable bubble).
   if (b.kind === 'call') {
+    // The OTHER party's name from this viewer's side, + call direction arrow.
+    const other = b.outgoingByMe
+      ? b.targetStaffId
+        ? itc.feed.staff.find((s) => s.id === b.targetStaffId)?.name ?? 'স্টাফ'
+        : 'বস — মারুফ'
+      : b.callerName ?? 'বস — মারুফ'
+    const arrow = b.outgoingByMe ? '↗' : '↘'
+    // Outcome from endedReason (falls back to receipts for pre-migration rows).
     const answered = b.receipts.some((r) => r.confirmedAt) || b.mine?.confirmedAt
+    let stat: { label: string; cls: 'ok' | 'miss' }
+    if (b.endedReason === 'completed') stat = { label: 'কল হয়েছে', cls: 'ok' }
+    else if (b.endedReason === 'declined') stat = { label: 'প্রত্যাখ্যান', cls: 'miss' }
+    else if (b.endedReason === 'missed' || b.endedReason === 'cancelled')
+      stat = { label: b.outgoingByMe ? 'কেউ ধরেনি' : 'মিসড কল', cls: 'miss' }
+    else if (!b.endedAt) stat = { label: answered ? 'চলছে…' : 'রিং হচ্ছে…', cls: 'ok' }
+    else stat = answered ? { label: 'ধরা হয়েছে', cls: 'ok' } : { label: 'মিসড কল', cls: 'miss' }
     return (
       <div className="gb itc-vb call">
         <span className="itc-callline">
-          📞 লাইভ কল · {targetLabel}
-          <span className={`itc-callstat ${answered ? 'ok' : 'miss'}`}>{answered ? 'ধরা হয়েছে' : 'মিসড কল'}</span>
+          📞 {arrow} {other}
+          <span className={`itc-callstat ${stat.cls}`}>{stat.label}</span>
         </span>
       </div>
     )
@@ -954,23 +1101,32 @@ export function IntercomTakeover({ itc }: { itc: Intercom }) {
 const fmtClock = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
 
 export function IntercomCall({ itc }: { itc: Intercom }) {
-  const { self, feed, activeCallId, callPeer, callApi, endCall, answerCall, declineCall, nowMs } = itc
+  const { feed, activeCallId, callPeer, callApi, endCall, answerCall, declineCall, nowMs } = itc
+  const iosNative = useIsIosNative()
+  // Minimize the in-call overlay to a small pill so the rest of the office page
+  // is usable while talking (WhatsApp-style multitask). Reset on a new call.
+  const [minimized, setMinimized] = useState(false)
+  useEffect(() => {
+    if (!activeCallId) setMinimized(false)
+  }, [activeCallId])
 
-  // Staff: a fresh, unconfirmed call broadcast addressed to me = an incoming ring
-  // (unless I'm already in a call). Freshness uses server-skew-adjusted time so a
-  // phone with a wrong clock still rings.
+  // A fresh call addressed to ME (owner OR staff — bidirectional) that hasn't
+  // ended = an incoming ring, unless I'm already in a call. incomingForMe is
+  // server-computed; endedAt clearing stops the ring the instant the caller
+  // cancels. Freshness uses server-skew-adjusted time so a phone with a wrong
+  // clock still rings. Silent in the iOS native shell (native CallKit rings).
   const incoming = useMemo(() => {
-    if (self !== 'staff' || activeCallId) return null
+    if (activeCallId || iosNative) return null
     return (
       feed.broadcasts.find(
         (b) =>
           b.kind === 'call' &&
-          b.mine &&
-          !b.mine.confirmedAt &&
+          b.incomingForMe &&
+          !b.endedAt &&
           nowMs() - new Date(b.createdAt).getTime() < CALL_RING_MS,
       ) ?? null
     )
-  }, [self, activeCallId, feed.broadcasts, nowMs])
+  }, [activeCallId, iosNative, feed.broadcasts, nowMs])
 
   // Ring tone + vibration while an incoming call is pending.
   const ringRef = useRef<{ ctx: AudioContext; stop: () => void } | null>(null)
@@ -1020,13 +1176,14 @@ export function IntercomCall({ itc }: { itc: Intercom }) {
     }
   }, [incoming])
 
-  // ── incoming ring (staff) ──
+  // ── incoming ring (owner OR staff — bidirectional) ──
   if (incoming) {
+    const who = incoming.callerName ?? 'বস — মারুফ'
     return (
       <div className="itc-call incoming" role="alertdialog" aria-label="ইনকামিং কল">
         <div className="itc-call-top">
-          <div className="itc-tk-av"><span className="ring" /><span className="ring r2" />M</div>
-          <div className="itc-call-who">বস — মারুফ</div>
+          <div className="itc-tk-av"><span className="ring" /><span className="ring r2" />{avInitial(who)}</div>
+          <div className="itc-call-who">{who}</div>
           <div className="itc-call-sub">📞 অফিস লাইভ কল…</div>
         </div>
         <div className="itc-call-btns">
@@ -1039,18 +1196,43 @@ export function IntercomCall({ itc }: { itc: Intercom }) {
   }
 
   // ── active call (owner or staff, once we've joined) ──
-  if (!activeCallId) return null
+  // On iOS the native call screen renders this instead — keep the web one dark.
+  if (!activeCallId || iosNative) return null
   const st = callApi.state
   const connected = callApi.remoteJoined
   const failed = st === 'error'
+
+  // Minimized: a compact floating pill — tap to expand, ✕ to end. The rest of the
+  // office page stays fully interactive behind it (talk while you work).
+  if (minimized) {
+    return (
+      <button className={`itc-call-mini${connected ? ' live' : ''}`} onClick={() => setMinimized(false)} aria-label="কল খুলুন">
+        <span className="itc-mini-dot" />
+        <span className="itc-mini-txt">{connected ? fmtClock(callApi.callSeconds) : failed ? '⚠️' : 'রিং…'} · {callPeer || 'কল'}</span>
+        {connected && (
+          <span
+            className={`itc-mini-mute${callApi.muted ? ' on' : ''}`}
+            role="button"
+            aria-label={callApi.muted ? 'আনমিউট' : 'মিউট'}
+            onClick={(e) => { e.stopPropagation(); void callApi.toggleMute() }}
+          >
+            {callApi.muted ? '🔇' : '🎤'}
+          </span>
+        )}
+        <span className="itc-mini-end" role="button" aria-label="কল শেষ" onClick={(e) => { e.stopPropagation(); endCall() }}>✕</span>
+      </button>
+    )
+  }
+
   return (
     <div className="itc-call active" role="dialog" aria-label="লাইভ কল">
+      <button className="itc-call-min" onClick={() => setMinimized(true)} aria-label="ছোট করুন">⌄</button>
       <div className="itc-call-top">
         <div className={`itc-tk-av${connected ? ' connected' : ''}`}>
           {!connected && <><span className="ring" /><span className="ring r2" /></>}
-          {self === 'owner' ? (callPeer.trim()[0] || 'M').toUpperCase() : 'M'}
+          {avInitial(callPeer || 'M')}
         </div>
-        <div className="itc-call-who">{self === 'owner' ? callPeer || 'স্টাফ' : 'বস — মারুফ'}</div>
+        <div className="itc-call-who">{callPeer || 'স্টাফ'}</div>
         <div className="itc-call-sub">
           {failed
             ? callApi.error === 'agora_unconfigured'
@@ -1058,9 +1240,7 @@ export function IntercomCall({ itc }: { itc: Intercom }) {
               : '⚠️ কল সংযোগে সমস্যা'
             : connected
               ? '🟢 কল চলছে — লাইভ অডিও'
-              : self === 'owner'
-                ? '📞 রিং হচ্ছে…'
-                : 'সংযোগ হচ্ছে…'}
+              : '📞 রিং হচ্ছে…'}
         </div>
         {connected && <div className="itc-call-timer">{fmtClock(callApi.callSeconds)}</div>}
       </div>
@@ -1071,8 +1251,8 @@ export function IntercomCall({ itc }: { itc: Intercom }) {
             {callApi.muted ? '🔇 আনমিউট' : '🎤 মিউট'}
           </button>
         )}
-        <button className="itc-cbtn decline big" onClick={endCall} aria-label="কল শেষ">✕</button>
-        <div className="itc-call-end-lbl">{failed ? 'বন্ধ করুন' : 'কল শেষ করুন'}</div>
+        <button className="itc-cbtn decline big" onClick={() => endCall()} aria-label="কল শেষ">✕</button>
+        <div className="itc-call-end-lbl">{failed ? 'বন্ধ করুন' : connected ? 'কল শেষ করুন' : 'বাতিল করুন'}</div>
       </div>
     </div>
   )

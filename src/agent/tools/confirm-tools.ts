@@ -2,8 +2,53 @@
 import { prisma } from '@/lib/prisma'
 import { resolvePageId, getRecentPosts, getMessengerInbox, pageLabel, getUnansweredComments } from '@/agent/lib/meta'
 import { resolveFbPostImageRef } from '@/agent/lib/fb-image-resolve'
+import { agentStorageListFolder } from '@/agent/lib/storage'
 import { formatDateTimeDhaka } from '@/lib/agent-api/dhaka-date'
 import type { AgentTool } from './registry'
+
+/** Owner-decision card types — one at a time per conversation (owner incident
+ * 2026-07-13: the marketing head staged an fb_post AND a fresh image_gen 0.3s
+ * apart in ONE turn, and 5 image cards for one request). The old per-type guard
+ * let a different-type card slip through; this blocks ANY second pending card. */
+const OWNER_DECISION_CARD_TYPES = ['image_gen', 'video_gen', 'fb_post', 'instagram_post']
+
+/** Returns an error result if ANY owner-decision card is already pending in this
+ * conversation (model-proof: no prompt rule can bypass a DB check). null = clear. */
+async function assertSingleOpenCard(
+  conversationId: string | null,
+  label: string,
+): Promise<{ success: false; error: string } | null> {
+  if (!conversationId) return null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const open = await (prisma as any).agentPendingAction.findFirst({
+    where: { conversationId, type: { in: OWNER_DECISION_CARD_TYPES }, status: 'pending' },
+    select: { id: true, type: true },
+  })
+  if (!open) return null
+  return {
+    success: false,
+    error:
+      `ONE_CARD_AT_A_TIME: এই চ্যাটে ইতিমধ্যে একটা "${open.type}" কার্ড (${open.id}) Boss-এর সিদ্ধান্তের অপেক্ষায় আছে। ` +
+      `${label} সহ নতুন কোনো card বানানো নিষেধ — Boss approve/reject করা পর্যন্ত থামো, প্রম্পট বদলে আবার call কোরো না।`,
+  }
+}
+
+/** A product/catalog storage path whose object is a real image (≥1 KB). Corrupt
+ * uploads (~4 bytes) fail Google's render AND make a dead FB post; block them at
+ * stage time (owner incident 2026-07-13: fb_post staged with 4-byte 720-ADULT/1.jpg). */
+async function storagePathIsHealthy(path: string | undefined): Promise<boolean> {
+  if (!path) return true // no image → caller handles (textOnly / warning)
+  if (!path.startsWith('product-images/')) return true // generated/uploads assumed fine
+  const cut = path.lastIndexOf('/')
+  if (cut <= 0) return true
+  try {
+    const entries = await agentStorageListFolder(path.slice(0, cut))
+    const size = entries.find((e) => e.name === path.slice(cut + 1))?.size
+    return size == null || size >= 1024 // unknown → fail-open; known-tiny → corrupt
+  } catch {
+    return true
+  }
+}
 
 // ── Image generation ───────────────────────────────────────────────────────
 
@@ -13,7 +58,9 @@ const generate_image: AgentTool = {
     'Generates an image using Nano Banana (Google Gemini). ' +
     'This tool creates a PENDING ACTION — the owner must approve before the image is generated. ' +
     'quality: "pro" (face-preservation, product mockups, ~৳4.50/image) | "standard" (routine, ~৳1.10/image). ' +
-    'referenceImageId: optional Supabase storage path for reference image.',
+    'referenceImageId: optional Supabase storage path for reference image — for PRODUCT ' +
+    'creatives pass a real catalog image storagePath from get_product so the render matches ' +
+    'the actual product (never generate a product look without a reference).',
   input_schema: {
     type: 'object' as const,
     properties: {
@@ -37,7 +84,7 @@ const generate_image: AgentTool = {
         enum: ['1K', '2K', '4K'],
         description: 'Output resolution (default 2K)',
       },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['prompt'],
   },
@@ -45,6 +92,17 @@ const generate_image: AgentTool = {
     try {
       const quality = (input.quality as string) === 'standard' ? 'standard' : 'pro'
       const costEstimate = quality === 'pro' ? 4.5 : 1.1 // BDT estimate
+
+      // ── Spree guard (owner incident 2026-07-13): ONE owner-decision card per
+      // conversation at a time — cross-type, so a post + a fresh image can't be
+      // staged together, and cards can't queue up for one request. This alone
+      // stops the spree: a second card is impossible while the first is pending.
+      // NO time-based cool-off — that blocked the legitimate "ছবি change চাই"
+      // flow (owner: after rejecting an image the head silently couldn't re-render
+      // for 5 min). Once a card is resolved, a new one is allowed.
+      const convIdForGuard = input.conversationId ? String(input.conversationId) : null
+      const blockedImg = await assertSingleOpenCard(convIdForGuard, 'নতুন ছবি')
+      if (blockedImg) return blockedImg
 
       const summary =
         `Image generation request (${quality} quality)\n` +
@@ -111,7 +169,7 @@ const post_to_facebook: AgentTool = {
         type: 'boolean',
         description: 'True only for caption-only posts with no image',
       },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['page', 'message'],
   },
@@ -123,12 +181,29 @@ const post_to_facebook: AgentTool = {
       const conversationId = input.conversationId ? String(input.conversationId) : null
       const textOnly = input.textOnly === true
 
+      // ONE owner-decision card per conversation, cross-type (owner incident
+      // 2026-07-13: an fb_post + a fresh image_gen were staged 0.3s apart in ONE
+      // turn — a post must never be staged alongside/before an unconfirmed image).
+      const blockedPost = await assertSingleOpenCard(conversationId, 'নতুন পোস্ট')
+      if (blockedPost) return blockedPost
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { imageRef, hadRecentPostableImage } = await resolveFbPostImageRef(prisma as any, {
         conversationId,
         imageArtifactOrFileId: input.imageArtifactOrFileId,
         textOnly,
       })
+
+      // Reject a corrupt catalog reference before it becomes a dead post (owner
+      // incident 2026-07-13: the head passed the 4-byte 720-ADULT/1.jpg directly).
+      if (imageRef && !(await storagePathIsHealthy(imageRef))) {
+        return {
+          success: false,
+          error:
+            `CORRUPT_IMAGE: "${imageRef}" একটা ভাঙা/খালি ফাইল — এটা দিয়ে পোস্ট করা যাবে না। ` +
+            'get_product দিয়ে ওই প্রোডাক্টের সুস্থ ছবির storagePath নাও, অথবা generate_image দিয়ে studio শট বানিয়ে confirm করাও, তারপর পোস্ট।',
+        }
+      }
 
       const imageLine = imageRef
         ? `📷 ছবি: ${imageRef}\n\n`
@@ -203,7 +278,7 @@ const publish_to_instagram: AgentTool = {
         type: 'string',
         description: 'Supabase path: generated/<id>.png or chat upload path — optional if an image was generated/uploaded in this chat',
       },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['page', 'caption'],
   },
@@ -214,6 +289,10 @@ const publish_to_instagram: AgentTool = {
       const pageId = resolvePageId(page)
       const conversationId = input.conversationId ? String(input.conversationId) : null
 
+      // One owner-decision card per conversation, cross-type (2026-07-13 incident).
+      const blockedIg = await assertSingleOpenCard(conversationId, 'নতুন Instagram পোস্ট')
+      if (blockedIg) return blockedIg
+
       // Instagram has no caption-only posts — an image is mandatory. Reuse the
       // exact FB image-resolution chain (explicit ref → conversation generated →
       // conversation upload). textOnly is always false here.
@@ -223,6 +302,14 @@ const publish_to_instagram: AgentTool = {
         imageArtifactOrFileId: input.imageArtifactOrFileId,
         textOnly: false,
       })
+
+      if (imageRef && !(await storagePathIsHealthy(imageRef))) {
+        return {
+          success: false,
+          error:
+            `CORRUPT_IMAGE: "${imageRef}" ভাঙা/খালি ফাইল — Instagram-এ দেওয়া যাবে না। সুস্থ ছবি নাও বা generate_image দিয়ে বানাও।`,
+        }
+      }
 
       if (!imageRef) {
         return {
@@ -284,8 +371,8 @@ const get_fb_recent_posts: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      page: { type: 'string', enum: ['lifestyle', 'onlineshop'] },
-      limit: { type: 'number' },
+      page: { type: 'string', enum: ['lifestyle', 'onlineshop'], description: 'Which Facebook page: "lifestyle" (Alma Lifestyle) or "onlineshop" (Alma Online Shop)' },
+      limit: { type: 'number', description: 'How many recent posts to fetch (1–25, default 10)' },
     },
     required: ['page'],
   },
@@ -310,8 +397,8 @@ const get_fb_messenger_inbox: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      page: { type: 'string', enum: ['lifestyle', 'onlineshop'] },
-      limit: { type: 'number' },
+      page: { type: 'string', enum: ['lifestyle', 'onlineshop'], description: 'Which Facebook page: "lifestyle" (Alma Lifestyle) or "onlineshop" (Alma Online Shop)' },
+      limit: { type: 'number', description: 'How many inbox conversations to fetch (1–25, default 15)' },
     },
     required: ['page'],
   },
@@ -424,7 +511,7 @@ const send_customer_message: AgentTool = {
         type: 'string',
         description: 'Message text to send (max 2000 chars)',
       },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['customerNameOrPsid', 'page', 'message'],
   },
@@ -525,8 +612,8 @@ const get_unanswered_comments: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      page: { type: 'string', enum: ['lifestyle', 'onlineshop'] },
-      postLimit: { type: 'number' },
+      page: { type: 'string', enum: ['lifestyle', 'onlineshop'], description: 'Which Facebook page: "lifestyle" or "onlineshop"' },
+      postLimit: { type: 'number', description: 'How many recent posts to scan (default 10)' },
     },
     required: ['page'],
   },
@@ -573,7 +660,7 @@ const reply_to_comment: AgentTool = {
       message: { type: 'string', description: 'Reply text to post publicly (max 1000 chars)' },
       customerName: { type: 'string', description: 'Comment author name (for the approval card summary)' },
       commentText: { type: 'string', description: 'The original comment text (for the approval card summary)' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['commentId', 'page', 'message'],
   },

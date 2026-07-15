@@ -4,7 +4,58 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
 } from 'openai/resources/chat/completions'
-import type { NeutralMsg, NeutralTool, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
+import type { NeutralMsg, NeutralTool, NeutralToolChoice, ProviderAdapter, TurnEvent } from '@/agent/lib/models/types'
+
+/**
+ * Phase 3 request shaping (pure, unit-tested): map the neutral tool_choice /
+ * parallel_tool_calls controls to OpenAI-dialect params. Only emitted when the
+ * request actually carries tools — a tool_choice with no tools 400s on several
+ * OpenRouter providers. Omitted fields keep the provider default, so callers
+ * that don't pass the controls get the exact pre-Phase-3 request.
+ */
+export function buildOpenAiRequestShaping(args: {
+  tools: NeutralTool[]
+  toolChoice?: NeutralToolChoice
+  parallelToolCalls?: boolean
+}): { tool_choice?: unknown; parallel_tool_calls?: boolean } {
+  if (args.tools.length === 0) return {}
+  const out: { tool_choice?: unknown; parallel_tool_calls?: boolean } = {}
+  if (args.toolChoice !== undefined && args.toolChoice !== 'auto') {
+    out.tool_choice =
+      typeof args.toolChoice === 'object'
+        ? { type: 'function', function: { name: args.toolChoice.name } }
+        : args.toolChoice // 'none' | 'required'
+  }
+  if (args.parallelToolCalls !== undefined) {
+    out.parallel_tool_calls = args.parallelToolCalls
+  }
+  return out
+}
+
+/**
+ * Grok (x-ai/*) caches automatically on stable prefixes; the Anthropic-style
+ * `cache_control` block is ignored there and only muddies the request (audit
+ * correction #4). Keep it for the models that DO honour it via OpenRouter
+ * (Claude, DeepSeek, Qwen).
+ */
+export function wantsAnthropicCacheControl(apiModel: string): boolean {
+  return !apiModel.startsWith('x-ai/')
+}
+
+/**
+ * OpenRouter Exacto routing (pure, unit-testable): append `:exacto` to the model
+ * slug so OpenRouter picks providers by TOOL-CALL QUALITY instead of the default
+ * price+speed "Balanced" mode. OpenRouter's own telemetry measured ~8%→~1%
+ * tool-call error on the same model just from this provider tiering — the single
+ * biggest lever on the "cheap model mangles tool calls" incident class.
+ * Only applied when the request actually carries tools (that is what Exacto
+ * tiers on), and never when the slug already pins a variant (`:nitro`/`:floor`).
+ */
+export function exactoSlug(apiModel: string, hasTools: boolean): string {
+  if (!hasTools) return apiModel
+  if (apiModel.includes(':')) return apiModel
+  return `${apiModel}:exacto`
+}
 
 function toOpenAiMessages(
   system: string,
@@ -47,10 +98,19 @@ function toOpenAiMessages(
     }
 
     if (msg.role === 'tool') {
+      // Chat-completions tool messages are TEXT-ONLY — a vision result's base64
+      // `image` (now preserved by the neutral cap, Phase 6) would ship ~100KB of
+      // undecodable garbage here. Strip it; the textual result keeps the
+      // screenshotUrl, which is what these models can actually use.
+      let payload: unknown = msg.result
+      if (payload && typeof payload === 'object' && 'image' in (payload as Record<string, unknown>)) {
+        const { image: _omit, ...rest } = payload as Record<string, unknown>
+        payload = rest
+      }
       out.push({
         role: 'tool',
         tool_call_id: msg.toolCallId,
-        content: JSON.stringify(msg.result),
+        content: JSON.stringify(payload),
       })
     }
   }
@@ -73,6 +133,9 @@ export class OpenAiAdapter implements ProviderAdapter {
   private client: OpenAI
   private cachePrefix: boolean
   private streamReasoning: boolean
+  private includeCostUsage: boolean
+  private exacto: boolean
+  private requireParameters: boolean
 
   constructor(
     apiKey: string,
@@ -87,6 +150,29 @@ export class OpenAiAdapter implements ProviderAdapter {
        * thinking. Owner can disable via STREAM_OPENROUTER_REASONING=false.
        */
       reasoning?: boolean
+      /**
+       * Ask OpenRouter to attach the ACTUAL billed cost to the final usage chunk
+       * (`usage: { include: true }` → `usage.cost` in USD). Only OpenRouter honours
+       * this; raw OpenAI ignores/rejects the field, so it's opt-in per factory.
+       * When on, the turn's displayed cost is OpenRouter's real charge instead of
+       * a local token×rate estimate. Owner can disable via
+       * OPENROUTER_INCLUDE_COST=false to fall back to the estimate.
+       */
+      includeCostUsage?: boolean
+      /**
+       * OpenRouter Exacto: route tool-bearing requests to the providers with the
+       * best measured tool-call quality (see exactoSlug above). Owner kill switch:
+       * ENABLE_OPENROUTER_EXACTO=false.
+       */
+      exacto?: boolean
+      /**
+       * OpenRouter `provider.require_parameters`: only route to hosts that support
+       * EVERY parameter in the request (tools especially) instead of silently
+       * dropping unsupported ones — a documented cause of "the model ignored my
+       * tools" on third-party hosts. Owner kill switch:
+       * OPENROUTER_REQUIRE_PARAMETERS=false.
+       */
+      requireParameters?: boolean
     },
   ) {
     this.client = new OpenAI({
@@ -98,6 +184,9 @@ export class OpenAiAdapter implements ProviderAdapter {
     // ENABLE_OPENROUTER_CACHE=false if a provider ever rejects the extension field.
     this.cachePrefix = (opts?.cachePrefix ?? false) && process.env.ENABLE_OPENROUTER_CACHE !== 'false'
     this.streamReasoning = (opts?.reasoning ?? false) && process.env.STREAM_OPENROUTER_REASONING !== 'false'
+    this.includeCostUsage = (opts?.includeCostUsage ?? false) && process.env.OPENROUTER_INCLUDE_COST !== 'false'
+    this.exacto = (opts?.exacto ?? false) && process.env.ENABLE_OPENROUTER_EXACTO !== 'false'
+    this.requireParameters = (opts?.requireParameters ?? false) && process.env.OPENROUTER_REQUIRE_PARAMETERS !== 'false'
   }
 
   async *streamTurn(args: {
@@ -107,6 +196,8 @@ export class OpenAiAdapter implements ProviderAdapter {
     tools: NeutralTool[]
     signal?: AbortSignal
     thinking?: 'adaptive' | 'level' | 'none'
+    toolChoice?: NeutralToolChoice
+    parallelToolCalls?: boolean
   }): AsyncGenerator<TurnEvent> {
     // `reasoning` is an OpenRouter extension (not in the OpenAI SDK types) that
     // asks reasoning-capable models (DeepSeek, Qwen-thinking) to stream their
@@ -120,12 +211,35 @@ export class OpenAiAdapter implements ProviderAdapter {
     const reasoningParam = wantReasoning
       ? { reasoning: { enabled: true, effort: 'medium' } }
       : {}
+    // Grok caches prefixes automatically — skip the Anthropic-style cache_control
+    // extension for x-ai/* models (Phase 3 cleanup; see wantsAnthropicCacheControl).
+    const cachePrefix = this.cachePrefix && wantsAnthropicCacheControl(args.apiModel)
+    // Exacto quality routing on tool-bearing requests (OpenRouter-only factory
+    // option). The variant slug is understood by OpenRouter alone, so the raw
+    // OpenAI/xAI factories never enable it.
+    const modelSlug = this.exacto ? exactoSlug(args.apiModel, args.tools.length > 0) : args.apiModel
+    // provider.require_parameters: filter to hosts that honour tools + our other
+    // params. Scoped to tool-bearing requests (the failure class it fixes) and
+    // dropped from the final BARE retry below like every other extension.
+    const providerPrefs = this.requireParameters && args.tools.length > 0
+      ? { provider: { require_parameters: true } }
+      : {}
     const baseParams = {
-      model: args.apiModel,
-      messages: toOpenAiMessages(args.system, args.messages, this.cachePrefix),
+      model: modelSlug,
+      messages: toOpenAiMessages(args.system, args.messages, cachePrefix),
+      ...providerPrefs,
       tools: args.tools.length ? toOpenAiTools(args.tools) : undefined,
       stream: true as const,
       stream_options: { include_usage: true },
+      // Phase 3 request controller: per-call tool_choice + parallel_tool_calls.
+      // Both drop out of the final BARE retry below, so a provider that rejects
+      // either param degrades to plain OpenAI-spec instead of knocking the head over.
+      ...buildOpenAiRequestShaping(args),
+      // OpenRouter now ALWAYS returns the billed cost in the final chunk's
+      // `usage.cost` (this opt-in flag is a documented no-op kept for intent +
+      // forward-compat). Harmless to raw OpenAI. The actual gate on whether we
+      // TRUST that cost is `this.includeCostUsage`, applied at read time below.
+      ...(this.includeCostUsage ? { usage: { include: true } } : {}),
     }
     // Cast to the streaming params type so the `reasoning` extension is accepted
     // and the create() overload still resolves to a Stream (not a single reply).
@@ -134,6 +248,21 @@ export class OpenAiAdapter implements ProviderAdapter {
     // 280s turn abort until Vercel hard-kills the function at 300s: no salvage,
     // a forever-'running' turn row and a blank reply (2026-07-12 carousel run).
     const reqOptions = args.signal ? { signal: args.signal } : undefined
+    // Pull OpenRouter's upstream detail out of an APIError — `error.metadata.raw`
+    // carries the provider's real reason ("Provider returned error" alone is
+    // useless; the 2026-07-13 Grok-4.20 outage was undiagnosable without it).
+    const errDetail = (err: unknown): string => {
+      const base = err instanceof Error ? err.message : String(err)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const body = (err as any)?.error
+      const raw = body?.metadata?.raw ?? body?.error?.metadata?.raw
+      return raw ? `${base} | provider: ${String(raw).slice(0, 300)}` : base
+    }
+    // Retry ladder: full request → without the reasoning extension → BARE
+    // (no reasoning, no cache_control, no stream_options). A provider that 400s
+    // on ANY optional extension must degrade the head to plain OpenAI-spec, never
+    // knock it over to the fallback model (Grok-4.20 was silently DeepSeek all
+    // day, 2026-07-13, because both extension-bearing attempts 400'd).
     let stream
     try {
       stream = await this.client.chat.completions.create({
@@ -141,15 +270,33 @@ export class OpenAiAdapter implements ProviderAdapter {
         ...reasoningParam,
       } as ChatCompletionCreateParamsStreaming, reqOptions)
     } catch (err) {
-      if (!wantReasoning) throw err
+      if (args.signal?.aborted) throw err
       console.warn(
-        `[openai-adapter] ${args.apiModel} rejected the reasoning param — retrying without it:`,
-        err instanceof Error ? err.message : err,
+        `[openai-adapter] ${args.apiModel} rejected the full request — retrying without reasoning:`,
+        errDetail(err),
       )
-      stream = await this.client.chat.completions.create(
-        baseParams as ChatCompletionCreateParamsStreaming,
-        reqOptions,
-      )
+      try {
+        stream = await this.client.chat.completions.create(
+          baseParams as ChatCompletionCreateParamsStreaming,
+          reqOptions,
+        )
+      } catch (err2) {
+        if (args.signal?.aborted) throw err2
+        console.warn(
+          `[openai-adapter] ${args.apiModel} rejected the standard request too — final bare retry (no cache_control/stream_options):`,
+          errDetail(err2),
+        )
+        const bareParams = {
+          model: args.apiModel,
+          messages: toOpenAiMessages(args.system, args.messages, false),
+          tools: args.tools.length ? toOpenAiTools(args.tools) : undefined,
+          stream: true as const,
+        }
+        stream = await this.client.chat.completions.create(
+          bareParams as ChatCompletionCreateParamsStreaming,
+          reqOptions,
+        )
+      }
     }
 
     const toolBuffers = new Map<number, { id: string; name: string; args: string; started: boolean }>()
@@ -223,11 +370,23 @@ export class OpenAiAdapter implements ProviderAdapter {
           (chunk.usage as { prompt_tokens_details?: { cached_tokens?: number } })
             .prompt_tokens_details?.cached_tokens ?? 0
         const promptTokens = chunk.usage.prompt_tokens ?? 0
+        // OpenRouter attaches the ACTUAL billed cost (USD; credits == USD on this
+        // non-BYOK account, so it matches the dashboard) in `usage.cost` on the
+        // final chunk. This is authoritative — it already reflects the provider's
+        // real per-token + cache-discount rates,
+        // so the caller uses it verbatim instead of estimating from the registry
+        // table. Guard against 0/NaN so a provider that omits it falls back to the
+        // local estimate rather than persisting a bogus $0.00.
+        const rawCost = this.includeCostUsage ? (chunk.usage as { cost?: number }).cost : undefined
+        const costUsd = typeof rawCost === 'number' && Number.isFinite(rawCost) && rawCost > 0
+          ? rawCost
+          : undefined
         yield {
           type: 'usage',
           inputTokens: Math.max(0, promptTokens - cachedTokens),
           outputTokens: chunk.usage.completion_tokens ?? 0,
           cacheRead: cachedTokens,
+          costUsd,
         }
       }
     }
@@ -240,4 +399,18 @@ export function createOpenAiAdapter(): OpenAiAdapter {
   const key = process.env.OPENAI_API_KEY?.trim()
   if (!key) throw new Error('OPENAI_API_KEY not configured')
   return new OpenAiAdapter(key)
+}
+
+/**
+ * xAI direct (api.x.ai, OpenAI-compatible). First-party serving for the Grok
+ * head: no OpenRouter middleman, so no third-party tool-call parser between the
+ * model and us — the same serving the Grok app gets. No OpenRouter extensions:
+ * xAI caches prefixes automatically (no cache_control), reports no usage.cost,
+ * and takes no `reasoning` request param — but the stream reader still surfaces
+ * `reasoning_content` deltas if the model sends them, so live thinking works.
+ */
+export function createXaiAdapter(): OpenAiAdapter {
+  const key = process.env.XAI_API_KEY?.trim()
+  if (!key) throw new Error('XAI_API_KEY not configured')
+  return new OpenAiAdapter(key, { baseURL: 'https://api.x.ai/v1' })
 }

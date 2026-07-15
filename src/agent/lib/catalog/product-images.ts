@@ -193,17 +193,66 @@ export type ProductImageEntry = {
  * Re-signs storage URLs on the fly when the stored URL is missing/expired so the
  * agent (and CS) always receive a usable link. Limited to `limit` images.
  */
+/** Storage paths whose object is a plausible image (≥1 KB). A failed upload leaves
+ * a ~4-byte object; picking one as a generate_image reference fails the whole
+ * render with Google's "Unable to process input image" (owner incident
+ * 2026-07-13: 133-ADULT/1.jpg is 4 bytes). Uses the storage REST list API — the
+ * earlier raw-SQL storage.objects check silently lacked privileges under the
+ * app's DB role and no-op'd (the "fixed but not fixed" round). Filtering and
+ * failures both log loudly so a prod no-op can never hide again. */
+async function healthyStoragePaths(paths: string[]): Promise<Set<string>> {
+  if (paths.length === 0) return new Set()
+  const byFolder = new Map<string, string[]>()
+  for (const p of paths) {
+    const cut = p.lastIndexOf('/')
+    if (cut <= 0) continue
+    const folder = p.slice(0, cut)
+    const arr = byFolder.get(folder)
+    if (arr) arr.push(p)
+    else byFolder.set(folder, [p])
+  }
+  const healthy = new Set<string>()
+  await Promise.all(
+    Array.from(byFolder.keys()).map(async (folder) => {
+      try {
+        const { agentStorageListFolder } = await import('@/agent/lib/storage')
+        const entries = await agentStorageListFolder(folder)
+        const sizeByName = new Map(entries.map((e) => [e.name, e.size]))
+        for (const p of byFolder.get(folder) ?? []) {
+          const size = sizeByName.get(p.slice(folder.length + 1))
+          if (size == null || size >= 1024) {
+            healthy.add(p)   // unknown (not listed) fails OPEN; known-tiny is dropped
+          } else {
+            console.warn(`[product-images] dropping corrupt catalog image ${p} (${size} bytes)`)
+          }
+        }
+      } catch (err) {
+        console.warn(`[product-images] storage list failed for ${folder} — keeping its images unfiltered:`,
+          err instanceof Error ? err.message : err)
+        for (const p of byFolder.get(folder) ?? []) healthy.add(p)
+      }
+    }),
+  )
+  return healthy
+}
+
 export async function listProductImages(
   productCode: string,
   business = DEFAULT_CATALOG_BUSINESS,
   limit = 8,
 ): Promise<ProductImageEntry[]> {
   const code = normalizeProductCode(productCode)
-  const rows = await db.productImage.findMany({
+  let rows = await db.productImage.findMany({
     where: { productCode: code, business },
     orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
     take: limit,
   })
+  // Corrupt uploads never leave this function — not as gallery thumbs, not as
+  // generate_image references.
+  const healthy = await healthyStoragePaths(
+    (rows as Array<{ storagePath: string }>).map((r) => r.storagePath),
+  )
+  rows = (rows as Array<{ storagePath: string }>).filter((r) => healthy.has(r.storagePath))
   // Re-sign in parallel: a gallery of expired URLs would otherwise be N serial
   // Supabase round-trips (and, unfixed, N broken thumbnails).
   return Promise.all(

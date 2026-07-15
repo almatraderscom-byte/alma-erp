@@ -34,6 +34,7 @@ import WebKit
 import AVFoundation
 import PhotosUI
 import ObjectiveC
+import os.signpost
 
 // MARK: - Palette (web token parity: globals.css / agent-ambient.css)
 
@@ -153,10 +154,14 @@ enum AgentJSONValue: Decodable {
     }
 }
 
-/// One entry of the persisted Claude-style activity timeline (`t: 'think' | 'tool' | 'file'`).
+/// One entry of the persisted Claude-style activity timeline
+/// (`t: 'think' | 'text' | 'verify' | 'tool' | 'file'`).
 struct AgentTimelineEntryWire: Decodable {
     let t: String?
     let text: String?
+    let state: String?  // t=="text": "superseded" = verification rewrote this draft
+    let attempt: Int?   // t=="verify"
+    let max: Int?       // t=="verify"
     let id: String?
     let name: String?
     let ok: Bool?
@@ -176,6 +181,10 @@ struct AgentMessageWire: Decodable {
     let timeline: [AgentTimelineEntryWire]?
     let tokensIn: Int?
     let tokensOut: Int?
+    let cacheCreation: Int?
+    let cacheRead: Int?
+    let apiRounds: Int?
+    let roundCostsUsd: [Double]?
     let costUsd: AgentJSONValue?
     let createdAt: String?
 }
@@ -297,32 +306,7 @@ struct AgentFileRef: Codable, Equatable {
 struct OkResponse: Decodable { let ok: Bool?; let success: Bool?; let message: String? }
 struct SignedURLResponse: Decodable { let url: String? }
 struct TranscribeResponse: Decodable { let text: String? }
-struct TurnEnqueueResponse: Decodable { let turnId: String; let conversationId: String? }
-struct TurnStatusResponse: Decodable { let status: String?; let turnId: String? }
-
 /// One SSE event — all fields optional, switch on `type`.
-struct AgentSSEEvent: Decodable {
-    let type: String
-    let id: String?
-    let delta: String?
-    let label: String?
-    let name: String?
-    let success: Bool?
-    let resultPreview: String?
-    let input: AgentJSONValue?
-    let pendingActionId: String?
-    let summary: String?
-    let actionType: String?
-    let costEstimate: Double?
-    let askCardId: String?
-    let question: String?
-    let options: [String]?
-    let message: String?
-    let error: String?
-    let title: String?          // artifact_saved
-    let artifactType: String?   // artifact_saved
-}
-
 // MARK: - UI models
 
 @available(iOS 17.0, *)
@@ -351,6 +335,9 @@ struct AgentChatMessage: Identifiable, Equatable {
         var status: String        // pending | approved | executed | failed | expired | rejected
         var actionType: String?
         var costEstimate: Double?
+        /// Set locally the moment the owner taps Approve — drives the Creative-
+        /// Studio-style render % on approved image cards (owner ask 2026-07-13).
+        var approvedAt: Date? = nil
     }
     struct AskCard: Identifiable, Equatable {
         let id: String            // askCardId
@@ -362,6 +349,11 @@ struct AgentChatMessage: Identifiable, Equatable {
     /// Ordered SSE timeline — mirrors web `TimelineEntry` / server `usage.timeline`.
     enum TimelineEntry: Equatable {
         case think(String)
+        /// A user-visible prose segment in its true chronological slot (parity
+        /// roadmap RC-1 — these were silently dropped before, so cold-load showed
+        /// only the last paragraph). `superseded` = verification rewrote it: it
+        /// stays visible but is never the verified final answer.
+        case text(String, superseded: Bool)
         case tool(id: String, name: String, ok: Bool?, live: Bool, inputPretty: String?, resultFull: String?)
         /// A tool filed a document as a conversation artifact (id = artifact id).
         case file(id: String, name: String)
@@ -385,11 +377,19 @@ struct AgentChatMessage: Identifiable, Equatable {
         case prose(id: String, text: String)
         case activity(ActivityBlock)
         case file(id: String, artifactId: String, name: String)
+        // Cards keep their DATA in message.confirmCards/askCards (status updates flow
+        // there); these blocks only pin WHERE in the reply the card appeared, so a
+        // question asked mid-turn renders mid-turn — not dumped at the bottom
+        // (owner report build-70 round 4).
+        case confirmCard(id: String, pendingActionId: String)
+        case askCard(id: String, askCardId: String)
         var id: String {
             switch self {
             case .prose(let id, _): return id
             case .activity(let a): return a.id
             case .file(let id, _, _): return id
+            case .confirmCard(let id, _): return id
+            case .askCard(let id, _): return id
             }
         }
     }
@@ -403,6 +403,15 @@ struct AgentChatMessage: Identifiable, Equatable {
     var localImages: [UIImage] = []   // optimistic composer thumbnails (user msgs)
     var confirmCards: [ConfirmCard] = []
     var askCards: [AskCard] = []
+    /// PR 3b — model_switch_required approval (web parity): the turn paused
+    /// server-side for a premium-model upgrade decision.
+    struct ModelSwitch: Equatable {
+        var toLabel: String
+        var fromLabel: String
+        var fallbackModelId: String?
+        var status: String = "pending"   // pending | approved | declined
+    }
+    var modelSwitch: ModelSwitch?
     var tools: [Tool] = []            // flat list (live streaming + fallback)
     var timeline: [TimelineEntry] = []
     var blocks: [TurnBlock] = []      // interleaved prose ↔ activity (streaming UI)
@@ -412,9 +421,17 @@ struct AgentChatMessage: Identifiable, Equatable {
     var streamStartedAt: Date?
     var tokensIn: Int?
     var tokensOut: Int?
+    var cacheCreation: Int?
+    var cacheRead: Int?
+    /// Actual provider API rounds (billing rows) — NOT UI activity phases (RC-4).
+    var apiRounds: Int?
+    var roundCostsUsd: [Double]?
     var costUsd: String?
     var createdAt: String?
     var isStreaming = false
+    /// Prose block ids the verification guard superseded — data-truth only; the
+    /// prose stays visible in place (roadmap invariant 3/4), never blanked.
+    var supersededBlockIds: Set<String> = []
 
     /// The heartbeat's self-wake seed renders as a divider, never as an owner bubble
     /// (web: isHeartbeatWakeText / HEARTBEAT_WAKE_SENTINEL).
@@ -451,6 +468,10 @@ struct AgentChatMessage: Identifiable, Equatable {
         m.thinkingMs = wire.thinkingMs
         m.tokensIn = wire.tokensIn
         m.tokensOut = wire.tokensOut
+        m.cacheCreation = wire.cacheCreation
+        m.cacheRead = wire.cacheRead
+        m.apiRounds = wire.apiRounds
+        m.roundCostsUsd = wire.roundCostsUsd
         m.createdAt = wire.createdAt
         if let c = wire.costUsd {
             switch c {
@@ -466,17 +487,75 @@ struct AgentChatMessage: Identifiable, Equatable {
         m.phases = Self.buildPhases(timeline: Self.timelineFromWire(wire), messageId: wire.id, live: false,
                                     fallbackTools: m.tools)
         m.timeline = Self.timelineFromWire(wire)
+        // Canonical convergence (parity roadmap RC-1/RC-3): when the persisted
+        // timeline carries prose segments, rebuild the SAME interleaved TurnBlock
+        // composition the live stream shows — cold-load, poll and relaunch then
+        // render identically to the just-streamed turn (web ChronoFlow parity).
+        if m.timeline.contains(where: { if case .text = $0 { return true }; return false }) {
+            Self.applyPersistedBlocks(to: &m)
+        }
         return m
     }
 
+    /// Rebuild the interleaved prose ↔ activity TurnBlocks from the persisted
+    /// timeline + cards, using the SAME builders the live SSE reducer uses — so
+    /// settled/cold-loaded rows converge on the live composition by construction.
+    static func applyPersistedBlocks(to m: inout AgentChatMessage) {
+        var blocks: [TurnBlock] = []
+        var superseded: Set<String> = []
+        for e in m.timeline {
+            switch e {
+            case .text(let t, let isSuperseded):
+                // One prose segment per timeline entry (never merged into the
+                // previous one — segment boundaries are canonical).
+                let id = "bp-\(m.id)-\(blocks.count)"
+                blocks.append(.prose(id: id, text: t))
+                if isSuperseded { superseded.insert(id) }
+            case .think(let t):
+                blocks = appendThinkBlock(blocks, chunk: t, messageId: m.id)
+            case .tool(let id, let name, let ok, _, _, _):
+                blocks = appendToolBlock(blocks, toolId: id, name: name, messageId: m.id)
+                blocks = finalizeToolBlock(blocks, toolId: id, ok: ok ?? true)
+            case .file(let aid, let name):
+                blocks.append(.file(id: "fb-\(m.id)-\(aid)", artifactId: aid, name: name))
+            }
+        }
+        for card in m.confirmCards {
+            blocks.append(.confirmCard(id: "bc-\(m.id)-\(card.id)", pendingActionId: card.id))
+        }
+        for card in m.askCards {
+            blocks.append(.askCard(id: "bq-\(m.id)-\(card.id)", askCardId: card.id))
+        }
+        m.blocks = blocks
+        m.supersededBlockIds = superseded
+    }
+
+    /// Live-parity label for a persisted verification event (same string the
+    /// verification_retry reducer shows mid-stream).
+    static func verifyLabel(attempt: Int, max: Int) -> String {
+        "নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি (\(almaBn(attempt))/\(almaBn(max)))…"
+    }
+
     static func timelineFromWire(_ wire: AgentMessageWire) -> [TimelineEntry] {
-        (wire.timeline ?? []).compactMap { e -> TimelineEntry? in
+        (wire.timeline ?? []).enumerated().compactMap { idx, e -> TimelineEntry? in
             if e.t == "think" {
                 let t = (e.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 return t.isEmpty ? nil : .think(t)
             }
+            if e.t == "text" {
+                let t = e.text ?? ""
+                return t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? nil : .text(t, superseded: e.state == "superseded")
+            }
+            if e.t == "verify" {
+                // Truthful activity row between superseded draft and replacement —
+                // rendered through the existing thinking-row style (design locked).
+                return .think(verifyLabel(attempt: e.attempt ?? 1, max: e.max ?? (e.attempt ?? 1)))
+            }
             if e.t == "tool" {
-                return .tool(id: e.id ?? "tl-\(wire.id)", name: e.name ?? "টুল", ok: e.ok, live: false,
+                // Persisted tool entries carry no id — a per-ordinal fallback keeps
+                // every entry unique (a shared id used to collapse them to one row).
+                return .tool(id: e.id ?? "tl-\(wire.id)-\(idx)", name: e.name ?? "টুল", ok: e.ok, live: false,
                              inputPretty: e.input?.pretty(), resultFull: e.result)
             }
             if e.t == "file", let aid = e.id {
@@ -690,6 +769,9 @@ struct AgentChatMessage: Identifiable, Equatable {
                 cur?.tools.append(Tool(id: id, name: name, ok: ok, preview: result.map { String($0.prefix(160)) },
                                        live: toolLive, inputPretty: input, resultFull: result))
                 if toolLive { cur?.live = true }
+            case .text:
+                // Prose renders in the message body (TurnBlocks), never as a phase step.
+                continue
             case .file:
                 // File cards render as their own row in the message body, not as a phase step.
                 continue
@@ -706,99 +788,6 @@ struct AgentChatMessage: Identifiable, Equatable {
     /// Legacy wire builder — delegates to the unified timeline path.
     static func buildPhases(wire: AgentMessageWire, fallbackTools: [Tool]) -> [Phase] {
         buildPhases(timeline: timelineFromWire(wire), messageId: wire.id, live: false, fallbackTools: fallbackTools)
-    }
-}
-
-// MARK: - Networking (SSE + multipart; JSON goes through AlmaAPI)
-
-/// Streaming + multipart companion to AlmaAPI (which is JSON-only). Shares the
-/// same cookie bridge: HTTPCookieStorage.shared, refreshed via AlmaAPI.syncCookies().
-enum AssistantNet {
-    static let base = AlmaAPI.baseURL
-
-    /// Long-lived session for SSE turns (a turn may legitimately run ~5 minutes).
-    static let streamSession: URLSession = {
-        let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 330
-        cfg.timeoutIntervalForResource = 660
-        cfg.httpShouldSetCookies = true
-        cfg.httpAdditionalHeaders = ["Accept": "text/event-stream",
-                                     "X-Requested-With": "XMLHttpRequest"]
-        return URLSession(configuration: cfg, delegate: AssistantRedirectBlocker(), delegateQueue: nil)
-    }()
-
-    /// Multipart upload (images / mic audio). Returns the raw response data on 2xx.
-    static func uploadMultipart(path: String, fileField: String, filename: String,
-                                mime: String, data: Data,
-                                extraFields: [String: String] = [:]) async throws -> Data {
-        await AlmaAPI.shared.syncCookies()
-        let boundary = "alma-\(UUID().uuidString)"
-        var req = URLRequest(url: base.appendingPathComponent(path))
-        req.httpMethod = "POST"
-        req.timeoutInterval = 120
-        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        var body = Data()
-        func append(_ s: String) { body.append(s.data(using: .utf8)!) }
-        for (k, v) in extraFields {
-            append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(k)\"\r\n\r\n\(v)\r\n")
-        }
-        append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(fileField)\"; filename=\"\(filename)\"\r\nContent-Type: \(mime)\r\n\r\n")
-        body.append(data)
-        append("\r\n--\(boundary)--\r\n")
-        req.httpBody = body
-        let (respData, resp) = try await streamSession.data(for: req)
-        guard let http = resp as? HTTPURLResponse else { throw AlmaAPIError.transport(URLError(.badServerResponse)) }
-        guard (200..<300).contains(http.statusCode) else {
-            if http.statusCode == 401 || http.statusCode == 403 { throw AlmaAPIError.notAuthenticated }
-            throw AlmaAPIError.http(status: http.statusCode, body: String(data: respData, encoding: .utf8) ?? "")
-        }
-        return respData
-    }
-
-    /// POST a small JSON body and return raw bytes (the TTS endpoint answers audio/mpeg).
-    static func postJSONForData(path: String, body: [String: String]) async throws -> Data {
-        await AlmaAPI.shared.syncCookies()
-        var req = URLRequest(url: base.appendingPathComponent(path))
-        req.httpMethod = "POST"
-        req.timeoutInterval = 60
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONEncoder().encode(body)
-        let (data, resp) = try await streamSession.data(for: req)
-        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw AlmaAPIError.http(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, body: "tts")
-        }
-        return data
-    }
-
-    /// Open an SSE stream and yield parsed events. Caller cancels via Task cancellation.
-    static func streamEvents(request: URLRequest,
-                             onEvent: @MainActor @escaping (AgentSSEEvent) -> Void) async throws {
-        let (bytes, resp) = try await streamSession.bytes(for: request)
-        guard let http = resp as? HTTPURLResponse else { throw AlmaAPIError.transport(URLError(.badServerResponse)) }
-        if http.statusCode == 401 || http.statusCode == 403 || (300..<400).contains(http.statusCode) {
-            throw AlmaAPIError.notAuthenticated
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            throw AlmaAPIError.http(status: http.statusCode, body: "stream")
-        }
-        for try await line in bytes.lines {
-            try Task.checkCancellation()
-            guard line.hasPrefix("data: ") else { continue }   // skip ": ping" keepalives
-            guard let d = line.dropFirst(6).data(using: .utf8),
-                  let ev = try? JSONDecoder().decode(AgentSSEEvent.self, from: d) else { continue }
-            await onEvent(ev)
-        }
-    }
-}
-
-/// Same policy as AlmaAPI's RedirectBlocker (private there): a 307 → /login must
-/// surface as a status code, not a silently-followed login HTML page.
-final class AssistantRedirectBlocker: NSObject, URLSessionTaskDelegate {
-    func urlSession(_ session: URLSession, task: URLSessionTask,
-                    willPerformHTTPRedirection response: HTTPURLResponse,
-                    newRequest request: URLRequest,
-                    completionHandler: @escaping (URLRequest?) -> Void) {
-        completionHandler(nil)
     }
 }
 
@@ -820,6 +809,69 @@ final class AssistantVM {
     var justSettledId: String?
     var thinkingLive = false        // spinner row before the first text token
     var currentTurnId: String?
+    /// Transport lost while the server turn (presumably) still runs — drives the
+    /// truthful "কাজ চলছে — সংযোগ ফিরছে…" label instead of an error (Phase 1.1).
+    var reconnecting = false
+    /// Bumped on every owner send — the screen scrolls to the tail on THIS signal
+    /// (user-initiated), while plain count changes respect the reading position.
+    var ownSendTick = 0
+    /// personal_mode wire event (web parity) — the head is in LISTEN/personal mode.
+    var personalMode = false
+    /// done.needContinue arrived — fire one bounded machine "continue" after settle.
+    private var pendingAutoContinue = false
+    private var autoContinueCount = 0
+
+    // ── PR 5: durable-turn client state ─────────────────────────────────────
+    /// Roadmap 4.3 — recovery descriptor, persisted so process death can't lose
+    /// the running turn. Cleared only on terminal reconcile or explicit cancel.
+    struct RecoverableTurn: Codable {
+        var conversationId: String
+        var turnId: String?
+        var clientMessageId: String
+        var lastSeq: Int
+        var startedAt: Date
+    }
+    private static let recoverableTurnKey = "alma.assistant.recoverableTurn"
+    private var recoverableTurn: RecoverableTurn? = AssistantVM.loadRecoverableTurn() {
+        didSet {
+            if let rt = recoverableTurn, let d = try? JSONEncoder().encode(rt) {
+                UserDefaults.standard.set(d, forKey: Self.recoverableTurnKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.recoverableTurnKey)
+            }
+        }
+    }
+    private static func loadRecoverableTurn() -> RecoverableTurn? {
+        guard let d = UserDefaults.standard.data(forKey: recoverableTurnKey) else { return nil }
+        return try? JSONDecoder().decode(RecoverableTurn.self, from: d)
+    }
+    /// Idempotency key of the in-flight send (goes to the server with the body).
+    private var currentClientMessageId: String?
+    /// Highest durable-stream seq observed (single network-task writer; monotonic
+    /// int reads are race-benign) — persisted into the descriptor on background.
+    final class SeqBox: @unchecked Sendable { var value: Int = -1 }
+    private let seqBox = SeqBox()
+    /// A terminal done/error event flowed through apply() for the current watch —
+    /// distinguishes "stream closed because finished" from "replay page ended".
+    private var sawTerminalEvent = false
+    /// Wall-clock of the last send — recovery uses it to tell OUR turn's terminal
+    /// status apart from a PREVIOUS turn's stale terminal row (until Phase 3's
+    /// clientMessageId gives exact identity).
+    private var lastSendAt: Date?
+    private var recoveryTask: Task<Void, Never>?
+    private var recoveryInFlight = false
+    /// Observer tokens live in a box whose own (nonisolated) deinit unregisters
+    /// them — a MainActor class deinit may not touch isolated stored state.
+    private final class NotificationTokenBox {
+        var tokens: [NSObjectProtocol] = []
+        deinit { for t in tokens { NotificationCenter.default.removeObserver(t) } }
+    }
+    private let lifecycleTokens = NotificationTokenBox()
+    private var backgroundedAt: Date?
+    /// 4.2 — nonessential polling pauses while backgrounded.
+    private var isInBackground = false
+    /// 4.3 — foreground→recovery latency metric anchor.
+    private var lastForegroundAt: Date?
     private var streamTask: Task<Void, Never>?
     private var understandingTask: Task<Void, Never>?
     private var requestedLiveMode = "thinking"
@@ -953,14 +1005,77 @@ final class AssistantVM {
     // ── Bootstrap + polling ────────────────────────────────────────────────
 
     func bootstrap() async {
-        NotificationCenter.default.addObserver(forName: AlmaAPI.authExpiredNotification,
-                                               object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.authExpired = true }
-        }
+        registerObserversOnce()
         await loadModels()
         await loadActiveConversation()
+        await recoverFromPersistedDescriptor()
         await loadPlanDrive()
         startPolling()
+    }
+
+    /// PR 5 — kill/relaunch recovery: the persisted descriptor outlives the
+    /// process. If it points at a still-running turn (possibly in a different
+    /// conversation than the active-pointer), follow it and re-attach; a stale
+    /// descriptor for a finished turn is dropped after normal reconciliation.
+    private func recoverFromPersistedDescriptor() async {
+        guard let rt = recoverableTurn else { return }
+        if isStreaming { return }   // active-conversation recovery already took it
+        if conversationId != rt.conversationId {
+            let st: TurnStatusResponse? = try? await AlmaAPI.shared.get(
+                "/api/assistant/conversations/\(rt.conversationId)/turn-status")
+            guard st?.status == "running" else { recoverableTurn = nil; return }
+            await openConversation(rt.conversationId)   // ends in recoverTurnState
+        } else {
+            currentTurnId = rt.turnId ?? currentTurnId
+            await recoverTurnState(trigger: "relaunch")
+        }
+        if !isStreaming { recoverableTurn = nil }        // nothing running — stale
+    }
+
+    /// One-time observer registration (bootstrap can re-run; observers must not
+    /// stack — roadmap Phase 1.2). Lifecycle recovery: a suspended SSE socket dies
+    /// while the server keeps working, so the moment the owner returns the app we
+    /// verify the turn NOW — never wait for the 12s quiet poll.
+    private func registerObserversOnce() {
+        guard lifecycleTokens.tokens.isEmpty else { return }
+        let nc = NotificationCenter.default
+        lifecycleTokens.tokens.append(nc.addObserver(forName: AlmaAPI.authExpiredNotification,
+                                              object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.authExpired = true }
+        })
+        lifecycleTokens.tokens.append(nc.addObserver(forName: UIApplication.didEnterBackgroundNotification,
+                                              object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.backgroundedAt = Date()
+                self.isInBackground = true
+                // PR 5: stamp the replay cursor into the persisted descriptor —
+                // if iOS kills the process, relaunch recovers from here.
+                if var rt = self.recoverableTurn {
+                    rt.lastSeq = self.seqBox.value
+                    self.recoverableTurn = rt
+                }
+                AlmaTurnLog.event("turn.background", self.isStreaming ? "streaming" : "idle")
+                // Server work continues — nothing is cancelled here by design.
+            }
+        })
+        lifecycleTokens.tokens.append(nc.addObserver(forName: UIApplication.willEnterForegroundNotification,
+                                              object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isInBackground = false
+                self.lastForegroundAt = Date()
+                AlmaTurnLog.event("turn.foreground")
+                await self.recoverTurnState(trigger: "foreground")
+            }
+        })
+        lifecycleTokens.tokens.append(nc.addObserver(forName: UIApplication.didBecomeActiveNotification,
+                                              object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.backgroundedAt != nil else { return }   // skip launch activation
+                await self.recoverTurnState(trigger: "active")               // idempotent re-check
+            }
+        })
     }
 
     private func loadActiveConversation() async {
@@ -971,7 +1086,7 @@ final class AssistantVM {
                 modelId = ptr.modelId
                 await loadMessages(showSpinner: messages.isEmpty)
                 await loadArtifacts()
-                await resumeRunningTurnIfAny()
+                await recoverTurnState(trigger: "bootstrap")
             }
             authExpired = false
         } catch AlmaAPIError.notAuthenticated { authExpired = true } catch {
@@ -979,20 +1094,73 @@ final class AssistantVM {
         }
     }
 
+    // ── Phase 4.1: windowed history + delta sync ───────────────────────────
+    /// The 12s full-history replacement is gone: the initial load takes the LATEST
+    /// window, older pages prepend on demand, and the quiet poll asks "anything
+    /// new since <stamp>?" (an empty array ≈ free) — a full window refresh runs
+    /// only when the delta says something changed, or every 5th tick to true-up
+    /// card statuses that mutate without new rows.
+    static let historyWindow = 50
+    /// Max createdAt seen in the last window (ISO — lexicographic order works).
+    private var lastSyncStamp: String?
+    /// Rows PREPENDED via "load older" — merge preserves them above the window.
+    private var paginatedPrefixCount = 0
+    var canLoadOlder = false
+    var loadingOlder = false
+
     func loadMessages(showSpinner: Bool = false) async {
         guard let cid = conversationId else { return }
         if showSpinner { loadingHistory = true }
         defer { loadingHistory = false }
         do {
-            let wire: [AgentMessageWire] = try await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/messages")
+            let wire: [AgentMessageWire] = try await AlmaAPI.shared.get(
+                "/api/assistant/conversations/\(cid)/messages",
+                query: ["limit": String(Self.historyWindow)])
             // Never clobber an in-flight optimistic/streaming tail with the poll.
             guard !isStreaming else { return }
             mergeServerMessages(wire)
+            canLoadOlder = wire.count >= Self.historyWindow || paginatedPrefixCount > 0
             authExpired = false
             await loadOpenTasks()
         } catch AlmaAPIError.notAuthenticated { authExpired = true } catch {
             if showSpinner { errorToast = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription }
         }
+    }
+
+    /// Cheap delta poll: only rows newer than the sync stamp come back.
+    private func pollForNewMessages() async {
+        guard let cid = conversationId else { return }
+        guard let stamp = lastSyncStamp else { await loadMessages(); return }
+        guard let fresh: [AgentMessageWire] = try? await AlmaAPI.shared.get(
+            "/api/assistant/conversations/\(cid)/messages", query: ["since": stamp]) else { return }
+        if !fresh.isEmpty {
+            AlmaTurnLog.event("sync.deltaNew", "\(fresh.count)")
+            await loadMessages()   // one windowed refresh folds them in with full pairing
+        }
+    }
+
+    /// Scroll-up pagination: prepend the page ABOVE the oldest loaded row.
+    func loadOlderMessages() async {
+        guard !loadingOlder, canLoadOlder, let cid = conversationId,
+              let oldest = messages.first,
+              !oldest.id.hasPrefix("local-"), !oldest.id.hasPrefix("stream-") else { return }
+        loadingOlder = true
+        defer { loadingOlder = false }
+        guard let older: [AgentMessageWire] = try? await AlmaAPI.shared.get(
+            "/api/assistant/conversations/\(cid)/messages",
+            query: ["limit": String(Self.historyWindow), "before": oldest.id]) else { return }
+        canLoadOlder = older.count >= Self.historyWindow
+        // A server without cursor support echoes rows we already hold — drop them
+        // (graceful against an un-upgraded backend during rollout).
+        let known = Set(messages.map(\.id))
+        let fresh = older.filter { !known.contains($0.id) }
+        guard !fresh.isEmpty else { canLoadOlder = false; return }
+        let rows = fresh.map(AgentChatMessage.from)
+        var tx = Transaction()
+        tx.disablesAnimations = true
+        withTransaction(tx) { messages.insert(contentsOf: rows, at: 0) }
+        paginatedPrefixCount += rows.count
+        AlmaTurnLog.event("sync.olderPage", "\(rows.count)")
     }
 
     /// Local ("stream-…" / "local-…") id per server message id — keeps SwiftUI row
@@ -1037,7 +1205,13 @@ final class AssistantVM {
                 incoming[i].phases = old.phases
                 incoming[i].tools = old.tools
             }
-            incoming[i].blocks = old.blocks
+            // Canonical-vs-thinner rule (parity roadmap invariant 6): the server
+            // projection wins when it carries the full prose composition; a thinner
+            // server row (timeline not yet persisted) never wipes richer local blocks.
+            if incoming[i].blocks.isEmpty {
+                incoming[i].blocks = old.blocks
+                incoming[i].supersededBlockIds = old.supersededBlockIds
+            }
             if incoming[i].thinking == nil { incoming[i].thinking = old.thinking }
             if incoming[i].thinkingMs == nil { incoming[i].thinkingMs = old.thinkingMs }
             if old.role == .user, !old.localImages.isEmpty { incoming[i].localImages = old.localImages }
@@ -1053,7 +1227,16 @@ final class AssistantVM {
             kept.isStreaming = false
             incoming.append(kept)
         }
-        messages = incoming
+        // 1.4: authoritative reconciliation applies in ONE non-animated transaction —
+        // height changes from server truth must not run springs mid-scroll.
+        // 4.1: rows prepended by "load older" sit ABOVE the refreshed window and
+        // are preserved verbatim (they are settled history — nothing to merge).
+        let prefix = Array(messages.prefix(paginatedPrefixCount))
+        var tx = Transaction()
+        tx.disablesAnimations = true
+        withTransaction(tx) { messages = prefix + incoming }
+        if let maxStamp = wire.compactMap(\.createdAt).max() { lastSyncStamp = maxStamp }
+        AlmaTurnLog.event("turn.messagesReconciled", "count=\(incoming.count)")
     }
 
     /// Stream ended: settle the tail in place FIRST (prose stays on screen), then
@@ -1071,6 +1254,9 @@ final class AssistantVM {
             await loadOpenTasks()
             await loadArtifacts()   // the turn may have just produced one
         }
+        // PR 5: terminal + reconciled — the descriptor has done its job.
+        recoverableTurn = nil
+        currentClientMessageId = nil
     }
 
     /// Web parity: quiet message re-poll every 12s (day-shift lines, Telegram echoes)
@@ -1082,8 +1268,22 @@ final class AssistantVM {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 12_000_000_000)
                 guard let self, !Task.isCancelled else { return }
-                if !self.isStreaming { await self.loadMessages() }
+                // 4.2: nonessential polling pauses while backgrounded — the
+                // foreground observer runs recovery + one sync immediately anyway.
+                if self.isInBackground { continue }
                 tick += 1
+                if !self.isStreaming {
+                    // 4.1: cheap delta poll; a full windowed refresh only when the
+                    // delta reports news, or every 5th tick (~60s) to true-up card
+                    // statuses that mutate without new rows.
+                    if tick % 5 == 0 { await self.loadMessages() }
+                    else { await self.pollForNewMessages() }
+                }
+                // Server-side work started outside this client (approval execution,
+                // continuation turns) shows the live spinner within one poll tick —
+                // not only on app-resume (owner ask 2026-07-13, Claude-Code parity:
+                // approve → "করছি বস" line + working animation until the reply lands).
+                if !self.isStreaming { await self.recoverTurnState(trigger: "poll") }
                 if tick % 2 == 0 {
                     let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/presence",
                                                                         body: [String: String]())
@@ -1095,29 +1295,211 @@ final class AssistantVM {
         }
     }
 
-    /// If a turn was still running when the app was backgrounded/killed, show the
-    /// spinner and poll turn-status until it settles (web does the same on resume).
-    private func resumeRunningTurnIfAny() async {
+    /// Roadmap Phase 1.3 — immediate, idempotent turn recovery. Fetches turn-status
+    /// NOW (never waits for the 12s poll), keeps a VISIBLE streaming tail while the
+    /// server works, then reconciles the final message. Single-flight: concurrent
+    /// triggers (foreground + didBecomeActive + poll tick + transport-drop) share
+    /// one recovery loop. UI transport state is never treated as server turn state.
+    func recoverTurnState(trigger: String) async {
         guard let cid = conversationId else { return }
-        guard let st: TurnStatusResponse = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/turn-status"),
-              st.status == "running" else { return }
-        isStreaming = true
-        thinkingLive = true
-        requestLiveMode("thinking")
-        currentTurnId = st.turnId
-        streamTask = Task { [weak self] in
-            for _ in 0..<100 {
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
+        if isStreaming && !reconnecting { return }   // healthy live stream — nothing to recover
+        if recoveryInFlight { return }
+        recoveryInFlight = true
+        defer { recoveryInFlight = false }
+        AlmaTurnLog.event("turn.reconnectStarted", trigger)
+
+        // Transient status failures keep the truthful reconnect UI — never a false error.
+        var st: TurnStatusResponse?
+        for attempt in 0..<3 {
+            st = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/turn-status")
+            if st != nil { break }
+            try? await Task.sleep(nanoseconds: UInt64(500_000_000 * (attempt + 1)))
+        }
+        guard let status = st else { return }   // unreachable — next trigger retries
+        // 4.3 metric: foreground-to-recovery-state latency (no content, just ms).
+        if let t0 = lastForegroundAt {
+            lastForegroundAt = nil
+            AlmaTurnLog.event("turn.foregroundRecoveryMs", "\(Int(Date().timeIntervalSince(t0) * 1000))")
+        }
+
+        if status.status == "running" {
+            currentTurnId = status.turnId
+            isStreaming = true
+            ensureStreamingTail()               // P0-C fix: progress needs a row to live on
+            thinkingLive = true
+            requestLiveMode("thinking")
+            // PR 5: every turn now has a durable event log — replay the missed
+            // activity and continue LIVE instead of blind status-polling. Polling
+            // remains the fallback when the stream can't be attached.
+            if let tid = status.turnId {
+                startDurableRecoveryTail(cid: cid, turnId: tid)
+            } else {
+                startRecoveryPolling(cid: cid)
+            }
+        } else if reconnecting || isStreaming {
+            // We believed a turn was live. Is this terminal row OUR turn, or a stale
+            // previous one (our send may have died before the server created a turn)?
+            if isTerminalForOurTurn(status) {
+                await finishRecovery(terminalStatus: status.status ?? "done")
+            } else if trigger == "transport-drop" {
+                // Bounded proof: turn creation can lag the send by a few seconds
+                // (auth, persistence, vision). Poll briefly before declaring failure.
+                startRecoveryPolling(cid: cid, awaitingTurnCreation: true)
+            } else {
+                await finishRecovery(terminalStatus: status.status ?? "done")
+            }
+        }
+    }
+
+    /// True when the latest turn's terminal status plausibly belongs to the turn we
+    /// were watching: it is the turn we hold an id for, or it started at/after our
+    /// last send (small clock slack). Phase 3 replaces this heuristic with
+    /// clientMessageId identity.
+    private func isTerminalForOurTurn(_ st: TurnStatusResponse) -> Bool {
+        if let tid = st.turnId, tid == currentTurnId { return true }
+        guard let sentAt = lastSendAt else { return true }   // resume path: any terminal is truth
+        guard let raw = st.startedAt else { return true }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let started = iso.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
+        guard let started else { return true }
+        return started >= sentAt.addingTimeInterval(-15)
+    }
+
+    /// PR 5 recovery transport: attach the durable stream — the full activity
+    /// timeline replays (thinking/tools/cards/prose, tail rebuilt authoritatively)
+    /// and then continues live until the terminal event. If the stream closes
+    /// without a terminal (Redis-less replay page) we reconcile via status; if it
+    /// can't be attached at all, plain status polling takes over.
+    private func startDurableRecoveryTail(cid: String, turnId: String) {
+        recoveryTask?.cancel()
+        recoveryTask = Task { [weak self] in
+            guard let self else { return }
+            self.sawTerminalEvent = false
+            let buffer = AgentEventBuffer { [weak self] evs in self?.apply(evs) }
+            do {
+                try await self.tailDurableTurn(turnId, afterSeq: -1, buffer: buffer)
                 guard !Task.isCancelled else { return }
+                if self.sawTerminalEvent {
+                    await self.finishRecovery(terminalStatus: "stream-terminal")
+                } else {
+                    // Replay ended without done/error — check whether the turn is
+                    // really still running before deciding anything.
+                    let s: TurnStatusResponse? = try? await AlmaAPI.shared.get(
+                        "/api/assistant/conversations/\(cid)/turn-status")
+                    guard !Task.isCancelled else { return }
+                    if s?.status == "running" {
+                        self.startRecoveryPolling(cid: cid)
+                    } else {
+                        await self.finishRecovery(terminalStatus: s?.status ?? "done")
+                    }
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                AlmaTurnLog.event("turn.recoveryTailFailed", "\(error)")
+                self.startRecoveryPolling(cid: cid)
+            }
+        }
+    }
+
+    /// Poll turn-status with 1s initial cadence, exponential backoff capped at 3s,
+    /// plus jitter (roadmap 1.3). `awaitingTurnCreation` = we are not yet sure the
+    /// server ever created our turn; if none appears within ~20s, the send truly
+    /// failed and the owner gets a Bangla error instead of a silent lost message.
+    private func startRecoveryPolling(cid: String, awaitingTurnCreation: Bool = false) {
+        recoveryTask?.cancel()
+        recoveryTask = Task { [weak self] in
+            var delay = 1.0
+            var elapsed = 0.0
+            var sawRunning = false
+            // ~7 min bound — far beyond any healthy turn gap; the server's own
+            // 30-min ghost timeout is the backstop of last resort.
+            while elapsed < 420 {
+                try? await Task.sleep(nanoseconds: UInt64((delay + Double.random(in: 0...0.25)) * 1_000_000_000))
+                guard let self, !Task.isCancelled else { return }
+                elapsed += delay
                 let s: TurnStatusResponse? = try? await AlmaAPI.shared.get("/api/assistant/conversations/\(cid)/turn-status")
-                if s?.status != "running" { break }
+                guard !Task.isCancelled else { return }
+                if let s {
+                    if s.status == "running" {
+                        sawRunning = true
+                        self.currentTurnId = s.turnId
+                        if self.reconnecting { self.ensureStreamingTail() }
+                    } else if sawRunning || !awaitingTurnCreation || self.isTerminalForOurTurn(s) {
+                        await self.finishRecovery(terminalStatus: s.status ?? "done")
+                        return
+                    } else if elapsed > 20 {
+                        // No turn was ever created for our send — real failure.
+                        await self.failRecovery()
+                        return
+                    }
+                }
+                delay = min(3.0, delay * 1.6)
             }
             guard let self, !Task.isCancelled else { return }
-            self.isStreaming = false
-            self.thinkingLive = false
-            self.settleLiveMode()
-            await self.loadMessages()
+            await self.finishRecovery(terminalStatus: "timeout")
         }
+    }
+
+    /// Terminal: settle the tail, fold in server truth, and only then drop the
+    /// reconnect label (roadmap: remove it after the final row appears).
+    private func finishRecovery(terminalStatus: String) async {
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        isStreaming = false
+        thinkingLive = false
+        settleLiveMode()
+        // 1.5: never retain an empty placeholder tail; a partial tail's blocks are a
+        // strict prefix of the persisted reply — clear them so server truth renders
+        // whole (blocks-empty rows use the settled summary + full-prose path).
+        if let i = messages.lastIndex(where: { $0.isStreaming }) {
+            messages[i].isStreaming = false
+            if reconnecting {
+                if messages[i].text.isEmpty && messages[i].timeline.isEmpty && messages[i].blocks.isEmpty {
+                    messages.remove(at: i)
+                } else {
+                    messages[i].blocks = []
+                }
+            }
+        }
+        let lastAssistantBefore = messages.last(where: { $0.role == .assistant })?.id
+        await loadMessages()
+        // "Final content within 2s": persistence can trail the terminal status by a
+        // beat — one short retry before we surface whatever state we have.
+        if messages.last(where: { $0.role == .assistant })?.id == lastAssistantBefore {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            await loadMessages()
+        }
+        reconnecting = false
+        justSettledId = messages.last(where: { $0.role == .assistant })?.id
+        recoverableTurn = nil            // terminal + reconciled (PR 5)
+        AlmaTurnLog.event("turn.terminal", "recovery:\(terminalStatus)")
+        if terminalStatus == "error" {
+            errorToast = "সমস্যা হয়েছে — আবার চেষ্টা করুন"
+        }
+    }
+
+    /// The send never became a server turn — keep the owner's message row, drop the
+    /// placeholder tail, and say so in Bangla (roadmap 1.1: bounded recovery proved
+    /// no turn exists — only now may a failure surface).
+    private func failRecovery() async {
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        isStreaming = false
+        thinkingLive = false
+        settleLiveMode()
+        reconnecting = false
+        if let i = messages.lastIndex(where: { $0.isStreaming }) {
+            if messages[i].text.isEmpty && messages[i].blocks.isEmpty {
+                messages.remove(at: i)
+            } else {
+                messages[i].isStreaming = false
+            }
+        }
+        recoverableTurn = nil            // nothing recoverable exists (PR 5)
+        AlmaTurnLog.event("turn.terminal", "recovery:failed-no-turn")
+        errorToast = "পাঠানো যায়নি — আবার চেষ্টা করুন"
+        UINotificationFeedbackGenerator().notificationOccurred(.error)
     }
 
     // ── Conversations + sidebar data (web AgentSidebar parity) ────────────
@@ -1225,6 +1607,10 @@ final class AssistantVM {
         stopStreaming(cancelServer: false)
         conversationId = id
         modelId = conversations.first { $0.id == id }?.modelId   // pinned model follows the chat
+        localIdByServerId = [:]   // 1.5: optimistic-ID maps never leak across conversations
+        lastSyncStamp = nil       // 4.1: window/delta cursors are per-conversation
+        paginatedPrefixCount = 0
+        canLoadOlder = false
         messages = []
         openTasks = []
         artifacts = []
@@ -1232,12 +1618,16 @@ final class AssistantVM {
         await loadArtifacts()
         let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/active-conversation",
                                                             body: ["conversationId": id])
-        await resumeRunningTurnIfAny()
+        await recoverTurnState(trigger: "openConversation")
     }
 
     func newChat() async {
         stopStreaming(cancelServer: false)
         conversationId = nil     // server creates one on the first send
+        localIdByServerId = [:]  // 1.5: optimistic-ID maps never leak across conversations
+        lastSyncStamp = nil      // 4.1: window/delta cursors are per-conversation
+        paginatedPrefixCount = 0
+        canLoadOlder = false
         // Owner rule 2026-07-12: a NEW chat always starts on Auto (router picks) —
         // it must not inherit the previous conversation's pinned model (the picker
         // was silently carrying over e.g. Sonnet 4.6 from the last-opened chat).
@@ -1373,9 +1763,45 @@ final class AssistantVM {
         let files: [AgentFileRef]
         let modelId: String?
         var voice: Bool? = nil    // voice console turns: TTS-friendly replies
+        /// Roadmap PR 5 — idempotency key: one key = at most one stored message and
+        /// one server turn, however many times transport makes us retry.
+        var clientMessageId: String? = nil
+        /// PR 3b — model-upgrade approval resume: re-runs the SAME turn on the
+        /// premium model (approve) or the cheap fallback (decline). No new message.
+        struct Resume: Encodable { let approve: Bool; var fallbackModelId: String? = nil }
+        var resume: Resume? = nil
     }
 
-    func send(_ raw: String) {
+    /// PR 3b — owner tapped the model-switch card: resume the paused turn on the
+    /// chosen model (web parity: POST /chat with resume{}, same conversation).
+    func resumeModelSwitch(messageId: String, approve: Bool) {
+        guard !isStreaming else { return }
+        if let i = messages.firstIndex(where: { $0.id == messageId }) {
+            messages[i].modelSwitch?.status = approve ? "approved" : "declined"
+        }
+        let fallback = messages.first(where: { $0.id == messageId })?.modelSwitch?.fallbackModelId
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        isStreaming = true
+        thinkingLive = true
+        beginUnderstanding()
+        currentTurnId = nil
+        reconnecting = false
+        lastSendAt = Date()
+        seqBox.value = -1
+        sawTerminalEvent = false
+        AlmaTurnLog.event("turn.submit", "model-switch-resume")
+        ensureStreamingTail()
+        let body = ChatBody(conversationId: conversationId, message: "",
+                            files: [], modelId: modelId ?? "auto",
+                            resume: .init(approve: approve,
+                                          fallbackModelId: approve ? nil : fallback))
+        streamTask = Task { [weak self] in
+            await self?.runTurn(body: body)
+        }
+    }
+
+    func send(_ raw: String, isAutoContinue: Bool = false) {
+        if !isAutoContinue { autoContinueCount = 0 }   // manual message resets the budget
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let readyFiles: [AgentFileRef] = pendingFiles.compactMap {
             if case .ready(let ref) = $0.state { return ref } else { return nil }
@@ -1393,22 +1819,40 @@ final class AssistantVM {
         thinkingLive = true
         beginUnderstanding()
         currentTurnId = nil
+        reconnecting = false
+        recoveryTask?.cancel(); recoveryTask = nil
+        lastSendAt = Date()
+        ownSendTick += 1
+        // PR 5 — idempotency key: however transport fails, THIS send can only ever
+        // become one server message + one turn + one execution.
+        let clientMessageId = UUID().uuidString
+        currentClientMessageId = clientMessageId
+        seqBox.value = -1
+        sawTerminalEvent = false
+        AlmaTurnLog.event("turn.submit", clientMessageId)
         ensureStreamingTail()
 
         let body = ChatBody(conversationId: conversationId, message: text,
-                            files: readyFiles, modelId: modelId ?? "auto")
+                            files: readyFiles, modelId: modelId ?? "auto",
+                            clientMessageId: clientMessageId)
         streamTask = Task { [weak self] in
             await self?.runTurn(body: body)
         }
     }
 
     private func runTurn(body: ChatBody) async {
+        var handedToRecovery = false
         defer {
-            isStreaming = false
-            thinkingLive = false
-            settleLiveMode()
-            if let i = messages.lastIndex(where: { $0.isStreaming }) { messages[i].isStreaming = false }
+            if !handedToRecovery {
+                isStreaming = false
+                thinkingLive = false
+                settleLiveMode()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) { messages[i].isStreaming = false }
+            }
         }
+        // Phase 2: one buffer per turn — deltas coalesce off-main and land as
+        // batched reducer applies (roadmap 2.3).
+        let buffer = AgentEventBuffer { [weak self] evs in self?.apply(evs) }
         do {
             await AlmaAPI.shared.syncCookies()
             var req = URLRequest(url: AssistantNet.base.appendingPathComponent("/api/assistant/chat"))
@@ -1416,36 +1860,76 @@ final class AssistantVM {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.httpBody = try JSONEncoder().encode(body)
 
-            var sawEvent = false
+            let firstEvent = AssistantNet.EventFlag()
             do {
-                // Direct SSE, with a 15s first-event watchdog (web parity: a hung
-                // serverless run is handed to the VPS worker via /turn).
-                try await withFirstEventWatchdog(seconds: 15, sawEvent: { sawEvent }) {
-                    try await AssistantNet.streamEvents(request: req) { [weak self] ev in
-                        sawEvent = true
-                        self?.handle(ev)
-                    }
+                // Direct SSE, with a 15s first-event watchdog. PR 5: the fallback no
+                // longer re-sends the prompt — it asks /turn for THE turn by
+                // clientMessageId and tails its durable stream.
+                try await withFirstEventWatchdog(seconds: 15, sawEvent: { firstEvent.raised }) {
+                    try await AssistantNet.streamEvents(request: req, buffer: buffer, firstEvent: firstEvent)
                 }
             } catch is WatchdogTimeout {
-                try await runWorkerFallback(body: body)
+                try await runWorkerFallback(body: body, buffer: buffer)
             } catch AlmaAPIError.notAuthenticated {
-                // One cookie refresh + retry, mirroring AlmaAPI.perform.
+                // One cookie refresh + retry, mirroring AlmaAPI.perform. The retry
+                // carries the SAME clientMessageId — if the first attempt secretly
+                // created the turn, the server answers 202 duplicate (caught below).
                 AlmaAPI.shared.invalidateCookieCache()
                 await AlmaAPI.shared.syncCookies()
-                try await AssistantNet.streamEvents(request: req) { [weak self] ev in
-                    self?.handle(ev)
-                }
+                try await AssistantNet.streamEvents(request: req, buffer: buffer)
             }
             // Server truth (final card ids/statuses, tool rows, cost) merges into the
             // tail in place — never a wholesale replace (prose must not blink).
             await finalizeTurn()
+            AlmaTurnLog.event("turn.terminal", "stream-done")
+            fireAutoContinueIfNeeded()
         } catch is CancellationError {
             await finalizeTurn()
+        } catch let dup as AssistantNet.DuplicateTurn {
+            // A retry raced an EXISTING turn (Phase 3 idempotency) — observe it,
+            // never re-run (roadmap invariant 2).
+            AlmaTurnLog.event("turn.duplicateObserved", dup.turnId)
+            currentTurnId = dup.turnId
+            if conversationId == nil { conversationId = dup.conversationId }
+            do {
+                try await tailDurableTurn(dup.turnId, afterSeq: -1, buffer: buffer)
+                await finalizeTurn()
+            } catch {
+                handedToRecovery = true
+                reconnecting = true
+                ensureStreamingTail()
+                Task { [weak self] in await self?.recoverTurnState(trigger: "duplicate-tail-drop") }
+            }
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true
         } catch {
-            errorToast = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
-            UINotificationFeedbackGenerator().notificationOccurred(.error)
+            let kind = TurnFailureKind.classify(error)
+            AlmaTurnLog.event("turn.transportDisconnected", "\(kind) turnId=\(currentTurnId ?? "nil")")
+            switch kind {
+            case .transportInterrupted, .offline:
+                // Roadmap Phase 1.1 — the server deliberately keeps the turn alive
+                // after a dropped client socket (chat route detaches from req.signal).
+                // Freeze the partial reply, show the truthful Bangla reconnect state
+                // and verify via turn-status; a raw English transport toast must
+                // never appear while the turn may still be running.
+                if conversationId != nil {
+                    handedToRecovery = true
+                    reconnecting = true
+                    ensureStreamingTail()
+                    thinkingLive = true
+                    requestLiveMode("thinking")
+                    Task { [weak self] in await self?.recoverTurnState(trigger: "transport-drop") }
+                } else {
+                    // No conversation was ever created — nothing recoverable exists.
+                    errorToast = kind.banglaMessage
+                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                }
+            case .authentication:
+                authExpired = true
+            case .server, .terminalAgentError:
+                errorToast = kind.banglaMessage
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+            }
         }
     }
 
@@ -1473,117 +1957,296 @@ final class AssistantVM {
         }
     }
 
-    /// A2 fallback: enqueue on the VPS worker queue and tail its durable stream.
-    private func runWorkerFallback(body: ChatBody) async throws {
+    /// PR 5 — the first-event watchdog fallback. No longer re-sends the prompt as
+    /// a fresh job (the old P0-D duplicate-work race): /turn is idempotent on
+    /// clientMessageId, so the server returns the EXISTING turn when the direct
+    /// run is healthy, or re-dispatches a dead one to the VPS worker. Either way
+    /// we then tail ONE durable stream — the same message can never run twice.
+    private func runWorkerFallback(body: ChatBody, buffer: AgentEventBuffer) async throws {
         struct TurnBody: Encodable {
             let conversationId: String?
             let message: String
             let files: [AgentFileRef]
+            let clientMessageId: String?
         }
         let enq: TurnEnqueueResponse = try await AlmaAPI.shared.send(
             "POST", "/api/assistant/turn",
-            body: TurnBody(conversationId: body.conversationId, message: body.message, files: body.files))
+            body: TurnBody(conversationId: body.conversationId, message: body.message,
+                           files: body.files, clientMessageId: body.clientMessageId))
         currentTurnId = enq.turnId
         if conversationId == nil { conversationId = enq.conversationId }
-        var req = URLRequest(url: AssistantNet.base.appendingPathComponent("/api/assistant/turn/\(enq.turnId)/stream"))
+        if let cid = conversationId, let cmid = body.clientMessageId {
+            recoverableTurn = RecoverableTurn(conversationId: cid, turnId: enq.turnId,
+                                              clientMessageId: cmid, lastSeq: -1, startedAt: Date())
+        }
+        try await tailDurableTurn(enq.turnId, afterSeq: -1, buffer: buffer)
+    }
+
+    /// Attach to a turn's durable stream: replay everything after `afterSeq`, then
+    /// live-tail. A FULL replay (afterSeq < 0) rebuilds the tail from scratch —
+    /// partial content rendered before a drop is replaced by the authoritative
+    /// log, never doubled (the direct stream carries no seq to splice on). The
+    /// wipe fires on the stream's `turn_snapshot` hello, NOT before the request:
+    /// a failed attach must keep the frozen partial on screen.
+    private var pendingReplayReset = false
+
+    private func tailDurableTurn(_ turnId: String, afterSeq: Int, buffer: AgentEventBuffer) async throws {
+        if afterSeq < 0 { pendingReplayReset = true }
+        defer { pendingReplayReset = false }
+        var comps = URLComponents(url: AssistantNet.base.appendingPathComponent("/api/assistant/turn/\(turnId)/stream"),
+                                  resolvingAgainstBaseURL: false)!
+        if afterSeq >= 0 { comps.queryItems = [URLQueryItem(name: "afterSeq", value: String(afterSeq))] }
+        var req = URLRequest(url: comps.url!)
         req.httpMethod = "GET"
-        try await AssistantNet.streamEvents(request: req) { [weak self] ev in
-            self?.handle(ev)
+        let box = seqBox
+        try await AssistantNet.streamEvents(request: req, buffer: buffer,
+                                            onSeq: { box.value = max(box.value, $0) })
+    }
+
+    /// Wipe the streaming tail's derived content ahead of an authoritative replay.
+    private func resetStreamingTailForReplay() {
+        ensureStreamingTail()
+        guard let i = messages.lastIndex(where: { $0.isStreaming }) else { return }
+        messages[i].text = ""
+        messages[i].thinking = nil
+        messages[i].timeline = []
+        messages[i].blocks = []
+        messages[i].phases = []
+        messages[i].tools = []
+        messages[i].confirmCards = []
+        messages[i].askCards = []
+    }
+
+    /// Phase 2 reducer — applies ONE buffered batch per MainActor hop (roadmap 2.3).
+    /// Deltas arrive pre-coalesced; `refreshPhases` runs once per flush, not once
+    /// per token. Every wire event has an explicit handler (roadmap 2.1) — unknown
+    /// types were already telemetried at decode and are dropped knowingly.
+    private func apply(_ events: [AgentTurnEvent]) {
+        var touchedStream = false
+        for ev in events {
+            switch ev {
+            case .conversationId(let id):
+                conversationId = id
+            case .turnId(let id):
+                currentTurnId = id
+                // PR 5: the turn is now addressable — persist the recovery descriptor
+                // so even process death can find its way back.
+                if let cid = conversationId, let cmid = currentClientMessageId {
+                    recoverableTurn = RecoverableTurn(conversationId: cid, turnId: id,
+                                                      clientMessageId: cmid,
+                                                      lastSeq: seqBox.value, startedAt: Date())
+                }
+            case .personalMode(let active):
+                personalMode = active
+            case .modelInfo(let label):
+                if !label.isEmpty { modelLabel = label }
+            case .thinkingDelta(let chunk):
+                guard !chunk.isEmpty else { break }
+                if reconnecting { reconnecting = false }   // live content flows again
+                requestLiveMode("thinking")
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    messages[i].thinking = (messages[i].thinking ?? "") + chunk
+                    messages[i].timeline = AgentChatMessage.appendThink(messages[i].timeline, chunk: chunk)
+                    messages[i].blocks = AgentChatMessage.appendThinkBlock(
+                        messages[i].blocks, chunk: chunk, messageId: messages[i].id)
+                    touchedStream = true
+                }
+            case .textDelta(let chunk):
+                guard !chunk.isEmpty else { break }
+                if reconnecting { reconnecting = false }   // live content flows again
+                requestLiveMode("writing")
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    if messages[i].text.isEmpty, let start = messages[i].streamStartedAt {
+                        messages[i].thinkingMs = max(1, Int(Date().timeIntervalSince(start) * 1000))
+                    }
+                    messages[i].text += chunk
+                    messages[i].blocks = AgentChatMessage.appendProseBlock(
+                        messages[i].blocks, chunk: chunk, messageId: messages[i].id)
+                    touchedStream = true
+                }
+            case .toolStart(let tid, let name, let inputPretty):
+                requestLiveMode("searching")
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    messages[i].timeline = AgentChatMessage.pushOrUpdateTool(
+                        messages[i].timeline, id: tid, name: name, inputPretty: inputPretty)
+                    messages[i].blocks = AgentChatMessage.appendToolBlock(
+                        messages[i].blocks, toolId: tid, name: name, messageId: messages[i].id)
+                    touchedStream = true
+                }
+            case .toolEnd(let tid, let ok, let preview, let screenshot):
+                requestLiveMode("writing")
+                if let i = messages.lastIndex(where: { $0.isStreaming }), !tid.isEmpty {
+                    // Screenshot payload noted in the row preview; inline image
+                    // rendering in the tool sheet is a tracked follow-up.
+                    let result = screenshot != nil
+                        ? [preview, "📸 স্ক্রিনশট নেওয়া হয়েছে"].compactMap { $0 }.joined(separator: "\n")
+                        : preview
+                    messages[i].timeline = AgentChatMessage.finalizeTool(
+                        messages[i].timeline, id: tid, ok: ok, result: result)
+                    messages[i].blocks = AgentChatMessage.finalizeToolBlock(
+                        messages[i].blocks, toolId: tid, ok: ok)
+                    touchedStream = true
+                }
+            case .subagentStart(let sid, let roleLabel, let task):
+                // Specialist worker spun up — a Claude-style activity row (parity:
+                // web shows subagent activity; native silently dropped it, P0-E).
+                requestLiveMode("searching")
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    messages[i].timeline = AgentChatMessage.pushOrUpdateTool(
+                        messages[i].timeline, id: "sub-\(sid)", name: "সহকারী: \(roleLabel)",
+                        inputPretty: task)
+                    messages[i].blocks = AgentChatMessage.appendToolBlock(
+                        messages[i].blocks, toolId: "sub-\(sid)", name: "সহকারী: \(roleLabel)",
+                        messageId: messages[i].id)
+                    touchedStream = true
+                }
+            case .subagentEnd(let sid, let ok, let summary):
+                if let i = messages.lastIndex(where: { $0.isStreaming }), !sid.isEmpty {
+                    messages[i].timeline = AgentChatMessage.finalizeTool(
+                        messages[i].timeline, id: "sub-\(sid)", ok: ok, result: summary)
+                    messages[i].blocks = AgentChatMessage.finalizeToolBlock(
+                        messages[i].blocks, toolId: "sub-\(sid)", ok: ok)
+                    touchedStream = true
+                }
+            case .artifactSaved(let aid, let title):
+                // A tool filed a document (SEO report, research…) — drop a FILE CARD
+                // into the reply flow, Claude-style (web AgentApp parity).
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    messages[i].timeline.append(.file(id: aid, name: title))
+                    messages[i].blocks.append(.file(id: "fb-\(messages[i].id)-\(aid)", artifactId: aid, name: title))
+                }
+            case .confirmCard(let pid, let summary, let actionType, let costEstimate):
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }),
+                   !messages[i].confirmCards.contains(where: { $0.id == pid }) {
+                    messages[i].confirmCards.append(.init(id: pid, summary: summary,
+                                                          status: "pending", actionType: actionType,
+                                                          costEstimate: costEstimate))
+                    messages[i].blocks.append(.confirmCard(id: "bc-\(messages[i].id)-\(pid)", pendingActionId: pid))
+                }
+            case .askCard(let aid, let question, let options):
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }),
+                   !messages[i].askCards.contains(where: { $0.id == aid }) {
+                    messages[i].askCards.append(.init(id: aid, question: question,
+                                                      options: options, status: "pending",
+                                                      selectedOption: nil))
+                    messages[i].blocks.append(.askCard(id: "bq-\(messages[i].id)-\(aid)", askCardId: aid))
+                }
+            case .verificationRetry(let attempt, let maxAttempts):
+                // Parity roadmap RC-2: NEVER blank the reply. The draft prose stays
+                // visible in place, marked superseded in data; a truthful verification
+                // activity row follows it, and the rewrite streams in after that —
+                // exactly the composition the server now persists (t:'verify').
+                requestLiveMode("thinking")
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    if let lastProse = messages[i].blocks.last(where: {
+                        if case .prose = $0 { return true }; return false
+                    }), case .prose(let pid, let draft) = lastProse {
+                        messages[i].supersededBlockIds.insert(pid)
+                        messages[i].timeline.append(.text(draft, superseded: true))
+                    }
+                    // Final-answer accumulator resets (server does the same with
+                    // finalText) — the visible blocks are untouched.
+                    messages[i].text = ""
+                    let label = AgentChatMessage.verifyLabel(attempt: attempt, max: maxAttempts)
+                    messages[i].timeline = AgentChatMessage.appendThink(messages[i].timeline, chunk: label)
+                    messages[i].blocks = AgentChatMessage.appendThinkBlock(
+                        messages[i].blocks, chunk: label, messageId: messages[i].id)
+                    touchedStream = true
+                }
+            case .modelSwitchRequired(let toLabel, let fromLabel, let fallbackModelId):
+                // PR 3b — the turn paused server-side for a premium-model upgrade
+                // decision. Attach the native approval card (web parity) and settle
+                // the tail; approve/decline resumes the SAME turn via resume{}.
+                thinkingLive = false
+                settleLiveMode()
+                ensureStreamingTail()
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    messages[i].modelSwitch = .init(toLabel: toLabel, fromLabel: fromLabel,
+                                                    fallbackModelId: fallbackModelId)
+                    messages[i].isStreaming = false
+                }
+                isStreaming = false
+            case .conversationCompacted(let newId):
+                // Server folded this thread into a fresh conversation (cost cap) —
+                // follow it, exactly like the web client.
+                conversationId = newId
+            case .done(_, let tokensIn, let tokensOut, let costUsd, let needContinue, let apiRounds,
+                       let cacheCreation, let cacheRead, let roundCostsUsd):
+                if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    if let tokensIn { messages[i].tokensIn = tokensIn }
+                    if let tokensOut { messages[i].tokensOut = tokensOut }
+                    if let cacheCreation { messages[i].cacheCreation = cacheCreation }
+                    if let cacheRead { messages[i].cacheRead = cacheRead }
+                    if let apiRounds { messages[i].apiRounds = apiRounds }
+                    if let roundCostsUsd { messages[i].roundCostsUsd = roundCostsUsd }
+                    if let costUsd, costUsd > 0 { messages[i].costUsd = String(format: "%.4f", costUsd) }
+                }
+                if needContinue { pendingAutoContinue = true }
+                sawTerminalEvent = true
+                thinkingLive = false
+                settleLiveMode()
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            case .turnError(let message):
+                sawTerminalEvent = true
+                thinkingLive = false
+                settleLiveMode()
+                errorToast = message
+            case .turnSnapshot(let turnId, let convId, _, _):
+                // Durable-stream hello (PR 5) — reconcile ids on (re)connect, and
+                // NOW (stream provably attached) wipe the frozen partial so the
+                // authoritative replay rebuilds the tail without doubling.
+                if let turnId { currentTurnId = turnId }
+                if conversationId == nil, let convId { conversationId = convId }
+                if pendingReplayReset {
+                    pendingReplayReset = false
+                    resetStreamingTailForReplay()
+                }
+            case .replayContinue(let afterSeq):
+                // Page-capped replay: continue from the cursor (no tail reset).
+                if let tid = currentTurnId {
+                    recoveryTask?.cancel()
+                    recoveryTask = Task { [weak self] in
+                        guard let self else { return }
+                        let buffer = AgentEventBuffer { [weak self] evs in self?.apply(evs) }
+                        try? await self.tailDurableTurn(tid, afterSeq: afterSeq, buffer: buffer)
+                    }
+                }
+            case .unknown:
+                break   // telemetried at decode (stream.unknownEvent)
+            }
+        }
+        if touchedStream, let i = messages.lastIndex(where: { $0.isStreaming }) {
+            AgentChatMessage.refreshPhases(on: &messages[i], live: messages[i].text.isEmpty)
         }
     }
 
-    /// Apply one SSE event to the streaming tail message.
-    private func handle(_ ev: AgentSSEEvent) {
-        switch ev.type {
-        case "conversation_id":
-            if let id = ev.id { conversationId = id }
-        case "turn_id":
-            currentTurnId = ev.id
-        case "model_info":
-            if let l = ev.label { modelLabel = l }
-        case "thinking_delta":
-            requestLiveMode("thinking")
-            ensureStreamingTail()
-            if let i = messages.lastIndex(where: { $0.isStreaming }) {
-                let chunk = ev.delta ?? ""
-                messages[i].thinking = (messages[i].thinking ?? "") + chunk
-                messages[i].timeline = AgentChatMessage.appendThink(messages[i].timeline, chunk: chunk)
-                messages[i].blocks = AgentChatMessage.appendThinkBlock(
-                    messages[i].blocks, chunk: chunk, messageId: messages[i].id)
-                let live = messages[i].text.isEmpty
-                AgentChatMessage.refreshPhases(on: &messages[i], live: live)
-            }
-        case "text_delta":
-            requestLiveMode("writing")
-            ensureStreamingTail()
-            if let i = messages.lastIndex(where: { $0.isStreaming }) {
-                if messages[i].text.isEmpty {
-                    if let start = messages[i].streamStartedAt {
-                        messages[i].thinkingMs = max(1, Int(Date().timeIntervalSince(start) * 1000))
-                    }
-                    AgentChatMessage.refreshPhases(on: &messages[i], live: false)
-                }
-                messages[i].text += ev.delta ?? ""
-                messages[i].blocks = AgentChatMessage.appendProseBlock(
-                    messages[i].blocks, chunk: ev.delta ?? "", messageId: messages[i].id)
-            }
-        case "tool_start":
-            requestLiveMode("searching")
-            ensureStreamingTail()
-            if let i = messages.lastIndex(where: { $0.isStreaming }) {
-                let tid = ev.id ?? UUID().uuidString
-                messages[i].timeline = AgentChatMessage.pushOrUpdateTool(
-                    messages[i].timeline, id: tid, name: ev.name ?? "টুল",
-                    inputPretty: ev.input?.pretty())
-                messages[i].blocks = AgentChatMessage.appendToolBlock(
-                    messages[i].blocks, toolId: tid, name: ev.name ?? "টুল",
-                    messageId: messages[i].id)
-                AgentChatMessage.refreshPhases(on: &messages[i], live: messages[i].text.isEmpty)
-            }
-        case "tool_end":
-            requestLiveMode("writing")
-            if let i = messages.lastIndex(where: { $0.isStreaming }),
-               let tid = ev.id {
-                messages[i].timeline = AgentChatMessage.finalizeTool(
-                    messages[i].timeline, id: tid, ok: ev.success ?? true,
-                    result: ev.resultPreview)
-                messages[i].blocks = AgentChatMessage.finalizeToolBlock(
-                    messages[i].blocks, toolId: tid, ok: ev.success ?? true)
-                AgentChatMessage.refreshPhases(on: &messages[i], live: messages[i].text.isEmpty)
-            }
-        case "artifact_saved":
-            // A tool filed a document (SEO report, research…) — drop a FILE CARD
-            // into the reply flow, Claude-style (web AgentApp parity).
-            ensureStreamingTail()
-            if let i = messages.lastIndex(where: { $0.isStreaming }), let aid = ev.id {
-                let name = ev.title ?? "ডকুমেন্ট"
-                messages[i].timeline.append(.file(id: aid, name: name))
-                messages[i].blocks.append(.file(id: "fb-\(messages[i].id)-\(aid)", artifactId: aid, name: name))
-            }
-        case "confirm_card":
-            ensureStreamingTail()
-            if let i = messages.lastIndex(where: { $0.isStreaming }), let pid = ev.pendingActionId {
-                messages[i].confirmCards.append(.init(id: pid, summary: ev.summary ?? "",
-                                                      status: "pending", actionType: ev.actionType,
-                                                      costEstimate: ev.costEstimate))
-            }
-        case "ask_card":
-            ensureStreamingTail()
-            if let i = messages.lastIndex(where: { $0.isStreaming }), let aid = ev.askCardId {
-                messages[i].askCards.append(.init(id: aid, question: ev.question ?? "",
-                                                  options: ev.options ?? [], status: "pending",
-                                                  selectedOption: nil))
-            }
-        case "done":
-            thinkingLive = false
-            settleLiveMode()
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        case "error":
-            thinkingLive = false
-            settleLiveMode()
-            errorToast = ev.message ?? ev.error ?? "সমস্যা হয়েছে — আবার চেষ্টা করুন"
-        default:
-            break
+    /// Web parity (AgentApp MAX_AUTO_CONTINUES): a serverless-deadline turn ended
+    /// mid-task — machine-send "continue" so long jobs finish end-to-end. Bounded;
+    /// any manual owner message resets the budget (see send()).
+    private static let maxAutoContinues = 8
+    private static let autoContinueText = "continue — ঠিক যেখানে ছিলে সেখান থেকে কাজ চালিয়ে যাও"
+
+    private func fireAutoContinueIfNeeded() {
+        guard pendingAutoContinue else { return }
+        pendingAutoContinue = false
+        guard autoContinueCount < Self.maxAutoContinues else {
+            errorToast = "কাজটা লম্বা — অটো-continue সীমা শেষ। \"continue\" লিখলে বাকিটা এগোবে।"
+            return
+        }
+        autoContinueCount += 1
+        AlmaTurnLog.event("turn.autoContinue", "\(autoContinueCount)/\(Self.maxAutoContinues)")
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard let self, !self.isStreaming else { return }
+            self.send(Self.autoContinueText, isAutoContinue: true)
         }
     }
 
@@ -1599,7 +2262,13 @@ final class AssistantVM {
     func stopStreaming(cancelServer: Bool = true) {
         streamTask?.cancel()
         streamTask = nil
+        // Conversation switch / Stop also ends any reconnect-recovery loop; server
+        // work is only cancelled when explicitly asked (roadmap invariant 9).
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        reconnecting = false
         if cancelServer, let tid = currentTurnId {
+            recoverableTurn = nil    // explicit cancel — nothing to recover (PR 5)
             Task {
                 let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/turn/\(tid)/cancel")
             }
@@ -1610,10 +2279,302 @@ final class AssistantVM {
         if let i = messages.lastIndex(where: { $0.isStreaming }) { messages[i].isStreaming = false }
     }
 
+    // ── Phase 0 stress fixture (roadmap) ───────────────────────────────────
+
+    /// Local reproduction fixture — ALMA_ASSISTANT_FIXTURE=1. Builds 40 mixed
+    /// rows (long/short Bangla + Banglish, interleaved thinking/tool/prose
+    /// blocks, one 2,000+ char reply), then streams 1,000 small deltas into a
+    /// live tail through the SAME mutation helpers the real SSE path uses — so
+    /// scroll-gap and per-delta MainActor cost reproduce without a server.
+    /// Parity roadmap visual fixture — ALMA_ASSISTANT_PARITY=1: ONLY the persisted
+    /// verification-retry turn (no stress stream), decoded through the real wire
+    /// path, so a screenshot shows the exact cold-load composition: progress prose →
+    /// tool rows → superseded draft (visible) → verify row → corrected final +
+    /// Σ/cache/ধাপ footer.
+    func loadParityFixture() {
+        var rows: [AgentChatMessage] = []
+        rows.append(AgentChatMessage(id: "fix-u-parity", role: .user,
+                                     text: "স্টকের কাজটা কি হয়েছে?"))
+        let parityJSON = #"""
+        {"id":"fix-a-parity","role":"assistant",
+         "content":[{"type":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"}],
+         "tokensIn":1200,"tokensOut":300,"cacheCreation":5000,"cacheRead":20000,
+         "apiRounds":4,"roundCostsUsd":[0.01,0.01,0.01,0.012],"costUsd":0.042,
+         "createdAt":"2026-07-14T10:00:00.000Z",
+         "timeline":[
+           {"t":"text","text":"আগে স্টকের অবস্থাটা দেখে নিচ্ছি…"},
+           {"t":"tool","name":"get_inventory_status","ok":true},
+           {"t":"text","text":"কাজটা করে দিয়েছি Boss!","state":"superseded"},
+           {"t":"verify","attempt":1,"max":2},
+           {"t":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"}]}
+        """#
+        if let d = parityJSON.data(using: .utf8),
+           let wire = try? JSONDecoder().decode(AgentMessageWire.self, from: d) {
+            rows.append(AgentChatMessage.from(wire))
+        }
+        messages = rows
+    }
+
+    func loadDebugFixture() {
+        let bnShort = "ঠিক আছে Boss, এটা এখনই দেখছি।"
+        let bnLong = "আজকের সেলস রিপোর্ট অনুযায়ী ALMA Lifestyle-এর মোট বিক্রি ভালো হয়েছে। Facebook ক্যাম্পেইনের CTR বেড়েছে, আর নতুন কালেকশনের প্রি-অর্ডারও আসছে। কালকে সকালে স্টাফ মিটিংয়ে inventory নিয়ে কথা বলা দরকার — তিনটা প্রোডাক্টের স্টক কমে যাচ্ছে। "
+        var rows: [AgentChatMessage] = []
+        for i in 0..<38 {
+            if i % 2 == 0 {
+                var u = AgentChatMessage(id: "fix-u-\(i)", role: .user,
+                                         text: i % 4 == 0 ? "আজকের sales koto holo? আর কালকের plan টা দাও" : bnShort)
+                rows.append(u)
+            } else {
+                var a = AgentChatMessage(id: "fix-a-\(i)", role: .assistant,
+                                         text: i % 3 == 0 ? String(repeating: bnLong, count: 4) : bnLong)
+                a.thinking = "হিসাব করছি: অর্ডার টেবিল থেকে আজকের রো গুনে টাকার যোগফল বের করা দরকার।"
+                a.thinkingMs = 2300
+                if i % 5 == 0 {
+                    a.timeline = [.think("রিপোর্ট টানছি"),
+                                  .tool(id: "fix-t-\(i)", name: "get_sales_summary", ok: true,
+                                        live: false, inputPretty: nil, resultFull: nil)]
+                }
+                rows.append(a)
+            }
+        }
+        // The 2,000+ character interleaved reply the gap reproduces around.
+        var big = AgentChatMessage(id: "fix-a-big", role: .assistant, text: "")
+        big.thinking = "লম্বা রিপ্লাই টেস্ট।"
+        var blocks: [AgentChatMessage.TurnBlock] = []
+        blocks = AgentChatMessage.appendThinkBlock(blocks, chunk: "বিশ্লেষণ চলছে…", messageId: big.id)
+        blocks = AgentChatMessage.appendToolBlock(blocks, toolId: "fix-t-big", name: "get_orders", messageId: big.id)
+        blocks = AgentChatMessage.finalizeToolBlock(blocks, toolId: "fix-t-big", ok: true)
+        blocks = AgentChatMessage.appendProseBlock(blocks, chunk: String(repeating: bnLong, count: 14), messageId: big.id)
+        big.blocks = blocks
+        big.text = String(repeating: bnLong, count: 14)
+        rows.append(big)
+
+        // Parity roadmap — a PERSISTED (cold-load) verification-retry turn decoded
+        // through the real wire path: draft prose stays visible, truthful verify
+        // row between draft and corrected final, cache/rounds in the footer.
+        rows.append(AgentChatMessage(id: "fix-u-parity", role: .user,
+                                     text: "স্টকের কাজটা কি হয়েছে?"))
+        let parityJSON = #"""
+        {"id":"fix-a-parity","role":"assistant",
+         "content":[{"type":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"}],
+         "tokensIn":1200,"tokensOut":300,"cacheCreation":5000,"cacheRead":20000,
+         "apiRounds":4,"roundCostsUsd":[0.01,0.01,0.01,0.012],"costUsd":0.042,
+         "timeline":[
+           {"t":"text","text":"আগে স্টকের অবস্থাটা দেখে নিচ্ছি…"},
+           {"t":"tool","name":"get_inventory_status","ok":true},
+           {"t":"text","text":"কাজটা করে দিয়েছি Boss!","state":"superseded"},
+           {"t":"verify","attempt":1,"max":2},
+           {"t":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"}]}
+        """#
+        if let d = parityJSON.data(using: .utf8),
+           let wire = try? JSONDecoder().decode(AgentMessageWire.self, from: d) {
+            rows.append(AgentChatMessage.from(wire))
+        }
+        messages = rows
+
+        // Live tail: 1,000 one-word deltas at ~5ms — token-rate MainActor stress.
+        isStreaming = true
+        thinkingLive = false
+        ensureStreamingTail()
+        streamTask = Task { [weak self] in
+            for n in 0..<1000 {
+                try? await Task.sleep(nanoseconds: 5_000_000)
+                guard let self, !Task.isCancelled else { return }
+                if let i = self.messages.lastIndex(where: { $0.isStreaming }) {
+                    let chunk = n % 12 == 11 ? "টেস্ট \(n)।\n" : "শব্দ\(n) "
+                    self.messages[i].text += chunk
+                    self.messages[i].blocks = AgentChatMessage.appendProseBlock(
+                        self.messages[i].blocks, chunk: chunk, messageId: self.messages[i].id)
+                }
+            }
+            guard let self, !Task.isCancelled else { return }
+            self.isStreaming = false
+            if let i = self.messages.lastIndex(where: { $0.isStreaming }) { self.messages[i].isStreaming = false }
+        }
+    }
+
+    /// Phase 2 self-test — ALMA_ASSISTANT_EVENTTEST=1: pipes a canned SSE byte
+    /// stream through the REAL parser → typed enum → buffer → reducer. Exercises
+    /// CRLF, no-space `data:`, comment keepalives, multi-line data, an unknown
+    /// event, subagent rows, tool screenshot, ask card, and a trailing `done`
+    /// with no final blank line — the whole roadmap 2.1/2.2 matrix on screen.
+    func runDebugEventTest() {
+        isStreaming = true
+        thinkingLive = true
+        ensureStreamingTail()
+        let wire = [
+            "data: {\"type\":\"conversation_id\",\"id\":\"evt-conv\"}", "",
+            "data:{\"type\":\"personal_mode\",\"active\":false}", "",       // no space after colon
+            ": ping", "",                                                   // comment keepalive
+            "data: {\"type\":\"model_info\",\"modelId\":\"m\",\"label\":\"Grok 4.20\",\"variant\":\"default\",\"tier\":\"heavy\"}", "",
+            "data: {\"type\":\"thinking_delta\",\"delta\":\"সেলস ডেটা মিলিয়ে দেখছি…\"}", "",
+            "data: {\"type\":\"subagent_start\",\"id\":\"s1\",\"role\":\"ops\",\"roleLabel\":\"অপারেশনস\",\"task\":\"স্টক রিপোর্ট টানা\"}", "",
+            "data: {\"type\":\"tool_start\",\"id\":\"t1\",\"name\":\"get_sales_summary\"}", "",
+            "data: {\"type\":\"tool_end\",\"id\":\"t1\",\"name\":\"get_sales_summary\",\"success\":true,\"resultPreview\":\"মোট ৳৬,০৫২\",\"screenshot\":\"shot.png\"}", "",
+            "data: {\"type\":\"subagent_end\",\"id\":\"s1\",\"role\":\"ops\",\"success\":true,\"summary\":\"স্টক ঠিক আছে\"}", "",
+            "data: {\"type\":\"future_event_xyz\",\"foo\":1}", "",          // unknown → telemetry, nonfatal
+            "data: {\"type\":\"text_delta\",\"delta\":\"আজকের বিক্রি ভালো হয়েছে Boss।\"}", "",
+            "data: {\"type\":\"text_delta\",",                              // multi-line data event
+            "data: \"delta\":\" মাল্টি-লাইন ইভেন্টও ঠিকভাবে এসেছে।\"}", "",
+            // Parity roadmap RC-2 — the draft above must STAY visible (superseded in
+            // data), a truthful verify row follows, then the corrected final prose.
+            "data: {\"type\":\"verification_retry\",\"attempt\":1,\"maxAttempts\":2}", "",
+            "data: {\"type\":\"text_delta\",\"delta\":\"যাচাই শেষে ঠিক করা উত্তর: আজকের মোট বিক্রি ৳৬,০৫২।\"}", "",
+            "data: {\"type\":\"ask_card\",\"askCardId\":\"a1\",\"question\":\"কোনটা আগে করব Boss?\",\"options\":[\"স্টক অর্ডার\",\"ক্যাম্পেইন\",\"পরে বলব\"]}", "",
+            "data: {\"type\":\"done\",\"messageId\":\"evt-m1\",\"tokensIn\":1200,\"tokensOut\":86,\"cacheCreation\":0,\"cacheRead\":0,\"costUsd\":0.0123}",
+            // no trailing blank line — exercises the flushTrailing() path
+        ].joined(separator: "\r\n")
+
+        let buffer = AgentEventBuffer { [weak self] evs in self?.apply(evs) }
+        streamTask = Task { [weak self] in
+            var parser = AlmaSSEParser()
+            let decoder = JSONDecoder()
+            func dispatch(_ payload: String) async {
+                guard let d = payload.data(using: .utf8),
+                      let dto = try? decoder.decode(AgentSSEEvent.self, from: d) else {
+                    AlmaTurnLog.event("stream.malformedEvent", String(payload.prefix(80)))
+                    return
+                }
+                let ev = AgentTurnEvent(dto: dto)
+                if case .unknown(let t) = ev { AlmaTurnLog.event("stream.unknownEvent", t) }
+                await buffer.push(ev)
+            }
+            for line in wire.components(separatedBy: "\n") {                // CR kept — parser strips
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                if let payload = parser.consume(line: line) { await dispatch(payload) }
+            }
+            if let p = parser.flushTrailing() { await dispatch(p) }
+            await buffer.finish()
+            guard let self else { return }
+            self.isStreaming = false
+            if let i = self.messages.lastIndex(where: { $0.isStreaming }) { self.messages[i].isStreaming = false }
+        }
+    }
+
+    /// Phase 4.4 — in-app unit assertions for the pure protocol layer (parser,
+    /// typed-event mapping, transport classifier, event buffer). Runs headlessly
+    /// in the simulator via ALMA_ASSISTANT_UNITTEST=1 and renders PASS/FAIL as a
+    /// local message, so CI can screenshot it without an XCTest target (adding
+    /// one to the shared pbxproj is an owner/Xcode decision).
+    func runDebugUnitTests() {
+        var results: [String] = []
+        func check(_ name: String, _ cond: Bool) { results.append("\(cond ? "✅" : "❌") \(name)") }
+
+        // AlmaSSEParser — spec matrix
+        var p = AlmaSSEParser()
+        check("keepalive ignored", p.consume(line: ": ping") == nil)
+        check("no-space data", { _ = p.consume(line: "data:{\"a\":1}"); return p.consume(line: "") == "{\"a\":1}" }())
+        check("CRLF stripped", { _ = p.consume(line: "data: x\r"); return p.consume(line: "\r") == "x" }())
+        _ = p.consume(line: "data: line1")
+        _ = p.consume(line: "data: line2")
+        check("multi-line joined", p.consume(line: "") == "line1\nline2")
+        _ = p.consume(line: "id: 42")
+        check("id: captured", p.lastEventId == "42")
+        _ = p.consume(line: "data: tail")
+        check("trailing flush", p.flushTrailing() == "tail")
+
+        // Typed event mapping
+        func decode(_ json: String) -> AgentTurnEvent? {
+            guard let d = json.data(using: .utf8),
+                  let dto = try? JSONDecoder().decode(AgentSSEEvent.self, from: d) else { return nil }
+            return AgentTurnEvent(dto: dto)
+        }
+        if case .unknown(let t)? = decode(#"{"type":"future_thing"}"#) { check("unknown telemetried", t == "future_thing") } else { check("unknown telemetried", false) }
+        if case .done(let mid, let tin, _, let cost, let cont, _, _, _, _)? = decode(#"{"type":"done","messageId":"m1","tokensIn":5,"costUsd":0.1,"needContinue":true}"#) {
+            check("done fields", mid == "m1" && tin == 5 && cost == 0.1 && cont)
+        } else { check("done fields", false) }
+        if case .turnSnapshot(let tid, _, let st, let seq)? = decode(#"{"type":"turn_snapshot","turnId":"t9","status":"running","lastSeq":7}"#) {
+            check("turn_snapshot", tid == "t9" && st == "running" && seq == 7)
+        } else { check("turn_snapshot", false) }
+
+        // Presentation parity (roadmap RC-1/RC-3/RC-4) — persisted wire row must
+        // decode every prose/verify segment and rebuild the SAME interleaved
+        // TurnBlock composition the live stream shows, superseded marked in data.
+        let parityJSON = #"""
+        {"id":"m-parity","role":"assistant",
+         "content":[{"type":"text","text":"ঠিক করা উত্তর।"}],
+         "tokensIn":1200,"tokensOut":300,"cacheCreation":5000,"cacheRead":20000,
+         "apiRounds":4,"roundCostsUsd":[0.01,0.01,0.01,0.012],"costUsd":0.042,
+         "timeline":[
+           {"t":"text","text":"আগে দেখে নিচ্ছি…"},
+           {"t":"tool","name":"get_orders","ok":true},
+           {"t":"text","text":"কাজটা করে দিয়েছি Boss!","state":"superseded"},
+           {"t":"verify","attempt":1,"max":2},
+           {"t":"text","text":"ঠিক করা উত্তর।"}]}
+        """#
+        if let d = parityJSON.data(using: .utf8),
+           let wire = try? JSONDecoder().decode(AgentMessageWire.self, from: d) {
+            let m = AgentChatMessage.from(wire)
+            let textCount = m.timeline.reduce(0) { n, e in
+                if case .text = e { return n + 1 }; return n
+            }
+            check("RC-1 persisted prose decoded", textCount == 3)
+            check("RC-4 usage decoded", m.cacheCreation == 5000 && m.cacheRead == 20000
+                  && m.apiRounds == 4 && m.roundCostsUsd?.count == 4)
+            let fingerprint = m.blocks.map { b -> String in
+                switch b {
+                case .prose(let id, _): return m.supersededBlockIds.contains(id) ? "prose*" : "prose"
+                case .activity(let a):
+                    switch a.kind {
+                    case .thinking: return "think"
+                    case .search: return "search"
+                    case .tool: return "tool"
+                    }
+                case .file: return "file"
+                case .confirmCard: return "confirm"
+                case .askCard: return "ask"
+                }
+            }
+            check("RC-3 canonical block fingerprint",
+                  fingerprint == ["prose", "search", "tool", "prose*", "think", "prose"])
+            // Determinism: decoding the same wire twice yields the same composition.
+            let m2 = AgentChatMessage.from(wire)
+            check("RC-3 projection deterministic",
+                  m2.blocks == m.blocks && m2.supersededBlockIds == m.supersededBlockIds)
+        } else {
+            check("parity wire decode", false)
+        }
+
+        // Transport classifier
+        if case .offline = TurnFailureKind.classify(URLError(.notConnectedToInternet)) { check("offline classified", true) } else { check("offline classified", false) }
+        if case .transportInterrupted = TurnFailureKind.classify(URLError(.networkConnectionLost)) { check("drop classified", true) } else { check("drop classified", false) }
+        if case .authentication = TurnFailureKind.classify(AlmaAPIError.notAuthenticated) { check("auth classified", true) } else { check("auth classified", false) }
+        if case .server(let s) = TurnFailureKind.classify(AlmaAPIError.http(status: 502, body: "")) { check("server classified", s == 502) } else { check("server classified", false) }
+
+        // Event buffer — coalescing + control-flush chronology (async)
+        Task { [weak self] in
+            var applied: [[AgentTurnEvent]] = []
+            let buf = AgentEventBuffer { evs in applied.append(evs) }
+            await buf.push(.textDelta("আ"))
+            await buf.push(.textDelta("জ"))
+            await buf.push(.toolStart(id: "t", name: "x", inputPretty: nil))   // control → flush
+            await buf.finish()
+            let flat = applied.flatMap { $0 }
+            var ok = flat.count == 2
+            if ok, case .textDelta(let joined) = flat[0] { ok = joined == "আজ" } else { ok = false }
+            if ok, case .toolStart = flat[1] {} else { ok = false }
+            guard let self else { return }
+            var final = results
+            final.append("\(ok ? "✅" : "❌") buffer coalesce+order")
+            let passed = final.allSatisfy { $0.hasPrefix("✅") }
+            var m = AgentChatMessage(id: "unittest-\(UUID().uuidString)", role: .assistant,
+                                     text: (passed ? "প্রোটোকল ইউনিট টেস্ট: সব পাশ ✅" : "প্রোটোকল ইউনিট টেস্ট: FAIL ❌")
+                                        + "\n\n" + final.joined(separator: "\n"))
+            self.messages.append(m)
+            AlmaTurnLog.event("unittest.result", passed ? "PASS \(final.count)" : "FAIL")
+        }
+    }
+
     // ── Cards ──────────────────────────────────────────────────────────────
+
+    /// Approve timestamps survive the 12s message re-poll (which rebuilds cards
+    /// from the wire and wiped card.approvedAt — the render % restarted from 1
+    /// on every poll, owner bug 2026-07-13). Keyed by pendingActionId.
+    var confirmApprovedAt: [String: Date] = [:]
 
     func approveAction(_ cardId: String, approve: Bool) async {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        if approve { confirmApprovedAt[cardId] = Date() }
         setConfirmStatus(cardId, approve ? "approved" : "rejected")
         do {
             let _: OkResponse = try await AlmaAPI.shared.send(
@@ -1631,6 +2592,7 @@ final class AssistantVM {
         for i in messages.indices {
             if let j = messages[i].confirmCards.firstIndex(where: { $0.id == cardId }) {
                 messages[i].confirmCards[j].status = status
+                messages[i].confirmCards[j].approvedAt = status == "approved" ? Date() : nil
             }
         }
     }
@@ -1877,10 +2839,105 @@ struct AgentAuroraBackground: View {
 
 // MARK: - Markdown-lite renderer (headers / lists / code / tables / inline)
 
+extension UIFont {
+    /// System serif at the given size — UIKit twin of `.font(.system(size:design:.serif))`.
+    static func almaSerif(_ size: CGFloat) -> UIFont {
+        let base = UIFont.systemFont(ofSize: size)
+        guard let d = base.fontDescriptor.withDesign(.serif) else { return base }
+        return UIFont(descriptor: d, size: size)
+    }
+}
+
+/// In-place selectable rich text (Claude-app parity, owner ask build-70 round 4):
+/// a non-scrolling UITextView so long-press/double-tap marks text DIRECTLY in the
+/// chat with native grabbers + the system Copy/Look Up/Translate menu — no separate
+/// sheet. SwiftUI Text on iOS can only copy a whole block, which the owner rejected.
+@available(iOS 17.0, *)
+struct AlmaSelectableRichText: UIViewRepresentable {
+    let attributed: NSAttributedString
+    var tint: UIColor = UIColor(AgentPalette.coral)   // selection handles/highlight
+
+    init(attributed: NSAttributedString) { self.attributed = attributed }
+
+    /// Plain single-style text (the owner's coral bubble — white handles there,
+    /// coral-on-coral would be invisible).
+    init(plain: String, font: UIFont, color: UIColor, lineSpacing: CGFloat = 0) {
+        let p = NSMutableParagraphStyle()
+        p.lineSpacing = lineSpacing
+        self.attributed = NSAttributedString(string: plain, attributes: [
+            .font: font, .foregroundColor: color, .paragraphStyle: p,
+        ])
+        self.tint = .white
+    }
+
+    /// Roadmap Phase 1.4 — measurement stability. LazyVStack re-proposes rows many
+    /// times (including nil-width estimation passes) while rows enter/leave the
+    /// viewport; an unanswered nil proposal used to fall back to UIKit intrinsic
+    /// sizing at a 0pt-wide container → one-word-per-line → a viewport-sized
+    /// phantom height reserved for the row (the giant scroll gap). Every proposal
+    /// is now answered from an explicit measure, cached by
+    /// (content, rounded width, Dynamic Type size); a nil width reuses the last
+    /// REAL layout width so a stale estimate can never stick.
+    final class Coordinator {
+        var cache: [String: CGSize] = [:]
+        var lastRealWidth: CGFloat = 0
+    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> UITextView {
+        let tv = UITextView()
+        tv.isEditable = false
+        tv.isSelectable = true
+        tv.isScrollEnabled = false
+        tv.backgroundColor = .clear
+        tv.textContainerInset = .zero
+        tv.textContainer.lineFragmentPadding = 0
+        tv.textContainer.widthTracksTextView = true
+        tv.setContentHuggingPriority(.required, for: .vertical)
+        tv.setContentCompressionResistancePriority(.required, for: .vertical)
+        tv.tintColor = tint
+        tv.attributedText = attributed
+        return tv
+    }
+
+    func updateUIView(_ tv: UITextView, context: Context) {
+        if !tv.attributedText.isEqual(to: attributed) {
+            tv.attributedText = attributed
+            tv.invalidateIntrinsicContentSize()
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        let co = context.coordinator
+        let width: CGFloat
+        if let w = proposal.width, w > 0, w.isFinite {
+            width = w
+            co.lastRealWidth = w
+        } else if co.lastRealWidth > 0 {
+            width = co.lastRealWidth          // estimation pass — reuse the real width
+        } else {
+            // First-ever pass before any real proposal: measure at a sane chat
+            // width instead of letting UIKit size a 0pt-wide container.
+            width = UIScreen.main.bounds.width - 32
+        }
+        let key = "\(attributed.hash)|\(Int(width.rounded()))|\(uiView.traitCollection.preferredContentSizeCategory.rawValue)"
+        if let cached = co.cache[key] { return cached }
+        let fit = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
+        // Hug the longest line (owner bubble must not stretch full-width for "Ok").
+        let size = CGSize(width: min(width, fit.width.rounded(.up)), height: fit.height.rounded(.up))
+        co.cache[key] = size
+        if co.cache.count > 64 { co.cache.removeAll() }   // bound churn on live tails
+        return size
+    }
+}
+
 @available(iOS 17.0, *)
 struct AgentMarkdownText: View {
     let text: String
     let pal: AgentPalette
+    /// Settled agent prose sets this — paragraphs render as in-place selectable
+    /// UITextViews. Streaming/shimmering prose keeps the SwiftUI Text path.
+    var selectable = false
 
     private enum Segment: Identifiable {
         case paragraph(String)
@@ -1896,6 +2953,14 @@ struct AgentMarkdownText: View {
     }
 
     private var segments: [Segment] {
+        // Roadmap 2.4 fast path: in-flight prose usually has no fences/tables —
+        // skip the split/scan work on every streaming re-render (≤25/s) and
+        // return one paragraph. Settled/selectable text takes the full path.
+        if !selectable && !text.contains("```"),
+           !text.contains("\n|"), !text.hasPrefix("|") {
+            return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? [] : [.paragraph(text)]
+        }
         var out: [Segment] = []
         let parts = text.components(separatedBy: "```")
         for (i, part) in parts.enumerated() {
@@ -1934,6 +2999,77 @@ struct AgentMarkdownText: View {
     }
 
     @ViewBuilder private func paragraph(_ s: String) -> some View {
+        if selectable {
+            AlmaSelectableRichText(attributed: Self.attributedParagraph(s, pal: pal))
+        } else {
+            plainParagraph(s)
+        }
+    }
+
+    /// Mirror of `plainParagraph`'s per-line styling as ONE NSAttributedString so a
+    /// selection can span the whole paragraph: coral headers, • bullets, serif body,
+    /// resolved bold/italic/code (UITextView doesn't interpret markdown intents).
+    static func attributedParagraph(_ s: String, pal: AgentPalette) -> NSAttributedString {
+        let body = UIFont.almaSerif(15.5)
+        let ink = UIColor(pal.ink)
+        let out = NSMutableAttributedString()
+        let para = NSMutableParagraphStyle()
+        para.lineSpacing = 3
+        para.paragraphSpacing = 6
+        var first = true
+        for line in s.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty { continue }
+            if !first { out.append(NSAttributedString(string: "\n")) }
+            first = false
+            if trimmed.hasPrefix("###") || trimmed.hasPrefix("##") || trimmed.hasPrefix("# ") {
+                let title = String(trimmed.drop(while: { $0 == "#" || $0 == " " }))
+                let size: CGFloat = trimmed.hasPrefix("# ") ? 18 : 16
+                out.append(NSAttributedString(string: title, attributes: [
+                    .font: UIFont.systemFont(ofSize: size, weight: .semibold),
+                    .foregroundColor: UIColor(AgentPalette.coral),
+                ]))
+            } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") || trimmed.hasPrefix("• ") {
+                out.append(NSAttributedString(string: "•  ", attributes: [.font: body, .foregroundColor: UIColor(pal.muted)]))
+                out.append(inlineNS(String(trimmed.dropFirst(2)), baseFont: body, color: ink))
+            } else {
+                out.append(inlineNS(line, baseFont: body, color: ink))
+            }
+        }
+        out.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: out.length))
+        return out
+    }
+
+    /// Inline markdown line → NSAttributedString with **bold** / *italic* / `code`
+    /// resolved to real fonts (AttributedString keeps them as presentation intents,
+    /// which UIKit ignores).
+    private static func inlineNS(_ line: String, baseFont: UIFont, color: UIColor) -> NSAttributedString {
+        guard let md = try? AttributedString(markdown: line,
+                                             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) else {
+            return NSAttributedString(string: line, attributes: [.font: baseFont, .foregroundColor: color])
+        }
+        let out = NSMutableAttributedString()
+        for run in md.runs {
+            let sub = String(md[run.range].characters)
+            var font = baseFont
+            if let intent = run.inlinePresentationIntent {
+                if intent.contains(.code) {
+                    font = .monospacedSystemFont(ofSize: baseFont.pointSize - 1.5, weight: .regular)
+                } else {
+                    var traits = font.fontDescriptor.symbolicTraits
+                    if intent.contains(.stronglyEmphasized) { traits.insert(.traitBold) }
+                    if intent.contains(.emphasized) { traits.insert(.traitItalic) }
+                    if let d = font.fontDescriptor.withSymbolicTraits(traits) {
+                        font = UIFont(descriptor: d, size: baseFont.pointSize)
+                    }
+                }
+            }
+            out.append(NSAttributedString(string: sub, attributes: [.font: font, .foregroundColor: color]))
+        }
+        return out
+    }
+
+    @ViewBuilder private func plainParagraph(_ s: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(s.components(separatedBy: "\n").enumerated()), id: \.offset) { _, line in
                 let trimmed = line.trimmingCharacters(in: .whitespaces)
@@ -2031,13 +3167,23 @@ struct AgentChatImage: View {
         let pal = AgentPalette(scheme)
         Group {
             if failed {
-                VStack(spacing: 3) {
-                    Image(systemName: "photo").font(.system(size: 16))
-                    Text("ছবি নেই").font(.system(size: 9))
+                // Tap-to-retry (owner bug 2026-07-13: a 2.6MB render on 4G failed
+                // once and the tile stayed dead "ছবি নেই" forever). Retry re-signs
+                // and reloads instead of leaving a permanent broken tile.
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    failed = false
+                    url = nil
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: "arrow.clockwise").font(.system(size: 15))
+                        Text("আবার চেষ্টা").font(.system(size: 9))
+                    }
+                    .foregroundStyle(pal.muted)
+                    .frame(width: 80, height: 80)
+                    .background(pal.card.opacity(0.4), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
-                .foregroundStyle(pal.muted)
-                .frame(width: 80, height: 80)
-                .background(pal.card.opacity(0.4), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .buttonStyle(.plain)
             } else if let url {
                 AsyncImage(url: url) { phase in
                     switch phase {
@@ -2114,11 +3260,11 @@ struct AgentMessageRow: View {
                     }
                 }
                 if !message.text.isEmpty {
-                    Text(message.text)
-                        .font(.system(size: 15))
-                        .lineSpacing(3.5)
-                        .foregroundStyle(.white)
-                        .textSelection(.enabled)
+                    // Owner ask build-70 round 4: bubble text is DIRECTLY selectable
+                    // in place (native grabbers + system Copy menu) — no context menu.
+                    AlmaSelectableRichText(plain: message.text,
+                                           font: .systemFont(ofSize: 15),
+                                           color: .white, lineSpacing: 3.5)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 12)
                         .background(
@@ -2128,21 +3274,6 @@ struct AgentMessageRow: View {
                                                        bottomTrailingRadius: 6, topTrailingRadius: 20,
                                                        style: .continuous))
                         .shadow(color: AgentPalette.coral.opacity(0.20), radius: 4, y: 1)
-                        // Owner issue #6 (build 69): long-press → copy + haptic.
-                        .contextMenu {
-                            Button {
-                                UIPasteboard.general.string = message.text
-                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            } label: {
-                                Label("কপি করুন", systemImage: "doc.on.doc")
-                            }
-                            Button {
-                                UISelectionFeedbackGenerator().selectionChanged()
-                                onActivitySheet(.init(message: message, kind: .selectText, slice: message.text))
-                            } label: {
-                                Label("টেক্সট সিলেক্ট করুন", systemImage: "text.cursor")
-                            }
-                        }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -2183,7 +3314,9 @@ struct AgentMessageRow: View {
                                     }
                                 } else {
                                     AgentMarkdownText(text: message.text, pal: pal)
-                                        .frame(maxHeight: long && !expandedLong ? 340 : .infinity, alignment: .top)
+                                        // 1.4: cap ONLY the collapsed state; expanded rows size
+                                        // naturally (never a greedy .infinity inside the lazy list).
+                                        .frame(maxHeight: long && !expandedLong ? 340 : nil, alignment: .top)
                                         .clipped()
                                         .mask(
                                             LinearGradient(stops: long && !expandedLong
@@ -2240,20 +3373,37 @@ struct AgentMessageRow: View {
                     ForEach(message.imagePaths, id: \.self) { p in
                         AgentChatImage(path: p, vm: vm)
                     }
-                    ForEach(message.confirmCards) { card in
+                    // Cards already pinned in-flow by TurnBlocks render THERE; only
+                    // cards with no block (persisted history turns) fall back here.
+                    let inlineConfirmIds = Set(message.blocks.compactMap { b -> String? in
+                        if case .confirmCard(_, let pid) = b { return pid }; return nil
+                    })
+                    ForEach(message.confirmCards.filter { !inlineConfirmIds.contains($0.id) }) { card in
                         AgentConfirmCardView(card: card, pal: pal, vm: vm) { approve in
                             Task { await vm.approveAction(card.id, approve: approve) }
                         }
                     }
-                    if !message.askCards.isEmpty {
-                        AgentAskCardsPager(cards: message.askCards, pal: pal) { card, option in
+                    let inlineAskIds = Set(message.blocks.compactMap { b -> String? in
+                        if case .askCard(_, let aid) = b { return aid }; return nil
+                    })
+                    let bottomAskCards = message.askCards.filter { !inlineAskIds.contains($0.id) }
+                    if !bottomAskCards.isEmpty {
+                        AgentAskCardsPager(cards: bottomAskCards, pal: pal) { card, option in
                             Task { await vm.answerAskCard(card.id, option: option) }
+                        }
+                    }
+
+                    // PR 3b — model-upgrade approval card (web parity): the turn is
+                    // paused server-side until the owner picks a model.
+                    if let ms = message.modelSwitch {
+                        AgentModelSwitchCardView(card: ms, pal: pal) { approve in
+                            vm.resumeModelSwitch(messageId: message.id, approve: approve)
                         }
                     }
 
                     // Single starburst — bottom-left INSIDE the card while the turn runs.
                     if showWorkingIndicator {
-                        AgentThinkingRow(mode: vm.liveMode, pal: pal)
+                        AgentThinkingRow(mode: vm.liveMode, pal: pal, reconnecting: vm.reconnecting)
                             .padding(.top, 2)
                     }
 
@@ -2295,7 +3445,7 @@ struct AgentShimmerModifier: ViewModifier {
                     // Only the gradient band re-evaluates per frame; the content and
                     // its mask stay put (cheap even on a long streaming reply).
                     GeometryReader { g in
-                        TimelineView(.animation) { context in
+                        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
                             let phase = context.date.timeIntervalSinceReferenceDate
                                 .truncatingRemainder(dividingBy: Self.period) / Self.period
                             let band = max(70, g.size.width * 0.5)
@@ -2395,7 +3545,7 @@ struct AlmaShimmerText: View {
                 .foregroundStyle(base.opacity(0.35))
                 .overlay(
                     GeometryReader { g in
-                        TimelineView(.animation) { context in
+                        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
                             let phase = context.date.timeIntervalSinceReferenceDate
                                 .truncatingRemainder(dividingBy: Self.period) / Self.period
                             let band = max(56, g.size.width * 0.5)
@@ -2435,7 +3585,7 @@ struct AgentGlyphShimmerModifier: ViewModifier {
             content
                 .overlay(
                     GeometryReader { g in
-                        TimelineView(.animation) { context in
+                        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
                             let phase = context.date.timeIntervalSinceReferenceDate
                                 .truncatingRemainder(dividingBy: Self.period) / Self.period
                             let band = max(44, g.size.width * 0.3)   // narrow highlight
@@ -2878,6 +4028,9 @@ struct AgentThoughtProcessSheet: View {
                                  input: input ?? tool?.inputPretty,
                                  output: result ?? tool?.resultFull ?? tool?.preview,
                                  isThought: false, failed: ok == false))
+            case .text:
+                // Prose lives in the message body — the activity summary only lists steps.
+                continue
             case .file(_, let name):
                 flushThink()
                 out.append(.init(icon: "doc.text", title: name, body: nil, input: nil, output: nil,
@@ -3023,7 +4176,19 @@ struct AgentMessageActions: View {
             }
             Spacer()
             if let tin = message.tokensIn {
-                Text("↑\(tin)\(message.tokensOut.map { " ↓\($0)" } ?? "")\(message.costUsd.map { " $\($0)" } ?? "")")
+                // Web-footer parity (RC-4): Σ total (incl. cache) · ↑input ⚡cache-write
+                // ♻cache-read ↓output $cost · N ধাপ — N = actual provider API rounds,
+                // the same number the web cost badge shows, never UI phase count.
+                let tout = message.tokensOut ?? 0
+                let cw = message.cacheCreation ?? 0
+                let cr = message.cacheRead ?? 0
+                let total = tin + tout + cw + cr
+                let rounds = (message.apiRounds ?? 0) > 1 ? " · \(almaBn(message.apiRounds!)) ধাপ" : ""
+                Text("Σ\(almaBnCompact(total)) · ↑\(almaBnCompact(tin))"
+                     + (cw > 0 ? " ⚡\(almaBnCompact(cw))" : "")
+                     + (cr > 0 ? " ♻\(almaBnCompact(cr))" : "")
+                     + " ↓\(almaBnCompact(tout))"
+                     + (message.costUsd.map { " $\($0)\(rounds)" } ?? ""))
                     .font(.system(size: 9.5, design: .monospaced))
                     .foregroundStyle(pal.muted.opacity(0.8))
                     .lineLimit(1)
@@ -3060,6 +4225,49 @@ struct AgentPlayingBars: View {
         }
         .onAppear {
             withAnimation(.easeInOut(duration: 0.35).repeatForever(autoreverses: true)) { up = true }
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+/// Live render progress inside an approved image/video card — the Creative Studio
+/// GeneratingTile recipe (owner ask 2026-07-13): time-eased % that approaches 95
+/// and holds (typical render ~38s); the REAL artifact arriving in the thread is
+/// the honest 100%. Never fakes completion.
+@available(iOS 17.0, *)
+struct AgentRenderProgressStrip: View {
+    let startedAt: Date
+    let pal: AgentPalette
+
+    private func pct(_ now: Date) -> Int {
+        let elapsed = now.timeIntervalSince(startedAt)
+        guard elapsed > 0 else { return 3 }
+        return max(3, min(95, Int(95 * (1 - exp(-elapsed / 38)))))
+    }
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 0.5)) { ctx in
+            let p = pct(ctx.date)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small).tint(AgentPalette.coral)
+                    Text("ছবি তৈরি হচ্ছে… \(almaBn(p))%")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AgentPalette.coral)
+                    Spacer()
+                }
+                GeometryReader { g in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.08))
+                        Capsule()
+                            .fill(LinearGradient(colors: [AgentPalette.coralDim, AgentPalette.coral],
+                                                 startPoint: .leading, endPoint: .trailing))
+                            .frame(width: g.size.width * CGFloat(p) / 100)
+                            .animation(.easeOut(duration: 0.4), value: p)
+                    }
+                }
+                .frame(height: 5)
+            }
         }
     }
 }
@@ -3160,6 +4368,14 @@ struct AgentConfirmCardView: View {
                         .overlay(alignment: .top) { Rectangle().fill(pal.borderSubtle).frame(height: 1) }
                     }
                 }
+            } else if card.status == "approved", card.actionType == "image_gen" || card.actionType == "video_gen" {
+                // Creative-Studio-style render count (owner ask 2026-07-13): a live
+                // 1→95% time-eased fill while the artifact renders — the real image
+                // message landing below is the 100% moment.
+                AgentRenderProgressStrip(
+                    startedAt: vm.confirmApprovedAt[card.id] ?? card.approvedAt ?? Date(),
+                    pal: pal)
+                    .padding(.horizontal, 16).padding(.bottom, 14)
             } else {
                 HStack(spacing: 5) {
                     Image(systemName: statusIcon).font(.system(size: 11))
@@ -3490,6 +4706,21 @@ struct AgentTurnBlocksView: View {
                     proseBlock(text, isTail: id == lastBlockId && message.isStreaming)
                 case .file(_, let artifactId, let name):
                     AgentArtifactFileCard(artifactId: artifactId, name: name, vm: vm, pal: pal)
+                case .confirmCard(_, let pid):
+                    // Rendered HERE, at the exact point of the reply where the head
+                    // staged it (owner report build-70 round 4 — cards used to pile
+                    // up at the bottom of the turn). Data/status live in the array.
+                    if let card = message.confirmCards.first(where: { $0.id == pid }) {
+                        AgentConfirmCardView(card: card, pal: pal, vm: vm) { approve in
+                            Task { await vm.approveAction(card.id, approve: approve) }
+                        }
+                    }
+                case .askCard(_, let aid):
+                    if let card = message.askCards.first(where: { $0.id == aid }) {
+                        AgentAskCardsPager(cards: [card], pal: pal) { card, option in
+                            Task { await vm.answerAskCard(card.id, option: option) }
+                        }
+                    }
                 case .activity(let a):
                     if hidden.contains(a.id) {
                         if a.id == activityIds[hiddenCount - 1] {
@@ -3517,36 +4748,12 @@ struct AgentTurnBlocksView: View {
                 }
                 .padding(.vertical, 2)
             } else {
-                AgentMarkdownText(text: text, pal: pal)
+                // Owner ask build-70 round 4 (Claude-app parity): settled prose is
+                // DIRECTLY selectable in the chat — long-press/double-tap marks with
+                // native grabbers and the system Copy menu. No context menu here (it
+                // would swallow the long-press); whole-reply copy lives in the footer.
+                AgentMarkdownText(text: text, pal: pal, selectable: true)
                     .padding(.vertical, 2)
-                    .contentShape(Rectangle())
-                    // Owner issue #6 (build 69): tap-and-hold anywhere on agent
-                    // prose → Copy with haptic, Claude-app style.
-                    .contextMenu {
-                        Button {
-                            UIPasteboard.general.string = text
-                            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                        } label: {
-                            Label("কপি করুন", systemImage: "doc.on.doc")
-                        }
-                        // Owner ask build-70 round 2: partial copy — opens the text
-                        // in a selectable sheet so any portion can be marked+copied.
-                        Button {
-                            UISelectionFeedbackGenerator().selectionChanged()
-                            onActivitySheet(.selectText, text)
-                        } label: {
-                            Label("টেক্সট সিলেক্ট করুন", systemImage: "text.cursor")
-                        }
-                        if message.text.trimmingCharacters(in: .whitespacesAndNewlines) != text
-                            .trimmingCharacters(in: .whitespacesAndNewlines), !message.text.isEmpty {
-                            Button {
-                                UIPasteboard.general.string = message.text
-                                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                            } label: {
-                                Label("পুরো উত্তর কপি করুন", systemImage: "doc.on.doc.fill")
-                            }
-                        }
-                    }
             }
         }
     }
@@ -3599,7 +4806,7 @@ struct AgentLiveWorkSummaryRow: View {
     var body: some View {
         HStack(spacing: 6) {
             // Slim rotating arc (web: border-gold spinner), time-driven.
-            TimelineView(.animation) { context in
+            TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
                 let angle = context.date.timeIntervalSinceReferenceDate
                     .truncatingRemainder(dividingBy: 0.8) / 0.8 * 360
                 Circle()
@@ -3685,15 +4892,84 @@ struct AgentSettledSummaryRow: View {
 }
 
 /// Live indicator — approved multi-colour burst with the existing ALMA wordmark.
+/// PR 3b — model_switch_required approval card. The paused turn resumes on the
+/// premium model (approve) or the cheap fallback (decline) — web parity.
+@available(iOS 17.0, *)
+struct AgentModelSwitchCardView: View {
+    let card: AgentChatMessage.ModelSwitch
+    let pal: AgentPalette
+    let onDecide: (_ approve: Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.up.circle")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(AgentPalette.coral)
+                Text("মডেল আপগ্রেড দরকার")
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(pal.ink)
+            }
+            Text("এই কাজটা ভালোভাবে করতে \(card.toLabel) লাগবে (এখন \(card.fromLabel) চলছে)। খরচ একটু বেশি হবে Boss।")
+                .font(.system(size: 13))
+                .foregroundStyle(pal.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            if card.status == "pending" {
+                HStack(spacing: 10) {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        onDecide(true)
+                    } label: {
+                        Text("\(card.toLabel)-এ চালাও")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .background(AgentPalette.coral, in: Capsule())
+                    }
+                    Button {
+                        UISelectionFeedbackGenerator().selectionChanged()
+                        onDecide(false)
+                    } label: {
+                        Text("সস্তা মডেলেই চালাও")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(pal.muted)
+                            .padding(.horizontal, 14).padding(.vertical, 8)
+                            .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
+                    }
+                }
+            } else {
+                Text(card.status == "approved" ? "✅ \(card.toLabel)-এ চালানো হচ্ছে…" : "চালু মডেলেই চলছে…")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(pal.muted)
+            }
+        }
+        .padding(14)
+        .background(pal.glassFill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(AgentPalette.coral.opacity(0.35), lineWidth: 1))
+        .padding(.vertical, 4)
+    }
+}
+
 @available(iOS 17.0, *)
 struct AgentThinkingRow: View {
     let mode: String
     let pal: AgentPalette
+    /// Transport dropped but the server turn is still running (roadmap Phase 1.1) —
+    /// truthful glyph/text-only state, never an error, never a background effect.
+    var reconnecting: Bool = false
 
     var body: some View {
         HStack(spacing: 8) {
             AlmaSpinnerView(mode: mode, size: 28, showVerb: false, haptics: true)
-            AlmaShimmerWordmark(size: 12.5, weight: .semibold, tracking: 2.1)
+            if reconnecting {
+                Text("কাজ চলছে — সংযোগ ফিরছে…")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(pal.muted)
+                    .transition(.opacity)
+            } else {
+                AlmaShimmerWordmark(size: 12.5, weight: .semibold, tracking: 2.1)
+            }
             Spacer()
         }
         .padding(.leading, 0)
@@ -5349,6 +6625,44 @@ private struct AgentArtifactsSheet: View {
 
 // MARK: - Screen
 
+/// Roadmap Phase 0 — debug-only row bounds. Launch with ALMA_DEBUG_ROWS=1 to draw
+/// each message row's measured height/role/id/block-count and log a
+/// `message.rowHeightChanged` signpost on every height change, so the giant-gap
+/// row can be identified on-device. Inert in production (flag never set).
+@available(iOS 17.0, *)
+struct AgentRowDebugOverlay: ViewModifier {
+    static let enabled = ProcessInfo.processInfo.environment["ALMA_DEBUG_ROWS"] == "1"
+        || ProcessInfo.processInfo.arguments.contains("ALMA_DEBUG_ROWS=1")
+    let message: AgentChatMessage
+    @State private var height: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        if Self.enabled {
+            content
+                .background(GeometryReader { g in
+                    Color.clear
+                        .onChange(of: g.size.height, initial: true) { _, h in
+                            guard abs(h - height) > 0.5 else { return }
+                            height = h
+                            AlmaTurnLog.event("message.rowHeightChanged",
+                                              "\(message.id.suffix(6)) \(message.role == .user ? "U" : "A") h=\(Int(h)) blocks=\(message.blocks.count) tl=\(message.timeline.count) chars=\(message.text.count) live=\(message.isStreaming)")
+                        }
+                })
+                .overlay(alignment: .topTrailing) {
+                    Text("\(message.id.suffix(5)) \(message.role == .user ? "U" : "A") h\(Int(height)) b\(message.blocks.count)\(message.isStreaming ? " ●" : "")")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 3).padding(.vertical, 1)
+                        .background(Color.red.opacity(0.65))
+                        .allowsHitTesting(false)
+                }
+                .border(Color.red.opacity(0.35), width: 0.5)
+        } else {
+            content
+        }
+    }
+}
+
 @available(iOS 17.0, *)
 struct AssistantScreen: View {
     @State private var vm = AssistantVM()
@@ -5357,7 +6671,9 @@ struct AssistantScreen: View {
     @State private var scrollViewportH: CGFloat = 0
     @State private var toolSheet: AgentChatMessage.Tool?
     @State private var activitySheet: AgentActivitySheetRequest?
-    @State private var bottomScrollGeneration: UInt = 0
+    /// 1.4: ONE cancelable debounce task owns bottom-scrolling (the old
+    /// generation-counter fan-out left every superseded task alive on MainActor).
+    @State private var scrollDebounceTask: Task<Void, Never>?
     @State private var showArtifacts = false
 
     let openWeb: (_ path: String, _ title: String) -> Void
@@ -5389,6 +6705,37 @@ struct AssistantScreen: View {
                         if vm.loadingHistory && vm.messages.isEmpty {
                             AlmaPageLoader()
                         }
+                        // 4.1 — history above the loaded window, on demand. Anchor
+                        // is preserved: the previous top row is scrolled back to
+                        // top after the non-animated prepend.
+                        if vm.canLoadOlder && !vm.messages.isEmpty {
+                            Button {
+                                UISelectionFeedbackGenerator().selectionChanged()
+                                let anchorId = vm.messages.first?.id
+                                Task {
+                                    await vm.loadOlderMessages()
+                                    if let anchorId {
+                                        var tx = Transaction(); tx.disablesAnimations = true
+                                        withTransaction(tx) { proxy.scrollTo(anchorId, anchor: .top) }
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if vm.loadingOlder {
+                                        ProgressView().controlSize(.mini)
+                                    } else {
+                                        Image(systemName: "arrow.up.circle").font(.system(size: 12))
+                                    }
+                                    Text(vm.loadingOlder ? "আনা হচ্ছে…" : "আরও পুরনো মেসেজ")
+                                        .font(.system(size: 12.5, weight: .medium))
+                                }
+                                .foregroundStyle(pal.muted)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.bottom, 6)
+                        }
                         // Plan-Drive Live Desk — in-thread only while a plan is in flight.
                         if !(vm.planDrive?.drives ?? []).isEmpty {
                             AgentPlanDriveCard(vm: vm, pal: pal)
@@ -5406,6 +6753,7 @@ struct AssistantScreen: View {
                                     && msg.id == vm.messages.last(where: { $0.role == .assistant })?.id,
                                 onToolTap: { tool in toolSheet = tool },
                                 onActivitySheet: { activitySheet = $0 })
+                            .modifier(AgentRowDebugOverlay(message: msg))
                             .transition(.asymmetric(
                                 insertion: .opacity.combined(with: .offset(y: 12)),
                                 removal: .opacity))
@@ -5455,12 +6803,22 @@ struct AssistantScreen: View {
                     scheduleScrollToBottom(proxy: proxy)
                 }
                 .onChange(of: vm.messages.count) { _, _ in
+                    // 1.4: server merges/polls must never yank the owner away from
+                    // older content he is reading — only follow when near bottom.
+                    guard nearBottom else { return }
                     if vm.isStreaming {
                         scheduleScrollToBottom(proxy: proxy)
                     } else {
                         withAnimation(.easeOut(duration: 0.2)) {
                             proxy.scrollTo(Self.bottomID, anchor: .bottom)
                         }
+                    }
+                }
+                // The owner's OWN send always jumps to the tail (Claude-app feel),
+                // even if he had scrolled up — user-initiated, unlike merges.
+                .onChange(of: vm.ownSendTick) { _, _ in
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(Self.bottomID, anchor: .bottom)
                     }
                 }
                 .overlay(alignment: .bottom) {
@@ -5480,6 +6838,26 @@ struct AssistantScreen: View {
                         .padding(.bottom, 10)
                         .transition(.scale(scale: 0.6).combined(with: .opacity))
                     }
+                }
+                // Phase 1.4 self-test — ALMA_ASSISTANT_SCROLLTEST=1 (debug launches
+                // only): 100 top↔bottom round-trips during and after the fixture
+                // stream; lazy rows mount/unmount at both ends while heights are
+                // logged, reproducing the gap conditions deterministically.
+                .task {
+                    let p = ProcessInfo.processInfo
+                    guard p.environment["ALMA_ASSISTANT_SCROLLTEST"] == "1"
+                        || p.arguments.contains("ALMA_ASSISTANT_SCROLLTEST=1") else { return }
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    for round in 0..<100 {
+                        if let top = vm.messages.first?.id {
+                            withAnimation(.linear(duration: 0.05)) { proxy.scrollTo(top, anchor: .top) }
+                        }
+                        try? await Task.sleep(nanoseconds: 130_000_000)
+                        withAnimation(.linear(duration: 0.05)) { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+                        try? await Task.sleep(nanoseconds: 130_000_000)
+                        if (round + 1) % 25 == 0 { AlmaTurnLog.event("scroll.stressRound", "\(round + 1)/100") }
+                    }
+                    AlmaTurnLog.event("scroll.stressDone")
                 }
             }
         }
@@ -5524,6 +6902,27 @@ struct AssistantScreen: View {
                     toolSheet = vm.messages.flatMap(\.phases).flatMap(\.tools)
                         .first { $0.inputPretty != nil || $0.resultFull != nil }
                 }
+            }
+            // Roadmap Phase 0 — local scroll/streaming stress fixture; skips the
+            // server entirely (no bootstrap) so layout is tested in isolation.
+            if argFlag("ALMA_ASSISTANT_FIXTURE") {
+                vm.loadDebugFixture()
+                return
+            }
+            // Parity roadmap — persisted verification-retry composition only.
+            if argFlag("ALMA_ASSISTANT_PARITY") {
+                vm.loadParityFixture()
+                return
+            }
+            // Roadmap Phase 2 — canned SSE wire through the real parser/reducer.
+            if argFlag("ALMA_ASSISTANT_EVENTTEST") {
+                vm.runDebugEventTest()
+                return
+            }
+            // Roadmap Phase 4.4 — protocol-layer unit assertions, on-screen.
+            if argFlag("ALMA_ASSISTANT_UNITTEST") {
+                vm.runDebugUnitTests()
+                return
             }
             await vm.bootstrap()
         }
@@ -5577,13 +6976,12 @@ struct AssistantScreen: View {
     }
 
     private func scheduleScrollToBottom(proxy: ScrollViewProxy) {
-        bottomScrollGeneration &+= 1
-        let gen = bottomScrollGeneration
-        Task { @MainActor in
+        scrollDebounceTask?.cancel()
+        scrollDebounceTask = Task { @MainActor in
             // Coalesce rapid SSE text_delta bursts — avoids SwiftUI
             // "onChange tried to update multiple times per frame" freeze.
             try? await Task.sleep(for: .milliseconds(48))
-            guard gen == bottomScrollGeneration else { return }
+            guard !Task.isCancelled else { return }
             proxy.scrollTo(Self.bottomID, anchor: .bottom)
         }
     }

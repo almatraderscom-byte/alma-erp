@@ -3,7 +3,7 @@
  * Verify apiModel strings against provider dashboards before trusting in production.
  */
 
-export type Provider = 'anthropic' | 'google' | 'openai' | 'openrouter'
+export type Provider = 'anthropic' | 'google' | 'openai' | 'openrouter' | 'xai'
 
 export interface ModelEntry {
   id: string
@@ -267,6 +267,26 @@ export const MODEL_REGISTRY: ModelEntry[] = [
     thinking: 'level',
   },
   {
+    // xAI DIRECT (api.x.ai, OpenAI-compatible) — first-party serving for the Grok
+    // head, added 2026-07-14. Via OpenRouter the same model goes through third-party
+    // hosts whose tool-call parsers vary (the 2026-07-13 "silently DeepSeek all day"
+    // + provider-400 class); direct xAI is the exact serving the Grok app uses.
+    // Pricing mirrors or-grok-4.20 — verify against console.x.ai before trusting.
+    // supportsCaching=false: xAI caches prompt prefixes automatically server-side,
+    // no cache_control breakpoint wanted (same reason the OpenRouter adapter skips
+    // x-ai/* slugs). Requires XAI_API_KEY.
+    id: 'xai-grok-4.20',
+    label: 'Grok 4.20 (xAI direct)',
+    provider: 'xai',
+    apiModel: 'grok-4.20',
+    supportsTools: true,
+    supportsCaching: false,
+    contextWindow: 2_000_000,
+    inPerM: 1.25,
+    outPerM: 2.5,
+    thinking: 'level',
+  },
+  {
     id: 'or-qwen2.5-vl-72b',
     label: 'Qwen 2.5 VL 72B (OpenRouter)',
     provider: 'openrouter',
@@ -294,7 +314,7 @@ export function isKnownModelId(id: string): boolean {
 }
 
 export function modelsByProvider(): Record<Provider, ModelEntry[]> {
-  const out: Record<Provider, ModelEntry[]> = { anthropic: [], google: [], openai: [], openrouter: [] }
+  const out: Record<Provider, ModelEntry[]> = { anthropic: [], google: [], openai: [], openrouter: [], xai: [] }
   for (const m of MODEL_REGISTRY) out[m.provider].push(m)
   return out
 }

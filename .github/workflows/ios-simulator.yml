@@ -2,14 +2,29 @@
 # Never touches TestFlight / App Store Connect, so it cannot consume any
 # TestFlight build quota. Safe to run as often as needed.
 #
-# Trigger: manual only ("Run workflow" button on GitHub → Actions tab).
-# Kept manual because macOS runners bill at 10x minutes; add a push trigger
-# later if the minutes budget allows.
+# Triggers (roadmap Phase 4.5): manual, plus pull_request ONLY when native
+# assistant code / the protocol schema / turn plumbing changed — those are the
+# regressions this gate exists to block. Path-scoped because macOS runners bill
+# at 10x minutes; unrelated PRs never pay for a Mac runner.
 
 name: iOS Simulator Build (no TestFlight)
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'ios/**'
+      - 'src/agent/protocol/**'
+      - 'src/agent/lib/turn-status.ts'
+      - 'src/agent/lib/turn-events.ts'
+      - 'src/app/api/assistant/turn/**'
+      - 'prisma/schema.prisma'
+      # Presentation-parity roadmap (stage 5): the native client renders what these
+      # produce — server presentation/timeline drift must also compile-check iOS.
+      - 'src/agent/lib/presentation/**'
+      - 'src/app/api/assistant/conversations/**'
+      - 'src/agent/lib/models/run-owner-turn.ts'
+      - 'src/agent/lib/core.ts'
 
 concurrency:
   group: ios-simulator-${{ github.ref }}

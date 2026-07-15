@@ -26,6 +26,7 @@ describe('A2 — enqueue payload (buildTurnJobData)', () => {
       ],
       projectId: 'proj_9',
       personalMode: true,
+      clientRequestId: 'request_123',
     })
     expect(data).toEqual({
       turnId: 'turn_1',
@@ -34,6 +35,7 @@ describe('A2 — enqueue payload (buildTurnJobData)', () => {
       files: [{ bucket: 'agent-files', path: 'a/b.png', mediaType: 'image/png' }],
       projectId: 'proj_9',
       personalMode: true,
+      clientRequestId: 'request_123',
     })
   })
 

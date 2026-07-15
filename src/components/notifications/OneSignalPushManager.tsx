@@ -8,7 +8,9 @@ import { isCapacitorNative } from '@/lib/capacitor-native'
 import {
   ensureNativeOneSignalInitialized,
   listenForNativeNotificationClicks,
+  listenForPermissionChanges,
   nativePushAvailable,
+  nativePushHasPermission,
   registerNativePushSubscription,
   requestNativePushPermission,
 } from '@/lib/native-push'
@@ -325,6 +327,45 @@ export function OneSignalPushManager() {
         console.warn('[native-push] init failed', error)
       })
   }, [appId, nativeApp])
+
+  // Native auto-registration: staff phones stayed silent because registration
+  // only ran when someone tapped the dismissible prompt card — most users never
+  // did, so their OneSignal subscription was never created (or died as
+  // notification_types -10 after a permission change). On every authenticated
+  // native launch: permission already granted → re-register silently; never
+  // asked before → show the OS dialog ONCE directly (the card stays as the
+  // retry path if it's denied). Also re-register the moment permission flips
+  // (user returns from Settings).
+  useEffect(() => {
+    if (!nativeApp || !appId || status !== 'authenticated' || !userId) return
+    let cancelled = false
+    const input = { appId, userId, role, businessId, businessName: business.name, employeeIdGas }
+    void (async () => {
+      try {
+        await ensureNativeOneSignalInitialized(appId)
+        void listenForPermissionChanges(input)
+        const registerSilently = async () => {
+          const ok = await registerNativePushSubscription(input)
+          if (ok && !cancelled) markRegistered()
+        }
+        if (await nativePushHasPermission()) {
+          await registerSilently()
+          return
+        }
+        const askedKey = `alma_push_os_asked:${userId}`
+        if (localStorage.getItem(askedKey)) return
+        localStorage.setItem(askedKey, String(Date.now()))
+        // No settings fallback here — yanking someone into the Settings app on
+        // launch is hostile; the visible prompt button keeps that behaviour.
+        if (await requestNativePushPermission(false)) await registerSilently()
+      } catch {
+        // The visible prompt card remains the fallback.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [appId, business.name, businessId, employeeIdGas, markRegistered, nativeApp, role, status, userId])
 
   useEffect(() => {
     function registerNativeSilently() {

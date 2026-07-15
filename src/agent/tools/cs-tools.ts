@@ -139,7 +139,7 @@ const match_product_by_image: AgentTool = {
     type: 'object' as const,
     properties: {
       imageRef: { type: 'string', description: 'Storage path or URL of customer image' },
-      csConversationId: { type: 'string' },
+      csConversationId: { type: 'string', description: 'CS conversation id — omit; the server fills it automatically' },
     },
     required: ['imageRef'],
   },
@@ -269,8 +269,8 @@ const search_products: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      query: { type: 'string' },
-      limit: { type: 'number' },
+      query: { type: 'string', description: 'Product name / keywords the customer used (Bangla or English)' },
+      limit: { type: 'number', description: 'Max results to return' },
     },
     required: ['query'],
   },
@@ -301,7 +301,7 @@ const get_product_details: AgentTool = {
   description: 'Get price, sizes/variants, stock, short description for a product code.',
   input_schema: {
     type: 'object' as const,
-    properties: { code: { type: 'string' } },
+    properties: { code: { type: 'string', description: 'Product code / SKU' } },
     required: ['code'],
   },
   handler: async (input) => {
@@ -371,7 +371,7 @@ const send_product_image: AgentTool = {
   description: 'Get catalog image URL to attach in customer reply.',
   input_schema: {
     type: 'object' as const,
-    properties: { code: { type: 'string' } },
+    properties: { code: { type: 'string', description: 'Product code / SKU' } },
     required: ['code'],
   },
   handler: async (input) => {
@@ -425,22 +425,23 @@ const create_order_draft: AgentTool = {
     properties: {
       items: {
         type: 'array',
+        description: 'Ordered products with quantity/variant',
         items: {
           type: 'object',
           properties: {
-            code: { type: 'string' },
-            qty: { type: 'number' },
-            variant: { type: 'string' },
+            code: { type: 'string', description: 'Product code / SKU' },
+            qty: { type: 'number', description: 'Quantity (default 1)' },
+            variant: { type: 'string', description: 'Size/color variant if the customer chose one' },
           },
         },
       },
-      customerName: { type: 'string' },
-      phone: { type: 'string' },
-      address: { type: 'string' },
-      note: { type: 'string' },
-      csConversationId: { type: 'string' },
-      pageId: { type: 'string' },
-      psid: { type: 'string' },
+      customerName: { type: 'string', description: 'Customer full name for delivery' },
+      phone: { type: 'string', description: 'Customer phone number (BD format)' },
+      address: { type: 'string', description: 'Full delivery address' },
+      note: { type: 'string', description: 'Optional order note (size, color, special request)' },
+      csConversationId: { type: 'string', description: 'CS conversation id — omit; the server fills it automatically' },
+      pageId: { type: 'string', description: 'Facebook page id — omit; the server fills it automatically' },
+      psid: { type: 'string', description: 'Messenger PSID of this customer — omit; the server fills it automatically' },
     },
     required: ['items', 'phone'],
   },
@@ -538,8 +539,8 @@ const get_customer_order_status: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      psid: { type: 'string' },
-      pageId: { type: 'string' },
+      psid: { type: 'string', description: 'Messenger PSID of this customer — omit; the server fills it automatically' },
+      pageId: { type: 'string', description: 'Facebook page id — omit; the server fills it automatically' },
     },
     required: ['psid'],
   },
@@ -580,11 +581,11 @@ const handoff_to_human: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      reason: { type: 'string' },
-      csConversationId: { type: 'string' },
-      pageId: { type: 'string' },
-      psid: { type: 'string' },
-      suggestedReply: { type: 'string' },
+      reason: { type: 'string', description: 'Why this needs a human (short)' },
+      csConversationId: { type: 'string', description: 'CS conversation id — omit; the server fills it automatically' },
+      pageId: { type: 'string', description: 'Facebook page id — omit; the server fills it automatically' },
+      psid: { type: 'string', description: 'Messenger PSID of this customer — omit; the server fills it automatically' },
+      suggestedReply: { type: 'string', description: 'Optional draft reply the human can send' },
     },
     required: ['reason'],
   },

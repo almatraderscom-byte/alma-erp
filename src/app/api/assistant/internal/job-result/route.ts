@@ -5,13 +5,18 @@ import { timingSafeEqual } from 'crypto'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { agentStorageSignedUrl } from '@/agent/lib/storage'
 import { enqueueAgentContinuation } from '@/agent/lib/approval-continuation'
+import { finalizeTurnIfRunning } from '@/agent/lib/turn-status'
 import { buildOutboundDialMessage } from '@/agent/lib/outbound-call-tracking'
 import { sendOwnerText } from '@/agent/lib/telegram-owner-notify'
+import { shouldEmitGenericJobSuccess } from '@/agent/lib/job-result-message-policy'
 import { prisma } from '@/lib/prisma'
 
 const IMAGE_SIGNED_URL_TTL_SEC = 3600
 
 export const runtime = 'nodejs'
+// The continuation may run INLINE here (up to 90s) when the VPS worker's turn
+// consumer is down — see approval-continuation.ts. Default fn timeout is too short.
+export const maxDuration = 120
 
 function verifyToken(provided: string): boolean {
   const expected = process.env.AGENT_INTERNAL_TOKEN ?? ''
@@ -95,7 +100,25 @@ export async function POST(req: NextRequest) {
     },
   })
 
+  // Phase 5: the worker reported — free the execution lease and sync the
+  // canonical WorkflowRun to the card's final status right away (turn-start
+  // reconcile would catch it later; doing it here keeps the run's step honest
+  // for anything reading it between now and the next turn). Fail-open.
+  void import('@/agent/lib/workflow-run')
+    .then(async (wf) => {
+      await wf.releaseWorkflowLease(pendingActionId)
+      await wf.syncWorkflowWithPendingAction(pendingActionId, 'worker')
+    })
+    .catch((err) => {
+      console.warn('[job-result] workflow sync failed open:', err instanceof Error ? err.message : err)
+    })
+
   const payload = action.payload as Record<string, unknown>
+
+  // Progress turn opened at approve time ("ছবিটা বানাতে দিচ্ছি…" + spinner) — the
+  // continuation below reuses it; any other exit closes it so the app's spinner
+  // never runs forever.
+  const progressTurnId = typeof payload.progressTurnId === 'string' ? payload.progressTurnId : null
 
   // Family-chain assembly line: a finished step queues the next one (adult shot →
   // child garment → child shot → merge). Best-effort — a chain problem must never
@@ -146,6 +169,10 @@ export async function POST(req: NextRequest) {
 
   const convId = resolveConversationId(action)
   let messageText: string | null = null
+  /** Storage path of a generated image — persisted as a file_ref block so the
+   * NATIVE app shows the actual picture (it renders images only from file_ref;
+   * a markdown image link is plain text there — owner report 2026-07-13). */
+  let messageImagePath: string | null = null
   let pushTelegram = false
   // True only for a plain image_gen success that just posted its image into the
   // conversation. That is the moment the head can finally chain to the next step
@@ -202,6 +229,12 @@ export async function POST(req: NextRequest) {
           : String(data?.imageUrl ?? '')
         if (!imageUrl) throw new Error('No image path in job result')
         messageText = `✅ Image generated successfully.\n![Generated image](${imageUrl})`
+        // The native app renders images ONLY from file_ref content blocks —
+        // markdown image links display as plain text there, so the owner
+        // couldn't see the preview he was asked to confirm (2026-07-13).
+        if (storagePath) {
+          messageImagePath = storagePath
+        }
         resumeAgentAfterImage = true
         const qcFlag = typeof data?.qc === 'object' && data.qc !== null
           ? (data.qc as { flagged?: string }).flagged
@@ -222,6 +255,11 @@ export async function POST(req: NextRequest) {
     pushTelegram = true
   } else if (status === 'failed') {
     messageText = `❌ কাজটি সম্পাদন ব্যর্থ হয়েছে।\nকারণ: ${error ?? 'Unknown error'}`
+  } else if (status === 'success' && !shouldEmitGenericJobSuccess(action.type)) {
+    // The head polls this durable action and delivers the real score/report/file.
+    // A second context-free assistant bubble ("কাজটি সফল...") interleaved with
+    // that turn and made the owner think the agent had restarted on its own.
+    messageText = null
   } else if (status === 'success') {
     messageText = `✅ কাজটি সফলভাবে সম্পাদিত হয়েছে।`
   }
@@ -259,11 +297,21 @@ export async function POST(req: NextRequest) {
   }
 
   if (convId && messageText) {
+    const contentBlocks: Array<Record<string, unknown>> = [{ type: 'text', text: messageText }]
+    if (messageImagePath) {
+      const ext = messageImagePath.split('.').pop()?.toLowerCase()
+      contentBlocks.push({
+        type: 'file_ref',
+        bucket: 'agent-files',
+        path: messageImagePath,
+        mediaType: ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png',
+      })
+    }
     await db.agentMessage.create({
       data: {
         conversationId: convId,
         role: 'assistant',
-        content: [{ type: 'text', text: messageText }],
+        content: contentBlocks,
         tokensIn: 0,
         tokensOut: 0,
         costUsd: 0,
@@ -280,6 +328,10 @@ export async function POST(req: NextRequest) {
     if (!tg.ok) console.warn('[job-result] owner telegram notify failed:', tg.error)
   }
 
+  if (progressTurnId && (status === 'failed' || !resumeAgentAfterImage)) {
+    await finalizeTurnIfRunning(progressTurnId, status === 'failed' ? 'error' : 'done').catch(() => {})
+  }
+
   // The generated image is now in the conversation → resume the head so it carries on
   // its task (e.g. build the Instagram/Facebook post it was about to make) instead of
   // going silent. Best-effort: no-ops without a worker queue or if the owner disabled
@@ -288,10 +340,16 @@ export async function POST(req: NextRequest) {
     try {
       await enqueueAgentContinuation({
         conversationId: convId,
+        // Reuse the progress turn opened at approve time ("ছবিটা বানাতে দিচ্ছি…")
+        // so the app's spinner runs from the owner's tap straight through to
+        // this reply (Claude-Code-parity progress, owner ask 2026-07-13).
+        turnId: progressTurnId,
         message:
           '[সিস্টেম নোট — অনুমোদিত ছবি তৈরি হয়েছে] Boss-এর approve-করা ছবিটি এইমাত্র তৈরি হয়ে কনভারসেশনে যোগ হয়েছে। ' +
-          'এখন থেমে যেও না — তোমার চলমান কাজের পরের ধাপে নিজে থেকে এগোও (যেমন এই ছবিটা দিয়ে যে পোস্ট/কনটেন্ট বানানোর কথা ছিল সেটা তৈরি করো), ' +
-          'অথবা সব শেষ হলে সংক্ষেপে Boss-কে জানাও। ছবিটা আর নতুন করে generate কোরো না।',
+          '**আগে PREVIEW CONFIRM (বাধ্যতামূলক — Boss-এর নিয়ম 2026-07-13):** ছবিটা Boss এখনো নিজের চোখে দেখেননি — ' +
+          'reply-তে ছবিটা উল্লেখ করে ask_user card দাও: "ছবিটা ঠিক আছে?" (অপশন: "ঠিক আছে, পোস্ট রেডি করো" / "ছবি change চাই")। ' +
+          'Boss "ঠিক আছে" বললে তবেই post_to_facebook/publish_to_instagram card দেবে — ছবি confirm হওয়ার আগে পোস্টের card দেওয়া নিষেধ। ' +
+          'ছবিটা আর নতুন করে generate কোরো না।',
       })
     } catch (err) {
       console.warn('[job-result] agent continuation enqueue failed (result unaffected):', err instanceof Error ? err.message : err)

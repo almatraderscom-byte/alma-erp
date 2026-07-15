@@ -94,6 +94,28 @@ export async function POST(
     data: { status: 'rejected', resolvedAt: new Date() },
   })
 
+  // Phase 4 sync: a rejected card cancels its canonical WorkflowRun and the
+  // terminal transition auto-closes the linked open-task chips. Fail-open.
+  try {
+    const { syncWorkflowWithPendingAction } = await import('@/agent/lib/workflow-run')
+    await syncWorkflowWithPendingAction(actionId, 'approval')
+  } catch (err) {
+    console.warn('[reject] workflow sync failed (rejection unaffected):', err instanceof Error ? err.message : err)
+  }
+
+  // Phase 1 approval span: rejections join the turn trace too — a rejected card
+  // is the strongest "the agent staged the wrong thing" signal we have (fail-open).
+  void import('@/agent/lib/tool-telemetry').then((m) =>
+    m.logToolEvent({
+      toolName: '__approval__',
+      phase: 'approval',
+      success: true,
+      conversationId: (action.conversationId as string | null) ?? null,
+      businessId: (action.businessId as string) ?? 'ALMA_LIFESTYLE',
+      detail: { actionId, actionType: action.type, decision: 'rejected' },
+    }),
+  ).catch(() => {})
+
   // Record trust rejection (non-blocking)
   const trustDomain = (action.type as string).startsWith('staff_') ? 'staff' :
     ['content_gate1', 'content_gate2', 'fb_post', 'instagram_post', 'ad_creative_gate', 'ads_creative_brief', 'reply_to_comment', 'launch_campaign'].includes(action.type as string) ? 'content' :

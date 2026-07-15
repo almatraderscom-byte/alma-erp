@@ -23,7 +23,7 @@ const pause_campaign: AgentTool = {
     type: 'object' as const,
     properties: {
       campaignId: { type: 'string', description: 'Meta campaign ID' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['campaignId'],
   },
@@ -61,9 +61,9 @@ const update_campaign_budget: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      campaignId: { type: 'string' },
+      campaignId: { type: 'string', description: 'Meta Ads campaign id' },
       dailyBudget: { type: 'number', description: 'New daily budget in whole BDT' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['campaignId', 'dailyBudget'],
   },
@@ -106,7 +106,7 @@ const duplicate_campaign: AgentTool = {
     type: 'object' as const,
     properties: {
       campaignId: { type: 'string', description: 'Source Meta campaign ID to duplicate' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['campaignId'],
   },
@@ -165,11 +165,11 @@ const launch_campaign: AgentTool = {
       headline: { type: 'string', description: 'Optional short headline under the image' },
       imageUrl: { type: 'string', description: 'REQUIRED public image URL for the creative — a click-to-Messenger ad cannot run without media' },
       page: { type: 'string', description: "'lifestyle' (default) or 'onlineshop'" },
-      ageMin: { type: 'number' },
-      ageMax: { type: 'number' },
+      ageMin: { type: 'number', description: 'Minimum audience age (default 18)' },
+      ageMax: { type: 'number', description: 'Maximum audience age (default 65)' },
       audienceId: { type: 'string', description: 'Optional custom/lookalike audience id to TARGET (retargeting or lookalike campaign). From list_audiences. Omit for broad Bangladesh prospecting.' },
       excludeAudienceId: { type: 'string', description: 'Optional custom audience id to EXCLUDE (e.g. exclude existing engagers from a lookalike prospecting campaign).' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['name', 'dailyBudget', 'message', 'imageUrl'],
   },
@@ -252,7 +252,7 @@ const recommend_ad_actions: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
       createApprovalCard: {
         type: 'boolean',
         description: 'If true and actionable recs exist, send owner Telegram approval card (default false for chat)',
@@ -367,7 +367,7 @@ const create_retargeting_audience: AgentTool = {
       name: { type: 'string', description: 'Audience name (short, e.g. "Page Engagers 365d")' },
       page: { type: 'string', description: "'lifestyle' (default) or 'onlineshop'" },
       retentionDays: { type: 'number', description: 'Look-back window in days (1-365, default 365 = widest warm pool)' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['name'],
   },
@@ -425,7 +425,7 @@ const create_lookalike_audience: AgentTool = {
       name: { type: 'string', description: 'Lookalike name (short, e.g. "LAL 1% BD — Page Engagers")' },
       sourceAudienceId: { type: 'string', description: 'Source custom-audience id to model on (from list_audiences)' },
       ratioPercent: { type: 'number', description: 'Lookalike size 1-20 (%). Smaller = tighter match. Default 1.' },
-      conversationId: { type: 'string' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
     },
     required: ['name', 'sourceAudienceId'],
   },

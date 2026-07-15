@@ -15,6 +15,11 @@
 import { prisma } from '@/lib/prisma'
 import { agentStorageDownload, agentStorageUpload } from '@/agent/lib/storage'
 import { buildClientReportMarkdown, buildCompareMarkdown, buildIssuesCsv, type AuditJson } from '@/agent/lib/seo-report'
+import {
+  normalizeAuditUrl,
+  ownerExplicitlyRequestedFreshAudit,
+  seoAuditDedupeKey,
+} from '@/agent/lib/seo-audit-idempotency'
 import { saveConversationArtifact } from './artifact-tools'
 import type { AgentTool } from './registry'
 
@@ -56,6 +61,11 @@ const run_website_seo_audit: AgentTool = {
         type: 'string',
         description: 'Optional: a short note of target keywords / ranking findings to fold into the report.',
       },
+      forceNew: {
+        type: 'boolean',
+        description:
+          'Only true when the OWNER explicitly asked for a fresh re-audit after changes. Normal retries/resumes MUST omit this so the existing logical audit is reused.',
+      },
     },
     required: ['url'],
   },
@@ -67,24 +77,115 @@ const run_website_seo_audit: AgentTool = {
       }
       const conversationId = typeof input.conversationId === 'string' ? input.conversationId : null
       const maxPages = Math.min(Math.max(Number(input.maxPages) || 40, 5), 80)
+      const normalizedUrl = normalizeAuditUrl(url)
+      let ownerApprovedFreshAudit = false
+      let latestOwnerMessageId: string | null = null
+      if (conversationId && input.forceNew === true) {
+        const latestOwnerMessage = await db.agentMessage.findFirst({
+          where: { conversationId, role: 'user' },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, content: true },
+        })
+        latestOwnerMessageId = typeof latestOwnerMessage?.id === 'string' ? latestOwnerMessage.id : null
+        ownerApprovedFreshAudit = ownerExplicitlyRequestedFreshAudit(latestOwnerMessage?.content)
+      }
+      const dedupeKey = conversationId
+        ? seoAuditDedupeKey(
+            conversationId,
+            normalizedUrl,
+            ownerApprovedFreshAudit && latestOwnerMessageId ? `owner-message:${latestOwnerMessageId}` : 'initial',
+          )
+        : null
 
-      const action = await db.agentPendingAction.create({
-        data: {
-          conversationId,
-          type: 'seo_audit',
-          payload: { url, maxPages, keywordsNote: input.keywordsNote ?? null, conversationId },
-          summary: `🔎 SEO audit: ${url} (${maxPages} pages)`,
-          costEstimate: 0,
-          // Read-only crawl, no owner-side effects → runs without an approval card.
-          status: 'approved',
-        },
-        select: { id: true },
-      })
+      // Logical-task idempotency: model retries and structured continuations reuse
+      // the active/completed audit instead of charging the crawler again. A real
+      // before/after re-audit remains available only through explicit forceNew.
+      if (conversationId && dedupeKey) {
+        const keyed = await db.agentPendingAction.findUnique({
+          where: { dedupeKey },
+          select: { id: true, status: true },
+        })
+        if (keyed) {
+          return {
+            success: true,
+            data: {
+              pendingActionId: keyed.id as string,
+              reused: true,
+              status: keyed.status as string,
+              note: `Existing logical SEO audit reused for ${normalizedUrl}; poll this id. Do not start another audit unless Boss explicitly requests a fresh re-audit.`,
+            },
+          }
+        }
+
+        if (!ownerApprovedFreshAudit) {
+          // Backward compatibility: actions created before the dedupe-key migration
+          // still need to be reused. New creations below are protected by the unique
+          // key even when two tool calls race this lookup concurrently.
+          const recent = await db.agentPendingAction.findMany({
+            where: {
+              conversationId,
+              type: 'seo_audit',
+              status: { in: ['approved', 'executed'] },
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 20,
+            select: { id: true, status: true, payload: true },
+          })
+          const existing = recent.find((row: { payload: unknown }) => {
+            const payload = (row.payload ?? {}) as Record<string, unknown>
+            return typeof payload.url === 'string' && normalizeAuditUrl(payload.url) === normalizedUrl
+          })
+          if (existing) {
+            return {
+              success: true,
+              data: {
+                pendingActionId: existing.id as string,
+                reused: true,
+                status: existing.status as string,
+                note: `Existing logical SEO audit reused for ${normalizedUrl}; poll this id. Do not start another audit unless Boss explicitly requests a fresh re-audit.`,
+              },
+            }
+          }
+        }
+      }
+
+      let action: { id: string }
+      try {
+        action = await db.agentPendingAction.create({
+          data: {
+            conversationId,
+            dedupeKey,
+            type: 'seo_audit',
+            payload: { url: normalizedUrl, maxPages, keywordsNote: input.keywordsNote ?? null, conversationId },
+            summary: `🔎 SEO audit: ${normalizedUrl} (${maxPages} pages)`,
+            costEstimate: 0,
+            // Read-only crawl, no owner-side effects → runs without an approval card.
+            status: 'approved',
+          },
+          select: { id: true },
+        })
+      } catch (createErr) {
+        if (!dedupeKey || (createErr as { code?: string })?.code !== 'P2002') throw createErr
+        const winner = await db.agentPendingAction.findUnique({
+          where: { dedupeKey },
+          select: { id: true, status: true },
+        })
+        if (!winner) throw createErr
+        return {
+          success: true,
+          data: {
+            pendingActionId: winner.id as string,
+            reused: true,
+            status: winner.status as string,
+            note: `Concurrent SEO audit retry was deduplicated for ${normalizedUrl}; poll this id.`,
+          },
+        }
+      }
       return {
         success: true,
         data: {
           pendingActionId: action.id as string,
-          note: `SEO audit queued for ${url}. Poll check_website_seo_audit; a failure leaves a resume checkpoint automatically.`,
+          note: `SEO audit queued for ${normalizedUrl}. Poll check_website_seo_audit; a failure leaves a resume checkpoint automatically.`,
         },
       }
     } catch (err) {

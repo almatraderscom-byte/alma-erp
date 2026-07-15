@@ -44,7 +44,7 @@ const add_important_date: AgentTool = {
       calendar: { type: 'string', enum: ['gregorian', 'islamic'], description: 'Default gregorian' },
       relatedName: { type: 'string', description: 'Optional person this date relates to' },
       remindDaysBefore: { type: 'number', description: 'Days before to start reminding (default 1)' },
-      notes: { type: 'string' },
+      notes: { type: 'string', description: 'Optional free-text note' },
     },
     required: ['title', 'eventDate'],
   },
@@ -143,7 +143,7 @@ const delete_important_date: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      id: { type: 'string' },
+      id: { type: 'string', description: 'Date id from list_important_dates' },
       titleMatch: { type: 'string', description: 'Alternative to id — match by partial title' },
     },
   },

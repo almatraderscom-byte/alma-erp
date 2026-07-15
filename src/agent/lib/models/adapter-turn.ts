@@ -16,6 +16,10 @@ export type AdapterTurnResult = {
    *  share entirely — callers must pass them to calcModelTurnCostUsd. */
   cacheRead: number
   cacheWrite: number
+  /** Provider-billed ACTUAL cost (USD) summed across every turn of the tool loop,
+   *  when the adapter reports it (OpenRouter). null when no turn reported a cost —
+   *  the caller then falls back to the local token×rate estimate. */
+  actualCostUsd: number | null
   toolsUsed: string[]
 }
 
@@ -36,6 +40,7 @@ export async function runAdapterToolLoop(args: {
   let outputTokens = 0
   let cacheRead = 0
   let cacheWrite = 0
+  let actualCostUsd: number | null = null
   let finalText = ''
   const adapter = adapterFor(args.model.provider)
 
@@ -63,6 +68,7 @@ export async function runAdapterToolLoop(args: {
         outputTokens += ev.outputTokens
         cacheRead += ev.cacheRead ?? 0
         cacheWrite += ev.cacheWrite ?? 0
+        if (ev.costUsd != null) actualCostUsd = (actualCostUsd ?? 0) + ev.costUsd
       }
     }
 
@@ -93,6 +99,7 @@ export async function runAdapterToolLoop(args: {
     outputTokens,
     cacheRead,
     cacheWrite,
+    actualCostUsd,
     toolsUsed: Array.from(new Set(toolsUsed)),
   }
 }

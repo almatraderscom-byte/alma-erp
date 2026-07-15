@@ -41,6 +41,13 @@ import { logCost } from '@/agent/lib/cost-events'
 import { looksLikeDurableFact, MEMORY_SAVE_NUDGE } from '@/agent/lib/memory-fact-detect'
 import { touchConversationActivity } from '@/agent/lib/conversation-activity'
 import { applyTailCompaction } from '@/agent/lib/tail-compact'
+import { shouldAutoContinueTurn } from '@/agent/lib/continuation-policy'
+import { shouldNudgeZeroToolIntent } from '@/agent/lib/turn-loop-policy'
+import {
+  deriveOwnerTurnAuthorization,
+  filterToolsForOwnerTurn,
+  ownerTurnAuthorizationNote,
+} from '@/agent/lib/turn-authorization'
 import {
   buildVerificationReminder,
   detectMissingCardViolation,
@@ -89,7 +96,7 @@ export type AgentEvent =
   // needContinue: the turn hit the serverless deadline mid-task (browser work
   // unfinished) — the web client auto-sends a bounded "continue" so a long task
   // finishes end-to-end without the owner typing it every ~4.5 minutes.
-  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; cacheCreation: number; cacheRead: number; costUsd: number; needContinue?: boolean }
+  | { type: 'done'; messageId: string; tokensIn: number; tokensOut: number; cacheCreation: number; cacheRead: number; costUsd: number; needContinue?: boolean; apiRounds?: number; roundCostsUsd?: number[] }
   | { type: 'error'; message: string }
 
 // ── Mutating tools (conservative: unknown = treat as mutating) ──────────────
@@ -134,9 +141,6 @@ const HEAD_TOOL_BUDGET_NUDGE =
 // claims, but not future-intent "I WILL do X" with zero tool calls. This regex
 // detects that announced intent (Bangla + Banglish + English) so we can re-prompt
 // the head to actually run the tool in the SAME turn instead of stopping.
-const ANNOUNCED_TOOL_INTENT =
-  /(দিয়ে\s*দেখি|করে\s*দেখি|চেক\s*কর(ি|ছি)|দেখে\s*নিই|দেখে\s*নি|বের\s*কর(ি|ছি)|চালাই|চালাচ্ছি|টান(ি|ছি)|আনছি|আগে.*দেখি|let me (check|look|see|pull|run|fetch)|i('|’)?ll (check|look|see|pull|run|fetch|grab)|i will (check|look|see|pull|run|fetch)|going to (check|look|run|pull|fetch)|let's (check|look|run|see))/i
-
 // One-time message injected when the head announces it will use a tool but ends
 // its turn without calling any. Force it to act NOW, in this same turn.
 const ACT_NOW_NUDGE =
@@ -629,6 +633,7 @@ export async function* runAgentTurn(
     if (text.trim()) recentUserTexts.unshift(text.trim())
   }
   const lastUserText = recentUserTexts[recentUserTexts.length - 1] ?? ''
+  const turnAuthorization = deriveOwnerTurnAuthorization(lastUserText)
 
   const now = new Date()
   let teachingBlock: string | undefined
@@ -939,7 +944,27 @@ export async function* runAgentTurn(
   // It is injected into the current owner user turn instead (see
   // buildTurnApiMessages), keeping the system block byte-stable across turns.
   const systemBlocks = [...stableSystem]
-  const volatileText = volatileSystem.map((b) => b.text).join('\n')
+  let volatileText = volatileSystem.map((b) => b.text).join('\n')
+  const authorizationNote = ownerTurnAuthorizationNote(turnAuthorization)
+  if (authorizationNote) {
+    volatileText = volatileText ? `${authorizationNote}\n\n${volatileText}` : authorizationNote
+  }
+  // Phase 4 parity with the alternate-provider path: reconcile the conversation's
+  // canonical WorkflowRuns against their cards' live status, then put the exact
+  // in-flight state in front of the head — "হ্যাঁ/continue" resumes THE step.
+  // Phase 6 deterministic order: the workflow snapshot LEADS the per-turn
+  // context (core → workflow → memory/context), matching run-owner-turn.
+  // Fail-open; skipped in personal mode.
+  if (!personalMode) {
+    try {
+      const wf = await import('@/agent/lib/workflow-run')
+      const runs = await wf.reconcileConversationWorkflows(conversationId)
+      const note = wf.buildWorkflowSnapshotNote(runs)
+      if (note) volatileText = volatileText ? `${note}\n\n${volatileText}` : note
+    } catch (err) {
+      console.warn('[core] workflow reconcile failed open:', err instanceof Error ? err.message : err)
+    }
+  }
 
   // The current owner turn is the last user message at this point (history +
   // optional compaction summary; tool-loop reminders/nudges are appended AFTER
@@ -952,7 +977,10 @@ export async function* runAgentTurn(
   // Owner Control Center: drop OFF-capability tools and tell the agent (in the
   // prompt) to ask the owner to enable instead of improvising. Fail-open.
   const agentControls = await getAgentControls()
-  const gatedTools = filterToolDefsByControls(selectedTools, agentControls)
+  const gatedTools = filterToolDefsByControls(
+    filterToolsForOwnerTurn(selectedTools, turnAuthorization),
+    agentControls,
+  )
   const controlsNote = controlsPromptNote(agentControls)
   if (controlsNote) systemBlocks.push({ type: 'text', text: controlsNote })
 
@@ -994,7 +1022,8 @@ export async function* runAgentTurn(
   // Stored in usage.timeline; NEVER replayed to the model, so it costs zero tokens.
   type TimelineEntry =
     | { t: 'think'; text: string }
-    | { t: 'text'; text: string }
+    | { t: 'text'; text: string; state?: 'superseded' }
+    | { t: 'verify'; attempt: number; max: number }
     | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; shot?: string }
     | { t: 'file'; id: string; name: string; kind?: string }
   const timeline: TimelineEntry[] = []
@@ -1177,6 +1206,14 @@ export async function* runAgentTurn(
               categories: Array.from(new Set(violations.map((v) => v.category))),
               snippets: violations.map((v) => v.matchedSnippet),
             }
+            // Presentation parity (mirrors run-owner-turn.ts): keep the draft visible
+            // but truthfully superseded, and persist the verification event so reload
+            // shows the same draft → যাচাই → final composition as the live stream.
+            for (let ti = timeline.length - 1; ti >= 0; ti--) {
+              const te = timeline[ti]
+              if (te.t === 'text') { te.state = 'superseded'; break }
+            }
+            timeline.push({ t: 'verify', attempt: verifyRetries, max: MAX_VERIFY_RETRIES })
             assistantTurns.pop()
             const reminder = buildVerificationReminder(violations)
             messages = [
@@ -1195,6 +1232,7 @@ export async function* runAgentTurn(
           !signal?.aborted
           && !memoryNudgeSent
           && lastUserText
+          && turnAuthorization.allowMutations
           && looksLikeDurableFact(lastUserText)
           && !toolRecords.some((r) => r.toolName === 'save_memory')
         ) {
@@ -1222,7 +1260,11 @@ export async function* runAgentTurn(
             .map((b) => b.text)
             .join('\n')
             .trim()
-          if (finalIntentText && ANNOUNCED_TOOL_INTENT.test(finalIntentText)) {
+          if (shouldNudgeZeroToolIntent({
+            text: finalIntentText,
+            hasAskCard: emittedAskCards.length > 0,
+            ownerRequestedAction: turnAuthorization.allowMutations,
+          })) {
             intentNudgeSent = true
             assistantTurns.pop()
             messages = [
@@ -1297,8 +1339,8 @@ export async function* runAgentTurn(
         }
         const started = Date.now()
         const result = personalMode
-          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId })
-          : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id })
+          ? await executePersonalTool(tb.name, tb.input, { conversationId, businessId, turnAuthorization })
+          : await executeTool(tb.name, tb.input, { conversationId, businessId, modelId: chatModel.id, turnAuthorization })
         return { tb, result, durationMs: Date.now() - started }
       }
 
@@ -1429,8 +1471,27 @@ export async function* runAgentTurn(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const row = await (prisma as any).agentPendingAction.findUnique({
               where: { id: d.pendingActionId },
-              select: { status: true, summary: true, costEstimate: true },
+              select: { status: true, summary: true, costEstimate: true, type: true },
             })
+            // Phase 4 (parity with run-owner-turn): every staged card gets a
+            // canonical WorkflowRun the moment it exists — idempotent, fail-open.
+            // Phase 5: actionType drives the workflow-template mapping.
+            if (row && !personalMode) {
+              void import('@/agent/lib/workflow-run')
+                .then(async (wf) => {
+                  const { packsForPendingActionType } = await import('@/agent/tools/state-router')
+                  const kind = packsForPendingActionType(String(row.type ?? ''))[0] ?? 'generic'
+                  await wf.ensureWorkflowRunForPendingAction({
+                    pendingActionId: d.pendingActionId as string,
+                    conversationId,
+                    businessId,
+                    actionType: String(row.type ?? ''),
+                    kind,
+                    goal: String(row.summary ?? '').slice(0, 500) || `${row.type} card`,
+                  })
+                })
+                .catch(() => {})
+            }
             if (row?.status === 'pending') {
               const cardSummary = decodeUnicodeEscapes(
                 typeof d.summary === 'string' && d.summary ? d.summary : (row.summary ?? ''),
@@ -1549,9 +1610,12 @@ export async function* runAgentTurn(
     // Deadline/abort salvage — mirrors run-owner-turn.ts: never persist an EMPTY
     // reply (strands the owner mid-task AND leaves a context hole in replayed
     // history so the next turn restarts the task from scratch).
-    const coreBrowserTurn = toolRecords.some((r: ToolRecord) => r.toolName.startsWith('live_browser_'))
     const coreDeadlineHit = Boolean(signal?.aborted) || deadlineNudgeSent
-    const coreTaskUnfinished = coreBrowserTurn && coreDeadlineHit && emittedAskCards.length === 0
+    const coreTaskUnfinished = shouldAutoContinueTurn({
+      deadlineHit: coreDeadlineHit,
+      hasAskCard: emittedAskCards.length > 0,
+      tools: toolRecords,
+    })
     if (!joinedText.trim()) {
       const okSteps = toolRecords.filter((r: ToolRecord) => r.status === 'success').length
       joinedText = [

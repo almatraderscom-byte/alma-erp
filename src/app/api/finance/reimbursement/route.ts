@@ -18,6 +18,8 @@ type ClaimRow = {
   amount: number
   category: string
   note: string | null
+  expenseDate: string | null
+  hasReceipt: boolean
   status: string
   createdAt: string
   resolvedAt: string | null
@@ -58,6 +60,8 @@ export async function GET(req: NextRequest) {
         amount: roundMoney(Number(snap.reimburse_amount || snap.amount || 0)),
         category: String(snap.category || 'Reimbursement'),
         note: snap.note ? String(snap.note) : null,
+        expenseDate: snap.date ? String(snap.date) : null,
+        hasReceipt: Boolean(snap.receipt_attachment_id),
         status: r.status,
         createdAt: r.createdAt.toISOString(),
         resolvedAt: (r.approvedAt || r.rejectedAt)?.toISOString() || null,
@@ -101,30 +105,53 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const amount = roundMoney(Number(String(raw.amount ?? '').toString().replace(/[^0-9.]/g, '')))
-    if (!(amount > 0)) {
-      return apiFailure('bad_amount', 'সঠিক একটি টাকার অঙ্ক দিন।', { status: 400 })
+    // Batch (items[]) or legacy single-claim body — one approval per item so the
+    // owner can approve/reject each expense independently in the approval center.
+    const rawItems: Record<string, unknown>[] = Array.isArray(raw.items)
+      ? (raw.items as Record<string, unknown>[])
+      : [raw]
+    if (rawItems.length < 1) {
+      return apiFailure('no_items', 'অন্তত একটি খরচ দিন।', { status: 400 })
     }
-    const category = String(raw.category || '').trim() || 'Reimbursement'
-    const note = raw.note ? String(raw.note).slice(0, 500) : null
+    if (rawItems.length > 20) {
+      return apiFailure('too_many_items', 'একসাথে সর্বোচ্চ ২০টি খরচ জমা দেওয়া যায়।', { status: 400 })
+    }
 
-    const approval = await enqueueReimbursementClaim({
-      businessId,
-      employeeId,
-      userId: token.sub,
-      actorName: String(profile?.name || token.name || token.email || 'Staff'),
-      amount,
-      category,
-      note,
-      vendor: raw.vendor ? String(raw.vendor) : null,
-      receiptRef: raw.receipt_ref ? String(raw.receipt_ref) : null,
-      receiptAttachmentId: raw.receipt_attachment_id ? String(raw.receipt_attachment_id) : null,
-    })
+    const parsed = rawItems.map((item) => ({
+      amount: roundMoney(Number(String(item.amount ?? '').toString().replace(/[^0-9.]/g, ''))),
+      category: String(item.category || '').trim() || 'Reimbursement',
+      note: item.note ? String(item.note).slice(0, 500) : null,
+      vendor: item.vendor ? String(item.vendor) : null,
+      expenseDate: item.expense_date ? String(item.expense_date) : null,
+      receiptRef: item.receipt_ref ? String(item.receipt_ref) : null,
+      receiptAttachmentId: item.receipt_attachment_id ? String(item.receipt_attachment_id) : null,
+    }))
+    if (parsed.some((p) => !(p.amount > 0))) {
+      return apiFailure('bad_amount', 'প্রতিটি খরচে সঠিক টাকার অঙ্ক দিন।', { status: 400 })
+    }
 
+    const actorName = String(profile?.name || token.name || token.email || 'Staff')
+    const approvalIds: string[] = []
+    for (const p of parsed) {
+      const approval = await enqueueReimbursementClaim({
+        businessId,
+        employeeId,
+        userId: token.sub,
+        actorName,
+        ...p,
+      })
+      approvalIds.push(approval.id)
+    }
+
+    const total = roundMoney(parsed.reduce((s, p) => s + p.amount, 0))
     return NextResponse.json({
       ok: true,
-      approvalId: approval.id,
-      message: `৳${amount.toLocaleString('en-BD')} ফেরতের আবেদন পাঠানো হয়েছে। মালিক অনুমোদন করলে আপনার ওয়ালেটে যোগ হবে।`,
+      approvalId: approvalIds[0],
+      approvalIds,
+      count: approvalIds.length,
+      message: approvalIds.length > 1
+        ? `${approvalIds.length}টি খরচ (মোট ৳${total.toLocaleString('en-BD')}) একসাথে পাঠানো হয়েছে। মালিক অনুমোদন করলে টাকা পাবেন।`
+        : `৳${total.toLocaleString('en-BD')} ফেরতের আবেদন পাঠানো হয়েছে। মালিক অনুমোদন করলে আপনার ওয়ালেটে যোগ হবে।`,
     })
   } catch (e) {
     logEvent('error', 'reimbursement.create_failed', { error: (e as Error).message })
