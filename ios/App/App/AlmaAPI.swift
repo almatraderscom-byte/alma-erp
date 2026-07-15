@@ -113,19 +113,45 @@ final class AlmaAPI: NSObject {
     /// Copies every cookie from the shared WKWebsiteDataStore into HTTPCookieStorage.shared
     /// so URLSession sends the same session as the web views. WKHTTPCookieStore is a
     /// main-thread API with a completion handler — hop to main and bridge to async.
+    ///
+    /// BOUNDED (2026-07-15): the callback answers through WebKit's own processes;
+    /// when they are broken (seen live: iOS 26 sim after a Simulator-host restart)
+    /// it simply NEVER calls back, and every send() hung forever before its request
+    /// — before the first-event watchdog could even start. On timeout we proceed
+    /// with the cookies already in HTTPCookieStorage: a stale copy still sends the
+    /// request (worst case a 401 → the normal re-auth path); a hang sends nothing.
     func syncCookies() async {
-        let cookies: [HTTPCookie] = await withCheckedContinuation { continuation in
-            DispatchQueue.main.async {
-                WKWebsiteDataStore.default().httpCookieStore.getAllCookies { all in
-                    continuation.resume(returning: all)
-                }
-            }
-        }
+        let cookies = await Self.wkCookies(timeout: 3)
+        guard let cookies else { return }   // timed out — keep cached cookies, retry next call
         let storage = HTTPCookieStorage.shared
         for cookie in cookies {
             storage.setCookie(cookie)
         }
         setLastSync(Date())
+    }
+
+    private static func wkCookies(timeout seconds: TimeInterval) async -> [HTTPCookie]? {
+        final class Once: @unchecked Sendable {
+            private let lock = NSLock()
+            private var fired = false
+            func claim() -> Bool {
+                lock.lock(); defer { lock.unlock() }
+                if fired { return false }
+                fired = true
+                return true
+            }
+        }
+        let once = Once()
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                WKWebsiteDataStore.default().httpCookieStore.getAllCookies { all in
+                    if once.claim() { continuation.resume(returning: all) }
+                }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + seconds) {
+                if once.claim() { continuation.resume(returning: nil) }
+            }
+        }
     }
 
     /// Forget the last sync time so the very next request re-copies cookies first.
