@@ -116,6 +116,23 @@ const ROUTINE_RE = new RegExp(
     // order / pending counts
     '(koto|কত|how\\s*many)[^\\n]{0,12}(order|অর্ডার|pending|পেন্ডিং|delivery|ডেলিভারি)',
     '(order|অর্ডার|pending|পেন্ডিং)[^\\n]{0,12}(koto|কত|count|সংখ্যা)',
+    // ── LG-1 routine-graph intents (2026-07-15): these phrasings must reach the
+    // light head deterministically or the graph never sees them. All read-only;
+    // HEAVY_DENY_RE (money/destructive) is still checked before this regex.
+    // today's expense (today-word required — period questions stay on triage)
+    '(\\baj\\b|\\bajke\\b|\\bajker\\b|আজ|আজকে|আজকের|\\btoday\\b)[^\\n]{0,24}(khoroch|kharoch|খরচ|expense)',
+    '(khoroch|kharoch|খরচ|expense)[^\\n]{0,24}(\\baj\\b|\\bajke\\b|\\bajker\\b|আজ|আজকে|আজকের|\\btoday\\b)',
+    // staff task status (assignment commands like "task dao" don\'t match)
+    '(ki|কি|কী|kon|কোন)\\s*(task|টাস্ক)',
+    '(task|টাস্ক)[^\\n]{0,14}(dise|dice|দিছে|দিয়েছে|dewa|দেওয়া|status|স্ট্যাটাস|hoise|হয়েছে)',
+    // salah/waqt times (a time word is required)
+    '(namaz|namaj|নামাজ|নামায|salah|salat|সালাত|ছালাত)[^\\n]{0,16}(somoy|সময়|time|টাইম|schedule|সূচি|waqt|ওয়াক্ত|kokhon|কখন|koyta|কয়টা|কটায়)',
+    // pending approvals
+    '(approval|অ্যাপ্রুভাল|এপ্রুভাল|onumodon|অনুমোদন)[^\\n]{0,14}(pending|পেন্ডিং|baki|বাকি|koto|কত|ache|আছে|\\base\\b)',
+    '(pending|পেন্ডিং)[^\\n]{0,12}(approval|অ্যাপ্রুভাল|এপ্রুভাল|অনুমোদন|card|কার্ড)',
+    // order status by number ("order 1234 kothay", "#ALM-1234 status") — a
+    // status word is REQUIRED so "order 500 pcs ano" (a command) never routes here
+    '(order|অর্ডার|invoice|#)\\s*#?\\s*[A-Za-z]{0,6}-?\\d{3,12}[^\\n]{0,24}(status|স্ট্যাটাস|obostha|অবস্থা|kothay|কোথায়|koi|কই|update|আপডেট|hoise|হয়েছে|deliver|ডেলিভার|কতদূর)',
   ].join('|'),
   'i',
 )
