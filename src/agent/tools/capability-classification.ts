@@ -330,6 +330,7 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   make_plan: write('plan'),
   execute_plan: write('plan', 'medium'),
   get_plan: read('plan'),
+  get_workflow_history: read('plan'),
 
   // ── autonomy / heartbeat ───────────────────────────────────────────────────
   scan_business_signals: read('autonomy'),

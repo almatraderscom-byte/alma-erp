@@ -503,4 +503,60 @@ const get_action_cards: AgentTool = {
   },
 }
 
-export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan, scan_business_signals, check_owner_silence, check_quiet_hours, get_action_cards]
+const get_workflow_history: AgentTool = {
+  name: 'get_workflow_history',
+  description:
+    'Step-by-step history of a long workflow run (e.g. client SEO batch) — what happened, in order, ' +
+    'from its durable graph checkpoints (LG-8). USE when the owner asks "কী হয়েছিল", "কতদূর হলো", ' +
+    '"batch er ki obostha", or wants a post-mortem of a long job. Read-only. ' +
+    'Without runId it reports the conversation\'s most recent workflow run.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      runId: { type: 'string', description: 'WorkflowRun id (optional — defaults to the most recent run in this conversation)' },
+      conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = prisma as any
+      const runId = input.runId ? String(input.runId) : null
+      const conversationId = input.conversationId ? String(input.conversationId) : null
+      const row = runId
+        ? await db.workflowRun.findUnique({ where: { id: runId } })
+        : conversationId
+          ? await db.workflowRun.findFirst({ where: { conversationId }, orderBy: { updatedAt: 'desc' } })
+          : null
+      if (!row) {
+        return { success: true, data: { found: false, message: 'এই conversation-এ কোনো workflow run পাওয়া যায়নি।' } }
+      }
+      const { getSeoBatchGraphHistory } = await import('@/agent/lib/graph/seo-batch-graph')
+      const steps = await getSeoBatchGraphHistory(String(row.id))
+      return {
+        success: true,
+        data: {
+          found: true,
+          run: {
+            id: row.id,
+            kind: row.kind,
+            status: row.status,
+            state: row.state,
+            goal: String(row.goal ?? '').slice(0, 300),
+            updatedAt: row.updatedAt,
+          },
+          // Oldest-first for the owner's reading order; [] when the run predates
+          // the graph mirror (LG-6 gate off at the time) — say so honestly.
+          steps: [...steps].reverse(),
+          note: steps.length
+            ? null
+            : 'এই run-টার ধাপভিত্তিক checkpoint history নেই (পুরনো run বা graph mirror তখন বন্ধ ছিল) — শুধু বর্তমান অবস্থা দেখানো যাচ্ছে।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
+  },
+}
+
+export const ORCHESTRATOR_TOOLS: AgentTool[] = [delegate_to_specialist, make_plan, execute_plan, get_plan, scan_business_signals, check_owner_silence, check_quiet_hours, get_action_cards, get_workflow_history]
