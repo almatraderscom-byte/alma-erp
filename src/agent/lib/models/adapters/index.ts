@@ -1,7 +1,7 @@
 import type { Provider } from '@/agent/lib/models/registry'
 import type { ProviderAdapter } from '@/agent/lib/models/types'
 import { createGoogleAdapter } from '@/agent/lib/models/adapters/google'
-import { createOpenAiAdapter } from '@/agent/lib/models/adapters/openai'
+import { createOpenAiAdapter, createXaiAdapter } from '@/agent/lib/models/adapters/openai'
 import { createOpenRouterAdapter } from '@/agent/lib/models/adapters/openrouter'
 import { createAnthropicAdapter } from '@/agent/lib/models/adapters/anthropic'
 
@@ -11,6 +11,8 @@ export function adapterFor(provider: Provider): ProviderAdapter {
       return createGoogleAdapter()
     case 'openai':
       return createOpenAiAdapter()
+    case 'xai':
+      return createXaiAdapter()
     case 'openrouter':
       return createOpenRouterAdapter()
     case 'anthropic':

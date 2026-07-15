@@ -104,9 +104,13 @@ const ROUTINE_RE = new RegExp(
     // today's sales / revenue
     '(aj|ajk|ajke|আজ|আজকে)[^\\n]{0,20}(sell|sale|sales|bikri|বিক্রি|বিক্রয়|সেল|revenue|আয়|koto\\s*holo|koto\\s*hoyeche)',
     '(koto|কত)[^\\n]{0,12}(sell|sale|bikri|বিক্রি|সেল)',
-    // who is present / attendance / in office
-    '(ke|কে|kara|কারা)[^\\n]{0,20}(office|অফিস|ase|আছে|present|উপস্থিত|hajir|হাজির|check\\s*in|checkin|checked\\s*in)',
-    'attendance|হাজিরা|উপস্থিতি|ke\\s*ke\\s*ase',
+    // who is present / attendance / in office. Word-bounded (2026-07-14 fix):
+    // bare 'ke'/'ase' matched INSIDE words ("keno ... ase?" → false routine hit,
+    // masked until the structured-output change exposed it in tests). Latin tokens
+    // get \b; Bangla কে gets the (?![ঀ-ৼ]) no-more-Bangla-letters guard used
+    // elsewhere (turn-loop-policy) since \b doesn't understand Bangla script.
+    '(\\bke\\b|কে(?![ঀ-ৼ])|\\bkara\\b|কারা)[^\\n]{0,20}(office|অফিস|\\base\\b|আছে|present|উপস্থিত|hajir|হাজির|check\\s*in|checkin|checked\\s*in)',
+    'attendance|হাজিরা|উপস্থিতি|\\bke\\s*ke\\s*ase\\b',
     // stock / inventory counts
     'stock|স্টক|মজুদ|inventory|koto\\s*pcs|koto\\s*piece',
     // order / pending counts
@@ -159,7 +163,86 @@ const CLASSIFY_PERSONAL_SYSTEM =
   'Answer "work" for everything else: business questions or tasks, orders, marketing, staff, money, ' +
   'status lookups, OR an emotion that is ABOUT someone else (a customer/staff being upset), ' +
   'OR any message that mixes a feeling with a concrete work request. ' +
-  'When unsure, answer "work". Reply with EXACTLY one word: personal or work.'
+  'When unsure, answer "work". Answer as JSON: {"classification":"personal"} or {"classification":"work"}.'
+
+/**
+ * Shared classifier call with PROVIDER-ENFORCED structured output — OpenRouter
+ * `response_format: json_schema` (strict) constrains the model to the schema at
+ * decode time, replacing the old "hope the model emits exactly one word, then
+ * substring-match it" parsing (the misroute class). If the routed host rejects
+ * the parameter, retry once WITHOUT it — the legacy keyword net below still
+ * parses a plain-word reply, so classification degrades instead of failing the
+ * turn. Returns the raw content string ('' on any error → caller fail-safes).
+ */
+async function classifierCompletion(opts: {
+  client: OpenAI
+  system: string
+  text: string
+  schemaName: string
+  schema: Record<string, unknown>
+  via: string
+  conversationId?: string
+}): Promise<string> {
+  const model = getModel(triageModelId())
+  const base = {
+    model: model.apiModel,
+    max_tokens: 24,
+    temperature: 0,
+    messages: [
+      { role: 'system' as const, content: opts.system },
+      { role: 'user' as const, content: opts.text.slice(0, 1500) },
+    ],
+  }
+  const structured = {
+    ...base,
+    response_format: {
+      type: 'json_schema' as const,
+      json_schema: { name: opts.schemaName, strict: true, schema: opts.schema },
+    },
+  }
+  const reqOptions = { signal: AbortSignal.timeout(8000) }
+  let resp
+  try {
+    resp = await opts.client.chat.completions.create(structured, reqOptions)
+  } catch (err) {
+    console.warn(
+      `[head-router] ${opts.via} structured output rejected → plain retry:`,
+      err instanceof Error ? err.message : err,
+    )
+    resp = await opts.client.chat.completions.create(base, reqOptions)
+  }
+  const usage = resp.usage
+  if (usage) {
+    void logCost({
+      provider: 'openai',
+      kind: 'chat',
+      units: {
+        input_tokens: usage.prompt_tokens ?? 0,
+        output_tokens: usage.completion_tokens ?? 0,
+        model: model.id,
+        via: opts.via,
+      },
+      costUsd: calcModelTurnCostUsd(model, {
+        inputTokens: usage.prompt_tokens ?? 0,
+        outputTokens: usage.completion_tokens ?? 0,
+      }),
+      conversationId: opts.conversationId ?? null,
+      dedupKey: `${opts.via}:${opts.conversationId ?? 'na'}:${Date.now()}`,
+    }).catch(() => {})
+  }
+  return resp.choices[0]?.message?.content ?? ''
+}
+
+/** Parse a strict-schema classifier reply; null when it isn't the expected JSON. */
+function parseClassifierField(content: string, field: string): string | null {
+  try {
+    const obj = JSON.parse(content) as Record<string, unknown>
+    const v = obj?.[field]
+    return typeof v === 'string' && v ? v : null
+  } catch {
+    return null
+  }
+}
 
 /**
  * Confirm (via the cheap triage model) whether an emotion-hinted message is the
@@ -171,40 +254,25 @@ const CLASSIFY_PERSONAL_SYSTEM =
 async function classifyIsPersonalEmotional(text: string, conversationId?: string): Promise<boolean> {
   const client = openRouterClient()
   if (!client) return false
-  const model = getModel(triageModelId())
   try {
-    const resp = await client.chat.completions.create(
-      {
-        model: model.apiModel,
-        max_tokens: 4,
-        temperature: 0,
-        messages: [
-          { role: 'system', content: CLASSIFY_PERSONAL_SYSTEM },
-          { role: 'user', content: text.slice(0, 1500) },
-        ],
+    const content = await classifierCompletion({
+      client,
+      system: CLASSIFY_PERSONAL_SYSTEM,
+      text,
+      schemaName: 'personal_classification',
+      schema: {
+        type: 'object',
+        properties: { classification: { type: 'string', enum: ['personal', 'work'] } },
+        required: ['classification'],
+        additionalProperties: false,
       },
-      { signal: AbortSignal.timeout(8000) },
-    )
-    const usage = resp.usage
-    if (usage) {
-      void logCost({
-        provider: 'openai',
-        kind: 'chat',
-        units: {
-          input_tokens: usage.prompt_tokens ?? 0,
-          output_tokens: usage.completion_tokens ?? 0,
-          model: model.id,
-          via: 'personal-classify',
-        },
-        costUsd: calcModelTurnCostUsd(model, {
-          inputTokens: usage.prompt_tokens ?? 0,
-          outputTokens: usage.completion_tokens ?? 0,
-        }),
-        conversationId: conversationId ?? null,
-        dedupKey: `personal-classify:${conversationId ?? 'na'}:${Date.now()}`,
-      }).catch(() => {})
-    }
-    const out = (resp.choices[0]?.message?.content ?? '').toLowerCase()
+      via: 'personal-classify',
+      conversationId,
+    })
+    const parsed = parseClassifierField(content, 'classification')
+    if (parsed) return parsed === 'personal'
+    // Legacy keyword net for plain-word replies (provider without structured output).
+    const out = content.toLowerCase()
     return out.includes('personal') && !out.includes('work')
   } catch (err) {
     console.warn('[head-router] personal-emotional classify failed → work:', err instanceof Error ? err.message : err)
@@ -280,7 +348,7 @@ const TRIAGE_SYSTEM =
   'discipline, multi-step tasks, planning or strategy, asking you to phone/call a person and relay a message ' +
   '(an outbound call, NOT a "remind me" note), or anything ambiguous, unclear, ' +
   'or where a wrong answer costs money or trust.\n' +
-  'When unsure between light and heavy, choose "heavy". Answer with EXACTLY one word: light, marketing, or heavy.'
+  'When unsure between light and heavy, choose "heavy". Answer as JSON: {"tier":"light"}, {"tier":"marketing"}, or {"tier":"heavy"}.'
 
 function openRouterClient(): OpenAI | null {
   const key = process.env.OPENROUTER_API_KEY?.trim()
@@ -296,41 +364,25 @@ function openRouterClient(): OpenAI | null {
 async function triageTier(text: string, conversationId?: string): Promise<HeadTier> {
   const client = openRouterClient()
   if (!client) return 'heavy'
-  const model = getModel(triageModelId())
   try {
-    const resp = await client.chat.completions.create(
-      {
-        model: model.apiModel,
-        max_tokens: 4,
-        temperature: 0,
-        messages: [
-          { role: 'system', content: TRIAGE_SYSTEM },
-          { role: 'user', content: text.slice(0, 1500) },
-        ],
+    const content = await classifierCompletion({
+      client,
+      system: TRIAGE_SYSTEM,
+      text,
+      schemaName: 'head_triage',
+      schema: {
+        type: 'object',
+        properties: { tier: { type: 'string', enum: ['light', 'marketing', 'heavy'] } },
+        required: ['tier'],
+        additionalProperties: false,
       },
-      { signal: AbortSignal.timeout(8000) },
-    )
-    const usage = resp.usage
-    if (usage) {
-      const costUsd = calcModelTurnCostUsd(model, {
-        inputTokens: usage.prompt_tokens ?? 0,
-        outputTokens: usage.completion_tokens ?? 0,
-      })
-      void logCost({
-        provider: 'openai',
-        kind: 'chat',
-        units: {
-          input_tokens: usage.prompt_tokens ?? 0,
-          output_tokens: usage.completion_tokens ?? 0,
-          model: model.id,
-          via: 'head-triage',
-        },
-        costUsd,
-        conversationId: conversationId ?? null,
-        dedupKey: `triage:${conversationId ?? 'na'}:${Date.now()}`,
-      }).catch(() => {})
-    }
-    const out = (resp.choices[0]?.message?.content ?? '').toLowerCase()
+      via: 'head-triage',
+      conversationId,
+    })
+    const parsed = parseClassifierField(content, 'tier')
+    if (parsed === 'marketing' || parsed === 'light' || parsed === 'heavy') return parsed
+    // Legacy keyword net for plain-word replies (provider without structured output).
+    const out = content.toLowerCase()
     if (out.includes('marketing')) return 'marketing'
     if (out.includes('light')) return 'light'
     return 'heavy'

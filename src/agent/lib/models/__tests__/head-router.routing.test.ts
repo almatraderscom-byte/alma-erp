@@ -41,6 +41,22 @@ describe('resolveHeadModelId — routine fast-path', () => {
     expect(decision.via).toBe('routine_kw')
   })
 
+  // 2026-07-14 word-boundary regression: bare 'ke'/'ase' used to match INSIDE
+  // words ('keno', 'karon ase'), silently routing non-routine questions to the
+  // cheap head. These must NOT take the routine fast-path.
+  it.each([
+    'notun design keno late hocche? karon ase?',
+    'কেন আজ delivery ase nai bolo to',
+  ])('a ke/ase substring inside another word is NOT a routine lookup: %s', async (msg) => {
+    const decision = await resolveHeadModelId({
+      requestedModelId: 'auto',
+      lastUserText: msg,
+      personalMode: false,
+      businessId: 'ALMA_LIFESTYLE',
+    })
+    expect(decision.via).not.toBe('routine_kw')
+  })
+
   it('a money keyword still forces the heavy head, never the cheap DeepSeek head', async () => {
     const decision = await resolveHeadModelId({
       requestedModelId: 'auto',
