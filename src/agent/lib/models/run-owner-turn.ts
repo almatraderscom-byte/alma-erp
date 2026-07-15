@@ -366,11 +366,48 @@ async function* runAlternateProviderTurn(
   // createdAt" (2026-07-12: the head bound the reply to the wrong question).
   type MatchedAskCard = { id: string; question: string; status: string; selectedOption: string | null; options: unknown; workflowRunId?: string | null }
   let matchedAskCard: MatchedAskCard | undefined
+  // AGENT-IOS-001 (client side): an option tap ships the tapped card's id as an
+  // `ask_card_ref` marker block on the user message row — bind to that EXACT card
+  // first, no text-match guessing (two recent cards can share an option like "হ্যাঁ").
+  let explicitAskCardId: string | null = null
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i] as { role?: string; content?: unknown }
+    if (r.role !== 'user') continue
+    if (Array.isArray(r.content)) {
+      const ref = (r.content as Array<{ type?: string; askCardId?: unknown }>)
+        .find((b) => b?.type === 'ask_card_ref' && typeof b.askCardId === 'string')
+      explicitAskCardId = (ref?.askCardId as string | undefined) ?? null
+    }
+    break
+  }
   if (!suppressWork && !listenMode && lastUserText) {
     try {
-      const recentCards: MatchedAskCard[] =
+      if (explicitAskCardId) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (prisma as any).agentAskCard.findMany({
+        const exact: (MatchedAskCard & { conversationId?: string }) | null =
+          await (prisma as any).agentAskCard.findUnique({
+            where: { id: explicitAskCardId },
+            select: { id: true, question: true, status: true, selectedOption: true, options: true, workflowRunId: true, conversationId: true },
+          })
+        if (exact && exact.conversationId === conversationId) {
+          if (!exact.selectedOption) {
+            // The answer-endpoint write raced/failed — record the tapped answer
+            // ourselves so the durable row and the anchoring note agree.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (prisma as any).agentAskCard.update({
+              where: { id: exact.id },
+              data: { status: 'answered', selectedOption: lastUserText.slice(0, 500) },
+            }).catch(() => {})
+            exact.status = 'answered'
+            exact.selectedOption = lastUserText.slice(0, 500)
+          }
+          matchedAskCard = exact
+        }
+      }
+      const recentCards: MatchedAskCard[] = matchedAskCard
+        ? []
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        : await (prisma as any).agentAskCard.findMany({
           where: { conversationId },
           orderBy: { createdAt: 'desc' },
           take: 5,
@@ -378,7 +415,7 @@ async function* runAlternateProviderTurn(
         })
       const matchesText = (opt: unknown): boolean =>
         typeof opt === 'string' && !!opt.trim() && lastUserText.startsWith(opt.trim().slice(0, 40))
-      matchedAskCard = recentCards.find((c) => matchesText(c.selectedOption))
+      if (!matchedAskCard) matchedAskCard = recentCards.find((c) => matchesText(c.selectedOption))
       if (!matchedAskCard) {
         // Race self-heal: the tapped option arrived as the message but the answer
         // write hasn't landed (or failed) — the card is still pending. Record it

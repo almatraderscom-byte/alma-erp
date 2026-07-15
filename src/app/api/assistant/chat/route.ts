@@ -65,6 +65,9 @@ interface ChatBody {
   /** Phase 3 idempotency key (client-generated UUID): one key → at most one
    * stored owner message and one turn, however many times the client retries. */
   clientMessageId?: string
+  /** AGENT-IOS-001 — the tapped ask-card's id: binds this message (the option
+   * text) to the EXACT question server-side, no text-match guessing. */
+  askCardId?: string
   /** Stable id shared by the direct web send and its VPS fallback. */
   clientRequestId?: string
   /** Structured, owner-session-only continuation. Never stored as a user message. */
@@ -212,6 +215,16 @@ export async function POST(req: NextRequest) {
   const clientMessageId =
     !isInternalCall && typeof body.clientMessageId === 'string' && body.clientMessageId.trim()
       ? body.clientMessageId.trim().slice(0, 64)
+      : null
+
+  // AGENT-IOS-001 (client side, additive): an ask-card option tap carries the
+  // tapped card's id, so the turn binds the answer to the EXACT question without
+  // text-match guessing. Stored as a marker block on the user message row —
+  // durable across the direct path AND the VPS worker replay (internal calls
+  // forward it in the job body). Clients that don't send it lose nothing.
+  const askCardRef =
+    typeof body.askCardId === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(body.askCardId.trim())
+      ? body.askCardId.trim()
       : null
   if (clientMessageId) {
     const dup = await findTurnByClientMessageId(clientMessageId)
@@ -409,6 +422,10 @@ export async function POST(req: NextRequest) {
             ? `[বস আপনার আগের এই মেসেজের রিপ্লাই দিয়ে লিখছেন — এই প্রসঙ্গেই উত্তর দিন:\n"${replyToText}"]\n\n${message}`
             : message,
         },
+        // AGENT-IOS-001 marker — read by run-owner-turn's ask-card resolution;
+        // invisible to clients and to the model (unknown block types are skipped
+        // by dbRowsToNeutral, the presentation builder and both chat clients).
+        ...(askCardRef ? [{ type: 'ask_card_ref', askCardId: askCardRef }] : []),
       ]
 
       // Vision pre-read: an image/PDF is transcribed ONCE by Gemini Flash (cheap) and

@@ -30,7 +30,7 @@ function turnEventChannel(turnId) {
  * @param {object|null} args.telegramBot
  */
 export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot }) {
-  const { turnId, conversationId, message, files, projectId, personalMode, clientRequestId } = job.data ?? {}
+  const { turnId, conversationId, message, files, projectId, personalMode, clientRequestId, askCardId } = job.data ?? {}
   if (!turnId || !conversationId || !message) {
     console.warn(`[worker] streamed-turn ${job?.id} — missing turnId/conversationId/message`)
     return
@@ -73,7 +73,7 @@ export async function runStreamedTurn({ supabase, job, redisUrl, telegramBot }) 
         'Content-Type': 'application/json',
         Authorization: `Bearer ${getInternalToken()}`,
       },
-      body: JSON.stringify({ conversationId, message, files, projectId, personalMode, turnId, clientRequestId }),
+      body: JSON.stringify({ conversationId, message, files, projectId, personalMode, turnId, clientRequestId, askCardId }),
       // Generous cap for genuinely long turns — this is the whole point of A2.
       signal: AbortSignal.timeout(25 * 60 * 1000),
     })

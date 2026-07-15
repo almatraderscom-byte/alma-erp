@@ -65,6 +65,21 @@ describe('buildAgentPresentationV1', () => {
     // Exactly ONE final block — the superseded draft is never counted as an answer.
     const finals = p.blocks.filter((b) => b.type === 'prose' && b.state === 'final')
     expect(finals).toHaveLength(1)
+    // Additive selfCorrected marker — drives the clients' "নিজে যাচাই করে
+    // ঠিক করেছে" badge from the canonical payload.
+    expect(p.selfCorrected).toBe(true)
+  })
+
+  it('selfCorrected: absent when no verification/superseded entry exists', () => {
+    const p = buildAgentPresentationV1({
+      messageId: MSG,
+      content: [{ type: 'text', text: 'সব ঠিক আছে Boss।' }],
+      timeline: [
+        { t: 'think', text: 'সরাসরি উত্তর দিই' },
+        { t: 'text', text: 'সব ঠিক আছে Boss।' },
+      ],
+    })
+    expect(p.selfCorrected).toBeUndefined()
   })
 
   it('status-tool-status-final: intentional progress prose stays chronological, never mislabelled final', () => {
