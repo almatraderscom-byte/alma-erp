@@ -21,6 +21,11 @@ describe('shouldAutoContinueTurn', () => {
       autoContinueFromTurnId: 'completed-turn-id',
     })).toBe(false)
     expect(shouldPersistIncomingMessage({ isResume: false, autoContinueFromTurnId: null })).toBe(true)
+    expect(shouldPersistIncomingMessage({
+      isResume: false,
+      autoContinueFromTurnId: null,
+      internalControl: true,
+    })).toBe(false)
   })
 
   it('does not treat a failed browser probe as unfinished browser work', () => {

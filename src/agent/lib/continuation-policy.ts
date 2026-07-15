@@ -38,6 +38,7 @@ export function shouldAutoContinueTurn(input: {
 export function shouldPersistIncomingMessage(input: {
   isResume: boolean
   autoContinueFromTurnId: string | null
+  internalControl?: boolean
 }): boolean {
-  return !input.isResume && !input.autoContinueFromTurnId
+  return !input.isResume && !input.autoContinueFromTurnId && input.internalControl !== true
 }
