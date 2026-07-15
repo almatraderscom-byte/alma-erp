@@ -42,6 +42,9 @@ function CopyButton({ text }: { text: string }) {
  */
 function ImageWithDownload({ src, alt }: { src?: string; alt?: string }) {
   const [busy, setBusy] = React.useState(false)
+  // Click = full-screen preview (owner ask 2026-07-15: "image e click korle boro
+  // hoy na, direct download lekha thake") — download stays as the corner button.
+  const [zoom, setZoom] = React.useState(false)
   const download = useCallback(async () => {
     if (!src || busy) return
     setBusy(true)
@@ -69,7 +72,12 @@ function ImageWithDownload({ src, alt }: { src?: string; alt?: string }) {
   return (
     <span className="group relative my-3 block overflow-hidden rounded-xl border border-border-subtle bg-bg-1">
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={src} alt={alt ?? ''} className="block h-auto w-full max-w-full" />
+      <img
+        src={src}
+        alt={alt ?? ''}
+        onClick={() => setZoom(true)}
+        className="block h-auto w-full max-w-full cursor-zoom-in"
+      />
       <button
         onClick={download}
         disabled={busy}
@@ -77,6 +85,24 @@ function ImageWithDownload({ src, alt }: { src?: string; alt?: string }) {
       >
         {busy ? '…' : '⬇ ডাউনলোড'}
       </button>
+      {zoom && (
+        <span
+          onClick={() => setZoom(false)}
+          className="fixed inset-0 z-[100] flex cursor-zoom-out items-center justify-center bg-black/85 p-6 backdrop-blur-sm"
+          role="dialog"
+          aria-label={alt || 'ছবির প্রিভিউ'}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={src} alt={alt ?? ''} className="max-h-full max-w-full rounded-2xl object-contain shadow-2xl" />
+          <button
+            onClick={(e) => { e.stopPropagation(); void download() }}
+            disabled={busy}
+            className="absolute bottom-6 left-1/2 -translate-x-1/2 rounded-full bg-card/85 backdrop-blur-md border border-border px-4 py-2 text-[12px] font-semibold text-cream transition-all hover:bg-[#E07A5F]/15 hover:text-[#E07A5F] active:scale-95 disabled:opacity-60"
+          >
+            {busy ? '…' : '⬇ ডাউনলোড'}
+          </button>
+        </span>
+      )}
     </span>
   )
 }

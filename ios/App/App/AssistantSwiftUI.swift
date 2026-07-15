@@ -2386,6 +2386,7 @@ final class AssistantVM {
         doc.serverId = "fix-a-doc"
         doc.createdAt = "2026-07-14T10:05:00.000Z"
         doc.text = "## ঈদ ক্যাম্পেইন প্ল্যান\n\n**লক্ষ্য:** ৭ দিনে ৳১,৫০,০০০ বিক্রি।\n\n"
+            + "![অফিস ক্যামেরা — Work Room](https://picsum.photos/seed/office/800/450)\n\n"
             + (1...14).map { "**ধাপ \(almaBn($0)):** কনটেন্ট তৈরি, অডিয়েন্স বাছাই, বাজেট ভাগ, ক্রিয়েটিভ টেস্ট আর ফলোআপ — প্রতিদিন সকাল ১০টায় রিপোর্ট।" }.joined(separator: "\n\n")
             + "\n\n**নোট:** প্রতিটা ধাপের ফলাফল রাতের রিপোর্টে যোগ হবে, আর বাজেট ছাড়ানোর আগে অনুমোদন কার্ড আসবে। শেষ দিনে পুরো ক্যাম্পেইনের লাভ-ক্ষতির হিসাব একসাথে দেখানো হবে।"
         rows.append(doc)
@@ -3137,20 +3138,54 @@ struct AgentMarkdownText: View {
         case paragraph(String)
         case code(lang: String, body: String)
         case table(String)
+        /// Markdown image `![alt](https://…)` — web parity: the agent embeds
+        /// camera snapshots / generated images as markdown; iOS used to show the
+        /// raw `![…](…)` text (owner report 2026-07-15).
+        case image(url: String, alt: String)
         var id: String {
             switch self {
             case .paragraph(let s): return "p\(s.hashValue)"
             case .code(let l, let b): return "c\(l.hashValue)\(b.hashValue)"
             case .table(let s): return "t\(s.hashValue)"
+            case .image(let u, _): return "i\(u.hashValue)"
             }
         }
     }
 
+    /// `![alt](https://url)` — matched over each plain-text block at flush time.
+    private static let mdImageRegex = try? NSRegularExpression(
+        pattern: "!\\[([^\\]]*)\\]\\((https?://[^)\\s]+)\\)")
+
+    /// Split a prose block around its markdown images: text-image-text order is
+    /// preserved; a block with no image stays one paragraph (zero extra work).
+    private static func appendSplittingImages(_ s: String, into out: inout [Segment]) {
+        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard trimmed.contains("!["), let re = mdImageRegex else {
+            out.append(.paragraph(s)); return
+        }
+        let ns = s as NSString
+        var cursor = 0
+        for m in re.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
+            let before = ns.substring(with: NSRange(location: cursor, length: m.range.location - cursor))
+            if !before.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                out.append(.paragraph(before.trimmingCharacters(in: .whitespacesAndNewlines)))
+            }
+            out.append(.image(url: ns.substring(with: m.range(at: 2)),
+                              alt: ns.substring(with: m.range(at: 1))))
+            cursor = m.range.location + m.range.length
+        }
+        let rest = ns.substring(from: cursor)
+        if !rest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            out.append(.paragraph(rest.trimmingCharacters(in: .whitespacesAndNewlines)))
+        }
+    }
+
     private var segments: [Segment] {
-        // Roadmap 2.4 fast path: in-flight prose usually has no fences/tables —
-        // skip the split/scan work on every streaming re-render (≤25/s) and
-        // return one paragraph. Settled/selectable text takes the full path.
-        if !selectable && !text.contains("```"),
+        // Roadmap 2.4 fast path: in-flight prose usually has no fences/tables/
+        // images — skip the split/scan work on every streaming re-render (≤25/s)
+        // and return one paragraph. Settled/selectable text takes the full path.
+        if !selectable && !text.contains("```"), !text.contains("!["),
            !text.contains("\n|"), !text.hasPrefix("|") {
             return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? [] : [.paragraph(text)]
@@ -3168,7 +3203,7 @@ struct AgentMarkdownText: View {
                 // plain text — pull out contiguous table blocks
                 var buf: [String] = []
                 var tbl: [String] = []
-                func flushBuf() { let s = buf.joined(separator: "\n"); if !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { out.append(.paragraph(s)) }; buf = [] }
+                func flushBuf() { Self.appendSplittingImages(buf.joined(separator: "\n"), into: &out); buf = [] }
                 func flushTbl() { if !tbl.isEmpty { out.append(.table(tbl.joined(separator: "\n"))); tbl = [] } }
                 for line in part.components(separatedBy: "\n") {
                     if line.trimmingCharacters(in: .whitespaces).hasPrefix("|") { flushBuf(); tbl.append(line) }
@@ -3187,6 +3222,10 @@ struct AgentMarkdownText: View {
                 case .paragraph(let s): paragraph(s)
                 case .code(let lang, let body): codeCard(lang: lang, body: body)
                 case .table(let s): tableCard(s)
+                case .image(let url, _):
+                    // Framed chat image, tap → full-screen pinch-zoom viewer
+                    // (web ImageWithDownload parity).
+                    AgentToolScreenshotThumb(urlString: url, maxHeight: 300, fit: true)
                 }
             }
         }
@@ -5050,6 +5089,9 @@ struct AgentAskCardsPager: View {
 struct AgentToolScreenshotThumb: View {
     let urlString: String
     var maxHeight: CGFloat = 190
+    /// `.fit` mode for in-prose chat images (whole image visible, letterboxed);
+    /// default `.fill` crop suits wide browser screenshots under tool rows.
+    var fit = false
     @State private var preview: PortalImagePreview?
     @State private var failed = false
 
@@ -5065,8 +5107,8 @@ struct AgentToolScreenshotThumb: View {
                     switch phase {
                     case .success(let img):
                         img.resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(maxWidth: .infinity, maxHeight: maxHeight, alignment: .top)
+                            .aspectRatio(contentMode: fit ? .fit : .fill)
+                            .frame(maxWidth: .infinity, maxHeight: maxHeight, alignment: fit ? .leading : .top)
                             .clipped()
                     case .failure:
                         Color.clear.frame(height: 1).onAppear { failed = true }
