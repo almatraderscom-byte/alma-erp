@@ -1222,13 +1222,29 @@ async function actWithRetry(tabId, func, arg) {
 
 // Wait until the tab finishes loading (status === 'complete') instead of a blind
 // fixed sleep — fast pages proceed immediately, slow ones get up to timeoutMs.
-async function waitForTabLoad(tabId, timeoutMs) {
+function tabReachedNavigation(tab, expectedUrl, previousUrl) {
+  const actual = String((tab && (tab.pendingUrl || tab.url)) || '')
+  if (!expectedUrl) return actual && !actual.startsWith('about:')
+  try {
+    const wanted = new URL(expectedUrl)
+    const current = new URL(actual)
+    const wantedHost = wanted.hostname.replace(/^www\./, '')
+    const currentHost = current.hostname.replace(/^www\./, '')
+    // Normal http→https / www redirects stay on the same host. Cross-host auth
+    // redirects are also valid once the tab has actually left the previous URL.
+    return currentHost === wantedHost || (actual !== previousUrl && /^https?:/i.test(actual))
+  } catch {
+    return actual !== previousUrl && /^https?:/i.test(actual)
+  }
+}
+
+async function waitForTabLoad(tabId, timeoutMs, expectedUrl, previousUrl) {
   const deadline = Date.now() + timeoutMs
   await new Promise((r) => setTimeout(r, 350)) // let the navigation actually begin
   while (Date.now() < deadline) {
     try {
       const t = await chrome.tabs.get(tabId)
-      if (t && t.status === 'complete') {
+      if (t && t.status === 'complete' && tabReachedNavigation(t, expectedUrl, previousUrl)) {
         // Heavy SPAs (Facebook etc.) fire 'complete' on the skeleton — give client
         // rendering a real beat so reads/screenshots see actual content.
         await new Promise((r) => setTimeout(r, 1500))
@@ -1378,6 +1394,7 @@ async function executeCommand(cmd) {
 
   if (action === 'navigate') {
     if (!/^https?:\/\//i.test(cmd.url || '')) return { ok: false, error: 'navigate needs http(s) url' }
+    const previousUrl = tab.url || ''
     await chrome.tabs.update(tab.id, { url: cmd.url })
     // Front the ALMA tab (inside the owner's own window) so he SEES each page as
     // it loads — Claude-in-Chrome behaviour. Screenshots don't need this (CDP
@@ -1387,7 +1404,14 @@ async function executeCommand(cmd) {
     } catch {
       /* tab gone — next getAgentTab recreates */
     }
-    await waitForTabLoad(tab.id, 15000)
+    await waitForTabLoad(tab.id, 15000, cmd.url, previousUrl)
+    const landed = await chrome.tabs.get(tab.id).catch(() => null)
+    if (!landed || !tabReachedNavigation(landed, cmd.url, previousUrl)) {
+      return {
+        ok: false,
+        error: `navigation_not_committed: tab stayed at ${String(landed && landed.url || previousUrl || 'unknown')}`,
+      }
+    }
     await showOverlay(tab.id, 'পেজ খুলছে: ' + cmd.url.replace(/^https?:\/\//, '').slice(0, 48))
     return { ok: true, data: { url: cmd.url } }
   }
@@ -1407,10 +1431,18 @@ async function executeCommand(cmd) {
     return { ok: true, screenshot: dataUrl }
   }
   if (action === 'read_text') {
+    const current = await chrome.tabs.get(tab.id).catch(() => null)
+    if (!current || !/^https?:\/\//i.test(current.url || '')) {
+      return { ok: false, error: `tab_not_readable: ${String(current && current.url || 'missing')}` }
+    }
     await showOverlay(tab.id, 'পেজ পড়ছে…')
     return { ok: true, data: await runInPage(tab.id, pageReadText) }
   }
   if (action === 'read_dom') {
+    const current = await chrome.tabs.get(tab.id).catch(() => null)
+    if (!current || !/^https?:\/\//i.test(current.url || '')) {
+      return { ok: false, error: `tab_not_readable: ${String(current && current.url || 'missing')}` }
+    }
     await showOverlay(tab.id, 'পেজ দেখছে…')
     return { ok: true, data: await runInPage(tab.id, pageReadDom) }
   }

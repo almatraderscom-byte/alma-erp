@@ -18,6 +18,7 @@ import {
   type WorkflowRunView,
 } from './workflow-run'
 import type { OwnerTurnRequirements } from './owner-turn-requirements'
+import { extractClientSeoBrowserEvidenceUrl } from './client-seo-browser-evidence'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -76,7 +77,7 @@ function eventFromTool(toolName: string, input: Record<string, unknown>, data: u
   const d = (data ?? {}) as Record<string, unknown>
   if (toolName === 'live_browser_act') return { type: 'browser_act' }
   if (toolName === 'live_browser_look') {
-    const url = typeof d.currentUrl === 'string' ? d.currentUrl : ''
+    const url = extractClientSeoBrowserEvidenceUrl(input, d)
     if (!url) return null
     return {
       type: 'browser_look',
@@ -210,6 +211,18 @@ export async function guardClientSeoBatchTool(
       const wanted = new URL(String(input.url ?? '')).hostname.replace(/^www\./, '')
       const current = new URL(target.url).hostname.replace(/^www\./, '')
       if (wanted !== current) return { guard: 'client_seo_wrong_browser_target', error: `WORKFLOW_BLOCKED: 1-by-1 order অনুযায়ী এখন ${target.url} browse করতে হবে।` }
+    } catch { /* normal schema validation handles it */ }
+  }
+  if (toolName === 'live_browser_look' && typeof input.url === 'string' && target) {
+    try {
+      const wanted = new URL(input.url).hostname.replace(/^www\./, '')
+      const current = new URL(target.url).hostname.replace(/^www\./, '')
+      if (wanted !== current) {
+        return {
+          guard: 'client_seo_wrong_browser_target',
+          error: `WORKFLOW_BLOCKED: 1-by-1 order অনুযায়ী এখন ${target.url} browse করতে হবে; ${input.url} পরে।`,
+        }
+      }
     } catch { /* normal schema validation handles it */ }
   }
   return null

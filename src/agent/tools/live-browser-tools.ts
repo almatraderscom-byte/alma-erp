@@ -360,10 +360,15 @@ const live_browser_look: AgentTool = {
       // advisory in this one read.
       const { sandwichWrap, scanForInjection, injectionWarningBn } = await import('@/agent/lib/live-browser/guard')
       let pageUrl: string | undefined
+      let textReadOk = false
+      let domReadOk = false
       if (want === 'text' || want === 'both') {
         let r = await runCommand(dev.deviceId, 'read_text')
         // up to 2 settle retries (≈2s apart) while the page still reads as a placeholder
         for (let retry = 0; retry < 2; retry++) {
+          // A transport/tab read failure is not a loading placeholder. Retrying
+          // it silently was the visible 3x loop; stop immediately and report it.
+          if (!r.ok) break
           const t = r.ok ? String((r.data as { text?: string } | undefined)?.text ?? '') : ''
           if (r.ok && !looksUnsettled(t)) break
           await runCommand(dev.deviceId, 'wait', { ms: 2000 })
@@ -371,6 +376,7 @@ const live_browser_look: AgentTool = {
           if (again.ok) { r = again; steps.push(`settle-retry:${retry + 1}`) }
         }
         if (r.ok) {
+          textReadOk = true
           const pageData = r.data as { url?: string; text?: string } | undefined
           if (pageData?.url) pageUrl = pageData.url
           const rawText = typeof pageData?.text === 'string' ? pageData.text : JSON.stringify(pageData ?? {})
@@ -393,6 +399,7 @@ const live_browser_look: AgentTool = {
       if (want === 'dom' || want === 'both') {
         const r = await runCommand(dev.deviceId, 'read_dom')
         if (r.ok) {
+          domReadOk = true
           const domData = r.data as { url?: string; elements?: unknown } | undefined
           if (domData?.url) pageUrl = pageUrl ?? domData.url
           const elements = domData?.elements ?? r.data
@@ -444,6 +451,24 @@ const live_browser_look: AgentTool = {
         if (shot.ok) {
           out.screenshotUrl = await persistScreenshot(shot.screenshot)
           visionImage = splitDataUrl(shot.screenshot)
+        }
+      }
+
+      // A screenshot alone is not browser evidence. The Companion heartbeat can
+      // be healthy while the controlled tab is still about:blank/error-page.
+      // Previously both reads failed but this tool returned success=true, so the
+      // workflow forced another look forever and the head falsely implied the
+      // extension was OFF. Surface one truthful, terminal tool failure instead.
+      if (!textReadOk && !domReadOk) {
+        const details = [out.textError, out.domError].filter(Boolean).map(String).join(' | ')
+        return {
+          success: false,
+          error:
+            'LIVE_BROWSER_READ_FAILED: Server Companion heartbeat পাচ্ছে, তাই extension OFF বলা নিষেধ। ' +
+            `কিন্তু controlled tab-এর page content পড়া যায়নি${details ? ` (${details})` : ''}। ` +
+            'এই turn-এ আর live_browser_look repeat করবে না; exact read failure Boss-কে বলবে।',
+          data: out,
+          ...(visionImage ? { image: visionImage } : {}),
         }
       }
 

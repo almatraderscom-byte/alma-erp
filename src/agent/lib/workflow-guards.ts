@@ -48,6 +48,7 @@ export const WORKFLOW_GUARDED_TOOLS = new Set([
   'generate_image',
   'delegate_to_specialist',
   'live_browser_act',
+  'live_browser_look',
   'run_website_seo_audit',
   'check_website_seo_audit',
   'complete_skill_pack_run',
@@ -244,6 +245,7 @@ export async function checkWorkflowGuards(
       ctx.driveClientSeoBatch
       && (
         toolName === 'live_browser_act'
+        || toolName === 'live_browser_look'
         || toolName === 'run_website_seo_audit'
         || toolName === 'check_website_seo_audit'
         || toolName === 'complete_skill_pack_run'

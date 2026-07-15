@@ -86,6 +86,7 @@ vi.mock('@/lib/prisma', () => ({
 
 import { checkWorkflowGuards, onWorkflowToolExecuted } from '../workflow-guards'
 import { createWorkflowRun, updateWorkflowFacts } from '../workflow-run'
+import { createClientSeoBatchFacts } from '../client-seo-batch-state'
 
 beforeEach(() => {
   store.workflowRun.length = 0
@@ -225,6 +226,29 @@ describe('repeated_navigation guard (§H)', () => {
   it('never touches non-navigate actions', async () => {
     await seedBrowserRun({ currentUrl: 'https://x.com', lastActionOk: true, lastActionAt: new Date().toISOString() })
     expect(await checkWorkflowGuards('live_browser_act', { action: 'click', text: 'Next' }, ctx)).toBeNull()
+  })
+})
+
+describe('ordered client SEO browser guard', () => {
+  it('blocks live_browser_look from jumping to the second target', async () => {
+    await createWorkflowRun({
+      conversationId: 'conv1',
+      kind: 'client_seo_batch',
+      goal: 'দুইটি site audit',
+      state: 'target_1_browser_walk',
+      facts: createClientSeoBatchFacts(['https://one.com', 'https://two.com'], {
+        requireLiveBrowser: true,
+        requireArtifact: true,
+      }) as unknown as Record<string, unknown>,
+      nextAllowedTools: ['live_browser_act'],
+    })
+    const block = await checkWorkflowGuards(
+      'live_browser_look',
+      { url: 'https://two.com', want: 'both' },
+      { ...ctx, driveClientSeoBatch: true },
+    )
+    expect(block?.guard).toBe('client_seo_wrong_browser_target')
+    expect(block?.error).toContain('https://one.com')
   })
 })
 
