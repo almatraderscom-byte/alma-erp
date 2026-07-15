@@ -860,6 +860,9 @@ final class AssistantVM {
     var personalMode = false
     /// done.needContinue arrived — fire one bounded machine "continue" after settle.
     private var pendingAutoContinue = false
+    /// The durable predecessor turn that the server marked as continuation-eligible.
+    /// This must be sent as control state, never as a visible owner message.
+    private var pendingAutoContinueTurnId: String?
     private var autoContinueCount = 0
 
     // ── PR 5: durable-turn client state ─────────────────────────────────────
@@ -1385,6 +1388,14 @@ final class AssistantVM {
             // We believed a turn was live. Is this terminal row OUR turn, or a stale
             // previous one (our send may have died before the server created a turn)?
             if isTerminalForOurTurn(status) {
+                // Polling is the LAST discovery path — the done event (needContinue +
+                // predecessor) never reached apply() here, so arm the structured
+                // continuation from the server's own snapshot. claimContinuationTurn
+                // keeps the claim exactly-once even if the event path also armed it.
+                if status.continuationNeeded == true, status.status == "done", let tid = status.turnId {
+                    pendingAutoContinue = true
+                    pendingAutoContinueTurnId = tid
+                }
                 await finishRecovery(terminalStatus: status.status ?? "done")
             } else if trigger == "transport-drop" {
                 // Bounded proof: turn creation can lag the send by a few seconds
@@ -1522,6 +1533,13 @@ final class AssistantVM {
         if terminalStatus == "error" {
             errorToast = "সমস্যা হয়েছে — আবার চেষ্টা করুন"
         }
+        // A LONG turn's direct SSE routinely drops mid-flight, so its done event
+        // (with needContinue + predecessor id) arrives through THIS recovery tail —
+        // only the direct-stream path fired the structured continuation, stranding
+        // the server's continuation_needed=true forever (live 2026-07-15: turn
+        // f2dfdc5d finished eligible and unclaimed). Same guarded no-op when no
+        // continuation is pending.
+        fireAutoContinueIfNeeded()
     }
 
     /// The send never became a server turn — keep the owner's message row, drop the
@@ -1818,6 +1836,10 @@ final class AssistantVM {
         /// premium model (approve) or the cheap fallback (decline). No new message.
         struct Resume: Encodable { let approve: Bool; var fallbackModelId: String? = nil }
         var resume: Resume? = nil
+        /// Server-claimed continuation of a completed turn. When present, the
+        /// route creates no owner message and atomically consumes the predecessor
+        /// continuation flag (web parity).
+        var autoContinueFromTurnId: String? = nil
     }
 
     /// PR 3b — owner tapped the model-switch card: resume the paused turn on the
@@ -1848,20 +1870,29 @@ final class AssistantVM {
         }
     }
 
-    func send(_ raw: String, isAutoContinue: Bool = false, askCardId: String? = nil) {
-        if !isAutoContinue { autoContinueCount = 0 }   // manual message resets the budget
+    func send(_ raw: String, isAutoContinue: Bool = false, askCardId: String? = nil, autoContinueFromTurnId: String? = nil) {
+        if !isAutoContinue {
+            autoContinueCount = 0
+            pendingAutoContinue = false
+            pendingAutoContinueTurnId = nil
+        }   // manual message resets the budget and cancels a queued machine turn
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let structuredAutoContinue = isAutoContinue && autoContinueFromTurnId != nil
         let readyFiles: [AgentFileRef] = pendingFiles.compactMap {
             if case .ready(let ref) = $0.state { return ref } else { return nil }
         }
-        guard !text.isEmpty || !readyFiles.isEmpty, !isStreaming else { return }
+        guard !text.isEmpty || !readyFiles.isEmpty || structuredAutoContinue, !isStreaming else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
 
-        var userMsg = AgentChatMessage(id: "local-\(UUID().uuidString)", role: .user, text: text)
-        userMsg.localImages = pendingFiles.compactMap {
-            if case .failed = $0.state { return nil } else { return $0.image }
+        // A structured continuation is server control state, not a new owner
+        // message. Rendering a bubble here was the native-only duplicate-turn bug.
+        if !structuredAutoContinue {
+            var userMsg = AgentChatMessage(id: "local-\(UUID().uuidString)", role: .user, text: text)
+            userMsg.localImages = pendingFiles.compactMap {
+                if case .failed = $0.state { return nil } else { return $0.image }
+            }
+            messages.append(userMsg)
         }
-        messages.append(userMsg)
         pendingFiles = []
         isStreaming = true
         thinkingLive = true
@@ -1873,16 +1904,19 @@ final class AssistantVM {
         ownSendTick += 1
         // PR 5 — idempotency key: however transport fails, THIS send can only ever
         // become one server message + one turn + one execution.
-        let clientMessageId = UUID().uuidString
+        let clientMessageId = structuredAutoContinue ? nil : UUID().uuidString
         currentClientMessageId = clientMessageId
         seqBox.value = -1
         sawTerminalEvent = false
-        AlmaTurnLog.event("turn.submit", clientMessageId)
+        AlmaTurnLog.event("turn.submit", structuredAutoContinue
+                          ? "auto-continuation:\(autoContinueFromTurnId!)"
+                          : (clientMessageId ?? "manual"))
         ensureStreamingTail()
 
         let body = ChatBody(conversationId: conversationId, message: text,
                             files: readyFiles, modelId: modelId ?? "auto",
-                            clientMessageId: clientMessageId, askCardId: askCardId)
+                            clientMessageId: clientMessageId, askCardId: askCardId,
+                            autoContinueFromTurnId: autoContinueFromTurnId)
         streamTask = Task { [weak self] in
             await self?.runTurn(body: body)
         }
@@ -1917,6 +1951,13 @@ final class AssistantVM {
                     try await AssistantNet.streamEvents(request: req, buffer: buffer, firstEvent: firstEvent)
                 }
             } catch is WatchdogTimeout {
+                // A continuation has already been atomically claimed by the
+                // direct /chat route. The legacy worker handoff requires a
+                // user message and would turn this control action into a second
+                // owner-authored job, so never fall back by inventing one.
+                if body.autoContinueFromTurnId != nil {
+                    throw WatchdogTimeout()
+                }
                 try await runWorkerFallback(body: body, buffer: buffer)
             } catch AlmaAPIError.notAuthenticated {
                 // One cookie refresh + retry, mirroring AlmaAPI.perform. The retry
@@ -2236,7 +2277,17 @@ final class AssistantVM {
                     if let roundCostsUsd { messages[i].roundCostsUsd = roundCostsUsd }
                     if let costUsd, costUsd > 0 { messages[i].costUsd = String(format: "%.4f", costUsd) }
                 }
-                if needContinue { pendingAutoContinue = true }
+                if needContinue {
+                    // The server emits turn_id before done. Refuse to schedule a
+                    // continuation without that durable predecessor id: a plain
+                    // "continue" message is never a safe fallback.
+                    if let predecessor = currentTurnId {
+                        pendingAutoContinue = true
+                        pendingAutoContinueTurnId = predecessor
+                    } else {
+                        AlmaTurnLog.event("turn.autoContinueSkipped", "missing-predecessor-turn-id")
+                    }
+                }
                 sawTerminalEvent = true
                 thinkingLive = false
                 settleLiveMode()
@@ -2284,6 +2335,11 @@ final class AssistantVM {
     private func fireAutoContinueIfNeeded() {
         guard pendingAutoContinue else { return }
         pendingAutoContinue = false
+        guard let predecessor = pendingAutoContinueTurnId else {
+            AlmaTurnLog.event("turn.autoContinueSkipped", "missing-predecessor-turn-id")
+            return
+        }
+        pendingAutoContinueTurnId = nil
         guard autoContinueCount < Self.maxAutoContinues else {
             errorToast = "কাজটা লম্বা — অটো-continue সীমা শেষ। \"continue\" লিখলে বাকিটা এগোবে।"
             return
@@ -2293,7 +2349,8 @@ final class AssistantVM {
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             guard let self, !self.isStreaming else { return }
-            self.send(Self.autoContinueText, isAutoContinue: true)
+            self.send(Self.autoContinueText, isAutoContinue: true,
+                      autoContinueFromTurnId: predecessor)
         }
     }
 
@@ -4145,7 +4202,7 @@ struct AgentThoughtProcessSheet: View {
     @ViewBuilder private func summaryItemRow(_ item: SummaryItem, index: Int, isLast: Bool, pal: AgentPalette) -> some View {
         let open = openItems.contains(index)
         let hasDetail = (item.body?.isEmpty == false) || (item.input?.isEmpty == false)
-            || (item.output?.isEmpty == false)
+            || (item.output?.isEmpty == false) || (item.shot?.isEmpty == false)
         HStack(alignment: .top, spacing: 12) {
             VStack(spacing: 2) {
                 Image(systemName: item.icon)
@@ -4193,6 +4250,11 @@ struct AgentThoughtProcessSheet: View {
                             .lineSpacing(5)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    // The step's browser screenshot survives the collapse (owner
+                    // report 2026-07-15: labels alone read as "screenshots lost").
+                    if let shot = item.shot, !shot.isEmpty {
+                        AgentToolScreenshotThumb(urlString: shot)
                     }
                     if let input = item.input, !input.isEmpty {
                         sheetIOBlock(label: "ইনপুট · INPUT", text: input, pal: pal, failed: false)
@@ -4246,6 +4308,9 @@ struct AgentThoughtProcessSheet: View {
         let output: String?
         let isThought: Bool
         let failed: Bool
+        /// Browser-step screenshot URL (owner report 2026-07-15: the collapsed-steps
+        /// sheet listed only labels, so the earlier sites' screenshots looked lost).
+        var shot: String? = nil
         var tint: Color {
             if failed { return .red }
             if icon == "magnifyingglass" { return Color(red: 0.831, green: 0.659, blue: 0.294) } // gold
@@ -4273,7 +4338,7 @@ struct AgentThoughtProcessSheet: View {
                 guard !line.isEmpty else { continue }
                 if pendingThink == nil { pendingThink = line }
                 else { pendingThink! += "\n\n" + line }
-            case .tool(let id, let name, let ok, _, let input, let result, _):
+            case .tool(let id, let name, let ok, _, let input, let result, let shot):
                 flushThink()
                 if !sawSearch {
                     out.append(.init(icon: "magnifyingglass", title: "Searched available tools",
@@ -4286,7 +4351,8 @@ struct AgentThoughtProcessSheet: View {
                                  body: nil,
                                  input: input ?? tool?.inputPretty,
                                  output: result ?? tool?.resultFull ?? tool?.preview,
-                                 isThought: false, failed: ok == false))
+                                 isThought: false, failed: ok == false,
+                                 shot: shot ?? tool?.screenshot))
             case .text:
                 // Prose lives in the message body — the activity summary only lists steps.
                 continue
@@ -5124,18 +5190,30 @@ struct AgentToolScreenshotThumb: View {
                 preview = PortalImagePreview(urls: [urlString], index: 0)
             } label: {
                 AsyncImage(url: URL(string: urlString)) { phase in
+                    // Placeholder and loaded image render at the SAME height: a lazy
+                    // chat row whose height jumps when the image arrives shifts the
+                    // whole scroll geometry — that jump is one root of the 2026-07-15
+                    // scroll-bounce/freeze diagnosis. Reserve the box up front.
                     switch phase {
                     case .success(let img):
-                        img.resizable()
-                            .aspectRatio(contentMode: fit ? .fit : .fill)
-                            .frame(maxWidth: .infinity, maxHeight: maxHeight, alignment: fit ? .leading : .top)
+                        // Fixed-size stage + overlay: the image can NEVER dictate row
+                        // geometry (2026-07-15 owner report: a wide screenshot pushed
+                        // the card past the screen edge when the image sized the frame).
+                        Color.clear
+                            .frame(maxWidth: .infinity)
+                            .frame(height: maxHeight)
+                            .overlay(alignment: fit ? .leading : .top) {
+                                img.resizable()
+                                    .aspectRatio(contentMode: fit ? .fit : .fill)
+                                    .frame(maxWidth: .infinity, maxHeight: maxHeight, alignment: fit ? .leading : .top)
+                            }
                             .clipped()
                     case .failure:
                         Color.clear.frame(height: 1).onAppear { failed = true }
                     default:
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(Color.white.opacity(0.06))
-                            .frame(height: 110)
+                            .frame(height: maxHeight)
                             .redacted(reason: .placeholder)
                     }
                 }
@@ -7205,6 +7283,7 @@ struct AssistantScreen: View {
     /// 1.4: ONE cancelable debounce task owns bottom-scrolling (the old
     /// generation-counter fan-out left every superseded task alive on MainActor).
     @State private var scrollDebounceTask: Task<Void, Never>?
+    @State private var scrollSettleTask: Task<Void, Never>?
     @State private var showArtifacts = false
     /// DEBUG self-test hook (ALMA_ASSISTANT_VIEWERTEST=1) — presents the zoomable
     /// image viewer with its সংরক্ষণ button for a headless fixture screenshot.
@@ -7310,9 +7389,16 @@ struct AssistantScreen: View {
                 // compared content maxY against UIScreen height, but the scroll
                 // viewport is ~200pt shorter (composer + tab bar + header), so the
                 // arrow only appeared after a long scroll-up — it read as missing.
-                .background(GeometryReader { g in
-                    Color.clear.preference(key: AgentScrollViewportKey.self, value: g.size.height)
-                })
+                // iOS 17 ONLY — on 18+ onScrollGeometryChange owns nearBottom and
+                // this per-layout-pass preference channel fed the AttributeGraph
+                // update cycle that froze the app (2026-07-15 hang samples).
+                .background {
+                    if #unavailable(iOS 18.0) {
+                        GeometryReader { g in
+                            Color.clear.preference(key: AgentScrollViewportKey.self, value: g.size.height)
+                        }
+                    }
+                }
                 .onPreferenceChange(AgentScrollViewportKey.self) { h in
                     if h > 0, abs(h - scrollViewportH) > 0.5 { scrollViewportH = h }
                 }
@@ -7351,16 +7437,14 @@ struct AssistantScreen: View {
                 // The owner's OWN send always jumps to the tail (Claude-app feel),
                 // even if he had scrolled up — user-initiated, unlike merges.
                 .onChange(of: vm.ownSendTick) { _, _ in
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(Self.bottomID, anchor: .bottom)
-                    }
+                    scrollToBottomConverging(proxy: proxy)
                 }
                 .overlay(alignment: .bottom) {
                     // Web parity: centered 40pt frosted circle just above the composer.
                     if !nearBottom {
                         Button {
                             UISelectionFeedbackGenerator().selectionChanged()
-                            withAnimation { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+                            scrollToBottomConverging(proxy: proxy)
                         } label: {
                             Image(systemName: "arrow.down")
                                 .font(.system(size: 14, weight: .semibold))
@@ -7517,6 +7601,24 @@ struct AssistantScreen: View {
         }
     }
 
+    /// Animated jump + two non-animated settle passes. A single scrollTo computes
+    /// its target from ESTIMATED lazy-row heights; rows mounting mid-animation
+    /// (large markdown, image thumbs) grow the content so the landing falls short
+    /// of the true bottom — the owner-reported "bounce back up" (2026-07-15).
+    /// The settle passes re-anchor after the heights have resolved.
+    private func scrollToBottomConverging(proxy: ScrollViewProxy) {
+        withAnimation { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+        scrollSettleTask?.cancel()
+        scrollSettleTask = Task { @MainActor in
+            for delayMs: Int64 in [350, 800] {
+                try? await Task.sleep(for: .milliseconds(delayMs))
+                guard !Task.isCancelled else { return }
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+            }
+        }
+    }
+
     private func scheduleScrollToBottom(proxy: ScrollViewProxy) {
         scrollDebounceTask?.cancel()
         scrollDebounceTask = Task { @MainActor in
@@ -7528,13 +7630,19 @@ struct AssistantScreen: View {
         }
     }
 
-    private var scrollOffsetReader: some View {
-        GeometryReader { g in
-            // Raw content maxY in the scroll view's own space; the reader above
-            // subtracts the MEASURED viewport height (never UIScreen).
-            Color.clear.preference(
-                key: AgentScrollBottomKey.self,
-                value: g.frame(in: .named("agentscroll")).maxY)
+    @ViewBuilder private var scrollOffsetReader: some View {
+        // iOS 17 ONLY — the 18+ path never reads AgentScrollBottomKey, but the
+        // GeometryReader still re-emitted it on every layout pass of the giant
+        // lazy thread, participating in the 2026-07-15 freeze cycle. Don't even
+        // attach it where it has no consumer.
+        if #unavailable(iOS 18.0) {
+            GeometryReader { g in
+                // Raw content maxY in the scroll view's own space; the reader above
+                // subtracts the MEASURED viewport height (never UIScreen).
+                Color.clear.preference(
+                    key: AgentScrollBottomKey.self,
+                    value: g.frame(in: .named("agentscroll")).maxY)
+            }
         }
     }
 
