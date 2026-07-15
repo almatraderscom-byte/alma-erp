@@ -27,6 +27,15 @@ const nextConfig = {
     ],
   },
   poweredByHeader: false,
+  // 2026-07-16 build-hang fix: `next build`'s combined "Linting and checking
+  // validity of types" stage intermittently deadlocks on Vercel's 4-core box
+  // (three 30-45m hung deploys on 2026-07-15/16, one of them production, all
+  // wedged at exactly this stage; the same commit + same restored cache also
+  // built in 4-6m, so it is a worker hang, not our code). Correctness moved to
+  // CI: the Agent PR Gate runs `tsc --noEmit` + `next lint` on every PR, so
+  // the deploy build only builds. Do NOT remove without re-checking the hang.
+  eslint: { ignoreDuringBuilds: true },
+  typescript: { ignoreBuildErrors: true },
   compress: true,
   env: {
     /** Surfaced by /api/health + optional client reads */
