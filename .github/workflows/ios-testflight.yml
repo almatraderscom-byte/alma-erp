@@ -4,9 +4,12 @@
 #
 # Signing: Xcode cloud signing via an App Store Connect API key
 # (-allowProvisioningUpdates). No certificate export needed on the Mac.
-# Build numbers: Xcode's manageAppVersionAndBuildNumber (default) asks App
-# Store Connect for the next free build number, so no collisions with builds
-# uploaded from the owner's Mac.
+# Build numbers: GIT is the source of truth. manageAppVersionAndBuildNumber is
+# OFF so the upload carries exactly the committed CURRENT_PROJECT_VERSION —
+# the repo rule is "build number in git must always equal the number on
+# TestFlight" (that traceability is what the builds 63–69 feature losses cost
+# us). Bump + commit + push BEFORE running this workflow; a number already used
+# on App Store Connect will be rejected, which is the desired loud failure.
 #
 # Required repository secrets (Settings → Secrets and variables → Actions):
 #   ASC_KEY_ID      — App Store Connect API key ID (e.g. ABC123XYZ)
@@ -59,6 +62,13 @@ jobs:
         working-directory: ios/App
         run: pod install
 
+      - name: Stamp the built commit into Info.plist (forensics parity with the Mac path)
+        run: |
+          PLIST=ios/App/App/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :ALMAGitCommit ${GITHUB_SHA}" "$PLIST" 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Add :ALMAGitCommit string ${GITHUB_SHA}" "$PLIST"
+          echo "ALMAGitCommit=${GITHUB_SHA}"
+
       - name: Write App Store Connect API key
         env:
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
@@ -104,6 +114,8 @@ jobs:
             <string>automatic</string>
             <key>uploadSymbols</key>
             <true/>
+            <key>manageAppVersionAndBuildNumber</key>
+            <false/>
           </dict>
           </plist>
           EOF
