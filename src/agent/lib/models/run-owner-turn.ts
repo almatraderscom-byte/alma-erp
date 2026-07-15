@@ -916,7 +916,15 @@ async function* runAlternateProviderTurn(
       if (iterThinking.trim()) timeline.push({ t: 'think', text: iterThinking.trim().slice(0, 4000) })
       // Round's visible text joins the timeline too, so the persisted stream keeps
       // the true text↔step order after reload (ChronoFlow) — same as core.ts.
-      if (iterationText.trim() && calls.length === 0) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
+      if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
+      // Tool-round prose streams right away so the live view and reload both keep
+      // the narration between steps; final-round text is emitted AFTER the
+      // requirement-contract checks below (which may replace it).
+      if (iterationText.trim() && calls.length > 0) {
+        const sep = finalText && !finalText.endsWith('\n') ? '\n\n' : ''
+        finalText += sep + iterationText
+        yield { type: 'text_delta', delta: sep + iterationText }
+      }
 
       if (calls.length === 0 || signal?.aborted) {
         // Fully empty round → nudge the model to continue instead of silently
@@ -1010,6 +1018,7 @@ async function* runAlternateProviderTurn(
           }
         }
 
+        const preContractText = iterationText
         const batchStatus = driveClientSeoBatch ? await getClientSeoBatchStatus(conversationId) : null
         const explicitMemoryMissing = ownerRequirements.remember
           && !toolRecords.some((r) => r.toolName === 'save_memory' && r.status === 'success')
@@ -1044,6 +1053,18 @@ async function* runAlternateProviderTurn(
           // No legal tool means the VPS worker owns the current step. Never let
           // the model fill that wait with unrelated prose.
           iterationText = clientSeoBatchProgressText(batchStatus.facts)
+        }
+        // The contract replaced the model's draft → keep the persisted timeline
+        // truthful too: mark the draft superseded (same presentation as verify
+        // retries) and record what was actually said instead.
+        if (iterationText !== preContractText) {
+          if (preContractText.trim()) {
+            for (let ti = timeline.length - 1; ti >= 0; ti--) {
+              const te = timeline[ti]
+              if (te.t === 'text') { te.state = 'superseded'; break }
+            }
+          }
+          if (iterationText.trim()) timeline.push({ t: 'text', text: iterationText.slice(0, 6000) })
         }
         if (iterationText) {
           finalText += iterationText
@@ -1241,6 +1262,7 @@ async function* runAlternateProviderTurn(
         const note = contractToolFailureText(terminalContractFailure)
         const sep = finalText ? '\n\n' : ''
         finalText += sep + note
+        timeline.push({ t: 'text', text: note.slice(0, 6000) })
         yield { type: 'text_delta', delta: sep + note }
         break
       }
