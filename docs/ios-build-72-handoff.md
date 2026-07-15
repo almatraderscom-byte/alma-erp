@@ -1,0 +1,97 @@
+# iOS Build 72 — Handoff: WhatsApp-style VoIP/CallKit calling
+
+**Branch:** `claude/ios-build-72` (off `main` @ 9dacf429)
+**Purpose:** ship iOS build **72** = the office live-call now rings the callee's iPhone as a **native full-screen CallKit call even when the app is backgrounded or killed** (WhatsApp parity). The whole calling part is **already DONE and merged to `main`** — this branch exists so a follow-up agent can layer *its own* iOS work on top and ship one clean build 72 without conflicting with the calling code.
+
+---
+
+## STATUS: what is already done (do NOT rebuild it)
+
+### iOS app code — on `main`, compiles green (sim BUILD SUCCEEDED)
+| File | Change | Conflict note |
+|---|---|---|
+| `ios/App/App/CallKitVoIP.swift` | **NEW** — PushKit VoIP registry → CallKit provider. On a VoIP push reports a CallKit incoming call; answer joins the Agora channel (`AgoraIntercom.startCall`), end/decline tears down. Registers the device VoIP token to the server. Dedupes with the poll-based `FloatingChatHead` ring via `markCallHandled`. | Self-contained new file — nothing else defines this. |
+| `ios/App/App/AgoraIntercom.swift` | **ADDITIVE** — `callKitManaged` flag (CallKit owns the AVAudioSession: skips `setActive` + sets `setAudioSessionOperationRestriction(.deactivateSession)`); `setMuted(_:)`, `audioSessionActivated()`; server-skew + 60s ring window in `pendingIncomingCall`. | If you touch this file, keep these members. |
+| `ios/App/App/AppDelegate.swift` | `CallKitVoIP.shared.start()` in `didFinishLaunchingWithOptions` (iOS 17+ guard). | One added line inside the existing method. |
+| `ios/App/App/Info.plist` | added `voip` to `UIBackgroundModes` (already had `audio`, `remote-notification`, `fetch`). | Keep `voip` in the array. |
+| `ios/App/App.xcodeproj/project.pbxproj` | registered `CallKitVoIP.swift` in the App target (4 entries, IDs `CA11C177…`). | If you add files, don't drop these entries. |
+
+### Server + config — LIVE on production (verified)
+- APNs VoIP sender (`src/agent/lib/apns-voip.ts`), FCM sender, call-push token registry (`call-push.ts`), `POST /api/assistant/internal/call-push/register`, and the wake-push wiring in `office-intercom.ts` are **merged to `main` and deployed to production** (PRs #365–#368).
+- Vercel env is set (Production + Preview): `APNS_AUTH_KEY`, `APNS_KEY_ID=LMJW5S2DGW`, `APNS_TEAM_ID=5D9FLR3MMA`, `APNS_PRODUCTION=true`.
+- **Verified working on production:** `GET /api/assistant/internal/call-push/diag` (owner-only) returns `apnsProbe.reason = "BadDeviceToken"` + `parseOk: true` → the server authenticates to Apple's APNs successfully. (Apple only rejects the fake diagnostic token — the key/topic/auth are all valid.)
+- APNs Auth Key is a **new** key created 2026-07-14 (`ALMA VoIP Push`, Key ID `LMJW5S2DGW`), stored at `~/.appstoreconnect/private_keys/AuthKey_LMJW5S2DGW.p8`. It is independent of the OneSignal push credential — OneSignal keeps working.
+
+### Android — separate track (already shipped via OTA)
+The Android full-screen incoming call is on branch `claude/android-ota-calling-v12` (built + OTA'd, versionCode 12). Not part of this iOS build.
+
+---
+
+## What the follow-up agent should do
+
+1. Do your own iOS work on this branch (or `main`).
+2. **Preserve the calling code above** — it's additive; the only shared files you might also touch are `AgoraIntercom.swift`, `AppDelegate.swift`, `Info.plist`, `project.pbxproj`. Merge, don't overwrite.
+3. **Verify calling still builds** in the simulator:
+   ```
+   cd ios/App && pod install    # if a fresh worktree; Pods are gitignored
+   # populate web assets: npx cap copy ios  (needs node_modules)
+   xcodebuild -workspace App.xcworkspace -scheme App \
+     -destination 'platform=iOS Simulator,name=iPhone 17 Pro Max' \
+     -derivedDataPath /tmp/dd -configuration Debug CODE_SIGNING_ALLOWED=NO build
+   ```
+   Expect **BUILD SUCCEEDED**. (Full VoIP ring can't be exercised in the sim — a real VoIP push needs a device; the CallKit UI + registration path compile + run.)
+4. **Ship build 72:**
+   - `bash scripts/ios-build-preflight.sh` (hard-fails on dirty/unpushed/behind-main; stamps the commit SHA into Info.plist). Fix any git state it flags — never archive around it.
+   - Bump `CURRENT_PROJECT_VERSION` from **71 → 72** in `ios/App/App.xcodeproj/project.pbxproj`, commit `chore(ios): bump build to 72`, push.
+   - Archive + upload to App Store Connect (ASC API key `~/.appstoreconnect/private_keys/AuthKey_T875C2865Y.p8` — the DIFFERENT key, for uploads; see memory `project_apple_developer_enroll`).
+5. **Owner device test (the real proof — hardware only):** staff iPhone closed/backgrounded → owner places a live call from the office (native roster or web) → the staff iPhone should ring a **native CallKit incoming call**, answer → two-way audio, and the app can be backgrounded mid-call.
+
+## UPDATE 2026-07-14 — WhatsApp-parity round 2 also landed on `main` (additive, sim BUILD SUCCEEDED)
+A follow-up pass added more calling parity. These iOS changes are **additive on the same files** and are on `main` (commit `a61a36f8` on branch `claude/calling-feature-audit-43f696` → merges to main). When you sync `main` into this branch you get them automatically — just keep them:
+- **`CallKitVoIP.swift`** — handles a VoIP push with `event:"cancel"`: ends the ringing CallKit call for that `broadcastId` instantly (caller hung up / answered elsewhere), while still reporting-and-ending a transient call to satisfy iOS's "must report on every VoIP push" rule. This is the "cancel push" the previous known-follow-up asked for — now DONE.
+- **`AgoraIntercom.swift`** — `pendingIncomingCall()` now rings on the server-computed `incomingForMe` (bidirectional: the **owner** also rings for a **staff→owner** call, and never for a call he placed), suppresses `endedAt` calls, and uses the dynamic `callerName`. Falls back to the staff `mine` receipt for older server builds.
+- Server: new `POST /api/assistant/office/intercom/end` + `endedAt`/`endedReason` columns (additive migration `20260916120000_intercom_call_lifecycle`) + `event:'ring'|'cancel'` on the VoIP payload. All merged to main + deployed.
+- **Nothing extra to build for these** — they compile in the same sim build; ship them with build 72.
+
+## Known follow-ups / polish (optional)
+- iOS CallKit ringtone is the system default (a bundled `.caf` could be added).
+- ~~cancel push~~ — DONE (see the 2026-07-14 update above).
+- The owner-only diag endpoint (`/api/assistant/internal/call-push/diag`) can be removed once you're confident, or kept as an ops tool.
+
+---
+
+## UPDATE 2026-07-14 (session 2) — presentation-parity work is NOW ON THIS BRANCH
+
+The iOS presentation-parity program (`docs/ios-agent-presentation-parity-roadmap.md`, PR #369) is **merged into this branch** at `76449cc1`. It rides along in the SAME build 72 — nothing extra to archive.
+
+### What it is (short)
+One canonical presentation for every agent reply on web + iOS:
+- native now decodes persisted `t:'text'`/`t:'verify'` timeline entries (cold-load no longer drops work prose — RC-1);
+- `verification_retry` no longer blanks the reply (draft stays, marked superseded in data, verify row appended — RC-2);
+- cold-load/poll/relaunch rebuild the SAME interleaved TurnBlock composition as the live stream (`applyPersistedBlocks` — RC-3);
+- wire + `done` decode `cacheCreation/cacheRead/apiRounds/roundCostsUsd`; footer = web semantics `Σ ↑ ⚡ ♻ ↓ $ · N ধাপ` (RC-4);
+- server: `buildAgentPresentationV1()` + additive `presentation` field on the messages API; both head loops persist `t:'verify'` + `state:'superseded'` on verification retry.
+
+**Touched iOS files:** `AssistantSwiftUI.swift` (large), `AssistantTransport.swift` (done-event fields). If your work also touches these, MERGE — do not overwrite. The `AgentTurnEvent.done` case now has 9 associated values; pattern-matches must use the new arity.
+
+**Proof already banked:** vitest 867/867 (11 new presentation golden tests), tsc 0, sim BUILD SUCCEEDED, in-sim assertions **18/18** (`SIMCTL_CHILD_ALMA_OPEN_ASSISTANT=1 SIMCTL_CHILD_ALMA_ASSISTANT_UNITTEST=1 xcrun simctl launch <udid> com.almatraders.erp` → renders "প্রোটোকল ইউনিট টেস্ট: সব পাশ ✅"), preview API shows `presentation.version=1` with byte-identical repeated GETs, owner-logged-in web preview renders unchanged.
+
+### Self-test hooks you can reuse (no login needed)
+- `SIMCTL_CHILD_ALMA_ASSISTANT_UNITTEST=1` → 18 protocol/parity assertions on screen (must stay "সব পাশ ✅" in your final build)
+- `SIMCTL_CHILD_ALMA_ASSISTANT_PARITY=1` → renders the persisted verification-retry fixture: progress prose → tool rows → superseded draft (VISIBLE) → "নিজের উত্তর যাচাই…" row → final prose → Σ/⚡/♻ footer
+- `SIMCTL_CHILD_ALMA_ASSISTANT_EVENTTEST=1` → live SSE fixture incl. mid-stream `verification_retry` (draft must NOT blank)
+- App lock in sim: passcode `Maruf@123` typed via osascript after activating Simulator (flaky — retry).
+- Fresh worktree: `npm install`, then `LANG=en_US.UTF-8 pod install` in `ios/App`, then `npx cap copy ios`.
+
+## OWNER PROCESS RULE for whoever ships build 72 (owner instruction 2026-07-14)
+
+1. **Batch everything**: this branch already carries (a) VoIP/CallKit calling (via main), (b) presentation parity (merged here), (c) your new session's work. Verify them TOGETHER, resolve any conflict here on the branch, and ship **ONE** TestFlight build 72 — no drip builds.
+2. **Before archive**: run the three sim self-test hooks above + a normal sim launch, plus your own feature's checks. All green first.
+3. **Preflight is mandatory**: `bash scripts/ios-build-preflight.sh` (use `ALMA_PREFLIGHT_ALLOW_BRANCH=1` while on this non-main branch, or merge to main first per owner approval of PR #369). Bump 71 → 72 as a pushed commit.
+4. **After upload, give the owner a Bangla checklist** covering EVERYTHING in the build, e.g.:
+   - কলিং: বন্ধ/ব্যাকগ্রাউন্ড iPhone-এ অফিস-কল এলে নেটিভ ফুল-স্ক্রিন রিং, ধরলে দুই-দিকে অডিও, কেটে দিলে সাথে সাথে রিং বন্ধ
+   - এজেন্ট চ্যাট: পুরনো conversation খুললে কাজের ধাপে-ধাপে লেখা + টুল row সব দেখা যায় (শুধু শেষ লাইন না)
+   - যাচাই-turn: আগের draft দৃশ্যমান + মাঝে "নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি…" row + নিচে ঠিক করা উত্তর; উত্তর কখনো ফাঁকা হয় না
+   - Footer: Σ মোট টোকেন, ⚡/♻ cache, $ খরচ, N ধাপ — web-এর সংখ্যার সাথে মিলবে
+   - App বন্ধ করে আবার খুললে একই reply-র চেহারা একটুও বদলায় না (৬০ সেকেন্ড পরেও)
+   - + নতুন session-এর নিজের ফিচারগুলোর আইটেম
