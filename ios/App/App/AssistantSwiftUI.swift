@@ -1525,6 +1525,13 @@ final class AssistantVM {
         if terminalStatus == "error" {
             errorToast = "সমস্যা হয়েছে — আবার চেষ্টা করুন"
         }
+        // A LONG turn's direct SSE routinely drops mid-flight, so its done event
+        // (with needContinue + predecessor id) arrives through THIS recovery tail —
+        // only the direct-stream path fired the structured continuation, stranding
+        // the server's continuation_needed=true forever (live 2026-07-15: turn
+        // f2dfdc5d finished eligible and unclaimed). Same guarded no-op when no
+        // continuation is pending.
+        fireAutoContinueIfNeeded()
     }
 
     /// The send never became a server turn — keep the owner's message row, drop the
