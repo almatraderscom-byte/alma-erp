@@ -58,6 +58,12 @@ async function handle(req: NextRequest) {
         where: { createdAt: { lt: new Date(Date.now() - 7 * 24 * 3600 * 1000) } },
       })
     } catch { /* table may not exist yet on old DBs — best-effort */ }
+    // LG-2 retention: stale LangGraph checkpoint threads (roadmap: TTL cleanup
+    // from day 1). No-ops when the checkpointer gate is off; best-effort.
+    try {
+      const { cleanupGraphCheckpoints } = await import('@/agent/lib/graph/graph-checkpointer')
+      await cleanupGraphCheckpoints()
+    } catch { /* best-effort */ }
     return NextResponse.json({ ok: true, ...result, watchdog })
   } catch (err) {
     await captureAgentError(err, 'open_task_nudge_tick', { route: 'open-task-nudge' })
