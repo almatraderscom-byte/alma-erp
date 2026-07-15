@@ -23,9 +23,16 @@ export function nativePushAvailable(appId?: string | null): boolean {
 
 export async function ensureNativeOneSignalInitialized(appId: string): Promise<void> {
   if (!nativePushAvailable(appId) || initializedAppId === appId) return
-  const OneSignal = await getOneSignal()
-  await OneSignal.initialize(appId)
-  initializedAppId = appId
+  try {
+    const OneSignal = await getOneSignal()
+    await OneSignal.initialize(appId)
+    initializedAppId = appId
+  } catch (error) {
+    // DIAGNOSTIC (temporary): an init failure silently skips the click-listener
+    // registration downstream, which looks identical to "the effect never ran".
+    reportTapDiag('init_failed', { message: String(error) })
+    throw error
+  }
 }
 
 export async function nativePushHasPermission(): Promise<boolean> {
@@ -81,6 +88,26 @@ export async function registerNativePushSubscription(input: NativePushRegisterIn
   return res.ok
 }
 
+/**
+ * TEMPORARY diagnostic reporter — notification-tap chain (owner bug 2026-07-16).
+ * Fire-and-forget: a diagnostic must never break or delay a real tap. Remove with
+ * /api/notifications/tap-diag once the root cause is found.
+ */
+function reportTapDiag(stage: string, detail?: Record<string, unknown>): void {
+  try {
+    void fetch('/api/notifications/tap-diag', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stage, detail: detail ?? null, at: new Date().toISOString() }),
+      // The tap may navigate/suspend the page immediately after — keepalive lets
+      // the report survive that, otherwise we'd lose the very event we're chasing.
+      keepalive: true,
+    }).catch(() => {})
+  } catch {
+    /* never throw from a diagnostic */
+  }
+}
+
 type AlmaNavBridgePlugin = { openPath: (options: { path: string }) => Promise<void> }
 
 /**
@@ -133,7 +160,10 @@ async function landNativeTap(url: URL): Promise<void> {
  * `allowNavigation` (capacitor.config.ts) keeps the production host in-shell.
  */
 export async function listenForNativeNotificationClicks(): Promise<void> {
-  if (!isCapacitorNative()) return
+  if (!isCapacitorNative()) {
+    reportTapDiag('skip_not_native')
+    return
+  }
   try {
     const OneSignal = await getOneSignal()
     const notifications = OneSignal.Notifications as unknown as {
@@ -142,7 +172,20 @@ export async function listenForNativeNotificationClicks(): Promise<void> {
         listener: (event: { notification?: { additionalData?: unknown; launchURL?: string } }) => void,
       ) => void
     }
-    notifications?.addEventListener?.('click', event => {
+    if (typeof notifications?.addEventListener !== 'function') {
+      reportTapDiag('no_add_event_listener', { notificationsType: typeof notifications })
+      return
+    }
+    notifications.addEventListener('click', event => {
+      // DIAGNOSTIC: dump the RAW event so we can see the payload's true shape —
+      // if `notification.additionalData` isn't where we read it from, `target`
+      // resolves to null and the tap silently dies (the reported symptom).
+      reportTapDiag('click_fired', {
+        rawEvent: JSON.stringify(event ?? null).slice(0, 1200),
+        hasBridge: Boolean(getAlmaNavBridge()),
+        platform: Capacitor.getPlatform(),
+        origin: window.location.origin,
+      })
       const data = (event?.notification?.additionalData ?? {}) as { actionUrl?: string; source?: string }
       // Agent pushes sent before the server-side '/agent' default existed (or by a
       // not-yet-redeployed worker) carry no actionUrl — still land them on the
@@ -150,7 +193,11 @@ export async function listenForNativeNotificationClicks(): Promise<void> {
       const target = data.actionUrl
         || event?.notification?.launchURL
         || (data.source === 'agent' ? '/agent' : null)
-      if (!target) return
+      if (!target) {
+        reportTapDiag('no_target_resolved')
+        return
+      }
+      reportTapDiag('target_resolved', { target })
       try {
         // Resolve against the current origin so a relative path still works,
         // then land the tap (full href keeps the production host in-shell even
@@ -161,7 +208,12 @@ export async function listenForNativeNotificationClicks(): Promise<void> {
         // Malformed URL — ignore rather than crash the tap.
       }
     })
-  } catch {
+    // Proves the listener was actually attached. If this reports but 'click_fired'
+    // never does, the OneSignal SDK isn't delivering taps to JS at all — which is
+    // where the owner's symptom points.
+    reportTapDiag('listener_registered')
+  } catch (error) {
+    reportTapDiag('listen_error', { message: String(error) })
     // Non-critical: a failed listener must never break push registration.
   }
 }
