@@ -334,6 +334,38 @@ const CONTINUATION_RE = new RegExp(
 const CONTINUATION_MAX_LEN = 44
 
 /**
+ * LG-4 shadow: PURE re-derivation of the fast-path classification the head
+ * router applies before any paid triage call, in the EXACT order decideHead
+ * checks them (deny → call → personal-hint → marketing → routine →
+ * continuation). Zero I/O, zero model calls — the shadow turn graph runs this
+ * on every turn and compares against the live decision's `via`, so the graph's
+ * guard topology is scored on real traffic before any cutover.
+ * NOTE: 'personal_hint' is the cheap regex HINT only — the live path confirms
+ * with a classifier model, so a hint here + non-personal live tier is NOT a
+ * mismatch. 'continuation' likewise depends on sticky-thread DB state.
+ */
+export type HeadFastPathKind =
+  | 'deny_kw'
+  | 'call_intent'
+  | 'personal_hint'
+  | 'marketing_kw'
+  | 'routine_kw'
+  | 'continuation'
+  | null
+
+export function classifyHeadFastPath(text: string): HeadFastPathKind {
+  const t = (text ?? '').trim()
+  if (!t) return null
+  if (HEAVY_DENY_RE.test(t)) return 'deny_kw'
+  if (isOutboundCallIntent(t)) return 'call_intent'
+  if (personalEmpathyEnabled() && PERSONAL_EMOTION_RE.test(t)) return 'personal_hint'
+  if (MARKETING_RE.test(t)) return 'marketing_kw'
+  if (ROUTINE_RE.test(t)) return 'routine_kw'
+  if (t.length <= CONTINUATION_MAX_LEN || CONTINUATION_RE.test(t)) return 'continuation'
+  return null
+}
+
+/**
  * The head model the conversation last ran on (Rule 1). Read from the most recent
  * assistant message's saved usage.model. Returns null on no history / error so the
  * caller falls back to normal triage. Never throws.
