@@ -5187,10 +5187,17 @@ struct AgentToolScreenshotThumb: View {
                     // scroll-bounce/freeze diagnosis. Reserve the box up front.
                     switch phase {
                     case .success(let img):
-                        img.resizable()
-                            .aspectRatio(contentMode: fit ? .fit : .fill)
-                            .frame(maxWidth: .infinity, alignment: fit ? .leading : .top)
-                            .frame(height: maxHeight, alignment: fit ? .leading : .top)
+                        // Fixed-size stage + overlay: the image can NEVER dictate row
+                        // geometry (2026-07-15 owner report: a wide screenshot pushed
+                        // the card past the screen edge when the image sized the frame).
+                        Color.clear
+                            .frame(maxWidth: .infinity)
+                            .frame(height: maxHeight)
+                            .overlay(alignment: fit ? .leading : .top) {
+                                img.resizable()
+                                    .aspectRatio(contentMode: fit ? .fit : .fill)
+                                    .frame(maxWidth: .infinity, maxHeight: maxHeight, alignment: fit ? .leading : .top)
+                            }
                             .clipped()
                     case .failure:
                         Color.clear.frame(height: 1).onAppear { failed = true }
