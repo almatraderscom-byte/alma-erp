@@ -226,20 +226,45 @@ extension AlmaTabBarController {
     /// everything else falls back to the web view unchanged. Native screens get a
     /// FORCED-web escape closure so "ওয়েবে খুলুন" can never recurse into the router.
     private func pushSmart(on nav: UINavigationController?, path: String, title: String, icon: String) {
+        // Query-carrying deep links (/orders?focus=…, /attendance?review=…) only
+        // work on the web page — the router strips queries and native screens
+        // don't receive them, so routing those "natively" would silently drop
+        // the deep-link context.
+        let bare = path.split(separator: "?").first.map(String.init) ?? path
+        if path.dropFirst(bare.count).count > 1 {
+            pushWeb(on: nav, path: path, title: title, icon: icon)
+            return
+        }
         if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *),
            let native = AlmaNativeRouter.screen(for: path, openWebForced: { [weak self, weak nav] p, t in
                // Same-page pushes are the screen's ESCAPE HATCH → always the real web
-               // (recursion guard). Cross-page links route back through the router so
-               // e.g. Finance → Office fund opens the native screen when it exists.
+               // (recursion guard; prefix match so /employees/{id}'s escape to
+               // /employees stays a real escape). Cross-page links route back
+               // through the router so e.g. Finance → Office fund opens native.
                let origin = path.split(separator: "?").first.map(String.init) ?? path
                let target = p.split(separator: "?").first.map(String.init) ?? p
-               if target == origin { self?.pushWeb(on: nav, path: p, title: t, icon: icon) }
+               if origin.hasPrefix(target) { self?.pushWeb(on: nav, path: p, title: t, icon: icon) }
                else { self?.pushSmart(on: nav, path: p, title: t, icon: icon) }
            }) {
             nav?.pushViewController(native, animated: true)
             return
         }
         pushWeb(on: nav, path: path, title: title, icon: icon)
+    }
+
+    /// openWeb closure for a native TAB ROOT: the tab's own path stays a real web
+    /// escape hatch, query deep-links stay web, and every other link is routed
+    /// through pushSmart so it opens NATIVE when a screen exists. Before this,
+    /// tab roots were wired straight to pushWeb, so e.g. tapping a requester name
+    /// on Approvals opened the WEB employee profile even though the native
+    /// Employees screen exists (owner report 2026-07-15).
+    private func smartOpen(origin: String, navRef: WeakRef<UINavigationController>,
+                           icon: String) -> (_ path: String, _ title: String) -> Void {
+        { [weak self] path, title in
+            let target = path.split(separator: "?").first.map(String.init) ?? path
+            if target == origin { self?.pushWeb(on: navRef.value, path: path, title: title, icon: icon) }
+            else { self?.pushSmart(on: navRef.value, path: path, title: title, icon: icon) }
+        }
     }
 
     /// Home tab (`/`). Owner lifted the FROZEN_CAPACITOR freeze (2026-07-06): when the
@@ -256,9 +281,9 @@ extension AlmaTabBarController {
         detachDashboardVC(dvc)
         if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *) {
             let navRef = WeakRef<UINavigationController>()
-            let container = DashboardHostController(capacitor: dvc, openWeb: { [weak self] path, title in
-                self?.pushWeb(on: navRef.value, path: path, title: title, icon: "square.grid.2x2")
-            })
+            let container = DashboardHostController(
+                capacitor: dvc,
+                openWeb: smartOpen(origin: "/", navRef: navRef, icon: "square.grid.2x2"))
             let nav = Self.darkNav(root: container, tabTitle: "Dashboard", icon: "square.grid.2x2", largeTitles: false)
             navRef.value = nav
             return nav
@@ -277,9 +302,8 @@ extension AlmaTabBarController {
     func makeOrdersTab() -> UINavigationController {
         if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *) {
             let navRef = WeakRef<UINavigationController>()
-            let screen = OrdersScreen(openWeb: { [weak self] path, title in
-                self?.pushWeb(on: navRef.value, path: path, title: title, icon: "shippingbox")
-            })
+            let screen = OrdersScreen(
+                openWeb: smartOpen(origin: "/orders", navRef: navRef, icon: "shippingbox"))
             let host = AlmaHostingController(rootView: screen)
             host.title = "Orders"
             let nav = Self.darkNav(root: host, tabTitle: "Orders", icon: "shippingbox", largeTitles: false)
@@ -292,9 +316,8 @@ extension AlmaTabBarController {
     func makeApprovalsTab() -> UINavigationController {
         if AlmaSwiftUIFlag.isActive, #available(iOS 17.0, *) {
             let navRef = WeakRef<UINavigationController>()
-            let screen = ApprovalsScreen(openWeb: { [weak self] path, title in
-                self?.pushWeb(on: navRef.value, path: path, title: title, icon: "checkmark.seal")
-            })
+            let screen = ApprovalsScreen(
+                openWeb: smartOpen(origin: "/approvals", navRef: navRef, icon: "checkmark.seal"))
             let host = AlmaHostingController(rootView: screen)
             host.title = "Approvals"
             let nav = Self.darkNav(root: host, tabTitle: "Approvals", icon: "checkmark.seal", largeTitles: false)

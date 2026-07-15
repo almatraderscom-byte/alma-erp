@@ -52,6 +52,18 @@ type ApprovalRow = {
     isVerified?: boolean
     status?: string
   } | null
+  penaltyAppeal?: {
+    fineDate?: string
+    fineKind?: 'LATE' | 'EARLY_LEAVE' | 'NO_CHECKOUT' | 'UNKNOWN'
+    lateMinutes?: number | null
+    earlyLeaveMinutes?: number | null
+    checkInAt?: string | null
+    checkOutAt?: string | null
+    originalPenaltyAmount?: number
+    requestedReductionAmount?: number | null
+    requestType?: string
+    appealSubmittedAt?: string
+  } | null
 }
 
 type ApprovalResponse = {
@@ -398,6 +410,7 @@ function ApprovalsPageInner() {
                       <>
                         <p className="font-bold text-muted-hi">{row.entityLabel || row.entityId}</p>
                         {row.type === 'ATTENDANCE_LEAVE' && <LeaveInfo payloadSnapshot={row.payloadSnapshot} />}
+                        {row.type === 'PENALTY_APPEAL' && <PenaltyAppealInfo appeal={row.penaltyAppeal} />}
                         <p className="mt-1 line-clamp-2 text-muted">{row.reason}</p>
                       </>
                     )}
@@ -503,6 +516,9 @@ function ApprovalsPageInner() {
                     <Info label="Entity / account affected" value={selected.entityLabel || selected.entityId} />
                     {selected.type === 'ATTENDANCE_LEAVE' && (
                       <Info label="ছুটির সময়কাল" value={<LeaveInfo payloadSnapshot={selected.payloadSnapshot} />} />
+                    )}
+                    {selected.type === 'PENALTY_APPEAL' && (
+                      <Info label="কোন জরিমানার আপিল" value={<PenaltyAppealInfo appeal={selected.penaltyAppeal} />} />
                     )}
                     <Info label="Reason" value={selected.reason} />
                     {(selected.type === 'WALLET_ADVANCE' || selected.type === 'WALLET_WITHDRAWAL' || selected.type === 'SALARY_ADVANCE') && (
@@ -795,6 +811,45 @@ function LeaveInfo({ payloadSnapshot }: { payloadSnapshot: unknown }) {
     <div className="mt-1.5 space-y-0.5 rounded-lg border border-amber-500/25 bg-amber-500/[0.07] px-2.5 py-1.5 text-[13px]">
       {dateRange && <p className="font-bold text-cream">📅 {dateRange}</p>}
       <p className="font-semibold text-amber-500">{duration}</p>
+    </div>
+  )
+}
+
+/**
+ * The fine behind a PENALTY_APPEAL — which day, why it was levied, how much, and
+ * what relief the staff asked for. Without this the row's createdAt (the appeal
+ * submission time) reads like the fine happened today (owner report 2026-07-15).
+ */
+function PenaltyAppealInfo({ appeal }: { appeal: ApprovalRow['penaltyAppeal'] }) {
+  if (!appeal?.fineDate) return null
+  const fineDay = new Date(appeal.fineDate).toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'short', year: 'numeric', weekday: 'short', timeZone: 'Asia/Dhaka',
+  })
+  const time = (iso?: string | null) =>
+    iso ? new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Dhaka' }) : null
+  let story: string
+  if (appeal.fineKind === 'LATE') {
+    story = `দেরিতে চেক-ইন${appeal.lateMinutes ? ` — ${appeal.lateMinutes} মিনিট দেরি` : ''}${time(appeal.checkInAt) ? ` (চেক-ইন ${time(appeal.checkInAt)})` : ''}`
+  } else if (appeal.fineKind === 'EARLY_LEAVE') {
+    story = `নির্ধারিত সময়ের আগে বের হওয়া${appeal.earlyLeaveMinutes ? ` — ${appeal.earlyLeaveMinutes} মিনিট আগে` : ''}${time(appeal.checkOutAt) ? ` (চেক-আউট ${time(appeal.checkOutAt)})` : ''}`
+  } else if (appeal.fineKind === 'NO_CHECKOUT') {
+    story = 'চেক-আউট দেওয়া হয়নি'
+  } else {
+    story = 'অ্যাটেনডেন্স জরিমানা'
+  }
+  const relief = appeal.requestType === 'PARTIAL_REDUCE'
+    ? `৳${(appeal.requestedReductionAmount ?? 0).toLocaleString('en-BD')} কমানো`
+    : appeal.requestType === 'RECONSIDERATION' ? 'পুনর্বিবেচনা' : 'পুরো মাফ'
+  return (
+    <div className="mt-1.5 space-y-0.5 rounded-lg border border-amber-500/25 bg-amber-500/[0.07] px-2.5 py-1.5 text-[13px]">
+      <p className="font-bold text-cream">📅 জরিমানার দিন: {fineDay}</p>
+      <p className="font-semibold text-amber-500">{story}</p>
+      <p className="font-semibold text-cream">
+        জরিমানা ৳{(appeal.originalPenaltyAmount ?? 0).toLocaleString('en-BD')} · চাওয়া: {relief}
+      </p>
+      {appeal.appealSubmittedAt && (
+        <p className="text-[11px] text-muted">আপিল জমা: {new Date(appeal.appealSubmittedAt).toLocaleString('en-GB', { timeZone: 'Asia/Dhaka' })}</p>
+      )}
     </div>
   )
 }

@@ -103,12 +103,33 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
     penaltyEntityIds.length
       ? prisma.attendanceWaiverRequest.findMany({
           where: { id: { in: penaltyEntityIds } },
-          select: { id: true, status: true },
+          select: {
+            id: true,
+            status: true,
+            requestType: true,
+            originalPenaltyAmount: true,
+            requestedReductionAmount: true,
+            penaltyLedgerEntryId: true,
+            createdAt: true,
+            attendanceRecord: {
+              select: {
+                attendanceDate: true,
+                lateMinutes: true,
+                earlyLeaveMinutes: true,
+                checkInAt: true,
+                checkOutAt: true,
+                penaltyLedgerEntryId: true,
+                earlyLeavePenaltyLedgerEntryId: true,
+                noCheckoutFineLedgerEntryId: true,
+              },
+            },
+          },
         })
       : [],
   ])
   const walletStatusMap = new Map(walletRows.map(w => [w.id, w.status]))
   const penaltyStatusMap = new Map(penaltyRows.map(w => [w.id, w.status]))
+  const penaltyWaiverMap = new Map(penaltyRows.map(w => [w.id, w]))
 
   const payoutByUser = new Map<string, Awaited<ReturnType<typeof resolvePayoutSummariesForUsers>> extends Map<string, infer V> ? V : never>()
   if (role === 'SUPER_ADMIN') {
@@ -161,6 +182,9 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
       executable: isExecutable(row.module, row.type),
       linkageStatus,
       sourceStatus: walletStatus ?? penaltyStatus,
+      penaltyAppeal: isPenaltyApprovalType(row.module, row.type)
+        ? penaltyAppealContext(penaltyWaiverMap.get(row.entityId))
+        : undefined,
       payoutSummary:
         isWalletApprovalType(row.module, row.type) || row.type === 'SALARY_ADVANCE'
           ? payoutByUser.get(`${row.businessId || 'ALMA_LIFESTYLE'}:${row.requestedBy}`)
@@ -181,6 +205,60 @@ export const GET = withApiRoute('approvals.list', async (req: NextRequest) => {
     { headers: { 'Cache-Control': summary ? 'private, max-age=10, stale-while-revalidate=30' : 'private, no-store' } },
   )
 })
+
+type PenaltyWaiverSlice = {
+  status: string
+  requestType: string
+  originalPenaltyAmount: unknown
+  requestedReductionAmount: unknown
+  penaltyLedgerEntryId: string | null
+  createdAt: Date
+  attendanceRecord: {
+    attendanceDate: Date
+    lateMinutes: number
+    earlyLeaveMinutes: number | null
+    checkInAt: Date
+    checkOutAt: Date | null
+    penaltyLedgerEntryId: string | null
+    earlyLeavePenaltyLedgerEntryId: string | null
+    noCheckoutFineLedgerEntryId: string | null
+  } | null
+}
+
+/**
+ * The fine behind a PENALTY_APPEAL, resolved at read time so the reviewer sees
+ * WHICH day's fine it is and WHY it was levied — the approval row's own
+ * createdAt is only the appeal-submission time (owner report 2026-07-15: cards
+ * looked like "today's fine" with no story).
+ */
+function penaltyAppealContext(waiver: PenaltyWaiverSlice | undefined) {
+  const record = waiver?.attendanceRecord
+  if (!waiver || !record) return undefined
+  // The waiver pins the exact contested ledger entry; match it to name the fine.
+  const fineKind = (() => {
+    const led = waiver.penaltyLedgerEntryId
+    if (led && led === record.earlyLeavePenaltyLedgerEntryId) return 'EARLY_LEAVE'
+    if (led && led === record.noCheckoutFineLedgerEntryId) return 'NO_CHECKOUT'
+    if (led && led === record.penaltyLedgerEntryId) return 'LATE'
+    if (record.lateMinutes > 0) return 'LATE'
+    if ((record.earlyLeaveMinutes ?? 0) > 0) return 'EARLY_LEAVE'
+    if (!record.checkOutAt) return 'NO_CHECKOUT'
+    return 'UNKNOWN'
+  })()
+  return {
+    fineDate: record.attendanceDate.toISOString(),
+    fineKind,
+    lateMinutes: record.lateMinutes,
+    earlyLeaveMinutes: record.earlyLeaveMinutes ?? null,
+    checkInAt: record.checkInAt.toISOString(),
+    checkOutAt: record.checkOutAt ? record.checkOutAt.toISOString() : null,
+    originalPenaltyAmount: Number(waiver.originalPenaltyAmount ?? 0),
+    requestedReductionAmount:
+      waiver.requestedReductionAmount == null ? null : Number(waiver.requestedReductionAmount),
+    requestType: waiver.requestType,
+    appealSubmittedAt: waiver.createdAt.toISOString(),
+  }
+}
 
 function entityLabel(snapshot: unknown, fallback: string, type?: string) {
   if (!snapshot || typeof snapshot !== 'object') return fallback

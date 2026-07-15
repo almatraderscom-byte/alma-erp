@@ -369,6 +369,9 @@ struct DigitalClientsScreen: View {
     @State private var searchDebounce: Task<Void, Never>? = nil
     @State private var showCreate = false
     let openWeb: (_ path: String, _ title: String) -> Void
+    /// Deep-link target: /digital/clients/{id} opens this client's native detail
+    /// sheet once the list loads (project rows used to escape to the web page).
+    var focusClientId: String? = nil
 
     var body: some View {
         ScrollView {
@@ -397,7 +400,12 @@ struct DigitalClientsScreen: View {
         .background(DigitalClientsAurora())
         .claudeTopFade()
         .refreshable { await vm.load() }
-        .task { await vm.load() }
+        .task {
+            await vm.load()
+            if let fid = focusClientId, selected == nil {
+                selected = vm.clients.first { $0.id == fid }
+            }
+        }
         .sheet(item: $selected) { c in
             DigitalClientsDetailSheet(client: c, vm: vm, openWeb: openWeb)
                 .presentationDetents([.medium, .large])
