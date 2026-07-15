@@ -117,7 +117,10 @@ async function conversationAutoApprovesUpgrade(conversationId: string): Promise<
 function providerToCostProvider(provider: string): CostProvider {
   if (provider === 'google') return 'gemini'
   if (provider === 'openrouter') return 'openrouter'
-  if (provider === 'openai') return 'openai'
+  // xAI direct is OpenAI-compatible and priced from the same registry rates —
+  // tag its spend under 'openai' (CostProvider has no xai bucket; adding one
+  // would ripple through the cost dashboards for no accounting gain).
+  if (provider === 'openai' || provider === 'xai') return 'openai'
   return 'anthropic'
 }
 
@@ -681,7 +684,8 @@ async function* runAlternateProviderTurn(
   // in usage.timeline; never replayed to the model, so it adds zero token cost.
   type TimelineEntry =
     | { t: 'think'; text: string }
-    | { t: 'text'; text: string }
+    | { t: 'text'; text: string; state?: 'superseded' }
+    | { t: 'verify'; attempt: number; max: number }
     | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; shot?: string }
     | { t: 'file'; id: string; name: string; kind?: string }
   const timeline: TimelineEntry[] = []
@@ -907,6 +911,15 @@ async function* runAlternateProviderTurn(
               categories: Array.from(new Set(violations.map((v) => v.category))),
               snippets: violations.map((v) => v.matchedSnippet),
             }
+            // Presentation parity: the draft stays visible in the timeline but is
+            // truthfully marked superseded, and the verification event itself is
+            // persisted — so reload shows the same draft → যাচাই → final composition
+            // the live stream showed, instead of silently deleting the draft.
+            for (let ti = timeline.length - 1; ti >= 0; ti--) {
+              const te = timeline[ti]
+              if (te.t === 'text') { te.state = 'superseded'; break }
+            }
+            timeline.push({ t: 'verify', attempt: verifyRetries, max: MAX_VERIFY_RETRIES })
             finalText = ''
             messages = [
               ...messages,

@@ -299,6 +299,24 @@ export const INTERCOM_CSS = `
   -webkit-tap-highlight-color:transparent}
 .itc-call-mute.on{background:rgba(245,158,11,.16);border-color:rgba(245,158,11,.4);color:#fcd34d}
 .itc-call-end-lbl{font-size:11.5px;color:#AEB2C0}
+/* minimize (⌄) — collapse the full call to a pill */
+.itc-call-min{position:absolute;top:14px;right:14px;width:40px;height:40px;border-radius:9999px;border:1px solid rgba(255,255,255,.16);
+  background:rgba(255,255,255,.08);color:#F7F8FC;font-size:20px;line-height:1;cursor:pointer;-webkit-tap-highlight-color:transparent}
+/* minimized pill — floats bottom-right; page behind stays interactive */
+.itc-call-mini{position:fixed;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 88px);z-index:2147483401;
+  display:flex;align-items:center;gap:9px;padding:10px 12px 10px 14px;border-radius:9999px;cursor:pointer;
+  font-family:inherit;font-size:13.5px;font-weight:700;color:#F7F8FC;border:1px solid rgba(255,255,255,.16);
+  background:rgba(17,19,28,.96);box-shadow:0 10px 30px rgba(0,0,0,.5);-webkit-tap-highlight-color:transparent;
+  backdrop-filter:blur(10px)}
+.itc-call-mini.live{border-color:rgba(34,197,94,.4)}
+.itc-mini-dot{width:9px;height:9px;border-radius:50%;background:#f59e0b;flex:none}
+.itc-call-mini.live .itc-mini-dot{background:#22c55e;animation:itcpulse 1.6s ease-in-out infinite}
+.itc-mini-txt{font-variant-numeric:tabular-nums;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.itc-mini-mute,.itc-mini-end{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:13px;flex:none;background:rgba(255,255,255,.1)}
+.itc-mini-end{background:rgba(239,68,68,.9);color:#fff;font-weight:800}
+.itc-mini-mute.on{background:rgba(245,158,11,.22)}
+@keyframes itcpulse{0%,100%{opacity:1}50%{opacity:.35}}
 
 @media(prefers-reduced-motion:reduce){
   .itc-eq i,.itc-tk-wave.playing i,.itc-ptt-wrap.live .itc-ring,.itc-tk-av .ring,.itc-dock-h .t .dot,

@@ -1022,7 +1022,8 @@ export async function* runAgentTurn(
   // Stored in usage.timeline; NEVER replayed to the model, so it costs zero tokens.
   type TimelineEntry =
     | { t: 'think'; text: string }
-    | { t: 'text'; text: string }
+    | { t: 'text'; text: string; state?: 'superseded' }
+    | { t: 'verify'; attempt: number; max: number }
     | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; shot?: string }
     | { t: 'file'; id: string; name: string; kind?: string }
   const timeline: TimelineEntry[] = []
@@ -1205,6 +1206,14 @@ export async function* runAgentTurn(
               categories: Array.from(new Set(violations.map((v) => v.category))),
               snippets: violations.map((v) => v.matchedSnippet),
             }
+            // Presentation parity (mirrors run-owner-turn.ts): keep the draft visible
+            // but truthfully superseded, and persist the verification event so reload
+            // shows the same draft → যাচাই → final composition as the live stream.
+            for (let ti = timeline.length - 1; ti >= 0; ti--) {
+              const te = timeline[ti]
+              if (te.t === 'text') { te.state = 'superseded'; break }
+            }
+            timeline.push({ t: 'verify', attempt: verifyRetries, max: MAX_VERIFY_RETRIES })
             assistantTurns.pop()
             const reminder = buildVerificationReminder(violations)
             messages = [

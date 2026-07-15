@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma'
 import { toolResultPreview } from '@/agent/lib/tool-labels'
 import { decodeUnicodeEscapes } from '@/agent/lib/decode-unicode-escapes'
 import { buildMessagesPagePlan } from '@/agent/lib/messages-page'
+import { buildAgentPresentationV1 } from '@/agent/lib/presentation/build-presentation'
 
 export async function GET(
   req: NextRequest,
@@ -250,26 +251,50 @@ export async function GET(
       synthetic.length > 0 && Array.isArray(baseContent)
         ? [...baseContent, ...synthetic]
         : baseContent
+    const toolCalls = toolsByMsg.get(m.id) ?? []
+    const cacheCreation = num(u.cache_creation_input_tokens)
+    const cacheRead = num(u.cache_read_input_tokens)
+    const apiRounds = num(u.api_rounds) ?? undefined
+    const roundCostsUsd = Array.isArray(u.round_costs_usd)
+      ? (u.round_costs_usd as unknown[]).filter((n): n is number => typeof n === 'number')
+      : undefined
+    const timeline = Array.isArray(u.timeline) ? u.timeline : undefined
     return {
       ...m,
       content,
-      toolCalls: toolsByMsg.get(m.id) ?? [],
-      cacheCreation: num(u.cache_creation_input_tokens),
-      cacheRead: num(u.cache_read_input_tokens),
+      toolCalls,
+      cacheCreation,
+      cacheRead,
       // One reply = several provider API calls (one per tool round) = several rows
       // on the OpenRouter Logs page. Surface the round count + per-round billed
       // costs so the cost badge can show "· N ধাপ" with a breakdown.
-      apiRounds: num(u.api_rounds) ?? undefined,
-      roundCostsUsd: Array.isArray(u.round_costs_usd)
-        ? (u.round_costs_usd as unknown[]).filter((n): n is number => typeof n === 'number')
-        : undefined,
+      apiRounds,
+      roundCostsUsd,
       // Surface the extended-thinking trace (persisted in usage metadata) so the
       // "Thought for Ns" block survives reload, not just the live stream.
       thinking: typeof u.reasoning === 'string' && u.reasoning ? u.reasoning : undefined,
       thinkingMs: typeof u.reasoningMs === 'number' ? u.reasoningMs : undefined,
       // Ordered, display-only activity timeline (reasoning ↔ tool, execution order)
       // that drives the unified Claude-style stream after reload.
-      timeline: Array.isArray(u.timeline) ? u.timeline : undefined,
+      timeline,
+      // ONE canonical, versioned presentation projection (parity roadmap §5) —
+      // additive next to every legacy field; both clients converge on this.
+      presentation:
+        m.role === 'assistant'
+          ? buildAgentPresentationV1({
+              messageId: m.id,
+              content,
+              timeline,
+              toolCalls: toolCalls as Array<{ id?: string; name?: string; success?: boolean; result?: string }>,
+              tokensIn: m.tokensIn,
+              tokensOut: m.tokensOut,
+              cacheCreation,
+              cacheRead,
+              costUsd: m.costUsd != null ? Number(m.costUsd) : null,
+              apiRounds: apiRounds ?? null,
+              roundCostsUsd: roundCostsUsd ?? null,
+            })
+          : undefined,
     }
   })
 

@@ -53,7 +53,12 @@ function fmtTok(n: number): string {
 /** One entry in the unified activity timeline — a reasoning segment or a tool call. */
 export type TimelineEntry =
   | { t: 'think'; text: string }
-  | { t: 'text'; text: string }
+  /** `superseded`: verification rewrote this draft — it stays visible in its
+   *  chronological slot but is never presented as the verified final answer. */
+  | { t: 'text'; text: string; state?: 'superseded' }
+  /** The honesty guard re-checked the draft — a truthful activity row between
+   *  the superseded prose and its replacement (parity roadmap). */
+  | { t: 'verify'; attempt?: number; max?: number }
   | { t: 'tool'; name: string; ok: boolean; input?: unknown; result?: string; live?: boolean; id?: string; shot?: string }
   | { t: 'file'; id: string; name: string; kind?: string }
 
@@ -829,10 +834,16 @@ function ActivityTimeline({
     let cur: Phase | null = null
     entries.forEach((e, i) => {
       const lastEntry = i === entries.length - 1
-      if (e.t === 'think') {
-        const steps = parseThoughtSteps(e.text)
-        const headline = steps.length ? steps[steps.length - 1].headline : e.text.trim().slice(0, 140)
-        const detail = e.text.trim()
+      if (e.t === 'think' || e.t === 'verify') {
+        // A persisted verification event renders as a truthful activity row with
+        // the same label the live stream showed (parity roadmap): the superseded
+        // draft stays visible around it, never silently deleted.
+        const raw = e.t === 'verify'
+          ? `নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি (${e.attempt ?? 1}/${e.max ?? e.attempt ?? 1})…`
+          : e.text
+        const steps = e.t === 'verify' ? [] : parseThoughtSteps(raw)
+        const headline = steps.length ? steps[steps.length - 1].headline : raw.trim().slice(0, 140)
+        const detail = raw.trim()
         if (cur && cur.tools.length > 0) { out.push(cur); cur = null }
         if (!cur) cur = { headline, detail, tools: [], live: live && lastEntry }
         else {

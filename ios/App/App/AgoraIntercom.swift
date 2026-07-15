@@ -222,24 +222,32 @@ final class AgoraIntercom: NSObject {
     /// FloatingChatHead polls this app-wide so a call rings on ANY screen.
     func pendingIncomingCall() async -> IncomingCall? {
         struct Mine: Decodable { let confirmedAt: String? }
-        struct B: Decodable { let id: String; let kind: String; let createdAt: String; let mine: Mine? }
+        struct B: Decodable {
+            let id: String; let kind: String; let createdAt: String; let mine: Mine?
+            // Server-computed: this call rings ME (owner OR staff) and I didn't place it.
+            let incomingForMe: Bool?
+            let endedAt: String?
+            let callerName: String?
+        }
         struct Feed: Decodable { let broadcasts: [B]; let serverNow: String? }
         guard mode == .idle || mode == .listening,
               let feed: Feed = try? await AlmaAPI.shared.get("/api/assistant/office/intercom")
         else { return nil }
-        // Server-anchored "now": a staff phone with a wrong clock used to never ring
+        // Server-anchored "now": a phone with a wrong clock used to never ring
         // because freshness was measured against the device clock. Mirror the web,
         // which offsets by (serverNow − deviceNow) before the freshness check.
         let skew: TimeInterval = feed.serverNow.flatMap(Self.parseISO)?.timeIntervalSinceNow ?? 0
         let nowServer = Date().addingTimeInterval(skew)
-        // Newest first — ring only the most recent live call. `mine != nil` means the
-        // call is addressed to THIS staff (owner feeds have no `mine`, so the boss who
-        // placed the call never rings himself). A call already confirmed (answered or
-        // declined on another device, e.g. the web office) must not re-ring here.
-        for b in feed.broadcasts.reversed() where b.kind == "call" && b.mine != nil {
-            guard !handledCallIds.contains(b.id), b.mine?.confirmedAt == nil else { continue }
+        // Newest first — ring only the most recent live call. `incomingForMe` is
+        // bidirectional (owner rings for a staff→owner call too) and is false for a
+        // call I placed, so I never ring myself. `endedAt` set = the caller cancelled
+        // / it was answered elsewhere → don't ring. Falls back to the staff `mine`
+        // receipt for older server builds that don't send incomingForMe yet.
+        for b in feed.broadcasts.reversed() where b.kind == "call" {
+            let forMe = b.incomingForMe ?? (b.mine != nil)
+            guard forMe, b.endedAt == nil, !handledCallIds.contains(b.id), b.mine?.confirmedAt == nil else { continue }
             if let t = Self.parseISO(b.createdAt), nowServer.timeIntervalSince(t) < Self.ringWindow {
-                return IncomingCall(broadcastId: b.id, channel: "itc_\(b.id)", caller: "বস — মারুফ")
+                return IncomingCall(broadcastId: b.id, channel: "itc_\(b.id)", caller: b.callerName ?? "বস — মারুফ")
             }
         }
         return nil
