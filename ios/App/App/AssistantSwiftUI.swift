@@ -154,10 +154,14 @@ enum AgentJSONValue: Decodable {
     }
 }
 
-/// One entry of the persisted Claude-style activity timeline (`t: 'think' | 'tool' | 'file'`).
+/// One entry of the persisted Claude-style activity timeline
+/// (`t: 'think' | 'text' | 'verify' | 'tool' | 'file'`).
 struct AgentTimelineEntryWire: Decodable {
     let t: String?
     let text: String?
+    let state: String?  // t=="text": "superseded" = verification rewrote this draft
+    let attempt: Int?   // t=="verify"
+    let max: Int?       // t=="verify"
     let id: String?
     let name: String?
     let ok: Bool?
@@ -177,6 +181,10 @@ struct AgentMessageWire: Decodable {
     let timeline: [AgentTimelineEntryWire]?
     let tokensIn: Int?
     let tokensOut: Int?
+    let cacheCreation: Int?
+    let cacheRead: Int?
+    let apiRounds: Int?
+    let roundCostsUsd: [Double]?
     let costUsd: AgentJSONValue?
     let createdAt: String?
 }
@@ -341,6 +349,11 @@ struct AgentChatMessage: Identifiable, Equatable {
     /// Ordered SSE timeline — mirrors web `TimelineEntry` / server `usage.timeline`.
     enum TimelineEntry: Equatable {
         case think(String)
+        /// A user-visible prose segment in its true chronological slot (parity
+        /// roadmap RC-1 — these were silently dropped before, so cold-load showed
+        /// only the last paragraph). `superseded` = verification rewrote it: it
+        /// stays visible but is never the verified final answer.
+        case text(String, superseded: Bool)
         case tool(id: String, name: String, ok: Bool?, live: Bool, inputPretty: String?, resultFull: String?)
         /// A tool filed a document as a conversation artifact (id = artifact id).
         case file(id: String, name: String)
@@ -408,9 +421,17 @@ struct AgentChatMessage: Identifiable, Equatable {
     var streamStartedAt: Date?
     var tokensIn: Int?
     var tokensOut: Int?
+    var cacheCreation: Int?
+    var cacheRead: Int?
+    /// Actual provider API rounds (billing rows) — NOT UI activity phases (RC-4).
+    var apiRounds: Int?
+    var roundCostsUsd: [Double]?
     var costUsd: String?
     var createdAt: String?
     var isStreaming = false
+    /// Prose block ids the verification guard superseded — data-truth only; the
+    /// prose stays visible in place (roadmap invariant 3/4), never blanked.
+    var supersededBlockIds: Set<String> = []
 
     /// The heartbeat's self-wake seed renders as a divider, never as an owner bubble
     /// (web: isHeartbeatWakeText / HEARTBEAT_WAKE_SENTINEL).
@@ -447,6 +468,10 @@ struct AgentChatMessage: Identifiable, Equatable {
         m.thinkingMs = wire.thinkingMs
         m.tokensIn = wire.tokensIn
         m.tokensOut = wire.tokensOut
+        m.cacheCreation = wire.cacheCreation
+        m.cacheRead = wire.cacheRead
+        m.apiRounds = wire.apiRounds
+        m.roundCostsUsd = wire.roundCostsUsd
         m.createdAt = wire.createdAt
         if let c = wire.costUsd {
             switch c {
@@ -462,17 +487,75 @@ struct AgentChatMessage: Identifiable, Equatable {
         m.phases = Self.buildPhases(timeline: Self.timelineFromWire(wire), messageId: wire.id, live: false,
                                     fallbackTools: m.tools)
         m.timeline = Self.timelineFromWire(wire)
+        // Canonical convergence (parity roadmap RC-1/RC-3): when the persisted
+        // timeline carries prose segments, rebuild the SAME interleaved TurnBlock
+        // composition the live stream shows — cold-load, poll and relaunch then
+        // render identically to the just-streamed turn (web ChronoFlow parity).
+        if m.timeline.contains(where: { if case .text = $0 { return true }; return false }) {
+            Self.applyPersistedBlocks(to: &m)
+        }
         return m
     }
 
+    /// Rebuild the interleaved prose ↔ activity TurnBlocks from the persisted
+    /// timeline + cards, using the SAME builders the live SSE reducer uses — so
+    /// settled/cold-loaded rows converge on the live composition by construction.
+    static func applyPersistedBlocks(to m: inout AgentChatMessage) {
+        var blocks: [TurnBlock] = []
+        var superseded: Set<String> = []
+        for e in m.timeline {
+            switch e {
+            case .text(let t, let isSuperseded):
+                // One prose segment per timeline entry (never merged into the
+                // previous one — segment boundaries are canonical).
+                let id = "bp-\(m.id)-\(blocks.count)"
+                blocks.append(.prose(id: id, text: t))
+                if isSuperseded { superseded.insert(id) }
+            case .think(let t):
+                blocks = appendThinkBlock(blocks, chunk: t, messageId: m.id)
+            case .tool(let id, let name, let ok, _, _, _):
+                blocks = appendToolBlock(blocks, toolId: id, name: name, messageId: m.id)
+                blocks = finalizeToolBlock(blocks, toolId: id, ok: ok ?? true)
+            case .file(let aid, let name):
+                blocks.append(.file(id: "fb-\(m.id)-\(aid)", artifactId: aid, name: name))
+            }
+        }
+        for card in m.confirmCards {
+            blocks.append(.confirmCard(id: "bc-\(m.id)-\(card.id)", pendingActionId: card.id))
+        }
+        for card in m.askCards {
+            blocks.append(.askCard(id: "bq-\(m.id)-\(card.id)", askCardId: card.id))
+        }
+        m.blocks = blocks
+        m.supersededBlockIds = superseded
+    }
+
+    /// Live-parity label for a persisted verification event (same string the
+    /// verification_retry reducer shows mid-stream).
+    static func verifyLabel(attempt: Int, max: Int) -> String {
+        "নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি (\(almaBn(attempt))/\(almaBn(max)))…"
+    }
+
     static func timelineFromWire(_ wire: AgentMessageWire) -> [TimelineEntry] {
-        (wire.timeline ?? []).compactMap { e -> TimelineEntry? in
+        (wire.timeline ?? []).enumerated().compactMap { idx, e -> TimelineEntry? in
             if e.t == "think" {
                 let t = (e.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 return t.isEmpty ? nil : .think(t)
             }
+            if e.t == "text" {
+                let t = e.text ?? ""
+                return t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? nil : .text(t, superseded: e.state == "superseded")
+            }
+            if e.t == "verify" {
+                // Truthful activity row between superseded draft and replacement —
+                // rendered through the existing thinking-row style (design locked).
+                return .think(verifyLabel(attempt: e.attempt ?? 1, max: e.max ?? (e.attempt ?? 1)))
+            }
             if e.t == "tool" {
-                return .tool(id: e.id ?? "tl-\(wire.id)", name: e.name ?? "টুল", ok: e.ok, live: false,
+                // Persisted tool entries carry no id — a per-ordinal fallback keeps
+                // every entry unique (a shared id used to collapse them to one row).
+                return .tool(id: e.id ?? "tl-\(wire.id)-\(idx)", name: e.name ?? "টুল", ok: e.ok, live: false,
                              inputPretty: e.input?.pretty(), resultFull: e.result)
             }
             if e.t == "file", let aid = e.id {
@@ -686,6 +769,9 @@ struct AgentChatMessage: Identifiable, Equatable {
                 cur?.tools.append(Tool(id: id, name: name, ok: ok, preview: result.map { String($0.prefix(160)) },
                                        live: toolLive, inputPretty: input, resultFull: result))
                 if toolLive { cur?.live = true }
+            case .text:
+                // Prose renders in the message body (TurnBlocks), never as a phase step.
+                continue
             case .file:
                 // File cards render as their own row in the message body, not as a phase step.
                 continue
@@ -1119,7 +1205,13 @@ final class AssistantVM {
                 incoming[i].phases = old.phases
                 incoming[i].tools = old.tools
             }
-            incoming[i].blocks = old.blocks
+            // Canonical-vs-thinner rule (parity roadmap invariant 6): the server
+            // projection wins when it carries the full prose composition; a thinner
+            // server row (timeline not yet persisted) never wipes richer local blocks.
+            if incoming[i].blocks.isEmpty {
+                incoming[i].blocks = old.blocks
+                incoming[i].supersededBlockIds = old.supersededBlockIds
+            }
             if incoming[i].thinking == nil { incoming[i].thinking = old.thinking }
             if incoming[i].thinkingMs == nil { incoming[i].thinkingMs = old.thinkingMs }
             if old.role == .user, !old.localImages.isEmpty { incoming[i].localImages = old.localImages }
@@ -2047,16 +2139,26 @@ final class AssistantVM {
                     messages[i].blocks.append(.askCard(id: "bq-\(messages[i].id)-\(aid)", askCardId: aid))
                 }
             case .verificationRetry(let attempt, let maxAttempts):
-                // Web parity: the honesty guard is rewriting the draft — clear it
-                // and say so, instead of a confusing blank-then-reappear.
+                // Parity roadmap RC-2: NEVER blank the reply. The draft prose stays
+                // visible in place, marked superseded in data; a truthful verification
+                // activity row follows it, and the rewrite streams in after that —
+                // exactly the composition the server now persists (t:'verify').
                 requestLiveMode("thinking")
                 ensureStreamingTail()
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
+                    if let lastProse = messages[i].blocks.last(where: {
+                        if case .prose = $0 { return true }; return false
+                    }), case .prose(let pid, let draft) = lastProse {
+                        messages[i].supersededBlockIds.insert(pid)
+                        messages[i].timeline.append(.text(draft, superseded: true))
+                    }
+                    // Final-answer accumulator resets (server does the same with
+                    // finalText) — the visible blocks are untouched.
                     messages[i].text = ""
-                    messages[i].blocks = []
-                    messages[i].timeline = AgentChatMessage.appendThink(
-                        messages[i].timeline,
-                        chunk: "নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি (\(almaBn(attempt))/\(almaBn(maxAttempts)))…")
+                    let label = AgentChatMessage.verifyLabel(attempt: attempt, max: maxAttempts)
+                    messages[i].timeline = AgentChatMessage.appendThink(messages[i].timeline, chunk: label)
+                    messages[i].blocks = AgentChatMessage.appendThinkBlock(
+                        messages[i].blocks, chunk: label, messageId: messages[i].id)
                     touchedStream = true
                 }
             case .modelSwitchRequired(let toLabel, let fromLabel, let fallbackModelId):
@@ -2076,10 +2178,15 @@ final class AssistantVM {
                 // Server folded this thread into a fresh conversation (cost cap) —
                 // follow it, exactly like the web client.
                 conversationId = newId
-            case .done(_, let tokensIn, let tokensOut, let costUsd, let needContinue, _):
+            case .done(_, let tokensIn, let tokensOut, let costUsd, let needContinue, let apiRounds,
+                       let cacheCreation, let cacheRead, let roundCostsUsd):
                 if let i = messages.lastIndex(where: { $0.isStreaming }) {
                     if let tokensIn { messages[i].tokensIn = tokensIn }
                     if let tokensOut { messages[i].tokensOut = tokensOut }
+                    if let cacheCreation { messages[i].cacheCreation = cacheCreation }
+                    if let cacheRead { messages[i].cacheRead = cacheRead }
+                    if let apiRounds { messages[i].apiRounds = apiRounds }
+                    if let roundCostsUsd { messages[i].roundCostsUsd = roundCostsUsd }
                     if let costUsd, costUsd > 0 { messages[i].costUsd = String(format: "%.4f", costUsd) }
                 }
                 if needContinue { pendingAutoContinue = true }
@@ -2179,6 +2286,35 @@ final class AssistantVM {
     /// blocks, one 2,000+ char reply), then streams 1,000 small deltas into a
     /// live tail through the SAME mutation helpers the real SSE path uses — so
     /// scroll-gap and per-delta MainActor cost reproduce without a server.
+    /// Parity roadmap visual fixture — ALMA_ASSISTANT_PARITY=1: ONLY the persisted
+    /// verification-retry turn (no stress stream), decoded through the real wire
+    /// path, so a screenshot shows the exact cold-load composition: progress prose →
+    /// tool rows → superseded draft (visible) → verify row → corrected final +
+    /// Σ/cache/ধাপ footer.
+    func loadParityFixture() {
+        var rows: [AgentChatMessage] = []
+        rows.append(AgentChatMessage(id: "fix-u-parity", role: .user,
+                                     text: "স্টকের কাজটা কি হয়েছে?"))
+        let parityJSON = #"""
+        {"id":"fix-a-parity","role":"assistant",
+         "content":[{"type":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"}],
+         "tokensIn":1200,"tokensOut":300,"cacheCreation":5000,"cacheRead":20000,
+         "apiRounds":4,"roundCostsUsd":[0.01,0.01,0.01,0.012],"costUsd":0.042,
+         "createdAt":"2026-07-14T10:00:00.000Z",
+         "timeline":[
+           {"t":"text","text":"আগে স্টকের অবস্থাটা দেখে নিচ্ছি…"},
+           {"t":"tool","name":"get_inventory_status","ok":true},
+           {"t":"text","text":"কাজটা করে দিয়েছি Boss!","state":"superseded"},
+           {"t":"verify","attempt":1,"max":2},
+           {"t":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"}]}
+        """#
+        if let d = parityJSON.data(using: .utf8),
+           let wire = try? JSONDecoder().decode(AgentMessageWire.self, from: d) {
+            rows.append(AgentChatMessage.from(wire))
+        }
+        messages = rows
+    }
+
     func loadDebugFixture() {
         let bnShort = "ঠিক আছে Boss, এটা এখনই দেখছি।"
         let bnLong = "আজকের সেলস রিপোর্ট অনুযায়ী ALMA Lifestyle-এর মোট বিক্রি ভালো হয়েছে। Facebook ক্যাম্পেইনের CTR বেড়েছে, আর নতুন কালেকশনের প্রি-অর্ডারও আসছে। কালকে সকালে স্টাফ মিটিংয়ে inventory নিয়ে কথা বলা দরকার — তিনটা প্রোডাক্টের স্টক কমে যাচ্ছে। "
@@ -2212,6 +2348,28 @@ final class AssistantVM {
         big.blocks = blocks
         big.text = String(repeating: bnLong, count: 14)
         rows.append(big)
+
+        // Parity roadmap — a PERSISTED (cold-load) verification-retry turn decoded
+        // through the real wire path: draft prose stays visible, truthful verify
+        // row between draft and corrected final, cache/rounds in the footer.
+        rows.append(AgentChatMessage(id: "fix-u-parity", role: .user,
+                                     text: "স্টকের কাজটা কি হয়েছে?"))
+        let parityJSON = #"""
+        {"id":"fix-a-parity","role":"assistant",
+         "content":[{"type":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"}],
+         "tokensIn":1200,"tokensOut":300,"cacheCreation":5000,"cacheRead":20000,
+         "apiRounds":4,"roundCostsUsd":[0.01,0.01,0.01,0.012],"costUsd":0.042,
+         "timeline":[
+           {"t":"text","text":"আগে স্টকের অবস্থাটা দেখে নিচ্ছি…"},
+           {"t":"tool","name":"get_inventory_status","ok":true},
+           {"t":"text","text":"কাজটা করে দিয়েছি Boss!","state":"superseded"},
+           {"t":"verify","attempt":1,"max":2},
+           {"t":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"}]}
+        """#
+        if let d = parityJSON.data(using: .utf8),
+           let wire = try? JSONDecoder().decode(AgentMessageWire.self, from: d) {
+            rows.append(AgentChatMessage.from(wire))
+        }
         messages = rows
 
         // Live tail: 1,000 one-word deltas at ~5ms — token-rate MainActor stress.
@@ -2258,6 +2416,10 @@ final class AssistantVM {
             "data: {\"type\":\"text_delta\",\"delta\":\"আজকের বিক্রি ভালো হয়েছে Boss।\"}", "",
             "data: {\"type\":\"text_delta\",",                              // multi-line data event
             "data: \"delta\":\" মাল্টি-লাইন ইভেন্টও ঠিকভাবে এসেছে।\"}", "",
+            // Parity roadmap RC-2 — the draft above must STAY visible (superseded in
+            // data), a truthful verify row follows, then the corrected final prose.
+            "data: {\"type\":\"verification_retry\",\"attempt\":1,\"maxAttempts\":2}", "",
+            "data: {\"type\":\"text_delta\",\"delta\":\"যাচাই শেষে ঠিক করা উত্তর: আজকের মোট বিক্রি ৳৬,০৫২।\"}", "",
             "data: {\"type\":\"ask_card\",\"askCardId\":\"a1\",\"question\":\"কোনটা আগে করব Boss?\",\"options\":[\"স্টক অর্ডার\",\"ক্যাম্পেইন\",\"পরে বলব\"]}", "",
             "data: {\"type\":\"done\",\"messageId\":\"evt-m1\",\"tokensIn\":1200,\"tokensOut\":86,\"cacheCreation\":0,\"cacheRead\":0,\"costUsd\":0.0123}",
             // no trailing blank line — exercises the flushTrailing() path
@@ -2318,12 +2480,60 @@ final class AssistantVM {
             return AgentTurnEvent(dto: dto)
         }
         if case .unknown(let t)? = decode(#"{"type":"future_thing"}"#) { check("unknown telemetried", t == "future_thing") } else { check("unknown telemetried", false) }
-        if case .done(let mid, let tin, _, let cost, let cont, _)? = decode(#"{"type":"done","messageId":"m1","tokensIn":5,"costUsd":0.1,"needContinue":true}"#) {
+        if case .done(let mid, let tin, _, let cost, let cont, _, _, _, _)? = decode(#"{"type":"done","messageId":"m1","tokensIn":5,"costUsd":0.1,"needContinue":true}"#) {
             check("done fields", mid == "m1" && tin == 5 && cost == 0.1 && cont)
         } else { check("done fields", false) }
         if case .turnSnapshot(let tid, _, let st, let seq)? = decode(#"{"type":"turn_snapshot","turnId":"t9","status":"running","lastSeq":7}"#) {
             check("turn_snapshot", tid == "t9" && st == "running" && seq == 7)
         } else { check("turn_snapshot", false) }
+
+        // Presentation parity (roadmap RC-1/RC-3/RC-4) — persisted wire row must
+        // decode every prose/verify segment and rebuild the SAME interleaved
+        // TurnBlock composition the live stream shows, superseded marked in data.
+        let parityJSON = #"""
+        {"id":"m-parity","role":"assistant",
+         "content":[{"type":"text","text":"ঠিক করা উত্তর।"}],
+         "tokensIn":1200,"tokensOut":300,"cacheCreation":5000,"cacheRead":20000,
+         "apiRounds":4,"roundCostsUsd":[0.01,0.01,0.01,0.012],"costUsd":0.042,
+         "timeline":[
+           {"t":"text","text":"আগে দেখে নিচ্ছি…"},
+           {"t":"tool","name":"get_orders","ok":true},
+           {"t":"text","text":"কাজটা করে দিয়েছি Boss!","state":"superseded"},
+           {"t":"verify","attempt":1,"max":2},
+           {"t":"text","text":"ঠিক করা উত্তর।"}]}
+        """#
+        if let d = parityJSON.data(using: .utf8),
+           let wire = try? JSONDecoder().decode(AgentMessageWire.self, from: d) {
+            let m = AgentChatMessage.from(wire)
+            let textCount = m.timeline.reduce(0) { n, e in
+                if case .text = e { return n + 1 }; return n
+            }
+            check("RC-1 persisted prose decoded", textCount == 3)
+            check("RC-4 usage decoded", m.cacheCreation == 5000 && m.cacheRead == 20000
+                  && m.apiRounds == 4 && m.roundCostsUsd?.count == 4)
+            let fingerprint = m.blocks.map { b -> String in
+                switch b {
+                case .prose(let id, _): return m.supersededBlockIds.contains(id) ? "prose*" : "prose"
+                case .activity(let a):
+                    switch a.kind {
+                    case .thinking: return "think"
+                    case .search: return "search"
+                    case .tool: return "tool"
+                    }
+                case .file: return "file"
+                case .confirmCard: return "confirm"
+                case .askCard: return "ask"
+                }
+            }
+            check("RC-3 canonical block fingerprint",
+                  fingerprint == ["prose", "search", "tool", "prose*", "think", "prose"])
+            // Determinism: decoding the same wire twice yields the same composition.
+            let m2 = AgentChatMessage.from(wire)
+            check("RC-3 projection deterministic",
+                  m2.blocks == m.blocks && m2.supersededBlockIds == m.supersededBlockIds)
+        } else {
+            check("parity wire decode", false)
+        }
 
         // Transport classifier
         if case .offline = TurnFailureKind.classify(URLError(.notConnectedToInternet)) { check("offline classified", true) } else { check("offline classified", false) }
@@ -3818,6 +4028,9 @@ struct AgentThoughtProcessSheet: View {
                                  input: input ?? tool?.inputPretty,
                                  output: result ?? tool?.resultFull ?? tool?.preview,
                                  isThought: false, failed: ok == false))
+            case .text:
+                // Prose lives in the message body — the activity summary only lists steps.
+                continue
             case .file(_, let name):
                 flushThink()
                 out.append(.init(icon: "doc.text", title: name, body: nil, input: nil, output: nil,
@@ -3963,7 +4176,19 @@ struct AgentMessageActions: View {
             }
             Spacer()
             if let tin = message.tokensIn {
-                Text("↑\(tin)\(message.tokensOut.map { " ↓\($0)" } ?? "")\(message.costUsd.map { " $\($0)" } ?? "")")
+                // Web-footer parity (RC-4): Σ total (incl. cache) · ↑input ⚡cache-write
+                // ♻cache-read ↓output $cost · N ধাপ — N = actual provider API rounds,
+                // the same number the web cost badge shows, never UI phase count.
+                let tout = message.tokensOut ?? 0
+                let cw = message.cacheCreation ?? 0
+                let cr = message.cacheRead ?? 0
+                let total = tin + tout + cw + cr
+                let rounds = (message.apiRounds ?? 0) > 1 ? " · \(almaBn(message.apiRounds!)) ধাপ" : ""
+                Text("Σ\(almaBnCompact(total)) · ↑\(almaBnCompact(tin))"
+                     + (cw > 0 ? " ⚡\(almaBnCompact(cw))" : "")
+                     + (cr > 0 ? " ♻\(almaBnCompact(cr))" : "")
+                     + " ↓\(almaBnCompact(tout))"
+                     + (message.costUsd.map { " $\($0)\(rounds)" } ?? ""))
                     .font(.system(size: 9.5, design: .monospaced))
                     .foregroundStyle(pal.muted.opacity(0.8))
                     .lineLimit(1)
@@ -6682,6 +6907,11 @@ struct AssistantScreen: View {
             // server entirely (no bootstrap) so layout is tested in isolation.
             if argFlag("ALMA_ASSISTANT_FIXTURE") {
                 vm.loadDebugFixture()
+                return
+            }
+            // Parity roadmap — persisted verification-retry composition only.
+            if argFlag("ALMA_ASSISTANT_PARITY") {
+                vm.loadParityFixture()
                 return
             }
             // Roadmap Phase 2 — canned SSE wire through the real parser/reducer.

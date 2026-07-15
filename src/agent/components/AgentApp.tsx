@@ -190,8 +190,8 @@ function appendThinkToTimeline(tl: TimelineEntry[] | undefined, chunk: string): 
 function appendTextToTimeline(tl: TimelineEntry[] | undefined, chunk: string): TimelineEntry[] {
   const next = tl ? tl.slice() : []
   const last = next[next.length - 1]
-  if (last && last.t === 'text') {
-    next[next.length - 1] = { t: 'text', text: last.text + chunk }
+  if (last && last.t === 'text' && last.state !== 'superseded') {
+    next[next.length - 1] = { ...last, text: last.text + chunk }
   } else {
     next.push({ t: 'text', text: chunk })
   }
@@ -1080,15 +1080,26 @@ export default function AgentApp({ userName: _userName }: AgentAppProps) {
           ))
         } else if (evt.type === 'verification_retry') {
           // The honesty guard caught a completion claim that wasn't backed by a
-          // real tool call this turn, so the draft is being rewritten. Make this
-          // understandable instead of a confusing blank-then-reappear.
+          // real tool call this turn, so the draft is being rewritten. The draft
+          // prose stays visible in the timeline, truthfully marked superseded, with
+          // a verification activity row after it (parity roadmap: never blank, never
+          // silently delete) — only the final-answer accumulator resets.
           setStreamMode('searching')
           setStreamStatus('🔁 নিজের উত্তর যাচাই করে ঠিক করে নিচ্ছি…')
-          setMessages((prev) => prev.map((m) =>
-            m.id === assistantMsgId
-              ? { ...m, text: '', toolActivity: [], selfCorrected: true }
-              : m
-          ))
+          setMessages((prev) => prev.map((m) => {
+            if (m.id !== assistantMsgId) return m
+            const timeline = [...(m.timeline ?? [])]
+            for (let i = timeline.length - 1; i >= 0; i--) {
+              const e = timeline[i]
+              if (e.t === 'text') { timeline[i] = { ...e, state: 'superseded' }; break }
+            }
+            timeline.push({
+              t: 'verify',
+              attempt: typeof evt.attempt === 'number' ? evt.attempt : 1,
+              max: typeof evt.maxAttempts === 'number' ? evt.maxAttempts : 1,
+            })
+            return { ...m, text: '', toolActivity: [], selfCorrected: true, timeline }
+          }))
         } else if (evt.type === 'done') {
           gotStreamDone = true
           // Serverless deadline cut the task mid-flight → queue a structured,
