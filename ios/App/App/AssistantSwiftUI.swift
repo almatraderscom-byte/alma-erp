@@ -5166,18 +5166,23 @@ struct AgentToolScreenshotThumb: View {
                 preview = PortalImagePreview(urls: [urlString], index: 0)
             } label: {
                 AsyncImage(url: URL(string: urlString)) { phase in
+                    // Placeholder and loaded image render at the SAME height: a lazy
+                    // chat row whose height jumps when the image arrives shifts the
+                    // whole scroll geometry — that jump is one root of the 2026-07-15
+                    // scroll-bounce/freeze diagnosis. Reserve the box up front.
                     switch phase {
                     case .success(let img):
                         img.resizable()
                             .aspectRatio(contentMode: fit ? .fit : .fill)
-                            .frame(maxWidth: .infinity, maxHeight: maxHeight, alignment: fit ? .leading : .top)
+                            .frame(maxWidth: .infinity, alignment: fit ? .leading : .top)
+                            .frame(height: maxHeight, alignment: fit ? .leading : .top)
                             .clipped()
                     case .failure:
                         Color.clear.frame(height: 1).onAppear { failed = true }
                     default:
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(Color.white.opacity(0.06))
-                            .frame(height: 110)
+                            .frame(height: maxHeight)
                             .redacted(reason: .placeholder)
                     }
                 }
@@ -7247,6 +7252,7 @@ struct AssistantScreen: View {
     /// 1.4: ONE cancelable debounce task owns bottom-scrolling (the old
     /// generation-counter fan-out left every superseded task alive on MainActor).
     @State private var scrollDebounceTask: Task<Void, Never>?
+    @State private var scrollSettleTask: Task<Void, Never>?
     @State private var showArtifacts = false
     /// DEBUG self-test hook (ALMA_ASSISTANT_VIEWERTEST=1) — presents the zoomable
     /// image viewer with its সংরক্ষণ button for a headless fixture screenshot.
@@ -7352,9 +7358,16 @@ struct AssistantScreen: View {
                 // compared content maxY against UIScreen height, but the scroll
                 // viewport is ~200pt shorter (composer + tab bar + header), so the
                 // arrow only appeared after a long scroll-up — it read as missing.
-                .background(GeometryReader { g in
-                    Color.clear.preference(key: AgentScrollViewportKey.self, value: g.size.height)
-                })
+                // iOS 17 ONLY — on 18+ onScrollGeometryChange owns nearBottom and
+                // this per-layout-pass preference channel fed the AttributeGraph
+                // update cycle that froze the app (2026-07-15 hang samples).
+                .background {
+                    if #unavailable(iOS 18.0) {
+                        GeometryReader { g in
+                            Color.clear.preference(key: AgentScrollViewportKey.self, value: g.size.height)
+                        }
+                    }
+                }
                 .onPreferenceChange(AgentScrollViewportKey.self) { h in
                     if h > 0, abs(h - scrollViewportH) > 0.5 { scrollViewportH = h }
                 }
@@ -7393,16 +7406,14 @@ struct AssistantScreen: View {
                 // The owner's OWN send always jumps to the tail (Claude-app feel),
                 // even if he had scrolled up — user-initiated, unlike merges.
                 .onChange(of: vm.ownSendTick) { _, _ in
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(Self.bottomID, anchor: .bottom)
-                    }
+                    scrollToBottomConverging(proxy: proxy)
                 }
                 .overlay(alignment: .bottom) {
                     // Web parity: centered 40pt frosted circle just above the composer.
                     if !nearBottom {
                         Button {
                             UISelectionFeedbackGenerator().selectionChanged()
-                            withAnimation { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+                            scrollToBottomConverging(proxy: proxy)
                         } label: {
                             Image(systemName: "arrow.down")
                                 .font(.system(size: 14, weight: .semibold))
@@ -7559,6 +7570,24 @@ struct AssistantScreen: View {
         }
     }
 
+    /// Animated jump + two non-animated settle passes. A single scrollTo computes
+    /// its target from ESTIMATED lazy-row heights; rows mounting mid-animation
+    /// (large markdown, image thumbs) grow the content so the landing falls short
+    /// of the true bottom — the owner-reported "bounce back up" (2026-07-15).
+    /// The settle passes re-anchor after the heights have resolved.
+    private func scrollToBottomConverging(proxy: ScrollViewProxy) {
+        withAnimation { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+        scrollSettleTask?.cancel()
+        scrollSettleTask = Task { @MainActor in
+            for delayMs: Int64 in [350, 800] {
+                try? await Task.sleep(for: .milliseconds(delayMs))
+                guard !Task.isCancelled else { return }
+                var tx = Transaction(); tx.disablesAnimations = true
+                withTransaction(tx) { proxy.scrollTo(Self.bottomID, anchor: .bottom) }
+            }
+        }
+    }
+
     private func scheduleScrollToBottom(proxy: ScrollViewProxy) {
         scrollDebounceTask?.cancel()
         scrollDebounceTask = Task { @MainActor in
@@ -7570,13 +7599,19 @@ struct AssistantScreen: View {
         }
     }
 
-    private var scrollOffsetReader: some View {
-        GeometryReader { g in
-            // Raw content maxY in the scroll view's own space; the reader above
-            // subtracts the MEASURED viewport height (never UIScreen).
-            Color.clear.preference(
-                key: AgentScrollBottomKey.self,
-                value: g.frame(in: .named("agentscroll")).maxY)
+    @ViewBuilder private var scrollOffsetReader: some View {
+        // iOS 17 ONLY — the 18+ path never reads AgentScrollBottomKey, but the
+        // GeometryReader still re-emitted it on every layout pass of the giant
+        // lazy thread, participating in the 2026-07-15 freeze cycle. Don't even
+        // attach it where it has no consumer.
+        if #unavailable(iOS 18.0) {
+            GeometryReader { g in
+                // Raw content maxY in the scroll view's own space; the reader above
+                // subtracts the MEASURED viewport height (never UIScreen).
+                Color.clear.preference(
+                    key: AgentScrollBottomKey.self,
+                    value: g.frame(in: .named("agentscroll")).maxY)
+            }
         }
     }
 
