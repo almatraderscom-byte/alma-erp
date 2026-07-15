@@ -65,6 +65,7 @@ import { specialistLabel } from '@/agent/lib/models/specialist-roles'
 import { adapterFor } from '@/agent/lib/models/adapters'
 import { logRouteSpan } from '@/agent/lib/tool-telemetry'
 import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
+import { isRoutineGraphEnabled, runRoutineTurnGraph } from '@/agent/lib/graph/routine-turn-graph'
 import { calcModelTurnCostUsd } from '@/agent/lib/models/cost'
 import { roundUsd } from '@/agent/lib/pricing'
 import {
@@ -753,6 +754,37 @@ async function* runAlternateProviderTurn(
   // Live-browser turns raise this cap (see BROWSER_TURN_MAX_ITERATIONS) — a real
   // UI task is 15–30 look→act rounds and must not die silently at the default cap.
   let maxIterations = MAX_TOOL_ITERATIONS
+
+  // ── LangGraph deterministic routine path (owner decision 2026-07-15) ────────
+  // The owner's fixed daily lookups run as a graph: CODE picks and executes the
+  // read tool (the model gets zero tool-choice freedom — the "wrong tool /
+  // invented numbers" class can't happen), the model only words the Bangla
+  // answer. Any miss or failure falls open to the normal loop below untouched.
+  // Rollout: AGENT_LANGGRAPH_ROUTINE=true/false; default ON in preview only.
+  if (!listenMode && headTier === 'light' && isRoutineGraphEnabled()) {
+    const g = await runRoutineTurnGraph(lastUserText, {
+      model,
+      businessId,
+      conversationId,
+      turnId,
+      turnAuthorization,
+      signal,
+    })
+    if (g.handled && g.toolRecord) {
+      maxIterations = 0 // the graph already produced this turn — the model loop never runs
+      apiRounds += 1
+      totalInputTokens += g.usage.inputTokens
+      totalOutputTokens += g.usage.outputTokens
+      const preview = toolResultPreview(g.toolRecord.output ?? {})
+      toolRecords.push(g.toolRecord)
+      timeline.push({ t: 'tool', name: g.toolRecord.toolName, ok: true, input: g.toolRecord.input, result: preview })
+      yield { type: 'tool_start', id: g.toolRecord.id, name: g.toolRecord.toolName, input: g.toolRecord.input }
+      yield { type: 'tool_end', id: g.toolRecord.id, name: g.toolRecord.toolName, success: true, resultPreview: preview }
+      finalText = g.replyText
+      timeline.push({ t: 'text', text: finalText })
+      yield { type: 'text_delta', delta: finalText }
+    }
+  }
 
   try {
     for (let iteration = 0; iteration < maxIterations; iteration++) {
