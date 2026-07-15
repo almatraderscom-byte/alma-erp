@@ -533,14 +533,7 @@ extension AlmaTabBarController {
             "/approvals": 3,
         ]
         if !hasQuery, let index = tabRoots[clean] {
-            selectedIndex = index
-            (selectedViewController as? UINavigationController)?
-                .popToRootViewController(animated: false)
-            // The Capacitor Dashboard reparent can reset the selection shortly after
-            // first appearance (same race ALMA_OPEN_TAB works around) — re-assert.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                self?.selectedIndex = index
-            }
+            selectTabRootStably(index)
             return
         }
 
@@ -550,6 +543,28 @@ extension AlmaTabBarController {
             pushWeb(on: nav, path: path, title: title, icon: "bell.badge")
         } else {
             pushSmart(on: nav, path: path, title: title, icon: "bell.badge")
+        }
+    }
+
+    /// Select a tab root and keep it selected against the cold-start reset race.
+    ///
+    /// On a notification cold-launch the sequence is: shell builds → biometric
+    /// lock overlay → Face ID unlock → Capacitor Dashboard (re)mounts. Any of
+    /// those late steps can snap `selectedIndex` back to 0 (Dashboard) AFTER a
+    /// one-shot re-assert. Re-assert on a short repeating schedule that stops
+    /// once the selection sticks, so the tap survives however long unlock takes.
+    private func selectTabRootStably(_ index: Int) {
+        selectedIndex = index
+        (selectedViewController as? UINavigationController)?.popToRootViewController(animated: false)
+        var attempts = 0
+        // ~4.8s of coverage (8 × 0.6s) spans a slow Face ID unlock + webview
+        // remount. Re-asserting an already-correct index is a no-op, so we just
+        // hold it for the whole window rather than trying to detect "settled".
+        Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            attempts += 1
+            if self.selectedIndex != index { self.selectedIndex = index }
+            if attempts >= 8 { timer.invalidate() }
         }
     }
 
