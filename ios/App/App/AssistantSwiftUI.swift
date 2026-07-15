@@ -169,6 +169,7 @@ struct AgentTimelineEntryWire: Decodable {
     let input: AgentJSONValue?
     let result: String?
     let kind: String?   // t=="file": document kind (markdown/html/…)
+    let shot: String?   // t=="tool": browser screenshot URL (web parity)
 }
 
 struct AgentMessageWire: Decodable {
@@ -320,6 +321,23 @@ struct AgentChatMessage: Identifiable, Equatable {
         var live: Bool
         var inputPretty: String?    // for the tool I/O sheet
         var resultFull: String?
+        /// Browser screenshot URL (tool_end / persisted timeline `shot`) — web parity:
+        /// renders inline under the tool row and big inside the I/O sheet.
+        var screenshot: String? = nil
+    }
+    /// Specialist sub-agent delegation (web DelegationCard parity) — live-session
+    /// state fed by subagent_start/end; the server persists only a plain tool row,
+    /// exactly like the web client.
+    struct Delegation: Identifiable, Equatable {
+        let id: String
+        var role: String
+        var roleLabel: String
+        var task: String
+        var done: Bool = false
+        var success: Bool?
+        var stopped: Bool = false
+        var summary: String?
+        var toolsUsed: [String]?
     }
     /// One Claude-style activity phase (a `think` headline + the tools that ran under it).
     struct Phase: Identifiable, Equatable {
@@ -354,7 +372,7 @@ struct AgentChatMessage: Identifiable, Equatable {
         /// only the last paragraph). `superseded` = verification rewrote it: it
         /// stays visible but is never the verified final answer.
         case text(String, superseded: Bool)
-        case tool(id: String, name: String, ok: Bool?, live: Bool, inputPretty: String?, resultFull: String?)
+        case tool(id: String, name: String, ok: Bool?, live: Bool, inputPretty: String?, resultFull: String?, shot: String?)
         /// A tool filed a document as a conversation artifact (id = artifact id).
         case file(id: String, name: String)
     }
@@ -369,6 +387,8 @@ struct AgentChatMessage: Identifiable, Equatable {
         var toolId: String? = nil
         var ok: Bool? = nil
         var live: Bool = false
+        /// Browser screenshot URL — inline preview under the settled tool row.
+        var screenshot: String? = nil
     }
 
     /// Chronological turn content: prose and activity rows grow together, in order,
@@ -397,12 +417,21 @@ struct AgentChatMessage: Identifiable, Equatable {
     /// `var` (not `let`): the stream-tail merge keeps the local id when the server
     /// copy arrives, so the row's SwiftUI identity never changes → prose never blinks.
     var id: String
+    /// Durable DB id of this message (nil until the server copy is known). The UI
+    /// id may stay a local "stream-…" id after the tail merge for row-identity
+    /// stability — feedback/artifact POSTs must use THIS id, never the local one.
+    var serverId: String?
     let role: Role
     var text: String = ""
     var imagePaths: [String] = []
     var localImages: [UIImage] = []   // optimistic composer thumbnails (user msgs)
     var confirmCards: [ConfirmCard] = []
     var askCards: [AskCard] = []
+    /// Live specialist delegations (web parity: rendered as cards, not tool rows).
+    var delegations: [Delegation] = []
+    /// The honesty guard superseded a draft this turn (live verification_retry, or
+    /// a persisted verify/superseded timeline entry) — drives the footer badge.
+    var selfCorrected = false
     /// PR 3b — model_switch_required approval (web parity): the turn paused
     /// server-side for a premium-model upgrade decision.
     struct ModelSwitch: Equatable {
@@ -441,6 +470,10 @@ struct AgentChatMessage: Identifiable, Equatable {
 
     static func from(_ wire: AgentMessageWire) -> AgentChatMessage {
         var m = AgentChatMessage(id: wire.id, role: wire.role == "user" ? .user : .assistant)
+        m.serverId = wire.id
+        // Canonical selfCorrected (mirrors the server presentation payload's rule):
+        // a verify entry or a superseded draft means the answer was rewritten.
+        m.selfCorrected = (wire.timeline ?? []).contains { $0.t == "verify" || ($0.t == "text" && $0.state == "superseded") }
         for block in wire.content ?? [] {
             switch block.type {
             case "text":
@@ -484,6 +517,12 @@ struct AgentChatMessage: Identifiable, Equatable {
             .init(id: t.id ?? "tool-\(wire.id)-\(i)", name: t.name ?? "?", ok: t.success,
                   preview: t.result, live: false, inputPretty: nil, resultFull: t.result)
         }
+        // No durable tool-call rows → derive the tappable Tool list from the
+        // canonical timeline instead, so a persisted tool row's I/O sheet (incl.
+        // its screenshot) opens by the SAME id the blocks carry.
+        if m.tools.isEmpty {
+            m.tools = Self.syncTools(from: Self.timelineFromWire(wire))
+        }
         m.phases = Self.buildPhases(timeline: Self.timelineFromWire(wire), messageId: wire.id, live: false,
                                     fallbackTools: m.tools)
         m.timeline = Self.timelineFromWire(wire)
@@ -513,9 +552,9 @@ struct AgentChatMessage: Identifiable, Equatable {
                 if isSuperseded { superseded.insert(id) }
             case .think(let t):
                 blocks = appendThinkBlock(blocks, chunk: t, messageId: m.id)
-            case .tool(let id, let name, let ok, _, _, _):
+            case .tool(let id, let name, let ok, _, _, _, let shot):
                 blocks = appendToolBlock(blocks, toolId: id, name: name, messageId: m.id)
-                blocks = finalizeToolBlock(blocks, toolId: id, ok: ok ?? true)
+                blocks = finalizeToolBlock(blocks, toolId: id, ok: ok ?? true, screenshot: shot)
             case .file(let aid, let name):
                 blocks.append(.file(id: "fb-\(m.id)-\(aid)", artifactId: aid, name: name))
             }
@@ -556,7 +595,7 @@ struct AgentChatMessage: Identifiable, Equatable {
                 // Persisted tool entries carry no id — a per-ordinal fallback keeps
                 // every entry unique (a shared id used to collapse them to one row).
                 return .tool(id: e.id ?? "tl-\(wire.id)-\(idx)", name: e.name ?? "টুল", ok: e.ok, live: false,
-                             inputPretty: e.input?.pretty(), resultFull: e.result)
+                             inputPretty: e.input?.pretty(), resultFull: e.result, shot: e.shot)
             }
             if e.t == "file", let aid = e.id {
                 return .file(id: aid, name: e.name ?? "ডকুমেন্ট")
@@ -580,22 +619,22 @@ struct AgentChatMessage: Identifiable, Equatable {
     static func pushOrUpdateTool(_ tl: [TimelineEntry], id: String, name: String,
                                  inputPretty: String?) -> [TimelineEntry] {
         var next = tl
-        if let idx = next.firstIndex(where: { if case .tool(let tid, _, _, _, _, _) = $0 { return tid == id }; return false }) {
-            if case .tool(_, let n, let ok, let live, _, let result) = next[idx] {
-                next[idx] = .tool(id: id, name: n, ok: ok, live: live, inputPretty: inputPretty ?? nil, resultFull: result)
+        if let idx = next.firstIndex(where: { if case .tool(let tid, _, _, _, _, _, _) = $0 { return tid == id }; return false }) {
+            if case .tool(_, let n, let ok, let live, _, let result, let shot) = next[idx] {
+                next[idx] = .tool(id: id, name: n, ok: ok, live: live, inputPretty: inputPretty ?? nil, resultFull: result, shot: shot)
             }
         } else {
-            next.append(.tool(id: id, name: name, ok: nil, live: true, inputPretty: inputPretty, resultFull: nil))
+            next.append(.tool(id: id, name: name, ok: nil, live: true, inputPretty: inputPretty, resultFull: nil, shot: nil))
         }
         return next
     }
 
     static func finalizeTool(_ tl: [TimelineEntry], id: String, ok: Bool,
-                             result: String?) -> [TimelineEntry] {
+                             result: String?, shot: String? = nil) -> [TimelineEntry] {
         tl.map { e in
-            if case .tool(let tid, let name, _, _, let input, _) = e, tid == id {
+            if case .tool(let tid, let name, _, _, let input, _, let oldShot) = e, tid == id {
                 return TimelineEntry.tool(id: tid, name: name, ok: ok, live: false,
-                                          inputPretty: input, resultFull: result)
+                                          inputPretty: input, resultFull: result, shot: shot ?? oldShot)
             }
             return e
         }
@@ -708,11 +747,13 @@ struct AgentChatMessage: Identifiable, Equatable {
     }
 
     /// tool_end → settle the matching tool row.
-    static func finalizeToolBlock(_ blocks: [TurnBlock], toolId: String, ok: Bool) -> [TurnBlock] {
+    static func finalizeToolBlock(_ blocks: [TurnBlock], toolId: String, ok: Bool,
+                                  screenshot: String? = nil) -> [TurnBlock] {
         blocks.map { b in
             if case .activity(var a) = b, a.toolId == toolId {
                 a.ok = ok
                 a.live = false
+                if let screenshot { a.screenshot = screenshot }
                 return .activity(a)
             }
             return b
@@ -721,9 +762,9 @@ struct AgentChatMessage: Identifiable, Equatable {
 
     static func syncTools(from timeline: [TimelineEntry]) -> [Tool] {
         timeline.compactMap { e in
-            if case .tool(let id, let name, let ok, let live, let input, let result) = e {
+            if case .tool(let id, let name, let ok, let live, let input, let result, let shot) = e {
                 return Tool(id: id, name: name, ok: ok, preview: result.map { String($0.prefix(160)) },
-                            live: live, inputPretty: input, resultFull: result)
+                            live: live, inputPretty: input, resultFull: result, screenshot: shot)
             }
             return nil
         }
@@ -762,12 +803,12 @@ struct AgentChatMessage: Identifiable, Equatable {
                     cur = Phase(id: "ph-\(messageId)-\(n)", headline: headline, detail: detail,
                                 tools: [], live: live && isLast)
                 }
-            case .tool(let id, let name, let ok, let toolLive, let input, let result):
+            case .tool(let id, let name, let ok, let toolLive, let input, let result, let shot):
                 if cur == nil {
                     cur = Phase(id: "ph-\(messageId)-t\(n)", headline: name, detail: nil, tools: [], live: false)
                 }
                 cur?.tools.append(Tool(id: id, name: name, ok: ok, preview: result.map { String($0.prefix(160)) },
-                                       live: toolLive, inputPretty: input, resultFull: result))
+                                       live: toolLive, inputPretty: input, resultFull: result, screenshot: shot))
                 if toolLive { cur?.live = true }
             case .text:
                 // Prose renders in the message body (TurnBlocks), never as a phase step.
@@ -1215,6 +1256,10 @@ final class AssistantVM {
             if incoming[i].thinking == nil { incoming[i].thinking = old.thinking }
             if incoming[i].thinkingMs == nil { incoming[i].thinkingMs = old.thinkingMs }
             if old.role == .user, !old.localImages.isEmpty { incoming[i].localImages = old.localImages }
+            // Delegation cards are live-session state (the server persists only a
+            // plain tool row, web parity) — the settle merge must not eat them.
+            if incoming[i].delegations.isEmpty { incoming[i].delegations = old.delegations }
+            if old.selfCorrected { incoming[i].selfCorrected = true }
             incoming[i].id = lid
         }
 
@@ -1766,6 +1811,9 @@ final class AssistantVM {
         /// Roadmap PR 5 — idempotency key: one key = at most one stored message and
         /// one server turn, however many times transport makes us retry.
         var clientMessageId: String? = nil
+        /// AGENT-IOS-001 — the tapped ask-card's id rides with the option text so
+        /// the server binds the answer to the EXACT question (no text-match guess).
+        var askCardId: String? = nil
         /// PR 3b — model-upgrade approval resume: re-runs the SAME turn on the
         /// premium model (approve) or the cheap fallback (decline). No new message.
         struct Resume: Encodable { let approve: Bool; var fallbackModelId: String? = nil }
@@ -1800,7 +1848,7 @@ final class AssistantVM {
         }
     }
 
-    func send(_ raw: String, isAutoContinue: Bool = false) {
+    func send(_ raw: String, isAutoContinue: Bool = false, askCardId: String? = nil) {
         if !isAutoContinue { autoContinueCount = 0 }   // manual message resets the budget
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let readyFiles: [AgentFileRef] = pendingFiles.compactMap {
@@ -1834,7 +1882,7 @@ final class AssistantVM {
 
         let body = ChatBody(conversationId: conversationId, message: text,
                             files: readyFiles, modelId: modelId ?? "auto",
-                            clientMessageId: clientMessageId)
+                            clientMessageId: clientMessageId, askCardId: askCardId)
         streamTask = Task { [weak self] in
             await self?.runTurn(body: body)
         }
@@ -1968,11 +2016,13 @@ final class AssistantVM {
             let message: String
             let files: [AgentFileRef]
             let clientMessageId: String?
+            let askCardId: String?
         }
         let enq: TurnEnqueueResponse = try await AlmaAPI.shared.send(
             "POST", "/api/assistant/turn",
             body: TurnBody(conversationId: body.conversationId, message: body.message,
-                           files: body.files, clientMessageId: body.clientMessageId))
+                           files: body.files, clientMessageId: body.clientMessageId,
+                           askCardId: body.askCardId))
         currentTurnId = enq.turnId
         if conversationId == nil { conversationId = enq.conversationId }
         if let cid = conversationId, let cmid = body.clientMessageId {
@@ -2015,6 +2065,7 @@ final class AssistantVM {
         messages[i].tools = []
         messages[i].confirmCards = []
         messages[i].askCards = []
+        messages[i].delegations = []
     }
 
     /// Phase 2 reducer — applies ONE buffered batch per MainActor hop (roadmap 2.3).
@@ -2079,37 +2130,32 @@ final class AssistantVM {
             case .toolEnd(let tid, let ok, let preview, let screenshot):
                 requestLiveMode("writing")
                 if let i = messages.lastIndex(where: { $0.isStreaming }), !tid.isEmpty {
-                    // Screenshot payload noted in the row preview; inline image
-                    // rendering in the tool sheet is a tracked follow-up.
-                    let result = screenshot != nil
-                        ? [preview, "📸 স্ক্রিনশট নেওয়া হয়েছে"].compactMap { $0 }.joined(separator: "\n")
-                        : preview
+                    // Web parity: the browser screenshot renders INLINE under the
+                    // tool row (and big inside the I/O sheet) — no text placeholder.
                     messages[i].timeline = AgentChatMessage.finalizeTool(
-                        messages[i].timeline, id: tid, ok: ok, result: result)
+                        messages[i].timeline, id: tid, ok: ok, result: preview, shot: screenshot)
                     messages[i].blocks = AgentChatMessage.finalizeToolBlock(
-                        messages[i].blocks, toolId: tid, ok: ok)
+                        messages[i].blocks, toolId: tid, ok: ok, screenshot: screenshot)
                     touchedStream = true
                 }
-            case .subagentStart(let sid, let roleLabel, let task):
-                // Specialist worker spun up — a Claude-style activity row (parity:
-                // web shows subagent activity; native silently dropped it, P0-E).
+            case .subagentStart(let sid, let role, let roleLabel, let task):
+                // Specialist worker spun up — a dedicated delegation CARD (web
+                // DelegationCard parity), not a plain tool row.
                 requestLiveMode("searching")
                 ensureStreamingTail()
-                if let i = messages.lastIndex(where: { $0.isStreaming }) {
-                    messages[i].timeline = AgentChatMessage.pushOrUpdateTool(
-                        messages[i].timeline, id: "sub-\(sid)", name: "সহকারী: \(roleLabel)",
-                        inputPretty: task)
-                    messages[i].blocks = AgentChatMessage.appendToolBlock(
-                        messages[i].blocks, toolId: "sub-\(sid)", name: "সহকারী: \(roleLabel)",
-                        messageId: messages[i].id)
+                if let i = messages.lastIndex(where: { $0.isStreaming }),
+                   !messages[i].delegations.contains(where: { $0.id == sid }) {
+                    messages[i].delegations.append(.init(id: sid, role: role,
+                                                         roleLabel: roleLabel, task: task ?? ""))
                     touchedStream = true
                 }
-            case .subagentEnd(let sid, let ok, let summary):
-                if let i = messages.lastIndex(where: { $0.isStreaming }), !sid.isEmpty {
-                    messages[i].timeline = AgentChatMessage.finalizeTool(
-                        messages[i].timeline, id: "sub-\(sid)", ok: ok, result: summary)
-                    messages[i].blocks = AgentChatMessage.finalizeToolBlock(
-                        messages[i].blocks, toolId: "sub-\(sid)", ok: ok)
+            case .subagentEnd(let sid, let ok, let summary, let toolsUsed):
+                if let i = messages.lastIndex(where: { $0.isStreaming }), !sid.isEmpty,
+                   let j = messages[i].delegations.firstIndex(where: { $0.id == sid }) {
+                    messages[i].delegations[j].done = true
+                    messages[i].delegations[j].success = ok
+                    messages[i].delegations[j].summary = summary
+                    messages[i].delegations[j].toolsUsed = toolsUsed
                     touchedStream = true
                 }
             case .artifactSaved(let aid, let title):
@@ -2155,6 +2201,7 @@ final class AssistantVM {
                     // Final-answer accumulator resets (server does the same with
                     // finalText) — the visible blocks are untouched.
                     messages[i].text = ""
+                    messages[i].selfCorrected = true
                     let label = AgentChatMessage.verifyLabel(attempt: attempt, max: maxAttempts)
                     messages[i].timeline = AgentChatMessage.appendThink(messages[i].timeline, chunk: label)
                     messages[i].blocks = AgentChatMessage.appendThinkBlock(
@@ -2276,7 +2323,14 @@ final class AssistantVM {
         isStreaming = false
         thinkingLive = false
         settleLiveMode()
-        if let i = messages.lastIndex(where: { $0.isStreaming }) { messages[i].isStreaming = false }
+        if let i = messages.lastIndex(where: { $0.isStreaming }) {
+            messages[i].isStreaming = false
+            // Web parity: a running specialist shows the ⏹ stopped glyph, never a
+            // forever-spinner, once the owner stops the turn.
+            for j in messages[i].delegations.indices where !messages[i].delegations[j].done {
+                messages[i].delegations[j].stopped = true
+            }
+        }
     }
 
     // ── Phase 0 stress fixture (roadmap) ───────────────────────────────────
@@ -2304,14 +2358,37 @@ final class AssistantVM {
          "timeline":[
            {"t":"text","text":"আগে স্টকের অবস্থাটা দেখে নিচ্ছি…"},
            {"t":"tool","name":"get_inventory_status","ok":true},
+           {"t":"tool","name":"live_browser_look","ok":true,"result":"পেজ দেখা হয়েছে","shot":"https://picsum.photos/seed/alma/900/560"},
            {"t":"text","text":"কাজটা করে দিয়েছি Boss!","state":"superseded"},
            {"t":"verify","attempt":1,"max":2},
            {"t":"text","text":"যাচাই করে দেখলাম — কাজটা তখনো হয়নি, এখন আসল স্টক আপডেট করে দিয়েছি।"}]}
         """#
         if let d = parityJSON.data(using: .utf8),
-           let wire = try? JSONDecoder().decode(AgentMessageWire.self, from: d) {
-            rows.append(AgentChatMessage.from(wire))
+           var wireRow = (try? JSONDecoder().decode(AgentMessageWire.self, from: d)).map(AgentChatMessage.from) {
+            // Chat-parity batch demo state: delegation cards (done + running) so a
+            // fixture screenshot proves the DelegationCard composition offline.
+            wireRow.delegations = [
+                .init(id: "fix-d1", role: "researcher", roleLabel: "গবেষক",
+                      task: "প্রতিযোগীদের ঈদ ক্যাম্পেইনের দাম যাচাই করো",
+                      done: true, success: true,
+                      summary: "তিনটা ব্র্যান্ড দেখা হয়েছে — গড় দাম ৳১,২৫০; আমাদের অফার প্রতিযোগিতামূলক।",
+                      toolsUsed: ["web_research", "compare_to_brand"]),
+                .init(id: "fix-d2", role: "cs", roleLabel: "কাস্টমার সার্ভিস",
+                      task: "WhatsApp inbox-এর নতুন প্রশ্নগুলোর খসড়া উত্তর"),
+            ]
+            rows.append(wireRow)
         }
+        // A long structured-markdown reply — proves the manual "সংরক্ষণ" footer
+        // action (detectArtifact ≥800 chars + headings) in the same fixture shot.
+        rows.append(AgentChatMessage(id: "fix-u-doc", role: .user,
+                                     text: "ঈদ ক্যাম্পেইনের প্ল্যানটা লিখে দাও"))
+        var doc = AgentChatMessage(id: "fix-a-doc", role: .assistant)
+        doc.serverId = "fix-a-doc"
+        doc.createdAt = "2026-07-14T10:05:00.000Z"
+        doc.text = "## ঈদ ক্যাম্পেইন প্ল্যান\n\n**লক্ষ্য:** ৭ দিনে ৳১,৫০,০০০ বিক্রি।\n\n"
+            + (1...14).map { "**ধাপ \(almaBn($0)):** কনটেন্ট তৈরি, অডিয়েন্স বাছাই, বাজেট ভাগ, ক্রিয়েটিভ টেস্ট আর ফলোআপ — প্রতিদিন সকাল ১০টায় রিপোর্ট।" }.joined(separator: "\n\n")
+            + "\n\n**নোট:** প্রতিটা ধাপের ফলাফল রাতের রিপোর্টে যোগ হবে, আর বাজেট ছাড়ানোর আগে অনুমোদন কার্ড আসবে। শেষ দিনে পুরো ক্যাম্পেইনের লাভ-ক্ষতির হিসাব একসাথে দেখানো হবে।"
+        rows.append(doc)
         messages = rows
     }
 
@@ -2332,7 +2409,7 @@ final class AssistantVM {
                 if i % 5 == 0 {
                     a.timeline = [.think("রিপোর্ট টানছি"),
                                   .tool(id: "fix-t-\(i)", name: "get_sales_summary", ok: true,
-                                        live: false, inputPretty: nil, resultFull: nil)]
+                                        live: false, inputPretty: nil, resultFull: nil, shot: nil)]
                 }
                 rows.append(a)
             }
@@ -2410,8 +2487,8 @@ final class AssistantVM {
             "data: {\"type\":\"thinking_delta\",\"delta\":\"সেলস ডেটা মিলিয়ে দেখছি…\"}", "",
             "data: {\"type\":\"subagent_start\",\"id\":\"s1\",\"role\":\"ops\",\"roleLabel\":\"অপারেশনস\",\"task\":\"স্টক রিপোর্ট টানা\"}", "",
             "data: {\"type\":\"tool_start\",\"id\":\"t1\",\"name\":\"get_sales_summary\"}", "",
-            "data: {\"type\":\"tool_end\",\"id\":\"t1\",\"name\":\"get_sales_summary\",\"success\":true,\"resultPreview\":\"মোট ৳৬,০৫২\",\"screenshot\":\"shot.png\"}", "",
-            "data: {\"type\":\"subagent_end\",\"id\":\"s1\",\"role\":\"ops\",\"success\":true,\"summary\":\"স্টক ঠিক আছে\"}", "",
+            "data: {\"type\":\"tool_end\",\"id\":\"t1\",\"name\":\"get_sales_summary\",\"success\":true,\"resultPreview\":\"মোট ৳৬,০৫২\",\"screenshot\":\"https://picsum.photos/seed/alma/900/560\"}", "",
+            "data: {\"type\":\"subagent_end\",\"id\":\"s1\",\"role\":\"ops\",\"success\":true,\"summary\":\"স্টক ঠিক আছে\",\"toolsUsed\":[\"get_inventory_status\"]}", "",
             "data: {\"type\":\"future_event_xyz\",\"foo\":1}", "",          // unknown → telemetry, nonfatal
             "data: {\"type\":\"text_delta\",\"delta\":\"আজকের বিক্রি ভালো হয়েছে Boss।\"}", "",
             "data: {\"type\":\"text_delta\",",                              // multi-line data event
@@ -2527,12 +2604,40 @@ final class AssistantVM {
             }
             check("RC-3 canonical block fingerprint",
                   fingerprint == ["prose", "search", "tool", "prose*", "think", "prose"])
+            // Chat-parity batch: a verify/superseded wire row marks the message
+            // self-corrected (footer badge) — same rule as the server presentation.
+            check("selfCorrected derived from wire", m.selfCorrected)
             // Determinism: decoding the same wire twice yields the same composition.
             let m2 = AgentChatMessage.from(wire)
             check("RC-3 projection deterministic",
                   m2.blocks == m.blocks && m2.supersededBlockIds == m.supersededBlockIds)
         } else {
             check("parity wire decode", false)
+        }
+
+        // Chat-parity batch: persisted browser screenshot (`shot`) survives the
+        // wire decode into the timeline, the Tool row and the rebuilt blocks.
+        let shotJSON = #"""
+        {"id":"m-shot","role":"assistant",
+         "content":[{"type":"text","text":"দেখা শেষ।"}],
+         "timeline":[
+           {"t":"text","text":"পেজটা দেখছি…"},
+           {"t":"tool","name":"live_browser_look","ok":true,"shot":"https://example.com/s.png"},
+           {"t":"text","text":"দেখা শেষ।"}]}
+        """#
+        if let d = shotJSON.data(using: .utf8),
+           let wire = try? JSONDecoder().decode(AgentMessageWire.self, from: d) {
+            let m = AgentChatMessage.from(wire)
+            var timelineShot: String?
+            for e in m.timeline { if case .tool(_, _, _, _, _, _, let s) = e { timelineShot = s } }
+            let blockShot = m.blocks.compactMap { b -> String? in
+                if case .activity(let a) = b { return a.screenshot }; return nil
+            }.first
+            check("tool shot decoded", timelineShot == "https://example.com/s.png"
+                  && m.tools.first?.screenshot == "https://example.com/s.png"
+                  && blockShot == "https://example.com/s.png")
+        } else {
+            check("tool shot decoded", false)
         }
 
         // Transport classifier
@@ -2607,8 +2712,97 @@ final class AssistantVM {
         }
         let _: OkResponse? = try? await AlmaAPI.shared.send(
             "POST", "/api/assistant/ask-cards/\(cardId)/answer", body: ["option": option])
-        // Feed the choice back into the chat so the agent continues instantly (web onQuickSend parity).
-        send(option)
+        // Feed the choice back into the chat so the agent continues instantly (web
+        // onQuickSend parity). The card id rides along (AGENT-IOS-001) so the turn
+        // binds this answer to the EXACT question — no text-match guessing.
+        send(option, askCardId: cardId)
+    }
+
+    // ── Owner feedback on a settled reply (roadmap Phase 1 correction loop) ──
+
+    /// Message ids (local UI ids) whose feedback is already filed this session.
+    var feedbackSentIds: Set<String> = []
+
+    /// One tap files a structured correction row — POST /api/assistant/feedback.
+    /// Best-effort like the web client: feedback must never break the chat.
+    func sendFeedback(kind: String, for message: AgentChatMessage) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        feedbackSentIds.insert(message.id)
+        guard let cid = conversationId else { return }
+        struct FeedbackBody: Encodable {
+            let kind: String
+            let conversationId: String
+            let messageId: String?
+        }
+        let serverId = message.serverId
+            ?? (message.id.hasPrefix("local-") || message.id.hasPrefix("stream-") ? nil : message.id)
+        Task {
+            let _: OkResponse? = try? await AlmaAPI.shared.send(
+                "POST", "/api/assistant/feedback",
+                body: FeedbackBody(kind: kind, conversationId: cid, messageId: serverId))
+        }
+    }
+
+    // ── Manual "সংরক্ষণ" — save a reply as a conversation artifact (web parity) ──
+
+    /// Message ids saved as artifacts this session (footer shows "সংরক্ষিত").
+    var artifactSavedIds: Set<String> = []
+
+    /// Web `detectArtifact` port: a ≥15-line fenced block becomes a code/html/svg
+    /// artifact; long structured markdown (≥800 chars with ##/**) becomes a
+    /// markdown document titled by its first heading.
+    static func detectArtifact(in text: String) -> (type: String, title: String, content: String)? {
+        if let re = try? NSRegularExpression(pattern: "```([\\w-]*)[ \\t]*\\n([\\s\\S]*?)```") {
+            let ns = text as NSString
+            let matches = re.matches(in: text, range: NSRange(location: 0, length: ns.length))
+            for m in matches where m.numberOfRanges >= 3 {
+                let lang = ns.substring(with: m.range(at: 1)).lowercased()
+                let content = ns.substring(with: m.range(at: 2))
+                guard content.components(separatedBy: "\n").count >= 15 else { continue }
+                let looksSvg = lang == "svg" || content.range(of: "^\\s*<svg[\\s>]", options: [.regularExpression, .caseInsensitive]) != nil
+                let looksHtml = lang == "html" || content.range(of: "^\\s*(<!doctype html|<html[\\s>])", options: [.regularExpression, .caseInsensitive]) != nil
+                if looksSvg { return ("svg", "SVG ছবি", content) }
+                if looksHtml { return ("html", "HTML প্রিভিউ", content) }
+                return ("code", lang.isEmpty ? "কোড" : "\(lang) কোড", content)
+            }
+        }
+        if text.count >= 800, text.contains("##") || text.contains("**") {
+            let title = text.range(of: "#{1,3} (.+)", options: .regularExpression)
+                .map { String(text[$0]).replacingOccurrences(of: "^#{1,3} ", with: "", options: .regularExpression) }
+                ?? "ডকুমেন্ট"
+            return ("markdown", title, text)
+        }
+        return nil
+    }
+
+    /// Footer "সংরক্ষণ" tap — files the detected document as an artifact and
+    /// refreshes the artifacts badge (web onArtifactSave parity).
+    func saveArtifactManually(from message: AgentChatMessage) async {
+        guard let cid = conversationId,
+              let detected = Self.detectArtifact(in: message.text) else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        struct ArtifactBody: Encodable {
+            let conversationId: String
+            let messageId: String?
+            let type: String
+            let title: String
+            let content: String
+        }
+        let serverId = message.serverId
+            ?? (message.id.hasPrefix("local-") || message.id.hasPrefix("stream-") ? nil : message.id)
+        do {
+            struct Created: Decodable { let id: String }
+            let _: Created = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/artifacts",
+                body: ArtifactBody(conversationId: cid, messageId: serverId,
+                                   type: detected.type, title: detected.title,
+                                   content: detected.content))
+            artifactSavedIds.insert(message.id)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            await loadArtifacts()
+        } catch {
+            errorToast = "সংরক্ষণ করা গেল না — আবার চেষ্টা করুন"
+        }
     }
 
     /// "আমার মত" — reject pending action, then send owner's correction as a new turn.
@@ -3370,6 +3564,17 @@ struct AgentMessageRow: View {
                         }
                     }
 
+                    // Specialist delegation cards — grouped after the activity flow,
+                    // exactly where the web thread renders DelegationCard.
+                    if !message.delegations.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(message.delegations) { d in
+                                AgentDelegationCardView(d: d, pal: pal)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+
                     ForEach(message.imagePaths, id: \.self) { p in
                         AgentChatImage(path: p, vm: vm)
                     }
@@ -3644,12 +3849,22 @@ struct AgentToolIOSheet: View {
             .padding(.horizontal, 20).padding(.top, 14).padding(.bottom, 10)
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if tool.inputPretty == nil && tool.resultFull == nil && tool.preview == nil {
+                    if tool.inputPretty == nil && tool.resultFull == nil && tool.preview == nil
+                        && tool.screenshot == nil {
                         Text("এই টুলের কোনো ইনপুট/ফলাফল নেই।")
                             .font(.system(size: 12))
                             .foregroundStyle(pal.muted)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 24)
+                    }
+                    if let shot = tool.screenshot {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("স্ক্রিনশট · SCREENSHOT")
+                                .font(.system(size: 10, weight: .semibold))
+                                .tracking(0.8)
+                                .foregroundStyle(pal.muted.opacity(0.7))
+                            AgentToolScreenshotThumb(urlString: shot, maxHeight: 320)
+                        }
                     }
                     if let input = tool.inputPretty, !input.isEmpty {
                         ioBlock(label: "ইনপুট · INPUT", body: input, pal: pal, failed: false)
@@ -4014,7 +4229,7 @@ struct AgentThoughtProcessSheet: View {
                 guard !line.isEmpty else { continue }
                 if pendingThink == nil { pendingThink = line }
                 else { pendingThink! += "\n\n" + line }
-            case .tool(let id, let name, let ok, _, let input, let result):
+            case .tool(let id, let name, let ok, _, let input, let result, _):
                 flushThink()
                 if !sawSearch {
                     out.append(.init(icon: "magnifyingglass", title: "Searched available tools",
@@ -4126,15 +4341,77 @@ struct AgentBrandWordmark: View {
     }
 }
 
-/// ALMA wordmark + relative time + copy + listen + token cost (web action row).
+/// Roadmap Phase 1 — one-tap owner corrections (web FEEDBACK_OPTIONS parity).
+let almaFeedbackOptions: [(kind: String, label: String)] = [
+    ("wrong_tool", "ভুল টুল"),
+    ("lost_progress", "কাজ হারিয়ে ফেলেছে"),
+    ("unnecessary_navigation", "অকারণ ঘোরাঘুরি"),
+    ("wrong_answer", "ভুল উত্তর"),
+    ("too_many_questions", "বেশি প্রশ্ন"),
+]
+
+/// ALMA wordmark + relative time + copy + listen + feedback + token cost (web action row).
 @available(iOS 17.0, *)
 struct AgentMessageActions: View {
     let message: AgentChatMessage
     let vm: AssistantVM
     let pal: AgentPalette
     @State private var copied = false
+    // Debug self-test hook (never set in production launches): ALMA_FEEDBACK_OPEN=1
+    // pre-opens the 👎 reason chips so the fixture screenshot proves the row.
+    @State private var reasonsOpen =
+        ProcessInfo.processInfo.environment["ALMA_FEEDBACK_OPEN"] == "1"
+        || ProcessInfo.processInfo.arguments.contains("ALMA_FEEDBACK_OPEN=1")
+
+    private var feedbackSent: Bool { vm.feedbackSentIds.contains(message.id) }
+    /// Cheap prefilter before the regex — detection only makes sense on long or
+    /// fenced replies, so short prose never pays the regex cost per render.
+    private var artifactDetectable: Bool {
+        !message.isStreaming
+            && (message.text.contains("```") || message.text.count >= 800)
+            && AssistantVM.detectArtifact(in: message.text) != nil
+    }
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            actionsRow
+            if reasonsOpen && !feedbackSent {
+                feedbackReasonsRow
+            }
+            if message.selfCorrected {
+                // Truth badge (web parity): the honesty guard caught a false
+                // completion claim and the agent verified + rewrote its answer.
+                Text("🔁 নিজে যাচাই করে ঠিক করেছে")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Color(red: 0.85, green: 0.55, blue: 0.10).opacity(0.9))
+            }
+        }
+    }
+
+    /// One-tap structured corrections — the roadmap correction loop's input.
+    private var feedbackReasonsRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(almaFeedbackOptions, id: \.kind) { opt in
+                    Button {
+                        withAnimation(.snappy(duration: 0.2)) { reasonsOpen = false }
+                        vm.sendFeedback(kind: opt.kind, for: message)
+                    } label: {
+                        Text(opt.label)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(pal.mutedHi)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(pal.card.opacity(0.6), in: Capsule())
+                            .overlay(Capsule().strokeBorder(AgentPalette.coral.opacity(0.35), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private var actionsRow: some View {
         HStack(spacing: 6) {
             AgentBrandWordmark(
                 animateReveal: vm.justSettledId == message.id,
@@ -4173,6 +4450,53 @@ struct AgentMessageActions: View {
                 .frame(width: 28, height: 28)
                 .background(vm.ttsPlayingId == message.id ? AgentPalette.coral.opacity(0.1) : .clear,
                             in: RoundedRectangle(cornerRadius: 8))
+            }
+            // 👍/👎 correction loop (web FeedbackButtons parity) — one tap files a
+            // structured row in agent_owner_feedback for the weekly report.
+            if feedbackSent {
+                HStack(spacing: 3) {
+                    Image(systemName: "checkmark").font(.system(size: 9, weight: .semibold))
+                    Text("নোট করেছি").font(.system(size: 10.5, weight: .medium))
+                }
+                .foregroundStyle(AgentPalette.teal.opacity(0.9))
+                .padding(.horizontal, 2)
+            } else {
+                Button {
+                    reasonsOpen = false
+                    vm.sendFeedback(kind: "good", for: message)
+                } label: {
+                    Image(systemName: "hand.thumbsup")
+                        .font(.system(size: 12))
+                        .foregroundStyle(pal.muted)
+                        .frame(width: 28, height: 28)
+                }
+                Button {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    withAnimation(.snappy(duration: 0.2)) { reasonsOpen.toggle() }
+                } label: {
+                    Image(systemName: "hand.thumbsdown")
+                        .font(.system(size: 12))
+                        .foregroundStyle(reasonsOpen ? AgentPalette.coral : pal.muted)
+                        .frame(width: 28, height: 28)
+                }
+            }
+            // Manual "সংরক্ষণ" — file this reply as a conversation artifact.
+            if artifactDetectable {
+                if vm.artifactSavedIds.contains(message.id) {
+                    Text("সংরক্ষিত")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(AgentPalette.teal.opacity(0.9))
+                } else {
+                    Button {
+                        Task { await vm.saveArtifactManually(from: message) }
+                    } label: {
+                        Text("সংরক্ষণ")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(pal.muted)
+                            .padding(.horizontal, 6)
+                            .frame(height: 28)
+                    }
+                }
             }
             Spacer()
             if let tin = message.tokensIn {
@@ -4417,6 +4741,98 @@ struct AgentConfirmCardView: View {
     }
 }
 
+/// Cursor-style delegation card (web DelegationCard parity): the head hands a
+/// sub-task to a specialist — role icon, task line, live status, and an
+/// expandable result summary + tools-used once the specialist returns.
+@available(iOS 17.0, *)
+struct AgentDelegationCardView: View {
+    let d: AgentChatMessage.Delegation
+    let pal: AgentPalette
+    @State private var open = false
+
+    private static let roleIcon: [String: String] = [
+        "researcher": "🔎", "analyst": "📊", "marketer": "📣",
+        "content": "✍️", "ops": "🗂️", "cs": "💬",
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                guard d.summary?.isEmpty == false else { return }
+                UISelectionFeedbackGenerator().selectionChanged()
+                withAnimation(.snappy(duration: 0.2)) { open.toggle() }
+            } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    Text(Self.roleIcon[d.role] ?? "🤝")
+                        .font(.system(size: 15))
+                        .padding(.top, 1)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(d.roleLabel)
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundStyle(pal.ink)
+                            Text("সাব-এজেন্ট")
+                                .font(.system(size: 9.5, weight: .medium))
+                                .foregroundStyle(Color(red: 0.15, green: 0.47, blue: 0.85))
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color(red: 0.15, green: 0.47, blue: 0.85).opacity(0.12),
+                                            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        }
+                        if !d.task.isEmpty {
+                            Text(d.task)
+                                .font(.system(size: 12))
+                                .foregroundStyle(pal.muted)
+                                .lineLimit(open ? nil : 1)
+                        }
+                        if let tools = d.toolsUsed, !tools.isEmpty {
+                            Text(tools.joined(separator: " · "))
+                                .font(.system(size: 10))
+                                .foregroundStyle(pal.muted.opacity(0.8))
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer(minLength: 6)
+                    statusGlyph.padding(.top, 2)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 11)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if open, let summary = d.summary, !summary.isEmpty {
+                Rectangle().fill(pal.borderSubtle).frame(height: 1)
+                Text(summary)
+                    .font(.system(size: 13))
+                    .foregroundStyle(pal.mutedHi)
+                    .lineSpacing(4)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14).padding(.vertical, 11)
+            }
+        }
+        .background(pal.card.opacity(0.8), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.07), lineWidth: 1))
+    }
+
+    @ViewBuilder private var statusGlyph: some View {
+        if !d.done && !d.stopped {
+            AlmaSparklePulse(size: 13)
+        } else if d.stopped {
+            Image(systemName: "stop.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(pal.muted.opacity(0.6))
+        } else if d.success != false {
+            Image(systemName: "checkmark")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(AgentPalette.teal)
+        } else {
+            Image(systemName: "xmark")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.red)
+        }
+    }
+}
+
 @available(iOS 17.0, *)
 struct AgentAskCardView: View {
     let card: AgentChatMessage.AskCard
@@ -4627,6 +5043,50 @@ struct AgentAskCardsPager: View {
     }
 }
 
+/// Inline browser-screenshot preview under a tool row (web parity: "the owner
+/// sees what the agent saw"). Tap → full-screen zoomable viewer (existing
+/// PortalImageViewer — pinch/double-tap zoom, ✕ to close).
+@available(iOS 17.0, *)
+struct AgentToolScreenshotThumb: View {
+    let urlString: String
+    var maxHeight: CGFloat = 190
+    @State private var preview: PortalImagePreview?
+    @State private var failed = false
+
+    var body: some View {
+        if failed {
+            EmptyView()
+        } else {
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                preview = PortalImagePreview(urls: [urlString], index: 0)
+            } label: {
+                AsyncImage(url: URL(string: urlString)) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(maxWidth: .infinity, maxHeight: maxHeight, alignment: .top)
+                            .clipped()
+                    case .failure:
+                        Color.clear.frame(height: 1).onAppear { failed = true }
+                    default:
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.white.opacity(0.06))
+                            .frame(height: 110)
+                            .redacted(reason: .placeholder)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.10), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .fullScreenCover(item: $preview) { PortalImageViewer(preview: $0) }
+        }
+    }
+}
+
 /// One compact Claude-iOS activity row: small outline SF icon + muted label +
 /// trailing chevron. No emoji, no spinner — just like the Claude app rows.
 @available(iOS 17.0, *)
@@ -4778,14 +5238,23 @@ struct AgentTurnBlocksView: View {
             // A step still RUNNING (no result yet) shimmers its icon+title while it
             // is the live tail — Claude Code's active-step headline (owner ask
             // 2026-07-12); the shimmer drops the moment tool_end lands (ok != nil).
-            AgentCompactActivityRow(icon: "wrench.and.screwdriver", label: a.label,
-                                    labelColor: pal.mutedHi, iconColor: pal.muted,
-                                    failed: a.ok == false,
-                                    shimmer: isTail && a.ok == nil) {
-                if let t = message.tools.first(where: { $0.id == a.toolId }) {
-                    onToolTap(t)
-                } else {
-                    onActivitySheet(.summary, nil)
+            VStack(alignment: .leading, spacing: 6) {
+                AgentCompactActivityRow(icon: "wrench.and.screwdriver", label: a.label,
+                                        labelColor: pal.mutedHi, iconColor: pal.muted,
+                                        failed: a.ok == false,
+                                        shimmer: isTail && a.ok == nil) {
+                    if let t = message.tools.first(where: { $0.id == a.toolId }) {
+                        onToolTap(t)
+                    } else {
+                        onActivitySheet(.summary, nil)
+                    }
+                }
+                // Browser screenshot INLINE — the owner sees what the agent saw
+                // (web parity); tap opens the full-screen zoomable viewer.
+                if let shot = a.screenshot {
+                    AgentToolScreenshotThumb(urlString: shot)
+                        .padding(.leading, 26)
+                        .padding(.bottom, 4)
                 }
             }
         }
