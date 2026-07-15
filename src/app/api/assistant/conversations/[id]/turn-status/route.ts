@@ -35,5 +35,10 @@ export async function GET(
     lastSeq: turn.lastSeq,
     assistantMessageId: turn.assistantMessageId,
     executionMode: turn.executionMode,
+    // iOS recovery: when a long turn's terminal is discovered by POLLING (its SSE
+    // and durable tail both gone), this is the only way the client can still see
+    // that the turn ended continuation-eligible. claimContinuationTurn keeps the
+    // actual claim exactly-once regardless of how many clients read this.
+    continuationNeeded: turn.continuationNeeded === true,
   })
 }

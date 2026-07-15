@@ -54,6 +54,8 @@ export interface TurnSnapshot {
   assistantMessageId: string | null
   lastSeq: number
   executionMode: string | null
+  /** Terminal turn is continuation-eligible (consumed atomically by claimContinuationTurn). */
+  continuationNeeded: boolean
   startedAt: Date
   updatedAt: Date | null
 }
@@ -67,6 +69,7 @@ const TURN_SNAPSHOT_SELECT = {
   assistantMessageId: true,
   lastSeq: true,
   executionMode: true,
+  continuationNeeded: true,
   startedAt: true,
   updatedAt: true,
 } as const
