@@ -65,6 +65,7 @@ import { adapterFor } from '@/agent/lib/models/adapters'
 import { logRouteSpan } from '@/agent/lib/tool-telemetry'
 import { AGENT_VERSIONS } from '@/agent/lib/agent-versions'
 import { isRoutineGraphEnabled, runRoutineTurnGraph, type RoutineGraphResult } from '@/agent/lib/graph/routine-turn-graph'
+import { isActionGraphEnabled, stageExpenseActionGraph, type StageExpenseResult } from '@/agent/lib/graph/action-turn-graph'
 import { buildOwnerRequirementNote, deriveOwnerTurnRequirements } from '@/agent/lib/owner-turn-requirements'
 import { contractToolFailureText, findContractToolFailure } from '@/agent/lib/contract-tool-failure'
 import {
@@ -698,9 +699,19 @@ async function* runAlternateProviderTurn(
   // Runs BEFORE the route span (LG-1) so the span records the graph outcome —
   // the cost dashboard reads graph-handled share + saved tokens from it.
   // Rollout: AGENT_LANGGRAPH_ROUTINE=true/false; default ON in preview only.
+  // ── LG-3: fixed WRITE intents stage their card as a paused graph thread ────
+  // (interrupt pilot: log_expense only). Runs BEFORE the routine READ graph so
+  // "500 taka khoroch holo" stages a card instead of reading today's summary.
+  // Any miss falls through to the routine graph, then the normal loop.
+  const actionGraphOn = isActionGraphEnabled()
+  let actionGraph: StageExpenseResult | null = null
+  if (!listenMode && headTier === 'light' && actionGraphOn) {
+    actionGraph = await stageExpenseActionGraph(lastUserText, { conversationId, turnId })
+  }
+
   const routineGraphOn = isRoutineGraphEnabled()
   let routineGraph: RoutineGraphResult | null = null
-  if (!listenMode && headTier === 'light') {
+  if (!listenMode && headTier === 'light' && !actionGraph?.staged) {
     // One line per light turn so "why didn't the graph run?" is answerable from
     // runtime logs instead of guesswork (2026-07-15 preview debugging session:
     // VERCEL_ENV visibility couldn't be confirmed any other way).
@@ -747,6 +758,8 @@ async function* runAlternateProviderTurn(
       // LG-1: routine-graph outcome on EVERY turn — 'off' (gate off / not a
       // light turn), 'handled' or 'miss'. Dashboard: handled share + the tiny
       // graph token usage vs the loop's normal spend = saved tokens.
+      // LG-3: same for the action (interrupt) graph.
+      actionGraph: actionGraph ? (actionGraph.staged ? 'staged' : 'miss') : 'off',
       routineGraph: routineGraph ? (routineGraph.handled ? 'handled' : 'miss') : 'off',
       routineIntent: routineGraph?.intent ?? null,
       routineMissReason: routineGraph?.missReason ?? null,
@@ -821,6 +834,24 @@ async function* runAlternateProviderTurn(
   // Live-browser turns raise this cap (see BROWSER_TURN_MAX_ITERATIONS) — a real
   // UI task is 15–30 look→act rounds and must not die silently at the default cap.
   let maxIterations = MAX_TOOL_ITERATIONS
+
+  // LG-3: the action graph staged a card (thread paused at its interrupt) —
+  // emit the ordinary confirm-card event + a fixed Bangla staging line; the
+  // model loop never runs. Approve/reject resumes the thread server-side.
+  if (actionGraph?.staged && actionGraph.pendingActionId) {
+    maxIterations = 0
+    timeline.push({ t: 'tool', name: 'log_expense', ok: true, input: { via: 'action_graph' }, result: actionGraph.summary })
+    yield {
+      type: 'confirm_card',
+      pendingActionId: actionGraph.pendingActionId,
+      summary: actionGraph.summary,
+      actionType: 'log_expense',
+      isFinance: true,
+    }
+    finalText = actionGraph.replyText
+    timeline.push({ t: 'text', text: finalText })
+    yield { type: 'text_delta', delta: finalText }
+  }
 
   // Routine graph handled the turn (invoked above, before the route span) —
   // emit its tool + reply as a perfectly ordinary turn; the model loop never runs.

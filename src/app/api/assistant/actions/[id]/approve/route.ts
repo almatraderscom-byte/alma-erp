@@ -1143,18 +1143,32 @@ async function runApprove(
   }
 
   if (action.type === 'log_expense') {
-    const { amount, currency, category, note, occurredAt } = payload as {
-      amount: number; currency: string; category?: string; note: string; occurredAt: string
+    // LG-3 pilot: a card staged by the action graph carries a graphThread
+    // bridge — resume the paused thread with the owner's decision (interrupt
+    // is TRANSPORT; the auth/status/expiry guards above stay the
+    // authorization). Any resume failure falls open to the legacy path below.
+    const graphThread = (payload as { graphThread?: { threadId?: string } }).graphThread
+    if (graphThread?.threadId) {
+      const { resumeExpenseActionGraph } = await import('@/agent/lib/graph/action-turn-graph')
+      const r = await resumeExpenseActionGraph({ pendingActionId: actionId, threadId: graphThread.threadId })
+      if (r.resumed && r.executed) {
+        return Response.json({ success: true, expenseId: r.expenseId, via: 'graph_resume' })
+      }
+      if (r.resumed && !r.executed) {
+        // The thread resumed but the claim found the row already resolved —
+        // report honestly instead of double-logging via the legacy path.
+        return Response.json({ error: 'already_resolved', detail: r.error ?? undefined }, { status: 409 })
+      }
+      // resumed=false → checkpointer/thread problem → legacy path executes.
     }
-    const expense = await db.agentFinanceExpense.create({
-      data: { amount, currency, category: category ?? null, note, occurredAt: new Date(occurredAt) },
-      select: { id: true, amount: true, currency: true },
-    })
-    await db.agentPendingAction.update({
-      where: { id: actionId },
-      data:  { status: 'executed', resolvedAt: new Date(), result: { expenseId: expense.id } },
-    })
-    return Response.json({ success: true, expenseId: expense.id })
+    // Legacy inline path — shares the claim-guarded executor with the graph
+    // node, so a partial graph resume can never lead to a double expense row.
+    const { claimAndExecuteLogExpense } = await import('@/agent/lib/graph/action-turn-graph')
+    const r = await claimAndExecuteLogExpense(actionId)
+    if (!r.executed) {
+      return Response.json({ error: 'already_resolved', detail: r.reason ?? undefined }, { status: 409 })
+    }
+    return Response.json({ success: true, expenseId: r.expenseId })
   }
 
   if (action.type === 'set_reminder_tier3') {
