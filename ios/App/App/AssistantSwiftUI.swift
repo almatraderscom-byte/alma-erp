@@ -4202,7 +4202,7 @@ struct AgentThoughtProcessSheet: View {
     @ViewBuilder private func summaryItemRow(_ item: SummaryItem, index: Int, isLast: Bool, pal: AgentPalette) -> some View {
         let open = openItems.contains(index)
         let hasDetail = (item.body?.isEmpty == false) || (item.input?.isEmpty == false)
-            || (item.output?.isEmpty == false)
+            || (item.output?.isEmpty == false) || (item.shot?.isEmpty == false)
         HStack(alignment: .top, spacing: 12) {
             VStack(spacing: 2) {
                 Image(systemName: item.icon)
@@ -4250,6 +4250,11 @@ struct AgentThoughtProcessSheet: View {
                             .lineSpacing(5)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    // The step's browser screenshot survives the collapse (owner
+                    // report 2026-07-15: labels alone read as "screenshots lost").
+                    if let shot = item.shot, !shot.isEmpty {
+                        AgentToolScreenshotThumb(urlString: shot)
                     }
                     if let input = item.input, !input.isEmpty {
                         sheetIOBlock(label: "ইনপুট · INPUT", text: input, pal: pal, failed: false)
@@ -4303,6 +4308,9 @@ struct AgentThoughtProcessSheet: View {
         let output: String?
         let isThought: Bool
         let failed: Bool
+        /// Browser-step screenshot URL (owner report 2026-07-15: the collapsed-steps
+        /// sheet listed only labels, so the earlier sites' screenshots looked lost).
+        var shot: String? = nil
         var tint: Color {
             if failed { return .red }
             if icon == "magnifyingglass" { return Color(red: 0.831, green: 0.659, blue: 0.294) } // gold
@@ -4330,7 +4338,7 @@ struct AgentThoughtProcessSheet: View {
                 guard !line.isEmpty else { continue }
                 if pendingThink == nil { pendingThink = line }
                 else { pendingThink! += "\n\n" + line }
-            case .tool(let id, let name, let ok, _, let input, let result, _):
+            case .tool(let id, let name, let ok, _, let input, let result, let shot):
                 flushThink()
                 if !sawSearch {
                     out.append(.init(icon: "magnifyingglass", title: "Searched available tools",
@@ -4343,7 +4351,8 @@ struct AgentThoughtProcessSheet: View {
                                  body: nil,
                                  input: input ?? tool?.inputPretty,
                                  output: result ?? tool?.resultFull ?? tool?.preview,
-                                 isThought: false, failed: ok == false))
+                                 isThought: false, failed: ok == false,
+                                 shot: shot ?? tool?.screenshot))
             case .text:
                 // Prose lives in the message body — the activity summary only lists steps.
                 continue
