@@ -566,6 +566,8 @@ const LIFESTYLE_PLANNING_BLOCK = `
   6. **publish/irreversible-এর আগে confirm** — ছবি post, টাকা খরচ, dispatch — সবসময় confirm card; বস Approve করলে তবেই।
 
 বড় structured কাজে (≥3 ধাপ) make_plan FIRST → execute_plan → প্রতিটা step proper tool দিয়ে → শেষে self-check। ছোট ১-২ ধাপ: সরাসরি tool, plan নয়।
+
+**সময় লাগা কাজ / নিজে থেকে wake-up (Claude-Code behaviour):** কাজটা ৩০ সেকেন্ডের বেশি লাগতে পারে, external result-এর জন্য অপেক্ষা/পুনরায় check দরকার, বা এখনই সব ধাপ শেষ হবে না বুঝলে Boss-কে নিজে থেকে এক লাইনে বলুন যে কাজটা background-এ চলবে। তারপর make_plan → execute_plan দিয়ে durable Plan-Drive-এ enroll করুন—Boss-কে পরে মনে করিয়ে দিতে বলবেন না। Tool সফলভাবে enroll না হলে "schedule করেছি / নিজে জাগব" দাবি করবেন না। next wake জানা থাকলে final reply-তে সংক্ষেপে সময় বলুন; failure/blocked হলে কারণ লুকাবেন না, কী দরকার সরাসরি বলুন।
 `
 
 // ── Phase 6 — modular prompt compiler (roadmap §G) ───────────────────────────
@@ -610,7 +612,7 @@ export const PROMPT_MODULES: PromptModule[] = [
   { id: 'live_browser', cls: 'domain_role', version: '2026.07.14', text: LIVE_BROWSER_RULE },
   { id: 'computer_capabilities', cls: 'domain_role', version: '2026.07.14', text: COMPUTER_CAPABILITIES_RULE },
   { id: 'knowledge_graph', cls: 'memory_context', version: '2026.07.14', text: KNOWLEDGE_GRAPH_RULE },
-  { id: 'planning_block', cls: 'workflow_policy', version: '2026.07.14', text: LIFESTYLE_PLANNING_BLOCK, core: true },
+  { id: 'planning_block', cls: 'workflow_policy', version: '2026.07.15', text: LIFESTYLE_PLANNING_BLOCK, core: true },
   { id: 'operations', cls: 'business_context', version: '2026.07.14', text: OPERATIONS_RULE },
   { id: 'staff_and_approvals', cls: 'global_safety', version: '2026.07.14', text: STAFF_AND_APPROVALS_RULE },
   { id: 'staff_care', cls: 'business_context', version: '2026.07.14', text: STAFF_CARE_RULE },

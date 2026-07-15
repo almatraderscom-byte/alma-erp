@@ -85,7 +85,10 @@ final class AgoraIntercom: NSObject {
     var recording = false             // PTT voice-note is capturing right now
     var callPeer = "স্টাফ"            // who we're talking to (shown on the call screen)
 
-    private var engine: AgoraRtcEngineKit?
+    // Agora's Objective-C engine is SDK plumbing, never SwiftUI state. Xcode 26
+    // cannot demangle the synthesized Observation key path for this imported
+    // optional type at launch, so keep it out of @Observable tracking.
+    @ObservationIgnored private var engine: AgoraRtcEngineKit?
     private var appId: String?
     private var channel: String?
     private var callTimer: Timer?

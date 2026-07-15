@@ -17,6 +17,7 @@ import {
   type Plan,
   type PlanStep,
   type AutodriveState,
+  loadFinishedPlanDrives,
   loadVisiblePlanDrives,
 } from '@/agent/lib/planner'
 import { getAutodriveConfig } from '@/agent/lib/autodrive-config'
@@ -52,9 +53,30 @@ export interface PlanDriveView {
   waitingReason?: string
   /** ISO timestamp of the self-scheduled next wake-up, when scheduled. */
   nextTickAt: string | null
+  /** Stable origin for honest live elapsed time (never reset by polling). */
+  startedAt: string | null
   lastDrivenAt: string | null
   attemptCount: number
   maxAttempts: number
+  costTaka: number
+}
+
+export type PlanDriveHistoryStatus = 'completed' | 'failed' | 'stopped'
+
+export interface PlanDriveHistoryView {
+  planId: string
+  goal: string
+  conversationId: string | null
+  status: PlanDriveHistoryStatus
+  /** The original owner/agent task brief. */
+  input: string
+  /** Verified step output, when the plan produced one. */
+  result?: string
+  /** Failure/stop reason, kept distinct from successful output. */
+  error?: string
+  startedAt: string | null
+  completedAt: string | null
+  steps: PlanDriveStepView[]
   costTaka: number
 }
 
@@ -62,6 +84,8 @@ export interface PlanDrivePanelData {
   /** Master kill-switch echo — UI shows "চালু/বন্ধ". */
   enabled: boolean
   drives: PlanDriveView[]
+  /** Recent terminal plans; additive so existing web/native consumers stay safe. */
+  finished: PlanDriveHistoryView[]
   activeCount: number
   needsDecisionCount: number
   /** Whole-taka spent vs the daily cap, for the panel header. */
@@ -87,9 +111,9 @@ function stepDetail(step: PlanStep): string | undefined {
   if (step.result == null) return undefined
   if (typeof step.result === 'string') return step.result
   try {
-    return JSON.stringify(step.result).slice(0, 200)
+    return JSON.stringify(step.result).slice(0, 4000)
   } catch {
-    return String(step.result).slice(0, 200)
+    return String(step.result).slice(0, 4000)
   }
 }
 
@@ -134,9 +158,63 @@ function toView(plan: Plan): PlanDriveView {
         ? plan.selfCheckNote ?? undefined
         : undefined,
     nextTickAt: plan.nextTickAt ? new Date(plan.nextTickAt).toISOString() : null,
+    startedAt: plan.createdAt ? new Date(plan.createdAt).toISOString() : null,
     lastDrivenAt: plan.lastDrivenAt ? new Date(plan.lastDrivenAt).toISOString() : null,
     attemptCount: plan.attemptCount,
     maxAttempts: plan.maxAttempts,
+    costTaka: plan.costTaka,
+  }
+}
+
+function historyStatus(plan: Plan): PlanDriveHistoryStatus {
+  if (plan.autodriveState === 'abandoned') return 'stopped'
+  if (plan.autodriveState === 'failed' || plan.status === 'failed') return 'failed'
+  return 'completed'
+}
+
+function historyResult(plan: Plan): string | undefined {
+  const lines = plan.steps.flatMap((step) => {
+    if (step.status !== 'done') return []
+    const detail = stepDetail(step)
+    return detail ? [`${step.action}: ${detail}`] : []
+  })
+  if (lines.length > 0) return lines.join('\n')
+  if (historyStatus(plan) === 'completed') {
+    return plan.selfCheckNote ?? 'সব ধাপ যাচাই করে কাজটি সম্পন্ন হয়েছে।'
+  }
+  return undefined
+}
+
+function historyError(plan: Plan): string | undefined {
+  const failed = plan.steps.find((step) => step.status === 'failed')
+  if (failed?.error) return failed.error
+  if (historyStatus(plan) === 'stopped') return plan.selfCheckNote ?? 'Owner task-টি বন্ধ করেছেন।'
+  if (historyStatus(plan) === 'failed') return plan.selfCheckNote ?? 'কাজটি সম্পন্ন করা যায়নি।'
+  return undefined
+}
+
+function toHistoryView(plan: Plan): PlanDriveHistoryView {
+  return {
+    planId: plan.id,
+    goal: plan.goal,
+    conversationId: plan.conversationId ?? null,
+    status: historyStatus(plan),
+    input: plan.goal,
+    result: historyResult(plan),
+    error: historyError(plan),
+    startedAt: plan.createdAt ? new Date(plan.createdAt).toISOString() : null,
+    completedAt: plan.completedAt
+      ? new Date(plan.completedAt).toISOString()
+      : plan.updatedAt
+        ? new Date(plan.updatedAt).toISOString()
+        : null,
+    steps: plan.steps.map((step) => ({
+      id: step.id,
+      action: step.action,
+      status: step.status,
+      toolName: step.toolName,
+      detail: stepDetail(step),
+    })),
     costTaka: plan.costTaka,
   }
 }
@@ -146,9 +224,13 @@ function toView(plan: Plan): PlanDriveView {
  * the things needing the owner's attention float to the top.
  */
 export async function getPlanDrivePanel(): Promise<PlanDrivePanelData> {
-  const config = await getAutodriveConfig()
-  const plans = await loadVisiblePlanDrives()
+  const [config, plans, finishedPlans] = await Promise.all([
+    getAutodriveConfig(),
+    loadVisiblePlanDrives(),
+    loadFinishedPlanDrives({ limit: 20 }),
+  ])
   const drives = plans.map(toView)
+  const finished = finishedPlans.map(toHistoryView)
 
   // Order: needs-decision → waiting-approval → driving (most-recent within group).
   const rank: Record<PlanDrivePhase, number> = {
@@ -162,6 +244,7 @@ export async function getPlanDrivePanel(): Promise<PlanDrivePanelData> {
   return {
     enabled: config.enabled,
     drives,
+    finished,
     activeCount: drives.filter((d) => d.phase === 'driving').length,
     needsDecisionCount: drives.filter((d) => d.phase === 'needs-decision').length,
     dailyCapTaka: config.dailyCapTaka,

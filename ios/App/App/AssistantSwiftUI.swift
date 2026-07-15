@@ -273,15 +273,129 @@ private struct AgentPlanDriveView: Decodable, Identifiable, Equatable {
     let currentLine: String?
     let waitingReason: String?
     let nextTickAt: String?
+    let startedAt: String?
+    let lastDrivenAt: String?
     let attemptCount: Int?
     let maxAttempts: Int?
     let costTaka: Double?
     var id: String { planId }
 }
 
+private struct AgentPlanDriveHistoryView: Decodable, Identifiable, Equatable {
+    let planId: String
+    let goal: String
+    let conversationId: String?
+    let status: String       // completed | failed | stopped
+    let input: String
+    let result: String?
+    let error: String?
+    let startedAt: String?
+    let completedAt: String?
+    let steps: [AgentPlanDriveStep]?
+    let costTaka: Double?
+    /// Namespace terminal rows away from live rows. A task moves between the two
+    /// arrays with the same planId; sharing SwiftUI identity can retain the old
+    /// Running row body after a live Running → Finished reconciliation.
+    var id: String { "finished-\(planId)" }
+}
+
 private struct AgentPlanDrivePanel: Decodable, Equatable {
     let enabled: Bool?
     let drives: [AgentPlanDriveView]?
+    let finished: [AgentPlanDriveHistoryView]?
+}
+
+/// Existing `/api/assistant/todos` wire shape. Office and the native Background
+/// Tasks sheet deliberately share this exact source, so a scheduler/agent status
+/// change is reflected in both surfaces without maintaining a second todo state.
+private struct AgentDailyTodo: Decodable, Identifiable, Equatable {
+    let id: String
+    let title: String
+    let description: String?
+    let priority: String?
+    let status: String?
+    let dueDate: String?
+    let source: String?
+    let dutyKey: String?
+    let createdAt: String?
+    let completedAt: String?
+}
+
+private struct AgentDailyTodosResponse: Decodable {
+    let todos: [AgentDailyTodo]?
+}
+
+/// Exact daily-duty row rendered by the Office monitor. Background Tasks reads
+/// this same payload so the compact checklist cannot drift from Office's roster.
+private struct AgentOfficeDuty: Decodable, Identifiable, Equatable {
+    let id: String
+    let duty: String
+    let label: String
+    let dutyDate: String
+    let status: String
+    let detail: String?
+    let ranAt: String?
+    let time: String?
+    let createdAt: String
+}
+
+private struct AgentOfficeDutyResponse: Decodable {
+    let agentDuties: [AgentOfficeDuty]
+}
+
+private struct AgentHeartbeatSettings: Decodable, Equatable {
+    let enabled: Bool
+    let autoArm: Bool
+    let dailyHeadWakeCap: Int
+    let officeHoursOnly: Bool
+}
+
+private struct AgentHeartbeatPulse: Decodable, Equatable {
+    let pendingApprovals: Int?
+    let ownerEscalations: Int?
+    let openTodos: Int?
+    let csAlerts: Int?
+    let moneyRequests: Int?
+    let agingApprovals: Int?
+}
+
+private struct AgentHeartbeatEntry: Decodable, Identifiable, Equatable {
+    let id: String
+    let at: String
+    let kind: String
+    let pulse: AgentHeartbeatPulse?
+    let headWoke: Bool
+    let summary: String
+    let costUsd: Double?
+    let conversationId: String?
+}
+
+private struct AgentHeartbeatFeed: Decodable, Equatable {
+    let settings: AgentHeartbeatSettings
+    let wakesToday: Int
+    let entries: [AgentHeartbeatEntry]
+    let nextCheckAt: String?
+}
+
+/// Server-authoritative owner-global turns. Unlike `isStreaming`, these survive
+/// switching to another chat because they are read from the durable AgentTurn row.
+private struct AgentActiveBackgroundTurn: Decodable, Identifiable, Equatable {
+    let id: String
+    let conversationId: String
+    let conversationTitle: String?
+    let kind: String
+    let input: String
+    let startedAt: String
+    let updatedAt: String?
+}
+
+private struct AgentActiveBackgroundTurnsResponse: Decodable {
+    let turns: [AgentActiveBackgroundTurn]
+    let count: Int
+}
+
+private struct AgentDailyTodoMutationResponse: Decodable {
+    let todo: AgentDailyTodo?
 }
 
 // Model picker (web AgentModelSelector parity)
@@ -966,10 +1080,16 @@ final class AssistantVM {
     var openTasks: [AgentOpenTask] = []
     var openTaskBusyId: String?
 
-    // S8 additive — artifacts (display-only) + Plan-Drive Live Desk
+    // S8 additive — artifacts + durable Plan-Drive background work.
     fileprivate var artifacts: [AgentArtifactWire] = []
     fileprivate var planDrive: AgentPlanDrivePanel?
+    fileprivate var dailyAgentTodos: [AgentDailyTodo] = []
+    fileprivate var officeDailyDuties: [AgentOfficeDuty] = []
+    fileprivate var heartbeatFeed: AgentHeartbeatFeed?
+    fileprivate var activeBackgroundTurns: [AgentActiveBackgroundTurn] = []
+    private var usesBackgroundTaskDebugFixture = false
     var planDriveBusyPlanId: String?
+    var dailyTodoBusyId: String?
 
     // TTS playback ("শুনুন")
     var ttsPlayingId: String?
@@ -1053,7 +1173,10 @@ final class AssistantVM {
         await loadModels()
         await loadActiveConversation()
         await recoverFromPersistedDescriptor()
-        await loadPlanDrive()
+        async let drive: Void = loadPlanDrive()
+        async let todos: Void = loadDailyAgentTodos()
+        async let turns: Void = loadActiveBackgroundTurns()
+        _ = await (drive, todos, turns)
         startPolling()
     }
 
@@ -1301,6 +1424,10 @@ final class AssistantVM {
             justSettledId = messages.last(where: { $0.role == .assistant })?.id
             await loadOpenTasks()
             await loadArtifacts()   // the turn may have just produced one
+            async let drive: Void = loadPlanDrive()
+            async let todos: Void = loadDailyAgentTodos()
+            async let turns: Void = loadActiveBackgroundTurns()
+            _ = await (drive, todos, turns)
         }
         // PR 5: terminal + reconciled — the descriptor has done its job.
         recoverableTurn = nil
@@ -1332,13 +1459,21 @@ final class AssistantVM {
                 // not only on app-resume (owner ask 2026-07-13, Claude-Code parity:
                 // approve → "করছি বস" line + working animation until the reply lands).
                 if !self.isStreaming { await self.recoverTurnState(trigger: "poll") }
+                // One bounded global query keeps task count identical across
+                // chat sessions. Assign-on-change prevents needless main-view
+                // invalidation when the server state is unchanged.
+                await self.loadActiveBackgroundTurns()
                 if tick % 2 == 0 {
                     let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/presence",
                                                                         body: [String: String]())
                 }
-                // Plan-Drive Live Desk — web polls every 30s; every other 12s
-                // tick (~24s) keeps the in-thread timeline fresh.
-                if tick % 2 == 1 { await self.loadPlanDrive() }
+                // Durable background work + today's tiny progress counter refresh
+                // together every ~24s. Neither request mutates business state.
+                if tick % 2 == 1 {
+                    async let drive: Void = self.loadPlanDrive()
+                    async let todos: Void = self.loadDailyAgentTodos()
+                    _ = await (drive, todos)
+                }
             }
         }
     }
@@ -1756,8 +1891,81 @@ final class AssistantVM {
     /// Web parity: GET /api/assistant/plan-driver, polled while the chat is open
     /// (web polls every 30s). Read-only; safe to poll.
     fileprivate func loadPlanDrive() async {
+        guard !usesBackgroundTaskDebugFixture else { return }
         if let panel: AgentPlanDrivePanel = try? await AlmaAPI.shared.get("/api/assistant/plan-driver") {
             planDrive = panel
+        }
+    }
+
+    /// Agent-owned daily work is a global day view, not conversation prose. It is
+    /// deliberately fetched separately and rendered only inside Background Tasks.
+    fileprivate func loadDailyAgentTodos() async {
+        guard !usesBackgroundTaskDebugFixture else { return }
+        if let response: AgentDailyTodosResponse = try? await AlmaAPI.shared.get(
+            "/api/assistant/todos", query: ["includeCompleted": "true"]) {
+            dailyAgentTodos = (response.todos ?? []).filter { todo in
+                todo.source != "owner" && todo.source != "owner_action"
+            }
+        }
+    }
+
+    /// Office's monitor already owns the canonical morning-to-night duty roster.
+    /// Decode only `agentDuties`; Decodable intentionally ignores the larger
+    /// monitor payload. This is read-only and does not change the legacy route.
+    fileprivate func loadOfficeDailyDuties() async {
+        guard !usesBackgroundTaskDebugFixture else { return }
+        if let response: AgentOfficeDutyResponse = try? await AlmaAPI.shared.get(
+            "/api/agent/staff-monitor") {
+            officeDailyDuties = response.agentDuties
+        }
+    }
+
+    /// Autonomous heartbeat history belongs in the same Background Tasks surface
+    /// as Plan-Drive; this is the existing owner-facing, read-only feed.
+    fileprivate func loadHeartbeatFeed() async {
+        guard !usesBackgroundTaskDebugFixture else { return }
+        if let feed: AgentHeartbeatFeed = try? await AlmaAPI.shared.get(
+            "/api/assistant/heartbeat", query: ["limit": "60"]) {
+            heartbeatFeed = feed
+        }
+    }
+
+    /// One bounded owner-global query replaces N per-conversation status polls.
+    /// It is cheap enough for the existing background cadence and keeps the main
+    /// chat rendering completely independent from session switching.
+    fileprivate func loadActiveBackgroundTurns() async {
+        guard !usesBackgroundTaskDebugFixture else { return }
+        if let response: AgentActiveBackgroundTurnsResponse = try? await AlmaAPI.shared.get(
+            "/api/assistant/background-tasks") {
+            if response.turns != activeBackgroundTurns {
+                activeBackgroundTurns = response.turns
+            }
+        }
+    }
+
+    func stopBackgroundTurn(id: String) async {
+        if id == currentTurnId {
+            stopStreaming()
+            activeBackgroundTurns.removeAll { $0.id == id }
+            return
+        }
+        let _: OkResponse? = try? await AlmaAPI.shared.send(
+            "POST", "/api/assistant/turn/\(id)/cancel")
+        activeBackgroundTurns.removeAll { $0.id == id }
+    }
+
+    /// Stop an agent-owned Office todo without deleting its audit trail. The
+    /// shared todo endpoint updates Office and this sheet from the same row.
+    func stopDailyAgentTodo(id: String) async {
+        guard dailyTodoBusyId == nil else { return }
+        dailyTodoBusyId = id
+        defer { dailyTodoBusyId = nil }
+        do {
+            let _: AgentDailyTodoMutationResponse = try await AlmaAPI.shared.send(
+                "PATCH", "/api/assistant/todos", body: ["id": id, "status": "cancelled"])
+            await loadDailyAgentTodos()
+        } catch {
+            errorToast = (error as? AlmaAPIError)?.localizedDescription ?? error.localizedDescription
         }
     }
 
@@ -1765,6 +1973,10 @@ final class AssistantVM {
     /// resume / add-budget / abandon → POST, then refresh the panel.
     func planDriveAct(planId: String, action: String) async {
         guard planDriveBusyPlanId == nil else { return }
+        if usesBackgroundTaskDebugFixture {
+            debugPlanDriveAct(planId: planId, action: action)
+            return
+        }
         planDriveBusyPlanId = planId
         defer { planDriveBusyPlanId = nil }
         do {
@@ -1780,7 +1992,49 @@ final class AssistantVM {
         }
     }
 
+    /// Deterministic Simulator proof: mirrors a real stop transition locally so
+    /// the open sheet can prove live Running → Finished reconciliation without
+    /// ever writing a fake plan to production.
+    private func debugPlanDriveAct(planId: String, action: String) {
+        guard action == "abandon", let panel = planDrive,
+              let drive = panel.drives?.first(where: { $0.planId == planId }) else { return }
+        let history = AgentPlanDriveHistoryView(
+            planId: drive.planId, goal: drive.goal ?? "Background task",
+            conversationId: drive.conversationId, status: "stopped",
+            input: drive.goal ?? "Background task", result: nil,
+            error: "Owner task-টি বন্ধ করেছেন।", startedAt: drive.startedAt,
+            completedAt: ISO8601DateFormatter().string(from: Date()),
+            steps: drive.steps, costTaka: drive.costTaka)
+        withAnimation(.spring(response: 0.38, dampingFraction: 0.88)) {
+            planDrive = AgentPlanDrivePanel(
+                enabled: panel.enabled,
+                drives: (panel.drives ?? []).filter { $0.planId != planId },
+                finished: [history] + (panel.finished ?? []))
+        }
+        errorToast = "Task বন্ধ করা হয়েছে"
+    }
+
     // ── TTS ("শুনুন") ──────────────────────────────────────────────────────
+
+    /// Web FeedbackButtons parity — native thumbs file the same traceable owner
+    /// feedback against this exact conversation/message. Simulator fixtures stay
+    /// entirely local and never write debug feedback to production data.
+    func submitReplyFeedback(messageId: String, kind: String) async -> Bool {
+        guard !usesBackgroundTaskDebugFixture else { return true }
+        guard let conversationId else {
+            errorToast = "Feedback save করার conversation পাওয়া যায়নি"
+            return false
+        }
+        do {
+            let _: OkResponse = try await AlmaAPI.shared.send(
+                "POST", "/api/assistant/feedback",
+                body: ["kind": kind, "conversationId": conversationId, "messageId": messageId])
+            return true
+        } catch {
+            errorToast = "Feedback save করা গেল না"
+            return false
+        }
+    }
 
     func toggleTTS(for message: AgentChatMessage) {
         if ttsPlayingId == message.id {
@@ -2530,6 +2784,125 @@ final class AssistantVM {
             guard let self, !Task.isCancelled else { return }
             self.isStreaming = false
             if let i = self.messages.lastIndex(where: { $0.isStreaming }) { self.messages[i].isStreaming = false }
+        }
+    }
+
+    /// Focused visual fixture for the Background Tasks surface. It never calls the
+    /// server and is reachable only through a local simulator launch argument.
+    func loadBackgroundTaskDebugFixture() {
+        usesBackgroundTaskDebugFixture = true
+        var first = AgentChatMessage(id: "bg-a-1", role: .assistant,
+                                     text: "বুঝেছি Boss — order audit-টা background-এ চালাচ্ছি। Result ready হলে নিজে থেকেই আবার check করব।")
+        first.createdAt = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-240))
+        let user = AgentChatMessage(id: "bg-u-2", role: .user,
+                                    text: "Courier mismatch-গুলোর reason-ও verify করো")
+        var latest = AgentChatMessage(id: "bg-a-2", role: .assistant,
+                                      text: "করছি Boss। Courier data মিলিয়ে final report দেব—আপনাকে আবার remind করতে হবে না।")
+        latest.createdAt = ISO8601DateFormatter().string(from: Date())
+        latest.tokensIn = 18420
+        latest.tokensOut = 892
+        latest.costUsd = "0.061869"
+        messages = [first, user, latest]
+        justSettledId = latest.id
+
+        let iso = ISO8601DateFormatter()
+        let wake = iso.string(from: Date().addingTimeInterval(22 * 60))
+        let runningStarted = iso.string(from: Date().addingTimeInterval(-28))
+        let attentionStarted = iso.string(from: Date().addingTimeInterval(-190))
+        let finishedAt = iso.string(from: Date().addingTimeInterval(-420))
+        planDrive = AgentPlanDrivePanel(enabled: true, drives: [
+            AgentPlanDriveView(
+                planId: "debug-running", goal: "Order ও courier audit", conversationId: "debug",
+                phase: "driving",
+                steps: [
+                    .init(id: "s1", action: "Pending orders যাচাই", status: "done", toolName: "get_orders", detail: nil),
+                    .init(id: "s2", action: "Courier mismatch re-check", status: "running", toolName: "courier_check", detail: nil),
+                    .init(id: "s3", action: "Final report", status: "pending", toolName: nil, detail: nil),
+                ],
+                doneCount: 1, totalCount: 3, currentLine: "Courier mismatch মিলিয়ে দেখছি",
+                waitingReason: nil, nextTickAt: nil, startedAt: runningStarted,
+                lastDrivenAt: runningStarted, attemptCount: 1, maxAttempts: 8, costTaka: 1),
+            AgentPlanDriveView(
+                planId: "debug-attention", goal: "Ads performance report", conversationId: "debug",
+                phase: "needs-decision",
+                steps: [.init(id: "a1", action: "Meta report আনুন", status: "failed", toolName: "meta_ads", detail: "Meta access token expire হয়েছে")],
+                doneCount: 0, totalCount: 1, currentLine: nil,
+                waitingReason: "Meta access token expire হয়েছে—reconnect দরকার",
+                nextTickAt: wake, startedAt: attentionStarted, lastDrivenAt: attentionStarted,
+                attemptCount: 3, maxAttempts: 3, costTaka: 0),
+        ], finished: [
+            .init(planId: "history-briefing", goal: "সকালের briefing প্রস্তুত", conversationId: "debug",
+                  status: "completed", input: "আজকের order, payment ও staff status থেকে verified owner briefing তৈরি করো।",
+                  result: "আজকের order, payment ও staff status থেকে verified briefing তৈরি হয়েছে।",
+                  error: nil, startedAt: iso.string(from: Date().addingTimeInterval(-780)),
+                  completedAt: finishedAt,
+                  steps: [.init(id: "h1", action: "Business data যাচাই", status: "done", toolName: "owner_briefing", detail: "Order, payment ও staff status verified")], costTaka: 1),
+            .init(planId: "history-dispatch", goal: "স্টাফ task dispatch", conversationId: "debug",
+                  status: "completed", input: "আজকের priority কাজগুলো staff-দের কাছে দায়িত্বসহ পাঠাও।",
+                  result: "Operations team-এ ৩টি verified task dispatch করা হয়েছে।", error: nil,
+                  startedAt: nil, completedAt: finishedAt, steps: nil, costTaka: 1),
+            .init(planId: "history-payment", goal: "পেমেন্ট reminder যাচাই", conversationId: "debug",
+                  status: "failed", input: "Overdue payment list যাচাই করে reminder ready করো।", result: nil,
+                  error: "Customer contact permission পাওয়া যায়নি—reminder পাঠানো হয়নি।",
+                  startedAt: nil, completedAt: finishedAt, steps: nil, costTaka: 0),
+            .init(planId: "history-cost", goal: "Cost reconcile", conversationId: "debug",
+                  status: "completed", input: "আজকের courier cost reconcile করো।",
+                  result: "Courier cost ledger-এর সঙ্গে reconcile হয়েছে।", error: nil,
+                  startedAt: nil, completedAt: finishedAt, steps: nil, costTaka: 1),
+            .init(planId: "history-stock", goal: "Low-stock follow-up", conversationId: "debug",
+                  status: "completed", input: "Low-stock SKU owner list update করো।",
+                  result: "৩টি low-stock SKU follow-up list-এ যোগ হয়েছে।", error: nil,
+                  startedAt: nil, completedAt: finishedAt, steps: nil, costTaka: 0),
+            .init(planId: "history-qa", goal: "Customer reply QA", conversationId: "debug",
+                  status: "completed", input: "আজকের customer replies quality check করো।",
+                  result: "১২টি reply check হয়েছে; critical issue পাওয়া যায়নি।", error: nil,
+                  startedAt: nil, completedAt: finishedAt, steps: nil, costTaka: 1),
+            .init(planId: "history-ads", goal: "Ads report", conversationId: "debug",
+                  status: "failed", input: "Meta ads performance report তৈরি করো।", result: nil,
+                  error: "Meta access token expire হয়েছে—reconnect দরকার।",
+                  startedAt: nil, completedAt: finishedAt, steps: nil, costTaka: 0),
+            .init(planId: "history-owner", goal: "Owner follow-up", conversationId: "debug",
+                  status: "stopped", input: "Pending owner follow-up review করো।", result: nil,
+                  error: "Owner task-টি বন্ধ করেছেন।", startedAt: nil, completedAt: finishedAt,
+                  steps: nil, costTaka: 0),
+        ])
+        dailyAgentTodos = [
+            .init(id: "t1", title: "Morning order scan", description: nil, priority: "high", status: "completed", dueDate: nil, source: "agent", dutyKey: "orders", createdAt: nil, completedAt: nil),
+            .init(id: "t2", title: "Staff attendance check", description: nil, priority: "normal", status: "completed", dueDate: nil, source: "agent", dutyKey: "attendance", createdAt: nil, completedAt: nil),
+            .init(id: "t3", title: "Courier reconciliation", description: nil, priority: "high", status: "running", dueDate: nil, source: "agent", dutyKey: nil, createdAt: nil, completedAt: nil),
+            .init(id: "t4", title: "Low-stock follow-up", description: nil, priority: "normal", status: "pending", dueDate: nil, source: "agent", dutyKey: nil, createdAt: nil, completedAt: nil),
+            .init(id: "t5", title: "Customer reply quality check", description: nil, priority: "normal", status: "pending", dueDate: nil, source: "agent", dutyKey: nil, createdAt: nil, completedAt: nil),
+            .init(id: "t6", title: "Ads report", description: "Meta access token expire হয়েছে", priority: "high", status: "failed", dueDate: nil, source: "agent", dutyKey: nil, createdAt: nil, completedAt: nil),
+        ]
+    }
+
+    /// Simulator-only motion proof: hold the task anchor under the old reply,
+    /// enter ALMA loader handoff during the new turn, then settle it under the
+    /// new reply using the production matched-geometry path.
+    func runBackgroundTaskMotionDebug() {
+        guard messages.count >= 3 else { return }
+        let user = messages[messages.count - 2]
+        let reply = messages[messages.count - 1]
+        messages = Array(messages.dropLast(2))
+        streamTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            guard let self, !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.22)) { self.messages.append(user) }
+            self.isStreaming = true
+            self.thinkingLive = true
+            self.beginUnderstanding()
+            self.ensureStreamingTail()
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            guard !Task.isCancelled,
+                  let index = self.messages.lastIndex(where: { $0.isStreaming }) else { return }
+            self.messages[index].text = reply.text
+            try? await Task.sleep(nanoseconds: 1_050_000_000)
+            guard !Task.isCancelled else { return }
+            self.messages[index].isStreaming = false
+            self.isStreaming = false
+            self.thinkingLive = false
+            self.settleLiveMode()
+            self.justSettledId = self.messages[index].id
         }
     }
 
@@ -3515,6 +3888,10 @@ struct AgentMessageRow: View {
     let vm: AssistantVM
     let showWorkingIndicator: Bool
     let isLastAssistant: Bool
+    let showsBackgroundTaskAnchor: Bool
+    let backgroundTaskHandoff: Bool
+    let backgroundTaskNamespace: Namespace.ID
+    let onBackgroundTasks: () -> Void
     let onToolTap: (AgentChatMessage.Tool) -> Void
     let onActivitySheet: (AgentActivitySheetRequest) -> Void
     @Environment(\.colorScheme) private var scheme
@@ -3713,14 +4090,17 @@ struct AgentMessageRow: View {
                             .padding(.top, 2)
                     }
 
-                // ALMA wordmark footer + copy / listen / cost (LOCKED §4).
+                // One reply footer: ALMA identity + background work + quiet actions.
+                // Background work never renders as a second chat row.
                 if !message.isStreaming && !message.text.isEmpty {
-                    AgentMessageActions(message: message, vm: vm, pal: pal)
-                }
-                // "N কাজ বাকি" — end of last assistant reply (web AgentOpenTasksChip parity)
-                if isLastAssistant && !message.isStreaming && !vm.openTasks.isEmpty {
-                    AgentOpenTasksChipView(vm: vm, pal: pal)
-                        .padding(.top, 2)
+                    AgentMessageActions(
+                        message: message,
+                        vm: vm,
+                        pal: pal,
+                        showsBackgroundTaskAnchor: showsBackgroundTaskAnchor,
+                        backgroundTaskHandoff: backgroundTaskHandoff,
+                        backgroundTaskNamespace: backgroundTaskNamespace,
+                        onBackgroundTasks: onBackgroundTasks)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -4383,15 +4763,37 @@ struct AgentThoughtProcessSheet: View {
 
 /// LOCKED §4 — ALMA wordmark (Claude Lottie parity): reply settles → burst pop-in
 /// (scale 0→1 + spin) → A·L·M·A letters stagger-slide out from behind it and STAY;
-/// next send → letters retract INTO the burst while the loader takes over.
+/// the current reply keeps its identity visible while the next turn starts.
 @available(iOS 17.0, *)
 struct AgentBrandWordmark: View {
     let animateReveal: Bool          // true only on the just-settled reply
     let isCurrent: Bool              // ONE burst per session — only the last settled reply has it
     let vm: AssistantVM
     @State private var shown = false
-    @State private var retracted = false
     private static let letters = ["A", "L", "M", "A"]
+
+    /// Owner rule: ordinary chat/Plan-Drive work must not spin the ALMA identity.
+    /// Only a scheduled sleep or an autonomous heartbeat wake activates it.
+    private var autonomousLoaderActive: Bool {
+        let sleeping = (vm.planDrive?.drives ?? []).contains { drive in
+            // A retry/attention timestamp is not autonomous sleeping. Only a
+            // plan that is still driving and deliberately scheduled its next
+            // wake may animate the ALMA identity.
+            guard drive.phase == "driving" else { return false }
+            guard let raw = drive.nextTickAt, let date = scheduledDate(raw) else { return false }
+            return date.timeIntervalSinceNow > 20
+        }
+        let globalSelfWake = vm.activeBackgroundTurns.contains { $0.kind == "self-wake" }
+        let localSelfWake = vm.isStreaming
+            && vm.messages.reversed().first(where: { $0.role == .user })?.isHeartbeatWake == true
+        return sleeping || globalSelfWake || localSelfWake
+    }
+
+    private func scheduledDate(_ raw: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
+    }
 
     var body: some View {
         if isCurrent { currentBody } else { staticBody }
@@ -4414,23 +4816,23 @@ struct AgentBrandWordmark: View {
     }
 
     private var currentBody: some View {
-        HStack(spacing: 5) {
-            AlmaStarburstLoader(mode: .idle, size: 15)
+        HStack(spacing: 6) {
+            AlmaStarburstLoader(mode: autonomousLoaderActive ? .thinking : .idle, size: 18)
                 .scaleEffect(shown ? 1 : 0.01)
                 .rotationEffect(.degrees(shown ? 0 : -300))
             HStack(spacing: 0.5) {
                 ForEach(Array(Self.letters.enumerated()), id: \.offset) { i, ch in
                     Text(ch)
-                        .font(.system(size: 11.5, weight: .bold))
-                        .tracking(1.6)
+                        .font(.system(size: 13, weight: .bold))
+                        .tracking(1.75)
                         // Per-letter slice of the loader aura so the settled
                         // wordmark reads multicolour, matching the burst beside it.
                         .foregroundStyle(AlmaRayBurst.colors[min(i + 1, AlmaRayBurst.colors.count - 1)])
-                        .opacity(shown && !retracted ? 1 : 0)
-                        .offset(x: shown && !retracted ? 0 : -14)
+                        .opacity(shown ? 1 : 0)
+                        .offset(x: shown ? 0 : -14)
                         .animation(.spring(response: 0.5, dampingFraction: 0.86)
-                            .delay(retracted ? Double(3 - i) * 0.06 : 0.12 + Double(i) * 0.07),
-                                   value: shown && !retracted)
+                            .delay(0.12 + Double(i) * 0.07),
+                                   value: shown)
                 }
             }
             .clipped()
@@ -4444,10 +4846,6 @@ struct AgentBrandWordmark: View {
                 withTransaction(tx) { shown = true }
             }
         }
-        .onChange(of: vm.isStreaming) { _, streaming in
-            // পরের message → letters উল্টো stagger-এ burst-এর ভিতরে ঢুকে যায়।
-            if streaming && animateReveal { retracted = true }
-        }
     }
 }
 
@@ -4460,12 +4858,16 @@ let almaFeedbackOptions: [(kind: String, label: String)] = [
     ("too_many_questions", "বেশি প্রশ্ন"),
 ]
 
-/// ALMA wordmark + relative time + copy + listen + feedback + token cost (web action row).
+/// ALMA wordmark + background work + quiet reply actions in one native footer.
 @available(iOS 17.0, *)
 struct AgentMessageActions: View {
     let message: AgentChatMessage
     let vm: AssistantVM
     let pal: AgentPalette
+    let showsBackgroundTaskAnchor: Bool
+    let backgroundTaskHandoff: Bool
+    let backgroundTaskNamespace: Namespace.ID
+    let onBackgroundTasks: () -> Void
     @State private var copied = false
     // Debug self-test hook (never set in production launches): ALMA_FEEDBACK_OPEN=1
     // pre-opens the 👎 reason chips so the fixture screenshot proves the row.
@@ -4484,9 +4886,9 @@ struct AgentMessageActions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            // Owner report 2026-07-15: with the feedback buttons added, a long
-            // token/cost figure got pushed off-screen. One line when it fits;
-            // otherwise the cost drops to its OWN full-width line below.
+            // Keep all existing metadata/actions above the identity/task anchor.
+            // ViewThatFits prevents a long cache/cost string from pushing an
+            // action off-screen on compact iPhones.
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 6) {
                     actionButtons
@@ -4509,6 +4911,29 @@ struct AgentMessageActions: View {
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(Color(red: 0.85, green: 0.55, blue: 0.10).opacity(0.9))
             }
+
+            // Owner-approved Claude hierarchy: the final line belongs only to
+            // loader + ALMA + the one global Background Tasks entry point.
+            HStack(spacing: 8) {
+                AgentBrandWordmark(
+                    animateReveal: vm.justSettledId == message.id,
+                    isCurrent: vm.messages.last(where: {
+                        $0.role == .assistant && !$0.isStreaming && !$0.text.isEmpty
+                    })?.id == message.id,
+                    vm: vm)
+
+                if showsBackgroundTaskAnchor {
+                    AgentBackgroundTasksAnchor(
+                        vm: vm,
+                        pal: pal,
+                        handoff: backgroundTaskHandoff,
+                        namespace: backgroundTaskNamespace,
+                        action: onBackgroundTasks)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 3)
         }
     }
 
@@ -4535,15 +4960,9 @@ struct AgentMessageActions: View {
         }
     }
 
-    /// Wordmark + time + copy/TTS/feedback/সংরক্ষণ — everything EXCEPT the cost
-    /// figure, so the ViewThatFits above can reflow the cost to its own line.
+    /// Time + copy/TTS/feedback/সংরক্ষণ — everything except the cost figure and
+    /// final ALMA/Background Tasks line.
     @ViewBuilder private var actionButtons: some View {
-            AgentBrandWordmark(
-                animateReveal: vm.justSettledId == message.id,
-                isCurrent: vm.messages.last(where: {
-                    $0.role == .assistant && !$0.isStreaming && !$0.text.isEmpty
-                })?.id == message.id,
-                vm: vm)
             if let rel = relativeTime(message.createdAt) {
                 Text(rel).font(.system(size: 10)).foregroundStyle(pal.muted)
             }
@@ -5919,7 +6338,7 @@ struct AgentModelPickerSheet: View {
 
 /// The chat-history drawer — slides in from the LEFT over a dimmed scrim, exactly
 /// like the web AgentSidebar (w-72, rounded-r-24, spring 280/28): header with the
-/// quick-access pills, চ্যাট/স্মৃতি tabs, project filter, চ্যাট/অফিস view switch,
+/// quick-access pills, চ্যাট/স্মৃতি tabs, project filter,
 /// search, conversation rows with rename/archive/delete, load-more, and the full
 /// Memory tab (learned rules + finance summary + scoped memories with pin/delete).
 @available(iOS 17.0, *)
@@ -5931,7 +6350,6 @@ struct AgentSideDrawer: View {
     @State private var visible = false
     @State private var dragX: CGFloat = 0      // swipe-left-to-close (iOS drawer feel)
     @State private var tab = 0                 // 0 = চ্যাট, 1 = স্মৃতি
-    @State private var chatView = 0            // 0 = regular, 1 = অফিস (day_shift)
     @State private var search = ""
     @State private var activeProject: String?  // nil = সব কথোপকথন
     @State private var memScope = "all"
@@ -6078,15 +6496,13 @@ struct AgentSideDrawer: View {
 
     // ── চ্যাট tab ──────────────────────────────────────────────────────────
 
-    private var officeCount: Int {
-        vm.conversations.filter { $0.archived != true && $0.source == "day_shift" }.count
-    }
-
     private var filteredConversations: [AgentConversation] {
         vm.conversations.filter { c in
             guard c.archived != true else { return false }
-            if chatView == 1 { if c.source != "day_shift" { return false } }
-            else if c.source == "day_shift" { return false }
+            // Office/day-shift conversations are background execution records,
+            // not a second owner chat inbox. Their daily work continues to sync
+            // into Background Tasks through loadOfficeDailyDuties().
+            guard c.source != "day_shift" else { return false }
             if let p = activeProject, c.projectId != p { return false }
             if !search.isEmpty {
                 return (c.title ?? "").localizedCaseInsensitiveContains(search)
@@ -6137,15 +6553,9 @@ struct AgentSideDrawer: View {
                         in: RoundedRectangle(cornerRadius: 11, style: .continuous))
             .padding(.horizontal, 14)
 
-            // চ্যাট / অফিস + প্রজেক্ট ফিল্টার — one compact control row.
+            // Office is intentionally not a second conversation section. Keep
+            // only the project filter; Office duties surface in Background Tasks.
             HStack(spacing: 8) {
-                HStack(spacing: 3) {
-                    chatViewButton("চ্যাট", index: 0, pal: pal)
-                    chatViewButton(officeCount > 0 ? "🏢 \(almaBn(officeCount))" : "🏢", index: 1, pal: pal)
-                }
-                .padding(3)
-                .background(Color.white.opacity(scheme == .dark ? 0.05 : 0.35), in: Capsule())
-                .overlay(Capsule().strokeBorder(pal.borderSubtle, lineWidth: 1))
                 Spacer()
                 Menu {
                     Button("সব কথোপকথন") { activeProject = nil }
@@ -6244,21 +6654,6 @@ struct AgentSideDrawer: View {
         return p.name + badge
     }
 
-    private func chatViewButton(_ label: String, index: Int, pal: AgentPalette) -> some View {
-        Button {
-            UISelectionFeedbackGenerator().selectionChanged()
-            withAnimation(.snappy(duration: 0.18)) { chatView = index }
-        } label: {
-            Text(label)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(chatView == index ? .white : pal.muted)
-                .padding(.horizontal, 12).padding(.vertical, 6)
-                .background(chatView == index ? AnyShapeStyle(AgentPalette.coral) : AnyShapeStyle(.clear),
-                            in: Capsule())
-        }
-        .buttonStyle(.plain)
-    }
-
     @ViewBuilder private func conversationRow(_ c: AgentConversation, pal: AgentPalette) -> some View {
         let active = c.id == vm.conversationId
         Button {
@@ -6266,13 +6661,12 @@ struct AgentSideDrawer: View {
             close()
         } label: {
             HStack(spacing: 8) {
-                if c.source == "day_shift" { Text("🏢").font(.system(size: 13)) }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(c.title?.isEmpty == false ? c.title! : "(শিরোনাম নেই)")
                         .font(.system(size: 14, weight: active ? .semibold : .regular))
                         .foregroundStyle(active ? AgentPalette.coral : pal.ink)
                         .lineLimit(1)
-                    Text("\(c.source == "day_shift" ? "অফিস লাইভ · " : "")\(shortDate(c.updatedAt))")
+                    Text(shortDate(c.updatedAt))
                         .font(.system(size: 11))
                         .foregroundStyle(pal.muted)
                 }
@@ -6803,7 +7197,1021 @@ struct AgentPendingTasksSheet: View {
     }
 }
 
-// MARK: - Plan-Drive Live Desk card (S8 additive; web PlanDriveTimeline parity, compact)
+// MARK: - Background tasks — one reply anchor + native task sheet
+
+/// Claude-Code-style inline task status. The ALMA mark belongs to the parent
+/// reply footer, so this renders no duplicate icon, loader, card, or chat row.
+@available(iOS 17.0, *)
+private struct AgentBackgroundTasksAnchor: View {
+    @Bindable var vm: AssistantVM
+    let pal: AgentPalette
+    let handoff: Bool
+    let namespace: Namespace.ID
+    let action: () -> Void
+
+    private var drives: [AgentPlanDriveView] { vm.planDrive?.drives ?? [] }
+    private var activeCount: Int {
+        let globalIds = Set(vm.activeBackgroundTurns.map(\.id))
+        let localTurnMissing = vm.isStreaming
+            && (vm.currentTurnId == nil || !globalIds.contains(vm.currentTurnId!))
+        return drives.count + vm.activeBackgroundTurns.count + (localTurnMissing ? 1 : 0)
+    }
+
+    private var label: String {
+        if activeCount > 0 {
+            return activeCount == 1 ? "1 Running Task" : "\(activeCount) Running Tasks"
+        }
+        return "Background Tasks"
+    }
+
+    var body: some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            action()
+        } label: {
+            HStack(spacing: 5) {
+                Text("·")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(pal.muted.opacity(0.7))
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(handoff ? pal.mutedHi : pal.ink.opacity(0.92))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+                    .contentTransition(.numericText())
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(pal.muted.opacity(0.68))
+            }
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .matchedGeometryEffect(id: "alma-background-task-anchor", in: namespace)
+        .animation(.spring(response: 0.48, dampingFraction: 0.84), value: handoff)
+        .accessibilityLabel(label)
+        .accessibilityHint("Background tasks খুলুন")
+    }
+}
+
+/// One presentation model over the three durable sources that can currently be
+/// executing work: a Plan-Drive, an Office todo, or the active chat turn.
+/// Source ids remain intact so Stop always reaches the owning endpoint.
+private struct AgentBackgroundRunningItem: Identifiable {
+    enum Source { case plan, todo, turn }
+    let id: String
+    let source: Source
+    let sourceId: String
+    let title: String
+    let detail: String?
+    let phase: String
+    let nextTickAt: String?
+    let startedAt: String?
+    let steps: [AgentPlanDriveStep]?
+}
+
+/// Compact checklist row shared by Office duties and any extra agent todo that
+/// is not part of the canonical duty roster.
+private struct AgentTodayWorkItem: Identifiable {
+    let id: String
+    let title: String
+    let detail: String?
+    let status: String
+    let time: String?
+    let dutyKey: String?
+}
+
+@available(iOS 17.0, *)
+private struct AgentBackgroundTasksSheet: View {
+    @Bindable var vm: AssistantVM
+    @Binding var selectedDetent: PresentationDetent
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.dismiss) private var dismiss
+    @State private var runningExpanded = true
+    @State private var todayExpanded = false
+    @State private var finishedExpanded = true
+    @State private var selectedFinished: AgentPlanDriveHistoryView?
+    @State private var confirm: Confirm?
+
+    private struct Confirm: Identifiable {
+        let id = UUID()
+        let source: AgentBackgroundRunningItem.Source
+        let sourceId: String
+        let title: String
+        let button: String
+    }
+
+    private var drives: [AgentPlanDriveView] { vm.planDrive?.drives ?? [] }
+    private var todayWork: [AgentTodayWorkItem] {
+        let duties = vm.officeDailyDuties.map { duty in
+            AgentTodayWorkItem(
+                id: "duty-\(duty.duty)", title: duty.label, detail: duty.detail,
+                status: duty.status, time: duty.time, dutyKey: duty.duty
+            )
+        }
+        let dutyKeys = Set(vm.officeDailyDuties.map(\.duty))
+        let extras = vm.dailyAgentTodos.compactMap { todo -> AgentTodayWorkItem? in
+            guard todo.status != "cancelled" else { return nil }
+            if let key = todo.dutyKey, dutyKeys.contains(key) { return nil }
+            return .init(
+                id: "todo-\(todo.id)", title: todo.title, detail: todo.description,
+                status: todo.status ?? "pending", time: nil, dutyKey: todo.dutyKey
+            )
+        }
+        return duties + extras
+    }
+    private var completedTodoCount: Int {
+        todayWork.filter { $0.status == "completed" || $0.status == "done" }.count
+    }
+    private var failedTodoCount: Int {
+        todayWork.filter { $0.status == "failed" || $0.status == "missed" }.count
+    }
+    private var todoPreview: [AgentTodayWorkItem] {
+        Array(todayWork.sorted { todayRank($0) < todayRank($1) }.prefix(3))
+    }
+    private var runningItems: [AgentBackgroundRunningItem] {
+        var items: [AgentBackgroundRunningItem] = []
+
+        if vm.isStreaming, let tail = vm.messages.last(where: { $0.isStreaming }) {
+            let sourceId = vm.currentTurnId ?? tail.id
+            items.append(.init(
+                id: "turn-\(sourceId)", source: .turn, sourceId: sourceId,
+                title: taskTitle(activeTurnInput()),
+                detail: activeTurnDetail(tail), phase: "driving", nextTickAt: nil,
+                startedAt: isoString(tail.streamStartedAt),
+                steps: steps(from: tail)
+            ))
+        }
+
+        // A server turn remains here after the owner opens another conversation.
+        // Skip the current conversation's copy while its richer local stream row
+        // is visible, otherwise the same execution would count twice.
+        items.append(contentsOf: vm.activeBackgroundTurns.compactMap { turn in
+            if vm.isStreaming && turn.conversationId == vm.conversationId { return nil }
+            let fallback = turn.conversationTitle ?? "Agent task"
+            let input = turn.input.trimmingCharacters(in: .whitespacesAndNewlines)
+            let selfWake = turn.kind == "self-wake"
+            return .init(
+                id: "turn-\(turn.id)", source: .turn, sourceId: turn.id,
+                title: selfWake ? "ALMA নিজে থেকে জেগে কাজ করছে" : taskTitle(input.isEmpty ? fallback : input),
+                detail: selfWake ? "Background self-wakeup চলছে" : fallback,
+                phase: selfWake ? "self-wake" : "driving", nextTickAt: nil,
+                startedAt: turn.startedAt, steps: nil
+            )
+        })
+
+        items.append(contentsOf: drives.map { drive in
+            .init(
+                id: "plan-\(drive.planId)", source: .plan, sourceId: drive.planId,
+                title: drive.goal ?? "Background task",
+                detail: drive.waitingReason ?? drive.currentLine,
+                phase: drive.phase ?? "driving", nextTickAt: drive.nextTickAt,
+                startedAt: drive.startedAt ?? drive.lastDrivenAt,
+                steps: drive.steps
+            )
+        })
+
+        return items
+    }
+
+    private var finishedItems: [AgentPlanDriveHistoryView] {
+        let combined = (vm.planDrive?.finished ?? []) + finishedHeartbeatWakes()
+            + finishedOfficeDuties() + finishedTodos()
+        let cutoff = Date().addingTimeInterval(-24 * 60 * 60)
+        var seen = Set<String>()
+        return combined
+            // Rolling 24-hour recycle: preserve the durable audit in storage, but
+            // keep this daily surface clean without destructive database deletes.
+            .filter { item in
+                guard let completed = parseISO(item.completedAt) else { return false }
+                return completed >= cutoff
+            }
+            .filter { seen.insert($0.id).inserted }
+            .sorted {
+                (parseISO($0.completedAt) ?? .distantPast) > (parseISO($1.completedAt) ?? .distantPast)
+            }
+    }
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        NavigationStack {
+            ZStack {
+                AgentAuroraBackground()
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 20) {
+                        if !runningItems.isEmpty {
+                            collapsibleHeader("Running", count: runningItems.count,
+                                              isExpanded: $runningExpanded, pal: pal)
+                            if runningExpanded {
+                                ForEach(runningItems) { runningRow($0, pal: pal) }
+                            }
+                        }
+
+                        almaSummary(pal: pal)
+
+                        todayWorkHeader(pal: pal)
+                        if todayWork.isEmpty {
+                            emptyLine("Office-এর আজকের duty load হয়নি", icon: "list.bullet.clipboard", pal: pal)
+                        } else {
+                            let displayedTodos = todayExpanded ? todayWork : todoPreview
+                            VStack(spacing: 0) {
+                                ForEach(Array(displayedTodos.enumerated()), id: \.element.id) { index, todo in
+                                    todayTodoRow(todo, pal: pal)
+                                    if index < displayedTodos.count - 1 {
+                                        Divider().overlay(pal.borderSubtle).padding(.leading, 47)
+                                    }
+                                }
+                                if !todayExpanded && todayWork.count > displayedTodos.count {
+                                    Button {
+                                        UISelectionFeedbackGenerator().selectionChanged()
+                                        withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+                                            todayExpanded = true
+                                        }
+                                    } label: {
+                                        Text("আরও \(almaBn(todayWork.count - displayedTodos.count))টি কাজ দেখুন")
+                                            .font(.system(size: 11.5, weight: .semibold))
+                                            .foregroundStyle(AlmaRayBurst.colors[1])
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 10)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .overlay(alignment: .top) {
+                                        Divider().overlay(pal.borderSubtle).padding(.horizontal, 12)
+                                    }
+                                }
+                            }
+                            .padding(.vertical, 3)
+                            .background(pal.card.opacity(0.62),
+                                        in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(AlmaRayBurst.colors[1].opacity(0.13), lineWidth: 1))
+                        }
+
+                        collapsibleHeader("Finished", count: finishedItems.count,
+                                          isExpanded: $finishedExpanded, pal: pal)
+                        if finishedExpanded {
+                            if finishedItems.isEmpty {
+                                emptyLine("Finished history এখনো নেই", icon: "clock.arrow.circlepath", pal: pal)
+                            } else {
+                                ForEach(finishedItems) { finishedRow($0, pal: pal) }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 17).padding(.top, 8).padding(.bottom, 34)
+                    .animation(.spring(response: 0.38, dampingFraction: 0.88), value: todayExpanded)
+                    .animation(.spring(response: 0.38, dampingFraction: 0.88), value: runningExpanded)
+                    .animation(.spring(response: 0.38, dampingFraction: 0.88), value: finishedExpanded)
+                    .animation(.spring(response: 0.38, dampingFraction: 0.88), value: todayWork.count)
+                    .animation(.spring(response: 0.38, dampingFraction: 0.88), value: runningItems.count)
+                    .animation(.spring(response: 0.38, dampingFraction: 0.88), value: finishedItems.count)
+                }
+            }
+            .navigationTitle("Background tasks")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark").font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(pal.ink)
+                            .frame(width: 32, height: 32)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel("বন্ধ করুন")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.86)) {
+                            selectedDetent = selectedDetent == .large ? .medium : .large
+                        }
+                    } label: {
+                        Image(systemName: selectedDetent == .large
+                              ? "arrow.down.right.and.arrow.up.left"
+                              : "arrow.up.left.and.arrow.down.right")
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(pal.mutedHi)
+                            .frame(width: 30, height: 30)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel(selectedDetent == .large ? "ছোট করুন" : "বড় করুন")
+                }
+            }
+        }
+        .task {
+            await refreshData(includeDuties: true)
+            let detailFlag = ProcessInfo.processInfo.arguments.contains("ALMA_BACKGROUND_TASK_DETAIL=1")
+                || ProcessInfo.processInfo.environment["ALMA_BACKGROUND_TASK_DETAIL"] == "1"
+            if detailFlag, selectedFinished == nil {
+                selectedFinished = finishedItems.first
+            }
+            let fixtureFlag = ProcessInfo.processInfo.arguments.contains("ALMA_BACKGROUND_TASK_FIXTURE=1")
+            let autoStopFlag = ProcessInfo.processInfo.arguments.contains("ALMA_BACKGROUND_TASK_AUTOSTOP=1")
+            if fixtureFlag, autoStopFlag, let planId = drives.first?.planId {
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                await vm.planDriveAct(planId: planId, action: "abandon")
+            }
+            var refreshTick = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled else { break }
+                refreshTick += 1
+                await refreshData(includeDuties: refreshTick % 15 == 0)
+            }
+        }
+        .refreshable { await refreshData(includeDuties: true) }
+        .sheet(item: $selectedFinished) { item in
+            AgentBackgroundTaskDetailSheet(task: item)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(28)
+        }
+        .confirmationDialog(confirm?.title ?? "", isPresented: Binding(
+            get: { confirm != nil }, set: { if !$0 { confirm = nil } }), titleVisibility: .visible) {
+            if let confirm {
+                Button(confirm.button, role: .destructive) {
+                    Task { await stop(confirm) }
+                }
+                Button("থাক", role: .cancel) {}
+            }
+        }
+    }
+
+    private func refreshData(includeDuties: Bool = false) async {
+        async let drive: Void = vm.loadPlanDrive()
+        async let turns: Void = vm.loadActiveBackgroundTurns()
+        if includeDuties {
+            async let todos: Void = vm.loadDailyAgentTodos()
+            async let duties: Void = vm.loadOfficeDailyDuties()
+            async let heartbeat: Void = vm.loadHeartbeatFeed()
+            _ = await (drive, turns, todos, duties, heartbeat)
+        } else {
+            // Two-second live refresh is restricted to the two genuinely dynamic
+            // feeds. Office roster/heartbeat history refresh every 30 seconds.
+            _ = await (drive, turns)
+        }
+    }
+
+    private func almaSummary(pal: AgentPalette) -> some View {
+        let sleeping = runningItems.contains {
+            $0.phase == "driving" && isFutureWake($0.nextTickAt)
+        }
+        let autonomousWakeRunning = runningItems.contains { $0.phase == "self-wake" }
+            || (vm.isStreaming
+            && vm.messages.reversed().first(where: { $0.role == .user })?.isHeartbeatWake == true
+            )
+        let loaderActive = sleeping || autonomousWakeRunning
+
+        // Only this tiny text/card subtree ticks once per second. The main chat
+        // list is outside the TimelineView, so countdown motion cannot invalidate
+        // or re-layout message rows.
+        return TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            let settings = vm.heartbeatFeed?.settings
+            let selfWakeEnabled = settings?.enabled == true || settings?.autoArm == true
+            let nextCheck = selfWakeEnabled ? nextHeartbeatCheck(after: timeline.date) : nil
+
+            HStack(spacing: 11) {
+                ZStack {
+                    Circle()
+                        .fill(AlmaRayBurst.colors[1].opacity(0.12))
+                        .frame(width: 42, height: 42)
+                    // A cron check alone is not an executing task. Animate only
+                    // for an explicit Plan-Drive sleep or a live autonomous wake.
+                    AlmaStarburstLoader(mode: loaderActive ? .thinking : .idle, size: 22)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Background execution")
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(pal.ink)
+                        .lineLimit(1)
+                    Text(nextCheck.map { "পরের wake check \(wakeCountdown(to: $0, now: timeline.date))" }
+                         ?? "Self-wakeup বন্ধ")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(pal.muted)
+                        .lineLimit(1)
+                        .contentTransition(.numericText())
+                }
+                Spacer(minLength: 4)
+            }
+        }
+        .padding(13)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 19, style: .continuous))
+        .background(
+            LinearGradient(colors: [AlmaRayBurst.colors[1].opacity(0.08), AgentPalette.coral.opacity(0.05)],
+                           startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: 19, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 19, style: .continuous)
+            .strokeBorder(AlmaRayBurst.colors[1].opacity(0.18), lineWidth: 1))
+    }
+
+    private func nextHeartbeatCheck(after now: Date) -> Date? {
+        if let serverDate = parseISO(vm.heartbeatFeed?.nextCheckAt), serverDate > now {
+            return serverDate
+        }
+        // Production may not have the additive API field until its next deploy;
+        // mirror the current Vercel cron (04/07/10/13 UTC) for native continuity.
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        for dayOffset in 0...1 {
+            guard let day = calendar.date(byAdding: .day, value: dayOffset, to: now) else { continue }
+            let parts = calendar.dateComponents([.year, .month, .day], from: day)
+            for hour in [4, 7, 10, 13] {
+                var candidateParts = parts
+                candidateParts.hour = hour
+                candidateParts.minute = 0
+                candidateParts.second = 0
+                if let candidate = calendar.date(from: candidateParts), candidate > now {
+                    return candidate
+                }
+            }
+        }
+        return nil
+    }
+
+    private func wakeCountdown(to date: Date, now: Date) -> String {
+        let seconds = max(0, Int(ceil(date.timeIntervalSince(now))))
+        let hours = seconds / 3_600
+        let minutes = (seconds % 3_600) / 60
+        let remainder = seconds % 60
+        if hours > 0 {
+            return "\(almaBn(hours))ঘ \(almaBn(minutes))মি \(almaBn(remainder))সে পরে"
+        }
+        if minutes > 0 { return "\(almaBn(minutes))মি \(almaBn(remainder))সে পরে" }
+        return "\(almaBn(remainder))সে পরে"
+    }
+
+    private func todayWorkHeader(pal: AgentPalette) -> some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+                todayExpanded.toggle()
+            }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AlmaRayBurst.colors[1])
+                Text("Today's work")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(pal.mutedHi)
+                Text(almaBn(todayWork.count))
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(pal.muted)
+                    .contentTransition(.numericText())
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(pal.muted)
+                    .rotationEffect(.degrees(todayExpanded ? 0 : -90))
+                Spacer(minLength: 8)
+                Text("আজ \(almaBn(completedTodoCount))/\(almaBn(todayWork.count))")
+                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(failedTodoCount > 0 ? AgentPalette.coral : AlmaRayBurst.colors[1])
+                    .padding(.horizontal, 8).padding(.vertical, 5)
+                    .background((failedTodoCount > 0 ? AgentPalette.coral : AlmaRayBurst.colors[1]).opacity(0.10),
+                                in: Capsule())
+                    .contentTransition(.numericText())
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("আজকের \(todayWork.count)টি কাজের মধ্যে \(completedTodoCount)টি শেষ")
+    }
+
+    private func todayTodoRow(_ todo: AgentTodayWorkItem, pal: AgentPalette) -> some View {
+        let status = todo.status
+        let running = status == "running" || status == "in_progress"
+        let done = status == "completed" || status == "done"
+        let failed = status == "failed" || status == "missed"
+        let skipped = status == "skipped"
+        let tint = failed ? AgentPalette.coral : done ? AgentPalette.teal
+            : running ? AlmaRayBurst.colors[1] : pal.muted
+        let icon = failed ? "exclamationmark" : done ? "checkmark" : running ? "waveform.path.ecg"
+            : skipped ? "minus" : "circle"
+        let statusText = status == "missed" ? "Missed" : failed ? "Failed" : done ? "Done"
+            : running ? "Running" : skipped ? "Skipped" : "Pending"
+
+        return HStack(alignment: .center, spacing: 11) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(tint.opacity(0.10))
+                    .frame(width: 34, height: 34)
+                Image(systemName: icon)
+                    .font(.system(size: 10.5, weight: .bold))
+                    .foregroundStyle(tint)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(todo.title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(pal.ink)
+                    .lineLimit(2)
+                if let detail = todo.detail, !detail.isEmpty {
+                    Text(detail)
+                        .font(.system(size: 11))
+                        .foregroundStyle(failed ? AgentPalette.coral : pal.muted)
+                        .lineLimit(2)
+                } else if let time = todo.time, !time.isEmpty {
+                    Text("আজ \(time)")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(pal.muted)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 6)
+            Text(statusText)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(tint)
+                .contentTransition(.numericText())
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func todayRank(_ todo: AgentTodayWorkItem) -> Int {
+        switch todo.status {
+        case "running", "in_progress": return 0
+        case "failed", "missed": return 1
+        case "pending": return 2
+        case "completed", "done": return 3
+        default: return 4
+        }
+    }
+
+    private func collapsibleHeader(_ title: String, count: Int,
+                                   isExpanded: Binding<Bool>, pal: AgentPalette) -> some View {
+        Button {
+            UISelectionFeedbackGenerator().selectionChanged()
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.88)) {
+                isExpanded.wrappedValue.toggle()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(pal.mutedHi)
+                Text(almaBn(count))
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(pal.muted)
+                    .contentTransition(.numericText())
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(pal.muted)
+                    .rotationEffect(.degrees(isExpanded.wrappedValue ? 0 : -90))
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func runningRow(_ item: AgentBackgroundRunningItem, pal: AgentPalette) -> some View {
+        let attention = item.phase == "needs-decision" || item.phase == "waiting-approval"
+        let sleeping = isFutureWake(item.nextTickAt)
+        let tint = attention ? AgentPalette.coral : sleeping ? AlmaRayBurst.colors[1] : AgentPalette.teal
+        return HStack(alignment: .center, spacing: 12) {
+            Image(systemName: attention ? "exclamationmark" : sleeping ? "moon.zzz.fill" : "waveform.path.ecg")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 34, height: 34)
+                .background(tint.opacity(0.11), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            VStack(alignment: .leading, spacing: 5) {
+                Text(item.title)
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(pal.ink)
+                    .lineLimit(2)
+                TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                    HStack(spacing: 6) {
+                        Text(sourceLabel(item.source))
+                        Text(elapsedLabel(item, now: timeline.date))
+                            .monospacedDigit()
+                            .contentTransition(.numericText())
+                        if sleeping { Text(wakeLabel(item.nextTickAt)) }
+                    }
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(pal.muted)
+                    .lineLimit(1)
+                }
+                Text(item.detail ?? (attention ? "আপনার সিদ্ধান্ত দরকার" : stepProgress(item)))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(attention ? AgentPalette.coral : pal.mutedHi)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 2)
+            Button {
+                UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                confirm = Confirm(source: item.source, sourceId: item.sourceId,
+                                  title: "এই background task বন্ধ করবেন?", button: "Stop task")
+            } label: {
+                Group {
+                    if runningItemBusy(item) {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 10, weight: .bold))
+                    }
+                }
+                .foregroundStyle(pal.ink)
+                .frame(width: 32, height: 32)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(pal.borderSubtle, lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .disabled(runningControlBusy)
+            .accessibilityLabel("\(item.title) বন্ধ করুন")
+        }
+        .padding(13)
+        .background(pal.card.opacity(0.68), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+        .overlay {
+            // Compositor-only sheen: no blur, shadow, state timer, or parent-view
+            // animation. It exists only while this sheet and running row are live.
+            TimelineView(.animation(minimumInterval: 1.0 / 24.0)) { timeline in
+                GeometryReader { proxy in
+                    let duration = 2.4
+                    let phase = timeline.date.timeIntervalSinceReferenceDate
+                        .truncatingRemainder(dividingBy: duration) / duration
+                    let width = max(76, proxy.size.width * 0.34)
+                    LinearGradient(
+                        colors: [.clear, tint.opacity(0.08), Color.white.opacity(0.12), .clear],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                    .frame(width: width, height: proxy.size.height)
+                    .offset(x: -width + (proxy.size.width + width) * phase)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+        .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous)
+            .strokeBorder(tint.opacity(0.16), lineWidth: 1))
+    }
+
+    private func finishedRow(_ item: AgentPlanDriveHistoryView, pal: AgentPalette) -> some View {
+        let failed = item.status == "failed"
+        let stopped = item.status == "stopped"
+        let tint = failed ? AgentPalette.coral : stopped ? pal.muted : AgentPalette.teal
+        return Button {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            selectedFinished = item
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: failed ? "exclamationmark" : stopped ? "stop.fill" : "checkmark")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(tint)
+                    .frame(width: 34, height: 34)
+                    .background(tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.goal)
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(pal.ink).lineLimit(2)
+                    HStack(spacing: 7) {
+                        Text(failed ? "Failed" : stopped ? "Stopped" : "Completed")
+                        if let stamp = completionLabel(item.completedAt) { Text(stamp) }
+                    }
+                    .font(.system(size: 11.5)).foregroundStyle(failed ? AgentPalette.coral : pal.muted)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold)).foregroundStyle(pal.muted)
+            }
+            .padding(13)
+            .background(pal.card.opacity(0.60), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous)
+                .strokeBorder(tint.opacity(0.12), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Task input এবং result খুলুন")
+    }
+
+    private func emptyLine(_ text: String, icon: String, pal: AgentPalette) -> some View {
+        Label(text, systemImage: icon)
+            .font(.system(size: 12.5)).foregroundStyle(pal.muted)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(pal.card.opacity(0.42), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private var runningControlBusy: Bool {
+        vm.planDriveBusyPlanId != nil || vm.dailyTodoBusyId != nil
+    }
+
+    private func runningItemBusy(_ item: AgentBackgroundRunningItem) -> Bool {
+        switch item.source {
+        case .plan: return vm.planDriveBusyPlanId == item.sourceId
+        case .todo: return vm.dailyTodoBusyId == item.sourceId
+        case .turn: return false
+        }
+    }
+
+    private func stop(_ item: Confirm) async {
+        switch item.source {
+        case .plan:
+            await vm.planDriveAct(planId: item.sourceId, action: "abandon")
+        case .todo:
+            await vm.stopDailyAgentTodo(id: item.sourceId)
+        case .turn:
+            if item.sourceId.hasPrefix("stream-") {
+                vm.stopStreaming()
+            } else {
+                await vm.stopBackgroundTurn(id: item.sourceId)
+            }
+        }
+        await refreshData()
+    }
+
+    private func sourceLabel(_ source: AgentBackgroundRunningItem.Source) -> String {
+        switch source {
+        case .plan: return "Plan-Drive"
+        case .todo: return "Office task"
+        case .turn: return "Agent turn"
+        }
+    }
+
+    private func stepProgress(_ item: AgentBackgroundRunningItem) -> String {
+        guard let steps = item.steps, !steps.isEmpty else { return "কাজ চলছে" }
+        let done = steps.filter { $0.status == "done" }.count
+        return "\(almaBn(done))/\(almaBn(steps.count)) ধাপ"
+    }
+
+    private func elapsedLabel(_ item: AgentBackgroundRunningItem, now: Date) -> String {
+        guard let start = parseISO(item.startedAt) else { return "00:00" }
+        let seconds = max(0, Int(now.timeIntervalSince(start)))
+        let hours = seconds / 3_600
+        let minutes = (seconds % 3_600) / 60
+        let remainder = seconds % 60
+        if hours > 0 {
+            return String(format: "%02d:%02d:%02d", hours, minutes, remainder)
+        }
+        return String(format: "%02d:%02d", minutes, remainder)
+    }
+
+    private func latestOwnerInput() -> String {
+        vm.messages.reversed().first {
+            $0.role == .user && !$0.isHeartbeatWake && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }?.text ?? "Agent task"
+    }
+
+    private func activeTurnInput() -> String {
+        guard let latest = vm.messages.reversed().first(where: { $0.role == .user }) else {
+            return "Agent task"
+        }
+        return latest.isHeartbeatWake ? "[স্বয়ংক্রিয় হার্টবিট]" : latest.text
+    }
+
+    private func activeTurnDetail(_ message: AgentChatMessage) -> String {
+        if let phase = message.phases.last?.headline, !phase.isEmpty { return phase }
+        if !message.text.isEmpty { return "উত্তর প্রস্তুত করছে" }
+        switch vm.liveMode {
+        case "searching", "researching": return "তথ্য খুঁজছে ও যাচাই করছে"
+        case "writing": return "উত্তর লিখছে"
+        default: return "বিশ্লেষণ করছে"
+        }
+    }
+
+    private func steps(from message: AgentChatMessage) -> [AgentPlanDriveStep]? {
+        guard !message.tools.isEmpty else { return nil }
+        return message.tools.map { tool in
+            let status = tool.live ? "running" : tool.ok == false ? "failed" : tool.ok == true ? "done" : "pending"
+            return .init(
+                id: "chat-\(message.id)-\(tool.id)", action: tool.name, status: status,
+                toolName: tool.name, detail: tool.resultFull ?? tool.preview
+            )
+        }
+    }
+
+    private func finishedHeartbeatWakes() -> [AgentPlanDriveHistoryView] {
+        (vm.heartbeatFeed?.entries ?? []).compactMap { entry in
+            guard entry.headWoke || entry.kind == "error" else { return nil }
+            let failed = entry.kind == "error"
+            let stopped = entry.kind == "stopped"
+            let blocked = entry.kind == "blocked"
+            return .init(
+                planId: "heartbeat-\(entry.id)",
+                goal: failed ? "ALMA self-wakeup ব্যর্থ"
+                    : stopped ? "ALMA self-wakeup বন্ধ করা হয়েছে"
+                    : "ALMA নিজে থেকে জেগেছিল",
+                conversationId: entry.conversationId,
+                status: failed ? "failed" : stopped ? "stopped" : "completed",
+                input: heartbeatInput(entry),
+                result: failed || stopped ? nil : entry.summary,
+                error: failed || stopped ? entry.summary : nil,
+                startedAt: entry.at, completedAt: entry.at,
+                steps: blocked ? [.init(id: "heartbeat-blocked-\(entry.id)", action: "Owner approval চেয়েছে", status: "done", toolName: "heartbeat", detail: entry.summary)] : nil,
+                costTaka: nil
+            )
+        }
+    }
+
+    private func heartbeatInput(_ entry: AgentHeartbeatEntry) -> String {
+        guard let pulse = entry.pulse else {
+            return "Autonomous heartbeat — owner message ছাড়াই ALMA business pulse যাচাই করেছে।"
+        }
+        let facts = [
+            (pulse.pendingApprovals ?? 0) > 0 ? "pending approvals \(pulse.pendingApprovals ?? 0)" : nil,
+            (pulse.ownerEscalations ?? 0) > 0 ? "owner escalations \(pulse.ownerEscalations ?? 0)" : nil,
+            (pulse.openTodos ?? 0) > 0 ? "open todos \(pulse.openTodos ?? 0)" : nil,
+            (pulse.csAlerts ?? 0) > 0 ? "CS alerts \(pulse.csAlerts ?? 0)" : nil,
+            (pulse.moneyRequests ?? 0) > 0 ? "money requests \(pulse.moneyRequests ?? 0)" : nil,
+            (pulse.agingApprovals ?? 0) > 0 ? "aging approvals \(pulse.agingApprovals ?? 0)" : nil,
+        ].compactMap { $0 }
+        let trigger = facts.isEmpty ? "কোনো actionable change ছিল না" : facts.joined(separator: " · ")
+        return "Autonomous heartbeat trigger\n\(trigger)"
+    }
+
+    private func finishedOfficeDuties() -> [AgentPlanDriveHistoryView] {
+        vm.officeDailyDuties.compactMap { duty in
+            guard ["done", "failed", "missed", "skipped"].contains(duty.status) else { return nil }
+            let failed = duty.status == "failed" || duty.status == "missed"
+            let stopped = duty.status == "skipped"
+            let status = failed ? "failed" : stopped ? "stopped" : "completed"
+            let scheduled = duty.time.map { "Scheduled: \($0)" }
+            return .init(
+                planId: "office-duty-\(duty.dutyDate)-\(duty.duty)",
+                goal: duty.label, conversationId: nil, status: status,
+                input: [duty.label, scheduled].compactMap { $0 }.joined(separator: "\n"),
+                result: status == "completed" ? (duty.detail ?? "Office duty completed হয়েছে।") : nil,
+                error: failed ? (duty.detail ?? "Office duty সম্পন্ন হয়নি।")
+                    : stopped ? (duty.detail ?? "Office duty skipped হয়েছে।") : nil,
+                startedAt: duty.createdAt, completedAt: duty.ranAt ?? duty.createdAt,
+                steps: nil, costTaka: nil
+            )
+        }
+    }
+
+    private func finishedTodos() -> [AgentPlanDriveHistoryView] {
+        let officeDutyKeys = Set(vm.officeDailyDuties.map(\.duty))
+        return vm.dailyAgentTodos.compactMap { todo in
+            guard todo.status == "completed" || todo.status == "failed" || todo.status == "cancelled" else {
+                return nil
+            }
+            if let dutyKey = todo.dutyKey, officeDutyKeys.contains(dutyKey) { return nil }
+            let status = todo.status == "completed" ? "completed" : todo.status == "cancelled" ? "stopped" : "failed"
+            let input = [todo.title, todo.description].compactMap { $0 }.joined(separator: "\n")
+            return .init(
+                planId: "todo-\(todo.id)", goal: todo.title, conversationId: nil,
+                status: status, input: input,
+                result: status == "completed" ? "Office daily task completed হয়েছে।" : nil,
+                error: status == "failed" ? (todo.description ?? "কাজটি সম্পন্ন করা যায়নি।")
+                    : status == "stopped" ? "Owner task-টি বন্ধ করেছেন।" : nil,
+                startedAt: todo.createdAt, completedAt: todo.completedAt ?? todo.createdAt,
+                steps: nil, costTaka: nil
+            )
+        }
+    }
+
+    private func taskTitle(_ raw: String) -> String {
+        let cleaned = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.hasPrefix("[স্বয়ংক্রিয় হার্টবিট") {
+            return "ALMA নিজে থেকে জেগে কাজ করছে"
+        }
+        let firstLine = cleaned.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? "Agent task"
+        guard firstLine.count > 72 else { return firstLine }
+        return String(firstLine.prefix(72)) + "…"
+    }
+
+    private func isoString(_ date: Date?) -> String? {
+        guard let date else { return nil }
+        return ISO8601DateFormatter().string(from: date)
+    }
+
+    private func completionLabel(_ raw: String?) -> String? {
+        guard let date = parseISO(raw) else { return nil }
+        if abs(date.timeIntervalSinceNow) < 5 { return "just now" }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func isFutureWake(_ raw: String?) -> Bool {
+        guard let date = parseISO(raw) else { return false }
+        return date.timeIntervalSinceNow > 20
+    }
+
+    private func wakeLabel(_ raw: String?) -> String {
+        guard let date = parseISO(raw) else { return "পরের wake সময় ঠিক হচ্ছে" }
+        let formatter = DateFormatter()
+        formatter.timeZone = TimeZone(identifier: "Asia/Dhaka")
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "h:mm a"
+        let time = formatter.string(from: date)
+            .replacingOccurrences(of: "AM", with: "AM")
+            .replacingOccurrences(of: "PM", with: "PM")
+        let digits = time.reduce(into: "") { out, char in
+            if let n = char.wholeNumberValue { out += almaBn(n) } else { out.append(char) }
+        }
+        return "পরের wake \(digits)"
+    }
+
+    private func parseISO(_ raw: String?) -> Date? {
+        guard let raw else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: raw) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.date(from: raw)
+    }
+}
+
+@available(iOS 17.0, *)
+private struct AgentBackgroundTaskDetailSheet: View {
+    let task: AgentPlanDriveHistoryView
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let pal = AgentPalette(scheme)
+        NavigationStack {
+            ZStack {
+                AgentAuroraBackground()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        statusLine(pal)
+                        detailBlock(title: "Task input", text: task.input, tint: AlmaRayBurst.colors[1], pal: pal)
+                        if let result = task.result, !result.isEmpty {
+                            detailBlock(title: "Result", text: result, tint: AgentPalette.teal, pal: pal)
+                        }
+                        if let error = task.error, !error.isEmpty {
+                            detailBlock(title: task.status == "stopped" ? "Stop reason" : "Error reason",
+                                        text: error, tint: AgentPalette.coral, pal: pal)
+                        }
+                        if let steps = task.steps, !steps.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Steps")
+                                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(pal.mutedHi)
+                                ForEach(steps) { step in
+                                    detailStepRow(step, pal: pal)
+                                }
+                            }
+                            .padding(14)
+                            .background(pal.card.opacity(0.58), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+                        }
+                    }
+                    .padding(.horizontal, 17).padding(.top, 10).padding(.bottom, 30)
+                }
+            }
+            .navigationTitle(task.goal)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark").font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(pal.ink).frame(width: 32, height: 32)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel("বন্ধ করুন")
+                }
+            }
+        }
+    }
+
+    private func statusLine(_ pal: AgentPalette) -> some View {
+        let failed = task.status == "failed"
+        let stopped = task.status == "stopped"
+        let tint = failed ? AgentPalette.coral : stopped ? pal.muted : AgentPalette.teal
+        return HStack(spacing: 8) {
+            Circle().fill(tint).frame(width: 7, height: 7)
+            Text(failed ? "Failed" : stopped ? "Stopped" : "Completed")
+                .font(.system(size: 12, weight: .semibold)).foregroundStyle(tint)
+            Spacer()
+            if let cost = task.costTaka, cost > 0 {
+                Text("৳\(Int(cost.rounded()))")
+                    .font(.system(size: 11.5, weight: .medium)).foregroundStyle(pal.muted)
+            }
+        }
+    }
+
+    private func detailBlock(title: String, text: String, tint: Color, pal: AgentPalette) -> some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(pal.mutedHi)
+            Text(text)
+                .font(.system(size: 12.5, design: .monospaced))
+                .foregroundStyle(pal.ink).lineSpacing(4).textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(13)
+                .background(pal.card.opacity(0.64), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .strokeBorder(tint.opacity(0.18), lineWidth: 1))
+        }
+    }
+
+    private func detailStepRow(_ step: AgentPlanDriveStep, pal: AgentPalette) -> some View {
+        let failed = step.status == "failed"
+        let done = step.status == "done"
+        let icon = done ? "checkmark.circle.fill" : failed ? "exclamationmark.circle.fill" : "circle"
+        let tint = done ? AgentPalette.teal : failed ? AgentPalette.coral : pal.muted
+        return HStack(alignment: .top, spacing: 9) {
+            Image(systemName: icon).font(.system(size: 11)).foregroundStyle(tint)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(step.action ?? "Task step")
+                    .font(.system(size: 12.5, weight: .medium)).foregroundStyle(pal.ink)
+                if let detail = step.detail, !detail.isEmpty {
+                    Text(detail).font(.system(size: 11.5)).foregroundStyle(pal.muted)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Legacy Plan-Drive card (no longer rendered in chat)
 
 /// In-thread compact timeline for in-flight autonomous plans: attention cards
 /// (needs-decision / needs-approval) first, then working step ladders. Renders
@@ -7275,6 +8683,7 @@ struct AgentRowDebugOverlay: ViewModifier {
 @available(iOS 17.0, *)
 struct AssistantScreen: View {
     @State private var vm = AssistantVM()
+    @Namespace private var backgroundTaskNamespace
     @Environment(\.colorScheme) private var scheme
     @State private var nearBottom = true
     @State private var scrollViewportH: CGFloat = 0
@@ -7288,12 +8697,37 @@ struct AssistantScreen: View {
     /// DEBUG self-test hook (ALMA_ASSISTANT_VIEWERTEST=1) — presents the zoomable
     /// image viewer with its সংরক্ষণ button for a headless fixture screenshot.
     @State private var debugViewer: PortalImagePreview?
+    @State private var showBackgroundTasks = false
+    @State private var backgroundTaskDetent: PresentationDetent = .medium
 
     let openWeb: (_ path: String, _ title: String) -> Void
     /// Wired by makeAssistantTab so the native bar buttons drive this screen.
     let barHooks: AssistantBarHooks
 
     private static let bottomID = "ALMA_BOTTOM"
+
+    /// During a new streaming turn the previous settled reply keeps ownership of
+    /// the task anchor. On settle this id changes once, giving SwiftUI a single
+    /// spring relocation instead of a disappear/reappear jump.
+    private var backgroundTaskAnchorId: String? {
+        if vm.isStreaming {
+            return vm.messages.last(where: {
+                $0.role == .assistant && !$0.isStreaming && !$0.text.isEmpty
+            })?.id
+        }
+        return vm.messages.last(where: {
+            $0.role == .assistant && !$0.isStreaming && !$0.text.isEmpty
+        })?.id
+    }
+
+    private var hasBackgroundTaskSurface: Bool {
+        // The anchor is a stable entry point after every settled reply. Its label
+        // alone communicates whether execution is idle or has N active jobs.
+        vm.messages.contains {
+            $0.role == .assistant && !$0.isStreaming
+                && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
 
     /// The drawer animates itself (slide-from-left) — the system cover must not.
     private static func presentDrawer(_ vm: AssistantVM) {
@@ -7349,11 +8783,6 @@ struct AssistantScreen: View {
                             .buttonStyle(.plain)
                             .padding(.bottom, 6)
                         }
-                        // Plan-Drive Live Desk — in-thread only while a plan is in flight.
-                        if !(vm.planDrive?.drives ?? []).isEmpty {
-                            AgentPlanDriveCard(vm: vm, pal: pal)
-                                .padding(.bottom, 12)
-                        }
                         if !vm.loadingHistory && vm.messages.isEmpty && !vm.isStreaming {
                             AgentEmptyStateView(pal: pal) { vm.send($0) }
                         }
@@ -7364,12 +8793,38 @@ struct AssistantScreen: View {
                                     && msg.id == vm.messages.last(where: { $0.isStreaming })?.id,
                                 isLastAssistant: msg.role == .assistant
                                     && msg.id == vm.messages.last(where: { $0.role == .assistant })?.id,
+                                showsBackgroundTaskAnchor: hasBackgroundTaskSurface
+                                    && msg.id == backgroundTaskAnchorId,
+                                backgroundTaskHandoff: vm.isStreaming,
+                                backgroundTaskNamespace: backgroundTaskNamespace,
+                                onBackgroundTasks: {
+                                    backgroundTaskDetent = .medium
+                                    showBackgroundTasks = true
+                                },
                                 onToolTap: { tool in toolSheet = tool },
                                 onActivitySheet: { activitySheet = $0 })
                             .modifier(AgentRowDebugOverlay(message: msg))
                             .transition(.asymmetric(
                                 insertion: .opacity.combined(with: .offset(y: 12)),
                                 removal: .opacity))
+                        }
+                        // A brand-new/empty chat has no reply footer to own the
+                        // global entry point yet. Keep the same final-line design
+                        // available so switching sessions never hides live work.
+                        if backgroundTaskAnchorId == nil {
+                            HStack(spacing: 8) {
+                                AgentBrandWordmark(animateReveal: false, isCurrent: true, vm: vm)
+                                AgentBackgroundTasksAnchor(
+                                    vm: vm, pal: pal, handoff: vm.isStreaming,
+                                    namespace: backgroundTaskNamespace,
+                                    action: {
+                                        backgroundTaskDetent = .medium
+                                        showBackgroundTasks = true
+                                    })
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.top, 12)
+                            .padding(.bottom, 4)
                         }
                         Color.clear.frame(height: 4).id(Self.bottomID)
                     }
@@ -7539,6 +8994,19 @@ struct AssistantScreen: View {
                 debugViewer = PortalImagePreview(urls: ["https://picsum.photos/seed/alma/900/560"], index: 0)
                 return
             }
+            if argFlag("ALMA_BACKGROUND_TASK_FIXTURE") {
+                vm.loadBackgroundTaskDebugFixture()
+                if argFlag("ALMA_BACKGROUND_TASK_MOTION") {
+                    vm.runBackgroundTaskMotionDebug()
+                }
+                if argFlag("ALMA_BACKGROUND_TASK_SHEET") {
+                    Task {
+                        try? await Task.sleep(nanoseconds: 650_000_000)
+                        showBackgroundTasks = true
+                    }
+                }
+                return
+            }
             // Roadmap Phase 2 — canned SSE wire through the real parser/reducer.
             if argFlag("ALMA_ASSISTANT_EVENTTEST") {
                 vm.runDebugEventTest()
@@ -7567,6 +9035,12 @@ struct AssistantScreen: View {
         }
         .sheet(isPresented: $showArtifacts) {
             AgentArtifactsSheet(vm: vm, openWeb: openWeb)
+        }
+        .sheet(isPresented: $showBackgroundTasks) {
+            AgentBackgroundTasksSheet(vm: vm, selectedDetent: $backgroundTaskDetent)
+                .presentationDetents([.medium, .large], selection: $backgroundTaskDetent)
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(28)
         }
         .overlay(alignment: .top) {
             if vm.authExpired { authBanner(pal) }
