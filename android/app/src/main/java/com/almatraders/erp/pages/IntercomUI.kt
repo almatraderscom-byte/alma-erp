@@ -91,7 +91,11 @@ fun IntercomSheet(isOwner: Boolean, dark: Boolean, onDismiss: () -> Unit) {
         pendingCallStaffId = null
         if (granted) {
             AgoraIntercom.clearError()
-            if (staffId != null) scope.launch { AgoraIntercom.ownerCall(staffId) }
+            if (staffId != null) {
+                val name = AgoraIntercom.roster.firstOrNull { it.id == staffId }?.name ?: "স্টাফ"
+                com.almatraders.erp.CallNotifications.startOutgoing(context, staffId, name)
+                onDismiss()
+            }
         } else {
             // Denied (or permanently denied — Android then shows no dialog at all).
             // Say so instead of placing a call the peer can never hear.
@@ -194,7 +198,12 @@ fun IntercomSheet(isOwner: Boolean, dark: Boolean, onDismiss: () -> Unit) {
                                             // join and publish silence — the staffer would never
                                             // hear us while we hear them.
                                             if (ic.hasMicPermission(context)) {
-                                                scope.launch { ic.ownerCall(s.id) }
+                                                // Dial out on the FULL-SCREEN call screen, not in
+                                                // this sheet: the sheet left the page visible behind
+                                                // it, so one stray tap on that scrim killed the call
+                                                // UI. A full-screen activity has no "outside".
+                                                com.almatraders.erp.CallNotifications.startOutgoing(context, s.id, s.name)
+                                                onDismiss()
                                             } else {
                                                 pendingCallStaffId = s.id
                                                 micLauncher.launch(android.Manifest.permission.RECORD_AUDIO)

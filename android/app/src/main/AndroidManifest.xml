@@ -78,7 +78,7 @@
             android:excludeFromRecents="true"
             android:showWhenLocked="true"
             android:turnScreenOn="true"
-            android:theme="@style/AppTheme.NoActionBarLaunch" />
+            android:theme="@style/AppTheme.Call" />
 
         <!-- OneSignal owns the FCM service; this extension turns an office-call push
              into the full-screen call instead of a default notification. -->

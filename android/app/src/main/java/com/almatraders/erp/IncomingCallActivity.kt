@@ -65,6 +65,9 @@ class IncomingCallActivity : ComponentActivity() {
     private var broadcastId = ""
     private var channel = ""
     private var caller = "বস — মারুফ"
+    /** true → we placed this call (dial out), false → someone is ringing us. */
+    private var outgoing = false
+    private var staffId = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,6 +75,17 @@ class IncomingCallActivity : ComponentActivity() {
         channel = intent.getStringExtra(CallNotifications.EXTRA_CHANNEL)
             ?: if (broadcastId.isNotEmpty()) "itc_$broadcastId" else ""
         caller = intent.getStringExtra(CallNotifications.EXTRA_CALLER) ?: "বস — মারুফ"
+        outgoing = intent.getBooleanExtra(CallNotifications.EXTRA_OUTGOING, false)
+        staffId = intent.getStringExtra(CallNotifications.EXTRA_STAFF_ID) ?: ""
+
+        // Own the WHOLE screen. The activity inherits the launch theme, whose window
+        // background showed through the status-bar inset as a white strip above the
+        // call UI. Paint the window with the call gradient's base colour and let the
+        // content draw edge-to-edge underneath the system bars.
+        window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0xFF0C0B12.toInt()))
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
 
         // Show over the lock screen and turn the screen on — WhatsApp-style.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -90,7 +104,15 @@ class IncomingCallActivity : ComponentActivity() {
 
         AgoraIntercom.attach(applicationContext)
         if (broadcastId.isNotEmpty()) AgoraIntercom.markCallHandled(broadcastId)
-        AgoraIntercom.ringIncoming()
+
+        if (outgoing) {
+            // We are dialling: no incoming ringtone, no Accept/Decline. ownerCall
+            // creates the broadcast (which pushes the callee) and then joins the
+            // channel — AgoraIntercom drives RINGING → CALLING → IDLE from there.
+            if (staffId.isNotEmpty()) lifecycleScope.launch { AgoraIntercom.ownerCall(staffId) }
+        } else {
+            AgoraIntercom.ringIncoming()
+        }
 
         setContent { MaterialTheme { CallScreen() } }
     }
@@ -121,11 +143,21 @@ class IncomingCallActivity : ComponentActivity() {
 
     @Composable
     private fun CallScreen() {
-        var answered by remember { mutableStateOf(false) }
+        // Outgoing calls are "answered" from the start — we dial, there is nothing to accept.
+        var answered by remember { mutableStateOf(outgoing) }
         val mode = AgoraIntercom.mode
         val connected = AgoraIntercom.connected
         val seconds = AgoraIntercom.callSeconds
         val muted = AgoraIntercom.micMuted
+
+        // The engine reports IDLE for a moment before an outgoing call reaches RINGING.
+        // Without this latch the "call ended" effect below would fire on that first
+        // frame and close the screen instantly. Only treat IDLE as "ended" once the
+        // call has actually been live at least once.
+        var wasLive by remember { mutableStateOf(false) }
+        LaunchedEffect(mode) {
+            if (mode == AgoraIntercom.Mode.RINGING || mode == AgoraIntercom.Mode.CALLING) wasLive = true
+        }
 
         // Answering without RECORD_AUDIO would join the channel and publish SILENCE —
         // the caller would hear nothing while we hear them. Ask at accept time; the
@@ -153,9 +185,10 @@ class IncomingCallActivity : ComponentActivity() {
             }
         }
 
-        // The call ended (caller hung up, or we ended it) → close the screen.
-        LaunchedEffect(mode, answered) {
-            if (answered && mode == AgoraIntercom.Mode.IDLE) finishAndCleanup()
+        // The call ended (peer hung up, or we ended it) → close the screen. `wasLive`
+        // guards the pre-dial IDLE frame of an outgoing call.
+        LaunchedEffect(mode, answered, wasLive) {
+            if (answered && wasLive && mode == AgoraIntercom.Mode.IDLE) finishAndCleanup()
         }
         // Caller cancelled before we answered (a cancel push arrived) → close instantly,
         // WhatsApp-style, instead of ringing on to the 60s timeout.
@@ -167,17 +200,22 @@ class IncomingCallActivity : ComponentActivity() {
                 finishAndCleanup()
             }
         }
-        // Nobody answered within the ring window → auto-dismiss (missed call).
-        LaunchedEffect(Unit) {
-            delay(60_000)
-            if (!answered) {
-                confirmReceipt()
-                AgoraIntercom.stopRinging()
-                finishAndCleanup()
+        // Incoming only: nobody picked up within the ring window → auto-dismiss
+        // (missed call). An outgoing call is ended by AgoraIntercom's own ring
+        // timeout, so this must not fight it.
+        if (!outgoing) {
+            LaunchedEffect(Unit) {
+                delay(60_000)
+                if (!answered) {
+                    confirmReceipt()
+                    AgoraIntercom.stopRinging()
+                    finishAndCleanup()
+                }
             }
         }
 
-        val ringing = !answered && mode != AgoraIntercom.Mode.CALLING
+        // Accept/Decline only exists for an incoming ring — never when we dialled.
+        val ringing = !outgoing && !answered && mode != AgoraIntercom.Mode.CALLING
 
         Box(
             Modifier
@@ -211,6 +249,8 @@ class IncomingCallActivity : ComponentActivity() {
                     Text(
                         when {
                             connected -> statusTime(seconds)
+                            // Dialling out: mirror the engine's own status ("রিং হচ্ছে…").
+                            outgoing -> AgoraIntercom.statusText.ifEmpty { "রিং হচ্ছে…" }
                             answered -> "সংযোগ হচ্ছে…"
                             else -> "📞 অফিস লাইভ কল…"
                         },
@@ -253,7 +293,11 @@ class IncomingCallActivity : ComponentActivity() {
                             if (muted) "আনমিউট" else "মিউট",
                             Color(0xFF6B7280),
                         ) { AgoraIntercom.toggleMute() }
-                        CallButton(Icons.Filled.CallEnd, "কল কাটুন", Color(0xFFEF4444)) {
+                        CallButton(
+                            Icons.Filled.CallEnd,
+                            if (connected) "কল কাটুন" else "বাতিল",
+                            Color(0xFFEF4444),
+                        ) {
                             AgoraIntercom.leave()
                             finishAndCleanup()
                         }

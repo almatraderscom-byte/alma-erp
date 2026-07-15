@@ -28,6 +28,27 @@ object CallNotifications {
     const val EXTRA_CHANNEL = "channel"
     const val EXTRA_CALLER = "caller"
 
+    /** true → we are PLACING the call (no ring/accept UI; the screen dials out). */
+    const val EXTRA_OUTGOING = "outgoing"
+
+    /** Outgoing only: the AgentStaff.id to ring (the screen creates the broadcast). */
+    const val EXTRA_STAFF_ID = "staffId"
+
+    /**
+     * Open the full-screen call screen for an OUTGOING call. The owner's call used to
+     * live in a bottom sheet, which left the page visible behind it — one stray tap on
+     * that scrim closed the call UI. A full-screen activity has no "outside" to tap.
+     */
+    fun startOutgoing(context: Context, staffId: String, peerName: String) {
+        val i = Intent(context, IncomingCallActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra(EXTRA_OUTGOING, true)
+            putExtra(EXTRA_STAFF_ID, staffId)
+            putExtra(EXTRA_CALLER, peerName)
+        }
+        context.startActivity(i)
+    }
+
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val mgr = context.getSystemService(NotificationManager::class.java) ?: return
