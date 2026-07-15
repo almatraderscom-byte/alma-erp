@@ -30,6 +30,7 @@
 import { StateGraph, Annotation, START, END } from '@langchain/langgraph'
 import { executeTool } from '@/agent/tools/registry'
 import { isRetryableErrorCode } from '@/agent/tools/tool-contract'
+import { getGraphCheckpointer, checkpointConfigFor } from '@/agent/lib/graph/graph-checkpointer'
 import { adapterFor } from '@/agent/lib/models/adapters'
 import type { ModelEntry } from '@/agent/lib/models/registry'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -303,6 +304,10 @@ export async function runRoutineTurnGraph(
     toolRecord: null,
   })
   try {
+    // LG-2 pilot consumer: durable state on Supabase when the checkpointer
+    // gate is on; null (gate off / broken) compiles exactly as before —
+    // the checkpointer is an upgrade, never a dependency.
+    const checkpointer = getGraphCheckpointer()
     const graph = new StateGraph(RoutineState)
       .addNode('detect_intent', (s) => ({ intent: detectRoutineIntent(s.userText) }))
       .addNode(
@@ -400,11 +405,21 @@ export async function runRoutineTurnGraph(
         ['format_reply', END],
       )
       .addEdge('format_reply', END)
-      .compile()
+      .compile(checkpointer ? { checkpointer } : undefined)
 
     const s = await graph.invoke(
       { userText },
-      { signal: deps.signal, recursionLimit: 8 },
+      {
+        signal: deps.signal,
+        recursionLimit: 8,
+        ...(checkpointer
+          ? checkpointConfigFor({
+              conversationId: deps.conversationId,
+              turnId: deps.turnId,
+              namespace: 'routine',
+            })
+          : {}),
+      },
     )
 
     console.log(

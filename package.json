@@ -53,6 +53,7 @@
     "@google/generative-ai": "^0.24.1",
     "@langchain/core": "^1.2.3",
     "@langchain/langgraph": "^1.4.8",
+    "@langchain/langgraph-checkpoint-postgres": "^1.0.4",
     "@onesignal/capacitor-plugin": "^1.1.0",
     "@prisma/client": "5.22.0",
     "@react-pdf/renderer": "^4.5.1",
