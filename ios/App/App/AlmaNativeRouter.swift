@@ -105,7 +105,27 @@ enum AlmaNativeRouter {
         // /digital/finance is a server redirect to /finance — serve the native Finance screen directly.
         case "/digital/finance": return host(FinanceScreen(openWeb: openWebForced), "Finance")
         default:
+            // Parameterized routes — exact cases above can't match /page/{id} paths,
+            // so entity links (approvals/payroll name taps → /employees/{empId},
+            // project rows → /digital/clients/{id}) used to fall through to the WEB
+            // view (owner report 2026-07-15: "native app must never jump to web").
+            // The native list screen opens with that entity's detail sheet focused.
+            if let empId = pathParam(clean, after: "/employees/") {
+                return host(EmployeesScreen(openWeb: openWebForced, focusEmpId: empId), "Employee")
+            }
+            if let clientId = pathParam(clean, after: "/digital/clients/") {
+                return host(DigitalClientsScreen(openWeb: openWebForced, focusClientId: clientId), "Client")
+            }
             return nil
         }
+    }
+
+    /// "/employees/EMP-51" after "/employees/" → "EMP-51"; nil when the prefix
+    /// doesn't match or the remainder is empty / has more path segments.
+    private static func pathParam(_ path: String, after prefix: String) -> String? {
+        guard path.hasPrefix(prefix) else { return nil }
+        let rest = String(path.dropFirst(prefix.count))
+        guard !rest.isEmpty, !rest.contains("/") else { return nil }
+        return rest.removingPercentEncoding ?? rest
     }
 }
