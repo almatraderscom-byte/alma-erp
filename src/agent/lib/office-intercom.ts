@@ -28,6 +28,9 @@ export type IntercomReceipt = {
   confirmedAt: string | null
 }
 
+/** How a live call ended — drives the "stop ringing" signal + missed-call history. */
+export type CallEndReason = 'cancelled' | 'declined' | 'missed' | 'completed'
+
 export type IntercomBroadcast = {
   id: string
   kind: IntercomKind
@@ -37,6 +40,18 @@ export type IntercomBroadcast = {
   transcript: string | null
   targetStaffId: string | null
   createdAt: string
+  /** Call display name of the caller (staff name or "বস — মারুফ"); null otherwise. */
+  callerName: string | null
+  /** Set once a call is over (cancelled/declined/missed/completed) — every client
+   *  stops ringing / closes the call the moment this is non-null. */
+  endedAt: string | null
+  endedReason: CallEndReason | null
+  /** True when this call row is an INCOMING ring for the polling viewer (they are
+   *  the callee and did not place it). The client rings on this — works for both
+   *  owner→staff and staff→owner without the client knowing its own user id. */
+  incomingForMe: boolean
+  /** True when the viewer PLACED this call (they are the caller). */
+  outgoingByMe: boolean
   /** Owner feed only — per-staff receipt states. */
   receipts: IntercomReceipt[]
   /** Staff feed only — the polling staff's own receipt. */
@@ -95,6 +110,21 @@ async function activeStaff(businessId: string): Promise<{ id: string; name: stri
   }))
 }
 
+const OWNER_LABEL = 'বস — মারুফ'
+
+/** The business owner's User.id — the callee for a staff→owner call. Cached. */
+let cachedOwnerUserId: { id: string | null; at: number } | null = null
+export async function resolveOwnerUserId(): Promise<string | null> {
+  if (cachedOwnerUserId && Date.now() - cachedOwnerUserId.at < 5 * 60_000) return cachedOwnerUserId.id
+  const owner = await prisma.user.findFirst({
+    where: { role: 'SUPER_ADMIN', active: true },
+    select: { id: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  cachedOwnerUserId = { id: owner?.id ?? null, at: Date.now() }
+  return owner?.id ?? null
+}
+
 export async function createIntercomBroadcast(args: {
   businessId: string
   senderUserId: string
@@ -104,10 +134,30 @@ export async function createIntercomBroadcast(args: {
   mediaType?: string | null
   durationSec?: number
   targetStaffId?: string | null
+  /** kind='call' only: the single callee's User.id (staff.user.id, or the owner's
+   *  id for a staff→owner call). Drives the wake push + incoming-ring targeting. */
+  targetUserId?: string | null
+  /** kind='call' only: caller display name shown on the callee's ring/CallKit. */
+  callerName?: string | null
 }): Promise<{ id: string; createdAt: string } | { error: 'no_target_staff' }> {
+  const isCall = args.kind === 'call'
   const staff = await activeStaff(args.businessId)
-  const targets = args.targetStaffId ? staff.filter((s) => s.id === args.targetStaffId) : staff
-  if (targets.length === 0) return { error: 'no_target_staff' }
+  // Voice/urgent fan out to a staff subset (targetStaffId, or everyone). A call
+  // rings exactly ONE callee: owner→staff has a targetStaffId (one receipt);
+  // staff→owner has none (no staff receipts — the owner acks via Agora presence).
+  const targets = args.targetStaffId
+    ? staff.filter((s) => s.id === args.targetStaffId)
+    : isCall
+      ? []
+      : staff
+  if (!isCall && targets.length === 0) return { error: 'no_target_staff' }
+
+  // Resolve the call's single callee user id: an explicit targetUserId (staff→owner)
+  // wins; otherwise derive it from the targeted staff row (owner→staff).
+  const callTargetUserId = isCall
+    ? args.targetUserId ?? (args.targetStaffId ? targets[0]?.userId ?? null : null)
+    : null
+  if (isCall && !callTargetUserId) return { error: 'no_target_staff' }
 
   const row = await prisma.officeIntercomBroadcast.create({
     data: {
@@ -118,34 +168,44 @@ export async function createIntercomBroadcast(args: {
       audioUrl: args.audioUrl ?? null,
       mediaType: args.mediaType ?? null,
       durationSec: Math.max(0, Math.round(args.durationSec ?? 0)),
+      // Keep targetStaffId for owner→staff calls (drives the "who did I call"
+      // history label); a staff→owner call has no staff target (targetUserId=owner).
       targetStaffId: args.targetStaffId ?? null,
+      targetUserId: callTargetUserId,
+      callerName: isCall ? args.callerName ?? OWNER_LABEL : null,
+      // A call keeps a receipt for a targeted STAFF (owner→staff answer tracking);
+      // a staff→owner call has no staff receipt (owner acks via Agora presence).
       receipts: { create: targets.map((t) => ({ staffId: t.id })) },
     },
     select: { id: true, createdAt: true },
   })
 
   // Best-effort push so a closed app still gets a ping. Never blocks the send.
+  const callerName = args.callerName ?? OWNER_LABEL
   const title =
-    args.kind === 'urgent' ? '🚨 বসের জরুরি এলার্ট' : args.kind === 'call' ? '📞 বস লাইভ কল করছেন' : '🎙️ বসের ভয়েস মেসেজ'
+    args.kind === 'urgent' ? '🚨 বসের জরুরি এলার্ট' : isCall ? `📞 ${callerName} কল করছেন` : '🎙️ বসের ভয়েস মেসেজ'
   const body =
     args.kind === 'urgent'
       ? 'এখনই অফিস অ্যাপ খুলুন।'
-      : args.kind === 'call'
+      : isCall
         ? 'এখনই অফিস অ্যাপ খুলে কল ধরুন।'
         : 'অফিস অ্যাপ খুলে শুনে কনফার্ম করুন।'
   // A call/urgent ring must reach the installed app itself — not just Telegram.
   // OneSignal push (high-priority for call/urgent) carries the broadcast id so
   // the in-app listener can raise the incoming-call ring; Telegram/ntfy stay as
   // the closed-app fallback. All best-effort, in parallel, never blocks.
-  const deviceUserIds = targets.map((t) => t.userId).filter((x): x is string => Boolean(x))
-  const highPriority = args.kind === 'call' || args.kind === 'urgent'
-  const callData =
-    args.kind === 'call'
-      ? { type: 'office_call', broadcastId: row.id, channel: `itc_${row.id}`, actionUrl: `${OFFICE_URL}` }
-      : { type: `office_${args.kind}`, broadcastId: row.id, actionUrl: `${OFFICE_URL}` }
+  // A call rings its ONE callee (targetUserId); voice/urgent fan out to staff.
+  const deviceUserIds = isCall
+    ? (callTargetUserId ? [callTargetUserId] : [])
+    : targets.map((t) => t.userId).filter((x): x is string => Boolean(x))
+  const highPriority = isCall || args.kind === 'urgent'
+  const callData = isCall
+    ? { type: 'office_call', broadcastId: row.id, channel: `itc_${row.id}`, caller: callerName, actionUrl: `${OFFICE_URL}` }
+    : { type: `office_${args.kind}`, broadcastId: row.id, actionUrl: `${OFFICE_URL}` }
 
   const pushes: Promise<unknown>[] = [
-    ...targets.map((t) => pushStaffPing(t, title, body)),
+    // Telegram/ntfy fallback only reaches staff (owner has no staff ping row).
+    ...(isCall ? [] : targets.map((t) => pushStaffPing(t, title, body))),
     pushStaffDevice(deviceUserIds, title, body, callData, highPriority),
   ]
 
@@ -153,9 +213,14 @@ export async function createIntercomBroadcast(args: {
   // CallKit) + an FCM high-priority data message (Android full-screen) so the
   // callee's phone rings a native incoming call even when the app is closed.
   // OneSignal/Telegram above stay as fallbacks. All best-effort, never blocks.
-  if (args.kind === 'call' && deviceUserIds.length > 0) {
-    const callerName = 'বস — মারুফ'
-    const voipPayload = { type: 'office_call' as const, broadcastId: row.id, channel: `itc_${row.id}`, caller: callerName }
+  if (isCall && deviceUserIds.length > 0) {
+    const voipPayload = {
+      type: 'office_call' as const,
+      broadcastId: row.id,
+      channel: `itc_${row.id}`,
+      caller: callerName,
+      event: 'ring' as const,
+    }
     pushes.push(
       (async () => {
         try {
@@ -177,13 +242,74 @@ export async function createIntercomBroadcast(args: {
 }
 
 /**
+ * End a live call — cancelled by the caller, declined by the callee, missed
+ * (ring timed out), or completed (hung up after talking). First writer wins
+ * (endedAt is set only once). Fires a "cancel" wake push to the callee's devices
+ * so a still-ringing closed phone stops instantly (WhatsApp-style), and leaves
+ * the row as the missed-/completed-call history item the feed renders.
+ */
+export async function endCall(args: {
+  broadcastId: string
+  businessId: string
+  reason: CallEndReason
+  actorUserId: string
+}): Promise<{ ok: boolean; alreadyEnded?: boolean }> {
+  // Atomically claim the end — updateMany with endedAt IS NULL guard.
+  const claimed = await prisma.officeIntercomBroadcast.updateMany({
+    where: { id: args.broadcastId, businessId: args.businessId, kind: 'call', endedAt: null },
+    data: { endedAt: new Date(), endedReason: args.reason },
+  })
+  if (claimed.count === 0) return { ok: true, alreadyEnded: true }
+
+  const row = await prisma.officeIntercomBroadcast.findFirst({
+    where: { id: args.broadcastId, businessId: args.businessId },
+    select: { id: true, targetUserId: true, senderUserId: true, callerName: true },
+  })
+  if (!row) return { ok: true }
+
+  // Ring the "stop" to whoever might still be ringing: the callee (targetUserId).
+  // If the callee ended it (decline), also poke the caller so its UI closes fast.
+  const notify = new Set<string>()
+  if (row.targetUserId) notify.add(row.targetUserId)
+  if (row.senderUserId) notify.add(row.senderUserId)
+  notify.delete(args.actorUserId) // the actor already knows locally
+  const notifyIds = [...notify].filter(Boolean)
+
+  if (notifyIds.length > 0) {
+    const cancelData = { type: 'office_call_cancel', broadcastId: row.id, reason: args.reason }
+    const voipPayload = {
+      type: 'office_call' as const,
+      broadcastId: row.id,
+      channel: `itc_${row.id}`,
+      caller: row.callerName ?? OWNER_LABEL,
+      event: 'cancel' as const,
+    }
+    try {
+      const { voip, fcm } = await getCallPushTargets(notifyIds)
+      await Promise.allSettled([
+        // OneSignal silent-ish cancel (Android extension + web listener close the ring).
+        pushStaffDevice(notifyIds, '📞 কল শেষ', 'কল কেটে দেওয়া হয়েছে।', cancelData, true),
+        voip.length ? sendVoipCall(voip, voipPayload) : Promise.resolve([]),
+        fcm.length ? sendFcmCall(fcm, voipPayload) : Promise.resolve([]),
+      ])
+    } catch (err) {
+      console.warn('[office-intercom] call cancel push failed:', (err as Error)?.message)
+    }
+  }
+
+  return { ok: true }
+}
+
+/**
  * Intercom feed. Owner gets full receipts per broadcast; a staff caller gets
  * only their own receipt state, and their undelivered receipts are marked
  * delivered as a side effect (their device just fetched the audio).
  */
 export async function getIntercomFeed(
   businessId: string,
-  viewer: { role: 'owner' } | { role: 'staff'; staffId: string },
+  viewer:
+    | { role: 'owner'; userId: string }
+    | { role: 'staff'; staffId: string; userId: string },
 ): Promise<IntercomFeed> {
   const sinceDate = new Date(Date.now() - FEED_HOURS * 3600_000)
 
@@ -191,8 +317,11 @@ export async function getIntercomFeed(
     where: {
       businessId,
       createdAt: { gte: sinceDate },
-      // Staff only see broadcasts addressed to them (receipt row exists).
-      ...(viewer.role === 'staff' ? { receipts: { some: { staffId: viewer.staffId } } } : {}),
+      // Staff see broadcasts addressed to them (receipt row exists) OR calls they
+      // placed themselves (their staff→owner outgoing call has no staff receipt).
+      ...(viewer.role === 'staff'
+        ? { OR: [{ receipts: { some: { staffId: viewer.staffId } } }, { senderUserId: viewer.userId }] }
+        : {}),
     },
     orderBy: { createdAt: 'desc' },
     take: FEED_LIMIT,
@@ -204,6 +333,11 @@ export async function getIntercomFeed(
       durationSec: true,
       transcript: true,
       targetStaffId: true,
+      targetUserId: true,
+      senderUserId: true,
+      callerName: true,
+      endedAt: true,
+      endedReason: true,
       createdAt: true,
       receipts: {
         select: { staffId: true, deliveredAt: true, playedAt: true, confirmedAt: true },
@@ -246,6 +380,7 @@ export async function getIntercomFeed(
           }))
         : []
     const my = viewer.role === 'staff' ? r.receipts.find((x) => x.staffId === viewer.staffId) : undefined
+    const isCall = (r.kind as IntercomKind) === 'call'
     return {
       id: r.id,
       kind: (r.kind as IntercomKind) ?? 'voice',
@@ -254,6 +389,13 @@ export async function getIntercomFeed(
       durationSec: r.durationSec,
       transcript: r.transcript,
       targetStaffId: r.targetStaffId,
+      callerName: r.callerName ?? null,
+      endedAt: r.endedAt?.toISOString() ?? null,
+      endedReason: (r.endedReason as CallEndReason | null) ?? null,
+      // I'm the callee (ring me) — a call aimed at my user id that I didn't place.
+      incomingForMe: isCall && r.targetUserId === viewer.userId && r.senderUserId !== viewer.userId,
+      // I placed this call (show my outgoing/waiting UI + call history on my side).
+      outgoingByMe: isCall && r.senderUserId === viewer.userId,
       createdAt: r.createdAt.toISOString(),
       receipts,
       mine: my

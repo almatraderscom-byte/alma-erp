@@ -184,7 +184,7 @@ const prepare_staff_task_proposal: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      date: { type: 'string', description: 'YYYY-MM-DD (default: today Dhaka)' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD (default: today Dhaka)' },
       saveProposal: { type: 'boolean', description: 'Save tasks as proposed (default true)' },
       createApprovalCard: { type: 'boolean', description: 'Create dispatch confirm card (default true)' },
       conversationId: { type: 'string', description: 'Server-managed conversation id — omit; the server fills it automatically.' },
@@ -447,7 +447,7 @@ const propose_staff_tasks: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      date: { type: 'string', description: 'YYYY-MM-DD (default: today in Asia/Dhaka)' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD (default: today in Asia/Dhaka)' },
       tasks: {
         type: 'array',
         description: 'Array of task objects',
@@ -527,7 +527,7 @@ const merge_into_proposal: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      date: { type: 'string', description: 'YYYY-MM-DD of the active proposal (default: pending proposal date)' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD of the active proposal (default: pending proposal date)' },
       staffName: { type: 'string', description: 'Which staff member the task is for' },
       additions: {
         type: 'array',
@@ -713,7 +713,7 @@ const approve_pending_dispatch: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      date: { type: 'string', description: 'YYYY-MM-DD (default: from pending action or today Dhaka)' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD (default: from pending action or today Dhaka)' },
     },
   },
   handler: async (input) => {
@@ -779,7 +779,7 @@ const get_dispatch_status: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      date: { type: 'string', description: 'YYYY-MM-DD (default: today Dhaka)' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD (default: today Dhaka)' },
     },
   },
   handler: async (input) => {
@@ -867,7 +867,7 @@ const get_lunch_status: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      date: { type: 'string', description: 'YYYY-MM-DD (default: today Dhaka)' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD (default: today Dhaka)' },
     },
   },
   handler: async (input) => {
@@ -942,7 +942,7 @@ const get_current_proposal: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      date: { type: 'string', description: 'YYYY-MM-DD (default: today Dhaka)' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD (default: today Dhaka)' },
     },
   },
   handler: async (input) => {
@@ -985,7 +985,7 @@ const correct_and_redispatch_staff_tasks: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      date: { type: 'string', description: 'YYYY-MM-DD (default: today Dhaka)' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD (default: today Dhaka)' },
     },
   },
   handler: async (input) => {
@@ -1182,7 +1182,7 @@ const send_dispatch_correction_notice: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      date: { type: 'string', description: 'YYYY-MM-DD (default: today Dhaka)' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD (default: today Dhaka)' },
       staffIds: {
         type: 'array',
         items: { type: 'string' },
@@ -2020,7 +2020,7 @@ const get_shift_handover: AgentTool = {
   input_schema: {
     type: 'object' as const,
     properties: {
-      date: { type: 'string', description: 'Dhaka date YYYY-MM-DD. Defaults to today.' },
+      date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'Dhaka date YYYY-MM-DD. Defaults to today.' },
       businessId: { type: 'string', enum: ['ALMA_LIFESTYLE', 'ALMA_TRADING'], description: 'Business — omit; the server fills it from the conversation' },
     },
   },

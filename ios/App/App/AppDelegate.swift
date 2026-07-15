@@ -1,4 +1,5 @@
 import UIKit
+import UserNotifications
 import Capacitor
 import CapawesomeCapacitorAppShortcuts
 
@@ -92,7 +93,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
-        // Restart any tasks that were paused (or not yet started) while the application was inactive. If the application was previously in the background, optionally refresh the user interface.
+        // Clear the app-icon badge on every open: server pushes use
+        // ios_badgeType "Increase" (src/lib/notifications.ts), so without a reset
+        // the count only ever grows. Notification Center items are untouched.
+        if #available(iOS 16.0, *) {
+            UNUserNotificationCenter.current().setBadgeCount(0)
+        } else {
+            application.applicationIconBadgeNumber = 0
+        }
     }
 
     func applicationWillTerminate(_ application: UIApplication) {

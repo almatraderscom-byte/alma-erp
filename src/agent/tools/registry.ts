@@ -5,6 +5,7 @@ import { logToolEvent } from '@/agent/lib/tool-telemetry'
 import {
   classifyErrorCode,
   isRetryableErrorCode,
+  malformedRawArgsError,
   resolveClassification,
   strictenSchema,
   validateToolInput,
@@ -699,6 +700,24 @@ export async function runRegisteredTool(
       errorCode: 'turn_read_only',
       retryable: false,
     }
+  }
+
+  // Streamed tool args that failed JSON.parse arrive as the `{ _raw }` marker.
+  // Short-circuit with a self-repair error that ECHOES the broken text back, so
+  // the model fixes its own emission — instead of the misleading schema error
+  // (`unknown field "_raw"`) this used to fall through to. retryable: the model
+  // gets another loop round to re-call correctly.
+  const malformed = malformedRawArgsError(input)
+  if (malformed) {
+    void logToolEvent({
+      ...baseEvent,
+      success: false,
+      errorClass: 'malformed_args',
+      errorCode: 'malformed_args',
+      latencyMs: Date.now() - started,
+      detail: { ...capDetail, argsValidation: 'unparseable' },
+    })
+    return { success: false, error: malformed, errorCode: 'malformed_args', retryable: true }
   }
 
   const validation = validateToolInput(tool.name, tool.input_schema, input ?? {})

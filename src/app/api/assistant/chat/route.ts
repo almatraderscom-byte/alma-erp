@@ -42,7 +42,11 @@ import {
 import { shouldPersistIncomingMessage } from '@/agent/lib/continuation-policy'
 
 export const runtime = 'nodejs'
-export const maxDuration = 300
+// 800s (Pro plan + Fluid compute; Vercel allows up to 1800s). Raised from 300s
+// on 2026-07-14 (owner confirmed Pro) so long browser/content turns stop dying
+// at the old ceiling. The effective turn deadline is still AGENT_TURN_HARD_CAP_MS
+// (default 280s) clamped ≥20s under this — set the env to 780000 to use the room.
+export const maxDuration = 800
 
 interface FileRef { bucket: string; path: string; mediaType: string }
 
@@ -493,10 +497,18 @@ export async function POST(req: NextRequest) {
   // controller instead and always persists the reply; the client just re-syncs the
   // conversation when it returns to the foreground (it polls the AgentTurn status).
   //
-  // The server controller has a 280s hard cap — under Vercel maxDuration (300s) so
+  // The server controller has a hard cap held safely under Vercel maxDuration so
   // the function returns cleanly instead of being killed mid-write. This covers the
-  // ~95% case (turns <= ~280s) surviving a background/close without new infra.
-  const TURN_HARD_CAP_MS = 280_000
+  // ~95% case (turns <= cap) surviving a background/close without new infra.
+  // Owner-tunable via AGENT_TURN_HARD_CAP_MS: on a Pro plan with Fluid compute,
+  // raise `maxDuration` above (Vercel now allows up to 1800s) and set the env to
+  // match — long browser/content turns stop dying at the old 280s ceiling. The
+  // Math.min guard keeps a mismatched env from ever exceeding the function's
+  // real budget (cap always ≥20s under maxDuration for the final persist).
+  const TURN_HARD_CAP_MS = Math.min(
+    Number(process.env.AGENT_TURN_HARD_CAP_MS) || 280_000,
+    (maxDuration - 20) * 1000,
+  )
   const turnAbort = new AbortController()
   const turnCapTimer = setTimeout(() => turnAbort.abort(), TURN_HARD_CAP_MS)
 

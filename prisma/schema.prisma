@@ -4149,6 +4149,17 @@ model OfficeIntercomBroadcast {
   transcript    String?                 @db.Text
   /// AgentStaff.id when the broadcast targets one person; null = everyone.
   targetStaffId String?                 @map("target_staff_id")
+  /// For kind='call': the single callee's User.id (works for staff→owner too,
+  /// where the target is the owner and has no AgentStaff row). null for voice/urgent.
+  targetUserId  String?                 @map("target_user_id")
+  /// Display name of who placed the call ("বস — মারুফ" or a staff's name) — the
+  /// callee's ring/CallKit label. null for non-call kinds.
+  callerName    String?                 @map("caller_name")
+  /// Set when a call is over: caller cancelled, callee declined, timed out (missed),
+  /// or completed. Non-null = "stop ringing / call finished" for every client.
+  endedAt       DateTime?               @map("ended_at")
+  /// Why the call ended: 'cancelled' | 'declined' | 'missed' | 'completed'.
+  endedReason   String?                 @map("ended_reason")
   createdAt     DateTime                @default(now()) @map("created_at")
   receipts      OfficeIntercomReceipt[]
 

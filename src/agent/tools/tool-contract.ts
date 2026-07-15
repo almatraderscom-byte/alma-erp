@@ -235,6 +235,30 @@ export function validateToolInput(
   }
 }
 
+/**
+ * Detect the streaming adapters' malformed-JSON marker. When a provider streams
+ * tool-call arguments that fail JSON.parse, the OpenAI-dialect adapter wraps the
+ * raw text as `{ _raw: "<text>" }` instead of throwing. Before this check, that
+ * marker fell through to schema validation and the model was told `unknown field
+ * "_raw"` — misleading, since the model never emitted a field called _raw; it
+ * emitted broken/truncated JSON. This returns an instructive, self-repair error
+ * (echoing the raw text) so the model can re-call correctly, or null when the
+ * input is not the marker shape.
+ */
+export function malformedRawArgsError(input: Record<string, unknown> | null | undefined): string | null {
+  if (!input) return null
+  const keys = Object.keys(input)
+  if (keys.length !== 1 || keys[0] !== '_raw' || typeof input._raw !== 'string') return null
+  const raw = input._raw as string
+  const shown = raw.slice(0, 400)
+  return (
+    'Your tool call arguments were NOT valid JSON — the argument stream could not be parsed ' +
+    '(usually a truncated or half-emitted object). Nothing was executed. ' +
+    `Raw text received: ${JSON.stringify(shown)}${raw.length > 400 ? '… (truncated)' : ''}. ` +
+    'Call the tool again with ONE complete, valid JSON object matching the tool schema.'
+  )
+}
+
 /** Test hook — compiled validators are keyed by tool name and cached for reuse. */
 export function clearValidatorCache(): void {
   validatorCache.clear()

@@ -37,6 +37,55 @@ describe('validated executor (Phase 2)', () => {
     expect(res).toMatchObject({ success: false, errorCode: 'turn_read_only', retryable: false })
   })
 
+  it('streamed-JSON parse failure ({_raw} marker) returns a self-repair error, never runs the handler', async () => {
+    let handlerRan = false
+    const tool = fakeTool({
+      name: 'fake_malformed_args',
+      handler: async () => {
+        handlerRan = true
+        return { success: true }
+      },
+    })
+    const res = await runRegisteredTool(tool, { _raw: '{"count": 1, "mode": "a' }, {}, {})
+    expect(handlerRan).toBe(false)
+    expect(res).toMatchObject({ success: false, errorCode: 'malformed_args', retryable: true })
+    // The error must ECHO the broken text and instruct a correct re-call —
+    // not the misleading `unknown field "_raw"` schema message.
+    expect(res.error).toContain('NOT valid JSON')
+    expect(res.error).toContain('count') // the broken text is echoed back
+    expect(res.error).not.toContain('_raw')
+  })
+
+  it('date pattern (staff/trading tools, 2026-07-14): "today"/Bangla dates rejected BEFORE the handler, ISO accepted', async () => {
+    // Mirrors the real prepare_staff_task_proposal date field — including the
+    // double-backslash escape ('\\d'); a single '\d' in a TS string silently
+    // becomes 'd' and would reject every real date.
+    const schema = {
+      type: 'object',
+      properties: {
+        date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'YYYY-MM-DD' },
+      },
+    }
+    clearValidatorCache()
+    expect(validateToolInput('fake_date_ok', schema, { date: '2026-07-14' }).ok).toBe(true)
+    for (const bad of ['today', 'আজ', '14-07-2026', '2026-7-14']) {
+      const v = validateToolInput('fake_date_ok', schema, { date: bad })
+      expect(v.ok).toBe(false)
+      expect(v.error).toContain('call the tool again')
+    }
+  })
+
+  it('a real field named _raw alongside others is NOT treated as the marker', async () => {
+    const tool = fakeTool({
+      name: 'fake_real_raw_field',
+      handler: async () => ({ success: true }),
+    })
+    // Two keys → not the adapter marker shape; falls through to normal schema
+    // validation (which rejects the unknown fields as before).
+    const res = await runRegisteredTool(tool, { _raw: 'x', count: 1 }, {}, {})
+    expect(res).toMatchObject({ success: false, errorCode: 'invalid_args' })
+  })
+
   it('invalid args NEVER reach the handler — unknown field', async () => {
     let handlerRan = false
     clearValidatorCache()

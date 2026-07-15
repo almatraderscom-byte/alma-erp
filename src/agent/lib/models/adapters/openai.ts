@@ -42,6 +42,21 @@ export function wantsAnthropicCacheControl(apiModel: string): boolean {
   return !apiModel.startsWith('x-ai/')
 }
 
+/**
+ * OpenRouter Exacto routing (pure, unit-testable): append `:exacto` to the model
+ * slug so OpenRouter picks providers by TOOL-CALL QUALITY instead of the default
+ * price+speed "Balanced" mode. OpenRouter's own telemetry measured ~8%→~1%
+ * tool-call error on the same model just from this provider tiering — the single
+ * biggest lever on the "cheap model mangles tool calls" incident class.
+ * Only applied when the request actually carries tools (that is what Exacto
+ * tiers on), and never when the slug already pins a variant (`:nitro`/`:floor`).
+ */
+export function exactoSlug(apiModel: string, hasTools: boolean): string {
+  if (!hasTools) return apiModel
+  if (apiModel.includes(':')) return apiModel
+  return `${apiModel}:exacto`
+}
+
 function toOpenAiMessages(
   system: string,
   messages: NeutralMsg[],
@@ -119,6 +134,8 @@ export class OpenAiAdapter implements ProviderAdapter {
   private cachePrefix: boolean
   private streamReasoning: boolean
   private includeCostUsage: boolean
+  private exacto: boolean
+  private requireParameters: boolean
 
   constructor(
     apiKey: string,
@@ -142,6 +159,20 @@ export class OpenAiAdapter implements ProviderAdapter {
        * OPENROUTER_INCLUDE_COST=false to fall back to the estimate.
        */
       includeCostUsage?: boolean
+      /**
+       * OpenRouter Exacto: route tool-bearing requests to the providers with the
+       * best measured tool-call quality (see exactoSlug above). Owner kill switch:
+       * ENABLE_OPENROUTER_EXACTO=false.
+       */
+      exacto?: boolean
+      /**
+       * OpenRouter `provider.require_parameters`: only route to hosts that support
+       * EVERY parameter in the request (tools especially) instead of silently
+       * dropping unsupported ones — a documented cause of "the model ignored my
+       * tools" on third-party hosts. Owner kill switch:
+       * OPENROUTER_REQUIRE_PARAMETERS=false.
+       */
+      requireParameters?: boolean
     },
   ) {
     this.client = new OpenAI({
@@ -154,6 +185,8 @@ export class OpenAiAdapter implements ProviderAdapter {
     this.cachePrefix = (opts?.cachePrefix ?? false) && process.env.ENABLE_OPENROUTER_CACHE !== 'false'
     this.streamReasoning = (opts?.reasoning ?? false) && process.env.STREAM_OPENROUTER_REASONING !== 'false'
     this.includeCostUsage = (opts?.includeCostUsage ?? false) && process.env.OPENROUTER_INCLUDE_COST !== 'false'
+    this.exacto = (opts?.exacto ?? false) && process.env.ENABLE_OPENROUTER_EXACTO !== 'false'
+    this.requireParameters = (opts?.requireParameters ?? false) && process.env.OPENROUTER_REQUIRE_PARAMETERS !== 'false'
   }
 
   async *streamTurn(args: {
@@ -181,9 +214,20 @@ export class OpenAiAdapter implements ProviderAdapter {
     // Grok caches prefixes automatically — skip the Anthropic-style cache_control
     // extension for x-ai/* models (Phase 3 cleanup; see wantsAnthropicCacheControl).
     const cachePrefix = this.cachePrefix && wantsAnthropicCacheControl(args.apiModel)
+    // Exacto quality routing on tool-bearing requests (OpenRouter-only factory
+    // option). The variant slug is understood by OpenRouter alone, so the raw
+    // OpenAI/xAI factories never enable it.
+    const modelSlug = this.exacto ? exactoSlug(args.apiModel, args.tools.length > 0) : args.apiModel
+    // provider.require_parameters: filter to hosts that honour tools + our other
+    // params. Scoped to tool-bearing requests (the failure class it fixes) and
+    // dropped from the final BARE retry below like every other extension.
+    const providerPrefs = this.requireParameters && args.tools.length > 0
+      ? { provider: { require_parameters: true } }
+      : {}
     const baseParams = {
-      model: args.apiModel,
+      model: modelSlug,
       messages: toOpenAiMessages(args.system, args.messages, cachePrefix),
+      ...providerPrefs,
       tools: args.tools.length ? toOpenAiTools(args.tools) : undefined,
       stream: true as const,
       stream_options: { include_usage: true },
@@ -355,4 +399,18 @@ export function createOpenAiAdapter(): OpenAiAdapter {
   const key = process.env.OPENAI_API_KEY?.trim()
   if (!key) throw new Error('OPENAI_API_KEY not configured')
   return new OpenAiAdapter(key)
+}
+
+/**
+ * xAI direct (api.x.ai, OpenAI-compatible). First-party serving for the Grok
+ * head: no OpenRouter middleman, so no third-party tool-call parser between the
+ * model and us — the same serving the Grok app gets. No OpenRouter extensions:
+ * xAI caches prefixes automatically (no cache_control), reports no usage.cost,
+ * and takes no `reasoning` request param — but the stream reader still surfaces
+ * `reasoning_content` deltas if the model sends them, so live thinking works.
+ */
+export function createXaiAdapter(): OpenAiAdapter {
+  const key = process.env.XAI_API_KEY?.trim()
+  if (!key) throw new Error('XAI_API_KEY not configured')
+  return new OpenAiAdapter(key, { baseURL: 'https://api.x.ai/v1' })
 }

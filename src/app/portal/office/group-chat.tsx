@@ -329,6 +329,17 @@ export default function GroupChat({ self }: { self: 'owner' | 'staff' }) {
                 📋
               </button>
             )}
+            {self === 'staff' && (
+              <button
+                className="cp-attach"
+                aria-label="বসকে কল করুন"
+                title="বসকে লাইভ কল"
+                disabled={itc.callStarting || !!itc.activeCallId}
+                onClick={() => itc.callOwner()}
+              >
+                📞
+              </button>
+            )}
             <button
               className="cp-attach"
               aria-label="ছবি যোগ করুন"

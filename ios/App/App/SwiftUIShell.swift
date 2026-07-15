@@ -489,4 +489,89 @@ extension AlmaTabBarController {
         setViewControllers(vcs, animated: false)
         applyTheme() // restyle the fresh navs (glass strip installs via applyNav)
     }
+
+    // MARK: - Notification-tap deep link (AlmaNavBridge → exact page)
+
+    /// AlmaNavBridge posts .almaOpenPath with the ERP route from a notification tap.
+    @objc func onOpenPath(_ note: Notification) {
+        guard let path = note.userInfo?["path"] as? String, path.hasPrefix("/") else { return }
+        routeNotificationTap(to: path)
+    }
+
+    /// Land a notification tap on its exact page.
+    ///
+    /// Root-tab paths select their tab (no duplicate copy pushed); everything else
+    /// pushes on the CURRENT tab's nav so Back returns the user to where they were.
+    /// Paths carrying a query string open the WEB page — AlmaNativeRouter strips
+    /// queries, and deep links like /orders?q=… or /attendance?review=… only work
+    /// on the web page. Bare paths go through pushSmart (native when migrated).
+    func routeNotificationTap(to path: String) {
+        // The tap can arrive before the shell is attached to a window (cold start
+        // races the webview boot) — retry once the hierarchy is up.
+        guard view.window != nil else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                self?.routeNotificationTap(to: path)
+            }
+            return
+        }
+        // A presented sheet/full-screen cover (voice console, approval sheet…) would
+        // swallow the navigation — dismiss it first, then route.
+        if let presented = presentedViewController {
+            presented.dismiss(animated: false) { [weak self] in self?.routeNotificationTap(to: path) }
+            return
+        }
+
+        let clean = path.split(separator: "?").first.map(String.init) ?? path
+        let query = path.dropFirst(clean.count)
+        let hasQuery = query.count > 1 // "?" alone is not a real query
+
+        // Tab roots: 0 Dashboard, 1 Orders, 2 Assistant, 3 Approvals, 4 More.
+        let tabRoots: [String: Int] = [
+            "/": 0, "/dashboard": 0,
+            "/orders": 1,
+            "/agent": 2,
+            "/approvals": 3,
+        ]
+        if !hasQuery, let index = tabRoots[clean] {
+            selectTabRootStably(index)
+            return
+        }
+
+        guard let nav = selectedViewController as? UINavigationController else { return }
+        let title = Self.notificationTapTitle(for: clean)
+        if hasQuery {
+            pushWeb(on: nav, path: path, title: title, icon: "bell.badge")
+        } else {
+            pushSmart(on: nav, path: path, title: title, icon: "bell.badge")
+        }
+    }
+
+    /// Select a tab root and keep it selected against the cold-start reset race.
+    ///
+    /// On a notification cold-launch the sequence is: shell builds → biometric
+    /// lock overlay → Face ID unlock → Capacitor Dashboard (re)mounts. Any of
+    /// those late steps can snap `selectedIndex` back to 0 (Dashboard) AFTER a
+    /// one-shot re-assert. Re-assert on a short repeating schedule that stops
+    /// once the selection sticks, so the tap survives however long unlock takes.
+    private func selectTabRootStably(_ index: Int) {
+        selectedIndex = index
+        (selectedViewController as? UINavigationController)?.popToRootViewController(animated: false)
+        var attempts = 0
+        // ~4.8s of coverage (8 × 0.6s) spans a slow Face ID unlock + webview
+        // remount. Re-asserting an already-correct index is a no-op, so we just
+        // hold it for the whole window rather than trying to detect "settled".
+        Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            attempts += 1
+            if self.selectedIndex != index { self.selectedIndex = index }
+            if attempts >= 8 { timer.invalidate() }
+        }
+    }
+
+    /// Human title for a pushed notification target ("/finance/office-fund" → "Office fund").
+    private static func notificationTapTitle(for cleanPath: String) -> String {
+        let segment = cleanPath.split(separator: "/").last.map(String.init) ?? "Alma ERP"
+        let words = segment.replacingOccurrences(of: "-", with: " ")
+        return words.prefix(1).uppercased() + words.dropFirst()
+    }
 }

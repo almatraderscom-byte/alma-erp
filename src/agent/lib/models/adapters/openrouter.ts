@@ -24,5 +24,12 @@ export function createOpenRouterAdapter(): OpenAiAdapter {
     // OpenRouter dashboard exactly, instead of a local token×rate estimate that
     // drifted 1.5–4× high (stale registry rates + guessed cache discounts).
     includeCostUsage: true,
+    // Exacto quality routing + require_parameters on tool-bearing requests:
+    // route only to hosts with proven tool-call parsers instead of the default
+    // price-first "Balanced" pick (OpenRouter measured ~8%→~1% tool-call error
+    // from this alone). Owner kill switches: ENABLE_OPENROUTER_EXACTO /
+    // OPENROUTER_REQUIRE_PARAMETERS.
+    exacto: true,
+    requireParameters: true,
   })
 }
