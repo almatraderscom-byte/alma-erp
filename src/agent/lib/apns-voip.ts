@@ -78,7 +78,13 @@ function normalizePem(raw: string): string {
   return `-----BEGIN PRIVATE KEY-----\n${wrapped}\n-----END PRIVATE KEY-----\n`
 }
 
-function apnsJwt(): string | null {
+/**
+ * The APNs auth JWT, cached and refreshed on the ~50-minute cycle APNs allows.
+ * Exported (additively — behaviour is unchanged) so the Live Activity push
+ * sender can reuse this exact signing path instead of duplicating it; both
+ * senders talk to the same APNs key and share the cached token.
+ */
+export function apnsJwt(): string | null {
   const keyRaw = process.env.APNS_AUTH_KEY?.trim()
   const keyId = process.env.APNS_KEY_ID?.trim()
   const teamId = process.env.APNS_TEAM_ID?.trim()

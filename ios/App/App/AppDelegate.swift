@@ -101,6 +101,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         } else {
             application.applicationIconBadgeNumber = 0
         }
+
+        // Dynamic Panel reconciliation (spec §14): ActivityKit can leave more
+        // than one Pulse activity alive if the app was killed mid-request, and
+        // two panels for one workspace is always wrong. Silent + no-op when
+        // there is nothing to fix; the survivor is refreshed by the web layer's
+        // next syncLivePulse() with authoritative server data.
+        if #available(iOS 16.1, *) {
+            PulseRestore.reconcile()
+        }
     }
 
     func applicationWillTerminate(_ application: UIApplication) {
