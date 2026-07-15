@@ -58,6 +58,8 @@ object AgoraIntercom {
     var remoteSpeaking by mutableStateOf(false); private set
     var localSpeaking by mutableStateOf(false); private set
     var micMuted by mutableStateOf(false); private set
+    /** Loudspeaker on? join() turns it on, so the UI starts in sync. */
+    var speakerOn by mutableStateOf(true); private set
     var recording by mutableStateOf(false); private set
     var callSeconds by mutableIntStateOf(0); private set
     var statusText by mutableStateOf(""); private set
@@ -252,6 +254,13 @@ object AgoraIntercom {
         post { micMuted = next }
     }
 
+    /** Earpiece ⇄ loudspeaker, like WhatsApp's speaker button. */
+    fun toggleSpeaker() {
+        val next = !speakerOn
+        engine?.setEnableSpeakerphone(next)
+        post { speakerOn = next }
+    }
+
     fun leave() {
         engine?.leaveChannel()
         appContext?.let { com.almatraders.erp.IntercomForegroundService.stop(it) }
@@ -353,6 +362,7 @@ object AgoraIntercom {
             publishMicrophoneTrack = publishMic
         }
         e.setEnableSpeakerphone(true)
+        post { speakerOn = true }
         e.muteLocalAudioStream(!publishMic)
         e.joinChannel(tok, ch, uid, opts)
         // Android 14+ blocks mic capture from a backgrounded app without a foreground

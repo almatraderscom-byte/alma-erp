@@ -39,6 +39,14 @@ import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.ui.draw.scale
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -181,7 +189,11 @@ class IncomingCallActivity : ComponentActivity() {
         // Outgoing calls are "answered" from the start — we dial, there is nothing to accept.
         var answered by remember { mutableStateOf(outgoing) }
         val mode = AgoraIntercom.mode
-        val connected = AgoraIntercom.connected
+        // "Connected" = the PEER joined the channel (mode flips to CALLING in
+        // onUserJoined, which is also when the call ticker starts). AgoraIntercom.connected
+        // only means WE joined — true the instant we dial — so using it here showed a
+        // 00:00 timer and a "কল কাটুন" button while the phone was still ringing.
+        val connected = mode == AgoraIntercom.Mode.CALLING
         val seconds = AgoraIntercom.callSeconds
         val muted = AgoraIntercom.micMuted
 
@@ -290,8 +302,18 @@ class IncomingCallActivity : ComponentActivity() {
             ) {
                 Spacer(Modifier.height(48.dp))
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    // WhatsApp-style: the avatar breathes while ringing, and settles the
+                    // moment the peer answers.
+                    val pulse = rememberInfiniteTransition(label = "ring")
+                    val scale by pulse.animateFloat(
+                        initialValue = 1f,
+                        targetValue = if (connected) 1f else 1.06f,
+                        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+                        label = "ringScale",
+                    )
                     Box(
                         Modifier
+                            .scale(if (connected) 1f else scale)
                             .size(112.dp)
                             .clip(CircleShape)
                             .background(
@@ -377,6 +399,11 @@ class IncomingCallActivity : ComponentActivity() {
                             if (muted) "আনমিউট" else "মিউট",
                             Color(0xFF6B7280),
                         ) { AgoraIntercom.toggleMute() }
+                        CallButton(
+                            if (AgoraIntercom.speakerOn) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
+                            if (AgoraIntercom.speakerOn) "স্পিকার" else "ইয়ারপিস",
+                            if (AgoraIntercom.speakerOn) Color(0xFF6B7280) else Color(0xFF3F4654),
+                        ) { AgoraIntercom.toggleSpeaker() }
                         CallButton(
                             Icons.Filled.CallEnd,
                             if (connected) "কল কাটুন" else "বাতিল",

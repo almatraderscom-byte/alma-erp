@@ -95,7 +95,9 @@ fun ActiveCallBar() {
                 buildString {
                     append(ic.callPeer)
                     append(" — ")
-                    append(if (ic.connected) clock(ic.callSeconds) else "রিং হচ্ছে…")
+                    // Same trap as the call screen: ic.connected is "we joined", not
+                    // "they answered". CALLING is the real connect (ticker starts there).
+                    append(if (ic.mode == AgoraIntercom.Mode.CALLING) clock(ic.callSeconds) else "রিং হচ্ছে…")
                 },
                 color = CallGreen,
                 fontSize = 14.sp,
