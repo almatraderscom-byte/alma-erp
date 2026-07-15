@@ -1,7 +1,23 @@
 # Agent Continuation Reliability — Server Integration + iOS Build-73 Verification
 
-Date: 2026-07-15 · Session: alma-erp-reliability (takeover)
-Status: **server side VERIFIED & MERGED · iOS branch BUILT for simulator · live simulator proof scenario PAUSED by owner** (another session was using the simulator; owner will say when to install the latest commit and run the scenario).
+Date: 2026-07-15/16 · Session: alma-erp-reliability (takeover)
+Status: **server fixes MERGED to main (PRs #376, #380, #382) · iOS branch simulator-verified through five live rounds · NO TestFlight.**
+
+## 0. Final round-up (what the live simulator rounds found and fixed)
+
+The owner-driven and automated sim rounds surfaced FIVE additional production bugs beyond the original continuation scope; each was root-caused with captured evidence before fixing:
+
+| # | Bug (live evidence) | Fix (commit) | Where |
+|---|---|---|---|
+| 1 | Assistant thread froze the whole app on large replies — sustained AttributeGraph layout loop, 213/213 then 1603/1603 main-thread samples inside one commit pass ([sample 1](./agent-ios73-hang-sample-1.txt), [sample 2](./agent-ios73-hang-sample-2.txt)); scroll-to-bottom arrow bounced back and never landed | image thumbs reserve final height; the two per-layout GeometryReader/PreferenceKey channels attach only on iOS 17; converging scroll-to-bottom (`f2283815`) — post-fix, three samples during heavy streaming show a fully idle main thread | iOS |
+| 2 | send() could hang FOREVER before its watchdog: `WKHTTPCookieStore.getAllCookies` never called back after a Simulator-host restart (`turn.submit` logged, zero requests on the wire while polls flowed on cached cookies) | 3s bounded cookie sync, cached-copy fallback (`d7656c34`) | iOS |
+| 3 | A long turn's SSE drops mid-flight → terminal discovered via recovery/polling → structured continuation NEVER fired; turns `f2dfdc5d` + `30c62ff7` sat `continuation_needed=true`, unclaimed forever | fire from recovery path (`d957ff5d`); `continuationNeeded` exposed on turn-status (PR #380, prod `f7ddebf7`) + polling-path arming (`c7979938`) | iOS + server |
+| 4 | A provider error (live: OpenRouter→Alibaba content filter at minute 6) threw away 44 steps of work — terminal error paths persisted nothing, reload lost the turn | salvage partial prose+timeline+tool rows with an honest stop-note (`171e8866`, PR #382 → main `f19c91b0`) | server |
+| 5 | Whole stretches of browser steps lost their screenshots: seven consecutive `step_timeout: screenshot (35000ms)` on heavy pages, single-attempt capture (46 captures succeeded around them) | one 1.5s settle-beat retry on capture failure (`1a3eac45` in PR #382); collapsed-steps sheet now renders each step's screenshot (`e9ffd353`); wide screenshots can no longer push the card off-screen (`d9558841`) | server + iOS |
+
+Sim-host wedging during automation (input pipeline dead while the APP was provably idle) was traced to long synthetic-keystroke bursts — an iOS 26 Simulator bug, not an app bug; the owner now drives verification manually.
+
+**Continuation invariants status:** exactly-once claim, no-owner-message persistence, no-prose inference, truthful browser evidence, mandatory-tool-failure stop — all unit-tested and live on prod. The client-side auto-fire is wired on all three terminal paths (direct stream / durable tail / status polling). The end-to-end visual (turn hits the ~12-min wall → auto-continues with no fake bubble) has not yet been witnessed: every live attempt either finished under the wall (4m13s for 12 sites), was canceled, or errored at minute 6 — the wall-hitting scenario remains for the owner's next long run, which the armed client will now handle on whichever path the terminal arrives.
 
 ---
 
