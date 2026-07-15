@@ -82,9 +82,22 @@ fun IntercomSheet(isOwner: Boolean, dark: Boolean, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // Staff id waiting on a mic grant — the call resumes the moment it's allowed.
+    var pendingCallStaffId by remember { mutableStateOf<String?>(null) }
     val micLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-    ) { }
+    ) { granted ->
+        val staffId = pendingCallStaffId
+        pendingCallStaffId = null
+        if (granted) {
+            AgoraIntercom.clearError()
+            if (staffId != null) scope.launch { AgoraIntercom.ownerCall(staffId) }
+        } else {
+            // Denied (or permanently denied — Android then shows no dialog at all).
+            // Say so instead of placing a call the peer can never hear.
+            AgoraIntercom.reportMicDenied()
+        }
+    }
 
     LaunchedEffect(Unit) {
         AgoraIntercom.attach(context)
@@ -100,7 +113,12 @@ fun IntercomSheet(isOwner: Boolean, dark: Boolean, onDismiss: () -> Unit) {
     val live = ic.mode == AgoraIntercom.Mode.BROADCASTING || ic.mode == AgoraIntercom.Mode.LISTENING
 
     ModalBottomSheet(
-        onDismissRequest = { ic.leave(); onDismiss() },
+        // WhatsApp parity: tapping outside the sheet (or swiping it down) MINIMISES an
+        // active call — it must never hang up. Audio keeps running in the foreground
+        // service; the ongoing notification (and the intercom bubble) tap back in.
+        // Only the explicit "কল কাটুন" button ends a call. The live walkie-talkie
+        // keeps its old behaviour (dismiss = leave the live channel).
+        onDismissRequest = { if (!inCall) ic.leave(); onDismiss() },
         sheetState = sheetState,
         containerColor = AlmaTheme.rootBg(dark),
     ) {
@@ -122,6 +140,20 @@ fun IntercomSheet(isOwner: Boolean, dark: Boolean, onDismiss: () -> Unit) {
             ic.error?.let {
                 Text(it, color = icRed, fontSize = 12.sp, textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().background(icRed.copy(alpha = 0.10f), RoundedCornerShape(12.dp)).padding(10.dp))
+                // A permanently-denied mic can ONLY be re-granted from app settings —
+                // Android stops showing the prompt after two refusals, so give a way out.
+                if (it == AgoraIntercom.MIC_DENIED_MSG) {
+                    BigBtn("⚙️ সেটিংস খুলুন", icViolet, false, Modifier.fillMaxWidth()) {
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent(
+                                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    android.net.Uri.fromParts("package", context.packageName, null),
+                                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        }
+                    }
+                }
             }
 
             // Live speaking orb.
@@ -157,7 +189,17 @@ fun IntercomSheet(isOwner: Boolean, dark: Boolean, onDismiss: () -> Unit) {
                             items(ic.roster, key = { it.id }) { s ->
                                 Row(
                                     Modifier.fillMaxWidth().almaGlassIntercom(dark)
-                                        .plainClick { scope.launch { ic.ownerCall(s.id) } }.padding(12.dp),
+                                        .plainClick {
+                                            // Ask for the mic AT CALL TIME. Without it Agora would
+                                            // join and publish silence — the staffer would never
+                                            // hear us while we hear them.
+                                            if (ic.hasMicPermission(context)) {
+                                                scope.launch { ic.ownerCall(s.id) }
+                                            } else {
+                                                pendingCallStaffId = s.id
+                                                micLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                                            }
+                                        }.padding(12.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 ) {

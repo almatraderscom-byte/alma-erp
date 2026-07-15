@@ -15,7 +15,9 @@ import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -125,6 +127,32 @@ class IncomingCallActivity : ComponentActivity() {
         val seconds = AgoraIntercom.callSeconds
         val muted = AgoraIntercom.micMuted
 
+        // Answering without RECORD_AUDIO would join the channel and publish SILENCE —
+        // the caller would hear nothing while we hear them. Ask at accept time; the
+        // launch-time prompt may have been refused long ago and never reappears.
+        val micLauncher = rememberLauncherForActivityResult(
+            ActivityResultContracts.RequestPermission(),
+        ) { granted ->
+            if (granted) {
+                answered = true
+                AgoraIntercom.stopRinging()
+                confirmReceipt()
+                lifecycleScope.launch { AgoraIntercom.startCall(channel, outgoing = false) }
+            } else {
+                AgoraIntercom.reportMicDenied()
+            }
+        }
+        fun acceptCall() {
+            if (AgoraIntercom.hasMicPermission(applicationContext)) {
+                answered = true
+                AgoraIntercom.stopRinging()
+                confirmReceipt()
+                lifecycleScope.launch { AgoraIntercom.startCall(channel, outgoing = false) }
+            } else {
+                micLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+            }
+        }
+
         // The call ended (caller hung up, or we ended it) → close the screen.
         LaunchedEffect(mode, answered) {
             if (answered && mode == AgoraIntercom.Mode.IDLE) finishAndCleanup()
@@ -189,6 +217,17 @@ class IncomingCallActivity : ComponentActivity() {
                         color = Color(0xFFB9BCC9),
                         fontSize = 15.sp,
                     )
+                    // Never let a mic problem stay invisible — a silent call looks
+                    // identical to a working one from this side.
+                    AgoraIntercom.error?.let { err ->
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            err,
+                            color = Color(0xFFFCA5A5),
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                        )
+                    }
                 }
 
                 if (ringing) {
@@ -202,12 +241,7 @@ class IncomingCallActivity : ComponentActivity() {
                             AgoraIntercom.leave()
                             finishAndCleanup()
                         }
-                        CallButton(Icons.Filled.Call, "গ্রহণ", Color(0xFF10B981)) {
-                            answered = true
-                            AgoraIntercom.stopRinging()
-                            confirmReceipt()
-                            lifecycleScope.launch { AgoraIntercom.startCall(channel, outgoing = false) }
-                        }
+                        CallButton(Icons.Filled.Call, "গ্রহণ", Color(0xFF10B981)) { acceptCall() }
                     }
                 } else {
                     Row(

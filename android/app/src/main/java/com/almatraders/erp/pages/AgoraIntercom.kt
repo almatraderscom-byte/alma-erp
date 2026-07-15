@@ -15,13 +15,16 @@
 
 package com.almatraders.erp.pages
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -114,6 +117,11 @@ object AgoraIntercom {
 
     // ── Live walkie-talkie ─────────────────────────────────────────────────────
     suspend fun joinLive(asBroadcaster: Boolean) {
+        // Broadcasting publishes the mic — same silent-failure trap as a call.
+        if (asBroadcaster && !hasMicPermission()) {
+            post { error = MIC_DENIED_MSG; statusText = "" }
+            return
+        }
         post { error = null; statusText = "সংযোগ হচ্ছে…" }
         try {
             val ch = resolveLiveChannel()
@@ -145,7 +153,36 @@ object AgoraIntercom {
         }
     }
 
+    /**
+     * Is RECORD_AUDIO granted RIGHT NOW?
+     *
+     * This gate is not optional. Without the permission Agora still joins the channel
+     * and reports success — it just publishes SILENCE, with no exception and no
+     * callback. The result is a call where we hear the peer but the peer hears
+     * nothing. Android 14+ additionally kills a `microphone` foreground service
+     * started without it (SecurityException inside startForeground), which is what
+     * dropped calls the moment the app was backgrounded. Both symptoms, one cause.
+     */
+    fun hasMicPermission(ctx: Context? = appContext): Boolean {
+        val c = ctx ?: return false
+        return ContextCompat.checkSelfPermission(c, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+    }
+
+    /** Bangla error surfaced when the mic is missing — never fail silently again. */
+    const val MIC_DENIED_MSG = "মাইক্রোফোনের অনুমতি নেই — সেটিংসে গিয়ে ALMA-কে মাইক অনুমতি দিন, নইলে ওপাশে আপনার কথা যাবে না।"
+
+    /** Surface the mic problem in the call UI (with a Settings shortcut next to it). */
+    fun reportMicDenied() = post { error = MIC_DENIED_MSG }
+
+    fun clearError() = post { error = null }
+
     suspend fun startCall(ch: String, outgoing: Boolean) {
+        // Refuse to place/answer a muted-forever call: tell the user instead.
+        if (!hasMicPermission()) {
+            post { error = MIC_DENIED_MSG; mode = Mode.IDLE; statusText = "" }
+            return
+        }
         post { error = null; mode = Mode.RINGING; callSeconds = 0; statusText = if (outgoing) "রিং হচ্ছে…" else "কল ধরছেন…" }
         remoteUids.clear()
         ringtone.stop()

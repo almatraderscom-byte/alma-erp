@@ -28,6 +28,16 @@
 -keep class com.almatraders.erp.ReminderRefreshWorker { <init>(...); }
 # (MainActivity + ReminderAlarmReceiver + AlmaPushChannels are manifest components →
 #  AGP keeps them automatically.)
+#
+# OneSignal loads the notification service extension REFLECTIVELY (Class.newInstance)
+# from the <meta-data android:value="..."> class NAME — a plain string AGP can't see as
+# a class reference. R8 therefore found no caller and stripped the no-arg constructor,
+# so OneSignal's init threw
+#     InstantiationException: ... has no zero argument constructor
+# which aborted bootstrapServices ENTIRELY: no FCM token was ever minted, so the app
+# received NO pushes at all (calls included). Keep the class AND its constructor.
+-keep class * implements com.onesignal.notifications.INotificationServiceExtension { <init>(); *; }
+-keep class com.almatraders.erp.CallNotificationExtension { <init>(); *; }
 
 # ── Native SDKs that call back via JNI / reflection ──
 -keep class io.agora.** { *; }
