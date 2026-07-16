@@ -84,6 +84,22 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
     URL.revokeObjectURL(url)
   }
 
+  // Client-report PDF export (owner ask 2026-07-16): the SERVER renders the
+  // designed A4 PDF (/api/assistant/artifacts/[id]/pdf) — the first cut
+  // rendered in-browser and a full Bangla report froze the tab for minutes.
+  // Here the button just opens the download URL; zero main-thread work.
+  const [pdfBusy, setPdfBusy] = useState(false)
+  const pdfable = Boolean(active?.content) && !previewable
+  function downloadPdf() {
+    if (!active?.id || pdfBusy) return
+    setPdfBusy(true)
+    const a = document.createElement('a')
+    a.href = `/api/assistant/artifacts/${active.id}/pdf`
+    a.click()
+    // The browser owns the download from here — just debounce double-taps.
+    setTimeout(() => setPdfBusy(false), 4000)
+  }
+
   const showPreview = previewable && mode === 'preview'
 
   const panel = (
@@ -166,6 +182,15 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
           <button onClick={downloadContent} className="flex-1 rounded-full border border-white/[0.06] bg-card/80 backdrop-blur-md py-2 text-xs font-semibold text-muted-hi transition-all hover:text-cream hover:border-gold-dim/30 hover:bg-gold/5 hover:shadow-[0_0_10px_rgba(201,168,76,0.1)]">
             ⬇️ ডাউনলোড
           </button>
+          {pdfable && (
+            <button
+              onClick={downloadPdf}
+              disabled={pdfBusy}
+              className="flex-1 rounded-full border border-white/[0.06] bg-card/80 backdrop-blur-md py-2 text-xs font-semibold text-muted-hi transition-all hover:text-cream hover:border-gold-dim/30 hover:bg-gold/5 hover:shadow-[0_0_10px_rgba(201,168,76,0.1)] disabled:opacity-50"
+            >
+              {pdfBusy ? '⏳ বানাচ্ছি…' : '📄 PDF'}
+            </button>
+          )}
         </div>
       )}
     </div>

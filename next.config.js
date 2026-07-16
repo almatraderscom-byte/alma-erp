@@ -2,7 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   experimental: {
-    serverComponentsExternalPackages: ['@react-pdf/renderer', 'bullmq', 'ioredis'],
+    serverComponentsExternalPackages: ['@react-pdf/renderer', 'bullmq', 'ioredis', 'puppeteer-core', '@sparticuz/chromium'],
     // CRITICAL: static `public/` assets are CDN-served and are NOT included in the
     // serverless function filesystem by default. The brand/Bangla TTFs are read from
     // disk at runtime (sharp/librsvg only renders text with fonts fontconfig finds on
@@ -17,6 +17,11 @@ const nextConfig = {
       '/api/assistant/brand-models': ['./public/fonts/**'],
       '/api/assistant/brand-models/tryon': ['./public/fonts/**'],
       '/api/assistant/internal/ad-creative-gate': ['./public/fonts/**'],
+      // Client-report PDF (2026-07-16): Bangla TTFs for the report template.
+      // NOTE: do NOT try to trace @sparticuz/chromium/bin here — local
+      // nft.json picks it up but Vercel's bundler still drops it; the route
+      // downloads the browser pack remotely instead (see the route file).
+      '/api/assistant/artifacts/[id]/pdf': ['./public/fonts/**'],
     },
   },
   images: {
