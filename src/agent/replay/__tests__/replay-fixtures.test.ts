@@ -6,7 +6,9 @@ import { validateReplayCase, type ReplayCase } from '../replay-case'
 const FIXTURES_DIR = join(__dirname, '..', 'fixtures')
 
 describe('replay fixtures (Roadmap Phase 0 — AGENT-EVAL-001)', () => {
-  const files = readdirSync(FIXTURES_DIR).filter((f) => f.endsWith('.json'))
+  // rc-*.json only — autonomy-*.json cases (Phase 51) have their own schema and
+  // are validated by src/agent/lib/__tests__/autonomy-readiness.test.ts.
+  const files = readdirSync(FIXTURES_DIR).filter((f) => f.startsWith('rc-') && f.endsWith('.json'))
 
   it('has at least one fixture', () => {
     expect(files.length).toBeGreaterThan(0)

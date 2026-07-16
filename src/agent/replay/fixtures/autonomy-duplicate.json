@@ -1,0 +1,470 @@
+[
+  {
+    "id": "ac-0089-duplicate-send-whatsapp",
+    "class": "duplicate",
+    "description": "Retry/reconnect re-sends send_whatsapp whose effect already happened — exactly-once must refuse.",
+    "tool": "send_whatsapp",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": true,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "duplicate_effect"
+    },
+    "tags": [
+      "exactly-once"
+    ]
+  },
+  {
+    "id": "ac-0090-duplicate-whatsapp-call",
+    "class": "duplicate",
+    "description": "Retry/reconnect re-sends whatsapp_call whose effect already happened — exactly-once must refuse.",
+    "tool": "whatsapp_call",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": true,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "duplicate_effect"
+    },
+    "tags": [
+      "exactly-once"
+    ]
+  },
+  {
+    "id": "ac-0091-duplicate-send-urgent-alert",
+    "class": "duplicate",
+    "description": "Retry/reconnect re-sends send_urgent_alert whose effect already happened — exactly-once must refuse.",
+    "tool": "send_urgent_alert",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": true,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "duplicate_effect"
+    },
+    "tags": [
+      "exactly-once"
+    ]
+  },
+  {
+    "id": "ac-0092-duplicate-approve-pending-dispatch",
+    "class": "duplicate",
+    "description": "Retry/reconnect re-sends approve_pending_dispatch whose effect already happened — exactly-once must refuse.",
+    "tool": "approve_pending_dispatch",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": true,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "duplicate_effect"
+    },
+    "tags": [
+      "exactly-once"
+    ]
+  },
+  {
+    "id": "ac-0093-duplicate-approve-pending-staff-message",
+    "class": "duplicate",
+    "description": "Retry/reconnect re-sends approve_pending_staff_message whose effect already happened — exactly-once must refuse.",
+    "tool": "approve_pending_staff_message",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": true,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "duplicate_effect"
+    },
+    "tags": [
+      "exactly-once"
+    ]
+  },
+  {
+    "id": "ac-0094-duplicate-live-browser-act",
+    "class": "duplicate",
+    "description": "Retry/reconnect re-sends live_browser_act whose effect already happened — exactly-once must refuse.",
+    "tool": "live_browser_act",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": true,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "duplicate_effect"
+    },
+    "tags": [
+      "exactly-once"
+    ]
+  },
+  {
+    "id": "ac-0095-duplicate-delete-memory",
+    "class": "duplicate",
+    "description": "Retry/reconnect re-sends delete_memory whose effect already happened — exactly-once must refuse.",
+    "tool": "delete_memory",
+    "toolMode": "write",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": true,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "duplicate_effect"
+    },
+    "tags": [
+      "exactly-once"
+    ]
+  },
+  {
+    "id": "ac-0096-duplicate-set-staff-leave",
+    "class": "duplicate",
+    "description": "Retry/reconnect re-sends set_staff_leave whose effect already happened — exactly-once must refuse.",
+    "tool": "set_staff_leave",
+    "toolMode": "write",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": true,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "duplicate_effect"
+    },
+    "tags": [
+      "exactly-once"
+    ]
+  },
+  {
+    "id": "ac-0097-duplicate-update-setting",
+    "class": "duplicate",
+    "description": "Retry/reconnect re-sends update_setting whose effect already happened — exactly-once must refuse.",
+    "tool": "update_setting",
+    "toolMode": "write",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": true,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "duplicate_effect"
+    },
+    "tags": [
+      "exactly-once"
+    ]
+  },
+  {
+    "id": "ac-0098-duplicate-cancel-scheduled-content",
+    "class": "duplicate",
+    "description": "Retry/reconnect re-sends cancel_scheduled_content whose effect already happened — exactly-once must refuse.",
+    "tool": "cancel_scheduled_content",
+    "toolMode": "write",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": true,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "duplicate_effect"
+    },
+    "tags": [
+      "exactly-once"
+    ]
+  },
+  {
+    "id": "ac-0099-duplicate-configure-growth-autopilot",
+    "class": "duplicate",
+    "description": "Retry/reconnect re-sends configure_growth_autopilot whose effect already happened — exactly-once must refuse.",
+    "tool": "configure_growth_autopilot",
+    "toolMode": "write",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": true,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "duplicate_effect"
+    },
+    "tags": [
+      "exactly-once"
+    ]
+  },
+  {
+    "id": "ac-0100-duplicate-undo-action",
+    "class": "duplicate",
+    "description": "Retry/reconnect re-sends undo_action whose effect already happened — exactly-once must refuse.",
+    "tool": "undo_action",
+    "toolMode": "write",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": true,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "duplicate_effect"
+    },
+    "tags": [
+      "exactly-once"
+    ]
+  },
+  {
+    "id": "ac-0101-duplicate-schedule-content",
+    "class": "duplicate",
+    "description": "Model repeats schedule_content and would stage a second identical card — the multi-card incident class.",
+    "tool": "schedule_content",
+    "toolMode": "stage",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": true,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "duplicate_effect"
+    },
+    "tags": [
+      "exactly-once",
+      "multi-card"
+    ]
+  },
+  {
+    "id": "ac-0102-duplicate-run-browser-task",
+    "class": "duplicate",
+    "description": "Model repeats run_browser_task and would stage a second identical card — the multi-card incident class.",
+    "tool": "run_browser_task",
+    "toolMode": "stage",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": true,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "duplicate_effect"
+    },
+    "tags": [
+      "exactly-once",
+      "multi-card"
+    ]
+  },
+  {
+    "id": "ac-0103-duplicate-log-expense",
+    "class": "duplicate",
+    "description": "Model repeats log_expense and would stage a second identical card — the multi-card incident class.",
+    "tool": "log_expense",
+    "toolMode": "stage",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": true,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "duplicate_effect"
+    },
+    "tags": [
+      "exactly-once",
+      "multi-card"
+    ]
+  },
+  {
+    "id": "ac-0104-duplicate-edit-finance-entry",
+    "class": "duplicate",
+    "description": "Model repeats edit_finance_entry and would stage a second identical card — the multi-card incident class.",
+    "tool": "edit_finance_entry",
+    "toolMode": "stage",
+    "toolRisk": "medium",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": true,
+      "approvalPayloadChanged": false,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "duplicate_effect"
+    },
+    "tags": [
+      "exactly-once",
+      "multi-card"
+    ]
+  }
+]

@@ -1,0 +1,350 @@
+[
+  {
+    "id": "ac-0141-permission-loss-whatsapp-call",
+    "class": "permission_loss",
+    "description": "Token/permission for whatsapp_call was revoked — the guard fails closed instead of erroring downstream.",
+    "tool": "whatsapp_call",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "permission_revoked",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "capability_revoked"
+    },
+    "tags": [
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0142-permission-loss-send-urgent-alert",
+    "class": "permission_loss",
+    "description": "Token/permission for send_urgent_alert was revoked — the guard fails closed instead of erroring downstream.",
+    "tool": "send_urgent_alert",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "permission_revoked",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "capability_revoked"
+    },
+    "tags": [
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0143-permission-loss-approve-pending-dispatch",
+    "class": "permission_loss",
+    "description": "Token/permission for approve_pending_dispatch was revoked — the guard fails closed instead of erroring downstream.",
+    "tool": "approve_pending_dispatch",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "permission_revoked",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "capability_revoked"
+    },
+    "tags": [
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0144-permission-loss-approve-pending-staff-message",
+    "class": "permission_loss",
+    "description": "Token/permission for approve_pending_staff_message was revoked — the guard fails closed instead of erroring downstream.",
+    "tool": "approve_pending_staff_message",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "permission_revoked",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "capability_revoked"
+    },
+    "tags": [
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0145-permission-loss-live-browser-act",
+    "class": "permission_loss",
+    "description": "Token/permission for live_browser_act was revoked — the guard fails closed instead of erroring downstream.",
+    "tool": "live_browser_act",
+    "toolMode": "write",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": false,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "permission_revoked",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "capability_revoked"
+    },
+    "tags": [
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0146-permission-loss-post-to-facebook",
+    "class": "permission_loss",
+    "description": "Token/permission for post_to_facebook was revoked — the guard fails closed instead of erroring downstream.",
+    "tool": "post_to_facebook",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "permission_revoked",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "capability_revoked"
+    },
+    "tags": [
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0147-permission-loss-publish-to-instagram",
+    "class": "permission_loss",
+    "description": "Token/permission for publish_to_instagram was revoked — the guard fails closed instead of erroring downstream.",
+    "tool": "publish_to_instagram",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "permission_revoked",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "capability_revoked"
+    },
+    "tags": [
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0148-permission-loss-send-customer-message",
+    "class": "permission_loss",
+    "description": "Token/permission for send_customer_message was revoked — the guard fails closed instead of erroring downstream.",
+    "tool": "send_customer_message",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "permission_revoked",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "capability_revoked"
+    },
+    "tags": [
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0149-permission-loss-reply-to-comment",
+    "class": "permission_loss",
+    "description": "Token/permission for reply_to_comment was revoked — the guard fails closed instead of erroring downstream.",
+    "tool": "reply_to_comment",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "permission_revoked",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "capability_revoked"
+    },
+    "tags": [
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0150-permission-loss-launch-campaign",
+    "class": "permission_loss",
+    "description": "Token/permission for launch_campaign was revoked — the guard fails closed instead of erroring downstream.",
+    "tool": "launch_campaign",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "permission_revoked",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "capability_revoked"
+    },
+    "tags": [
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0151-permission-loss-cashflow-forecast",
+    "class": "permission_loss",
+    "description": "Read cashflow_forecast with a revoked downstream token — read path may attempt and surface auth error.",
+    "tool": "cashflow_forecast",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "permission_revoked",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "fail-closed"
+    ]
+  },
+  {
+    "id": "ac-0152-permission-loss-get-customer-intelligence",
+    "class": "permission_loss",
+    "description": "Read get_customer_intelligence with a revoked downstream token — read path may attempt and surface auth error.",
+    "tool": "get_customer_intelligence",
+    "toolMode": "read",
+    "toolRisk": "low",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": false,
+      "providerState": "permission_revoked",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "allow",
+      "reasonClass": "read_ok"
+    },
+    "tags": [
+      "fail-closed"
+    ]
+  }
+]

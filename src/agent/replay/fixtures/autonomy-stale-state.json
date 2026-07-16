@@ -1,0 +1,350 @@
+[
+  {
+    "id": "ac-0077-stale-state-send-customer-message",
+    "class": "stale_state",
+    "description": "Owner approved send_customer_message earlier but the payload changed after approval — re-approval required.",
+    "tool": "send_customer_message",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": true,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "stale_approval"
+    },
+    "tags": [
+      "stale-approval"
+    ]
+  },
+  {
+    "id": "ac-0078-stale-state-reply-to-comment",
+    "class": "stale_state",
+    "description": "Owner approved reply_to_comment earlier but the payload changed after approval — re-approval required.",
+    "tool": "reply_to_comment",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": true,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "stale_approval"
+    },
+    "tags": [
+      "stale-approval"
+    ]
+  },
+  {
+    "id": "ac-0079-stale-state-launch-campaign",
+    "class": "stale_state",
+    "description": "Owner approved launch_campaign earlier but the payload changed after approval — re-approval required.",
+    "tool": "launch_campaign",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": true,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "stale_approval"
+    },
+    "tags": [
+      "stale-approval"
+    ]
+  },
+  {
+    "id": "ac-0080-stale-state-update-campaign-budget",
+    "class": "stale_state",
+    "description": "Owner approved update_campaign_budget earlier but the payload changed after approval — re-approval required.",
+    "tool": "update_campaign_budget",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": true,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "stale_approval"
+    },
+    "tags": [
+      "stale-approval"
+    ]
+  },
+  {
+    "id": "ac-0081-stale-state-pause-campaign",
+    "class": "stale_state",
+    "description": "Owner approved pause_campaign earlier but the payload changed after approval — re-approval required.",
+    "tool": "pause_campaign",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": true,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "stale_approval"
+    },
+    "tags": [
+      "stale-approval"
+    ]
+  },
+  {
+    "id": "ac-0082-stale-state-outbound-phone-call",
+    "class": "stale_state",
+    "description": "Owner approved outbound_phone_call earlier but the payload changed after approval — re-approval required.",
+    "tool": "outbound_phone_call",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": true,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "stale_approval"
+    },
+    "tags": [
+      "stale-approval"
+    ]
+  },
+  {
+    "id": "ac-0083-stale-state-place-agent-call",
+    "class": "stale_state",
+    "description": "Owner approved place_agent_call earlier but the payload changed after approval — re-approval required.",
+    "tool": "place_agent_call",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": true,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "stale_approval"
+    },
+    "tags": [
+      "stale-approval"
+    ]
+  },
+  {
+    "id": "ac-0084-stale-state-draft-marketing-campaign",
+    "class": "stale_state",
+    "description": "Owner approved draft_marketing_campaign earlier but the payload changed after approval — re-approval required.",
+    "tool": "draft_marketing_campaign",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": true,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "stale_approval"
+    },
+    "tags": [
+      "stale-approval"
+    ]
+  },
+  {
+    "id": "ac-0085-stale-state-draft-gbp-reply",
+    "class": "stale_state",
+    "description": "Owner approved draft_gbp_reply earlier but the payload changed after approval — re-approval required.",
+    "tool": "draft_gbp_reply",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": true,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "stale_approval"
+    },
+    "tags": [
+      "stale-approval"
+    ]
+  },
+  {
+    "id": "ac-0086-stale-state-draft-gbp-post",
+    "class": "stale_state",
+    "description": "Owner approved draft_gbp_post earlier but the payload changed after approval — re-approval required.",
+    "tool": "draft_gbp_post",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": true,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "stale_approval"
+    },
+    "tags": [
+      "stale-approval"
+    ]
+  },
+  {
+    "id": "ac-0087-stale-state-delete-finance-entry",
+    "class": "stale_state",
+    "description": "Owner approved delete_finance_entry earlier but the payload changed after approval — re-approval required.",
+    "tool": "delete_finance_entry",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": true,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "stale_approval"
+    },
+    "tags": [
+      "stale-approval"
+    ]
+  },
+  {
+    "id": "ac-0088-stale-state-call-family-member",
+    "class": "stale_state",
+    "description": "Owner approved call_family_member earlier but the payload changed after approval — re-approval required.",
+    "tool": "call_family_member",
+    "toolMode": "stage",
+    "toolRisk": "high",
+    "context": {
+      "surface": "owner_chat",
+      "instructionOrigin": "owner_direct",
+      "ownerTurnAuthorizesMutation": true,
+      "policyEnabled": false,
+      "moneyTaka": 0,
+      "moneyCapTaka": 0,
+      "reversible": true,
+      "confidence": 0.95,
+      "duplicateOfPriorEffect": false,
+      "approvalPayloadChanged": true,
+      "providerState": "ok",
+      "accountScopeOk": true
+    },
+    "expected": {
+      "decision": "deny",
+      "reasonClass": "stale_approval"
+    },
+    "tags": [
+      "stale-approval"
+    ]
+  }
+]
