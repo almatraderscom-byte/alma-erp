@@ -12,6 +12,10 @@ import {
   listSitemaps,
   inspectUrl,
 } from '@/agent/lib/gsc'
+import { analyzePageLite, buildFindings, assessIndexability, type PageSnapshot } from '@/agent/lib/seo/technical-audit'
+import { buildTopicClusters, findContentGaps, type QueryRow } from '@/agent/lib/seo/content-strategy'
+import { buildLinkGraph, suggestInternalLinks } from '@/agent/lib/seo/internal-links'
+import { validateReleasePlan, applyTransition, type SeoReleasePlan, type ReleaseStatus } from '@/agent/lib/seo/release-graph'
 import type { WebsiteProductDetail, WebsiteProductSummary } from '@/lib/website/types'
 import type { AgentTool } from './registry'
 
@@ -672,6 +676,137 @@ const submit_to_indexnow: AgentTool = {
   },
 }
 
+const seo_technical_audit: AgentTool = {
+  name: 'seo_technical_audit',
+  description:
+    'Phase 47 technical SEO audit over up to 5 live URLs: fetch each page, snapshot title/meta/canonical/robots/H1/' +
+    'JSON-LD/alt/word-count/links, assess indexability, then return prioritized findings — each with evidence, ' +
+    'affected URLs, expected impact, confidence, effort, validation method and rollback — plus an internal-link graph ' +
+    '(orphans/dead-ends/depth) with ranked link suggestions. Read-only; regex snapshot (JS-rendered content needs the browser path).',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      urls: { type: 'array', items: { type: 'string' }, description: 'Up to 5 absolute URLs (first one is treated as home for depth)' },
+    },
+    required: ['urls'],
+  },
+  handler: async (input) => {
+    try {
+      const urls = (input.urls as string[]).slice(0, 5)
+      if (!urls.length) return { success: false, error: 'at least one URL required' }
+      const snapshots: PageSnapshot[] = []
+      for (const url of urls) {
+        try {
+          const res = await fetch(url, { signal: AbortSignal.timeout(15_000), redirect: 'follow' })
+          const html = await res.text()
+          snapshots.push(analyzePageLite(html, url, res.status))
+        } catch (err) {
+          snapshots.push({
+            url, statusCode: 0, title: '', titleLength: 0, metaDesc: '', metaDescLength: 0, h1Count: 0,
+            canonical: null, noindex: false, jsonLdTypes: [], imgCount: 0, missingAlt: 0, wordCount: 0,
+            internalLinks: [], externalCount: 0,
+          })
+          void err
+        }
+      }
+      const graph = buildLinkGraph(snapshots, urls[0])
+      return {
+        success: true,
+        data: {
+          findings: buildFindings(snapshots),
+          indexability: snapshots.map((s) => ({ url: s.url, ...assessIndexability(s) })),
+          linkGraph: { orphans: graph.orphans, deadEnds: graph.deadEnds, unreachable: graph.unreachable },
+          linkSuggestions: suggestInternalLinks(graph),
+          note: 'কোনো ranking guarantee নেই — প্রতিটা finding-এর validation method + realistic window ধরে মাপতে হবে।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+const seo_content_clusters: AgentTool = {
+  name: 'seo_content_clusters',
+  description:
+    'Topic clusters + content gaps from REAL Search Console queries: intent classification (transactional/commercial/' +
+    'navigational/informational, Bangla-aware), clusters ranked by opportunity (position 5–20 with impressions), and ' +
+    'gaps where demand exists but no dedicated page does. Needs GSC connected. Read-only; data freshness/row limits labelled.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      days: { type: 'number', description: 'Lookback window (default 28)' },
+      existingSlugs: { type: 'array', items: { type: 'string' }, description: 'Known page slugs to check gap coverage against' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      if (!(await isGscConnected())) return GSC_NOT_CONNECTED
+      const siteUrl = await resolveSiteUrl()
+      const days = Math.min(Math.max(Number(input.days ?? 28), 7), 90)
+      const { rows, rowLimitHit } = await searchAnalyticsQuery({
+        siteUrl,
+        startDate: ymd(days),
+        endDate: ymd(0),
+        dimensions: ['query'],
+        rowLimit: 250,
+      })
+      const queryRows: QueryRow[] = rows.map((r) => ({
+        query: r.keys[0] ?? '',
+        clicks: r.clicks,
+        impressions: r.impressions,
+        ctr: r.ctr,
+        position: r.position,
+      }))
+      const clusters = buildTopicClusters(queryRows)
+      const gaps = findContentGaps(clusters, (input.existingSlugs as string[]) ?? [])
+      return {
+        success: true,
+        data: {
+          clusters: clusters.slice(0, 15).map((c) => ({ ...c, members: c.members.slice(0, 5) })),
+          gaps,
+          honesty: `GSC final data lags ~2–3 days; ${rowLimitHit ? 'row limit HIT — এটা partial view' : 'full window read'}.`,
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+const seo_release_plan: AgentTool = {
+  name: 'seo_release_plan',
+  description:
+    'Validate/advance an SEO/CRO release plan through the loop draft→approved→preview_verified→released→rolled_back. ' +
+    'Every change needs description+affectedUrls+evidence+validation+rollback; ranking guarantees are rejected; ' +
+    '"released" only ever by the OWNER (agent never deploys production). action=validate|transition.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      action: { type: 'string', description: 'validate | transition' },
+      plan: { type: 'object', description: 'SeoReleasePlan {id,title,changes[],status}' },
+      to: { type: 'string', description: 'transition: target status' },
+      actor: { type: 'string', description: 'transition: "agent" or "owner" (released requires owner)' },
+    },
+    required: ['action', 'plan'],
+  },
+  handler: async (input) => {
+    try {
+      const plan = input.plan as unknown as SeoReleasePlan
+      if (input.action === 'validate') {
+        return { success: true, data: validateReleasePlan(plan) }
+      }
+      if (input.action === 'transition') {
+        const result = applyTransition(plan, String(input.to) as ReleaseStatus, input.actor === 'owner' ? 'owner' : 'agent')
+        return result.ok ? { success: true, data: result } : { success: false, error: result.error }
+      }
+      return { success: false, error: `unknown action "${input.action}"` }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
 export const SEO_TOOLS: AgentTool[] = [
   audit_product_seo,
   research_seo_keywords,
@@ -682,6 +817,9 @@ export const SEO_TOOLS: AgentTool[] = [
   get_search_console_performance,
   get_indexing_status,
   submit_to_indexnow,
+  seo_technical_audit,
+  seo_content_clusters,
+  seo_release_plan,
 ]
 
 export const SEO_ROLE_PROMPT = `
@@ -693,5 +831,6 @@ research_seo_keywords দিয়ে keyword ranking দেখুন — **আ�
 একটা মাত্র product-এর জন্য update_product_web-ও ব্যবহার করা যায় (price সহ)।
 **র‍্যাঙ্ক ট্র্যাকিং:** যে keyword-এ business rank করতে চায় সেটা track_keyword দিয়ে যোগ করুন (যোগ করা ফ্রি) — rank tracking ON থাকলে প্রতি সপ্তাহে নিজে থেকে SERP টেনে owner-কে র‍্যাঙ্ক জানাবে। list_tracked_keywords-এ সর্বশেষ র‍্যাঙ্ক, untrack_keyword-এ বন্ধ। এককালীন check-এ research_seo_keywords (Approve লাগে)।
 কখনোই নিজে থেকে content/meta change করবেন না — শুধু audit + draft + owner Approve।
+**Phase 47 senior SEO:** সাইট-লেভেল টেকনিক্যাল সমস্যা (noindex/canonical/schema/thin content/orphan pages) দেখতে **seo_technical_audit** (৫টা পর্যন্ত URL) — প্রতিটা finding-এ evidence+impact+confidence+validation+rollback থাকে। GSC query থেকে topic cluster + content gap পেতে **seo_content_clusters**। কোনো SEO/CRO পরিবর্তনের প্ল্যান **seo_release_plan** দিয়ে validate/track করুন — released শুধু owner-ই করে (এজেন্ট কখনো production deploy করে না), আর ranking guarantee নিষিদ্ধ।
 **দ্রুত re-crawl (IndexNow):** কোনো product-এর SEO ঠিক হওয়ার পর (owner draft_seo_fixes approve করলে) **submit_to_indexnow**-এ ওই product-এর slug/URL দিন — Bing/Yandex ইত্যাদি সাথে সাথে re-crawl করবে (ফ্রি, Google এতে নেই — Google-এর জন্য sitemap + Search Console)। INDEXNOW_KEY env + storefront root-এ <key>.txt ফাইল লাগে; ফাইল না থাকলে ping গৃহীত হয় (202) কিন্তু crawl হয় না — সেটা owner-কে জানাবেন।
 `

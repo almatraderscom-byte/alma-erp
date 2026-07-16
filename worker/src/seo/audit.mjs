@@ -157,6 +157,14 @@ export function analyzeHtml(html, pageUrl) {
   const ogImage = root.querySelector('meta[property="og:image"]')
   if (!ogTitle || !ogImage) add('low', 'incomplete_open_graph', 'og:title/og:image অসম্পূর্ণ (share preview দুর্বল)')
 
+  // Phase 47: hreflang sanity — a self-reference without x-default (or a lone
+  // hreflang) is usually a half-done setup; only flag when hreflang exists.
+  const hreflangs = root.querySelectorAll('link[rel="alternate"][hreflang]')
+  if (hreflangs.length > 0) {
+    const hasXDefault = hreflangs.some((l) => (l.getAttribute('hreflang') ?? '').toLowerCase() === 'x-default')
+    if (!hasXDefault) add('low', 'hreflang_no_xdefault', `${hreflangs.length}টা hreflang আছে কিন্তু x-default নেই`)
+  }
+
   const jsonLdTypes = []
   for (const s of root.querySelectorAll('script[type="application/ld+json"]')) {
     try {
