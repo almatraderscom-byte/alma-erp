@@ -36,6 +36,10 @@ async function launchBrowser() {
   const puppeteer = (await import('puppeteer-core')).default
   if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
     const chromium = (await import('@sparticuz/chromium')).default
+    // No WebGL needed for print — skips the GPU .so extraction (and v131's
+    // libnss3 failure came from a runtime/library mismatch; ≥149 ships the
+    // AL2023 lib set Vercel's node runtime actually has).
+    chromium.setGraphicsMode = false
     return puppeteer.launch({
       args: chromium.args,
       executablePath: await chromium.executablePath(),
@@ -76,7 +80,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     const page = await browser.newPage()
     // Fonts load from /fonts on this same deployment — wait for them so the
     // first page isn't measured with a fallback face.
-    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 60_000 })
+    await page.setContent(html, { waitUntil: 'load', timeout: 60_000 })
     await page.evaluateHandle('document.fonts.ready')
     const pdf = await page.pdf({
       format: 'A4',

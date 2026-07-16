@@ -75,7 +75,7 @@ describe.skipIf(!LOCAL_CHROME)('local Chromium print smoke (production pipeline)
     const browser = await puppeteer.launch({ executablePath: LOCAL_CHROME!, headless: true })
     try {
       const page = await browser.newPage()
-      await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30_000 })
+      await page.setContent(html, { waitUntil: 'load', timeout: 30_000 })
       await page.evaluateHandle('document.fonts.ready')
       const pdf = await page.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true })
       expect(pdf.length).toBeGreaterThan(30_000)
