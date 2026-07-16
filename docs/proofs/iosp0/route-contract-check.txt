@@ -1,0 +1,3 @@
+ROUTE CONTRACT OK: 69 fixture routes cover 66 web routes.
+{"native-required":61,"temporary-web":5,"public-web-allowed":3}
+open gaps: 7 → /agent (IOSP-1), /agent/creative-studio-demo (IOSP-7), /agent/live-watch (IOSP-1), /forgot-password (IOSP-7), /portal/wallet (IOSP-1), /reset-password (IOSP-7), /trading/accounts/[id] (IOSP-1)

@@ -1,0 +1,4 @@
+== IOSP-0 test/build checks ==
+vitest: 1089 tests PASS; 3 test FILES error on missing @langchain/langgraph dep in this worktree (pre-existing, no TS touched by IOSP-0)
+xcodebuild App (iPhone 17 Pro Max sim): BUILD SUCCEEDED (Debug, with IOSP-0 signposts)
+route-contract-check.mjs: OK (69 routes cover 66 web)

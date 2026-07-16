@@ -1,0 +1,174 @@
+   4 ios/App/App/SpikeNativeShell.swift:1194:23: warning: 'WKProcessPool' was deprecated in iOS 15.0: Creating and using multiple instances of WKProcessPool no longer has any effect.
+   2 ios/App/App/StaffMonitorSwiftUI.swift:561:17: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   2 ios/App/App/StaffMonitorSwiftUI.swift:541:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   2 ios/App/App/SpikeNativeShell.swift:991:29: warning: 'WKProcessPool' was deprecated in iOS 15.0: Creating and using multiple instances of WKProcessPool no longer has any effect.
+   2 ios/App/App/SpikeNativeShell.swift:329:33: warning: 'WKProcessPool' was deprecated in iOS 15.0: Creating and using multiple instances of WKProcessPool no longer has any effect.
+   2 ios/App/App/SpikeNativeShell.swift:315:36: warning: 'WKProcessPool' was deprecated in iOS 15.0: Creating and using multiple instances of WKProcessPool no longer has any effect.
+   2 ios/App/App/SpikeNativeShell.swift:1054:23: warning: 'WKProcessPool' was deprecated in iOS 15.0: Creating and using multiple instances of WKProcessPool no longer has any effect.
+   2 ios/App/App/PortalStaffOfficeSwiftUI.swift:192:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   2 ios/App/App/PortalStaffOfficeSwiftUI.swift:186:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   2 ios/App/App/PortalOfficeSwiftUI.swift:924:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   2 ios/App/App/PortalOfficeSwiftUI.swift:920:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   2 ios/App/App/PortalOfficeSwiftUI.swift:895:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   2 ios/App/App/PortalOfficeSwiftUI.swift:892:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   2 ios/App/App/PortalOfficeSwiftUI.swift:860:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   2 ios/App/App/PortalOfficeSwiftUI.swift:856:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   2 ios/App/App/DashboardSwiftUI.swift:790:9: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   2 ios/App/App/DashboardSwiftUI.swift:778:9: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   2 ios/App/App/CompanionSwiftUI.swift:149:23: warning: 'WKProcessPool' was deprecated in iOS 15.0: Creating and using multiple instances of WKProcessPool no longer has any effect.
+   2 ios/App/App/AssistantSwiftUI.swift:2886:13: warning: variable 'file' was never mutated; consider changing to 'let' constant
+   2 ios/App/App/ApprovalsSwiftUI.swift:534:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   2 ios/App/App/ApprovalsSwiftUI.swift:502:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   2 ios/App/App/ApprovalsSwiftUI.swift:497:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   2 ios/App/App/AlmaCompanion.swift:61:23: warning: 'WKProcessPool' was deprecated in iOS 15.0: Creating and using multiple instances of WKProcessPool no longer has any effect.
+   2 ios/App/App/AlmaCompanion.swift:51:29: warning: 'WKProcessPool' was deprecated in iOS 15.0: Creating and using multiple instances of WKProcessPool no longer has any effect.
+   2    |   `- warning: 'WKProcessPool' is deprecated: first deprecated in iOS 15.0 - Creating and using multiple instances of WKProcessPool no longer has any effect.
+   2    |                               `- warning: 'WKProcessPool' is deprecated: first deprecated in iOS 15.0 - Creating and using multiple instances of WKProcessPool no longer has any effect.
+   1 warning: Run script build phase '[CP] Embed Pods Frameworks' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking "Based on dependency analysis" in the script phase. (in target 'App' from project 'App')
+   1 warning: Run script build phase '[CP] Copy XCFrameworks' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking "Based on dependency analysis" in the script phase. (in target 'OneSignalXCFramework' from project 'Pods')
+   1 warning: Run script build phase '[CP] Copy XCFrameworks' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking "Based on dependency analysis" in the script phase. (in target 'IONGeolocationLib' from project 'Pods')
+   1 warning: Run script build phase '[CP] Copy XCFrameworks' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking "Based on dependency analysis" in the script phase. (in target 'AgoraRtcEngine_iOS' from project 'Pods')
+   1 warning: Run script build phase '[CP] Copy XCFrameworks' will be run during every build because it does not specify any outputs. To address this issue, either add output dependencies to the script phase, or configure it to run in every build by unchecking "Based on dependency analysis" in the script phase. (in target 'AgoraInfra_iOS' from project 'Pods')
+   1 node_modules/@onesignal/capacitor-plugin/ios/Sources/OneSignalCapacitorPlugin/OneSignalCapacitorPlugin.swift:514:34: warning: 'exit(_:withSuccess:withFailure:)' is deprecated
+   1 node_modules/@onesignal/capacitor-plugin/ios/Sources/OneSignalCapacitorPlugin/OneSignalCapacitorPlugin.swift:502:34: warning: 'enter(_:withToken:withSuccess:withFailure:)' is deprecated
+   1 node_modules/@capawesome/capacitor-app-shortcuts/ios/Plugin/AppShortcutsPluginHelper.swift:16:17: warning: initialization of immutable value 'iconString' was never used; consider replacing with assignment to '_' or removing it
+   1 node_modules/@capawesome/capacitor-app-shortcuts/ios/Plugin/AppShortcutsPluginHelper.swift:15:17: warning: initialization of immutable value 'iconInt' was never used; consider replacing with assignment to '_' or removing it
+   1 node_modules/@capawesome/capacitor-app-shortcuts/ios/Plugin/AppShortcutsPluginHelper.swift:14:17: warning: initialization of immutable value 'iosIconString' was never used; consider replacing with assignment to '_' or removing it
+   1 node_modules/@capawesome/capacitor-app-shortcuts/ios/Plugin/AppShortcutsPluginHelper.swift:13:17: warning: initialization of immutable value 'iosIconInt' was never used; consider replacing with assignment to '_' or removing it
+   1 node_modules/@capacitor/local-notifications/ios/Sources/LocalNotificationsPlugin/LocalNotificationsHandler.swift:41:14: warning: 'alert' was deprecated in iOS 14.0
+   1 node_modules/@capacitor/keyboard/ios/Sources/KeyboardPlugin/Keyboard.m:49:17: warning: auto property synthesis will not synthesize property 'pluginMethods' declared in protocol 'CAPBridgedPlugin' [-Wobjc-protocol-property-synthesis]
+   1 node_modules/@capacitor/keyboard/ios/Sources/KeyboardPlugin/Keyboard.m:49:17: warning: auto property synthesis will not synthesize property 'jsName' declared in protocol 'CAPBridgedPlugin' [-Wobjc-protocol-property-synthesis]
+   1 node_modules/@capacitor/keyboard/ios/Sources/KeyboardPlugin/Keyboard.m:49:17: warning: auto property synthesis will not synthesize property 'identifier' declared in protocol 'CAPBridgedPlugin' [-Wobjc-protocol-property-synthesis]
+   1 node_modules/@capacitor/ios/CapacitorCordova/CapacitorCordova/Classes/Public/CDVWebViewProcessPoolFactory.h:26:3: warning: 'WKProcessPool' is deprecated: first deprecated in iOS 15.0 - Creating and using multiple instances of WKProcessPool no longer has any effect.
+   1 node_modules/@capacitor/ios/CapacitorCordova/CapacitorCordova/Classes/Public/CDVWebViewProcessPoolFactory.h:23:31: warning: 'WKProcessPool' is deprecated: first deprecated in iOS 15.0 - Creating and using multiple instances of WKProcessPool no longer has any effect.
+   1 ios/App/App/TradingStaffSwiftUI.swift:414:53: warning: left side of nil coalescing operator '??' has non-optional type 'String', so the right side is never used
+   1 ios/App/App/TradingAnalyticsSwiftUI.swift:304:97: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsOption]', so the right side is never used
+   1 ios/App/App/TradingAnalyticsSwiftUI.swift:303:103: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsOption]', so the right side is never used
+   1 ios/App/App/TradingAnalyticsSwiftUI.swift:277:111: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsAccountRow]', so the right side is never used
+   1 ios/App/App/TradingAnalyticsSwiftUI.swift:276:98: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsAlert]', so the right side is never used
+   1 ios/App/App/TradingAnalyticsSwiftUI.swift:275:101: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsTrendPoint]', so the right side is never used
+   1 ios/App/App/TradingAnalyticsSwiftUI.swift:274:125: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsExpenseCat]', so the right side is never used
+   1 ios/App/App/TradingAnalyticsSwiftUI.swift:273:99: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsStaffRow]', so the right side is never used
+   1 ios/App/App/TradingAnalyticsSwiftUI.swift:272:135: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsAccountRow]', so the right side is never used
+   1 ios/App/App/TradingAnalyticsSwiftUI.swift:271:127: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsAccountRow]', so the right side is never used
+   1 ios/App/App/TradingAnalyticsSwiftUI.swift:270:121: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsAccountRow]', so the right side is never used
+   1 ios/App/App/TradingAnalyticsSwiftUI.swift:269:133: warning: left side of nil coalescing operator '??' has non-optional type '[TradingAnalyticsAccountRow]', so the right side is never used
+   1 ios/App/App/TaskSpotlightSwiftUI.swift:286:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/TaskSpotlightSwiftUI.swift:282:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/TaskSpotlightSwiftUI.swift:267:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/TaskSpotlightSwiftUI.swift:263:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/SpikeNativeShell.swift:373:16: warning: 'processPool' was deprecated in iOS 15.0: Creating and using multiple instances of WKProcessPool no longer has any effect.
+   1 ios/App/App/SpikeNativeShell.swift:1317:77: warning: 'WKProcessPool' was deprecated in iOS 15.0: Creating and using multiple instances of WKProcessPool no longer has any effect.
+   1 ios/App/App/SettingsNotificationsSwiftUI.swift:301:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/SettingsNotificationsSwiftUI.swift:295:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/SettingsNotificationsSwiftUI.swift:286:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalSwiftUI.swift:734:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalSwiftUI.swift:730:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalSwiftUI.swift:726:17: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalSwiftUI.swift:607:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalSwiftUI.swift:602:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalSwiftUI.swift:598:17: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalSwiftUI.swift:2532:17: warning: capture of 'self' with non-Sendable type 'PortalGpsOnce?' in a '@Sendable' closure
+   1 ios/App/App/PortalOfficeSwiftUI.swift:876:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalOfficeSwiftUI.swift:873:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalOfficeSwiftUI.swift:822:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalOfficeSwiftUI.swift:818:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalOfficeSwiftUI.swift:801:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalOfficeSwiftUI.swift:789:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalOfficeSwiftUI.swift:712:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalOfficeSwiftUI.swift:690:17: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalOfficeSwiftUI.swift:679:17: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalOfficeSwiftUI.swift:633:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalOfficeSwiftUI.swift:629:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalOfficeSwiftUI.swift:200:27: warning: left side of nil coalescing operator '??' has non-optional type '[PortalOfficeChatMsg.Attachment]', so the right side is never used
+   1 ios/App/App/PortalExpenseSwiftUI.swift:200:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalExpenseSwiftUI.swift:196:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PortalExpenseSwiftUI.swift:188:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PayrollSwiftUI.swift:902:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PayrollSwiftUI.swift:894:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PayrollSwiftUI.swift:871:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PayrollSwiftUI.swift:866:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PayrollSwiftUI.swift:841:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PayrollSwiftUI.swift:838:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PayrollSwiftUI.swift:808:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PayrollSwiftUI.swift:803:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PayrollSwiftUI.swift:776:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PayrollSwiftUI.swift:770:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PayrollSwiftUI.swift:754:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PayrollSwiftUI.swift:750:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PayrollSwiftUI.swift:734:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PayrollSwiftUI.swift:727:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/PayrollSwiftUI.swift:638:51: warning: reference to captured var 'rosterQuery' in concurrently-executing code; this is an error in the Swift 6 language mode
+   1 ios/App/App/OrdersSwiftUI.swift:456:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/OrdersSwiftUI.swift:450:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/OfficeFundSwiftUI.swift:402:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/OfficeFundSwiftUI.swift:397:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/OfficeFundSwiftUI.swift:372:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/OfficeFundSwiftUI.swift:367:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/OfficeFundSwiftUI.swift:341:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/OfficeFundSwiftUI.swift:336:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/NativeSpeechBridge.swift:87:27: warning: value 'self' was defined but never used; consider replacing with boolean test
+   1 ios/App/App/NativeIntelligenceBridge.swift:118:51: warning: left side of nil coalescing operator '??' has non-optional type 'JSArray' (aka 'Array<any JSValue>'), so the right side is never used
+   1 ios/App/App/InvoicesSwiftUI.swift:413:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/InvoicesSwiftUI.swift:401:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/InvoicesSwiftUI.swift:367:17: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/InvoicesSwiftUI.swift:346:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/InvoicesSwiftUI.swift:342:17: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/InventorySwiftUI.swift:404:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/InventorySwiftUI.swift:392:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/InventorySwiftUI.swift:389:17: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/InventorySwiftUI.swift:324:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/InventorySwiftUI.swift:316:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/FloatingChatHead.swift:161:15: warning: unnecessary check for 'iOS'; enclosing scope ensures guard will always be true
+   1 ios/App/App/FloatingChatHead.swift:157:12: warning: unnecessary check for 'iOS'; enclosing scope ensures guard will always be true
+   1 ios/App/App/FloatingChatHead.swift:153:12: warning: unnecessary check for 'iOS'; enclosing scope ensures guard will always be true
+   1 ios/App/App/ExpensesSwiftUI.swift:382:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/ExpensesSwiftUI.swift:370:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/EntityCacheBridge.swift:45:54: warning: left side of nil coalescing operator '??' has non-optional type 'JSArray' (aka 'Array<any JSValue>'), so the right side is never used
+   1 ios/App/App/EntityCacheBridge.swift:44:50: warning: left side of nil coalescing operator '??' has non-optional type 'JSArray' (aka 'Array<any JSValue>'), so the right side is never used
+   1 ios/App/App/EmployeesSwiftUI.swift:806:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/EmployeesSwiftUI.swift:783:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/EmployeesSwiftUI.swift:754:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/EmployeesSwiftUI.swift:712:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/EmployeesSwiftUI.swift:659:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/EmployeesSwiftUI.swift:553:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/EmployeesSwiftUI.swift:548:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/EmployeesSwiftUI.swift:527:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/EmployeesSwiftUI.swift:522:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/ConnectivityBeacon.swift:59:31: warning: capture of 'self' with non-Sendable type 'ConnectivityBeacon?' in a '@Sendable' closure
+   1 ios/App/App/ConnectivityBeacon.swift:129:27: warning: capture of 'self' with non-Sendable type 'ConnectivityBeacon?' in a '@Sendable' closure
+   1 ios/App/App/AttendanceSwiftUI.swift:549:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/AttendanceSwiftUI.swift:545:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/AttendanceSwiftUI.swift:524:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/AttendanceSwiftUI.swift:518:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/AttendanceSwiftUI.swift:502:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/AttendanceSwiftUI.swift:498:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/AttendanceSwiftUI.swift:480:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/AttendanceSwiftUI.swift:472:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/AssistantSwiftUI.swift:7820:50: warning: unnecessary check for 'iOS'; enclosing scope ensures guard will always be true
+   1 ios/App/App/AssistantSwiftUI.swift:2728:17: warning: variable 'm' was never mutated; consider changing to 'let' constant
+   1 ios/App/App/AssistantSwiftUI.swift:2464:21: warning: variable 'u' was never mutated; consider changing to 'let' constant
+   1 ios/App/App/ApprovalsSwiftUI.swift:560:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/ApprovalsSwiftUI.swift:463:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/ApprovalsSwiftUI.swift:442:13: warning: expression is 'async' but is not marked with 'await'; this is an error in the Swift 6 language mode
+   1 ios/App/App/AnalyticsSwiftUI.swift:246:34: warning: left side of nil coalescing operator '??' has non-optional type '[String : AnalyticsFlexNumber]', so the right side is never used
+   1 ios/App/App/AnalyticsSwiftUI.swift:244:108: warning: left side of nil coalescing operator '??' has non-optional type '[AnalyticsTrendPoint]', so the right side is never used
+   1 ios/App/App/AnalyticsSwiftUI.swift:243:115: warning: left side of nil coalescing operator '??' has non-optional type '[String : AnalyticsCategoryStat]', so the right side is never used
+   1 ios/App/App/AnalyticsSwiftUI.swift:242:30: warning: left side of nil coalescing operator '??' has non-optional type '[String : AnalyticsFlexNumber]', so the right side is never used
+   1 ios/App/App/AnalyticsSwiftUI.swift:240:109: warning: left side of nil coalescing operator '??' has non-optional type '[String : AnalyticsSourceStat]', so the right side is never used
+   1 ios/App/App/AnalyticsSwiftUI.swift:239:28: warning: left side of nil coalescing operator '??' has non-optional type '[String : AnalyticsFlexNumber]', so the right side is never used
+   1 ios/App/App/AlmaCompanion.swift:98:20: warning: 'contentEdgeInsets' was deprecated in iOS 15.0: This property is ignored when using UIButtonConfiguration
+   1 ios/App/App/AlmaCompanion.swift:367:25: warning: result of call to 'run(resultType:body:)' is unused
+   1 ios/App/App/AlmaCompanion.swift:109:16: warning: 'processPool' was deprecated in iOS 15.0: Creating and using multiple instances of WKProcessPool no longer has any effect.
+   1 ios/App/App/AgoraIntercom.swift:415:57: warning: 'allowBluetooth' was deprecated in iOS 8.0: renamed to 'AVAudioSession.CategoryOptions.allowBluetoothHFP'
+   1 2026-07-16 16:03:58.098 appintentsmetadataprocessor[97764:2676028] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+   1 2026-07-16 16:03:58.096 appintentsmetadataprocessor[97762:2676025] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+   1 2026-07-16 16:03:58.048 appintentsmetadataprocessor[97757:2676019] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+   1 2026-07-16 16:03:58.033 appintentsmetadataprocessor[97755:2676017] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+   1 2026-07-16 16:03:57.949 appintentsmetadataprocessor[97742:2675996] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+   1 2026-07-16 16:03:57.904 appintentsmetadataprocessor[97736:2675987] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+   1 2026-07-16 16:03:57.861 appintentsmetadataprocessor[97733:2675983] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+   1 2026-07-16 16:03:57.828 appintentsmetadataprocessor[97731:2675976] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+   1 2026-07-16 16:03:57.193 appintentsmetadataprocessor[97686:2675691] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+   1 /tmp/alma-iosp0-dd/Build/Products/Debug-iphonesimulator/CapacitorCordova/Cordova.framework/Headers/CDVWebViewProcessPoolFactory.h:26:3: warning: 'WKProcessPool' is deprecated: first deprecated in iOS 15.0 - Creating and using multiple instances of WKProcessPool no longer has any effect.
+   1 /tmp/alma-iosp0-dd/Build/Products/Debug-iphonesimulator/CapacitorCordova/Cordova.framework/Headers/CDVWebViewProcessPoolFactory.h:23:31: warning: 'WKProcessPool' is deprecated: first deprecated in iOS 15.0 - Creating and using multiple instances of WKProcessPool no longer has any effect.

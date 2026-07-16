@@ -78,6 +78,12 @@ final class AlmaHostingController<Content: View>: UIHostingController<Content> {
     @objc private func applyThemeBg() {
         view.backgroundColor = AlmaTheme.rootBg
     }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // IOSP-0 baseline: route.push → route.appeared brackets nav-to-screen time.
+        AlmaPerfLog.event("route.appeared", title ?? String(describing: Content.self))
+    }
 }
 
 /// Late-bound weak reference — the SwiftUI screens' closures need the nav controller
@@ -216,6 +222,7 @@ extension AlmaTabBarController {
     /// Push a web screen onto whatever nav a SwiftUI screen lives in — the S6 escape
     /// hatch (create order, full drawer, login) and the More rows all go through here.
     private func pushWeb(on nav: UINavigationController?, path: String, title: String, icon: String) {
+        AlmaPerfLog.event("route.pushWeb", path)
         let vc = AlmaWebTabViewController(url: URL(string: Self.base + path)!, processPool: contentPool,
                                           tabTitle: title, systemImage: icon, hideWebHeader: true)
         vc.hidesBottomBarWhenPushed = false
@@ -226,6 +233,7 @@ extension AlmaTabBarController {
     /// everything else falls back to the web view unchanged. Native screens get a
     /// FORCED-web escape closure so "ওয়েবে খুলুন" can never recurse into the router.
     private func pushSmart(on nav: UINavigationController?, path: String, title: String, icon: String) {
+        AlmaPerfLog.event("route.push", path)
         // Query-carrying deep links (/orders?focus=…, /attendance?review=…) only
         // work on the web page — the router strips queries and native screens
         // don't receive them, so routing those "natively" would silently drop

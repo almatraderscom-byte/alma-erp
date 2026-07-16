@@ -263,15 +263,24 @@ final class AlmaAPI: NSObject {
 
     /// Single wire round-trip; transport errors wrapped, non-HTTP responses rejected.
     private func attempt(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        // IOSP-0 baseline: every native API round-trip emits one api.request event
+        // (path + status + ms only — never payloads), so idle request volume and
+        // durations are countable from `log stream`.
+        let started = Date()
+        let path = request.url?.path ?? "?"
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else {
                 throw AlmaAPIError.transport(URLError(.badServerResponse))
             }
+            AlmaPerfLog.event("api.request",
+                              "\(request.httpMethod ?? "GET") \(path) status=\(http.statusCode) ms=\(Int(Date().timeIntervalSince(started) * 1000))")
             return (data, http)
         } catch let error as AlmaAPIError {
+            AlmaPerfLog.event("api.request", "\(request.httpMethod ?? "GET") \(path) error ms=\(Int(Date().timeIntervalSince(started) * 1000))")
             throw error
         } catch {
+            AlmaPerfLog.event("api.request", "\(request.httpMethod ?? "GET") \(path) error ms=\(Int(Date().timeIntervalSince(started) * 1000))")
             throw AlmaAPIError.transport(error)
         }
     }

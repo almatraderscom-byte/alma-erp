@@ -678,6 +678,9 @@ final class DashboardVM {
         do {
             let d: DashboardData = try await AlmaAPI.shared.get("/api/dashboard", query: query)
             withAnimation(.spring(duration: 0.4, bounce: 0.15)) { data = d }
+            // IOSP-0 baseline: launch.didFinishLaunching → dashboard.contentReady
+            // is the launch-to-useful-content metric (first occurrence per launch).
+            AlmaPerfLog.event("dashboard.contentReady")
             authExpired = false
         } catch AlmaAPIError.notAuthenticated {
             authExpired = true

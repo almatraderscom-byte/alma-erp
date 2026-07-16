@@ -9,6 +9,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        AlmaPerfLog.event("launch.didFinishLaunching")
         // Home-screen quick action on COLD START: forward to the AppShortcuts
         // plugin (it retains the event until the JS listener attaches).
         if let shortcutItem = launchOptions?[.shortcutItem] as? UIApplicationShortcutItem {

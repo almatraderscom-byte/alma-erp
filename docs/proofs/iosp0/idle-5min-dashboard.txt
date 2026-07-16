@@ -1,0 +1,19 @@
+== IOSP-0 five-minute idle request baseline ==
+Device: iPhone 17 Pro Max sim 9E51818A-AA25-4C9F-9C1F-9EE2D99E2998 (iOS 26.5), clean
+State: app foregrounded on Dashboard, logged in, ZERO user interaction
+Window: 2026-07-16 16:41:39 → 16:46:39 (Asia/Dhaka), exactly 5:00, app PID 23775 (no relaunch/crash in window)
+Source: xcrun simctl spawn <udid> log show --start '...' --end '...' --signpost \
+          --predicate 'subsystem == "com.almatraders.erp.perf"' | grep api.request
+
+TOTAL native API requests in 5 min: 116  (~23.2/min, ~1 every 2.6 s)
+
+By endpoint:
+  100  GET /api/assistant/office/intercom       ← FloatingChatHead 3-second incoming-call poll (app-wide)
+   10  GET /api/assistant/office/notifications   ← Alma Island / office notif watch (~30 s)
+    3  GET /api/assistant/actions                ← approvals/actions surface
+    3  GET /api/approvals                        ← approvals badge (~90 s)
+
+Dominant cost = the global 3-second /office/intercom poll (86% of idle traffic). This is the
+FloatingChatHead 3-s Timer identified in the audit (FloatingChatHead.swift:84) and is IOSP-4's
+primary reduction target (roadmap: >=80% idle-request cut). Note: this poll runs even though the
+UI is on Dashboard, not the Agent/office surface — it is truly app-wide.
