@@ -57,7 +57,7 @@ func cases() -> [(String, PulseActivityAttributes.ContentState, PulseMode)] {
                           items: [ordersItem, tasksItem]), .overview),
         ("2-working", st(mode: .working, headline: "কাজ চলছে", subtitle: "এজেন্ট এখন কাজ করছে",
                          orders: 0, items: [tasksItem]), .working),
-        ("3-approval", st(mode: .approval, headline: "আপনার অনুমোদনেই পরের ধাপ", subtitle: "লেজার এন্ট্রি — অপেক্ষায়",
+        ("3-approval", st(mode: .approval, headline: "আপনার অনুমোদন দরকার", subtitle: "লেজার এন্ট্রি — অপেক্ষায়",
                           items: [approvalItem, ordersItem, tasksItem],
                           approvalTitle: "লেজার এন্ট্রি — ধার পরিশোধ", counterparty: "Hossain Mama", amount: "৳৪৮,৫০০"), .approval),
         ("4-orders", st(mode: .orders, headline: "৪টি অর্ডার চলছে", subtitle: "২ কনফার্মড · ২ পেন্ডিং",

@@ -239,7 +239,10 @@ export function copyForMode(
 
     case 'approval':
       return {
-        headline: 'আপনার অনুমোদনেই পরের ধাপ',
+        // Short enough to survive the one-line headline slot without
+        // truncating (the longer "আপনার অনুমোদনেই পরের ধাপ" clipped mid-word in
+        // the snapshot pass).
+        headline: 'আপনার অনুমোদন দরকার',
         subtitle: ctx.approval
           ? `${ctx.approval.title} — অপেক্ষায়`
           : `${toBanglaDigits(ctx.approvalCount)}টি অনুমোদন অপেক্ষায়`,

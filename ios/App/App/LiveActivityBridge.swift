@@ -49,19 +49,31 @@ public class LiveActivityBridgePlugin: CAPPlugin, CAPBridgedPlugin {
     /// after a voice session ends while the app is backgrounded.
     static let lastStateKey = "alma.pulse.lastState"
 
+    /// UserDefaults breadcrumb: the outcome of the LAST update() call
+    /// ("updated" / "started" / "activities_disabled" / "voice_active" / …) plus
+    /// a timestamp. The plugin is deliberately fail-open, which also makes it
+    /// silent — this is the one observable trace of WHY the panel did or didn't
+    /// refresh, readable in diagnostics without any logging. No PII.
+    static let lastResultKey = "alma.pulse.lastResult"
+
+    static func breadcrumb(_ reason: String) {
+        UserDefaults.standard.set(
+            "\(reason) @\(Int(Date().timeIntervalSince1970))", forKey: lastResultKey)
+    }
+
     // MARK: - update
 
     @objc public func update(_ call: CAPPluginCall) {
+        // First line on purpose: distinguishes "JS→native dispatch happened"
+        // from every later guard/outcome (each of which overwrites this).
+        Self.breadcrumb("invoked")
         let title = call.getString("title", "ALMA ERP")
         let snapshotJson = call.getString("snapshotJson")
-
-        // Persist the freshest payload FIRST (even if starting fails below) so a
-        // post-voice restore always has the latest data the web layer sent.
-        if let snapshotJson { Self.cacheLastState(title: title, snapshotJson: snapshotJson) }
 
         #if canImport(ActivityKit)
         if #available(iOS 16.1, *) {
             guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+                Self.breadcrumb("activities_disabled")
                 call.resolve(["started": false, "reason": "activities_disabled"])
                 return
             }
@@ -70,14 +82,26 @@ public class LiveActivityBridgePlugin: CAPPlugin, CAPBridgedPlugin {
             // web's pulse tick steal the compact slot mid-conversation.
             if #available(iOS 17.0, *),
                !Activity<AlmaVoiceActivityAttributes>.activities.isEmpty {
+                Self.breadcrumb("voice_active")
                 call.resolve(["started": false, "reason": "voice_active"])
                 return
             }
 
             guard let state = Self.decodeState(snapshotJson: snapshotJson, call: call) else {
+                Self.breadcrumb("bad_payload")
                 call.resolve(["started": false, "reason": "bad_payload"])
                 return
             }
+
+            // Persist the DECODED state (re-encoded) so a post-voice restore
+            // always has the freshest payload — even if starting fails below.
+            // Caching the decoded state rather than the raw `snapshotJson`
+            // string matters for version skew: an older web bundle (e.g. prod
+            // before this branch deploys) calls update() with only the legacy
+            // scalars and NO snapshotJson — live-verified in the sim on
+            // 2026-07-16, where the cache silently stopped being written and
+            // restore would have had nothing.
+            Self.cacheLastState(title: title, state: state)
 
             let alert = call.getBool("alert", false)
             let alertConfig: AlertConfiguration? = alert
@@ -235,6 +259,7 @@ extension LiveActivityBridgePlugin {
                     await activity.update(using: state)
                 }
             }
+            Self.breadcrumb("updated")
             call.resolve(["started": true, "updated": true, "alerted": alert != nil])
             return
         }
@@ -256,8 +281,10 @@ extension LiveActivityBridgePlugin {
                 )
             }
             observePushToken(of: activity)
+            Self.breadcrumb("started")
             call.resolve(["started": true, "updated": false])
         } catch {
+            Self.breadcrumb("request_failed: \(error.localizedDescription)")
             call.resolve([
                 "started": false,
                 "reason": "request_failed",
@@ -292,11 +319,15 @@ extension LiveActivityBridgePlugin {
 
 // MARK: - Last-state cache
 
+#if canImport(ActivityKit)
+@available(iOS 16.1, *)
 extension LiveActivityBridgePlugin {
-    /// Persists the last snapshot JSON (plus `savedAt`) so PulseRestore can
-    /// re-request the activity after a voice session ends. Best-effort: never
-    /// throws, never crashes.
-    static func cacheLastState(title: String, snapshotJson: String) {
+    /// Persists the last decoded state (re-encoded, plus `savedAt`) so
+    /// PulseRestore can re-request the activity after a voice session ends.
+    /// Best-effort: never throws, never crashes.
+    static func cacheLastState(title: String, state: PulseActivityAttributes.ContentState) {
+        guard let stateData = try? JSONEncoder().encode(state),
+              let snapshotJson = String(data: stateData, encoding: .utf8) else { return }
         let payload: [String: Any] = [
             "title": title,
             "snapshotJson": snapshotJson,
@@ -307,6 +338,7 @@ extension LiveActivityBridgePlugin {
         UserDefaults.standard.set(data, forKey: lastStateKey)
     }
 }
+#endif
 
 // MARK: - Haptics (spec §12)
 //

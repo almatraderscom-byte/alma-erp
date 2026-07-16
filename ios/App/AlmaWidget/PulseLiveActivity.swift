@@ -134,6 +134,31 @@ private struct GoldATile: View {
     }
 }
 
+/// Deterministic progress bar. SwiftUI's `ProgressView(value:)` is a
+/// system-backed control that does not render reliably outside a live host
+/// (it drew as a full-width bar with a placeholder glyph in the offscreen
+/// snapshot pass) — a plain capsule pair is exact everywhere, including the
+/// widget extension.
+@available(iOS 16.1, *)
+private struct PulseProgressBar: View {
+    /// 0…1 — callers pass an already-clamped value.
+    let value: Double
+    let tint: Color
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.12))
+                Capsule()
+                    .fill(tint)
+                    .frame(width: max(4, geo.size.width * value))
+            }
+        }
+        .frame(height: 3)
+        .accessibilityHidden(true)
+    }
+}
+
 /// The state accent — a subtle top glow, NOT a neon background (spec §9).
 /// Clipped to the card and non-interactive.
 @available(iOS 16.1, *)
@@ -333,12 +358,8 @@ private struct PulseFeedRow: View {
                         .minimumScaleFactor(0.85)
                 }
                 if let progress = item.clampedProgress {
-                    ProgressView(value: progress)
-                        .progressViewStyle(.linear)
-                        .tint(tint)
-                        .frame(height: 2)
-                        .padding(.top, 2)
-                        .accessibilityHidden(true)
+                    PulseProgressBar(value: progress, tint: tint)
+                        .padding(.top, 3)
                 }
             }
 
@@ -424,12 +445,17 @@ private struct PulseCallout: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(
+            // NOT a system material: the card is always the dark brand surface,
+            // but `.ultraThinMaterial` follows the SYSTEM appearance — in Light
+            // Mode it rendered as a washed-out light-gray blob under white text
+            // (caught in the snapshot pass). A scheme-independent lift off the
+            // tile color keeps contrast identical in both appearances.
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(PulsePalette.tile.opacity(0.9))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .strokeBorder(tint.opacity(0.35), lineWidth: 0.5)
+                .strokeBorder(tint.opacity(0.4), lineWidth: 0.5)
         )
         .accessibilityElement(children: .combine)
     }
@@ -501,21 +527,29 @@ struct PulseLockScreenView: View {
     let mode: PulseMode
 
     var body: some View {
+        let callout = callout(for: state, mode: mode)
+        // The callout IS the focused event's presentation — repeating the same
+        // approval/alert as a feed row above it read as a rendering bug in the
+        // snapshot pass. Titles match because both sides come from the same
+        // snapshot fields, so filter the duplicate out.
+        let items = state.feedItems.filter { callout == nil || $0.title != callout!.title }
+
         VStack(alignment: .leading, spacing: 10) {
             PulseHeader(title: title, state: state, mode: mode)
 
             PulseMetricsRow(state: state, mode: mode)
 
-            let items = state.feedItems
             if !items.isEmpty {
                 VStack(spacing: 4) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                        PulseFeedRow(item: item, focused: index == 0)
+                        // With a callout the focus lives THERE — highlighting a
+                        // second row would split the emphasis (spec §7).
+                        PulseFeedRow(item: item, focused: callout == nil && index == 0)
                     }
                 }
             }
 
-            if let callout = callout(for: state, mode: mode) {
+            if let callout {
                 callout
             }
         }
@@ -571,11 +605,8 @@ private struct PulseExpandedStatus: View {
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 if let progress = item.clampedProgress {
-                    ProgressView(value: progress)
-                        .progressViewStyle(.linear)
-                        .tint(PulseTheme.tint(for: mode))
-                        .frame(width: 64, height: 2)
-                        .accessibilityHidden(true)
+                    PulseProgressBar(value: progress, tint: PulseTheme.tint(for: mode))
+                        .frame(width: 64)
                 }
             }
             .padding(.top, 2)
