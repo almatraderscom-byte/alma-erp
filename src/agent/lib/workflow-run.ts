@@ -23,6 +23,7 @@ import {
 } from './workflow-templates'
 import type { WorkflowStatus } from './workflow-run-types'
 import { TERMINAL_WORKFLOW_STATUSES } from './workflow-run-types'
+import { mirrorWorkflowRunTransition } from '@/agent/lib/graph/workflow-run-graph'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any
@@ -106,6 +107,10 @@ export async function createWorkflowRun(input: {
     select: VIEW_SELECT,
   })
   await logEvent(row.id, null, row.status, null, row.state, row.stateVersion, input.cause ?? 'turn', { created: true })
+  // LG-6 slice 2: seed the run's durable graph thread (fail-open inside).
+  await mirrorWorkflowRunTransition({
+    runId: row.id, kind: row.kind, status: row.status, state: row.state, event: null,
+  })
   return toView(row)
 }
 
@@ -167,6 +172,24 @@ export async function transitionWorkflowRun(opts: {
     opts.cause,
     opts.detail,
   )
+
+  // LG-6 slice 2: mirror the transition into the run's durable graph thread —
+  // one super-step per transition, template-legality re-checked inside.
+  // Fail-open inside; must never affect the canonical row.
+  await mirrorWorkflowRunTransition({
+    runId: opts.runId,
+    kind: current.kind as string,
+    status: toStatus,
+    state: toState,
+    event: {
+      fromStatus: current.status as string,
+      toStatus,
+      fromState: current.state as string,
+      toState,
+      cause: opts.cause,
+      stateVersion: opts.expectedVersion + 1,
+    },
+  })
 
   if (terminal) await closeLinkedFragments(opts.runId, toStatus, opts.cause)
 

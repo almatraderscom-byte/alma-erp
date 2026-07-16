@@ -532,7 +532,19 @@ const get_workflow_history: AgentTool = {
         return { success: true, data: { found: false, message: 'এই conversation-এ কোনো workflow run পাওয়া যায়নি।' } }
       }
       const { getSeoBatchGraphHistory } = await import('@/agent/lib/graph/seo-batch-graph')
-      const steps = await getSeoBatchGraphHistory(String(row.id))
+      let steps = await getSeoBatchGraphHistory(String(row.id))
+      if (!steps.length) {
+        // LG-6 slice 2: template runs (product_post, ad_campaign, …) live in
+        // their own graph threads — map onto the same step shape.
+        const { getWorkflowRunGraphHistory } = await import('@/agent/lib/graph/workflow-run-graph')
+        steps = (await getWorkflowRunGraphHistory(String(row.id))).map((s) => ({
+          stateLabel: s.labelBn || s.state,
+          eventType: s.cause,
+          currentIndex: null,
+          checkpointId: s.checkpointId,
+          createdAt: s.createdAt,
+        }))
+      }
       return {
         success: true,
         data: {
