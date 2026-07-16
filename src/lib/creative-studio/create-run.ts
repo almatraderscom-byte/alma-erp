@@ -19,6 +19,7 @@ import {
 } from '@/lib/tryon/art-director'
 import {
   CS_FAL_ENABLED_KEY,
+  CS_FLUX_FILL_ENABLED_KEY,
   CS_IDM_VTON_ENABLED_KEY,
   getEngine,
   isFalVtonEngine,
@@ -26,6 +27,7 @@ import {
   type StudioEngineId,
   type VtonClothType,
 } from '@/lib/creative-studio/provider-registry'
+import { buildFillPrompt, estimateFluxFillCostUsd, type MaskPresetId } from '@/lib/creative-studio/mask-contract'
 import { readKv } from '@/lib/creative-studio/taste'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 
@@ -54,6 +56,13 @@ export type CreativeStudioRunInput = {
   clothType?: VtonClothType | 'auto'
   /** CS6 — optional fixed seed for reproducible benchmark runs */
   seed?: number
+  /** CS7 — FLUX Fill precision edit: mask object path (white=edit, black=keep) */
+  maskPath?: string
+  /** CS7 — mask preset id (replace_background / remove_object / …) */
+  maskPreset?: MaskPresetId
+  /** CS7 — base image dimensions from mask-upload (for the cost estimate) */
+  baseWidth?: number
+  baseHeight?: number
   /** Video only */
   durationSec?: number
   vibe?: 'premium' | 'festival' | 'offer' | 'lifestyle'
@@ -284,6 +293,44 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
       jobs.push({ pendingActionId: item.pendingActionId, label: item.label, type: 'image_gen' })
     }
     return { jobs, provider: 'gemini', fashnReady }
+  }
+
+  // ── CS7: FLUX Fill masked precision edit (Edit mode + a painted mask) ──────
+  // Edits ONLY the masked region; the worker composites the fill back onto the
+  // protected base so unmasked pixels survive by construction. Durable Fal
+  // queue — never a Vercel request waiting on the model.
+  if (input.mode === 'edit' && input.maskPath) {
+    const basePath = input.sourceImagePath
+    if (!basePath) throw new Error('source_image_required')
+    if (!process.env.FAL_KEY?.trim()) throw new Error('fal_not_configured')
+    if ((await readKv(CS_FLUX_FILL_ENABLED_KEY)) !== '1') throw new Error('flux_fill_disabled')
+
+    const engine = getEngine('fal_flux_fill')
+    // Throws custom_prompt_required when the custom preset has no text.
+    const fillPrompt = buildFillPrompt(input.maskPreset, input.prompt ?? '')
+    const costEstimate = estimateFluxFillCostUsd(input.baseWidth ?? 0, input.baseHeight ?? 0)
+    const seed = Number.isFinite(input.seed) ? Math.trunc(input.seed as number) : undefined
+
+    const id = await createApprovedAction({
+      type: 'image_gen',
+      payload: {
+        provider: 'fal',
+        falEngine: 'fal_flux_fill',
+        falEndpointId: engine.falEndpointId,
+        baseImagePath: basePath,
+        maskPath: input.maskPath,
+        fillPrompt,
+        maskPreset: input.maskPreset ?? 'custom',
+        ...(seed !== undefined ? { seed } : {}),
+        creativeStudio: true,
+        studioMode: 'edit',
+        familyPreset: input.familyPreset,
+      },
+      summary: `🎯 Precision Edit (FLUX Fill · ${input.maskPreset ?? 'custom'})`,
+      costEstimate,
+    })
+    jobs.push({ pendingActionId: id, label: 'Precision Edit · FLUX Fill', type: 'image_gen' })
+    return { jobs, provider: 'fal_flux_fill', fashnReady }
   }
 
   // ── CS6: Fal-backed single-person VTON (owner-selected engine) ─────────────

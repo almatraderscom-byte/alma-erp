@@ -136,22 +136,31 @@ export async function falCancel(endpointId, requestId, { fetchImpl = fetch, canc
  * 2048px) WITHOUT changing aspect ratio — person proportions stay intact.
  * Falls back to the raw bytes if sharp fails (e.g. exotic format).
  */
-export async function storagePathToNormalizedDataUri(supabase, path, { maxSide = 2048 } = {}) {
+export async function storagePathToNormalizedDataUri(supabase, path, { maxSide = 2048, format = 'jpeg' } = {}) {
   const { data, error } = await supabase.storage.from('agent-files').download(path)
   if (error || !data) throw new Error(`download failed: ${path}`)
   const raw = Buffer.from(await data.arrayBuffer())
   try {
     const sharp = (await import('sharp')).default
-    const normalized = await sharp(raw)
+    const pipeline = sharp(raw)
       .rotate() // apply EXIF orientation (iPhone photos)
       .resize({ width: maxSide, height: maxSide, fit: 'inside', withoutEnlargement: true })
-      .jpeg({ quality: 92 })
-      .toBuffer()
-    return `data:image/jpeg;base64,${normalized.toString('base64')}`
+    // PNG for masks/precision bases (lossless, no jpeg edge bleed); JPEG default.
+    const normalized = format === 'png'
+      ? await pipeline.png().toBuffer()
+      : await pipeline.jpeg({ quality: 92 }).toBuffer()
+    return `data:image/${format === 'png' ? 'png' : 'jpeg'};base64,${normalized.toString('base64')}`
   } catch {
     const mime = data.type || 'image/jpeg'
     return `data:${mime};base64,${raw.toString('base64')}`
   }
+}
+
+/** Raw storage bytes (no normalization) — for pixel-exact composite work. */
+export async function storagePathToBuffer(supabase, path) {
+  const { data, error } = await supabase.storage.from('agent-files').download(path)
+  if (error || !data) throw new Error(`download failed: ${path}`)
+  return Buffer.from(await data.arrayBuffer())
 }
 
 /** Download a finished Fal output URL into agent-files storage. */

@@ -30,6 +30,7 @@ import {
   type VideoAudioMode,
 } from '@/lib/creative-studio/video-recipes'
 import LifestyleEditor from '@/agent/components/creative-studio/LifestyleEditor'
+import MaskEditor, { type MaskEditorResult } from '@/agent/components/creative-studio/MaskEditor'
 import {
   DEFAULT_OFFER,
   LIFESTYLE_EST,
@@ -44,6 +45,7 @@ import {
   deleteModel,
   runAutoStudioJob,
   runStudioJob,
+  uploadFillMask,
   saveModel,
   uploadStudioFile,
   fetchBrandStatus,
@@ -724,6 +726,9 @@ function StudioWorkspace({
   // CS6 — single Try-On engine choice + garment placement override
   const [vtonEngine, setVtonEngine] = useState<StudioEngineId>('fashn')
   const [clothType, setClothType] = useState<'auto' | 'overall' | 'upper' | 'lower' | 'outer'>('auto')
+  // CS7 — FLUX Fill precision edit
+  const [maskEditorOpen, setMaskEditorOpen] = useState(false)
+  const [maskRunning, setMaskRunning] = useState(false)
   const [familyPreset, setFamilyPreset] = useState<FamilyPresetId>('single')
   const [productPreview, setProductPreview] = useState<string | null>(null)
   const [modelPreview, setModelPreview] = useState<string | null>(null)
@@ -938,6 +943,32 @@ function StudioWorkspace({
     return true
   }, [mode, modeDef, productPath, modelPath, modelId, sourcePath, isFamilyMerge, secondSourcePath, familyActive, familyPreset, models])
 
+  // CS7 — mask editor confirmed: upload the mask (server validates dims +
+  // coverage + gives the real cost estimate), then queue the FLUX Fill job.
+  const handleMaskRun = async (r: MaskEditorResult) => {
+    if (!sourcePath) return
+    setMaskRunning(true)
+    try {
+      const uploaded = await uploadFillMask(r.maskBlob, sourcePath)
+      const result = await runStudioJob({
+        mode: 'edit',
+        sourceImagePath: sourcePath,
+        maskPath: uploaded.maskPath,
+        maskPreset: r.preset,
+        prompt: r.detail,
+        baseWidth: uploaded.width,
+        baseHeight: uploaded.height,
+      })
+      toast.success(`${result.message} · আনুমানিক $${uploaded.estimatedCostUsd.toFixed(2)}`)
+      setMaskEditorOpen(false)
+      onOpenGallery()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Run failed')
+    } finally {
+      setMaskRunning(false)
+    }
+  }
+
   const handleRun = async () => {
     if (!canRun) {
       toast.error('Required images missing')
@@ -1074,6 +1105,16 @@ function StudioWorkspace({
               required
             />
           )}
+          {/* CS7 — masked precision edit (FLUX Fill): Edit mode + uploaded source */}
+          {mode === 'edit' && sourcePath && sourcePreview && engineSelectable('fal_flux_fill') && (
+            <button
+              type="button"
+              onClick={() => setMaskEditorOpen(true)}
+              className="mx-auto flex items-center gap-2 rounded-2xl border border-[#E07A5F]/40 bg-[#E07A5F]/10 px-4 py-2.5 text-[12.5px] font-bold text-[#E07A5F]"
+            >
+              🎯 Precision Edit — মাস্ক এঁকে শুধু সেই জায়গা বদলান (FLUX Fill)
+            </button>
+          )}
         </div>
       </div>
 
@@ -1083,6 +1124,17 @@ function StudioWorkspace({
             lockedRole={addRoleSheet}
             onClose={() => setAddRoleSheet(null)}
             onSaved={() => void reloadModels()}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {maskEditorOpen && sourcePreview && sourcePath && (
+          <MaskEditor
+            imageUrl={sourcePreview}
+            running={maskRunning}
+            onCancel={() => setMaskEditorOpen(false)}
+            onRun={(r) => void handleMaskRun(r)}
           />
         )}
       </AnimatePresence>
@@ -1795,8 +1847,8 @@ function GalleryView() {
                       item.status === 'executed' ? 'bg-[#81B29A]/90 text-white' : 'bg-black/50 text-white',
                     )}
                   >
-                    {/* CS6 — show the exact engine, not just the vendor */}
-                    {item.engine === 'fal_idm_vton' ? 'IDM ⚠' : item.engine === 'fal_fashn_v16' ? 'FAL FASHN' : item.provider}
+                    {/* CS6/CS7 — show the exact engine, not just the vendor */}
+                    {item.engine === 'fal_idm_vton' ? 'IDM ⚠' : item.engine === 'fal_fashn_v16' ? 'FAL FASHN' : item.engine === 'fal_flux_fill' ? 'FLUX FILL' : item.provider}
                   </span>
                   {item.brandedUrl && (
                     <span className="absolute right-1.5 top-1.5 rounded-md bg-[#E07A5F]/90 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
@@ -1881,7 +1933,7 @@ function GalleryView() {
                 className="absolute left-4 top-[calc(1rem+env(safe-area-inset-top))] flex max-w-[70vw] flex-wrap items-center gap-1.5"
               >
                 <span className="rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-bold text-white ring-1 ring-white/25">
-                  {selected.engine === 'fal_idm_vton' ? 'IDM-VTON' : selected.engine === 'fal_fashn_v16' ? 'Fal FASHN v1.6' : selected.engine}
+                  {selected.engine === 'fal_idm_vton' ? 'IDM-VTON' : selected.engine === 'fal_fashn_v16' ? 'Fal FASHN v1.6' : selected.engine === 'fal_flux_fill' ? 'FLUX Fill' : selected.engine}
                 </span>
                 {selected.researchOnly && (
                   <span className="rounded-full bg-amber-500/90 px-2.5 py-1 text-[10px] font-bold text-white">

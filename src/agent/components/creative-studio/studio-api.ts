@@ -119,6 +119,11 @@ export type RunPayload = {
   vtonEngine?: StudioEngineId
   /** CS6 — owner override for garment placement when auto classification is uncertain */
   clothType?: 'auto' | 'overall' | 'upper' | 'lower' | 'outer'
+  /** CS7 — FLUX Fill precision edit fields (Edit mode only) */
+  maskPath?: string
+  maskPreset?: string
+  baseWidth?: number
+  baseHeight?: number
   productImagePath?: string
   modelImagePath?: string
   sourceImagePath?: string
@@ -210,6 +215,23 @@ export async function uploadStudioFile(file: File, folder: string): Promise<stri
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data.error ?? 'upload_failed')
   return data.path as string
+}
+
+/** CS7 — upload a painted FLUX Fill mask; server validates dims vs base + coverage. */
+export async function uploadFillMask(maskBlob: Blob, basePath: string): Promise<{
+  maskPath: string
+  width: number
+  height: number
+  coveragePct: number
+  estimatedCostUsd: number
+}> {
+  const fd = new FormData()
+  fd.append('mask', new File([maskBlob], 'mask.png', { type: 'image/png' }))
+  fd.append('basePath', basePath)
+  const res = await fetch('/api/assistant/creative-studio/mask-upload', { method: 'POST', body: fd })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? 'mask_upload_failed')
+  return data
 }
 
 export async function runStudioJob(payload: RunPayload) {

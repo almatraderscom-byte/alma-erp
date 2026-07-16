@@ -64,10 +64,10 @@ describe('provider registry — capability rules', () => {
     expect(getEngine('fal_flux_fill').modes).toEqual(['edit'])
   })
 
-  it('CS6: fal VTON engines runnable; FLUX Fill still foundation-only', () => {
+  it('CS7: all fal engines wired and runnable', () => {
     expect(getEngine('fal_fashn_v16').runnable).toBe(true)
     expect(getEngine('fal_idm_vton').runnable).toBe(true)
-    expect(getEngine('fal_flux_fill').runnable).toBe(false) // CS7 wires it
+    expect(getEngine('fal_flux_fill').runnable).toBe(true)
     expect(getEngine('fashn').runnable).toBe(true)
     expect(getEngine('gemini').runnable).toBe(true)
   })
