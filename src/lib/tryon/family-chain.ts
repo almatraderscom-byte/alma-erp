@@ -36,7 +36,17 @@ const CHILD_GARMENT_CACHE_PREFIX = 'tryon_child_garment:'
 const GROUP_KV_PREFIX = 'family_chain_group:'
 
 export type FamilyChainVariant = 'father_son' | 'mother_son' | 'mother_daughter' | 'father_daughter' | 'couple' | 'full_family'
-export type ChainStepKind = 'adult_tryon' | 'child_garment' | 'child_tryon' | 'pair_merge' | 'group_merge' | 'rescene'
+export type ChainStepKind =
+  | 'adult_tryon'
+  | 'child_garment'
+  | 'child_tryon'
+  | 'pair_merge'
+  | 'group_merge'
+  | 'rescene'
+  // CS9 — protected compositing (owner opt-in): approved people are cut out
+  // locally and placed deterministically; NO face/garment regeneration.
+  | 'pair_composite'
+  | 'group_composite'
 
 const STEP_LABELS_BN: Record<ChainStepKind, string> = {
   adult_tryon: 'বড়দের শট (FASHN)',
@@ -45,6 +55,8 @@ const STEP_LABELS_BN: Record<ChainStepKind, string> = {
   pair_merge: 'এক সিনে বসানো',
   group_merge: 'পুরো ফ্যামিলি একসাথে',
   rescene: 'বাংলাদেশি ব্যাকগ্রাউন্ড',
+  pair_composite: 'প্রোটেক্টেড কম্পোজিট (মুখ/গার্মেন্ট অক্ষত)',
+  group_composite: 'পুরো ফ্যামিলি প্রোটেক্টেড কম্পোজিট',
 }
 
 const VARIANT_LABELS_BN: Record<string, string> = {
@@ -82,6 +94,8 @@ export type FamilyChainState = {
   generationMode: string
   /** owner's optional free-text direction, carried into generation prompts */
   extraPrompt?: string
+  /** CS9 — owner opted into protected compositing (no face/garment regen) */
+  protectedComposite?: boolean
   conversationId?: string | null
 }
 
@@ -295,6 +309,47 @@ function buildStepAction(state: FamilyChainState, step: ChainStepKind): {
         costEstimate: 0.3,
       }
 
+    // CS9 — protected composite: the worker cuts the SECOND person out locally
+    // and inserts them beside the UNTOUCHED adult shot at the deterministic
+    // relative height; FLUX Fill may harmonize only edges + contact shadow.
+    case 'pair_composite':
+      return {
+        payload: {
+          ...base,
+          provider: 'family_composite',
+          composite: {
+            variant: state.variant,
+            baseImagePath: state.adultImagePath,
+            insertImagePath: state.childImagePath,
+            insertRole: state.childRole === 'mother' ? 'mother' : state.childRole,
+            expectedMembers: 2,
+            harmonize: true,
+            sceneRef: state.scene,
+          },
+        },
+        summary: chainSummary(state, step),
+        costEstimate: 0.15, // fill harmonize only — the people are free pixel copies
+      }
+
+    case 'group_composite':
+      // baseImagePath (father+son pair) and insertImagePath (mother+daughter
+      // pair) are injected by the group logic.
+      return {
+        payload: {
+          ...base,
+          provider: 'family_composite',
+          composite: {
+            variant: 'full_family',
+            insertRole: 'pair',
+            expectedMembers: 4,
+            harmonize: true,
+            sceneRef: state.scene,
+          },
+        },
+        summary: chainSummary(state, step),
+        costEstimate: 0.2,
+      }
+
     case 'rescene':
       return {
         payload: {
@@ -352,6 +407,8 @@ export type StartFamilyChainInput = {
   resolution?: string
   generationMode?: string
   extraPrompt?: string
+  /** CS9 — protected compositing: no face/garment regeneration in the merge */
+  protectedComposite?: boolean
   conversationId?: string | null
 }
 
@@ -384,6 +441,7 @@ async function startPairChain(opts: {
   resolution: string
   generationMode: string
   extraPrompt?: string
+  protectedComposite?: boolean
   conversationId?: string | null
 }): Promise<ChainJobRef> {
   const roles = VARIANT_ROLES[opts.variant]
@@ -396,9 +454,11 @@ async function startPairChain(opts: {
   const cachedGarment = isCouple
     ? opts.productImagePath
     : await readChildGarmentCache(opts.productImagePath, roles.child)
+  // CS9 — protected composite replaces the generative pair merge when opted in.
+  const finalStep: ChainStepKind = opts.protectedComposite ? 'pair_composite' : 'pair_merge'
   const plan: ChainStepKind[] = cachedGarment
-    ? ['adult_tryon', 'child_tryon', 'pair_merge']
-    : ['adult_tryon', 'child_garment', 'child_tryon', 'pair_merge']
+    ? ['adult_tryon', 'child_tryon', finalStep]
+    : ['adult_tryon', 'child_garment', 'child_tryon', finalStep]
 
   const state: FamilyChainState = {
     chainId: randomUUID(),
@@ -416,6 +476,7 @@ async function startPairChain(opts: {
     plan,
     stepIndex: 0,
     extraPrompt: opts.extraPrompt,
+    protectedComposite: opts.protectedComposite,
     aspectRatio: opts.aspectRatio,
     resolution: opts.resolution,
     generationMode: opts.generationMode,
@@ -458,6 +519,7 @@ export async function startFamilyChain(input: StartFamilyChainInput): Promise<{
     resolution: input.resolution ?? '2k',
     generationMode: input.generationMode ?? 'quality',
     extraPrompt: input.extraPrompt,
+    protectedComposite: input.protectedComposite,
     conversationId: input.conversationId ?? null,
   }
 
@@ -550,16 +612,26 @@ async function tryStartGroupMerge(state: FamilyChainState): Promise<string | nul
     return null
   }
 
+  // CS9 — protected chains combine the two APPROVED pair images without any
+  // regeneration: pair1 (father+son) is the untouched base, pair2's people are
+  // cut out and inserted as one unit.
+  const useComposite = Boolean(state.protectedComposite)
   const mergeState: FamilyChainState = {
     ...state,
     chainId: randomUUID(),
     variant: 'full_family',
-    plan: ['group_merge'],
+    plan: [useComposite ? 'group_composite' : 'group_merge'],
     stepIndex: 0,
   }
-  const { payload, summary, costEstimate } = buildStepAction(mergeState, 'group_merge')
-  payload.referenceImageId = pair1
-  payload.secondReferenceImageId = pair2
+  const { payload, summary, costEstimate } = buildStepAction(mergeState, useComposite ? 'group_composite' : 'group_merge')
+  if (useComposite) {
+    const composite = payload.composite as Record<string, unknown>
+    composite.baseImagePath = pair1
+    composite.insertImagePath = pair2
+  } else {
+    payload.referenceImageId = pair1
+    payload.secondReferenceImageId = pair2
+  }
   const row = await db.agentPendingAction.create({
     data: {
       conversationId: state.conversationId ?? null,
@@ -600,14 +672,15 @@ export async function advanceFamilyChain(
     if (step === 'child_tryon') next.childImagePath = storagePath
 
     // Pair finished → either done, or hand off to the full-family group merge.
-    if (step === 'pair_merge') {
+    // CS9: pair_composite behaves exactly like pair_merge in the chain graph.
+    if (step === 'pair_merge' || step === 'pair_composite') {
       if (state.groupId && state.variant !== 'full_family') {
         await recordGroupPair(state.groupId, state.variant, storagePath)
         return tryStartGroupMerge(state)
       }
       return null
     }
-    if (step === 'group_merge' || step === 'rescene') return null
+    if (step === 'group_merge' || step === 'group_composite' || step === 'rescene') return null
 
     const nextIndex = state.stepIndex + 1
     const nextStep = state.plan[nextIndex]

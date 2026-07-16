@@ -529,6 +529,40 @@ async function processImageGen(job) {
     return
   }
 
+  // CS9 — protected family composite: local segmentation + deterministic
+  // layout, NO face/garment regeneration; fal used only to harmonize seams.
+  if (payload.provider === 'family_composite') {
+    try {
+      const { processFamilyComposite } = await import('./family-composite.mjs')
+      const { logCost } = await import('./cost-log.mjs')
+      const result = await processFamilyComposite({ supabase, pendingActionId, payload, logCost })
+      const { postProcessImage } = await import('./cs/branding.mjs')
+      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath)
+      await callJobResult(pendingActionId, 'success', {
+        storagePath: result.storagePath,
+        allPaths: result.allPaths,
+        provider: 'family_composite',
+        protectedComposite: true,
+        variant: result.variant,
+        insertRole: result.insertRole,
+        memberCount: result.memberCount,
+        expectedMembers: result.expectedMembers,
+        harmonize: result.harmonize,
+        requestId: result.harmonize?.requestId,
+        latencyMs: result.harmonize?.latencyMs,
+        costUsd: result.harmonize?.costUsd ?? 0,
+        creativeStudio: true,
+        studioMode: payload.studioMode,
+        ...finishing,
+      })
+      console.log(`[worker] family-composite ${pendingActionId} — done → ${result.storagePath}`)
+    } catch (err) {
+      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      console.error(`[worker] family-composite ${pendingActionId} — failed:`, err.message)
+    }
+    return
+  }
+
   // CS6 — Fal-backed single-person VTON engines (owner-selected). Durable queue
   // client inside the adapters; result metadata is the truthful lineage the
   // Gallery shows (engine, request id, seed, latency, cost).

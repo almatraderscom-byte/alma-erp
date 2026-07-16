@@ -64,6 +64,8 @@ export type CreativeStudioRunInput = {
   clothType?: VtonClothType | 'auto'
   /** CS6 — optional fixed seed for reproducible benchmark runs */
   seed?: number
+  /** CS9 — family protected compositing (no face/garment regen in the merge) */
+  protectedComposite?: boolean
   /** CS7 — FLUX Fill precision edit: mask object path (white=edit, black=keep) */
   maskPath?: string
   /** CS7 — mask preset id (replace_background / remove_object / …) */
@@ -214,6 +216,9 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
       resolution: input.resolution,
       generationMode: input.generationMode,
       extraPrompt: [input.prompt, input.backgroundPrompt].filter(Boolean).join('. ') || undefined,
+      // CS9 — owner opt-in: deterministic protected composite instead of the
+      // generative pair/group merge (no face/garment regeneration).
+      protectedComposite: input.protectedComposite,
       conversationId: null,
     })
     for (const j of chain.jobs) jobs.push(j)

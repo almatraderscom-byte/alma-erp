@@ -290,3 +290,92 @@ describe('getChainProgress', () => {
     expect(progress!.totalSteps).toBe(4)
   })
 })
+
+// ── CS9: protected compositing (no face/garment regeneration) ────────────────
+
+describe('CS9 protected composite chain', () => {
+  it('replaces pair_merge with pair_composite carrying a worker-ready payload', async () => {
+    seedModels(['father', 'son'])
+    await startFamilyChain({
+      variant: 'father_son',
+      productImagePath: 'uploads/panjabi.jpg',
+      protectedComposite: true,
+    })
+    let row = lastAction()
+    expect(chainState(row).plan).toEqual(['adult_tryon', 'child_garment', 'child_tryon', 'pair_composite'])
+
+    let nextId = await completeStep(row, 'generated/adult.png')
+    row = actions.find((a) => a.id === nextId)!
+    nextId = await completeStep(row, 'generated/child-garment.png')
+    row = actions.find((a) => a.id === nextId)!
+    nextId = await completeStep(row, 'generated/child.png')
+    row = actions.find((a) => a.id === nextId)!
+
+    // final step = the protected composite job the worker consumes
+    expect(row.payload.provider).toBe('family_composite')
+    const composite = row.payload.composite as Record<string, unknown>
+    expect(composite.baseImagePath).toBe('generated/adult.png')
+    expect(composite.insertImagePath).toBe('generated/child.png')
+    expect(composite.insertRole).toBe('son')
+    expect(composite.expectedMembers).toBe(2)
+    expect(composite.harmonize).toBe(true)
+
+    const done = await completeStep(row, 'generated/family.png')
+    expect(done).toBeNull()
+  })
+
+  it('couple maps the wife to insertRole mother', async () => {
+    seedModels(['father', 'mother'])
+    await startFamilyChain({
+      variant: 'couple',
+      productImagePath: 'uploads/panjabi.jpg',
+      protectedComposite: true,
+    })
+    let row = lastAction()
+    // couple: no child-garment step (wife wears the adult product)
+    expect(chainState(row).plan).toEqual(['adult_tryon', 'child_tryon', 'pair_composite'])
+    let nextId = await completeStep(row, 'generated/husband.png')
+    row = actions.find((a) => a.id === nextId)!
+    nextId = await completeStep(row, 'generated/wife.png')
+    row = actions.find((a) => a.id === nextId)!
+    const composite = row.payload.composite as Record<string, unknown>
+    expect(composite.insertRole).toBe('mother')
+  })
+
+  it('full family: two protected pairs combine via ONE group_composite with pair inserts', async () => {
+    seedModels(['father', 'mother', 'son', 'daughter'])
+    const { jobs } = await startFamilyChain({
+      variant: 'full_family',
+      productImagePath: 'uploads/panjabi.jpg',
+      protectedComposite: true,
+    })
+    expect(jobs).toHaveLength(2)
+
+    // run both sub-chains to their pair_composite completion
+    for (const job of jobs) {
+      let row = actions.find((a) => a.id === job.pendingActionId)!
+      let next = await completeStep(row, `generated/${chainState(row).variant}-adult.png`)
+      while (next) {
+        row = actions.find((a) => a.id === next)!
+        const step = chainState(row).plan[chainState(row).stepIndex]
+        next = await completeStep(row, `generated/${chainState(row).variant}-${step}.png`)
+      }
+    }
+
+    const groupJobs = actions.filter(
+      (a) => (a.payload.composite as Record<string, unknown> | undefined)?.insertRole === 'pair',
+    )
+    expect(groupJobs).toHaveLength(1) // exactly once
+    const composite = groupJobs[0].payload.composite as Record<string, unknown>
+    expect(composite.expectedMembers).toBe(4)
+    expect(composite.baseImagePath).toBe('generated/father_son-pair_composite.png')
+    expect(composite.insertImagePath).toBe('generated/mother_daughter-pair_composite.png')
+  })
+
+  it('default (no opt-in) keeps the legacy generative pair_merge', async () => {
+    seedModels(['father', 'son'])
+    await startFamilyChain({ variant: 'father_son', productImagePath: 'uploads/panjabi.jpg' })
+    expect(chainState(lastAction()).plan).toContain('pair_merge')
+    expect(chainState(lastAction()).plan).not.toContain('pair_composite')
+  })
+})
