@@ -181,8 +181,31 @@ final class AlmaAPI: NSObject {
 
     /// GET a JSON endpoint. Nil query values are skipped, so callers can pass
     /// optional filters straight through: `get("/api/orders", query: ["status": filter])`.
+    ///
+    /// IOSP-3: concurrent identical GETs are coalesced into one wire round-trip
+    /// (single-flight). No TTL caching here — every distinct call still fetches;
+    /// use `getCached` to opt a read-only screen into a freshness window.
     func get<T: Decodable>(_ path: String, query: [String: String?] = [:]) async throws -> T {
-        let data = try await perform(request: makeRequest(method: "GET", path: path, query: query, bodyData: nil))
+        let key = AlmaRequestCache.key(method: "GET", path: path, query: query)
+        let request = makeRequest(method: "GET", path: path, query: query, bodyData: nil)
+        let data = try await AlmaRequestCache.shared.singleFlight(key: key) { [self] in
+            try await perform(request: request)
+        }
+        return try decode(data)
+    }
+
+    /// IOSP-3: GET with an opt-in TTL. Within `ttl` seconds a warm re-navigation
+    /// returns the cached bytes with ZERO refetch; after it, one fresh fetch (also
+    /// single-flighted). For READ-ONLY resources only — never approvals/mutations,
+    /// which go through `send` and clear this cache. `ttl` is per-resource; keep it
+    /// short (a few seconds) for anything that changes often.
+    func getCached<T: Decodable>(_ path: String, query: [String: String?] = [:],
+                                 ttl: TimeInterval) async throws -> T {
+        let key = AlmaRequestCache.key(method: "GET", path: path, query: query)
+        let request = makeRequest(method: "GET", path: path, query: query, bodyData: nil)
+        let data = try await AlmaRequestCache.shared.cached(key: key, ttl: ttl) { [self] in
+            try await perform(request: request)
+        }
         return try decode(data)
     }
 
@@ -193,6 +216,7 @@ final class AlmaAPI: NSObject {
             do { bodyData = try encoder.encode(body) } catch { throw AlmaAPIError.decoding(error) }
         }
         let data = try await perform(request: makeRequest(method: method, path: path, query: [:], bodyData: bodyData))
+        await AlmaRequestCache.shared.invalidateAll() // IOSP-3: a write must never be masked by a stale read
         return try decode(data)
     }
 
@@ -210,6 +234,7 @@ final class AlmaAPI: NSObject {
             do { bodyData = try encoder.encode(body) } catch { throw AlmaAPIError.decoding(error) }
         }
         let data = try await perform(request: makeRequest(method: method, path: path, query: query, bodyData: bodyData))
+        await AlmaRequestCache.shared.invalidateAll() // IOSP-3: a write must never be masked by a stale read
         return try decode(data)
     }
 
@@ -380,6 +405,7 @@ final class AlmaAPI: NSObject {
         request.httpBody = body
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         let respData = try await perform(request: request)
+        await AlmaRequestCache.shared.invalidateAll() // IOSP-3: uploads are writes
         return try decode(respData)
     }
 }

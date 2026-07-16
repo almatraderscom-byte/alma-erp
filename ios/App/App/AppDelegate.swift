@@ -13,6 +13,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         #if DEBUG
         runNavSelfTestIfRequested()
         if #available(iOS 17.0, *) { runOverlaySelfTestIfRequested() }
+        runCacheSelfTestIfRequested()
         #endif
         // Home-screen quick action on COLD START: forward to the AppShortcuts
         // plugin (it retains the event until the JS listener attaches).
@@ -213,6 +214,35 @@ extension AppDelegate {
         }
         postKeyboard(height: 340, at: 18, tag: "overlaySelfTest.keyboardUp")
         postKeyboard(height: 0, at: 26, tag: "overlaySelfTest.keyboardDown")
+    }
+
+    /// IOSP-3 cache self-test (DEBUG-only, env-gated). Proves single-flight (N
+    /// concurrent identical GETs → ONE api.request) and TTL (repeated getCached
+    /// within the window → cache.hit, no refetch). Verify from outside by counting
+    /// `api.request` vs `cache.hit` signposts for the probe path.
+    ///
+    ///   SIMCTL_CHILD_ALMA_CACHE_SELFTEST=1 xcrun simctl launch <udid> com.almatraders.erp
+    func runCacheSelfTestIfRequested() {
+        guard ProcessInfo.processInfo.environment["ALMA_CACHE_SELFTEST"] == "1" else { return }
+        // Decodes from ANY JSON shape (reads nothing) — we only care about request counts.
+        struct Probe: Decodable { init(from decoder: Decoder) throws {} }
+        let path = "/api/assistant/office/notifications"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
+            Task {
+                AlmaPerfLog.event("cacheSelfTest.concurrentStart")
+                // 6 identical GETs fired together → single-flight should collapse to 1.
+                await withTaskGroup(of: Void.self) { group in
+                    for _ in 0..<6 {
+                        group.addTask { _ = try? await AlmaAPI.shared.get(path) as Probe }
+                    }
+                }
+                AlmaPerfLog.event("cacheSelfTest.concurrentDone")
+                // 4 sequential cached reads within a 60s TTL → 1 fetch + 3 cache.hit.
+                AlmaPerfLog.event("cacheSelfTest.ttlStart")
+                for _ in 0..<4 { _ = try? await AlmaAPI.shared.getCached(path, ttl: 60) as Probe }
+                AlmaPerfLog.event("cacheSelfTest.ttlDone")
+            }
+        }
     }
 }
 #endif

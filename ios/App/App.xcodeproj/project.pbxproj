@@ -78,6 +78,7 @@
 		FA22BB00000000000000B902 /* AlmaPerfLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA22BB00000000000000A902 /* AlmaPerfLog.swift */; };
 		FA22BB00000000000000B903 /* AlmaNavCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA22BB00000000000000A903 /* AlmaNavCoordinator.swift */; };
 		FA22BB00000000000000B904 /* AlmaOverlayCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA22BB00000000000000A904 /* AlmaOverlayCoordinator.swift */; };
+		FA22BB00000000000000B905 /* AlmaRequestCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA22BB00000000000000A905 /* AlmaRequestCache.swift */; };
 		F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */; };
 		F2AA7700000000000000B023 /* AlmaStarburstSpinner.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A023 /* AlmaStarburstSpinner.swift */; };
 		F2AA7700000000000000B040 /* AlmaNativeRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2AA7700000000000000A040 /* AlmaNativeRouter.swift */; };
@@ -232,6 +233,7 @@
 		FA22BB00000000000000A902 /* AlmaPerfLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaPerfLog.swift; sourceTree = "<group>"; };
 		FA22BB00000000000000A903 /* AlmaNavCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaNavCoordinator.swift; sourceTree = "<group>"; };
 		FA22BB00000000000000A904 /* AlmaOverlayCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaOverlayCoordinator.swift; sourceTree = "<group>"; };
+		FA22BB00000000000000A905 /* AlmaRequestCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaRequestCache.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantVoiceSwiftUI.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A023 /* AlmaStarburstSpinner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaStarburstSpinner.swift; sourceTree = "<group>"; };
 		F2AA7700000000000000A040 /* AlmaNativeRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaNativeRouter.swift; sourceTree = "<group>"; };
@@ -366,6 +368,7 @@
 				FA22BB00000000000000A902 /* AlmaPerfLog.swift */,
 				FA22BB00000000000000A903 /* AlmaNavCoordinator.swift */,
 				FA22BB00000000000000A904 /* AlmaOverlayCoordinator.swift */,
+				FA22BB00000000000000A905 /* AlmaRequestCache.swift */,
 				F2AA7700000000000000A023 /* AlmaStarburstSpinner.swift */,
 				F2AA7700000000000000A022 /* AssistantVoiceSwiftUI.swift */,
 				F2AA7700000000000000A064 /* StaffMonitorSwiftUI.swift */,
@@ -677,6 +680,7 @@
 				FA22BB00000000000000B902 /* AlmaPerfLog.swift in Sources */,
 				FA22BB00000000000000B903 /* AlmaNavCoordinator.swift in Sources */,
 				FA22BB00000000000000B904 /* AlmaOverlayCoordinator.swift in Sources */,
+				FA22BB00000000000000B905 /* AlmaRequestCache.swift in Sources */,
 				F2AA7700000000000000B023 /* AlmaStarburstSpinner.swift in Sources */,
 				F2AA7700000000000000B022 /* AssistantVoiceSwiftUI.swift in Sources */,
 				F2AA7700000000000000B064 /* StaffMonitorSwiftUI.swift in Sources */,

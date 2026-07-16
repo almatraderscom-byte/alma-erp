@@ -1,0 +1,14 @@
+2026-07-16 21:53:08.705 Sp App[39083:3720b6] [com.almatraders.erp.perf:Perf] [spid excl, process, event] api.request: GET /api/assistant/office/notifications status=200 ms=306
+2026-07-16 21:53:38.701 Sp App[39083:3720b6] [com.almatraders.erp.perf:Perf] [spid excl, process, event] api.request: GET /api/assistant/office/notifications status=200 ms=302
+2026-07-16 21:54:08.780 Sp App[39083:36ea53] [com.almatraders.erp.perf:Perf] [spid excl, process, event] api.request: GET /api/assistant/office/notifications status=200 ms=381
+2026-07-16 21:54:29.226 Sp App[44374:374632] [com.almatraders.erp.perf:Perf] [spid excl, process, event] api.request: GET /api/assistant/office/notifications status=200 ms=611
+2026-07-16 21:54:39.852 Sp App[44374:3745f6] [com.almatraders.erp.perf:Perf] [spid excl, process, event] cacheSelfTest.concurrentStart
+2026-07-16 21:54:40.222 Sp App[44374:374673] [com.almatraders.erp.perf:Perf] [spid excl, process, event] api.request: GET /api/assistant/office/notifications status=200 ms=369
+2026-07-16 21:54:40.222 Sp App[44374:3745f6] [com.almatraders.erp.perf:Perf] [spid excl, process, event] cacheSelfTest.concurrentDone
+2026-07-16 21:54:40.222 Sp App[44374:3745f6] [com.almatraders.erp.perf:Perf] [spid excl, process, event] cacheSelfTest.ttlStart
+2026-07-16 21:54:40.987 Sp App[44374:374634] [com.almatraders.erp.perf:Perf] [spid excl, process, event] api.request: GET /api/assistant/office/notifications status=200 ms=764
+2026-07-16 21:54:40.991 Sp App[44374:374634] [com.almatraders.erp.perf:Perf] [spid excl, process, event] cache.hit: GET /api/assistant/office/notifications?
+2026-07-16 21:54:40.991 Sp App[44374:374634] [com.almatraders.erp.perf:Perf] [spid excl, process, event] cache.hit: GET /api/assistant/office/notifications?
+2026-07-16 21:54:40.991 Sp App[44374:374634] [com.almatraders.erp.perf:Perf] [spid excl, process, event] cache.hit: GET /api/assistant/office/notifications?
+2026-07-16 21:54:40.991 Sp App[44374:3745f6] [com.almatraders.erp.perf:Perf] [spid excl, process, event] cacheSelfTest.ttlDone
+2026-07-16 21:54:59.181 Sp App[44374:374634] [com.almatraders.erp.perf:Perf] [spid excl, process, event] api.request: GET /api/assistant/office/notifications status=200 ms=563
