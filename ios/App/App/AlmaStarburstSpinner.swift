@@ -382,13 +382,17 @@ struct AlmaStarburstLoader: View {
                 .frame(width: size * 1.08, height: size * 1.08)
                 .blur(radius: max(1.5, size * 0.12))
 
-            // Idle means truly idle: only an explicit loader mode owns this
-            // display link. Do not gate on scenePhase here: this SwiftUI view is
-            // hosted inside UIKit and can transiently report inactive while the
-            // foreground chat remains visible, freezing the progress indicator.
+            // Build-73 behavior restored (owner-verified static loader 2026-07-16):
+            // NEVER pause this schedule on mode — a `paused:` flip is exactly the
+            // SwiftUI path that fails to re-arm after backgrounding/mode churn in
+            // this UIKit-hosted chat, which froze the active starburst while the
+            // neighbouring pause-less shimmer kept moving. Idle stillness comes
+            // from the physics (target velocity 0), like the shipped build 73 —
+            // an idle canvas redraws an identical frame at trivial cost. The only
+            // legitimate pause input is Reduce Motion.
             TimelineView(.animation(
                 minimumInterval: 1 / 30,
-                paused: mode == .idle || reduceMotion
+                paused: reduceMotion
             )) { timeline in
                 Canvas { ctx, canvasSize in
                     anim.tick(mode: mode, now: timeline.date.timeIntervalSinceReferenceDate)

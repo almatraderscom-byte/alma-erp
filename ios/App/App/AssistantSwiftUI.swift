@@ -1057,6 +1057,19 @@ final class AssistantVM {
     private var understandingTask: Task<Void, Never>?
     private var requestedLiveMode = "thinking"
     private var visualLiveMode = "idle"
+    /// Stall watchdog (live-found 2026-07-16): a mid-turn SSE socket can die
+    /// SILENTLY — no error, no FIN — leaving isStreaming=true forever while the
+    /// server finishes into the durable log. The owner sat on "কাজ করছি… · ১ ধাপ"
+    /// for minutes with the reply already in Postgres. Any applied batch bumps
+    /// this; the 12s poll compares against it and hands a stalled stream to the
+    /// EXISTING recovery path (durable replay), which was previously unreachable
+    /// here because every trigger bailed on `isStreaming && !reconnecting`.
+    private var lastLiveEventAt = Date()
+    /// No live event for this long while "streaming" ⇒ treat the socket as dead.
+    /// Generous on purpose: real turns emit thinking/tool events far more often,
+    /// and a false positive only costs one idempotent status GET + seq-deduped
+    /// replay attach — never a duplicate turn.
+    private let streamStallSeconds: TimeInterval = 45
 
     /// Stable visual state, including a minimum 2.08s understanding intake.
     /// Later SSE states are queued during that intake, then handed off smoothly.
@@ -1485,6 +1498,15 @@ final class AssistantVM {
                 // not only on app-resume (owner ask 2026-07-13, Claude-Code parity:
                 // approve → "করছি বস" line + working animation until the reply lands).
                 if !self.isStreaming { await self.recoverTurnState(trigger: "poll") }
+                // Stall watchdog — a silently-dead mid-turn socket (no error, no
+                // events) previously hung "কাজ করছি…" forever: every recovery
+                // trigger bailed because isStreaming looked healthy. Marking it
+                // `reconnecting` is truthful (glyph state, never an error toast)
+                // and unlocks the normal durable-replay recovery.
+                if self.isStreaming, !self.reconnecting,
+                   Date().timeIntervalSince(self.lastLiveEventAt) > self.streamStallSeconds {
+                    await self.recoverTurnState(trigger: "stall")
+                }
                 // One bounded global query keeps task count identical across
                 // chat sessions. Assign-on-change prevents needless main-view
                 // invalidation when the server state is unchanged.
@@ -1511,7 +1533,26 @@ final class AssistantVM {
     /// one recovery loop. UI transport state is never treated as server turn state.
     func recoverTurnState(trigger: String) async {
         guard let cid = conversationId else { return }
-        if isStreaming && !reconnecting { return }   // healthy live stream — nothing to recover
+        if isStreaming && !reconnecting {
+            // "Streaming" is CLIENT belief, not proof of a live socket: a mid-turn
+            // SSE connection can die silently, and this early-return made every
+            // recovery trigger trust it forever (owner-hit 2026-07-16 — reply sat
+            // finished in the durable log while the UI showed "কাজ করছি…" for
+            // minutes). If the stream has been silent too long, stop trusting it:
+            // flip to the truthful reconnect state and re-verify via turn-status.
+            // False positives are cheap — one idempotent GET plus a seq-deduped
+            // replay attach; a real live stream just keeps applying on top.
+            // 20s floor for foreground/active: comfortably past the 15s
+            // first-event watchdog, so a merely-slow first token (still covered
+            // by the direct path's own fallback) never triggers a parallel
+            // replay attach next to a healthy live socket.
+            let silent = Date().timeIntervalSince(lastLiveEventAt)
+            let limit: TimeInterval = trigger == "stall" ? 0
+                : trigger == "poll" ? streamStallSeconds : 20
+            if silent <= limit { return }
+            reconnecting = true
+            AlmaTurnLog.event("turn.streamStallDetected", "\(trigger) after \(Int(silent))s silent")
+        }
         if recoveryInFlight { return }
         recoveryInFlight = true
         defer { recoveryInFlight = false }
@@ -2149,6 +2190,7 @@ final class AssistantVM {
         let fallback = messages.first(where: { $0.id == messageId })?.modelSwitch?.fallbackModelId
         AlmaAgentTickHaptic.ownerSend()
         isStreaming = true
+        lastLiveEventAt = Date()
         thinkingLive = true
         beginUnderstanding()
         currentTurnId = nil
@@ -2192,6 +2234,7 @@ final class AssistantVM {
         }
         pendingFiles = []
         isStreaming = true
+        lastLiveEventAt = Date()   // stall clock starts at the send, not at first event
         thinkingLive = true
         beginUnderstanding()
         currentTurnId = nil
@@ -2411,6 +2454,8 @@ final class AssistantVM {
     /// per token. Every wire event has an explicit handler (roadmap 2.1) — unknown
     /// types were already telemetried at decode and are dropped knowingly.
     private func apply(_ events: [AgentTurnEvent]) {
+        // Stall watchdog heartbeat: ANY delivered batch proves the stream lives.
+        lastLiveEventAt = Date()
         var touchedStream = false
         for ev in events {
             switch ev {
