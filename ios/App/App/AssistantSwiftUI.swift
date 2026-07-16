@@ -1157,6 +1157,35 @@ final class AssistantVM {
     fileprivate var heartbeatFeed: AgentHeartbeatFeed?
     fileprivate var activeBackgroundTurns: [AgentActiveBackgroundTurn] = []
     fileprivate var backgroundAttention: [AgentBackgroundAttention] = []
+
+    /// ONE source of truth for "approvals waiting on the owner" (owner-hit
+    /// 2026-07-17: the footer said "1 Approval Waiting" but the sheet showed
+    /// nothing — label and sheet were reading different sources). Server list
+    /// (12s poll) UNION the pending confirm cards visible in this chat, deduped
+    /// by pendingActionId; a locally-decided card drops out instantly even if
+    /// the server list hasn't repolled yet. Build-73 behavior, one source.
+    fileprivate var mergedAttention: [AgentBackgroundAttention] {
+        var items = backgroundAttention
+        var ids = Set(items.map(\.id))
+        var decided = Set<String>()
+        for message in messages {
+            for card in message.confirmCards {
+                if card.status == "pending" {
+                    guard !ids.contains(card.id) else { continue }
+                    ids.insert(card.id)
+                    items.append(.init(
+                        id: card.id,
+                        conversationId: conversationId,
+                        type: "approval",
+                        summary: card.summary.split(separator: "\n").first.map(String.init) ?? card.summary,
+                        createdAt: ""))
+                } else {
+                    decided.insert(card.id)
+                }
+            }
+        }
+        return items.filter { !decided.contains($0.id) }
+    }
     private var usesBackgroundTaskDebugFixture = false
     var planDriveBusyPlanId: String?
     var dailyTodoBusyId: String?
@@ -7422,20 +7451,7 @@ private struct AgentBackgroundTasksAnchor: View {
     /// hit exactly that gap (card on screen, label still asleep, round 2).
     /// Local card status flips instantly on approve/reject, so the label also
     /// falls back to sleep with zero lag.
-    private var attentionCount: Int {
-        var ids = Set(vm.backgroundAttention.map(\.id))
-        for message in vm.messages {
-            for card in message.confirmCards {
-                if card.status == "pending" {
-                    ids.insert(card.id)
-                } else {
-                    // Just decided locally — the server list may lag a poll tick.
-                    ids.remove(card.id)
-                }
-            }
-        }
-        return ids.count
-    }
+    private var attentionCount: Int { vm.mergedAttention.count }
 
     private var label: String {
         let total = runningCount + attentionCount
@@ -7833,12 +7849,13 @@ private struct AgentBackgroundTasksSheet: View {
     }
 
     @ViewBuilder private func attentionSection(pal: AgentPalette) -> some View {
-        if !vm.backgroundAttention.isEmpty {
-            attentionHeader(pal: pal)
+        let attention = vm.mergedAttention
+        if !attention.isEmpty {
+            attentionHeader(pal: pal, count: attention.count)
             VStack(spacing: 0) {
-                ForEach(Array(vm.backgroundAttention.enumerated()), id: \.element.id) { index, item in
+                ForEach(Array(attention.enumerated()), id: \.element.id) { index, item in
                     attentionRow(item, pal: pal)
-                    if index < vm.backgroundAttention.count - 1 {
+                    if index < attention.count - 1 {
                         Divider().overlay(pal.borderSubtle).padding(.leading, 47)
                     }
                 }
@@ -7861,12 +7878,9 @@ private struct AgentBackgroundTasksSheet: View {
             // lazy and keyed directly by the durable duty/todo id so the live
             // countdown refresh cannot rebuild every row or create a SwiftUI
             // AttributeGraph/layout feedback loop.
-            let sheenId = runningItems.isEmpty
-                ? displayedTodos.first(where: { !["completed", "done", "skipped"].contains($0.status) })?.id
-                : nil
             LazyVStack(spacing: 0) {
                 ForEach(displayedTodos) { todo in
-                    todayTodoRow(todo, pal: pal, animateSheen: todo.id == sheenId)
+                    todayTodoRow(todo, pal: pal)
                     if todo.id != displayedTodos.last?.id {
                         Divider().overlay(pal.borderSubtle).padding(.leading, 47)
                     }
@@ -7898,7 +7912,7 @@ private struct AgentBackgroundTasksSheet: View {
         }
     }
 
-    private func attentionHeader(pal: AgentPalette) -> some View {
+    private func attentionHeader(pal: AgentPalette, count: Int) -> some View {
         HStack(spacing: 7) {
             Image(systemName: "exclamationmark.circle.fill")
                 .font(.system(size: 11, weight: .semibold))
@@ -7906,7 +7920,7 @@ private struct AgentBackgroundTasksSheet: View {
             Text("Needs attention")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(pal.mutedHi)
-            Text(almaBn(vm.backgroundAttention.count))
+            Text(almaBn(count))
                 .font(.system(size: 12, weight: .medium, design: .rounded))
                 .foregroundStyle(AgentPalette.coral)
                 .contentTransition(.numericText())
@@ -8000,8 +8014,7 @@ private struct AgentBackgroundTasksSheet: View {
         .accessibilityLabel("আজকের \(todayWork.count)টি কাজের মধ্যে \(completedTodoCount)টি শেষ")
     }
 
-    private func todayTodoRow(_ todo: AgentTodayWorkItem, pal: AgentPalette,
-                              animateSheen: Bool = false) -> some View {
+    private func todayTodoRow(_ todo: AgentTodayWorkItem, pal: AgentPalette) -> some View {
         let status = todo.status
         let running = status == "running" || status == "in_progress"
         let done = status == "completed" || status == "done"
@@ -8047,32 +8060,6 @@ private struct AgentBackgroundTasksSheet: View {
                 .contentTransition(.numericText())
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
-        .overlay {
-            // Same sheen as the Running rows (owner 2026-07-17): when the only
-            // live work is a pending/running duty row — e.g. the approval-chase
-            // task waiting on the owner — the visual focus lives HERE.
-            if animateSheen {
-                TimelineView(.animation(
-                    minimumInterval: 1.0 / 12.0,
-                    paused: reduceMotion
-                )) { timeline in
-                    GeometryReader { proxy in
-                        let duration = 2.4
-                        let phase = timeline.date.timeIntervalSinceReferenceDate
-                            .truncatingRemainder(dividingBy: duration) / duration
-                        let width = max(76, proxy.size.width * 0.34)
-                        LinearGradient(
-                            colors: [.clear, tint.opacity(0.08), Color.white.opacity(0.12), .clear],
-                            startPoint: .leading, endPoint: .trailing
-                        )
-                        .frame(width: width, height: proxy.size.height)
-                        .offset(x: -width + (proxy.size.width + width) * phase)
-                    }
-                }
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-            }
-        }
         .accessibilityElement(children: .combine)
     }
 
