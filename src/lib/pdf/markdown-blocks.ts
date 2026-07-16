@@ -12,6 +12,19 @@
 
 export type InlineSpan = { text: string; bold?: boolean }
 
+/**
+ * react-pdf's line-breaker can WEDGE the main thread on long unbreakable
+ * tokens (URLs, joined domain names) once a custom TTF is registered — the
+ * 2026-07-16 client-report freeze. A zero-width space every ~18 chars inside
+ * any 24+ char token gives the layout legal break points; invisible in the
+ * rendered PDF.
+ */
+export function softBreakLongTokens(text: string, max = 24, every = 18): string {
+  return text.replace(new RegExp(`\\S{${max},}`, 'g'), (tok) =>
+    tok.replace(new RegExp(`(.{${every}})`, 'g'), '$1​'),
+  )
+}
+
 export type MarkdownBlock =
   | { kind: 'heading'; level: 1 | 2 | 3; text: string }
   | { kind: 'paragraph'; spans: InlineSpan[] }
@@ -34,9 +47,13 @@ export function parseInline(text: string): InlineSpan[] {
     last = m.index + m[0].length
   }
   if (last < cleaned.length) spans.push({ text: cleaned.slice(last) })
-  // Residual single *italics* markers read as noise in a client PDF — drop them.
+  // Residual single *italics* markers read as noise in a client PDF — drop
+  // them; then soft-break long tokens (the 2026-07-16 layout-freeze guard).
   return spans
-    .map((s) => ({ ...s, text: s.text.replace(/(^|\s)\*([^*]+)\*(?=\s|$|[,.;:!?])/g, '$1$2') }))
+    .map((s) => ({
+      ...s,
+      text: softBreakLongTokens(s.text.replace(/(^|\s)\*([^*]+)\*(?=\s|$|[,.;:!?])/g, '$1$2')),
+    }))
     .filter((s) => s.text.length > 0)
 }
 
@@ -88,7 +105,7 @@ export function parseMarkdownBlocks(markdown: string): MarkdownBlock[] {
     if (h) {
       flushPara(); flushList()
       const level = Math.min(h[1].length, 3) as 1 | 2 | 3
-      blocks.push({ kind: 'heading', level, text: spansToText(parseInline(h[2])) })
+      blocks.push({ kind: 'heading', level, text: softBreakLongTokens(spansToText(parseInline(h[2]))) })
       continue
     }
 

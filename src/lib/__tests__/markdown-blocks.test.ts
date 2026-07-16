@@ -65,3 +65,14 @@ describe('parseMarkdownBlocks', () => {
     expect(parseMarkdownBlocks('   \n\n  ')).toEqual([])
   })
 })
+
+describe('softBreakLongTokens (2026-07-16 layout-freeze guard)', () => {
+  it('inserts zero-width breaks inside long tokens, leaves normal words alone', async () => {
+    const { softBreakLongTokens } = await import('@/lib/pdf/markdown-blocks')
+    const long = 'queenspabd-gulshanspaone-combined-seo-audit-report.md'
+    const out = softBreakLongTokens(`dekho ${long} ekhane`)
+    expect(out).toContain('​')
+    expect(out.replace(/​/g, '')).toBe(`dekho ${long} ekhane`)
+    expect(softBreakLongTokens('sadharon bangla bakko')).toBe('sadharon bangla bakko')
+  })
+})

@@ -20,7 +20,7 @@ import {
   auraTableStyles,
   type AuraPalette,
 } from './aura'
-import type { InlineSpan, MarkdownBlock } from '@/lib/pdf/markdown-blocks'
+import { softBreakLongTokens, type InlineSpan, type MarkdownBlock } from '@/lib/pdf/markdown-blocks'
 
 export interface ClientReportModel {
   title: string
@@ -148,7 +148,7 @@ export function ClientReportDocument({ model }: { model: ClientReportModel }) {
           meta={model.metaLines}
         />
         <Text style={{ fontSize: 14, fontWeight: 700, color: p.ink, marginBottom: 8, lineHeight: 1.4 }}>
-          {model.title}
+          {softBreakLongTokens(model.title)}
         </Text>
         <Blocks p={p} blocks={model.blocks} />
         <AuraFooter p={p} lines={[model.companyName ?? 'ALMA Digital']} pageLabel="Page" />
