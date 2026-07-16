@@ -32,7 +32,10 @@ enum AlmaStarburstMode: String, CaseIterable, Identifiable {
         case .understanding:
             return .init(periodMs: 6200, clusterMs: .infinity, boilInterval: 0.095, toolLike: false)
         case .thinking:
-            return .init(periodMs: 2100, clusterMs: 270, boilInterval: 0.095, toolLike: false)
+            // 1600 (was 2100): the owner wants the understanding→thinking cut to
+            // feel like a walker breaking into a run — the ~4x jump from the
+            // 6.2s/rev intake makes the speed change unmistakable.
+            return .init(periodMs: 1600, clusterMs: 270, boilInterval: 0.095, toolLike: false)
         case .writing:
             return .init(periodMs: 2200, clusterMs: 290, boilInterval: 0.090, toolLike: false)
         case .researching, .searching:
@@ -243,6 +246,10 @@ private final class StarburstAnimState {
     private(set) var rotation: Double = 0
     private(set) var elapsed: Double = 0
     private(set) var boilFrame = 0
+    /// Shown scale — chases the per-mode target (see tick), easing every
+    /// mode change instead of cutting. Starts small so a first appearance
+    /// blooms in rather than popping.
+    private(set) var grow: Double = 0.34
     private var velocity: Double = 0
     private var lastTick: TimeInterval?
     private var lastMode: AlmaStarburstMode?
@@ -265,6 +272,21 @@ private final class StarburstAnimState {
         let blend = 1 - exp(-dt * 4.8)
         velocity += (targetVelocity - velocity) * blend
         rotation = (rotation + velocity * dt).truncatingRemainder(dividingBy: .pi * 2)
+
+        // Scale target: understanding breathes small→big→small (cosine from the
+        // trough, so every entry starts small); every other mode is full size.
+        // The SHOWN scale chases the target exactly like velocity does — that
+        // one ease IS the mode-change fade (owner ask 2026-07-16: no hard cut),
+        // and in-mode it tracks the slow breath imperceptibly closely.
+        let growTarget: Double
+        if mode == .understanding {
+            let breathe = 0.5 - 0.5 * cos((elapsed / 2.4) * .pi * 2)
+            growTarget = 0.34 + 0.66 * breathe
+        } else {
+            growTarget = 1
+        }
+        grow += (growTarget - grow) * (1 - exp(-dt * 8.5))
+
         boilFrame = AlmaRayBurst.positiveModulo(
             Int(floor(elapsed / mode.config.boilInterval)),
             AlmaRayBurst.boil.count)
@@ -275,14 +297,6 @@ private final class StarburstAnimState {
         let config = mode.config
         let toolAmount = config.toolLike ? AlmaRayBurst.toolStarAmount(elapsed: elapsed) : 1
         let boilRow = AlmaRayBurst.boil[boilFrame]
-
-        // Understanding = the Claude-style intake bloom (owner spec 2026-07-16):
-        // the whole star GROWS from small while rotating slowly, then the
-        // thinking handoff raises the spin speed. elapsed resets on every mode
-        // change, so the bloom always plays from its start.
-        let grow: Double = mode == .understanding
-            ? 0.34 + 0.66 * AlmaRayBurst.smoothstep(min(1, elapsed / 1.15))
-            : 1
 
         var layer = ctx
         layer.translateBy(x: size.width / 2, y: size.height / 2)
@@ -411,6 +425,10 @@ struct AlmaStarburstLoader: View {
                 radius: size > 40 ? size * 0.10 : 2)
         .shadow(color: AlmaRayBurst.colors[4].opacity(mode == .idle ? 0.08 : 0.15),
                 radius: size > 40 ? size * 0.16 : 2.5)
+        // The aura circle + glow opacities are SwiftUI-side `mode` reads — fade
+        // them with the same feel as the canvas's own scale ease, so a mode
+        // change never hard-cuts any layer (owner ask 2026-07-16).
+        .animation(.easeInOut(duration: 0.35), value: mode)
         .accessibilityLabel(mode.verbs.first ?? "ALMA")
     }
 }
