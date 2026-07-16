@@ -55,6 +55,8 @@ import {
 import {
   verifyClaimsAgainstLedger,
   buildVerificationReminder,
+  detectMissingCardViolation,
+  detectProseChoiceViolation,
   MAX_VERIFY_RETRIES,
   type ToolLedgerEntry,
 } from '@/agent/lib/claim-verifier'
@@ -138,6 +140,15 @@ function providerToCostProvider(provider: string): CostProvider {
 // tool-round budget. Marketing is Qwen's own specialty — it must NOT hand the job
 // to a cheap DeepSeek worker. So it is told to wrap up and answer now with what it
 // already gathered. No delegation: marketing quality stays on Qwen.
+// After staging an approval card, the head must WAIT — the owner watched it
+// (2026-07-16 late) chain save_memory sprees and more tools BELOW its own
+// pending card, burning tokens on work that may be rejected. One card ⇒ the
+// decision is now the owner's; the turn wraps in one line and stops.
+const CARD_STAGED_WRAPUP_NUDGE =
+  'অনুমোদন কার্ড এখন Boss-এর সামনে। এই টার্নে আর কোনো টুল কল বা নতুন কাজ নয় — ' +
+  'এক লাইনে জানাও যে অনুমোদনের অপেক্ষায় আছ, তারপর থামো। ' +
+  'Boss সিদ্ধান্ত দিলে পরের টার্নে বাকিটা হবে।'
+
 const MARKETING_HEAD_WRAPUP_NUDGE =
   'টুল ব্যবহারের বাজেট শেষ। এখন আর নতুন টুল কল কোরো না। ' +
   'হাতে যা তথ্য আছে তা দিয়েই মার্কেটিং কাজটা নিজে শেষ করো এবং সংক্ষেপে চূড়ান্ত উত্তর দাও। ' +
@@ -889,8 +900,12 @@ async function* runAlternateProviderTurn(
   const delegateOnlyNeutral = neutralTools.filter((t) => t.name === 'delegate_to_specialist')
   let headToolRounds = 0
   let budgetNudgeSent = false
+  let cardStagedNudgeSent = false
   let deadlineNudgeSent = false
   let canceled = false
+  /// Confirm cards yielded this turn — precondition for the card-shape
+  /// verifiers (an emitted card legitimately carries the ask).
+  let confirmCardsEmitted = 0
   // Live-browser turns raise this cap (see BROWSER_TURN_MAX_ITERATIONS) — a real
   // UI task is 15–30 look→act rounds and must not die silently at the default cap.
   let maxIterations = MAX_TOOL_ITERATIONS
@@ -901,6 +916,7 @@ async function* runAlternateProviderTurn(
   if (actionGraph?.staged && actionGraph.pendingActionId) {
     maxIterations = 0
     timeline.push({ t: 'tool', name: 'log_expense', ok: true, input: { via: 'action_graph' }, result: actionGraph.summary })
+    confirmCardsEmitted++
     yield {
       type: 'confirm_card',
       pendingActionId: actionGraph.pendingActionId,
@@ -976,8 +992,11 @@ async function* runAlternateProviderTurn(
       // Models whose provider offers no tool-calling (e.g. Qwen 2.5 VL 72B on
       // OpenRouter) get a chat/vision-only turn — sending tool defs would 4xx
       // the request and bounce the owner to the cheap-head fallback.
+      // A staged approval card ends the working part of the turn: everything
+      // past it is spend on work the owner may reject (and it buries the card).
+      const cardStaged = confirmCardsEmitted > 0
       const iterationTools =
-        nearDeadline || overBudget || emptyRoundRetries >= 2 || !model.supportsTools
+        nearDeadline || overBudget || cardStaged || emptyRoundRetries >= 2 || !model.supportsTools
           ? []
           : premiumOverBudget
             ? delegateOnlyNeutral
@@ -1001,6 +1020,10 @@ async function* runAlternateProviderTurn(
       if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
+      }
+      if (cardStaged && !cardStagedNudgeSent) {
+        cardStagedNudgeSent = true
+        messages = [...messages, { role: 'user', content: CARD_STAGED_WRAPUP_NUDGE }]
       }
       if (!nearDeadline && premiumOverBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
@@ -1139,6 +1162,14 @@ async function* runAlternateProviderTurn(
             error: r.error ?? undefined,
           }))
           const violations = verifyClaimsAgainstLedger(iterationText.trim(), ledger)
+          // Card-shape checks (parity with core.ts — the cheap-head path never
+          // ran them, which is exactly where weak models break the HARD RULE):
+          // a promised-but-unemitted card, and the owner-hit 2026-07-16 case of
+          // an Option-A/B choice asked in prose with nothing to tap.
+          if (violations.length === 0 && emittedAskCards.length === 0 && confirmCardsEmitted === 0) {
+            violations.push(...detectMissingCardViolation(iterationText.trim()))
+            violations.push(...detectProseChoiceViolation(iterationText.trim()))
+          }
           if (violations.length > 0) {
             verifyRetries++
             yield {
@@ -1366,6 +1397,7 @@ async function* runAlternateProviderTurn(
               }).catch(() => {})
             }
             if (row?.status === 'pending') {
+              confirmCardsEmitted++
               yield {
                 type: 'confirm_card',
                 pendingActionId: d.pendingActionId,
@@ -1788,11 +1820,19 @@ async function* runAlternateProviderTurn(
     // to Sonnet (the expensive rescue that spiked cost). Guards: only when no answer
     // was streamed yet, and not already on the cheap head (prevents recursion loop).
     const cheapId = process.env.CHEAP_HEAD_MODEL_ID?.trim() || 'or-deepseek-v4-flash'
-    if (canRestartHead && model.id !== cheapId && isKnownModelId(cheapId)) {
-      const cheap = getModel(cheapId)
+    // When the CHEAP head is the one that died (owner-hit 2026-07-16: OpenRouter
+    // credits ran out → DeepSeek 402 → raw English error on screen, because the
+    // only ladder went expensive→cheap), climb the other way instead: the native
+    // Gemini head rides a DIFFERENT billing account than every or-* model, so a
+    // provider-credit outage on OpenRouter still gets an answer.
+    const rescueId = model.id === cheapId
+      ? (process.env.HEAVY_HEAD_MODEL_ID?.trim() || 'gemini-3.1-pro')
+      : cheapId
+    if (canRestartHead && model.id !== rescueId && isKnownModelId(rescueId)) {
+      const cheap = getModel(rescueId)
       if (cheap.provider !== 'anthropic' && cheap.supportsTools) {
         console.warn(
-          `[run-owner-turn] head ${model.id} failed pre-answer → falling back to ${cheapId}:`,
+          `[run-owner-turn] head ${model.id} failed pre-answer → falling back to ${rescueId}:`,
           err instanceof Error ? err.message : err,
         )
         // Persist the REAL head error before we swallow it into the fallback —
@@ -1808,7 +1848,7 @@ async function* runAlternateProviderTurn(
           variant: modelVariant(cheap),
           tier: 'light',
         }
-        yield* runAlternateProviderTurn(conversationId, cheapId, options, 'light', 0, 'cheap_fallback')
+        yield* runAlternateProviderTurn(conversationId, rescueId, options, 'light', 0, 'cheap_fallback')
         return
       }
     }

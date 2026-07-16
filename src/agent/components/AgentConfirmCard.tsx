@@ -8,6 +8,7 @@ import AgentWorkingDots from './AgentWorkingDots'
 import { notifyTodosChanged } from './AgentTodoContext'
 import { MobileModalPortal } from '@/components/mobile/MobileModalPortal'
 import { notifyError, notifySuccess, notifyWarning } from '@/lib/haptics'
+import { approvalSuccess, showPulseSuccess } from '@/lib/live-pulse'
 
 export interface PendingAction {
   id: string
@@ -159,6 +160,10 @@ export default function AgentConfirmCard({ action, onResolved, onUpdated, onQuic
       setPhase(decision === 'approve' ? 'approved' : 'rejected')
       if (decision === 'approve') notifySuccess()
       else notifyWarning()
+      // Flash the Dynamic Panel's success state — only now, after the server
+      // confirmed (spec §6.6). It falls back to authoritative live state on the
+      // next sync, so an outdated cache can never linger on the lock screen.
+      if (decision === 'approve') void showPulseSuccess(approvalSuccess())
       toast.success(decision === 'approve' ? 'অনুমোদিত ✓' : 'বাতিল করা হয়েছে')
       onResolved(decision === 'approve' ? 'approved' : 'rejected')
       // A resolved card may have cancelled/created a todo (e.g. todo_cancel) —

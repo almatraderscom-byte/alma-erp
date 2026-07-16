@@ -48,6 +48,8 @@ export type HeartbeatKind =
   | 'active'
   /** Head woke and parked something for the owner's approval. */
   | 'blocked'
+  /** Owner stopped an in-flight autonomous wake from Background Tasks. */
+  | 'stopped'
   /** Tick errored (recorded so the owner sees the gap, never silent). */
   | 'error'
 

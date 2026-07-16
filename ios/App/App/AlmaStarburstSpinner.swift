@@ -32,7 +32,10 @@ enum AlmaStarburstMode: String, CaseIterable, Identifiable {
         case .understanding:
             return .init(periodMs: 6200, clusterMs: .infinity, boilInterval: 0.095, toolLike: false)
         case .thinking:
-            return .init(periodMs: 2100, clusterMs: 270, boilInterval: 0.095, toolLike: false)
+            // 1600 (was 2100): the owner wants the understanding→thinking cut to
+            // feel like a walker breaking into a run — the ~4x jump from the
+            // 6.2s/rev intake makes the speed change unmistakable.
+            return .init(periodMs: 1600, clusterMs: 270, boilInterval: 0.095, toolLike: false)
         case .writing:
             return .init(periodMs: 2200, clusterMs: 290, boilInterval: 0.090, toolLike: false)
         case .researching, .searching:
@@ -132,12 +135,6 @@ enum AlmaRayBurst {
         return sin(.pi * smoothstep(adjusted))
     }
 
-    static func understandingRetraction(index: Int, elapsed: Double) -> Double {
-        let shifted = min(1, max(0, (elapsed - Double(index % 3) * 0.022) / 2.040))
-        if shifted < 0.46 { return smoothstep(shifted / 0.46) }
-        return 1 - smoothstep((shifted - 0.46) / 0.54)
-    }
-
     static func positiveModulo(_ value: Int, _ divisor: Int) -> Int {
         ((value % divisor) + divisor) % divisor
     }
@@ -153,30 +150,45 @@ struct AlmaShimmerWordmark: View {
     var size: CGFloat = 13
     var weight: Font.Weight = .semibold
     var tracking: CGFloat = 2.1
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let period: Double = 1.8
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: false)) { timeline in
-            let cycle = timeline.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: 2.8) / 2.8
-            let leading = -1.15 + cycle * 2.65
-            Text("ALMA")
-                .font(.system(size: size, weight: weight))
-                .tracking(tracking)
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [
-                            AlmaRayBurst.colors[0],
-                            AlmaRayBurst.colors[1],
-                            AlmaRayBurst.colors[2],
-                            Color.white,
-                            AlmaRayBurst.colors[3],
-                            AlmaRayBurst.colors[4],
-                        ],
-                        startPoint: UnitPoint(x: leading, y: 0.5),
-                        endPoint: UnitPoint(x: leading + 1.18, y: 0.5)))
-                .shadow(color: AlmaRayBurst.colors[2].opacity(0.24),
-                        radius: max(1.5, size * 0.16))
-        }
+        Text("ALMA")
+            .font(.system(size: size, weight: weight))
+            .tracking(tracking)
+            .foregroundStyle(
+                LinearGradient(
+                    colors: AlmaRayBurst.colors,
+                    startPoint: .leading,
+                    endPoint: .trailing))
+            .overlay {
+                if !reduceMotion {
+                    GeometryReader { g in
+                        TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
+                            let phase = context.date.timeIntervalSinceReferenceDate
+                                .truncatingRemainder(dividingBy: Self.period) / Self.period
+                            let band = max(36, g.size.width * 0.48)
+                            let travel = g.size.width + band * 2
+                            LinearGradient(
+                                colors: [.clear, .white.opacity(0.95), .clear],
+                                startPoint: .leading,
+                                endPoint: .trailing)
+                                .frame(width: band)
+                                .offset(x: -band + travel * phase)
+                        }
+                    }
+                    .mask(
+                        Text("ALMA")
+                            .font(.system(size: size, weight: weight))
+                            .tracking(tracking)
+                    )
+                    .allowsHitTesting(false)
+                }
+            }
+            .shadow(color: AlmaRayBurst.colors[2].opacity(0.20),
+                    radius: max(1.5, size * 0.16))
         .accessibilityLabel("ALMA")
     }
 }
@@ -205,10 +217,24 @@ enum AlmaAgentTickHaptic {
         soft.prepare()
     }
 
+    /// Owner-initiated sends should feel immediate even after a long idle period.
+    static func ownerSend() {
+        medium.prepare()
+        medium.impactOccurred(intensity: 0.72)
+        medium.prepare()
+    }
+
+    static func turnCompleted() {
+        settleThud()
+    }
+
     static func settleThud() {
+        medium.prepare()
+        light.prepare()
         medium.impactOccurred(intensity: 0.65)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) {
             light.impactOccurred(intensity: 0.5)
+            light.prepare()
         }
     }
 }
@@ -220,6 +246,10 @@ private final class StarburstAnimState {
     private(set) var rotation: Double = 0
     private(set) var elapsed: Double = 0
     private(set) var boilFrame = 0
+    /// Shown scale — chases the per-mode target (see tick), easing every
+    /// mode change instead of cutting. Starts small so a first appearance
+    /// blooms in rather than popping.
+    private(set) var grow: Double = 0.34
     private var velocity: Double = 0
     private var lastTick: TimeInterval?
     private var lastMode: AlmaStarburstMode?
@@ -242,6 +272,21 @@ private final class StarburstAnimState {
         let blend = 1 - exp(-dt * 4.8)
         velocity += (targetVelocity - velocity) * blend
         rotation = (rotation + velocity * dt).truncatingRemainder(dividingBy: .pi * 2)
+
+        // Scale target: understanding breathes small→big→small (cosine from the
+        // trough, so every entry starts small); every other mode is full size.
+        // The SHOWN scale chases the target exactly like velocity does — that
+        // one ease IS the mode-change fade (owner ask 2026-07-16: no hard cut),
+        // and in-mode it tracks the slow breath imperceptibly closely.
+        let growTarget: Double
+        if mode == .understanding {
+            let breathe = 0.5 - 0.5 * cos((elapsed / 2.4) * .pi * 2)
+            growTarget = 0.34 + 0.66 * breathe
+        } else {
+            growTarget = 1
+        }
+        grow += (growTarget - grow) * (1 - exp(-dt * 8.5))
+
         boilFrame = AlmaRayBurst.positiveModulo(
             Int(floor(elapsed / mode.config.boilInterval)),
             AlmaRayBurst.boil.count)
@@ -256,7 +301,7 @@ private final class StarburstAnimState {
         var layer = ctx
         layer.translateBy(x: size.width / 2, y: size.height / 2)
         layer.rotate(by: .radians(rotation))
-        layer.scaleBy(x: unit, y: unit)
+        layer.scaleBy(x: unit * grow, y: unit * grow)
 
         for index in 0..<12 {
             let boilScale: Double = mode == .idle ? 0.45 : config.toolLike ? 0.28 : 1
@@ -272,14 +317,15 @@ private final class StarburstAnimState {
                 retract = AlmaRayBurst.clusterRetraction(
                     index: index, elapsed: elapsed, durationMs: config.clusterMs)
                     * AlmaRayBurst.smoothstep(elapsed / 0.520)
-            } else if mode == .understanding {
-                retract = AlmaRayBurst.understandingRetraction(index: index, elapsed: elapsed)
             } else {
+                // Understanding no longer retracts rays — the whole-star bloom
+                // (grow-in above) IS the intake gesture now; retracting while
+                // tiny read as noise.
                 retract = 0
             }
 
             let starInner = 5.5
-            let targetOuter = mode == .understanding ? 18 : Double(AlmaRayBurst.collapsed[index])
+            let targetOuter = Double(AlmaRayBurst.collapsed[index])
             let fixedOuter = Double(AlmaRayBurst.outer[index])
             let starOuter = fixedOuter + (targetOuter - fixedOuter) * retract
             let ringRadius = 31.5
@@ -333,6 +379,7 @@ struct AlmaStarburstLoader: View {
     let mode: AlmaStarburstMode
     var size: CGFloat = 22
     @State private var anim = StarburstAnimState()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var box: CGFloat { (size * 1.48).rounded() }
 
@@ -352,7 +399,18 @@ struct AlmaStarburstLoader: View {
                 .frame(width: size * 1.08, height: size * 1.08)
                 .blur(radius: max(1.5, size * 0.12))
 
-            TimelineView(.animation(minimumInterval: 1 / 60, paused: false)) { timeline in
+            // Build-73 behavior restored (owner-verified static loader 2026-07-16):
+            // NEVER pause this schedule on mode — a `paused:` flip is exactly the
+            // SwiftUI path that fails to re-arm after backgrounding/mode churn in
+            // this UIKit-hosted chat, which froze the active starburst while the
+            // neighbouring pause-less shimmer kept moving. Idle stillness comes
+            // from the physics (target velocity 0), like the shipped build 73 —
+            // an idle canvas redraws an identical frame at trivial cost. The only
+            // legitimate pause input is Reduce Motion.
+            TimelineView(.animation(
+                minimumInterval: 1 / 30,
+                paused: reduceMotion
+            )) { timeline in
                 Canvas { ctx, canvasSize in
                     anim.tick(mode: mode, now: timeline.date.timeIntervalSinceReferenceDate)
                     var inner = ctx
@@ -367,6 +425,10 @@ struct AlmaStarburstLoader: View {
                 radius: size > 40 ? size * 0.10 : 2)
         .shadow(color: AlmaRayBurst.colors[4].opacity(mode == .idle ? 0.08 : 0.15),
                 radius: size > 40 ? size * 0.16 : 2.5)
+        // The aura circle + glow opacities are SwiftUI-side `mode` reads — fade
+        // them with the same feel as the canvas's own scale ease, so a mode
+        // change never hard-cuts any layer (owner ask 2026-07-16).
+        .animation(.easeInOut(duration: 0.35), value: mode)
         .accessibilityLabel(mode.verbs.first ?? "ALMA")
     }
 }

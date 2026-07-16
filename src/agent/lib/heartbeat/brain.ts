@@ -41,7 +41,13 @@ import { mirrorDutyTick } from '@/agent/lib/graph/duty-run-graph'
 import { getModel, isKnownModelId, DEFAULT_MODEL_ID } from '@/agent/lib/models/registry'
 import type { AgentEvent } from '@/agent/lib/core'
 import { getOwnerSessionPointer } from '@/agent/lib/owner-session'
-import { getLatestTurn } from '@/agent/lib/turn-status'
+import {
+  createTurn,
+  finalizeTurnIfRunning,
+  getLatestTurn,
+  getTurnStatus,
+  linkTurnUserMessage,
+} from '@/agent/lib/turn-status'
 import { HEARTBEAT_WAKE_SENTINEL } from './wake-marker'
 import {
   recordHeartbeat,
@@ -258,15 +264,22 @@ function heartbeatHeadModelId(): string {
 async function wakeHead(
   pulse: HeartbeatPulse,
   now: Date,
-): Promise<{ kind: 'active' | 'blocked' | 'error'; summary: string; costUsd: number; conversationId?: string }> {
+): Promise<{ kind: 'active' | 'blocked' | 'stopped' | 'error'; summary: string; costUsd: number; conversationId?: string }> {
   let conversationId: string
+  let turnId: string | null = null
   try {
     conversationId = (await resolveWakeConversation(now)).id
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (prisma as any).agentMessage.create({
+    const seeded = await (prisma as any).agentMessage.create({
       data: { conversationId, role: 'user', content: [{ type: 'text', text: buildHeartbeatDirective(pulse) }] },
+      select: { id: true },
     })
+    // Reuse the exact durable lifecycle as owner chat turns. This makes a live
+    // self-wake visible and stoppable from every native chat session.
+    turnId = await createTurn(conversationId, { executionMode: 'inline' })
+    await linkTurnUserMessage(turnId, seeded.id)
   } catch (err) {
+    await finalizeTurnIfRunning(turnId, 'error')
     await captureAgentError(err, 'heartbeat_brain', { route: 'heartbeat:seed' })
     return { kind: 'error', summary: 'হার্টবিট চালু করা যায়নি (থ্রেড তৈরি ব্যর্থ)।', costUsd: 0 }
   }
@@ -284,6 +297,7 @@ async function wakeHead(
       // Owner decision: the autonomous heartbeat thinks on the cheap head (DeepSeek),
       // not Sonnet. Explicit id ⇒ head router runs exactly this model (no triage).
       modelId: heartbeatHeadModelId(),
+      turnId,
     })
     for await (const ev of stream) {
       switch (ev.type) {
@@ -313,10 +327,20 @@ async function wakeHead(
   }
 
   const clean = summary.trim()
+  if (turnId && (await getTurnStatus(turnId)) === 'canceled') {
+    return {
+      kind: 'stopped',
+      summary: 'Owner Background Tasks থেকে self-wakeup বন্ধ করেছেন।',
+      costUsd,
+      conversationId,
+    }
+  }
   if (error && !clean) {
+    await finalizeTurnIfRunning(turnId, 'error')
     await captureAgentError(new Error(error), 'heartbeat_brain', { route: 'heartbeat:turn' })
     return { kind: 'error', summary: `হার্টবিট সম্পূর্ণ হয়নি — ${error}`, costUsd, conversationId }
   }
+  await finalizeTurnIfRunning(turnId, 'done')
   return {
     kind: blocked ? 'blocked' : 'active',
     summary: clean || (blocked ? 'একটি কাজ আপনার অনুমোদনের জন্য পাঠিয়েছি।' : 'দেখে নিলাম — আলাদা ব্যবস্থার দরকার পড়েনি।'),
