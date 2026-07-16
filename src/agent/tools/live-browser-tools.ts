@@ -966,6 +966,53 @@ const live_browser_trust: AgentTool = {
   },
 }
 
+const browser_diagnose: AgentTool = {
+  name: 'browser_diagnose',
+  description:
+    'Phase 48 — classify a browser/web failure honestly: owner-fixable (re-login, permission) vs vendor/platform ' +
+    '(5xx, outage — we diagnose, we cannot fix their infrastructure) vs our-bug (broken selector, bad request), ' +
+    'with retryability and a Bangla playbook. Feed it the raw error text from a failed task/step.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      error: { type: 'string', description: 'Raw error text from the failed browser step/task' },
+    },
+    required: ['error'],
+  },
+  handler: async (input) => {
+    try {
+      const { diagnoseBrowserFailure } = await import('@/agent/lib/browser/diagnostics')
+      return { success: true, data: diagnoseBrowserFailure(String(input.error ?? '')) }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
+const growth_control_room: AgentTool = {
+  name: 'growth_control_room',
+  description:
+    'ONE joined growth picture (read-only): approved brief + running/draft experiments + verified learnings + recent ' +
+    'ads changes (changelog) + content-calendar health + measurement truth (gaps, thin-data) + CAPI pipeline + pending ' +
+    'approvals. Each section degrades independently (available:false) — a broken source never hides the rest. ' +
+    'Use this before weekly decisions instead of six separate reports.',
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      windowDays: { type: 'number', description: 'Lookback 1–30 days (default 7)' },
+    },
+  },
+  handler: async (input) => {
+    try {
+      const { buildGrowthControlRoom } = await import('@/agent/lib/marketing/growth-control-room')
+      const days = Math.min(Math.max(Number(input.windowDays ?? 7), 1), 30)
+      return { success: true, data: await buildGrowthControlRoom(days) }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
 export const LIVE_BROWSER_TOOLS: AgentTool[] = [
   set_live_browser,
   live_browser_pair,
@@ -973,4 +1020,6 @@ export const LIVE_BROWSER_TOOLS: AgentTool[] = [
   live_browser_look,
   live_browser_act,
   live_browser_trust,
+  browser_diagnose,
+  growth_control_room,
 ]

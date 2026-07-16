@@ -39,6 +39,12 @@ export interface LiveBrowserStep {
   /** look: how much of the page text the model actually received. */
   textRead: number | null
   ok: boolean
+  /**
+   * Phase 48: true when the step's outcome was independently verified against
+   * explicit success criteria (end-state re-read), false when verification
+   * failed, null/undefined when the step declared no criteria.
+   */
+  verified?: boolean | null
   /** Stamped by the graph node — identifies the post-node checkpoint. */
   stepNo?: number
 }

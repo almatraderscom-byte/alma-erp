@@ -10,7 +10,13 @@
  * error even if the browser binary is missing on the host.
  */
 
-const STEP_ACTIONS = new Set(['goto', 'click', 'type', 'press', 'extract', 'screenshot', 'wait'])
+import { summarizeConsole, summarizeNetwork, classifyFailure, evaluateSuccessCriteria } from './diagnostics.mjs'
+
+const STEP_ACTIONS = new Set([
+  'goto', 'click', 'type', 'press', 'extract', 'screenshot', 'wait',
+  // Phase 48 coordinate/diagnostic primitives
+  'click_xy', 'double_click', 'move', 'drag', 'scroll', 'zoom',
+])
 const TASK_TIMEOUT_MS = 90_000
 const NAV_TIMEOUT_MS = 30_000
 const MAX_SHOT_B64 = 350_000 // ~260KB image — keep the result JSON small.
@@ -46,6 +52,9 @@ export async function runBrowserTask(payload) {
   const steps = Array.isArray(payload?.steps) ? payload.steps : []
   let browser
   const deadline = Date.now() + TASK_TIMEOUT_MS
+  // Declared out here so the catch-path diagnostics never hit a TDZ reference.
+  const consoleEntries = []
+  const networkEntries = []
 
   try {
     browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] })
@@ -56,6 +65,26 @@ export async function runBrowserTask(payload) {
     })
     const page = await context.newPage()
     page.setDefaultTimeout(NAV_TIMEOUT_MS)
+
+    // Phase 48 — guarded diagnostics collection (read-only observers).
+    page.on('console', (msg) => {
+      if (consoleEntries.length < 200) consoleEntries.push({ type: msg.type(), text: msg.text() })
+    })
+    page.on('response', (res) => {
+      if (networkEntries.length >= 300) return
+      const status = res.status()
+      if (status >= 300) {
+        networkEntries.push({ url: res.url(), status, location: status < 400 ? res.headers()['location'] ?? null : null })
+      }
+    })
+    page.on('requestfailed', (req) => {
+      if (networkEntries.length < 300) networkEntries.push({ url: req.url(), failed: true, errorText: req.failure()?.errorText ?? null })
+    })
+    // The autonomous operator NEVER downloads files — cancel + log.
+    page.on('download', (dl) => {
+      result.log.push(`download BLOCKED: ${dl.suggestedFilename()} — operator does not download files`)
+      dl.cancel().catch(() => {})
+    })
 
     for (let i = 0; i < steps.length; i++) {
       if (Date.now() > deadline) throw new Error('task_timeout')
@@ -112,6 +141,53 @@ export async function runBrowserTask(payload) {
             result.screenshots.push({ step: i + 1, note: `screenshot too large (${b64.length} b64 chars), dropped` })
           }
           result.log.push(`#${i + 1} screenshot`)
+        } else if (action === 'click_xy') {
+          await page.mouse.click(Number(step.x), Number(step.y))
+          result.log.push(`#${i + 1} click_xy (${step.x},${step.y})`)
+        } else if (action === 'double_click') {
+          if (step.x !== undefined && step.y !== undefined) {
+            await page.mouse.dblclick(Number(step.x), Number(step.y))
+            result.log.push(`#${i + 1} double_click (${step.x},${step.y})`)
+          } else {
+            const loc = locator(page, step)
+            if (!loc) throw new Error('double_click needs x/y or selector/text')
+            await loc.dblclick({ timeout: NAV_TIMEOUT_MS })
+            result.log.push(`#${i + 1} double_click ${step.selector || step.text}`)
+          }
+        } else if (action === 'move') {
+          await page.mouse.move(Number(step.x), Number(step.y))
+          result.log.push(`#${i + 1} move (${step.x},${step.y})`)
+        } else if (action === 'drag') {
+          // Robust drag: move → down → stepped moves → up (some UIs need intermediate events).
+          const { x, y, toX, toY } = step
+          await page.mouse.move(Number(x), Number(y))
+          await page.mouse.down()
+          const steps = 8
+          for (let k = 1; k <= steps; k++) {
+            await page.mouse.move(
+              Number(x) + ((Number(toX) - Number(x)) * k) / steps,
+              Number(y) + ((Number(toY) - Number(y)) * k) / steps,
+            )
+          }
+          await page.mouse.up()
+          result.log.push(`#${i + 1} drag (${x},${y})→(${toX},${toY})`)
+        } else if (action === 'scroll') {
+          await page.mouse.wheel(0, Number(step.deltaY ?? 0))
+          result.log.push(`#${i + 1} scroll ${step.deltaY}px`)
+        } else if (action === 'zoom') {
+          const r = step.region ?? {}
+          const buf = await page.screenshot({
+            type: 'jpeg',
+            quality: 70,
+            clip: { x: Number(r.x), y: Number(r.y), width: Number(r.width), height: Number(r.height) },
+          })
+          const b64 = buf.toString('base64')
+          if (b64.length <= MAX_SHOT_B64) {
+            result.screenshots.push({ step: i + 1, dataUrl: `data:image/jpeg;base64,${b64}`, note: `zoom ${JSON.stringify(r)}` })
+          } else {
+            result.screenshots.push({ step: i + 1, note: 'zoom screenshot too large, dropped' })
+          }
+          result.log.push(`#${i + 1} zoom ${JSON.stringify(r)}`)
         }
       } catch (stepErr) {
         const msg = stepErr instanceof Error ? stepErr.message : String(stepErr)
@@ -120,10 +196,47 @@ export async function runBrowserTask(payload) {
       }
     }
 
-    result.ok = true
+    // Phase 48 — independent final-state re-read + explicit success criteria.
+    // A step log alone never proves success; we re-read where we ended up.
+    try {
+      const finalUrl = page.url()
+      const visibleText = (await page.locator('body').innerText().catch(() => '')).slice(0, 20_000)
+      const criteria = Array.isArray(payload?.successCriteria) ? payload.successCriteria : []
+      const presentSelectors = []
+      for (const c of criteria) {
+        if (c?.kind === 'selector_exists' && c.selector) {
+          const count = await page.locator(c.selector).count().catch(() => 0)
+          if (count > 0) presentSelectors.push(c.selector)
+        }
+      }
+      result.finalState = { url: finalUrl, textLength: visibleText.length }
+      if (criteria.length > 0) {
+        result.criteria = evaluateSuccessCriteria(criteria, { url: finalUrl, visibleText, presentSelectors })
+        result.log.push(
+          result.criteria.passed
+            ? `success criteria: ${criteria.length}/${criteria.length} PASSED (final state re-read)`
+            : `success criteria FAILED: ${result.criteria.results.filter((r) => !r.passed).map((r) => r.detail).join('; ')}`,
+        )
+      }
+      result.diagnostics = {
+        console: summarizeConsole(consoleEntries),
+        network: summarizeNetwork(networkEntries),
+      }
+    } catch (verifyErr) {
+      result.log.push(`final-state verification failed: ${verifyErr.message}`)
+    }
+
+    // ok = steps ran AND (no criteria, or criteria passed).
+    result.ok = !result.criteria || result.criteria.passed === true
+    if (!result.ok) result.error = 'success_criteria_failed'
     return result
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err)
+    result.failureDiagnosis = classifyFailure(result.error)
+    result.diagnostics = {
+      console: summarizeConsole(consoleEntries),
+      network: summarizeNetwork(networkEntries),
+    }
     return result
   } finally {
     if (browser) await browser.close().catch(() => {})

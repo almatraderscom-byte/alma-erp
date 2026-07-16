@@ -13,6 +13,7 @@
  *   • No credential persistence here — that is later-phase work.
  */
 import { prisma } from '@/lib/prisma'
+import { validateCriteria } from '@/agent/lib/browser/success-criteria'
 
 export const BROWSER_ACTION_TYPE = 'browser_action'
 
@@ -27,6 +28,13 @@ export const BROWSER_STEP_ACTIONS = [
   'extract',
   'screenshot',
   'wait',
+  // Phase 48 — coordinate/diagnostic primitives (Playwright runner supports them)
+  'click_xy',
+  'double_click',
+  'move',
+  'drag',
+  'scroll',
+  'zoom',
 ] as const
 
 export type BrowserStepAction = (typeof BROWSER_STEP_ACTIONS)[number]
@@ -47,6 +55,16 @@ export interface BrowserStep {
   ms?: number
   /** extract: what to pull — visible text (default) or raw html. */
   what?: 'text' | 'html'
+  /** click_xy/double_click/move/drag: viewport coordinates. */
+  x?: number
+  y?: number
+  /** drag: end coordinates. */
+  toX?: number
+  toY?: number
+  /** scroll: wheel delta in px (positive = down). */
+  deltaY?: number
+  /** zoom: clip region for a zoomed screenshot. */
+  region?: { x: number; y: number; width: number; height: number }
 }
 
 export interface BrowserTaskPayload {
@@ -57,6 +75,11 @@ export interface BrowserTaskPayload {
   /** Optional first URL (convenience — equivalent to a leading goto step). */
   startUrl?: string
   conversationId?: string | null
+  /**
+   * Phase 48: explicit end-state criteria. The runner independently re-reads
+   * the final page and evaluates these — a step log alone never proves success.
+   */
+  successCriteria?: import('@/agent/lib/browser/success-criteria').SuccessCriterion[]
 }
 
 const MAX_STEPS = 40
@@ -217,12 +240,49 @@ export function normalizeBrowserTask(input: Record<string, unknown>): Normalized
     }
     if (r.what !== undefined) step.what = String(r.what) === 'html' ? 'html' : 'text'
 
+    // Phase 48 — coordinate fields (bounded to a sane viewport range).
+    const coord = (v: unknown): number | undefined => {
+      const n = Number(v)
+      return Number.isFinite(n) && n >= 0 && n <= 10_000 ? Math.round(n) : undefined
+    }
+    if (r.x !== undefined) step.x = coord(r.x)
+    if (r.y !== undefined) step.y = coord(r.y)
+    if (r.toX !== undefined) step.toX = coord(r.toX)
+    if (r.toY !== undefined) step.toY = coord(r.toY)
+    if (r.deltaY !== undefined) {
+      const d = Number(r.deltaY)
+      if (Number.isFinite(d)) step.deltaY = Math.max(-10_000, Math.min(10_000, Math.round(d)))
+    }
+    if (r.region !== undefined && r.region && typeof r.region === 'object') {
+      const reg = r.region as Record<string, unknown>
+      const x = coord(reg.x)
+      const y = coord(reg.y)
+      const width = coord(reg.width)
+      const height = coord(reg.height)
+      if (x !== undefined && y !== undefined && width && height) step.region = { x, y, width, height }
+    }
+
     if (action === 'goto' && !step.url) return { ok: false, error: 'goto step requires url' }
     if (action === 'type' && step.value === undefined) {
       return { ok: false, error: 'type step requires value' }
     }
     if ((action === 'click' || action === 'type') && !step.selector && !step.text) {
       return { ok: false, error: `${action} step requires selector or text` }
+    }
+    if ((action === 'click_xy' || action === 'move') && (step.x === undefined || step.y === undefined)) {
+      return { ok: false, error: `${action} step requires x and y` }
+    }
+    if (action === 'double_click' && step.x === undefined && step.y === undefined && !step.selector && !step.text) {
+      return { ok: false, error: 'double_click step requires x/y or selector/text' }
+    }
+    if (action === 'drag' && (step.x === undefined || step.y === undefined || step.toX === undefined || step.toY === undefined)) {
+      return { ok: false, error: 'drag step requires x, y, toX, toY' }
+    }
+    if (action === 'scroll' && step.deltaY === undefined) {
+      return { ok: false, error: 'scroll step requires deltaY' }
+    }
+    if (action === 'zoom' && !step.region) {
+      return { ok: false, error: 'zoom step requires region {x,y,width,height}' }
     }
 
     steps.push(step)
@@ -235,7 +295,16 @@ export function normalizeBrowserTask(input: Record<string, unknown>): Normalized
   }
 
   const conversationId = input.conversationId ? String(input.conversationId) : null
-  return { ok: true, payload: { goal, steps, startUrl, conversationId } }
+
+  // Phase 48 — optional explicit success criteria (validated when supplied).
+  let successCriteria: BrowserTaskPayload['successCriteria']
+  if (input.successCriteria !== undefined) {
+    const v = validateCriteria(input.successCriteria)
+    if (!v.ok) return { ok: false, error: `successCriteria invalid: ${v.errors.join('; ')}` }
+    successCriteria = input.successCriteria as BrowserTaskPayload['successCriteria']
+  }
+
+  return { ok: true, payload: { goal, steps, startUrl, conversationId, ...(successCriteria ? { successCriteria } : {}) } }
 }
 
 /** Owner-facing Bangla summary for the approval card. */
@@ -250,6 +319,12 @@ export function summarizeBrowserTask(payload: BrowserTaskPayload): string {
     extract: 'তথ্য নেবে',
     screenshot: 'স্ক্রিনশট নেবে',
     wait: 'অপেক্ষা করবে',
+    click_xy: 'কোঅর্ডিনেটে ক্লিক করবে',
+    double_click: 'ডাবল-ক্লিক করবে',
+    move: 'মাউস সরাবে',
+    drag: 'টেনে ছাড়বে',
+    scroll: 'স্ক্রল করবে',
+    zoom: 'জুম-স্ক্রিনশট নেবে',
   }
   payload.steps.slice(0, 12).forEach((s, i) => {
     const detail =
@@ -257,10 +332,19 @@ export function summarizeBrowserTask(payload: BrowserTaskPayload): string {
         ? s.url
         : s.action === 'type'
           ? `${s.selector ?? s.text ?? ''} ← "${(s.value ?? '').slice(0, 30)}"`
-          : s.selector || s.text || s.key || (s.ms ? `${s.ms}ms` : '')
+          : s.action === 'click_xy' || s.action === 'move'
+            ? `(${s.x},${s.y})`
+            : s.action === 'drag'
+              ? `(${s.x},${s.y})→(${s.toX},${s.toY})`
+              : s.action === 'scroll'
+                ? `${s.deltaY}px`
+                : s.selector || s.text || s.key || (s.ms ? `${s.ms}ms` : '')
     lines.push(`${i + 1}. ${stepLabels[s.action]}${detail ? `: ${detail}` : ''}`)
   })
   if (payload.steps.length > 12) lines.push(`… আরও ${payload.steps.length - 12}টি ধাপ`)
+  if (payload.successCriteria?.length) {
+    lines.push(`✅ সফলতার শর্ত: ${payload.successCriteria.length}টি (শেষ অবস্থা re-read করে যাচাই হবে)`)
+  }
   if (isCriticalBrowserTask(payload)) {
     lines.push('')
     lines.push('⚠️ এই টাস্কে টাকা/অপরিবর্তনীয় কিছু থাকতে পারে — অনুমতি দেওয়ার আগে ভালো করে দেখুন, Boss।')
