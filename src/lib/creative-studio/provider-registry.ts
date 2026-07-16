@@ -92,7 +92,7 @@ export const STUDIO_ENGINES: StudioEngine[] = [
     singlePersonOnly: true,
     requiresEnv: 'FAL_KEY',
     settingsFlag: CS_FAL_ENABLED_KEY,
-    runnable: false, // CS6 wires it
+    runnable: true, // CS6: wired end to end (single Try-On only)
     approxCost: '~$0.075/generation',
   },
   {
@@ -106,7 +106,7 @@ export const STUDIO_ENGINES: StudioEngine[] = [
     singlePersonOnly: true,
     requiresEnv: 'FAL_KEY',
     settingsFlag: CS_IDM_VTON_ENABLED_KEY,
-    runnable: false, // CS6 wires it
+    runnable: true, // CS6: wired end to end (single Try-On only, opt-in)
     warningBn:
       'পরীক্ষামূলক (research-only) ইঞ্জিন — ব্যবসায়িক ব্যবহারে লাইসেন্স ঝুঁকি আছে। ফলাফল নিজে যাচাই না করে পাবলিশ করবেন না।',
   },
@@ -165,6 +165,25 @@ export function normalizeSingleVtonDefault(value: string | null | undefined): St
   return SINGLE_VTON_ENGINE_IDS.includes(value as StudioEngineId)
     ? (value as StudioEngineId)
     : 'fashn'
+}
+
+/** CS6 — the two Fal-backed VTON engines an owner can pick for single Try-On. */
+export const FAL_VTON_ENGINE_IDS: readonly StudioEngineId[] = ['fal_fashn_v16', 'fal_idm_vton']
+
+export function isFalVtonEngine(id: string | null | undefined): id is 'fal_fashn_v16' | 'fal_idm_vton' {
+  return FAL_VTON_ENGINE_IDS.includes(id as StudioEngineId)
+}
+
+/**
+ * CS6 — cat-vton garment placement classes (owner-locked mapping, roadmap §CS6):
+ * panjabi/long kurta/one-piece → overall; koti/waistcoat → outer;
+ * pajama/bottom-only → lower; tunic/top-only → upper.
+ */
+export type VtonClothType = 'overall' | 'upper' | 'lower' | 'outer'
+export const VTON_CLOTH_TYPES: readonly VtonClothType[] = ['overall', 'upper', 'lower', 'outer']
+
+export function isVtonClothType(v: string | null | undefined): v is VtonClothType {
+  return VTON_CLOTH_TYPES.includes(v as VtonClothType)
 }
 
 /**

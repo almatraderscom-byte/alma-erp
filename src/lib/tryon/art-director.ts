@@ -369,6 +369,46 @@ export function buildArtDirectorPrompt(opts: {
     .join(' ')
 }
 
+/**
+ * CS6 — map the classified garment type onto the cat-vton placement class
+ * (owner-locked, roadmap §CS6): panjabi/long kurta/one-piece → overall;
+ * koti/waistcoat → outer; bottom-only → lower; tunic/top-only → upper.
+ * Our catalogue is panjabi-first, so everything long defaults to overall.
+ * `uncertain` tells the UI to surface the owner-visible override.
+ */
+export function mapGarmentToVtonClothType(attrs: GarmentAttrs | null | undefined): {
+  clothType: 'overall' | 'upper' | 'lower' | 'outer'
+  uncertain: boolean
+} {
+  const t = attrs?.garmentType ?? 'unknown'
+  switch (t) {
+    case 'panjabi':
+    case 'kids_panjabi':
+    case 'pajama_panjabi_set':
+    case 'family_matching_set':
+      return { clothType: 'overall', uncertain: false }
+    case 'kurta':
+    case 'short_panjabi':
+      // hip-length tops read as upper for VTON placement
+      return { clothType: t === 'short_panjabi' ? 'upper' : 'overall', uncertain: false }
+    case 'koti_set':
+      return { clothType: 'outer', uncertain: false }
+    default:
+      return { clothType: 'overall', uncertain: true }
+  }
+}
+
+/**
+ * CS6 — the same garment classes mapped onto Fal FASHN v1.6 categories
+ * (tops / bottoms / one-pieces / auto).
+ */
+export function mapGarmentToFashnCategory(attrs: GarmentAttrs | null | undefined): string {
+  const t = attrs?.garmentType ?? 'unknown'
+  if (t === 'koti_set' || t === 'short_panjabi' || t === 'kurta') return 'tops'
+  if (t === 'panjabi' || t === 'kids_panjabi' || t === 'pajama_panjabi_set' || t === 'family_matching_set') return 'one-pieces'
+  return 'auto'
+}
+
 export function buildTryOnPrompt(opts: {
   style?: TryOnStyle
   pose?: TryOnPose

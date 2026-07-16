@@ -529,6 +529,43 @@ async function processImageGen(job) {
     return
   }
 
+  // CS6 — Fal-backed single-person VTON engines (owner-selected). Durable queue
+  // client inside the adapters; result metadata is the truthful lineage the
+  // Gallery shows (engine, request id, seed, latency, cost).
+  if (payload.provider === 'fal') {
+    try {
+      const adapter = payload.falEngine === 'fal_idm_vton'
+        ? await import('./fal/adapters/cat-vton.mjs')
+        : await import('./fal/adapters/fashn-v16.mjs')
+      const process = payload.falEngine === 'fal_idm_vton' ? adapter.processCatVton : adapter.processFashnV16
+      const { logCost } = await import('./cost-log.mjs')
+      const result = await process({ supabase, pendingActionId, payload, logCost })
+      const { postProcessImage } = await import('./cs/branding.mjs')
+      const finishing = await postProcessImage(supabase, pendingActionId, result.storagePath)
+      await callJobResult(pendingActionId, 'success', {
+        storagePath: result.storagePath,
+        allPaths: result.allPaths,
+        provider: 'fal',
+        falEngine: result.falEngine,
+        falEndpointId: result.falEndpointId,
+        requestId: result.requestId,
+        seed: result.seed ?? undefined,
+        latencyMs: result.latencyMs,
+        costUsd: result.costUsd,
+        researchOnly: result.researchOnly ?? undefined,
+        creativeStudio: true,
+        studioMode: payload.studioMode,
+        qc: result.qc ?? undefined,
+        ...finishing,
+      })
+      console.log(`[worker] fal:${payload.falEngine} ${pendingActionId} — done → ${result.storagePath}`)
+    } catch (err) {
+      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      console.error(`[worker] fal:${payload.falEngine} ${pendingActionId} — failed:`, err.message)
+    }
+    return
+  }
+
   if (payload.provider === 'fashn') {
     try {
       const { processFashnImageGen } = await import('./fashn/process.mjs')

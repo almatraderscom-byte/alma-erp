@@ -27,6 +27,15 @@ export type GalleryItem = {
   mode: string
   provider: string
   familyPreset: string | null
+  /** CS6 — truthful engine lineage (fal VTON runs) */
+  engine?: string | null
+  endpointId?: string | null
+  requestId?: string | null
+  seed?: number | null
+  latencyMs?: number | null
+  costUsd?: number | null
+  researchOnly?: boolean
+  qc?: { pass?: boolean; overall?: number; attempts?: number; flagged?: string } | null
   previewUrl: string | null
   /** small webp for the grid tile (falls back to previewUrl) */
   thumbUrl?: string | null
@@ -106,6 +115,10 @@ export async function finishImage(opts: FinishOptions): Promise<{ framedPath: st
 export type RunPayload = {
   mode: StudioModeId
   provider?: StudioProvider
+  /** CS6 — single Try-On engine choice (fashn / gemini / fal_fashn_v16 / fal_idm_vton) */
+  vtonEngine?: StudioEngineId
+  /** CS6 — owner override for garment placement when auto classification is uncertain */
+  clothType?: 'auto' | 'overall' | 'upper' | 'lower' | 'outer'
   productImagePath?: string
   modelImagePath?: string
   sourceImagePath?: string
