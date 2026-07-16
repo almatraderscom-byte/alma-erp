@@ -1071,24 +1071,47 @@ final class AssistantVM {
     /// replay attach — never a duplicate turn.
     private let streamStallSeconds: TimeInterval = 45
 
-    /// Stable visual state, including a minimum 2.08s understanding intake.
-    /// Later SSE states are queued during that intake, then handed off smoothly.
+    /// Stable visual state. Understanding (the intake bloom) holds from the send
+    /// until the FIRST real progress event arrives — thinking prose, text or a
+    /// tool — not a fixed timer (owner spec 2026-07-16: "thought খোলার আগ পর্যন্ত
+    /// understanding-এ থাকার কথা"). A minimum keeps the bloom from being cut
+    /// mid-gesture by a very fast first token.
     var liveMode: String { visualLiveMode }
+
+    /// Shortest visible intake: the grow-in needs about this long to read as a
+    /// deliberate gesture; an earlier first delta waits out the remainder.
+    private let minUnderstandingSeconds: TimeInterval = 0.85
+    private var understandingStartedAt = Date.distantPast
 
     private func beginUnderstanding() {
         understandingTask?.cancel()
+        understandingTask = nil
         requestedLiveMode = "thinking"
         visualLiveMode = "understanding"
-        understandingTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 2_080_000_000)
-            guard let self, !Task.isCancelled, self.isStreaming else { return }
-            self.visualLiveMode = self.requestedLiveMode
-        }
+        understandingStartedAt = Date()
     }
 
     private func requestLiveMode(_ mode: String) {
         requestedLiveMode = mode
-        if visualLiveMode != "understanding" { visualLiveMode = mode }
+        guard visualLiveMode == "understanding" else {
+            visualLiveMode = mode
+            return
+        }
+        // First real progress while the intake plays: hand off now if the bloom
+        // has had its minimum, else exactly when the minimum lands. The task
+        // reads requestedLiveMode at fire time, so later events refine the
+        // destination for free. settleLiveMode() cancels it on turn end.
+        let elapsed = Date().timeIntervalSince(understandingStartedAt)
+        if elapsed >= minUnderstandingSeconds {
+            visualLiveMode = mode
+        } else if understandingTask == nil {
+            let remaining = minUnderstandingSeconds - elapsed
+            understandingTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(remaining * 1_000_000_000))
+                guard let self, !Task.isCancelled else { return }
+                self.visualLiveMode = self.requestedLiveMode
+            }
+        }
     }
 
     private func settleLiveMode() {
@@ -1096,6 +1119,7 @@ final class AssistantVM {
         understandingTask = nil
         requestedLiveMode = "thinking"
         visualLiveMode = "idle"
+        understandingStartedAt = .distantPast
     }
 
     // Sidebar / conversations (web AgentSidebar parity)

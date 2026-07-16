@@ -132,12 +132,6 @@ enum AlmaRayBurst {
         return sin(.pi * smoothstep(adjusted))
     }
 
-    static func understandingRetraction(index: Int, elapsed: Double) -> Double {
-        let shifted = min(1, max(0, (elapsed - Double(index % 3) * 0.022) / 2.040))
-        if shifted < 0.46 { return smoothstep(shifted / 0.46) }
-        return 1 - smoothstep((shifted - 0.46) / 0.54)
-    }
-
     static func positiveModulo(_ value: Int, _ divisor: Int) -> Int {
         ((value % divisor) + divisor) % divisor
     }
@@ -282,10 +276,18 @@ private final class StarburstAnimState {
         let toolAmount = config.toolLike ? AlmaRayBurst.toolStarAmount(elapsed: elapsed) : 1
         let boilRow = AlmaRayBurst.boil[boilFrame]
 
+        // Understanding = the Claude-style intake bloom (owner spec 2026-07-16):
+        // the whole star GROWS from small while rotating slowly, then the
+        // thinking handoff raises the spin speed. elapsed resets on every mode
+        // change, so the bloom always plays from its start.
+        let grow: Double = mode == .understanding
+            ? 0.34 + 0.66 * AlmaRayBurst.smoothstep(min(1, elapsed / 1.15))
+            : 1
+
         var layer = ctx
         layer.translateBy(x: size.width / 2, y: size.height / 2)
         layer.rotate(by: .radians(rotation))
-        layer.scaleBy(x: unit, y: unit)
+        layer.scaleBy(x: unit * grow, y: unit * grow)
 
         for index in 0..<12 {
             let boilScale: Double = mode == .idle ? 0.45 : config.toolLike ? 0.28 : 1
@@ -301,14 +303,15 @@ private final class StarburstAnimState {
                 retract = AlmaRayBurst.clusterRetraction(
                     index: index, elapsed: elapsed, durationMs: config.clusterMs)
                     * AlmaRayBurst.smoothstep(elapsed / 0.520)
-            } else if mode == .understanding {
-                retract = AlmaRayBurst.understandingRetraction(index: index, elapsed: elapsed)
             } else {
+                // Understanding no longer retracts rays — the whole-star bloom
+                // (grow-in above) IS the intake gesture now; retracting while
+                // tiny read as noise.
                 retract = 0
             }
 
             let starInner = 5.5
-            let targetOuter = mode == .understanding ? 18 : Double(AlmaRayBurst.collapsed[index])
+            let targetOuter = Double(AlmaRayBurst.collapsed[index])
             let fixedOuter = Double(AlmaRayBurst.outer[index])
             let starOuter = fixedOuter + (targetOuter - fixedOuter) * retract
             let ringRadius = 31.5
