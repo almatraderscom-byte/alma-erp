@@ -536,8 +536,14 @@ async function processImageGen(job) {
     try {
       const adapter = payload.falEngine === 'fal_idm_vton'
         ? await import('./fal/adapters/cat-vton.mjs')
-        : await import('./fal/adapters/fashn-v16.mjs')
-      const process = payload.falEngine === 'fal_idm_vton' ? adapter.processCatVton : adapter.processFashnV16
+        : payload.falEngine === 'fal_flux_fill'
+          ? await import('./fal/adapters/flux-fill.mjs')
+          : await import('./fal/adapters/fashn-v16.mjs')
+      const process = payload.falEngine === 'fal_idm_vton'
+        ? adapter.processCatVton
+        : payload.falEngine === 'fal_flux_fill'
+          ? adapter.processFluxFill
+          : adapter.processFashnV16
       const { logCost } = await import('./cost-log.mjs')
       const result = await process({ supabase, pendingActionId, payload, logCost })
       const { postProcessImage } = await import('./cs/branding.mjs')
@@ -553,6 +559,10 @@ async function processImageGen(job) {
         latencyMs: result.latencyMs,
         costUsd: result.costUsd,
         researchOnly: result.researchOnly ?? undefined,
+        // CS7 — precision-edit lineage: mask + protected-pixel proof
+        maskPath: result.maskPath ?? undefined,
+        maskPreset: result.maskPreset ?? undefined,
+        protectedDiff: result.protectedDiff ?? undefined,
         creativeStudio: true,
         studioMode: payload.studioMode,
         qc: result.qc ?? undefined,

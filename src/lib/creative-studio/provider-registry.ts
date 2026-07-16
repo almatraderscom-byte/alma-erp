@@ -121,7 +121,7 @@ export const STUDIO_ENGINES: StudioEngine[] = [
     singlePersonOnly: false,
     requiresEnv: 'FAL_KEY',
     settingsFlag: CS_FLUX_FILL_ENABLED_KEY,
-    runnable: false, // CS7 wires it
+    runnable: true, // CS7: wired end to end (masked precision edit via worker)
     approxCost: '~$0.05/MP (রাউন্ড-আপ)',
   },
 ]
