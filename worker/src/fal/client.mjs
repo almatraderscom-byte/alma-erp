@@ -128,6 +128,53 @@ export async function falCancel(endpointId, requestId, { fetchImpl = fetch, canc
   return res.ok
 }
 
+// ── shared image plumbing (CS6) ──────────────────────────────────────────────
+
+/**
+ * Download an agent-files object and return it as a data URI, normalized for
+ * VTON input: EXIF orientation baked in and longest side capped (default
+ * 2048px) WITHOUT changing aspect ratio — person proportions stay intact.
+ * Falls back to the raw bytes if sharp fails (e.g. exotic format).
+ */
+export async function storagePathToNormalizedDataUri(supabase, path, { maxSide = 2048 } = {}) {
+  const { data, error } = await supabase.storage.from('agent-files').download(path)
+  if (error || !data) throw new Error(`download failed: ${path}`)
+  const raw = Buffer.from(await data.arrayBuffer())
+  try {
+    const sharp = (await import('sharp')).default
+    const normalized = await sharp(raw)
+      .rotate() // apply EXIF orientation (iPhone photos)
+      .resize({ width: maxSide, height: maxSide, fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 92 })
+      .toBuffer()
+    return `data:image/jpeg;base64,${normalized.toString('base64')}`
+  } catch {
+    const mime = data.type || 'image/jpeg'
+    return `data:${mime};base64,${raw.toString('base64')}`
+  }
+}
+
+/** Download a finished Fal output URL into agent-files storage. */
+export async function downloadFalOutputToStorage(supabase, outputUrl, pendingActionId, suffix = '') {
+  const res = await fetch(outputUrl, { signal: AbortSignal.timeout(120_000) })
+  if (!res.ok) throw new Error(`fal output download HTTP ${res.status}`)
+  const buf = Buffer.from(await res.arrayBuffer())
+  const contentType = res.headers.get('content-type') ?? 'image/png'
+  const ext = contentType.includes('jpeg') ? 'jpg' : contentType.includes('webp') ? 'webp' : 'png'
+  const storagePath = `generated/studio-${pendingActionId}${suffix ? `-${suffix}` : ''}.${ext}`
+  const { error } = await supabase.storage.from('agent-files').upload(storagePath, buf, {
+    contentType,
+    upsert: true,
+  })
+  if (error) throw new Error(`upload failed: ${error.message}`)
+  return storagePath
+}
+
+/** First image URL out of the differing Fal result shapes ({image} vs {images:[]}). */
+export function extractFalImageUrl(payload) {
+  return payload?.image?.url ?? payload?.images?.[0]?.url ?? null
+}
+
 // ── durable request state (agent_kv_settings) ────────────────────────────────
 
 const stateKey = (pendingActionId) => `fal_request:${pendingActionId}`

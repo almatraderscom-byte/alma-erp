@@ -9,6 +9,11 @@ import type { StudioModeId, StudioProvider, FamilyPresetId } from '@/lib/creativ
 const AUTO_ERRORS: Record<string, string> = {
   no_default_model: 'প্রথমে Models ট্যাবে একটি মডেল সেভ করুন — তারপর শুধু product upload দিলেই হবে।',
   product_image_required: 'Product ছবি upload করুন।',
+  model_image_required: 'মডেলের ছবি দিন — সেভ করা মডেল বাছুন বা নতুন ছবি upload করুন।',
+  // CS6 — Fal VTON gates
+  fal_not_configured: 'FAL_KEY সেট করা নেই — এই ইঞ্জিন এখন চালানো যাবে না।',
+  fal_engine_disabled: 'Fal ইঞ্জিন বন্ধ আছে — লাইব্রেরি → স্টুডিও সেটিংস থেকে "Fal ইঞ্জিন চালু" করুন।',
+  idm_vton_disabled: 'IDM-VTON বন্ধ আছে — লাইব্রেরি → স্টুডিও সেটিংস থেকে পরীক্ষামূলক IDM-VTON চালু করুন।',
 }
 
 const ROLE_BN: Record<string, string> = {
@@ -86,15 +91,21 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await runCreativeStudio(body)
+    // CS6 — name the engine that will ACTUALLY run, never a blanket "FASHN".
+    const message =
+      result.provider === 'fal_idm_vton'
+        ? 'IDM-VTON (পরীক্ষামূলক) render queued — Gallery-তে ফলাফল দেখুন। ফলাফল যাচাই না করে পাবলিশ করবেন না।'
+        : result.provider === 'fal_fashn_v16'
+          ? 'Fal FASHN v1.6 render queued — Gallery-তে ফলাফল দেখুন।'
+          : result.provider === 'fashn'
+            ? 'FASHN render queued — Gallery-তে ফলাফল দেখুন।'
+            : 'Gemini render queued — FASHN_API_KEY add করলে Pro quality পাবেন।'
     return Response.json({
       ok: true,
       jobs: result.jobs,
       provider: result.provider,
       fashnReady: result.fashnReady,
-      message:
-        result.provider === 'fashn'
-          ? 'FASHN render queued — Gallery-তে ফলাফল দেখুন।'
-          : 'Gemini render queued — FASHN_API_KEY add করলে Pro quality পাবেন।',
+      message,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

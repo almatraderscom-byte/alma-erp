@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   ALLOWED_FAL_ENDPOINTS,
+  FAL_VTON_ENGINE_IDS,
+  isFalVtonEngine,
+  isVtonClothType,
   CS_FAL_ENABLED_KEY,
   CS_FLUX_FILL_ENABLED_KEY,
   CS_IDM_VTON_ENABLED_KEY,
@@ -61,10 +64,10 @@ describe('provider registry — capability rules', () => {
     expect(getEngine('fal_flux_fill').modes).toEqual(['edit'])
   })
 
-  it('CS5 foundation: no Fal engine is runnable yet', () => {
-    for (const e of STUDIO_ENGINES.filter((x) => x.vendor === 'fal')) {
-      expect(e.runnable).toBe(false)
-    }
+  it('CS6: fal VTON engines runnable; FLUX Fill still foundation-only', () => {
+    expect(getEngine('fal_fashn_v16').runnable).toBe(true)
+    expect(getEngine('fal_idm_vton').runnable).toBe(true)
+    expect(getEngine('fal_flux_fill').runnable).toBe(false) // CS7 wires it
     expect(getEngine('fashn').runnable).toBe(true)
     expect(getEngine('gemini').runnable).toBe(true)
   })
@@ -106,6 +109,21 @@ describe('provider registry — fal endpoint allowlist', () => {
   })
 })
 
+describe('CS6 — fal VTON helpers', () => {
+  it('exactly the two fal VTON engines', () => {
+    expect([...FAL_VTON_ENGINE_IDS].sort()).toEqual(['fal_fashn_v16', 'fal_idm_vton'])
+    expect(isFalVtonEngine('fal_idm_vton')).toBe(true)
+    expect(isFalVtonEngine('fashn')).toBe(false)
+    expect(isFalVtonEngine('fal_flux_fill')).toBe(false)
+  })
+
+  it('cloth types match the owner-locked cat-vton mapping set', () => {
+    for (const t of ['overall', 'upper', 'lower', 'outer']) expect(isVtonClothType(t)).toBe(true)
+    expect(isVtonClothType('dress')).toBe(false)
+    expect(isVtonClothType(null)).toBe(false)
+  })
+})
+
 describe('provider registry — availability snapshot', () => {
   it('missing FAL_KEY yields configured:false without throwing', () => {
     const list = describeEngineAvailability({
@@ -117,7 +135,6 @@ describe('provider registry — availability snapshot', () => {
     const idm = list.find((e) => e.id === 'fal_idm_vton')!
     expect(idm.configured).toBe(false)
     expect(idm.enabled).toBe(false)
-    expect(idm.runnable).toBe(false)
     const fashn = list.find((e) => e.id === 'fashn')!
     expect(fashn.configured).toBe(true)
     expect(fashn.enabled).toBe(true)

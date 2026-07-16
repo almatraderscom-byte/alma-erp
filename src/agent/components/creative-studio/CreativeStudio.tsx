@@ -721,6 +721,9 @@ function StudioWorkspace({
 }) {
   const [mode, setMode] = useState<StudioModeId>('product_to_model')
   const [provider, setProvider] = useState<StudioProvider>('fashn')
+  // CS6 — single Try-On engine choice + garment placement override
+  const [vtonEngine, setVtonEngine] = useState<StudioEngineId>('fashn')
+  const [clothType, setClothType] = useState<'auto' | 'overall' | 'upper' | 'lower' | 'outer'>('auto')
   const [familyPreset, setFamilyPreset] = useState<FamilyPresetId>('single')
   const [productPreview, setProductPreview] = useState<string | null>(null)
   const [modelPreview, setModelPreview] = useState<string | null>(null)
@@ -773,6 +776,35 @@ function StudioWorkspace({
   const isMultiPersonFamily =
     familyPreset !== 'single' && (mode === 'product_to_model' || mode === 'try_on')
   const effectiveProvider: StudioProvider = isMultiPersonFamily ? 'gemini' : provider
+
+  // CS6 — engine picker applies ONLY to single-person Try-On. IDM/Fal engines
+  // are hidden everywhere else (family, swap, face, edit, video) by design.
+  const isSingleTryOn = mode === 'try_on' && familyPreset === 'single'
+  const engineAvail = useMemo(() => {
+    const m = new Map<string, StudioConfig['engines'][number]>()
+    for (const e of config?.engines ?? []) m.set(e.id, e)
+    return m
+  }, [config])
+  const engineSelectable = useCallback(
+    (id: string) => {
+      const e = engineAvail.get(id)
+      return Boolean(e && e.configured && e.enabled && e.runnable)
+    },
+    [engineAvail],
+  )
+  // Owner default from settings; fall back to direct FASHN when it isn't selectable.
+  useEffect(() => {
+    if (!config) return
+    const def = config.singleVtonDefault ?? 'fashn'
+    setVtonEngine(def === 'fashn' || def === 'gemini' || engineSelectable(def) ? def : 'fashn')
+  }, [config, engineSelectable])
+  const idmWarning = engineAvail.get('fal_idm_vton')?.warningBn ?? null
+  const VTON_ENGINE_LABELS: Record<string, string> = {
+    fashn: 'FASHN Pro',
+    fal_fashn_v16: 'Fal FASHN v1.6',
+    fal_idm_vton: 'IDM-VTON ⚠',
+    gemini: 'Gemini',
+  }
 
   const defaultModel = useMemo(
     () => models.find((m) => m.isDefault) ?? models[0] ?? null,
@@ -915,7 +947,11 @@ function StudioWorkspace({
     try {
       const result = await runStudioJob({
         mode,
-        provider,
+        // CS6: for single Try-On the engine picker is authoritative; the legacy
+        // provider field still drives every other mode.
+        provider: isSingleTryOn ? (vtonEngine === 'gemini' ? 'gemini' : 'fashn') : provider,
+        vtonEngine: isSingleTryOn ? vtonEngine : undefined,
+        clothType: isSingleTryOn && clothType !== 'auto' ? clothType : undefined,
         productImagePath: productPath ?? undefined,
         modelImagePath: modelPath ?? undefined,
         sourceImagePath: sourcePath ?? productPath ?? modelPath ?? undefined,
@@ -1120,18 +1156,52 @@ function StudioWorkspace({
             <div className="mb-2 flex flex-wrap gap-1.5">
               {mode !== 'image_to_video' && (
                 <>
-                  <select
-                    value={provider}
-                    onChange={(e) => setProvider(e.target.value as StudioProvider)}
-                    className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
-                  >
-                    <option value="fashn" disabled={!config?.fashnConfigured}>
-                      Pro (FASHN)
-                    </option>
-                    <option value="gemini" disabled={fashnOnly}>
-                      Draft (Gemini){fashnOnly ? ' — N/A' : ''}
-                    </option>
-                  </select>
+                  {isSingleTryOn ? (
+                    // CS6 — single Try-On: owner picks the exact VTON engine.
+                    <select
+                      value={vtonEngine}
+                      onChange={(e) => setVtonEngine(e.target.value as StudioEngineId)}
+                      className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
+                    >
+                      <option value="fashn" disabled={!config?.fashnConfigured}>
+                        FASHN Pro (direct)
+                      </option>
+                      <option value="fal_fashn_v16" disabled={!engineSelectable('fal_fashn_v16')}>
+                        Fal FASHN v1.6 · কমার্শিয়াল{engineSelectable('fal_fashn_v16') ? '' : ' — বন্ধ'}
+                      </option>
+                      <option value="fal_idm_vton" disabled={!engineSelectable('fal_idm_vton')}>
+                        IDM-VTON ⚠ পরীক্ষামূলক{engineSelectable('fal_idm_vton') ? '' : ' — বন্ধ'}
+                      </option>
+                      <option value="gemini">Draft (Gemini)</option>
+                    </select>
+                  ) : (
+                    <select
+                      value={provider}
+                      onChange={(e) => setProvider(e.target.value as StudioProvider)}
+                      className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
+                    >
+                      <option value="fashn" disabled={!config?.fashnConfigured}>
+                        Pro (FASHN)
+                      </option>
+                      <option value="gemini" disabled={fashnOnly}>
+                        Draft (Gemini){fashnOnly ? ' — N/A' : ''}
+                      </option>
+                    </select>
+                  )}
+                  {/* CS6 — garment placement override for the Fal VTON engines */}
+                  {isSingleTryOn && (vtonEngine === 'fal_idm_vton' || vtonEngine === 'fal_fashn_v16') && (
+                    <select
+                      value={clothType}
+                      onChange={(e) => setClothType(e.target.value as typeof clothType)}
+                      className="rounded-lg border border-border bg-card/80 px-2 py-1.5 text-[11px]"
+                    >
+                      <option value="auto">গার্মেন্ট: Auto</option>
+                      <option value="overall">পাঞ্জাবি/ফুল সেট (overall)</option>
+                      <option value="upper">শুধু টপ (upper)</option>
+                      <option value="lower">শুধু পাজামা (lower)</option>
+                      <option value="outer">কটি/ওয়েস্টকোট (outer)</option>
+                    </select>
+                  )}
                   <select
                     value={backgroundId}
                     onChange={(e) => setBackgroundId(e.target.value)}
@@ -1215,6 +1285,12 @@ function StudioWorkspace({
               )}
             </div>
 
+            {/* CS6 — research-only warning MUST be visible before Run (owner-locked) */}
+            {isSingleTryOn && vtonEngine === 'fal_idm_vton' && (
+              <div className="mb-2 rounded-xl border border-amber-400/50 bg-amber-50/10 px-3 py-2 text-[11px] leading-snug text-amber-700">
+                ⚠ {idmWarning ?? 'পরীক্ষামূলক (research-only) ইঞ্জিন — ফলাফল নিজে যাচাই না করে পাবলিশ করবেন না।'}
+              </div>
+            )}
             <motion.button
               type="button"
               disabled={!canRun || running}
@@ -1234,7 +1310,12 @@ function StudioWorkspace({
                 // CS5: multi-person family actually runs the accuracy chain
                 // (per-person FASHN try-on → Gemini merge) — label it honestly
                 // instead of claiming the whole job is Gemini.
-                <>Run — {isMultiPersonFamily ? FAMILY_CHAIN_LABEL_BN : effectiveProvider === 'fashn' ? 'FASHN Pro' : 'Gemini'}</>
+                // CS6: single Try-On names the exact engine the owner picked.
+                <>Run — {isMultiPersonFamily
+                  ? FAMILY_CHAIN_LABEL_BN
+                  : isSingleTryOn
+                    ? VTON_ENGINE_LABELS[vtonEngine] ?? vtonEngine
+                    : effectiveProvider === 'fashn' ? 'FASHN Pro' : 'Gemini'}</>
               )}
             </motion.button>
             <p className="mt-1.5 text-center text-[10px] text-muted">
@@ -1714,7 +1795,8 @@ function GalleryView() {
                       item.status === 'executed' ? 'bg-[#81B29A]/90 text-white' : 'bg-black/50 text-white',
                     )}
                   >
-                    {item.provider}
+                    {/* CS6 — show the exact engine, not just the vendor */}
+                    {item.engine === 'fal_idm_vton' ? 'IDM ⚠' : item.engine === 'fal_fashn_v16' ? 'FAL FASHN' : item.provider}
                   </span>
                   {item.brandedUrl && (
                     <span className="absolute right-1.5 top-1.5 rounded-md bg-[#E07A5F]/90 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">
@@ -1789,6 +1871,41 @@ function GalleryView() {
                 onClick={(e) => e.stopPropagation()}
                 className="max-h-full max-w-full rounded-lg object-contain"
               />
+            )}
+
+            {/* CS6 — truthful engine lineage (fal VTON runs): engine, request id,
+                seed, latency, actual cost + research-only badge */}
+            {selected.engine && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="absolute left-4 top-[calc(1rem+env(safe-area-inset-top))] flex max-w-[70vw] flex-wrap items-center gap-1.5"
+              >
+                <span className="rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-bold text-white ring-1 ring-white/25">
+                  {selected.engine === 'fal_idm_vton' ? 'IDM-VTON' : selected.engine === 'fal_fashn_v16' ? 'Fal FASHN v1.6' : selected.engine}
+                </span>
+                {selected.researchOnly && (
+                  <span className="rounded-full bg-amber-500/90 px-2.5 py-1 text-[10px] font-bold text-white">
+                    ⚠ পরীক্ষামূলক
+                  </span>
+                )}
+                {typeof selected.seed === 'number' && (
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-white/85">seed {selected.seed}</span>
+                )}
+                {typeof selected.latencyMs === 'number' && (
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-white/85">{Math.round(selected.latencyMs / 100) / 10}s</span>
+                )}
+                {typeof selected.costUsd === 'number' && selected.costUsd > 0 && (
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-white/85">${selected.costUsd.toFixed(3)}</span>
+                )}
+                {selected.requestId && (
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-white/60" title={selected.requestId}>
+                    req {selected.requestId.slice(0, 8)}
+                  </span>
+                )}
+                {selected.qc?.flagged && (
+                  <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-amber-300">{selected.qc.flagged}</span>
+                )}
+              </div>
             )}
 
             {/* Original ↔ Branded toggle (only when a branded variant exists) */}

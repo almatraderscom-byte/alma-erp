@@ -12,6 +12,21 @@ import {
   type FamilyChainVariant,
 } from '@/lib/tryon/family-chain'
 import { pickScene } from '@/lib/tryon/scene-pool'
+import {
+  getOrClassifyGarment,
+  mapGarmentToVtonClothType,
+  mapGarmentToFashnCategory,
+} from '@/lib/tryon/art-director'
+import {
+  CS_FAL_ENABLED_KEY,
+  CS_IDM_VTON_ENABLED_KEY,
+  getEngine,
+  isFalVtonEngine,
+  isVtonClothType,
+  type StudioEngineId,
+  type VtonClothType,
+} from '@/lib/creative-studio/provider-registry'
+import { readKv } from '@/lib/creative-studio/taste'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -33,6 +48,12 @@ export type CreativeStudioRunInput = {
   resolution?: FashnResolution
   generationMode?: FashnGenerationMode
   numImages?: number
+  /** CS6 — single Try-On engine choice (fal_fashn_v16 / fal_idm_vton route to Fal; fashn/gemini keep legacy paths) */
+  vtonEngine?: StudioEngineId
+  /** CS6 — owner override for cat-vton garment placement when auto classification is uncertain */
+  clothType?: VtonClothType | 'auto'
+  /** CS6 — optional fixed seed for reproducible benchmark runs */
+  seed?: number
   /** Video only */
   durationSec?: number
   vibe?: 'premium' | 'festival' | 'offer' | 'lifestyle'
@@ -110,7 +131,8 @@ async function createApprovedAction(data: {
 
 export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<{
   jobs: CreativeStudioJobRef[]
-  provider: StudioProvider
+  /** engine that will actually run — legacy 'fashn'/'gemini' or a CS6 fal VTON engine id */
+  provider: StudioProvider | StudioEngineId
   fashnReady: boolean
 }> {
   const modeDef = STUDIO_MODES.find((m) => m.id === input.mode)
@@ -262,6 +284,70 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
       jobs.push({ pendingActionId: item.pendingActionId, label: item.label, type: 'image_gen' })
     }
     return { jobs, provider: 'gemini', fashnReady }
+  }
+
+  // ── CS6: Fal-backed single-person VTON (owner-selected engine) ─────────────
+  // Single Try-On ONLY — multi-person family presets never reach here (they're
+  // handled by the accuracy chain above), and the UI hides these engines for
+  // family/swap/face/edit/video. The worker runs the durable Fal queue client.
+  if (
+    isFalVtonEngine(input.vtonEngine)
+    && input.mode === 'try_on'
+    && (!input.familyPreset || input.familyPreset === 'single')
+  ) {
+    if (!input.productImagePath) throw new Error('product_image_required')
+    const vtonModelPath = input.modelImagePath ?? input.sourceImagePath
+    if (!vtonModelPath) throw new Error('model_image_required')
+    if (!process.env.FAL_KEY?.trim()) throw new Error('fal_not_configured')
+
+    const engine = getEngine(input.vtonEngine)
+    // Owner flag gates: fal master switch for the commercial engine, the
+    // dedicated experimental switch for IDM.
+    if (input.vtonEngine === 'fal_fashn_v16' && (await readKv(CS_FAL_ENABLED_KEY)) !== '1') {
+      throw new Error('fal_engine_disabled')
+    }
+    if (input.vtonEngine === 'fal_idm_vton' && (await readKv(CS_IDM_VTON_ENABLED_KEY)) !== '1') {
+      throw new Error('idm_vton_disabled')
+    }
+
+    // Garment placement: honour the owner's manual override; otherwise classify
+    // (cached per product) and map via the owner-locked table.
+    const attrs = await getOrClassifyGarment(input.productImagePath)
+    const auto = mapGarmentToVtonClothType(attrs)
+    const clothType: VtonClothType = isVtonClothType(input.clothType) ? input.clothType : auto.clothType
+
+    const count = Math.min(Math.max(input.numImages ?? 1, 1), 4)
+    const seed = Number.isFinite(input.seed) ? Math.trunc(input.seed as number) : undefined
+    for (let i = 0; i < count; i++) {
+      const id = await createApprovedAction({
+        type: 'image_gen',
+        payload: {
+          provider: 'fal',
+          falEngine: input.vtonEngine,
+          falEndpointId: engine.falEndpointId,
+          productImagePath: input.productImagePath,
+          modelImagePath: vtonModelPath,
+          clothType,
+          clothTypeSource: isVtonClothType(input.clothType) ? 'owner' : 'auto',
+          clothTypeUncertain: auto.uncertain,
+          fashnCategory: mapGarmentToFashnCategory(attrs),
+          // CS6 defaults (roadmap): 30 steps, guidance 2.5, fixed seed when supplied.
+          numInferenceSteps: 30,
+          guidanceScale: 2.5,
+          ...(seed !== undefined ? { seed: seed + i } : {}),
+          prompt: extraPrompt || undefined,
+          generationMode: input.generationMode ?? 'balanced',
+          aspectRatio: input.aspectRatio ?? '4:5',
+          creativeStudio: true,
+          studioMode: input.mode,
+          familyPreset: 'single',
+        },
+        summary: `🎨 Studio Try-On${count > 1 ? ` #${i + 1}` : ''} (${engine.label})`,
+        costEstimate: input.vtonEngine === 'fal_fashn_v16' ? 0.075 : 0.1,
+      })
+      jobs.push({ pendingActionId: id, label: `Try-On · ${engine.label}`, type: 'image_gen' })
+    }
+    return { jobs, provider: input.vtonEngine, fashnReady }
   }
 
   if (provider === 'fashn' && modeDef.fashnModel) {
