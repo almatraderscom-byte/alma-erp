@@ -2,7 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   experimental: {
-    serverComponentsExternalPackages: ['@react-pdf/renderer', 'bullmq', 'ioredis'],
+    serverComponentsExternalPackages: ['@react-pdf/renderer', 'bullmq', 'ioredis', 'puppeteer-core', '@sparticuz/chromium'],
     // CRITICAL: static `public/` assets are CDN-served and are NOT included in the
     // serverless function filesystem by default. The brand/Bangla TTFs are read from
     // disk at runtime (sharp/librsvg only renders text with fonts fontconfig finds on
