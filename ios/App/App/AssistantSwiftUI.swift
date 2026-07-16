@@ -2477,6 +2477,12 @@ final class AssistantVM {
     /// Deltas arrive pre-coalesced; `refreshPhases` runs once per flush, not once
     /// per token. Every wire event has an explicit handler (roadmap 2.1) — unknown
     /// types were already telemetried at decode and are dropped knowingly.
+    /// Bumped once per applied batch that grew the streaming tail — thinking,
+    /// tool rows, screenshots, cards AND text alike. The scroll-follow watches
+    /// THIS (owner-hit 2026-07-16: it watched `last?.text` only, so tool-heavy
+    /// agentic turns grew downward without following until the final prose).
+    var streamGrowthTick = 0
+
     private func apply(_ events: [AgentTurnEvent]) {
         // Stall watchdog heartbeat: ANY delivered batch proves the stream lives.
         lastLiveEventAt = Date()
@@ -2689,6 +2695,7 @@ final class AssistantVM {
         }
         if touchedStream, let i = messages.lastIndex(where: { $0.isStreaming }) {
             AgentChatMessage.refreshPhases(on: &messages[i], live: messages[i].text.isEmpty)
+            streamGrowthTick &+= 1
         }
     }
 
@@ -7379,7 +7386,6 @@ private struct AgentBackgroundTasksSheet: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.scenePhase) private var scenePhase
     @State private var runningExpanded = true
     @State private var todayExpanded = false
     @State private var finishedExpanded = true
@@ -8012,9 +8018,15 @@ private struct AgentBackgroundTasksSheet: View {
         .background(pal.card.opacity(0.68), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
         .overlay {
             if animateSheen {
+                // No scenePhase gate (owner-hit 2026-07-16: the running task's
+                // sheen simply never showed) — this sheet is UIKit-hosted, where
+                // scenePhase can sit .inactive while perfectly visible, and a
+                // paused-born .animation schedule may never re-arm. Same class
+                // of bug as the frozen starburst; Reduce Motion is the only
+                // legitimate pause.
                 TimelineView(.animation(
                     minimumInterval: 1.0 / 12.0,
-                    paused: reduceMotion || scenePhase != .active
+                    paused: reduceMotion
                 )) { timeline in
                     GeometryReader { proxy in
                         let duration = 2.4
@@ -8879,6 +8891,10 @@ struct AssistantScreen: View {
     @Namespace private var backgroundTaskNamespace
     @Environment(\.colorScheme) private var scheme
     @State private var nearBottom = true
+    /// Own-send anchors the user's message to the viewport top; tail-follow
+    /// handlers stand down until this instant so they don't yank to the bottom
+    /// in the same update cycle.
+    @State private var followSuppressedUntil = Date.distantPast
     @State private var scrollViewportH: CGFloat = 0
     @State private var toolSheet: AgentChatMessage.Tool?
     @State private var activitySheet: AgentActivitySheetRequest?
@@ -9056,14 +9072,23 @@ struct AssistantScreen: View {
                 // onScrollGeometryChange is the supported live signal; the preference
                 // path stays as the iOS 17 fallback.
                 .modifier(AgentNearBottomScrollModifier(nearBottom: $nearBottom))
+                // Follow the GROWING tail — streamGrowthTick bumps on every
+                // applied batch (thinking/tools/screenshots/cards, not just
+                // prose), which is what actually grows an agentic turn
+                // (owner-hit 2026-07-16: `last?.text` alone never fired during
+                // tool-heavy work, so the reply ran below the fold unfollowed).
+                .onChange(of: vm.streamGrowthTick) { _, _ in
+                    guard nearBottom, Date() >= followSuppressedUntil else { return }
+                    scheduleScrollToBottom(proxy: proxy)
+                }
                 .onChange(of: vm.messages.last?.text) { _, _ in
-                    guard nearBottom else { return }
+                    guard nearBottom, Date() >= followSuppressedUntil else { return }
                     scheduleScrollToBottom(proxy: proxy)
                 }
                 .onChange(of: vm.messages.count) { _, _ in
                     // 1.4: server merges/polls must never yank the owner away from
                     // older content he is reading — only follow when near bottom.
-                    guard nearBottom else { return }
+                    guard nearBottom, Date() >= followSuppressedUntil else { return }
                     if vm.isStreaming {
                         scheduleScrollToBottom(proxy: proxy)
                     } else {
@@ -9072,10 +9097,22 @@ struct AssistantScreen: View {
                         }
                     }
                 }
-                // The owner's OWN send always jumps to the tail (Claude-app feel),
-                // even if he had scrolled up — user-initiated, unlike merges.
+                // The owner's OWN send anchors HIS message to the TOP of the
+                // viewport (Claude-app feel, owner spec 2026-07-16): the reply
+                // then flows beneath it, older context stays one scroll-up away.
+                // A short suppress window keeps the tail-follow handlers from
+                // yanking to the bottom in the same breath; after it, the
+                // growth-follow keeps the advancing edge on screen.
                 .onChange(of: vm.ownSendTick) { _, _ in
-                    scrollToBottom(proxy: proxy)
+                    followSuppressedUntil = Date().addingTimeInterval(0.8)
+                    nearBottom = true   // sending = explicit intent to follow this turn
+                    if let mine = vm.messages.last(where: { $0.role == .user })?.id {
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            proxy.scrollTo(mine, anchor: .top)
+                        }
+                    } else {
+                        scrollToBottom(proxy: proxy)
+                    }
                 }
                 .overlay(alignment: .bottom) {
                     // Web parity: centered 40pt frosted circle just above the composer.
