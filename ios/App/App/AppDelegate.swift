@@ -59,6 +59,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                     #endif
                     PulseRestore.reconcile()
                     PulseRestore.restartFromCache()
+                    // Native panel sync (2026-07-17): the webview path 401s
+                    // when its hidden session dies — this one rides AlmaAPI's
+                    // shared-store cookies, so the island stays truthful even
+                    // then. Throttled inside; silent on failure.
+                    PulseNativeSync.syncNow(reason: "active")
                 }
             }
         }
