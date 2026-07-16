@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { isHeartbeatWakeText } from '@/agent/lib/heartbeat/wake-marker'
 import { messageContentToText } from '@/agent/lib/message-recall'
+import { isPendingActionExpired } from '@/agent/lib/pending-action'
 
 const MAX_VISIBLE_TURN_AGE_MS = 30 * 60 * 1000
 const MAX_ACTIVE_TURNS = 20
@@ -15,6 +16,14 @@ export type ActiveBackgroundTurn = {
   updatedAt: string | null
 }
 
+export type BackgroundAttentionAction = {
+  id: string
+  conversationId: string | null
+  type: string
+  summary: string
+  createdAt: string
+}
+
 export function activeTurnKind(
   input: string,
   conversationSource: string | null | undefined,
@@ -22,6 +31,11 @@ export function activeTurnKind(
   return conversationSource === 'heartbeat' || isHeartbeatWakeText(input)
     ? 'self-wake'
     : 'active-chat'
+}
+
+/** Foreground owner chat is never a background task. */
+export function isBackgroundVisibleTurn(turn: ActiveBackgroundTurn): boolean {
+  return turn.kind === 'self-wake'
 }
 
 /**
@@ -84,5 +98,34 @@ export async function listActiveBackgroundTurns(
       startedAt: turn.startedAt.toISOString(),
       updatedAt: turn.updatedAt?.toISOString() ?? null,
     }
+  }).filter(isBackgroundVisibleTurn)
+}
+
+/**
+ * Owner-global approvals that genuinely need attention. These are not "Running"
+ * tasks: the Background Tasks sheet presents them in a separate attention group.
+ */
+export async function listBackgroundAttentionActions(): Promise<BackgroundAttentionAction[]> {
+  const rows = await prisma.agentPendingAction.findMany({
+    where: { status: 'pending' },
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+    select: {
+      id: true,
+      conversationId: true,
+      type: true,
+      summary: true,
+      createdAt: true,
+    },
   })
+
+  return rows
+    .filter((row) => !isPendingActionExpired(row.createdAt, row.type))
+    .map((row) => ({
+      id: row.id,
+      conversationId: row.conversationId,
+      type: row.type,
+      summary: row.summary,
+      createdAt: row.createdAt.toISOString(),
+    }))
 }

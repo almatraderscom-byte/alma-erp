@@ -2,7 +2,10 @@ import { type NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
-import { listActiveBackgroundTurns } from '@/agent/lib/background-tasks/active-turns'
+import {
+  listActiveBackgroundTurns,
+  listBackgroundAttentionActions,
+} from '@/agent/lib/background-tasks/active-turns'
 
 export const runtime = 'nodejs'
 
@@ -15,6 +18,14 @@ export async function GET(req: NextRequest) {
   if (!token?.sub) return Response.json({ error: 'unauthorized' }, { status: 401 })
   if (!isSystemOwner(token)) return Response.json({ error: 'forbidden' }, { status: 403 })
 
-  const turns = await listActiveBackgroundTurns()
-  return Response.json({ turns, count: turns.length })
+  const [turns, attention] = await Promise.all([
+    listActiveBackgroundTurns(),
+    listBackgroundAttentionActions(),
+  ])
+  return Response.json({
+    turns,
+    count: turns.length,
+    attention,
+    attentionCount: attention.length,
+  })
 }
