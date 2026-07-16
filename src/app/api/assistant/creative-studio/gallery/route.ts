@@ -4,6 +4,7 @@ import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { prisma } from '@/lib/prisma'
 import { agentStorageSignedUrls } from '@/agent/lib/storage'
+import { looksLikeRawInternalError, sanitizeVideoErrorMessage } from '@/lib/creative-studio/video-recipes'
 
 export const runtime = 'nodejs'
 
@@ -31,6 +32,17 @@ function buildQcDetailsBn(result: Record<string, unknown>): string | null {
   }
   if (typeof result.maskPreset === 'string' && result.maskPreset) {
     parts.push(`প্রিসেট: ${result.maskPreset}`)
+  }
+  // CS11 — video QC metrics in plain Bangla
+  const vq = result.videoQc as { pass?: boolean; warnings?: string[]; metrics?: { durationSec?: number; loudness?: { inputI?: number } | null }; referenceCheck?: { sameGarment?: boolean; samePerson?: boolean } | null; attempts?: number } | undefined
+  if (vq && typeof vq === 'object') {
+    const bits: string[] = [`ভিডিও QC ${vq.pass === false ? 'ফ্ল্যাগড' : 'পাস'}`]
+    if (vq.metrics?.durationSec) bits.push(`${vq.metrics.durationSec}s`)
+    if (vq.metrics?.loudness && typeof vq.metrics.loudness.inputI === 'number') bits.push(`লাউডনেস ${vq.metrics.loudness.inputI.toFixed(1)} LUFS`)
+    if (vq.referenceCheck) bits.push(vq.referenceCheck.sameGarment !== false && vq.referenceCheck.samePerson !== false ? 'রেফারেন্স মিল ✓' : '⚠ রেফারেন্স গরমিল')
+    if (vq.attempts && vq.attempts > 1) bits.push(`${vq.attempts} চেষ্টা`)
+    if (vq.warnings?.length) bits.push(`সতর্কতা: ${vq.warnings.join(',')}`)
+    parts.push(bits.join(' · '))
   }
   return parts.length ? parts.join(' — ') : null
 }
@@ -171,7 +183,10 @@ export async function GET(req: NextRequest) {
       coverOptions: (Array.isArray(result.coverCandidates) ? (result.coverCandidates as string[]) : [])
         .filter((c) => signed[c])
         .map((c) => ({ path: c, url: signed[c] })),
-      error: result.error ?? null,
+      // CS11 — never show raw ffmpeg/internal text; legacy rows get masked
+      error: typeof result.error === 'string' && looksLikeRawInternalError(result.error)
+        ? sanitizeVideoErrorMessage(result.error)
+        : (result.error ?? null),
     }
   })
 

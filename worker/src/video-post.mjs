@@ -29,6 +29,8 @@ const STING_INTRO_SEC = 1.2
 const STING_OUTRO_SEC = 1.6
 const MUSIC_VOLUME = 0.55
 
+const LOUDNORM_FILTER = 'loudnorm=I=-14:TP=-1:LRA=11' // CS11 — mirror of video-recipes.ts
+
 async function ffprobeJson(file) {
   const { stdout } = await execFileAsync(
     'ffprobe',
@@ -120,13 +122,13 @@ async function renderPostPass({ workDir, reelFile, outFile, assFile, captionOver
     if (speechLabel && (audioMode === 'music_duck' || voiceFile)) {
       parts.push(`${speechLabel}${fmt('')},asplit=2[sp1][sp2]`)
       parts.push(`[mus][sp1]sidechaincompress=threshold=0.03:ratio=12:attack=25:release=500[musduck]`)
-      parts.push(`[sp2][musduck]amix=inputs=2:duration=first:dropout_transition=0,afade=t=out:st=${fadeStart}:d=1[aout]`)
+      parts.push(`[sp2][musduck]amix=inputs=2:duration=first:dropout_transition=0,afade=t=out:st=${fadeStart}:d=1,${LOUDNORM_FILTER}[aout]`)
     } else {
-      parts.push(`[mus]afade=t=out:st=${fadeStart}:d=1,atrim=0:${durationSec}[aout]`)
+      parts.push(`[mus]afade=t=out:st=${fadeStart}:d=1,atrim=0:${durationSec},${LOUDNORM_FILTER}[aout]`)
     }
     aout = '[aout]'
   } else if (voiceFile) {
-    parts.push(`[${inputs.voice}:a]${fmt('')}[aout]`)
+    parts.push(`[${inputs.voice}:a]${fmt('')},${LOUDNORM_FILTER}[aout]`)
     aout = '[aout]'
   }
 
@@ -151,13 +153,15 @@ async function renderPostPass({ workDir, reelFile, outFile, assFile, captionOver
     videoArgs = ['-map', '0:v', '-c:v', 'copy']
   }
 
-  if (parts.length > 0) args.push('-filter_complex', parts.join(';'))
   args.push(...videoArgs)
   if (aout) {
     args.push('-map', aout, '-c:a', 'aac', '-b:a', '128k')
   } else if (reelHasAudio) {
-    args.push('-map', '0:a', '-c:a', 'copy')
+    // CS11 — even untouched original audio ships at the social loudness target
+    parts.push(`[0:a]${LOUDNORM_FILTER}[anorm]`)
+    args.push('-map', '[anorm]', '-c:a', 'aac', '-b:a', '128k')
   }
+  if (parts.length > 0) args.splice(args.indexOf(videoArgs[0]), 0, '-filter_complex', parts.join(';'))
   args.push('-movflags', '+faststart', '-t', String(durationSec + 0.5), outFile)
 
   // subtitles filter resolves relative filenames against cwd → run in workDir
@@ -381,7 +385,29 @@ export async function extractCoverCandidates({ file, workDir, durationSec }) {
       files.push(out)
     } catch { /* skip frame */ }
   }
-  return files
+  // CS11 — deterministic default ordering: sharp, well-exposed frames first
+  // (mirror of scoreCoverOrder in video-recipes.ts). Manual override in the
+  // Gallery cover picker always wins; this only sets the default.
+  try {
+    const sharp = (await import('sharp')).default
+    const metrics = []
+    for (let i = 0; i < files.length; i++) {
+      const st = await sharp(files[i]).grayscale().stats()
+      metrics.push({ index: i, sharpness: st.channels[0].stdev, brightness: st.channels[0].mean })
+    }
+    const maxSharp = Math.max(1, ...metrics.map((m) => m.sharpness))
+    const order = metrics
+      .map((m) => ({
+        index: m.index,
+        score: m.sharpness / maxSharp - (m.brightness < 40 || m.brightness > 215 ? 0.5 : 0),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .map((m) => m.index)
+    return order.map((i) => files[i])
+  } catch (err) {
+    console.warn('[video-post] cover scoring skipped:', err.message)
+    return files
+  }
 }
 
 /**

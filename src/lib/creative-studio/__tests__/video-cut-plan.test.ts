@@ -192,3 +192,61 @@ describe('planCuts — fallbacks and edges', () => {
     }
   })
 })
+
+// ── CS11: video hardening pure spec ──────────────────────────────────────────
+import {
+  CAPTION_SAFE_AREA,
+  LOUDNESS_TARGET,
+  LOUDNORM_FILTER,
+  VIDEO_ERRORS_BN,
+  clampCaptionMarginV,
+  looksLikeRawInternalError,
+  sanitizeVideoErrorMessage,
+  scoreCoverOrder,
+} from '../video-recipes'
+
+describe('CS11 — loudness target locked', () => {
+  it('-14 LUFS integrated, -1 dBTP, filter string matches', () => {
+    expect(LOUDNESS_TARGET.integratedLufs).toBe(-14)
+    expect(LOUDNESS_TARGET.truePeakDb).toBe(-1)
+    expect(LOUDNORM_FILTER).toBe('loudnorm=I=-14:TP=-1:LRA=11')
+  })
+})
+
+describe('CS11 — error sanitization (owner never sees raw internals)', () => {
+  it('maps raw failures to Bangla codes', () => {
+    expect(sanitizeVideoErrorMessage('Veo video generation timed out after 12 minutes')).toBe(VIDEO_ERRORS_BN.VEO_TIMEOUT)
+    expect(sanitizeVideoErrorMessage('Veo download failed: fetch failed')).toBe(VIDEO_ERRORS_BN.VEO_DOWNLOAD)
+    expect(sanitizeVideoErrorMessage('ffmpeg exited with code 1: /tmp/reel-x.mp4 ...')).toBe(VIDEO_ERRORS_BN.FFMPEG_RENDER)
+    expect(sanitizeVideoErrorMessage('QC_BLACK: 42% black frames')).toBe(VIDEO_ERRORS_BN.QC_BLACK)
+    expect(sanitizeVideoErrorMessage('')).toBe(VIDEO_ERRORS_BN.UNKNOWN)
+    // every mapped message is Bangla-facing and carries its code
+    for (const [code, msg] of Object.entries(VIDEO_ERRORS_BN)) expect(msg).toContain(code)
+  })
+
+  it('detects raw internals in legacy stored errors', () => {
+    expect(looksLikeRawInternalError('ffmpeg exited with code 1')).toBe(true)
+    expect(looksLikeRawInternalError('spawn ffprobe ENOENT')).toBe(true)
+    expect(looksLikeRawInternalError('ভিডিও প্রসেসিং ব্যর্থ (কোড: FFMPEG_RENDER)')).toBe(false)
+    expect(looksLikeRawInternalError(null)).toBe(false)
+  })
+})
+
+describe('CS11 — cover ordering + caption safe area', () => {
+  it('sharp, well-exposed frames rank first; dark frames penalized', () => {
+    const order = scoreCoverOrder([
+      { index: 0, sharpness: 10, brightness: 20 }, // dark → penalty
+      { index: 1, sharpness: 100, brightness: 120 }, // best
+      { index: 2, sharpness: 60, brightness: 130 },
+    ])
+    expect(order[0]).toBe(1)
+    expect(order[1]).toBe(2)
+    expect(order[2]).toBe(0)
+  })
+
+  it('caption margin clamps into the safe band', () => {
+    expect(clampCaptionMarginV(10, 1920)).toBe(CAPTION_SAFE_AREA.minMarginVPx)
+    expect(clampCaptionMarginV(2000, 1920)).toBe(Math.round(1920 * CAPTION_SAFE_AREA.maxBottomFraction))
+    expect(clampCaptionMarginV(200, 1920)).toBe(200)
+  })
+})
