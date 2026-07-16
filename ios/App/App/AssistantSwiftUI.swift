@@ -1073,6 +1073,12 @@ final class AssistantVM {
     /// and a false positive only costs one idempotent status GET + seq-deduped
     /// replay attach — never a duplicate turn.
     private let streamStallSeconds: TimeInterval = 45
+    /// Visible retry ladder (owner spec 2026-07-17): a stalled stream shows
+    /// "আবার চেষ্টা N/৫…" in the status slot — never a silent hang — and after
+    /// maxStallRetries failed recovery attempts the turn is truthfully ended
+    /// client-side instead of spinning forever. Reset by any applied batch.
+    var stallRetryAttempt = 0
+    let maxStallRetries = 5
 
     /// Stable visual state. Understanding (the intake bloom) holds from the send
     /// until the FIRST real progress event arrives — thinking prose, text or a
@@ -1545,9 +1551,29 @@ final class AssistantVM {
                 // trigger bailed because isStreaming looked healthy. Marking it
                 // `reconnecting` is truthful (glyph state, never an error toast)
                 // and unlocks the normal durable-replay recovery.
-                if self.isStreaming, !self.reconnecting,
+                // Note: no !reconnecting guard — the ladder must keep counting
+                // (and stay visible) while recovery itself is struggling, or one
+                // failed attach would freeze it at 1/5 forever. recoverTurnState
+                // is single-flighted internally.
+                if self.isStreaming,
                    Date().timeIntervalSince(self.lastLiveEventAt) > self.streamStallSeconds {
-                    await self.recoverTurnState(trigger: "stall")
+                    if self.stallRetryAttempt >= self.maxStallRetries {
+                        // Ladder exhausted — end the turn truthfully instead of
+                        // hanging. finalizeTurn (via cancel) fetches the server's
+                        // final message state, so a late server reply still lands.
+                        AlmaTurnLog.event("turn.stallGiveUp", "\(self.maxStallRetries) retries")
+                        self.stallRetryAttempt = 0
+                        self.errorToast = "এজেন্টের সাড়া পাওয়া যাচ্ছে না — শেষ অবস্থা এনে দিচ্ছি"
+                        self.streamTask?.cancel()
+                    } else {
+                        self.stallRetryAttempt += 1
+                        AlmaTurnLog.event("turn.stallRetry",
+                                          "\(self.stallRetryAttempt)/\(self.maxStallRetries)")
+                        // Kick the visual mode machine too: a stuck-idle visual
+                        // reads as a frozen loader even when recovery is working.
+                        self.requestLiveMode("thinking")
+                        await self.recoverTurnState(trigger: "stall")
+                    }
                 }
                 // One bounded global query keeps task count identical across
                 // chat sessions. Assign-on-change prevents needless main-view
@@ -2504,6 +2530,7 @@ final class AssistantVM {
     private func apply(_ events: [AgentTurnEvent]) {
         // Stall watchdog heartbeat: ANY delivered batch proves the stream lives.
         lastLiveEventAt = Date()
+        if stallRetryAttempt != 0 { stallRetryAttempt = 0 }   // stream is back
         var touchedStream = false
         for ev in events {
             switch ev {
@@ -4236,7 +4263,8 @@ struct AgentMessageRow: View {
                         AgentThinkingRow(mode: vm.liveMode, pal: pal,
                                          message: message,
                                          lastThinkingGrowthAt: vm.lastThinkingGrowthAt,
-                                         reconnecting: vm.reconnecting)
+                                         reconnecting: vm.reconnecting,
+                                         stallRetryAttempt: vm.stallRetryAttempt)
                             .padding(.top, 2)
                     }
 
@@ -6084,6 +6112,10 @@ struct AgentThinkingRow: View {
     /// Transport dropped but the server turn is still running (roadmap Phase 1.1) —
     /// truthful glyph/text-only state, never an error, never a background effect.
     var reconnecting: Bool = false
+    /// Stall-recovery ladder position (owner spec 2026-07-17, Claude-Code
+    /// style): >0 replaces the phase verb with "আবার চেষ্টা N/৫…" so a dead
+    /// stream reads as actively retrying, never as a silent hang.
+    var stallRetryAttempt: Int = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phaseEnteredAt = Date()
 
@@ -6137,6 +6169,9 @@ struct AgentThinkingRow: View {
     /// বেশি লাগবে সেখানে almost হবে"), thinking additionally treats a quiet
     /// delta stream (≥3s) as the thought closing.
     private func statusVerb(now: Date) -> String {
+        if stallRetryAttempt > 0 {
+            return "আবার চেষ্টা \(almaBn(stallRetryAttempt))/৫…"
+        }
         let inPhase = now.timeIntervalSince(phaseEnteredAt)
         switch mode {
         case "understanding":
@@ -7826,9 +7861,12 @@ private struct AgentBackgroundTasksSheet: View {
             // lazy and keyed directly by the durable duty/todo id so the live
             // countdown refresh cannot rebuild every row or create a SwiftUI
             // AttributeGraph/layout feedback loop.
+            let sheenId = runningItems.isEmpty
+                ? displayedTodos.first(where: { !["completed", "done", "skipped"].contains($0.status) })?.id
+                : nil
             LazyVStack(spacing: 0) {
                 ForEach(displayedTodos) { todo in
-                    todayTodoRow(todo, pal: pal)
+                    todayTodoRow(todo, pal: pal, animateSheen: todo.id == sheenId)
                     if todo.id != displayedTodos.last?.id {
                         Divider().overlay(pal.borderSubtle).padding(.leading, 47)
                     }
@@ -7962,7 +8000,8 @@ private struct AgentBackgroundTasksSheet: View {
         .accessibilityLabel("আজকের \(todayWork.count)টি কাজের মধ্যে \(completedTodoCount)টি শেষ")
     }
 
-    private func todayTodoRow(_ todo: AgentTodayWorkItem, pal: AgentPalette) -> some View {
+    private func todayTodoRow(_ todo: AgentTodayWorkItem, pal: AgentPalette,
+                              animateSheen: Bool = false) -> some View {
         let status = todo.status
         let running = status == "running" || status == "in_progress"
         let done = status == "completed" || status == "done"
@@ -8008,6 +8047,32 @@ private struct AgentBackgroundTasksSheet: View {
                 .contentTransition(.numericText())
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
+        .overlay {
+            // Same sheen as the Running rows (owner 2026-07-17): when the only
+            // live work is a pending/running duty row — e.g. the approval-chase
+            // task waiting on the owner — the visual focus lives HERE.
+            if animateSheen {
+                TimelineView(.animation(
+                    minimumInterval: 1.0 / 12.0,
+                    paused: reduceMotion
+                )) { timeline in
+                    GeometryReader { proxy in
+                        let duration = 2.4
+                        let phase = timeline.date.timeIntervalSinceReferenceDate
+                            .truncatingRemainder(dividingBy: duration) / duration
+                        let width = max(76, proxy.size.width * 0.34)
+                        LinearGradient(
+                            colors: [.clear, tint.opacity(0.08), Color.white.opacity(0.12), .clear],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                        .frame(width: width, height: proxy.size.height)
+                        .offset(x: -width + (proxy.size.width + width) * phase)
+                    }
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            }
+        }
         .accessibilityElement(children: .combine)
     }
 

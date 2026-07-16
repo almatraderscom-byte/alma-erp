@@ -140,6 +140,15 @@ function providerToCostProvider(provider: string): CostProvider {
 // tool-round budget. Marketing is Qwen's own specialty — it must NOT hand the job
 // to a cheap DeepSeek worker. So it is told to wrap up and answer now with what it
 // already gathered. No delegation: marketing quality stays on Qwen.
+// After staging an approval card, the head must WAIT — the owner watched it
+// (2026-07-16 late) chain save_memory sprees and more tools BELOW its own
+// pending card, burning tokens on work that may be rejected. One card ⇒ the
+// decision is now the owner's; the turn wraps in one line and stops.
+const CARD_STAGED_WRAPUP_NUDGE =
+  'অনুমোদন কার্ড এখন Boss-এর সামনে। এই টার্নে আর কোনো টুল কল বা নতুন কাজ নয় — ' +
+  'এক লাইনে জানাও যে অনুমোদনের অপেক্ষায় আছ, তারপর থামো। ' +
+  'Boss সিদ্ধান্ত দিলে পরের টার্নে বাকিটা হবে।'
+
 const MARKETING_HEAD_WRAPUP_NUDGE =
   'টুল ব্যবহারের বাজেট শেষ। এখন আর নতুন টুল কল কোরো না। ' +
   'হাতে যা তথ্য আছে তা দিয়েই মার্কেটিং কাজটা নিজে শেষ করো এবং সংক্ষেপে চূড়ান্ত উত্তর দাও। ' +
@@ -865,6 +874,7 @@ async function* runAlternateProviderTurn(
   const delegateOnlyNeutral = neutralTools.filter((t) => t.name === 'delegate_to_specialist')
   let headToolRounds = 0
   let budgetNudgeSent = false
+  let cardStagedNudgeSent = false
   let deadlineNudgeSent = false
   let canceled = false
   /// Confirm cards yielded this turn — precondition for the card-shape
@@ -956,8 +966,11 @@ async function* runAlternateProviderTurn(
       // Models whose provider offers no tool-calling (e.g. Qwen 2.5 VL 72B on
       // OpenRouter) get a chat/vision-only turn — sending tool defs would 4xx
       // the request and bounce the owner to the cheap-head fallback.
+      // A staged approval card ends the working part of the turn: everything
+      // past it is spend on work the owner may reject (and it buries the card).
+      const cardStaged = confirmCardsEmitted > 0
       const iterationTools =
-        nearDeadline || overBudget || emptyRoundRetries >= 2 || !model.supportsTools
+        nearDeadline || overBudget || cardStaged || emptyRoundRetries >= 2 || !model.supportsTools
           ? []
           : premiumOverBudget
             ? delegateOnlyNeutral
@@ -981,6 +994,10 @@ async function* runAlternateProviderTurn(
       if (!nearDeadline && overBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
         messages = [...messages, { role: 'user', content: MARKETING_HEAD_WRAPUP_NUDGE }]
+      }
+      if (cardStaged && !cardStagedNudgeSent) {
+        cardStagedNudgeSent = true
+        messages = [...messages, { role: 'user', content: CARD_STAGED_WRAPUP_NUDGE }]
       }
       if (!nearDeadline && premiumOverBudget && !budgetNudgeSent) {
         budgetNudgeSent = true
