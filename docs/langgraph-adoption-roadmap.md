@@ -75,6 +75,17 @@ preview: routine lookups answered via the graph at Σ~333 tokens / ~$0.000 vs
   every read; act surfaces scrollInfo + at-bottom notes. History readers of
   slices 1–3 dedupe to post-node checkpoints (appliedStep stamp).
   **Owner action: reload the Companion extension (0.9.8) in Chrome.**
+- **LG-9 slice 1 (SHIPPED 2026-07-16):** scheduled duties on durable threads.
+  Finding first: every surface (web chat, voice console, heartbeat wakes,
+  approval continuations, plan driver) already funnels through
+  `runOwnerTurn`, so LG-1/2/3 graphs cover them by construction — the
+  Telegram Hermes bot lives on legacy `/api/agent/*` and stays out by design.
+  New: every heartbeat tick decision (off_hours / resting / quiet /
+  unchanged / cap_reached / wake+outcome+cost / error) checkpoints onto
+  thread `duty:heartbeat:<ymd>` (`duty-run-graph.ts`, generic dutyKey for
+  future day-shift/watchdog duties); `getDutyRunDay` replays a day with
+  wake + cost totals. Same `AGENT_LANGGRAPH_WORKFLOW` gate, fail-open.
+  Remaining LG-9: other duty keys + an owner-facing "আজ কী করলে" reader.
 - **LG-7 (SHIPPED 2026-07-16, PR #393):** `AlmaMemoryStore` BaseStore adapter
   over the existing pgvector `agent_memory` (search delegates to the head's
   own ranking; delete refused — owner-curated). Gate `AGENT_LANGGRAPH_STORE`.
