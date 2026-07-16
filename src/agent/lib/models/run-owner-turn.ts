@@ -1747,11 +1747,19 @@ async function* runAlternateProviderTurn(
     // to Sonnet (the expensive rescue that spiked cost). Guards: only when no answer
     // was streamed yet, and not already on the cheap head (prevents recursion loop).
     const cheapId = process.env.CHEAP_HEAD_MODEL_ID?.trim() || 'or-deepseek-v4-flash'
-    if (canRestartHead && model.id !== cheapId && isKnownModelId(cheapId)) {
-      const cheap = getModel(cheapId)
+    // When the CHEAP head is the one that died (owner-hit 2026-07-16: OpenRouter
+    // credits ran out → DeepSeek 402 → raw English error on screen, because the
+    // only ladder went expensive→cheap), climb the other way instead: the native
+    // Gemini head rides a DIFFERENT billing account than every or-* model, so a
+    // provider-credit outage on OpenRouter still gets an answer.
+    const rescueId = model.id === cheapId
+      ? (process.env.HEAVY_HEAD_MODEL_ID?.trim() || 'gemini-3.1-pro')
+      : cheapId
+    if (canRestartHead && model.id !== rescueId && isKnownModelId(rescueId)) {
+      const cheap = getModel(rescueId)
       if (cheap.provider !== 'anthropic' && cheap.supportsTools) {
         console.warn(
-          `[run-owner-turn] head ${model.id} failed pre-answer → falling back to ${cheapId}:`,
+          `[run-owner-turn] head ${model.id} failed pre-answer → falling back to ${rescueId}:`,
           err instanceof Error ? err.message : err,
         )
         // Persist the REAL head error before we swallow it into the fallback —
@@ -1767,7 +1775,7 @@ async function* runAlternateProviderTurn(
           variant: modelVariant(cheap),
           tier: 'light',
         }
-        yield* runAlternateProviderTurn(conversationId, cheapId, options, 'light', 0, 'cheap_fallback')
+        yield* runAlternateProviderTurn(conversationId, rescueId, options, 'light', 0, 'cheap_fallback')
         return
       }
     }
