@@ -64,6 +64,17 @@ preview: routine lookups answered via the graph at Σ~333 tokens / ~$0.000 vs
   against the template step map — off-map jumps recorded `legal:false` (drift
   signal, never blocking); `get_workflow_history` now replays template runs
   too. Same gate `AGENT_LANGGRAPH_WORKFLOW`. Remaining slice: browser recipes.
+- **LG-6 slice 3 (SHIPPED 2026-07-16):** live-browser sessions on durable
+  threads (`lbrowse:<conversationId>`, `live-browser-graph.ts`) — every
+  look/act is a checkpoint with scroll telemetry. Root-caused the owner's
+  "model scrolls but doesn't understand" report: `read_text` silently
+  truncated at 12k chars with no scroll metrics. Companion 0.9.8 returns
+  textLength/truncated/scroll{y,viewport,pageHeight,atBottom} + `from`
+  windowing; the look tool gained `sweep:true` (auto-scroll + merge whole
+  page, lazy feeds included), truncation warnings, and scroll telemetry on
+  every read; act surfaces scrollInfo + at-bottom notes. History readers of
+  slices 1–3 dedupe to post-node checkpoints (appliedStep stamp).
+  **Owner action: reload the Companion extension (0.9.8) in Chrome.**
 - **LG-7 (SHIPPED 2026-07-16, PR #393):** `AlmaMemoryStore` BaseStore adapter
   over the existing pgvector `agent_memory` (search delegates to the head's
   own ranking; delete refused — owner-curated). Gate `AGENT_LANGGRAPH_STORE`.
