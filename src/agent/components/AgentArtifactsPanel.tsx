@@ -34,15 +34,23 @@ function isPreviewable(a: Artifact | null): boolean {
   return /^\s*(<!doctype html|<html[\s>]|<svg[\s>])/i.test(c)
 }
 
-/** Wrap artifact content into a self-contained doc for the sandboxed iframe. */
+/**
+ * Wrap artifact content into a self-contained doc for the sandboxed iframe.
+ * The wrapper follows the APP's theme (owner caught the light-mode bug
+ * 2026-07-16: dark-hardcoded backgrounds made cards unreadable) — full HTML
+ * documents keep their own styling untouched.
+ */
 function buildSrcDoc(a: Artifact): string {
   const c = a.content ?? ''
   const t = (a.type ?? '').toLowerCase()
+  const dark = typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark'
+  const bg = dark ? '#141418' : '#FAF9F6'
+  const ink = dark ? '#F7F8FC' : '#1d1d2b'
   if (t === 'svg' || /^\s*<svg[\s>]/i.test(c)) {
-    return `<!doctype html><meta charset="utf-8"><style>html,body{margin:0;height:100%;display:flex;align-items:center;justify-content:center;background:#0c0c10}svg{max-width:100%;max-height:100%;height:auto}</style>${c}`
+    return `<!doctype html><meta charset="utf-8"><style>html,body{margin:0;height:100%;display:flex;align-items:center;justify-content:center;background:${bg}}svg{max-width:100%;max-height:100%;height:auto}</style>${c}`
   }
   if (/^\s*(<!doctype html|<html[\s>])/i.test(c)) return c
-  return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;background:#0c0c10;color:#ECE6DA;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Bengali",system-ui,sans-serif;padding:14px}</style>${c}`
+  return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;background:${bg};color:${ink};font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans Bengali",system-ui,sans-serif;padding:14px}</style>${c}`
 }
 
 function fileExt(type: string | null): string {
@@ -184,12 +192,12 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
   const showPreview = previewable && mode === 'preview' && viewVersion === null
 
   const panel = (
-    <div className="flex h-full flex-col bg-[rgba(12,12,16,0.8)]">
+    <div className="flex h-full flex-col bg-bg-1/95 backdrop-blur-md">
       {/* Header */}
-      <div className="flex items-center gap-2 border-b border-white/[0.04] px-4 py-3">
+      <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
         <span className="text-sm font-bold text-cream">আর্টিফ্যাক্ট</span>
         {previewable && (
-          <div className="flex rounded-full border border-white/[0.08] bg-card/80 p-0.5">
+          <div className="flex rounded-full border border-border-strong bg-card/80 p-0.5">
             <button
               onClick={() => setMode('preview')}
               className={`rounded-full px-3 py-1 text-[11px] font-bold transition-all ${
@@ -225,7 +233,7 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
 
       {/* Artifact list tabs */}
       {artifacts.length > 1 && (
-        <div className="flex gap-1 overflow-x-auto border-b border-white/[0.04] px-3 py-2">
+        <div className="flex gap-1 overflow-x-auto border-b border-border-subtle px-3 py-2">
           {artifacts.map((a) => (
             <button
               key={a.id}
@@ -233,7 +241,7 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
               className={`flex-shrink-0 rounded-full px-3 py-1.5 text-[11px] font-medium backdrop-blur-md transition-all ${
                 (activeId ? activeId === a.id : a.id === artifacts[artifacts.length - 1]?.id)
                   ? 'bg-gold/10 border border-gold-dim/40 text-gold-lt shadow-[0_0_10px_rgba(201,168,76,0.1)]'
-                  : 'border border-white/[0.06] bg-card/80 text-muted-hi hover:text-cream hover:border-gold-dim/30'
+                  : 'border border-border-subtle bg-card/80 text-muted-hi hover:text-cream hover:border-gold-dim/30'
               }`}
             >
               {typeIcon(a.type)} {a.title ?? `আর্টিফ্যাক্ট ${artifacts.indexOf(a) + 1}`}
@@ -245,12 +253,12 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
 
       {/* Version strip — only when history exists */}
       {active && versionList && versionList.length > 0 && (
-        <div className="flex items-center gap-1 overflow-x-auto border-b border-white/[0.04] px-3 py-1.5">
+        <div className="flex items-center gap-1 overflow-x-auto border-b border-border-subtle px-3 py-1.5">
           <span className="mr-1 flex-shrink-0 text-[10px] font-bold uppercase tracking-wide text-muted">সংস্করণ</span>
           <button
             onClick={() => openVersion(null)}
             className={`flex-shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-bold transition-all ${
-              viewVersion === null ? 'bg-gold/10 border border-gold-dim/40 text-gold-lt' : 'border border-white/[0.06] bg-card/80 text-muted-hi hover:text-cream'
+              viewVersion === null ? 'bg-gold/10 border border-gold-dim/40 text-gold-lt' : 'border border-border-subtle bg-card/80 text-muted-hi hover:text-cream'
             }`}
           >v{active.version} · বর্তমান</button>
           {versionList.map((v) => (
@@ -258,7 +266,7 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
               key={v.version}
               onClick={() => openVersion(v.version)}
               className={`flex-shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-medium transition-all ${
-                viewVersion === v.version ? 'bg-gold/10 border border-gold-dim/40 text-gold-lt' : 'border border-white/[0.06] bg-card/80 text-muted-hi hover:text-cream'
+                viewVersion === v.version ? 'bg-gold/10 border border-gold-dim/40 text-gold-lt' : 'border border-border-subtle bg-card/80 text-muted-hi hover:text-cream'
               }`}
             >v{v.version}</button>
           ))}
@@ -284,7 +292,7 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
             title={active.title ?? 'preview'}
             sandbox="allow-scripts"
             srcDoc={buildSrcDoc(active)}
-            className="min-h-[60dvh] w-full flex-1 border-0 bg-[#0c0c10]"
+            className="min-h-[60dvh] w-full flex-1 border-0 bg-bg-0"
           />
         ) : viewVersion !== null && versionBody === null ? (
           <p className="mt-8 text-center text-[12px] text-muted-hi">সংস্করণ v{viewVersion} আনা হচ্ছে…</p>
@@ -293,12 +301,12 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
             {active.title && (
               <h3 className="mb-3 text-sm font-bold text-cream">
                 {active.title}
-                {viewVersion !== null && <span className="ml-2 rounded-full border border-white/[0.08] px-2 py-0.5 text-[10px] font-medium text-muted-hi">পুরনো সংস্করণ v{viewVersion}</span>}
+                {viewVersion !== null && <span className="ml-2 rounded-full border border-border-strong px-2 py-0.5 text-[10px] font-medium text-muted-hi">পুরনো সংস্করণ v{viewVersion}</span>}
               </h3>
             )}
-            <div className="rounded-xl border border-white/[0.06] bg-[rgba(8,8,12,0.7)] p-4 text-sm text-muted-hi backdrop-blur-md">
+            <div className="rounded-xl border border-border-subtle bg-card/80 p-4 text-sm text-muted-hi backdrop-blur-md">
               {active.type === 'code' || active.type === 'html' || active.type === 'svg' ? (
-                <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[13px] text-zinc-300">{shownContent}</pre>
+                <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[13px] text-muted-hi">{shownContent}</pre>
               ) : (
                 <AgentMarkdown content={shownContent ?? ''} />
               )}
@@ -309,17 +317,17 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
 
       {/* Actions */}
       {active?.content && (
-        <div className="flex gap-2 border-t border-white/[0.04] p-3">
-          <button onClick={copyContent} className="flex-1 rounded-full border border-white/[0.06] bg-card/80 py-2 text-xs font-semibold text-muted-hi backdrop-blur-md transition-all hover:border-gold-dim/30 hover:bg-gold/5 hover:text-cream hover:shadow-[0_0_10px_rgba(201,168,76,0.1)]">
+        <div className="flex gap-2 border-t border-border-subtle p-3">
+          <button onClick={copyContent} className="flex-1 rounded-full border border-border-subtle bg-card/80 py-2 text-xs font-semibold text-muted-hi backdrop-blur-md transition-all hover:border-gold-dim/30 hover:bg-gold/5 hover:text-cream hover:shadow-[0_0_10px_rgba(201,168,76,0.1)]">
             📋 কপি
           </button>
-          <button onClick={downloadContent} className="flex-1 rounded-full border border-white/[0.06] bg-card/80 py-2 text-xs font-semibold text-muted-hi backdrop-blur-md transition-all hover:border-gold-dim/30 hover:bg-gold/5 hover:text-cream hover:shadow-[0_0_10px_rgba(201,168,76,0.1)]">
+          <button onClick={downloadContent} className="flex-1 rounded-full border border-border-subtle bg-card/80 py-2 text-xs font-semibold text-muted-hi backdrop-blur-md transition-all hover:border-gold-dim/30 hover:bg-gold/5 hover:text-cream hover:shadow-[0_0_10px_rgba(201,168,76,0.1)]">
             ⬇️ ফাইল
           </button>
           <button
             onClick={() => downloadExport('pdf')}
             disabled={exportBusy !== null}
-            className="flex-1 rounded-full border border-white/[0.06] bg-card/80 py-2 text-xs font-semibold text-muted-hi backdrop-blur-md transition-all hover:border-gold-dim/30 hover:bg-gold/5 hover:text-cream hover:shadow-[0_0_10px_rgba(201,168,76,0.1)] disabled:opacity-50"
+            className="flex-1 rounded-full border border-border-subtle bg-card/80 py-2 text-xs font-semibold text-muted-hi backdrop-blur-md transition-all hover:border-gold-dim/30 hover:bg-gold/5 hover:text-cream hover:shadow-[0_0_10px_rgba(201,168,76,0.1)] disabled:opacity-50"
           >
             {exportBusy === 'pdf' ? '⏳ বানাচ্ছি…' : '📄 PDF'}
           </button>
@@ -327,7 +335,7 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
             <button
               onClick={() => downloadExport('doc')}
               disabled={exportBusy !== null}
-              className="flex-1 rounded-full border border-white/[0.06] bg-card/80 py-2 text-xs font-semibold text-muted-hi backdrop-blur-md transition-all hover:border-gold-dim/30 hover:bg-gold/5 hover:text-cream hover:shadow-[0_0_10px_rgba(201,168,76,0.1)] disabled:opacity-50"
+              className="flex-1 rounded-full border border-border-subtle bg-card/80 py-2 text-xs font-semibold text-muted-hi backdrop-blur-md transition-all hover:border-gold-dim/30 hover:bg-gold/5 hover:text-cream hover:shadow-[0_0_10px_rgba(201,168,76,0.1)] disabled:opacity-50"
             >
               {exportBusy === 'doc' ? '⏳ বানাচ্ছি…' : '📝 Word'}
             </button>
@@ -360,7 +368,7 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
                 role="button"
                 aria-label="টেনে বন্ধ করুন"
               >
-                <div className="h-1.5 w-12 rounded-full bg-white/20" />
+                <div className="h-1.5 w-12 rounded-full bg-muted/40" />
               </div>
               {panel}
             </motion.div>
@@ -370,7 +378,12 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
     )
   }
 
-  const desktopWidth = wide ? 680 : 380
+  // Wide mode caps to the window so the chat column never gets crushed on a
+  // small desktop window (found live 2026-07-16: 680px overflowed a 1080px
+  // window). 640px floor for chat+sidebar.
+  const desktopWidth = wide
+    ? Math.max(380, Math.min(680, (typeof window !== 'undefined' ? window.innerWidth : 1280) - 640))
+    : 380
   return (
     <AnimatePresence>
       {open && (
@@ -379,7 +392,7 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
           animate={{ width: desktopWidth, opacity: 1 }}
           exit={{ width: 0, opacity: 0 }}
           transition={{ duration: 0.2 }}
-          className="flex-shrink-0 overflow-hidden border-l border-white/[0.04]"
+          className="flex-shrink-0 overflow-hidden border-l border-border-subtle"
           style={{ width: open ? desktopWidth : 0 }}
         >
           {panel}
