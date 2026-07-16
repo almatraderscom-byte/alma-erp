@@ -17,14 +17,11 @@ const nextConfig = {
       '/api/assistant/brand-models': ['./public/fonts/**'],
       '/api/assistant/brand-models/tryon': ['./public/fonts/**'],
       '/api/assistant/internal/ad-creative-gate': ['./public/fonts/**'],
-      // Client-report PDF (2026-07-16): the route serves fonts to headless
-      // Chromium from this deployment, and @sparticuz/chromium extracts its
-      // browser binary from bin/ at runtime via fs — the tracer can't see
-      // either, so force-include both.
-      '/api/assistant/artifacts/[id]/pdf': [
-        './public/fonts/**',
-        './node_modules/@sparticuz/chromium/bin/**',
-      ],
+      // Client-report PDF (2026-07-16): Bangla TTFs for the report template.
+      // NOTE: do NOT try to trace @sparticuz/chromium/bin here — local
+      // nft.json picks it up but Vercel's bundler still drops it; the route
+      // downloads the browser pack remotely instead (see the route file).
+      '/api/assistant/artifacts/[id]/pdf': ['./public/fonts/**'],
     },
   },
   images: {

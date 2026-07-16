@@ -40,9 +40,18 @@ async function launchBrowser() {
     // libnss3 failure came from a runtime/library mismatch; ≥149 ships the
     // AL2023 lib set Vercel's node runtime actually has).
     chromium.setGraphicsMode = false
+    // Vercel's function bundler drops node_modules/@sparticuz/chromium/bin
+    // even when outputFileTracingIncludes lists it (local nft.json has the 4
+    // files; the deployed function 500'd with "input directory ... does not
+    // exist"). The supported pattern on Vercel is the remote pack: cold start
+    // downloads the browser tar to /tmp (~66MB, re-used while the function is
+    // warm). Pin the URL to the installed package version.
+    const packUrl =
+      process.env.CHROMIUM_PACK_URL ||
+      'https://github.com/Sparticuz/chromium/releases/download/v149.0.0/chromium-v149.0.0-pack.x64.tar'
     return puppeteer.launch({
       args: chromium.args,
-      executablePath: await chromium.executablePath(),
+      executablePath: await chromium.executablePath(packUrl),
       headless: true,
     })
   }
