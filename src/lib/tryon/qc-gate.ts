@@ -81,6 +81,22 @@ export function evaluateQCScore(score: QCScore, level: QCLevel): boolean {
   return axisValues(score).every((n) => n >= cfg.minAxis)
 }
 
+/**
+ * CS8 — PRODUCTION-mode hard gate (fixes the audit finding "normal QC can
+ * accept a 2/5 individual axis when overall passes"): garment fidelity, model
+ * identity and anatomy must EACH be ≥4/5, regardless of overall. Mirrored in
+ * worker/src/image-qc.mjs (keep in sync).
+ */
+export const PRODUCTION_MIN_CORE_AXIS = 4
+
+export function evaluateProductionCoreAxes(score: QCScore): boolean {
+  return (
+    score.garment_fidelity >= PRODUCTION_MIN_CORE_AXIS
+    && score.model_preserved >= PRODUCTION_MIN_CORE_AXIS
+    && score.anatomy >= PRODUCTION_MIN_CORE_AXIS
+  )
+}
+
 export function pickWeakestAxis(score: QCScore): string {
   const axes: Array<[string, number]> = [
     ['garment fidelity', score.garment_fidelity],

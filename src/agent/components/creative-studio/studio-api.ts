@@ -550,6 +550,8 @@ export type StudioSettings = {
   idmVtonEnabled: boolean
   fluxFillEnabled: boolean
   singleVtonDefault: StudioEngineId
+  /** CS8 — Preview (১টি সাশ্রয়ী রান) vs Production (কড়া QC + bounded repair) */
+  pipelineMode: 'preview' | 'production'
 }
 
 export async function fetchStudioSettings(): Promise<StudioSettings> {
@@ -566,6 +568,7 @@ export async function saveStudioSettings(patch: {
   idmVtonEnabled?: boolean
   fluxFillEnabled?: boolean
   singleVtonDefault?: StudioEngineId
+  pipelineMode?: 'preview' | 'production'
 }) {
   const res = await fetch('/api/assistant/creative-studio/settings', {
     method: 'POST',

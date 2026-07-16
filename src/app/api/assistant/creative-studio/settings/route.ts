@@ -17,6 +17,7 @@ import {
   normalizeSingleVtonDefault,
   type StudioEngineId,
 } from '@/lib/creative-studio/provider-registry'
+import { CS_PIPELINE_MODE_KEY, normalizePipelineMode } from '@/lib/creative-studio/single-pipeline'
 import { agentStorageSignedUrls } from '@/agent/lib/storage'
 
 export const runtime = 'nodejs'
@@ -50,6 +51,7 @@ export async function GET(req: NextRequest) {
     readKv(CS_FLUX_FILL_ENABLED_KEY),
     readKv(CS_SINGLE_VTON_DEFAULT_KEY),
   ])
+  const pipelineMode = normalizePipelineMode(await readKv(CS_PIPELINE_MODE_KEY))
 
   // Image engine — which model family the worker's Gemini-path renders use.
   // 'gpt' when the kv points the pro tier at a gpt-image model, else 'gemini'.
@@ -80,6 +82,8 @@ export async function GET(req: NextRequest) {
     idmVtonEnabled: idmEnabled === '1',
     fluxFillEnabled: fillEnabled === '1',
     singleVtonDefault: normalizeSingleVtonDefault(vtonDefault),
+    // CS8 — Preview (economical) vs Production (strict QC, bounded repair)
+    pipelineMode,
   })
 }
 
@@ -94,6 +98,7 @@ export async function POST(req: NextRequest) {
     idmVtonEnabled?: boolean
     fluxFillEnabled?: boolean
     singleVtonDefault?: string
+    pipelineMode?: string
   }
   try { body = await req.json() } catch { return Response.json({ error: 'invalid_json' }, { status: 400 }) }
 
@@ -133,6 +138,13 @@ export async function POST(req: NextRequest) {
       return Response.json({ error: 'invalid_vton_default' }, { status: 422 })
     }
     await writeKv(CS_SINGLE_VTON_DEFAULT_KEY, body.singleVtonDefault)
+  }
+  // CS8 — Preview/Production mode. Applies from the NEXT run, no redeploy.
+  if (typeof body.pipelineMode === 'string') {
+    if (!['preview', 'production'].includes(body.pipelineMode)) {
+      return Response.json({ error: 'invalid_pipeline_mode' }, { status: 422 })
+    }
+    await writeKv(CS_PIPELINE_MODE_KEY, body.pipelineMode)
   }
   return Response.json({ ok: true })
 }

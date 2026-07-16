@@ -3,6 +3,7 @@ import { getToken } from 'next-auth/jwt'
 import { requireAgentEnabled } from '@/agent/lib/guards'
 import { isSystemOwner } from '@/lib/roles'
 import { runAutoStudio, runCreativeStudio, type CreativeStudioRunInput } from '@/lib/creative-studio/create-run'
+import { READINESS_ERRORS_BN } from '@/lib/creative-studio/single-pipeline'
 import { resolveModel } from '@/lib/tryon/model-library'
 import type { StudioModeId, StudioProvider, FamilyPresetId } from '@/lib/creative-studio/constants'
 
@@ -34,6 +35,12 @@ function mapRunError(msg: string): string {
     const roles = msg.slice('missing_models:'.length).split(',').filter(Boolean)
     const bn = roles.map((r) => ROLE_BN[r] ?? r).join(', ')
     return `ফ্যামিলি শটের জন্য Models ট্যাবে ${bn} মডেল সেভ করুন — একবার সেভ করলেই প্রতিবার একই মুখ আসবে।`
+  }
+  // CS8 — input readiness gate: clear Bangla corrections BEFORE spending money
+  if (msg.startsWith('input_not_ready:')) {
+    const codes = msg.slice('input_not_ready:'.length).split(',').filter(Boolean)
+    const lines = codes.map((c) => READINESS_ERRORS_BN[c] ?? c)
+    return lines.join(' ')
   }
   return AUTO_ERRORS[msg] ?? msg
 }
