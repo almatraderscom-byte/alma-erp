@@ -148,6 +148,24 @@ async function createApprovedAction(data: {
   return row.id as string
 }
 
+
+/**
+ * Owner directive 2026-07-17: family/rescue chains follow the owner's single
+ * Try-On default. A Fal default (v1.6 or IDM) routes chain VTON steps to the
+ * COMMERCIAL Fal FASHN v1.6 (IDM never runs in family). With no usable direct
+ * FASHN key, fal is used whenever it is enabled.
+ */
+async function resolveChainVtonEngine(): Promise<'fashn' | 'fal_fashn_v16'> {
+  const falOk = Boolean(process.env.FAL_KEY?.trim()) && (await readKv(CS_FAL_ENABLED_KEY)) === '1'
+  if (!falOk) return 'fashn'
+  const { CS_SINGLE_VTON_DEFAULT_KEY } = await import('@/lib/creative-studio/provider-registry')
+  const { normalizeSingleVtonDefault } = await import('@/lib/creative-studio/provider-registry')
+  const def = normalizeSingleVtonDefault(await readKv(CS_SINGLE_VTON_DEFAULT_KEY))
+  if (def === 'fal_fashn_v16' || def === 'fal_idm_vton') return 'fal_fashn_v16'
+  if (!isFashnConfigured()) return 'fal_fashn_v16'
+  return 'fashn'
+}
+
 export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<{
   jobs: CreativeStudioJobRef[]
   /** engine that will actually run — legacy 'fashn'/'gemini' or a CS6 fal VTON engine id */
@@ -202,8 +220,12 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
   // the saved child models keep the same face on every run. Missing role models throw
   // FamilyChainModelError so the owner gets a clear "add the model" message instead of
   // a silent adult-for-child substitution.
+  // Chains run when EITHER VTON path is usable (direct FASHN key, or the Fal
+  // engine per the owner's 2026-07-17 directive).
+  const chainVtonEngine = await resolveChainVtonEngine()
+  const chainReady = fashnReady || chainVtonEngine === 'fal_fashn_v16'
   if (
-    fashnReady
+    chainReady
     && input.productImagePath
     && input.familyPreset
     && input.familyPreset !== 'single'
@@ -219,6 +241,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
       // CS9 — owner opt-in: deterministic protected composite instead of the
       // generative pair/group merge (no face/garment regeneration).
       protectedComposite: input.protectedComposite,
+      vtonEngine: chainVtonEngine,
       conversationId: null,
     })
     for (const j of chain.jobs) jobs.push(j)
@@ -453,6 +476,7 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           resolution: input.resolution,
           generationMode: input.generationMode,
           extraPrompt: extraPrompt || undefined,
+          vtonEngine: await resolveChainVtonEngine(),
           conversationId: null,
         })
         jobs.push({ pendingActionId: job.pendingActionId, label: modeDef.label, type: 'image_gen' })
@@ -587,7 +611,8 @@ export async function runAutoStudio(input: {
   const defaultModel = await getDefaultModel()
   if (!defaultModel) throw new Error('no_default_model')
 
-  const useFashn = isFashnConfigured()
+  const autoChainEngine = await resolveChainVtonEngine()
+  const useFashn = isFashnConfigured() || autoChainEngine === 'fal_fashn_v16' 
   const jobs: CreativeStudioJobRef[] = []
   /** variants rendered via the legacy Gemini batch (no-FASHN fallback) */
   const variants: ChatTryOnVariant[] = []
@@ -602,6 +627,7 @@ export async function runAutoStudio(input: {
       productImagePath,
       modelImagePath: defaultModel.imagePath,
       generationMode: 'quality',
+      vtonEngine: await resolveChainVtonEngine(),
       conversationId: null,
     })
     jobs.push({ pendingActionId: job.pendingActionId, label: 'On-model (best realism)', type: 'image_gen' })
@@ -629,6 +655,7 @@ export async function runAutoStudio(input: {
             variant: v,
             productImagePath,
             generationMode: 'quality',
+            vtonEngine: await resolveChainVtonEngine(),
             conversationId: null,
           })
           for (const j of chain.jobs) jobs.push(j)

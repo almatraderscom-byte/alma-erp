@@ -220,7 +220,7 @@ Cost facts to surface in the UI, not hard-code without a model-price configurati
 | CS7 | `agent-phase-cs7` | FLUX Fill precision editor and mask workflow | READY FOR OWNER |
 | CS8 | `agent-phase-cs8` | Professional single/product pipeline and localized repair | READY FOR OWNER |
 | CS9 | `agent-phase-cs9` | Family/couple/full-family protected compositing | READY FOR OWNER |
-| CS10 | `agent-phase-cs10` | QC 2.0, golden evaluation and model comparison | TODO |
+| CS10 | `agent-phase-cs10` | QC 2.0, golden evaluation and model comparison | READY FOR OWNER |
 | CS11 | `agent-phase-cs11` | Short-video and owner-shot video hardening | TODO |
 | CS12 | `agent-phase-cs12` | Observability, rollout controls and final E2E certification | TODO |
 
@@ -579,7 +579,7 @@ The roadmap file itself is allowed in every phase only for updating that phase's
 - FLUX Fill harmonizes ONLY the alpha-transition edge band + a ground contact-shadow ellipse (durable fal queue; a fal failure ships the free correct composite un-harmonized, flagged).
 - Exact member-count gate: mechanical Gemini count; mismatch fails with a clear Bangla error — a wrong family is never shipped silently.
 - **Live production run:** father_son protected chain end to end — adult shot → child garment → child shot → `family_composite` executed; final frame shows father (base pixels untouched, tea-stall street scene) + son inserted at correct relative height on the shared ground line, count 2/2 PASS. First run included the one-time ~80MB segmentation model download on the VPS.
-- Full family = two protected pairs + exactly ONE group composite (pair unit inserted at 1.0) — proven by end-to-end chain simulation in vitest (group fires once, base=father_son pair, insert=mother_daughter pair, expectedMembers 4). **Live full-family run blocked by data, not code: no mother/daughter models are saved in the library.** Owner action: save মা + মেয়ে models (AI model-creator can generate them), then run পুরো ফ্যামিলি with the 🛡 checkbox.
+- Full family = two protected pairs + exactly ONE group composite (pair unit inserted at 1.0). **LIVE-PROVEN on production 2026-07-17 (update):** after the owner saved ALMA mother/ALMA daughter models and PR #422 routed chain VTON steps to Fal FASHN v1.6 (owner directive — direct FASHN was OutOfCredits), a full পুরো ফ্যামিলি protected run completed end to end ENTIRELY on Fal: 2 pair chains (adult fal try-on → child garment → child fal try-on → pair composite "2 জন যাচাই") + exactly one group composite — final frame "🛡 প্রোটেক্টেড কম্পোজিট · **4 জন যাচাই**" with all four in the matching set. Remaining quality caveat: source product photos are marketing composites with baked-in text that bleeds into shots — clean garment-only golden fixtures (owner action) fix this, not code.
 - Child-garment cache stays keyed by product path (product change ⇒ new key); a failed composite step retries from stored artifact paths — successful paid steps never rerun.
 - Checks: type-check PASS, build PASS, vitest 94/94 (family-layout 8 + chain e2e +4), worker node:test 20/20, local segmentation smoke PASS.
 - Real spend this phase: father_son chain ≈ $0.6 (2 FASHN gens + child garment + $0.05 harmonize fill).
@@ -635,6 +635,21 @@ The roadmap file itself is allowed in every phase only for updating that phase's
 - Settings and Gallery expose useful QC details in plain Bangla.
 - Chrome preview proof shows comparison/QC metadata and a flagged-vs-passed example.
 - Update CS10 status to `READY FOR OWNER` and stop. Do not begin CS11.
+
+### CS10 verification notes (2026-07-17, branch `agent-phase-cs10`, tag `pre-agent-phase-cs10`, PR #420 — owner-directed same-session continuation + merge)
+
+**Status: READY FOR OWNER (merged to main at owner's instruction; live-verified on production)**
+
+- **Surface thresholds live:** single/family core floor 4, precision_edit core floor 5, poster text/brand-strict — image-qc-score accepts `surface`, worker plumbs it. Production never accepts a core axis below its floor (CS8 gate retained + surface-aware).
+- **Golden evaluation live-proven:** run `6d91c5c1` — 2 golden cases × Fal FASHN v1.6 + IDM-VTON = 4 attempts, all generated with fixed seed, scored on the single_tryon surface, per-attempt kv persistence (resumable, no re-pay). Actual cost **$0.25 = the estimate shown before Run**. Latencies real (v1.6 p95 23s, IDM p95 62s).
+- **Deterministic comparison honest:** both engines scored 3/5 average on the marketing-composite test products, 0% pass under the strict gate → verdict "কোনো ইঞ্জিন স্পষ্টভাবে এগিয়ে নেই — ডিফল্ট বদলানোর মতো প্রমাণ এখনো হয়নি।" Recommendation requires real margin + usable pass rate; nothing auto-applies (owner decision, CS12 canary). No LLM touches routing policy — fixed formula + owner ভালো/বাদ tallies.
+- Settings 🏅 গোল্ডেন টেস্ট section shows cases, one-tap run with cost estimate, rankings + verdict in Bangla (Chrome-proven on production).
+- Gallery lightbox now shows plain-Bangla QC details: production core axes, 🛡 composite member-count proof, protected-pixel proof, mask preset — closes the CS8/CS9 follow-ups.
+- **Repair policy per roadmap:** a failing localized axis routes to FLUX Fill repair only when a SAFE mask exists — safe = owner-painted (🎯 rescue); faces/embroidery never auto-repainted.
+- Checks: type-check PASS, build PASS, vitest 107/107 (qc-gate 8 + eval/comparison 9 new), worker node:test 20/20.
+- **Blockers/owner actions:** (1) Direct FASHN **OutOfCredits** — the fashn leg of the golden run and the family chains are blocked until the owner tops up fashn.ai credits; retry then. (2) Real verdicts need CLEAN garment-only product photos — the roadmap §6 golden set (docs/creative-studio-golden-eval.md has the add_case API); today's composite photos floor every engine at 3/5 garment fidelity. (3) The maroon মা-মেয়ে set photo the owner shared in chat could not be extracted as a file from the conversation — owner should upload it via the Studio/golden-set API for it to become a golden case.
+- Real spend this phase: **$0.25**.
+- Deviations (owner-directed): same-session continuation; Claude merged PR #420 and redeployed the VPS worker under standing permission.
 
 ---
 
