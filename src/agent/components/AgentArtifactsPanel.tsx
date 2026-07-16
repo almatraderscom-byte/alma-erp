@@ -102,7 +102,9 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
           import('@/components/pdf/ClientReportDocument'),
           import('react'),
         ])
-      await ensurePdfFonts()
+      // Client reports are Bangla-first — Helvetica renders the script as
+      // mojibake (2026-07-16 incident), so Noto is forced past PDF safe mode.
+      await ensurePdfFonts({ forceNoto: true, timeoutMs: 6000 })
       let blocks = parseMarkdownBlocks(active.content)
       let title = active.title ?? 'Report'
       const metaLines: string[] = []
@@ -127,7 +129,9 @@ export default function AgentArtifactsPanel({ artifacts, open, onClose, isMobile
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${(active.title ?? 'report').replace(/[\\/:*?"<>|]/g, '-')}.pdf`
+      a.download = `${(active.title ?? 'report')
+        .replace(/\.(md|txt|html?)$/i, '') // "report.md.pdf" reads broken to a client
+        .replace(/[\\/:*?"<>|]/g, '-')}.pdf`
       a.click()
       URL.revokeObjectURL(url)
     } catch (err) {
