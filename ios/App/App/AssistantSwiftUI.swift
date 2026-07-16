@@ -3273,11 +3273,32 @@ final class AssistantVM {
     func approveAction(_ cardId: String, approve: Bool) async {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         if approve { confirmApprovedAt[cardId] = Date() }
+        let summary = messages
+            .flatMap(\.confirmCards)
+            .first(where: { $0.id == cardId })?
+            .summary.split(separator: "\n").first.map(String.init) ?? ""
         setConfirmStatus(cardId, approve ? "approved" : "rejected")
         do {
             let _: OkResponse = try await AlmaAPI.shared.send(
                 "POST", "/api/assistant/actions/\(cardId)/\(approve ? "approve" : "reject")")
             UINotificationFeedbackGenerator().notificationOccurred(.success)
+            // Owner-hit 2026-07-16: a REJECT left the thread dead silent — no
+            // loader, no acknowledgment (approve is covered server-side: the
+            // route writes a progress note and enqueues a continuation turn,
+            // so a second client message there would double the reply). For
+            // reject, feed the decision into the chat exactly like an ask-card
+            // answer, so the agent responds to it knowingly — "বাতিল করলাম"
+            // deserves a reply, not a shrug.
+            if !approve {
+                let line = summary.isEmpty
+                    ? "এই কাজটা বাতিল করলাম।"
+                    : "\"\(summary.prefix(70))\" — এটা বাতিল করলাম।"
+                // send() owns the timeline from here (bubble + streaming tail) —
+                // running loadMessages() underneath it would rebuild the array
+                // mid-stream and clobber both. The reply lands via the stream.
+                send(line)
+                return
+            }
         } catch {
             setConfirmStatus(cardId, "pending")
             errorToast = error.localizedDescription
@@ -7343,7 +7364,7 @@ private struct AgentBackgroundTasksAnchor: View {
     let action: () -> Void
 
     private var drives: [AgentPlanDriveView] { vm.planDrive?.drives ?? [] }
-    private var activeCount: Int {
+    private var runningCount: Int {
         let selfWakes = vm.activeBackgroundTurns.filter { $0.kind == "self-wake" }
         let globalIds = Set(selfWakes.map(\.id))
         let localSelfWake = vm.isStreaming
@@ -7355,9 +7376,19 @@ private struct AgentBackgroundTasksAnchor: View {
         return drives.count + selfWakes.count + (localWakeMissing ? 1 : 0)
     }
 
+    /// Pending approvals count into the anchor (owner-hit 2026-07-16: an
+    /// approval card appeared and the footer still said a sleepy "Background
+    /// Tasks" — a decision waiting on the owner must light this label up, the
+    /// sheet already lists it under "Needs attention" with its age).
+    private var attentionCount: Int { vm.backgroundAttention.count }
+
     private var label: String {
-        if activeCount > 0 {
-            return activeCount == 1 ? "1 Running Task" : "\(activeCount) Running Tasks"
+        let total = runningCount + attentionCount
+        if attentionCount > 0 && runningCount == 0 {
+            return attentionCount == 1 ? "1 Approval Waiting" : "\(attentionCount) Approvals Waiting"
+        }
+        if total > 0 {
+            return total == 1 ? "1 Running Task" : "\(total) Running Tasks"
         }
         return "Background Tasks"
     }
