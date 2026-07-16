@@ -219,7 +219,7 @@ Cost facts to surface in the UI, not hard-code without a model-price configurati
 | CS6 | `agent-phase-cs6` | Selectable IDM-VTON and Fal FASHN single try-on | READY FOR OWNER |
 | CS7 | `agent-phase-cs7` | FLUX Fill precision editor and mask workflow | READY FOR OWNER |
 | CS8 | `agent-phase-cs8` | Professional single/product pipeline and localized repair | READY FOR OWNER |
-| CS9 | `agent-phase-cs9` | Family/couple/full-family protected compositing | TODO |
+| CS9 | `agent-phase-cs9` | Family/couple/full-family protected compositing | READY FOR OWNER |
 | CS10 | `agent-phase-cs10` | QC 2.0, golden evaluation and model comparison | TODO |
 | CS11 | `agent-phase-cs11` | Short-video and owner-shot video hardening | TODO |
 | CS12 | `agent-phase-cs12` | Observability, rollout controls and final E2E certification | TODO |
@@ -570,6 +570,20 @@ The roadmap file itself is allowed in every phase only for updating that phase's
 - One failed sub-chain can retry without rerunning successful paid steps.
 - Chrome preview proof covers one pair and one full-family result with progress and final metadata.
 - Update CS9 status to `READY FOR OWNER` and stop. Do not begin CS10.
+
+### CS9 verification notes (2026-07-17, branch `agent-phase-cs9`, tag `pre-agent-phase-cs9`, PR #416 — owner-directed same-session continuation + merge)
+
+**Status: READY FOR OWNER (merged to main at owner's instruction; pair path live-verified on production)**
+
+- **🛡 Protected composite (opt-in checkbox on family runs):** the approved adult FASHN shot is the UNTOUCHED base; the second person is cut out with LOCAL segmentation (`@imgly/background-removal-node`, on-VPS ONNX — no third paid model) and inserted at the owner-locked relative height (son 0.62 / daughter 0.56 / wife 0.94 / pair 1.0), feet on the shared ground line, roomier-side placement. Identity/garment survival is BY CONSTRUCTION (pixel copies).
+- FLUX Fill harmonizes ONLY the alpha-transition edge band + a ground contact-shadow ellipse (durable fal queue; a fal failure ships the free correct composite un-harmonized, flagged).
+- Exact member-count gate: mechanical Gemini count; mismatch fails with a clear Bangla error — a wrong family is never shipped silently.
+- **Live production run:** father_son protected chain end to end — adult shot → child garment → child shot → `family_composite` executed; final frame shows father (base pixels untouched, tea-stall street scene) + son inserted at correct relative height on the shared ground line, count 2/2 PASS. First run included the one-time ~80MB segmentation model download on the VPS.
+- Full family = two protected pairs + exactly ONE group composite (pair unit inserted at 1.0) — proven by end-to-end chain simulation in vitest (group fires once, base=father_son pair, insert=mother_daughter pair, expectedMembers 4). **Live full-family run blocked by data, not code: no mother/daughter models are saved in the library.** Owner action: save মা + মেয়ে models (AI model-creator can generate them), then run পুরো ফ্যামিলি with the 🛡 checkbox.
+- Child-garment cache stays keyed by product path (product change ⇒ new key); a failed composite step retries from stored artifact paths — successful paid steps never rerun.
+- Checks: type-check PASS, build PASS, vitest 94/94 (family-layout 8 + chain e2e +4), worker node:test 20/20, local segmentation smoke PASS.
+- Real spend this phase: father_son chain ≈ $0.6 (2 FASHN gens + child garment + $0.05 harmonize fill).
+- Deviations (owner-directed): same-session continuation; Claude merged PR #416 and redeployed the VPS worker under standing permission. Worker dependency added: `@imgly/background-removal-node` (reviewed local segmentation, sanctioned by this phase's allowed-files list).
 
 ---
 
