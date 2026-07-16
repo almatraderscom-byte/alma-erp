@@ -1,0 +1,28 @@
+== FINAL pre-TestFlight verification — 2026-07-17, sim 9E51818A (iPhone 17 Pro Max) ==
+Tree: agent-phase-26 MERGED with origin/main (build 75) = 49c58854
+(merge conflicts: 2 files — AgoraIntercom @ObservationIgnored superset kept,
+ AssistantSwiftUI IOSP-5 Reduce-Motion lines kept; both sides' features verified live)
+
+Clean build:            SUCCEEDED, 0 errors
+Swift-6 error-to-be:    0 app-wide   (was 96+1)
+WKProcessPool:          0            (was 9/15)
+allowBluetooth:         0            (was 1)
+never-mutated var:      0            (was 3)
+non-Sendable:           3            (known-deferred, Swift-6-mode work)
+script-phase:           5            (known-deferred, Pods regen)
+Route contract:         OK — 69 fixture routes / 66 web routes, 5 gaps all IOSP-7-sanctioned
+
+Sim drive (live data, Face ID unlock):
+  Dashboard/Orders/Assistant/Approvals/More  RENDER + live session  PASS
+  Assistant shows build-75 Background Tasks + IOSP-5 polish TOGETHER PASS
+Nav selftest signposts:
+  /trading/accounts → route.push+appeared (native)                  PASS
+  /payroll          → route.push+appeared (native, audit-fixed VM)  PASS
+  /portal/wallet    → route.webAllowed reason=temporary-web          PASS
+  /definitely-unknown-route → route.unknown (fail-loud)              PASS
+Cache selftest:  concurrentStart→Done, ttlStart→Done                 PASS
+Crash repro:     callResetRepro.start→survived, process alive,
+                 0 new crash reports                                  PASS
+
+Sim-only gotcha hit twice: BiometricKit enrollment silently resets to 0 —
+re-set enrollmentChanged=1 before every unlock loop (recipe updated).
