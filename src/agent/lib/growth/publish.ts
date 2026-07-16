@@ -20,6 +20,8 @@ export interface PublishOutcome {
   postId?: string
   permalinkUrl?: string
   error?: string
+  /** Phase 46: true only when the post was fetched back from the API after publishing. */
+  verified?: boolean
 }
 
 /**
@@ -35,14 +37,25 @@ export async function publishCalendarEntry(entry: CalendarEntryLike): Promise<Pu
       if (!entry.imageRef) {
         return { ok: false, error: 'Instagram পোস্টের জন্য ছবি লাগবে — imageRef খালি।' }
       }
-      const { publishInstagramImage } = await import('@/agent/lib/meta-instagram')
+      const { publishInstagramImage, verifyInstagramMedia } = await import('@/agent/lib/meta-instagram')
       const res = await publishInstagramImage({
         pageId,
         caption: entry.caption,
         mediaRef: entry.imageRef,
       })
-      if (!res.success) return { ok: false, error: res.error ?? 'IG publish failed' }
-      return { ok: true, postId: res.mediaId, permalinkUrl: res.permalink }
+      if (!res.success || !res.mediaId) return { ok: false, error: res.error ?? 'IG publish failed' }
+      // Phase 46 delivery truth: fetch the media back before claiming delivered.
+      const check = await verifyInstagramMedia(pageId, res.mediaId)
+      if (!check.ok) {
+        return {
+          ok: true,
+          verified: false,
+          postId: res.mediaId,
+          permalinkUrl: res.permalink,
+          error: `পাবলিশ কল সফল কিন্তু fetch-back verify হয়নি: ${check.error ?? 'unknown'}`,
+        }
+      }
+      return { ok: true, verified: true, postId: res.mediaId, permalinkUrl: check.permalink ?? res.permalink }
     }
 
     // default: facebook
@@ -57,7 +70,7 @@ export async function publishCalendarEntry(entry: CalendarEntryLike): Promise<Pu
       return { ok: false, error: `Facebook-এ পোস্ট হয়েছে (ID ${postId}) কিন্তু ছবি attach হয়নি।` }
     }
     void postedAsPhoto
-    return { ok: true, postId }
+    return { ok: true, verified: verified.ok, postId }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }

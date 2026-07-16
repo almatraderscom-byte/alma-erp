@@ -26,6 +26,7 @@ import {
 import { buildCreativeMatrix, checkCreativeCompliance, assessFatigue, type CreativeFormat, type ProductFacts } from '@/agent/lib/marketing/creative-strategy'
 import { getCalendarHealth } from '@/agent/lib/marketing/content-calendar'
 import { validateCroBrief, formatCroBrief, type CroBrief } from '@/agent/lib/marketing/cro-brief'
+import { getInstagramAccount, IG_FORMAT_SUPPORT } from '@/agent/lib/meta-instagram'
 import type { AgentTool } from './registry'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -590,6 +591,36 @@ const cro_brief_draft: AgentTool = {
   },
 }
 
+const social_ops_health: AgentTool = {
+  name: 'social_ops_health',
+  description:
+    'Social publishing asset health (read-only): Instagram account linkage per page + the honest IG format-support ' +
+    'matrix (single_image only today — reel/carousel/story explicitly unsupported until the VPS worker phase). ' +
+    'Use before promising any IG format to the owner.',
+  input_schema: { type: 'object' as const, properties: {} },
+  handler: async () => {
+    try {
+      const [lifestyle, onlineshop] = await Promise.all([
+        getInstagramAccount(resolvePageId('lifestyle')).catch((e) => ({ success: false, error: String(e) })),
+        getInstagramAccount(resolvePageId('onlineshop')).catch((e) => ({ success: false, error: String(e) })),
+      ])
+      return {
+        success: true,
+        data: {
+          instagram: {
+            lifestyle,
+            onlineshop,
+          },
+          formatSupport: IG_FORMAT_SUPPORT,
+          note: 'Unsupported মানে unsupported — owner-কে reel/carousel promise করবেন না যতক্ষণ না worker path আসে।',
+        },
+      }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  },
+}
+
 export const GROWTH_TOOLS: AgentTool[] = [
   schedule_content,
   schedule_content_batch,
@@ -600,6 +631,7 @@ export const GROWTH_TOOLS: AgentTool[] = [
   creative_matrix,
   content_calendar_health,
   cro_brief_draft,
+  social_ops_health,
 ]
 
 export const GROWTH_ROLE_PROMPT = `

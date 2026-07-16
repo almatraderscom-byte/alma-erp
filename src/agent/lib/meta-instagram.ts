@@ -22,8 +22,10 @@
 import { resilientFetch } from '@/agent/lib/fetch-retry'
 import { agentStorageSignedUrl } from '@/agent/lib/storage'
 import { normalizeFbImageRef, storagePathFromRef } from '@/agent/lib/meta'
+import { metaGraphBase } from '@/agent/lib/marketing/meta-version'
 
-const GRAPH_BASE = 'https://graph.facebook.com/v21.0'
+// Phase 45/46: version now lives in ONE place (meta-version.ts, env-overridable).
+const GRAPH_BASE = metaGraphBase()
 
 /**
  * Mirror of the page-token map in meta.ts (same env vars). Kept local so this
@@ -99,11 +101,60 @@ async function toPublicMediaUrl(ref: string): Promise<string> {
   return agentStorageSignedUrl(storagePath, 3600)
 }
 
+/**
+ * Phase 46 — honest format-support matrix for the IG publish path. Only
+ * `single_image` is proven end-to-end today; reel/carousel/story need async
+ * container-status polling (>30s) which belongs on the VPS worker queue per
+ * the architecture rule — they are explicit `unsupported`, never faked.
+ */
+export const IG_FORMAT_SUPPORT = {
+  single_image: { supported: true as const, note: 'two-call container→publish, sync-safe in Vercel' },
+  carousel: { supported: false as const, note: 'needs child containers + status polling — VPS worker phase' },
+  reel: { supported: false as const, note: 'video container processing >30s — VPS worker phase' },
+  story: { supported: false as const, note: 'story container processing — VPS worker phase' },
+} as const
+
+export type IgFormat = keyof typeof IG_FORMAT_SUPPORT
+
+/** Bangla unsupported-error, or null when the format is publishable now. */
+export function igFormatBlocker(format: string): string | null {
+  const entry = IG_FORMAT_SUPPORT[format as IgFormat]
+  if (!entry) return `অজানা Instagram format "${format}" — সমর্থিত: ${Object.keys(IG_FORMAT_SUPPORT).join(', ')}`
+  if (entry.supported) return null
+  return `Instagram ${format} এখনো এই path-এ supported না (${entry.note}) — এখন শুধু single_image পাবলিশ হয়।`
+}
+
+/**
+ * Fetch-back verification: a post is never claimed delivered until the media
+ * is re-read from the API (id + permalink + timestamp).
+ */
+export async function verifyInstagramMedia(
+  pageId: string,
+  mediaId: string,
+): Promise<{ ok: boolean; permalink?: string; timestamp?: string; error?: string }> {
+  try {
+    const token = pageToken(pageId)
+    const res = await resilientFetch(
+      `${GRAPH_BASE}/${mediaId}?fields=id,permalink,timestamp&access_token=${encodeURIComponent(token)}`,
+      { timeoutMs: 20_000, retries: 1 },
+    )
+    const text = await res.text()
+    if (!res.ok) return { ok: false, error: `IG verify ${res.status}: ${text.slice(0, 200)}` }
+    const data = JSON.parse(text) as { id?: string; permalink?: string; timestamp?: string }
+    if (data.id !== mediaId) return { ok: false, error: 'IG verify: media id mismatch' }
+    return { ok: true, permalink: data.permalink, timestamp: data.timestamp }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
 export interface IgPublishSpec {
   pageId: string
   caption: string
   /** A private-bucket storage path (generated/...) OR a public http image url. */
   mediaRef: string
+  /** Defaults single_image; any other format returns an honest unsupported error. */
+  format?: IgFormat | string
 }
 
 /**
@@ -114,6 +165,10 @@ export interface IgPublishSpec {
 export async function publishInstagramImage(
   spec: IgPublishSpec,
 ): Promise<{ success: boolean; mediaId?: string; permalink?: string; igUsername?: string; error?: string }> {
+  // Phase 46: format gate BEFORE any network call — unsupported stays unsupported.
+  const blocker = igFormatBlocker(spec.format ?? 'single_image')
+  if (blocker) return { success: false, error: blocker }
+
   const acct = await getInstagramAccount(spec.pageId)
   if (!acct.success || !acct.account) return { success: false, error: acct.error }
   const { igUserId, username } = acct.account

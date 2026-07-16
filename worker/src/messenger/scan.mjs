@@ -15,6 +15,11 @@ import { buildCallbackData } from '../telegram/callback-data.mjs'
 import { sendMarkdownSafe } from '../telegram/markdown-safe.mjs'
 import { resilientFetch } from '../fetch-retry.mjs'
 
+// Phase 46: same env override as src/agent/lib/marketing/meta-version.ts
+// (worker cannot import TS). Default = the contract-tested version.
+const META_GRAPH_VERSION = () =>
+  /^v\d{2}\.\d$/.test(process.env.META_GRAPH_VERSION ?? '') ? process.env.META_GRAPH_VERSION : 'v21.0'
+
 const PAGES = [
   { id: '1044848232034171', name: 'Alma Lifestyle',   envKey: 'FB_PAGE_TOKEN_LIFESTYLE' },
   { id: '827260860637393',  name: 'Alma Online Shop', envKey: 'FB_PAGE_TOKEN_ONLINESHOP' },
@@ -65,7 +70,7 @@ async function isCsHandledConversation(fbConversationId) {
 }
 
 async function fbGet(pageId, path, token) {
-  const url = `https://graph.facebook.com/v21.0/${pageId}${path}&access_token=${token}`
+  const url = `https://graph.facebook.com/${META_GRAPH_VERSION()}/${pageId}${path}&access_token=${token}`
   // Graph queries here are heavy (conversations + nested messages); a hard 15s ceiling
   // with no retry was timing out and spamming the worker error log. Use resilientFetch
   // (30s + one retry on transient/abort).
@@ -159,7 +164,7 @@ function draftReply(lastCustomerMsg) {
 async function checkPageTokenHealth(page, token) {
   try {
     const res = await fetch(
-      `https://graph.facebook.com/v21.0/${page.id}?fields=name&access_token=${token}`,
+      `https://graph.facebook.com/${META_GRAPH_VERSION()}/${page.id}?fields=name&access_token=${token}`,
     )
     if (!res.ok) {
       const err = await res.text()

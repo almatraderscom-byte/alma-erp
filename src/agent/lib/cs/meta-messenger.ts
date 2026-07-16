@@ -2,6 +2,7 @@
  * Meta Messenger Send API — customer-facing only (CS pipeline).
  */
 import { createHmac, timingSafeEqual } from 'crypto'
+import { metaGraphBase } from '@/agent/lib/marketing/meta-version'
 
 export const CS_PAGES: Record<string, { name: string; tokenEnv: string }> = {
   '1044848232034171': { name: 'Alma Lifestyle', tokenEnv: 'FB_PAGE_TOKEN_LIFESTYLE' },
@@ -31,7 +32,7 @@ export function verifyMetaWebhookSignature(rawBody: string, signatureHeader: str
 }
 
 async function graphPost(path: string, token: string, body: Record<string, unknown>) {
-  const res = await fetch(`https://graph.facebook.com/v21.0/${path}`, {
+  const res = await fetch(`${metaGraphBase()}/${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...body, access_token: token }),
@@ -113,7 +114,7 @@ export async function fetchPostImageUrl(pageId: string, postId: string): Promise
   if (!token) return null
   try {
     const res = await fetch(
-      `https://graph.facebook.com/v21.0/${postId}?fields=full_picture,attachments{media}&access_token=${token}`,
+      `${metaGraphBase()}/${postId}?fields=full_picture,attachments{media}&access_token=${token}`,
       { signal: AbortSignal.timeout(15_000) },
     )
     const data = await res.json() as {
