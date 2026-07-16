@@ -61,6 +61,8 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   live_browser_look: read('live_browser'),
   live_browser_act: { domain: 'live_browser', mode: 'write', risk: 'high', proof: 'external' },
   live_browser_trust: write('live_browser', 'medium'),
+  browser_diagnose: read('live_browser'),
+  growth_control_room: read('marketing'),
 
   // ── VPS workbench ──────────────────────────────────────────────────────────
   run_workbench_task: stage('workbench'),
@@ -236,6 +238,28 @@ export const TOOL_CLASSIFICATION: Record<string, ToolClassification> = {
   list_tracked_keywords: read('seo'),
   untrack_keyword: write('seo'),
   submit_to_indexnow: { domain: 'seo', mode: 'write', risk: 'low', proof: 'external' },
+
+  // ── Phase 41–48 growth operating system ────────────────────────────────────
+  marketing_capability_audit: read('marketing'),
+  growth_brief_get: read('marketing'),
+  // Draft version rows are internal strategy memory (no external effect);
+  // approve freezes the active strategy — direct write, owner-confirmed input.
+  growth_brief_draft: write('marketing'),
+  growth_brief_approve: write('marketing', 'medium'),
+  growth_strategy_run: read('marketing'),
+  marketing_attribution_report: read('marketing'),
+  utm_build: read('marketing'),
+  // Sends ONLY Events Manager test events (test code mandatory) — external but harmless.
+  marketing_capi_test_event: { domain: 'marketing', mode: 'write', risk: 'low', proof: 'external' },
+  growth_experiment: write('marketing'),
+  creative_matrix: read('marketing'),
+  content_calendar_health: read('marketing'),
+  cro_brief_draft: read('marketing'),
+  social_ops_health: read('marketing'),
+  ads_campaign_plan: read('ads'),
+  seo_technical_audit: read('seo'),
+  seo_content_clusters: read('seo'),
+  seo_release_plan: read('seo'),
 
   // ── analytics (GSC / GA4) ──────────────────────────────────────────────────
   get_search_console_performance: read('analytics'),
