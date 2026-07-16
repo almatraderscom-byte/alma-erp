@@ -28,13 +28,23 @@ is_web_irrelevant() {
 
 # 2) Pick the diff base: the branch's previously deployed commit if Vercel
 #    gives us one, else the merge-base with main (first push of a new branch).
+#    Vercel's clone is SHALLOW (~10 commits, no origin/main ref) — proven by
+#    the 2026-07-17 agent-phase-26 run falling through to fail-open. So:
+#    fetch the PREV sha directly if it's missing, and for the merge-base path
+#    deepen the branch + fetch main into FETCH_HEAD (origin/main never exists
+#    in the build container's clone).
 BASE=""
-if [ -n "${VERCEL_GIT_PREVIOUS_SHA:-}" ] && git cat-file -e "${VERCEL_GIT_PREVIOUS_SHA}^{commit}" 2>/dev/null; then
-  BASE="$VERCEL_GIT_PREVIOUS_SHA"
-else
-  # Public repo — fetch main and use the branch point as the base.
-  git fetch --no-tags --depth=100 origin main >/dev/null 2>&1 || true
-  BASE="$(git merge-base HEAD origin/main 2>/dev/null || true)"
+if [ -n "${VERCEL_GIT_PREVIOUS_SHA:-}" ]; then
+  git cat-file -e "${VERCEL_GIT_PREVIOUS_SHA}^{commit}" 2>/dev/null \
+    || git fetch --no-tags --depth=1 origin "$VERCEL_GIT_PREVIOUS_SHA" >/dev/null 2>&1 || true
+  if git cat-file -e "${VERCEL_GIT_PREVIOUS_SHA}^{commit}" 2>/dev/null; then
+    BASE="$VERCEL_GIT_PREVIOUS_SHA"
+  fi
+fi
+if [ -z "$BASE" ]; then
+  git fetch --no-tags --deepen=300 origin >/dev/null 2>&1 || true
+  git fetch --no-tags --depth=300 origin main >/dev/null 2>&1 || true
+  BASE="$(git merge-base HEAD FETCH_HEAD 2>/dev/null || true)"
 fi
 
 if [ -z "$BASE" ]; then
