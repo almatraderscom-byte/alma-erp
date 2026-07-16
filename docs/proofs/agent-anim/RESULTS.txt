@@ -30,3 +30,14 @@ DEBUG-only surface: all demo/selftest flags compiled out of Release builds.
    refresh). Sim-proven: character + "Release to refresh" at armed, real vm.load()
    runs (agentPull arm→refresh→done), idle screen pixel-clean (0pt).
    Build SUCCEEDED, 0 new warnings.
+
+== ROUND 3 — ios-build-76 integration (2026-07-17) ==
+Merged origin/ios-build-76 (Pulse native sync + island approve/reject, 4 commits)
+into agent-phase-27 (roadmap + animations): ZERO conflicts, all 3 new Swift files
+registered, both sides' AppDelegate hooks coexist. Clean build 0 errors,
+Swift-6-risk 0, warnings unchanged (36). Full suite re-run on merged tree:
+anim selftest 15/15, cache PASS, crash-repro survived (0 reports), tabs live.
+Pulse verified: ALMA_PULSE_RESET launch created a FRESH PulseActivityAttributes
+activity (WidgetRenderer log) and the Dynamic Island renders compact gold
+approval mode with the app backgrounded (screenshot). Island button TAP needs
+a hand per their handoff — owner device/Mac check.
