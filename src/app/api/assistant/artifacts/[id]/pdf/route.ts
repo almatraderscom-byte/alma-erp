@@ -99,7 +99,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       },
     })
   } catch (err) {
-    console.error('[artifact-pdf] render failed:', err instanceof Error ? err.message : err)
-    return Response.json({ error: 'pdf_render_failed' }, { status: 500 })
+    console.error('[artifact-pdf] render failed:', err instanceof Error ? err.stack ?? err.message : err)
+    // Owner-only route — surfacing the message here is the debuggability line
+    // that saved this feature (Vercel log tailing kept missing the entry).
+    return Response.json(
+      { error: 'pdf_render_failed', detail: err instanceof Error ? err.message : String(err) },
+      { status: 500 },
+    )
   }
 }
