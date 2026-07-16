@@ -32,6 +32,33 @@ const LOCAL_CHROME_PATHS = [
   '/usr/bin/chromium-browser',
 ]
 
+/**
+ * One extraction per lambda instance. chromium.executablePath's own cache
+ * check is `existsSync(/tmp/chromium)` — true the moment the file is CREATED,
+ * before the brotli inflate finishes writing it. Two overlapping requests on
+ * one instance therefore race: the second spawns a half-written binary and
+ * every spawn after that fails with ETXTBSY while the writer's fd is open.
+ * Serializing through a module-level promise removes the race.
+ */
+let chromiumPathPromise: Promise<string> | null = null
+
+async function vercelExecutablePath(
+  chromium: typeof import('@sparticuz/chromium').default,
+): Promise<string> {
+  if (!chromiumPathPromise) {
+    const packUrl =
+      process.env.CHROMIUM_PACK_URL ||
+      'https://github.com/Sparticuz/chromium/releases/download/v149.0.0/chromium-v149.0.0-pack.x64.tar'
+    chromiumPathPromise = chromium.executablePath(packUrl)
+  }
+  try {
+    return await chromiumPathPromise
+  } catch (err) {
+    chromiumPathPromise = null // failed download/extract — retry next request
+    throw err
+  }
+}
+
 async function launchBrowser() {
   const puppeteer = (await import('puppeteer-core')).default
   if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
@@ -40,20 +67,22 @@ async function launchBrowser() {
     // libnss3 failure came from a runtime/library mismatch; ≥149 ships the
     // AL2023 lib set Vercel's node runtime actually has).
     chromium.setGraphicsMode = false
-    // Vercel's function bundler drops node_modules/@sparticuz/chromium/bin
-    // even when outputFileTracingIncludes lists it (local nft.json has the 4
-    // files; the deployed function 500'd with "input directory ... does not
-    // exist"). The supported pattern on Vercel is the remote pack: cold start
-    // downloads the browser tar to /tmp (~66MB, re-used while the function is
-    // warm). Pin the URL to the installed package version.
-    const packUrl =
-      process.env.CHROMIUM_PACK_URL ||
-      'https://github.com/Sparticuz/chromium/releases/download/v149.0.0/chromium-v149.0.0-pack.x64.tar'
-    return puppeteer.launch({
-      args: chromium.args,
-      executablePath: await chromium.executablePath(packUrl),
-      headless: true,
-    })
+    // Remote pack because Vercel's function bundler drops
+    // node_modules/@sparticuz/chromium/bin even when
+    // outputFileTracingIncludes lists it — cold start downloads the browser
+    // tar to /tmp (~66MB, re-used while the instance is warm).
+    const executablePath = await vercelExecutablePath(chromium)
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await puppeteer.launch({ args: chromium.args, executablePath, headless: true })
+      } catch (err) {
+        // ETXTBSY = the binary still has a write fd open (extraction close
+        // lag). Short backoff clears it; give up after ~5s.
+        const busy = err instanceof Error && err.message.includes('ETXTBSY')
+        if (!busy || attempt >= 5) throw err
+        await new Promise((r) => setTimeout(r, attempt * 500))
+      }
+    }
   }
   const local = LOCAL_CHROME_PATHS.find((p) => existsSync(p))
   if (!local) throw new Error('no local Chrome found for PDF rendering')
