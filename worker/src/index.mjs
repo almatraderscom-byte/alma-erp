@@ -1297,7 +1297,9 @@ videoGenWorker.on('failed', async (job, err) => {
   captureWorkerError(err, 'worker.video_gen.failed', { jobId: job?.id })
   if (job?.data?.pendingActionId) {
     enqueuedIds.delete(job.data.pendingActionId)
-    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
+    // CS11 — the owner sees a Bangla code, never raw provider/ffmpeg text
+    const { sanitizeVideoError } = await import('./video-qc.mjs')
+    await callJobResult(job.data.pendingActionId, 'failed', undefined, sanitizeVideoError(err, `video-gen ${job.id}`))
   }
 })
 
@@ -1312,7 +1314,8 @@ videoEditWorker.on('failed', async (job, err) => {
   captureWorkerError(err, 'worker.video_edit.failed', { jobId: job?.id })
   if (job?.data?.pendingActionId) {
     enqueuedIds.delete(job.data.pendingActionId)
-    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
+    const { sanitizeVideoError } = await import('./video-qc.mjs')
+    await callJobResult(job.data.pendingActionId, 'failed', undefined, sanitizeVideoError(err, `video-edit ${job.id}`))
   }
 })
 
@@ -1326,7 +1329,8 @@ videoFinishWorker.on('failed', async (job, err) => {
   captureWorkerError(err, 'worker.video_finish.failed', { jobId: job?.id })
   if (job?.data?.pendingActionId) {
     enqueuedIds.delete(job.data.pendingActionId)
-    await callJobResult(job.data.pendingActionId, 'failed', undefined, err.message)
+    const { sanitizeVideoError } = await import('./video-qc.mjs')
+    await callJobResult(job.data.pendingActionId, 'failed', undefined, sanitizeVideoError(err, `video-finish ${job.id}`))
   }
 })
 

@@ -356,6 +356,20 @@ export async function processVideoEdit(job, { supabase, callJobResult }) {
       { timeout: PROBE_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
     ).catch(() => { /* thumbnail is optional */ })
 
+    // CS11 — deterministic QC gate on the FINAL owner-shot reel: critical
+    // black/frozen/corrupt outputs are rejected (sanitized Bangla error);
+    // metrics (incl measured loudness) ship in the result either way.
+    const { runVideoQc } = await import('./video-qc.mjs')
+    let videoQc = null
+    try {
+      videoQc = await runVideoQc({ file: finalFile, expectedDurationSec: plan.totalSec })
+    } catch (qcErr) {
+      console.warn(`[worker] video-edit ${pendingActionId} — QC skipped: ${qcErr.message}`)
+    }
+    if (videoQc && !videoQc.pass) {
+      throw new Error(videoQc.critical[0] ?? 'QC_DURATION: reel failed quality gate')
+    }
+
     await reportProgress(supabase, pendingActionId, 6)
     const storagePath = `generated/${pendingActionId}.mp4`
     const videoBuffer = await readFile(finalFile)
@@ -398,6 +412,9 @@ export async function processVideoEdit(job, { supabase, callJobResult }) {
       sourcePath: videoPath,
       postApplied: post.applied,
       ...(post.warnings.length ? { postWarnings: post.warnings } : {}),
+      // CS11 — QC metrics + loudness; ffmpeg-only edits carry zero API cost
+      ...(videoQc ? { videoQc: { pass: videoQc.pass, warnings: videoQc.warnings, metrics: videoQc.metrics } } : {}),
+      costUsd: 0,
     })
     console.log(`[worker] video-edit ${pendingActionId} — done → ${storagePath} (${plan.segments.length} cuts, ${plan.totalSec}s)`)
   } finally {

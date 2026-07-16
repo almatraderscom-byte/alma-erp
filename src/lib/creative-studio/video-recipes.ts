@@ -295,3 +295,76 @@ export function planCuts(input: {
     fadeSec: fade,
   }
 }
+
+// ── CS11: video hardening — pure, unit-tested spec (worker mirrors) ──────────
+
+/** Social-platform loudness target (roadmap): −14 LUFS integrated, TP ≤ −1 dBTP. */
+export const LOUDNESS_TARGET = { integratedLufs: -14, truePeakDb: -1, lra: 11 } as const
+
+/** ffmpeg loudnorm filter string built from the locked target. */
+export const LOUDNORM_FILTER = `loudnorm=I=${LOUDNESS_TARGET.integratedLufs}:TP=${LOUDNESS_TARGET.truePeakDb}:LRA=${LOUDNESS_TARGET.lra}`
+
+/**
+ * Owner-friendly Bangla video error codes. RAW ffmpeg/provider text never
+ * reaches the owner's Gallery — the full detail stays in worker logs (admin
+ * diagnostics). Mirrored in worker/src/video-qc.mjs (keep in sync).
+ */
+export const VIDEO_ERRORS_BN: Record<string, string> = {
+  VEO_TIMEOUT: 'ভিডিও তৈরি সময়সীমা পার করেছে — আবার চালান (কোড: VEO_TIMEOUT)',
+  VEO_FAILED: 'ভিডিও ইঞ্জিন ব্যর্থ — একটু পরে আবার চালান (কোড: VEO_FAILED)',
+  VEO_DOWNLOAD: 'তৈরি ভিডিও নামানো যায়নি — আবার চালালে একই জেনারেশন resume হবে (কোড: VEO_DOWNLOAD)',
+  QC_BLACK: 'ভিডিওতে কালো ফ্রেম বেশি — বাতিল করে নতুন করে চালানো হয়েছে/চালান (কোড: QC_BLACK)',
+  QC_FROZEN: 'ভিডিও আটকে-যাওয়া (frozen) ফ্রেমে ভরা — বাতিল (কোড: QC_FROZEN)',
+  QC_DURATION: 'ভিডিওর দৈর্ঘ্য ঠিক আসেনি — বাতিল (কোড: QC_DURATION)',
+  FFMPEG_RENDER: 'ভিডিও প্রসেসিং ব্যর্থ — আবার চালান; বারবার হলে সোর্স ভিডিওটা বদলান (কোড: FFMPEG_RENDER)',
+  SOURCE_DOWNLOAD: 'সোর্স ভিডিও পড়া যায়নি — আবার আপলোড করুন (কোড: SOURCE_DOWNLOAD)',
+  UNKNOWN: 'ভিডিওর কাজ ব্যর্থ — আবার চালান (কোড: UNKNOWN)',
+}
+
+/** Map a raw error string to a safe Bangla message. Pure and deterministic. */
+export function sanitizeVideoErrorMessage(raw: string | null | undefined): string {
+  const s = (raw ?? '').toLowerCase()
+  if (!s) return VIDEO_ERRORS_BN.UNKNOWN
+  if (s.includes('timed out') && s.includes('veo')) return VIDEO_ERRORS_BN.VEO_TIMEOUT
+  if (s.includes('veo download')) return VIDEO_ERRORS_BN.VEO_DOWNLOAD
+  if (s.includes('veo')) return VIDEO_ERRORS_BN.VEO_FAILED
+  if (s.includes('qc_black')) return VIDEO_ERRORS_BN.QC_BLACK
+  if (s.includes('qc_frozen')) return VIDEO_ERRORS_BN.QC_FROZEN
+  if (s.includes('qc_duration')) return VIDEO_ERRORS_BN.QC_DURATION
+  if (s.includes('download failed') || s.includes('sourcedownload')) return VIDEO_ERRORS_BN.SOURCE_DOWNLOAD
+  if (s.includes('ffmpeg') || s.includes('ffprobe') || s.includes('/tmp/') || s.includes('spawn')) return VIDEO_ERRORS_BN.FFMPEG_RENDER
+  return VIDEO_ERRORS_BN.UNKNOWN
+}
+
+/** True when a stored error string looks like raw internals the owner must not see. */
+export function looksLikeRawInternalError(msg: string | null | undefined): boolean {
+  if (!msg) return false
+  if (msg.includes('কোড:')) return false // already a sanitized Bangla message
+  return /ffmpeg|ffprobe|\/tmp\/|\bspawn\b|ENOENT|maxBuffer|exit code|stderr/i.test(msg)
+}
+
+export type CoverMetric = { index: number; sharpness: number; brightness: number }
+
+/**
+ * CS11 — deterministic cover ordering: sharp and well-exposed frames first.
+ * score = sharpness normalized − penalty for too-dark/too-bright frames.
+ * Manual override always wins in the UI; this only sets the DEFAULT order.
+ */
+export function scoreCoverOrder(metrics: CoverMetric[]): number[] {
+  const maxSharp = Math.max(1, ...metrics.map((m) => m.sharpness))
+  return [...metrics]
+    .map((m) => {
+      const exposurePenalty = m.brightness < 40 || m.brightness > 215 ? 0.5 : 0
+      return { index: m.index, score: m.sharpness / maxSharp - exposurePenalty }
+    })
+    .sort((a, b) => b.score - a.score)
+    .map((m) => m.index)
+}
+
+/** Caption safe area: overlays must sit within the bottom band but above UI chrome. */
+export const CAPTION_SAFE_AREA = { minMarginVPx: 96, maxBottomFraction: 0.28 } as const
+
+export function clampCaptionMarginV(marginV: number, videoHeight: number): number {
+  const maxMargin = Math.round(videoHeight * CAPTION_SAFE_AREA.maxBottomFraction)
+  return Math.min(Math.max(marginV, CAPTION_SAFE_AREA.minMarginVPx), maxMargin)
+}
