@@ -53,8 +53,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                 UIApplication.shared.applicationIconBadgeNumber = 0
             }
             if #available(iOS 16.1, *) {
-                PulseRestore.reconcile()
-                PulseRestore.restartFromCache()
+                Task { @MainActor in
+                    #if DEBUG
+                    await PulseRestore.debugResetIfRequested()
+                    #endif
+                    PulseRestore.reconcile()
+                    PulseRestore.restartFromCache()
+                }
             }
         }
 

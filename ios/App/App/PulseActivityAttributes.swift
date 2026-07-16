@@ -185,13 +185,26 @@ extension PulseActivityAttributes.ContentState {
 
     /// The single most important number for the compact Dynamic Island slot —
     /// the Island must never show three competing metrics (spec §3.2).
+    /// Owner rule 2026-07-16: pending approvals outrank every other count in
+    /// this slot — an approval is a blocked decision waiting on the owner,
+    /// while task/order counts are ambient. (Matters mostly for legacy
+    /// payloads without an explicit mode, where `max(approvals, tasks)` let a
+    /// big task backlog bury 2 waiting approvals behind "৩৮".)
     var compactValue: Int {
         switch activeMode {
         case .approval: return approvals
         case .orders: return runningOrders
         case .working, .overview, .stale, .offline, .success, .urgent:
-            return runningOrders > 0 ? runningOrders : max(approvals, pendingTasks)
+            if approvals > 0 { return approvals }
+            return runningOrders > 0 ? runningOrders : pendingTasks
         }
+    }
+
+    /// True when `compactValue` is showing the approvals count — the compact
+    /// slot marks it with the approval seal so the owner knows WHAT the number
+    /// is without expanding.
+    var compactShowsApprovals: Bool {
+        activeMode == .approval || (approvals > 0 && compactValue == approvals)
     }
 }
 #endif

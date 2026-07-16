@@ -41,6 +41,29 @@ enum PulseRestore {
             "\(reason) @\(Int(Date().timeIntervalSince1970))", forKey: lastRestoreKey)
     }
 
+    #if DEBUG
+    /// Sim-testing hook (DEBUG only): launching with ALMA_PULSE_RESET=1 ends
+    /// every Pulse activity before the restore runs, forcing a FRESH activity
+    /// from the cache. Needed because the simulator's SpringBoard freezes the
+    /// compact island snapshot at first render and ignores updates
+    /// (live-verified 2026-07-16: pushed state changes never repainted the
+    /// compact slot) — only a new activity re-renders it there. Devices
+    /// repaint on update, so this hook is pointless (and absent) in Release.
+    @available(iOS 16.1, *)
+    static func debugResetIfRequested() async {
+        guard ProcessInfo.processInfo.arguments.contains("ALMA_PULSE_RESET=1")
+            || ProcessInfo.processInfo.environment["ALMA_PULSE_RESET"] == "1" else { return }
+        for activity in Activity<PulseActivityAttributes>.activities {
+            if #available(iOS 16.2, *) {
+                await activity.end(nil, dismissalPolicy: .immediate)
+            } else {
+                await activity.end(dismissalPolicy: .immediate)
+            }
+        }
+        note("debug_reset")
+    }
+    #endif
+
     @available(iOS 16.1, *)
     static func restartFromCache() {
         #if canImport(ActivityKit)
@@ -48,10 +71,27 @@ enum PulseRestore {
             note("activities_disabled"); return
         }
 
-        // Never fight an existing activity: skip if Pulse is already live, or
-        // if a voice session still owns the island.
-        guard Activity<PulseActivityAttributes>.activities.isEmpty else {
-            note("already_live"); return
+        // Pulse already live: don't fight it — but push one SILENT same-state
+        // update so the system re-renders it under the CURRENT widget binary.
+        // Without this, an activity started before an app update keeps showing
+        // the old build's compact layout until the next (throttled, webview-
+        // dependent) web sync — live-hit 2026-07-16 while shipping the
+        // approvals-first island. Silent by contract: no AlertConfiguration.
+        if let live = Activity<PulseActivityAttributes>.activities.first {
+            if let cached = readCache() {
+                let staleDate = cached.state.staleAfterDate.flatMap { $0 > Date() ? $0 : nil }
+                Task {
+                    if #available(iOS 16.2, *) {
+                        await live.update(ActivityContent(state: cached.state, staleDate: staleDate))
+                    } else {
+                        await live.update(using: cached.state)
+                    }
+                }
+                note("refreshed_live")
+            } else {
+                note("already_live")
+            }
+            return
         }
         if #available(iOS 17.0, *) {
             guard Activity<AlmaVoiceActivityAttributes>.activities.isEmpty else {

@@ -104,13 +104,22 @@ public class LiveActivityBridgePlugin: CAPPlugin, CAPBridgedPlugin {
             Self.cacheLastState(title: title, state: state)
 
             let alert = call.getBool("alert", false)
-            let alertConfig: AlertConfiguration? = alert
+            var alertConfig: AlertConfiguration? = alert
                 ? Self.makeAlert(
                     title: call.getString("alertTitle", "ALMA ERP"),
                     body: call.getString("alertBody", ""),
                     kind: call.getString("alertKind", "approval")
                 )
                 : nil
+            // Approval nag (owner ask 2026-07-16): while approvals sit pending,
+            // the island should re-announce them every so often — an alerting
+            // update is the ONE sanctioned way iOS lets a Live Activity draw
+            // attention (brief expanded presentation + sound); nothing can
+            // programmatically hold the island open. Native so it also works
+            // with the legacy web bundle, which never sends `alert`.
+            if alertConfig == nil {
+                alertConfig = Self.approvalNagAlert(for: state)
+            }
 
             Self.apply(state: state, title: title, alert: alertConfig, call: call)
             return
@@ -234,6 +243,36 @@ extension LiveActivityBridgePlugin {
             body: LocalizedStringResource(stringLiteral: body),
             sound: sound
         )
+    }
+
+    /// Approval nag (owner ask 2026-07-16): pending approvals re-announce every
+    /// `approvalNagInterval` via an alerting update. Cooldown lives in
+    /// UserDefaults and clears the moment approvals hit zero — so the NEXT
+    /// pending approval after a clean slate alerts immediately.
+    private static let approvalNagInterval: TimeInterval = 15 * 60
+    private static let approvalNagKey = "alma.pulse.lastApprovalNag"
+
+    static func approvalNagAlert(
+        for state: PulseActivityAttributes.ContentState
+    ) -> AlertConfiguration? {
+        let approvals = state.approvals
+        guard approvals > 0 else {
+            UserDefaults.standard.removeObject(forKey: approvalNagKey)
+            return nil
+        }
+        let now = Date().timeIntervalSince1970
+        let last = UserDefaults.standard.double(forKey: approvalNagKey)
+        guard now - last >= approvalNagInterval else { return nil }
+        UserDefaults.standard.set(now, forKey: approvalNagKey)
+        Self.breadcrumb("approval_nag \(approvals)")
+        let bn = String(approvals).map { ch -> Character in
+            guard let d = ch.wholeNumberValue else { return ch }
+            return Character(UnicodeScalar(0x09E6 + d)!)
+        }
+        return makeAlert(
+            title: "অনুমোদন বাকি",
+            body: "\(String(bn))টা অনুমোদন আপনার অপেক্ষায় — চেপে দেখুন",
+            kind: "approval")
     }
 
     /// Update the running activity, or request a new one. New activities ask for

@@ -571,19 +571,31 @@ private struct PulseCompactPriority: View {
 
     var body: some View {
         HStack(spacing: 3) {
+            // Approvals get their seal in the compact slot (owner 2026-07-16):
+            // a bare number can't tell "38 open tasks" from "2 waiting
+            // approvals", and approvals are the count that blocks on HIM.
+            if state.compactShowsApprovals {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(PulseTheme.tint(for: .approval))
+                    .accessibilityHidden(true)
+            }
             Text(banglaDigits(state.compactValue))
                 .font(.system(size: 14, weight: .bold, design: .rounded))
                 .foregroundColor(PulsePalette.textPrimary)
                 .contentTransition(.numericText())
                 .animation(reduceMotion ? nil : .snappy(duration: 0.35), value: state.compactValue)
-            if mode == .approval || mode == .urgent {
+            if !state.compactShowsApprovals && mode == .urgent {
                 Circle()
                     .fill(PulseTheme.tint(for: mode))
                     .frame(width: 5, height: 5)
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(PulseTheme.label(for: mode)), \(banglaDigits(state.compactValue))")
+        .accessibilityLabel(
+            state.compactShowsApprovals
+                ? "অনুমোদন বাকি \(banglaDigits(state.compactValue))"
+                : "\(PulseTheme.label(for: mode)), \(banglaDigits(state.compactValue))")
     }
 }
 
