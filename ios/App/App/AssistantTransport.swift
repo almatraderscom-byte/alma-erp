@@ -271,9 +271,10 @@ struct AlmaSSEParser {
 }
 
 /// Roadmap 2.3 — event batching between the network task and MainActor. Adjacent
-/// text/thinking deltas coalesce for ~40ms; control events flush the pending batch
-/// FIRST so chronology stays exact. One MainActor apply per flush (20–30/s max)
-/// instead of one per token.
+/// text/thinking deltas coalesce for ~100ms; control events flush the pending batch
+/// FIRST so chronology stays exact. Ten visual updates per second is perceptually
+/// smooth for streamed text while leaving the main actor enough budget to lay out
+/// long native chat rows. Tool/card/control events still land immediately.
 actor AgentEventBuffer {
     private var batch: [AgentTurnEvent] = []
     private var flushScheduled = false
@@ -305,7 +306,7 @@ actor AgentEventBuffer {
         guard !flushScheduled else { return }
         flushScheduled = true
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 40_000_000)     // 25 flushes/s ceiling
+            try? await Task.sleep(nanoseconds: 100_000_000)    // 10 flushes/s ceiling
             await self?.flushNow()
         }
     }

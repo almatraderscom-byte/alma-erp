@@ -1,0 +1,30 @@
+# 2026-07-16 — repo-wide typecheck + lint on every PR.
+#
+# Companion to the build-hang fix: `next build`'s combined "Linting and
+# checking validity of types" stage intermittently deadlocked Vercel deploys
+# (30-45m hangs at that exact stage, including one production deploy), so the
+# deploy build now skips lint/typecheck (next.config.js). Correctness lives
+# here instead — every PR, all paths, hard 15-minute timeout so a hung worker
+# fails loudly instead of blocking deploys silently. The Agent PR Gate
+# (agent-gate.yml) still runs the agent behavior suite on agent paths.
+name: CI Checks
+
+on:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install (postinstall runs prisma generate)
+        run: npm ci --no-audit --no-fund
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npx next lint --max-warnings=9999

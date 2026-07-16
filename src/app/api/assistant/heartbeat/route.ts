@@ -14,6 +14,7 @@ import { isSystemOwner } from '@/lib/roles'
 import { getHeartbeatSettings, setHeartbeatSettings } from '@/agent/lib/heartbeat/heartbeat-settings'
 import { listHeartbeats, headWakesToday } from '@/agent/lib/heartbeat/heartbeat-log'
 import { runHeartbeatTick } from '@/agent/lib/heartbeat/brain'
+import { nextHeartbeatCheckAt } from '@/agent/lib/heartbeat/heartbeat-schedule'
 
 export const runtime = 'nodejs'
 export const maxDuration = 120
@@ -33,7 +34,10 @@ export async function GET(req: NextRequest) {
     headWakesToday(),
   ])
 
-  return Response.json({ settings, wakesToday, entries, count: entries.length })
+  const nextCheckAt = settings.enabled || settings.autoArm
+    ? nextHeartbeatCheckAt().toISOString()
+    : null
+  return Response.json({ settings, wakesToday, entries, count: entries.length, nextCheckAt })
 }
 
 /**
@@ -84,5 +88,8 @@ export async function POST(req: NextRequest) {
     listHeartbeats(30),
     headWakesToday(),
   ])
-  return Response.json({ settings, wakesToday, entries, count: entries.length, testResult })
+  const nextCheckAt = settings.enabled || settings.autoArm
+    ? nextHeartbeatCheckAt().toISOString()
+    : null
+  return Response.json({ settings, wakesToday, entries, count: entries.length, nextCheckAt, testResult })
 }

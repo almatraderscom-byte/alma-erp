@@ -155,28 +155,18 @@ struct AlmaShimmerWordmark: View {
     var tracking: CGFloat = 2.1
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: false)) { timeline in
-            let cycle = timeline.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: 2.8) / 2.8
-            let leading = -1.15 + cycle * 2.65
-            Text("ALMA")
-                .font(.system(size: size, weight: weight))
-                .tracking(tracking)
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [
-                            AlmaRayBurst.colors[0],
-                            AlmaRayBurst.colors[1],
-                            AlmaRayBurst.colors[2],
-                            Color.white,
-                            AlmaRayBurst.colors[3],
-                            AlmaRayBurst.colors[4],
-                        ],
-                        startPoint: UnitPoint(x: leading, y: 0.5),
-                        endPoint: UnitPoint(x: leading + 1.18, y: 0.5)))
-                .shadow(color: AlmaRayBurst.colors[2].opacity(0.24),
-                        radius: max(1.5, size * 0.16))
-        }
+        // A static aura wordmark keeps the premium colour identity without
+        // creating a second display-link beside the one active loader.
+        Text("ALMA")
+            .font(.system(size: size, weight: weight))
+            .tracking(tracking)
+            .foregroundStyle(
+                LinearGradient(
+                    colors: AlmaRayBurst.colors,
+                    startPoint: .leading,
+                    endPoint: .trailing))
+            .shadow(color: AlmaRayBurst.colors[2].opacity(0.20),
+                    radius: max(1.5, size * 0.16))
         .accessibilityLabel("ALMA")
     }
 }
@@ -333,6 +323,8 @@ struct AlmaStarburstLoader: View {
     let mode: AlmaStarburstMode
     var size: CGFloat = 22
     @State private var anim = StarburstAnimState()
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
     private var box: CGFloat { (size * 1.48).rounded() }
 
@@ -352,7 +344,14 @@ struct AlmaStarburstLoader: View {
                 .frame(width: size * 1.08, height: size * 1.08)
                 .blur(radius: max(1.5, size * 0.12))
 
-            TimelineView(.animation(minimumInterval: 1 / 60, paused: false)) { timeline in
+            // Idle means truly idle: SwiftUI's TimelineView used to run this
+            // canvas at 60 FPS even for `.idle`, keeping every visible ALMA
+            // footer alive forever. One 24 FPS display link exists only while an
+            // explicit loader mode is active and the app is foregrounded.
+            TimelineView(.animation(
+                minimumInterval: 1 / 24,
+                paused: mode == .idle || reduceMotion || scenePhase != .active
+            )) { timeline in
                 Canvas { ctx, canvasSize in
                     anim.tick(mode: mode, now: timeline.date.timeIntervalSinceReferenceDate)
                     var inner = ctx

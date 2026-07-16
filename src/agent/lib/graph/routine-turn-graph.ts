@@ -31,6 +31,7 @@ import { StateGraph, Annotation, START, END } from '@langchain/langgraph'
 import { executeTool } from '@/agent/tools/registry'
 import { isRetryableErrorCode } from '@/agent/tools/tool-contract'
 import { getGraphCheckpointer, checkpointConfigFor } from '@/agent/lib/graph/graph-checkpointer'
+import { getAlmaMemoryStore } from '@/agent/lib/graph/memory-store'
 import { adapterFor } from '@/agent/lib/models/adapters'
 import type { ModelEntry } from '@/agent/lib/models/registry'
 import type { AgentBusinessId } from '@/lib/agent-api/business-context'
@@ -409,7 +410,14 @@ export async function runRoutineTurnGraph(
         ['format_reply', END],
       )
       .addEdge('format_reply', END)
-      .compile(checkpointer ? { checkpointer } : undefined)
+      // LG-2 checkpointer + LG-7 store: both optional upgrades, never
+      // dependencies. The store lets future nodes call getStore() for
+      // owner-memory reads through the standard interface.
+      .compile((() => {
+        const store = getAlmaMemoryStore()
+        if (!checkpointer && !store) return undefined
+        return { ...(checkpointer ? { checkpointer } : {}), ...(store ? { store } : {}) }
+      })())
 
     const s = await graph.invoke(
       { userText },
