@@ -633,8 +633,12 @@ final class PayrollVM {
         }
 
         // Secondary blocks — best-effort in parallel; a failure never blanks the page.
-        var rosterQuery = summaryQuery
-        rosterQuery["roster_only"] = "true"
+        // `let` (not `var`): a mutable capture in the async-let below is a Swift 6 error.
+        let rosterQuery = {
+            var q = summaryQuery
+            q["roster_only"] = "true"
+            return q
+        }()
         async let rosterTask: PayrollSummaryResponse? = Self.fetch(
             "/api/payroll/wallet/summary", query: rosterQuery)
         async let hrTask: PayrollHRDashboardResponse? = Self.fetch(
