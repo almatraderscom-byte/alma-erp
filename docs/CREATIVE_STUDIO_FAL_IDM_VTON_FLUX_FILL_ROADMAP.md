@@ -218,7 +218,7 @@ Cost facts to surface in the UI, not hard-code without a model-price configurati
 | CS5 | `agent-phase-cs5` | Fal foundation, provider registry, flags, durable client | READY FOR OWNER |
 | CS6 | `agent-phase-cs6` | Selectable IDM-VTON and Fal FASHN single try-on | READY FOR OWNER |
 | CS7 | `agent-phase-cs7` | FLUX Fill precision editor and mask workflow | READY FOR OWNER |
-| CS8 | `agent-phase-cs8` | Professional single/product pipeline and localized repair | TODO |
+| CS8 | `agent-phase-cs8` | Professional single/product pipeline and localized repair | READY FOR OWNER |
 | CS9 | `agent-phase-cs9` | Family/couple/full-family protected compositing | TODO |
 | CS10 | `agent-phase-cs10` | QC 2.0, golden evaluation and model comparison | TODO |
 | CS11 | `agent-phase-cs11` | Short-video and owner-shot video hardening | TODO |
@@ -501,6 +501,20 @@ The roadmap file itself is allowed in every phase only for updating that phase's
 - Golden single-person subset meets agreed pass-rate target or reports evidence-backed blockers.
 - Chrome preview proof covers Direct FASHN, IDM manual choice, and one masked rescue path.
 - Update CS8 status to `READY FOR OWNER` and stop. Do not begin CS9.
+
+### CS8 verification notes (2026-07-17, branch `agent-phase-cs8`, tag `pre-agent-phase-cs8`, PR #413 — owner-directed same-session continuation + merge)
+
+**Status: READY FOR OWNER (merged to main at owner's instruction; live-verified on production)**
+
+- **Input readiness gate live-proven ($0 spent):** a 200px model image was rejected 422 with the exact Bangla correction "মডেলের ছবির রেজোলিউশন খুব কম (ছোট দিক ৫১২px-এর নিচে) — বড়/পরিষ্কার ছবি দিন।" — sharp resolution checks + cached narrow vision check (full person/occlusion/clutter), fail-open.
+- **Preview/Production modes** (kv `cs_pipeline_mode`, settings UI + Run-panel hint): Preview = 1 economical paid run, no auto repair; Production = strict QC, hard ceiling **3 paid generations** (bound shown to owner up front; costEstimate scales).
+- **Hard axis gate live-proven:** three production runs (Direct FASHN chain, IDM-VTON, chain Gemini step) each capped at exactly 3 attempts, result `qc.pipelineMode: production` + `coreAxes` surfaced; core axes at 3/5 correctly REFUSED a pass (previously a decent overall could hide a weak axis) — best flagged artifact returned instead of endless regens.
+- **No auto face/embroidery repaint:** masked repair limited to anatomy/composition (`repairableAxes`); flagged artifacts get 🎯 মাস্ক এঁকে ঠিক করুন in the Gallery lightbox. **Masked rescue live-proven:** rescue on the flagged FASHN artifact (remove-object mask on a plant pot) — FLUX Fill executed, request `019f6c70-0c2d-78a3-b637-75e53e1152b8`, 36s, actual $0.25 = pre-Run estimate.
+- **Controlled diversity:** last-4-scene exclusion ring (`cs_recent_scenes`) + scene/pose lineage in payloads; new runs visibly landed on fresh scenes (rooftop vs earlier sunset/lake).
+- Real spend this phase: IDM $0.15 + rescue Fill $0.25 + Direct-FASHN chain credits (~$0.68 est at 3×3 credits) + chain Gemini merges (small) ≈ **$1.1**.
+- Checks: type-check PASS, build PASS, vitest 82/82, worker node:test 20/20.
+- Owner decisions pending: default mode left at **preview** (production flips in সেটিংস); review production spend cap (3) and the strict-gate thresholds. Golden-set pass-rate evaluation deliberately deferred to CS10 (needs clean garment fixtures — today's marketing-composite product photo scores garment fidelity 3/5 on every engine).
+- Deviations (owner-directed): same-session continuation; Claude merged PR #413 and redeployed the VPS worker under the owner's standing permission.
 
 ---
 
