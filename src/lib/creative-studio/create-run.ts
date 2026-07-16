@@ -28,7 +28,15 @@ import {
   type VtonClothType,
 } from '@/lib/creative-studio/provider-registry'
 import { buildFillPrompt, estimateFluxFillCostUsd, type MaskPresetId } from '@/lib/creative-studio/mask-contract'
-import { readKv } from '@/lib/creative-studio/taste'
+import {
+  buildRunPlan,
+  checkSingleInputReadiness,
+  readPipelineMode,
+  readRecentSceneIds,
+  recordSceneUse,
+} from '@/lib/creative-studio/single-pipeline'
+import { pickSceneDiverse, toSceneRef } from '@/lib/tryon/scene-pool'
+import { readKv, readSceneWeights } from '@/lib/creative-studio/taste'
 import type { FashnGenerationMode, FashnResolution } from '@/lib/fashn/types'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -347,6 +355,16 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     if (!vtonModelPath) throw new Error('model_image_required')
     if (!process.env.FAL_KEY?.trim()) throw new Error('fal_not_configured')
 
+    // CS8 — readiness gate: stop unusable inputs BEFORE any paid call.
+    const readiness = await checkSingleInputReadiness({
+      modelImagePath: vtonModelPath,
+      productImagePath: input.productImagePath,
+    })
+    if (!readiness.ok) throw new Error(`input_not_ready:${readiness.errors.join(',')}`)
+
+    // CS8 — owner-tunable Preview/Production plan (bounded paid generations).
+    const plan = buildRunPlan(await readPipelineMode())
+
     const engine = getEngine(input.vtonEngine)
     // Owner flag gates: fal master switch for the commercial engine, the
     // dedicated experimental switch for IDM.
@@ -383,14 +401,18 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           guidanceScale: 2.5,
           ...(seed !== undefined ? { seed: seed + i } : {}),
           prompt: extraPrompt || undefined,
-          generationMode: input.generationMode ?? 'balanced',
+          // CS8 — preview mode renders economical; production keeps owner choice
+          generationMode: plan.economical ? 'performance' : (input.generationMode ?? 'balanced'),
           aspectRatio: input.aspectRatio ?? '4:5',
+          // CS8 — bounded-spend plan travels with the job (worker QC honours it)
+          pipelineMode: plan.mode,
+          maxPaidGenerations: plan.maxPaidGenerations,
           creativeStudio: true,
           studioMode: input.mode,
           familyPreset: 'single',
         },
-        summary: `🎨 Studio Try-On${count > 1 ? ` #${i + 1}` : ''} (${engine.label})`,
-        costEstimate: input.vtonEngine === 'fal_fashn_v16' ? 0.075 : 0.1,
+        summary: `🎨 Studio Try-On${count > 1 ? ` #${i + 1}` : ''} (${engine.label} · ${plan.mode === 'production' ? 'প্রোডাকশন' : 'প্রিভিউ'})`,
+        costEstimate: (input.vtonEngine === 'fal_fashn_v16' ? 0.075 : 0.05) * plan.maxPaidGenerations,
       })
       jobs.push({ pendingActionId: id, label: `Try-On · ${engine.label}`, type: 'image_gen' })
     }
@@ -410,6 +432,14 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     // reuse the model photo's background every single time.
     const tryOnModelPath = input.modelImagePath ?? input.sourceImagePath
     if (input.mode === 'try_on' && input.productImagePath && tryOnModelPath) {
+      // CS8 — same readiness gate as the Fal engines (single-person only).
+      if (!input.familyPreset || input.familyPreset === 'single') {
+        const readiness = await checkSingleInputReadiness({
+          modelImagePath: tryOnModelPath,
+          productImagePath: input.productImagePath,
+        })
+        if (!readiness.ok) throw new Error(`input_not_ready:${readiness.errors.join(',')}`)
+      }
       for (let i = 0; i < count; i++) {
         const job = await startSingleRescueChain({
           productImagePath: input.productImagePath,
@@ -435,8 +465,17 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
     // look per image with a random pose + fully-Bangladeshi scene in the prompt.
     // Owner-driven modes (edit / model_swap / face_to_model) keep the prompt as-is.
     const injectScene = input.mode === 'product_to_model'
+    // CS8 — controlled diversity: skip recently used scenes so a batch never
+    // returns near-identical compositions; every pick is recorded.
+    const [sceneWeights, recentScenes] = injectScene
+      ? await Promise.all([readSceneWeights(), readRecentSceneIds()])
+      : [{}, []]
     for (let i = 0; i < count; i++) {
-      const picked = injectScene ? pickScene() : null
+      const picked = injectScene ? pickSceneDiverse(sceneWeights, recentScenes) : null
+      if (picked) {
+        recentScenes.unshift(picked.scene.id)
+        await recordSceneUse(picked.scene.id)
+      }
       const sceneLine = picked ? `Pose: ${picked.adultPose}. ${picked.scene.prompt}` : ''
       const id = await createApprovedAction({
         type: 'image_gen',
@@ -457,6 +496,8 @@ export async function runCreativeStudio(input: CreativeStudioRunInput): Promise<
           familyPreset: input.familyPreset,
           productImagePath: input.productImagePath,
           modelImagePath: input.modelImagePath,
+          // CS8 — scene/pose lineage for diversity control
+          sceneRef: picked ? toSceneRef(picked) : undefined,
         },
         summary: `🎨 Studio ${modeDef.label}${count > 1 ? ` #${i + 1}` : ''} (FASHN)`,
         costEstimate: 0.25,

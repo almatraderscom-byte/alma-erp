@@ -729,6 +729,11 @@ function StudioWorkspace({
   // CS7 — FLUX Fill precision edit
   const [maskEditorOpen, setMaskEditorOpen] = useState(false)
   const [maskRunning, setMaskRunning] = useState(false)
+  // CS8 — pipeline mode (bounded spend, shown under Run)
+  const [pipelineMode, setPipelineMode] = useState<'preview' | 'production'>('preview')
+  useEffect(() => {
+    void fetchStudioSettings().then((s) => setPipelineMode(s.pipelineMode)).catch(() => {})
+  }, [])
   const [familyPreset, setFamilyPreset] = useState<FamilyPresetId>('single')
   const [productPreview, setProductPreview] = useState<string | null>(null)
   const [modelPreview, setModelPreview] = useState<string | null>(null)
@@ -1373,7 +1378,11 @@ function StudioWorkspace({
             <p className="mt-1.5 text-center text-[10px] text-muted">
               {isMultiPersonFamily
                 ? 'ফ্যামিলি ছবি: প্রতি জনের FASHN try-on, তারপর Gemini দিয়ে এক ফ্রেমে merge'
-                : 'No LLM cost — direct render queue'}
+                : isSingleTryOn
+                  ? pipelineMode === 'production'
+                    ? 'প্রোডাকশন মোড — কড়া QC (প্রতিটা ≥৪/৫), সর্বোচ্চ ৩টি পেইড রান'
+                    : 'প্রিভিউ মোড — ১টি সাশ্রয়ী রান, অটো-রিপেয়ার নেই (সেটিংসে বদলান)'
+                  : 'No LLM cost — direct render queue'}
             </p>
           </div>
         )}
@@ -1664,6 +1673,33 @@ function GalleryView() {
   const [showFinish, setShowFinish] = useState(false)
   const [themes, setThemes] = useState<string[]>(['default'])
   const [drive, setDrive] = useState<DriveStatus | null>(null)
+  // CS8 — masked rescue: owner paints the fix area on a flagged artifact and
+  // FLUX Fill repairs ONLY that region (never auto face/embroidery repaint).
+  const [rescueItem, setRescueItem] = useState<GalleryItem | null>(null)
+  const [rescueRunning, setRescueRunning] = useState(false)
+  const handleRescueRun = useCallback(async (r: MaskEditorResult) => {
+    if (!rescueItem?.storagePath) return
+    setRescueRunning(true)
+    try {
+      const uploaded = await uploadFillMask(r.maskBlob, rescueItem.storagePath)
+      const result = await runStudioJob({
+        mode: 'edit',
+        sourceImagePath: rescueItem.storagePath,
+        maskPath: uploaded.maskPath,
+        maskPreset: r.preset,
+        prompt: r.detail,
+        baseWidth: uploaded.width,
+        baseHeight: uploaded.height,
+      })
+      toast.success(`${result.message} · আনুমানিক $${uploaded.estimatedCostUsd.toFixed(2)}`)
+      setRescueItem(null)
+      setSelected(null)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Run failed')
+    } finally {
+      setRescueRunning(false)
+    }
+  }, [rescueItem])
   const openItem = useCallback((item: GalleryItem) => {
     setShowBranded(Boolean(item.brandedUrl))
     setShowFinish(false)
@@ -2005,6 +2041,16 @@ function GalleryView() {
                 >
                   ডাউনলোড
                 </button>
+                {/* CS8 — masked rescue for finished images (owner paints, Fill repairs) */}
+                {selected.status === 'executed' && selected.storagePath && selected.type === 'image_gen' && (
+                  <button
+                    type="button"
+                    onClick={() => setRescueItem(selected)}
+                    className="rounded-full bg-white/15 px-4 py-2 text-[13px] font-semibold text-white ring-1 ring-white/25 backdrop-blur-md"
+                  >
+                    🎯 মাস্ক এঁকে ঠিক করুন
+                  </button>
+                )}
                 {/* CS4: ভালো/বাদ → deterministic scene weighting */}
                 {selected.status === 'executed' && (
                   <div className="flex items-center gap-1.5 rounded-full bg-black/50 px-2 py-1 ring-1 ring-white/20 backdrop-blur-md">
@@ -2169,6 +2215,18 @@ function GalleryView() {
               </div>
             )}
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* CS8 — masked rescue editor on a finished artifact */}
+      <AnimatePresence>
+        {rescueItem?.previewUrl && (
+          <MaskEditor
+            imageUrl={rescueItem.previewUrl}
+            running={rescueRunning}
+            onCancel={() => setRescueItem(null)}
+            onRun={(r) => void handleRescueRun(r)}
+          />
         )}
       </AnimatePresence>
     </div>
@@ -2769,6 +2827,22 @@ function StudioSettingsCard() {
   return (
     <div className="mt-3 space-y-2.5 st-card p-3">
       <p className="text-[12px] font-bold text-cream">⚙️ স্টুডিও সেটিংস</p>
+      {/* CS8 — Preview vs Production: bounded spend shown up front */}
+      <label className="flex items-center justify-between gap-2">
+        <span className="text-[11px] text-muted">পাইপলাইন মোড</span>
+        <select
+          value={settings.pipelineMode}
+          onChange={(e) => {
+            const pipelineMode = e.target.value as StudioSettings['pipelineMode']
+            setSettings({ ...settings, pipelineMode })
+            void saveStudioSettings({ pipelineMode }).then(() => toast.success('সেভ হয়েছে — পরের রান থেকে কার্যকর')).catch(() => toast.error('হয়নি'))
+          }}
+          className="rounded-lg border border-border-subtle bg-bg-1 px-2 py-1 text-[11px] text-cream"
+        >
+          <option value="preview">প্রিভিউ — ১টি সাশ্রয়ী রান</option>
+          <option value="production">প্রোডাকশন — কড়া QC · সর্বোচ্চ ৩ পেইড রান</option>
+        </select>
+      </label>
       <label className="flex items-center justify-between gap-2">
         <span className="text-[11px] text-muted">ছবির QC (মান যাচাই)</span>
         <select
