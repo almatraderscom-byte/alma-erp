@@ -599,6 +599,87 @@ private struct PulseCompactPriority: View {
     }
 }
 
+/// The demo-approved expanded body (owner 2026-07-17): featured approval card
+/// with a privacy-blurred amount and REAL approve/reject buttons (iOS 17
+/// LiveActivityIntent — no app launch), or the in-flight order with its
+/// pipeline progress. One focus per mode; ~120pt fits the island's budget.
+@available(iOS 16.1, *)
+struct PulseExpandedBody: View {
+    let state: PulseActivityAttributes.ContentState
+    let mode: PulseMode
+
+    /// Buttons only for a REAL agent pending-action id — the synthetic
+    /// "erp-approvals" card has no direct endpoint; its tap opens the app.
+    private var actionableId: String? {
+        guard let id = state.approvalId, !id.isEmpty, id != "erp-approvals" else { return nil }
+        return id
+    }
+
+    var body: some View {
+        VStack(spacing: 7) {
+            if mode == .approval {
+                HStack(spacing: 9) {
+                    Text("✋").font(.system(size: 15))
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(state.approvalTitle ?? "অনুমোদনের অনুরোধ")
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundColor(PulsePalette.textPrimary)
+                            .lineLimit(1)
+                        Text(state.approvalCounterparty ?? "Approvals ট্যাবে বিস্তারিত")
+                            .font(.system(size: 10.5))
+                            .foregroundColor(PulsePalette.textSecondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 4)
+                    if let amount = state.approvalAmountText {
+                        Text(amount)
+                            .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                            .foregroundColor(PulseTheme.tint(for: .approval))
+                            .privacySensitive()
+                    }
+                }
+                .padding(.horizontal, 11).padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(Color.white.opacity(0.06)))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .strokeBorder(PulseTheme.tint(for: .approval).opacity(0.28), lineWidth: 1))
+
+                if #available(iOS 17.0, *), let id = actionableId {
+                    HStack(spacing: 8) {
+                        Button(intent: AlmaApproveActionIntent(actionId: id, approve: true)) {
+                            Text("অনুমোদন")
+                                .font(.system(size: 12.5, weight: .bold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.plain)
+                        .background(PulseTheme.tint(for: .approval), in: Capsule())
+                        .foregroundColor(Color(red: 0.09, green: 0.06, blue: 0.02))
+
+                        Button(intent: AlmaApproveActionIntent(actionId: id, approve: false)) {
+                            Text("বাতিল")
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.plain)
+                        .background(Color.white.opacity(0.10), in: Capsule())
+                        .foregroundColor(PulsePalette.textSecondary)
+                    }
+                } else {
+                    Text("বিস্তারিত ও সিদ্ধান্ত — ট্যাপ করে Approvals ট্যাবে")
+                        .font(.system(size: 10))
+                        .foregroundColor(PulsePalette.textSecondary)
+                }
+            } else {
+                PulseExpandedStatus(state: state, mode: mode)
+            }
+        }
+    }
+}
+
 @available(iOS 16.1, *)
 private struct PulseExpandedStatus: View {
     let state: PulseActivityAttributes.ContentState
@@ -687,7 +768,7 @@ struct PulseLiveActivity: Widget {
                     .accessibilityElement(children: .combine)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    PulseExpandedStatus(state: context.state, mode: mode)
+                    PulseExpandedBody(state: context.state, mode: mode)
                 }
             } compactLeading: {
                 Image(systemName: PulseTheme.icon(for: mode))

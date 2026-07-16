@@ -68,6 +68,29 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             }
         }
 
+        // Island approve/reject (owner spec 2026-07-17): LiveActivityIntent
+        // runs in THIS process, so the normal authenticated AlmaAPI session
+        // does the POST — no keychain sharing, no new server auth. After the
+        // decision, force-refresh the panel past the native-sync throttle so
+        // the island reflects the new truth within seconds.
+        if #available(iOS 17.0, *) {
+            PulseIntentBridge.executor = { actionId, approve in
+                struct OkResp: Decodable { let ok: Bool? }
+                do {
+                    let _: OkResp = try await AlmaAPI.shared.send(
+                        "POST", "/api/assistant/actions/\(actionId)/\(approve ? "approve" : "reject")")
+                    UserDefaults.standard.removeObject(forKey: "alma.pulse.lastNativeSyncAt")
+                    if #available(iOS 16.1, *) { PulseNativeSync.syncNow(reason: "intent") }
+                    return true
+                } catch {
+                    if #available(iOS 16.1, *) {
+                        LiveActivityBridgePlugin.breadcrumb("intent_failed")
+                    }
+                    return false
+                }
+            }
+        }
+
         // PHASE S1: wrap the app in a native tab bar. The storyboard already created
         // the Capacitor bridge VC as the window root; we REUSE that same instance as
         // tab 0 so Capacitor keeps running (push / Live Pulse / reminders / on-device

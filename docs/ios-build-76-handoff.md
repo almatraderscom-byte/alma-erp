@@ -34,3 +34,10 @@ xcrun simctl launch $UDID com.almatraders.erp ALMA_PULSE_RESET=1   # DEBUG-only:
 - Upstash Redis মাসিক 500k cap শেষ (14 জুলাই থেকে) — live tail degraded, owner-এর billing সিদ্ধান্ত বাকি
 - OpenRouter balance -$0.16 → cheap-head 402 → Gemini rescue আছে, তবু top-up দরকার (owner)
 - Owner-এর ফোনের hidden-webview session মরা — native sync এলে প্যানেল বাঁচবে; চাইলে logout/login-এ webview-ও সারে
+
+## Island Approve/Reject (owner-approved demo → SwiftUI, 2026-07-17 ভোর)
+
+- **AlmaPulseIntents.swift** (দুই টার্গেটেই pbxproj-এ registered): `AlmaApproveActionIntent` = LiveActivityIntent → **অ্যাপ-প্রসেসে চলে**, তাই AlmaAPI-র লগইন-সেশনই POST করে (`/api/assistant/actions/{id}/approve|reject`) — Keychain/নতুন auth লাগেনি। AppDelegate `PulseIntentBridge.executor` inject করে + সিদ্ধান্তের পর native-sync throttle মুছে সাথে সাথে প্যানেল refresh।
+- **PulseExpandedBody** (PulseLiveActivity.swift): approval-মোডে সোনালি-বর্ডার কার্ড (title/counterparty/৳-অঙ্ক `.privacySensitive()`) + **অনুমোদন/বাতিল ক্যাপসুল-বাটন** — শুধু আসল agent pendingActionId-তে (synthetic `erp-approvals`-এ বাটন নেই, ট্যাপ=অ্যাপ)। অন্য মোডে আগের PulseExpandedStatus।
+- **Verify done:** দুই টার্গেট build ✓; ImageRenderer probe + আসল prod snapshot → `/tmp/spinprobe/island-expanded-v2.png` (গোল্ড কার্ড+বাটন)।
+- **পরের এজেন্টের বাকি verify:** সিমে আসল agent-কার্ড pending রেখে expanded island-এ বাটন **ট্যাপ** → সার্ভারে approve পৌঁছায় + প্যানেল refresh হয় কি না (intent-চালনা headless হয় না — long-press লাগবে, নয়তো owner-চেক)। ERP request-টেবিলের approve endpoint বসালে synthetic কার্ডেও বাটন দেওয়া যাবে।

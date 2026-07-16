@@ -57,6 +57,8 @@
 		C1AA3300000000000000B005 /* PulseActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A001 /* PulseActivityAttributes.swift */; };
 		C1AA3300000000000000B006 /* PulseRestore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1AA3300000000000000A006 /* PulseRestore.swift */; };
 		3EA5184BE0944925A1354C73 /* PulseNativeSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 225EEE3482AE44E3828274DC /* PulseNativeSync.swift */; };
+		2B6B2F8815A04035BB620761 /* AlmaPulseIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98A853183508427ABE4D3B70 /* AlmaPulseIntents.swift */; };
+		F548794AB3AB4CA9983C0435 /* AlmaPulseIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98A853183508427ABE4D3B70 /* AlmaPulseIntents.swift */; };
 		C6A88A8FC60371085CFB3D09 /* cs_sample_0.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 59423C6C3ED49CE9F31ED592 /* cs_sample_0.jpg */; };
 		CD24687123B1E85C414A573D /* cs_sample_6.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 0CE6BFDD03747701FD223CA6 /* cs_sample_6.jpg */; };
 		D1AA4400000000000000B001 /* NativeIntelligenceBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */; };
@@ -216,6 +218,7 @@
 		C1AA3300000000000000A004 /* PulseLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseLiveActivity.swift; sourceTree = "<group>"; };
 		C1AA3300000000000000A006 /* PulseRestore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseRestore.swift; sourceTree = "<group>"; };
 		225EEE3482AE44E3828274DC /* PulseNativeSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PulseNativeSync.swift; sourceTree = "<group>"; };
+		98A853183508427ABE4D3B70 /* AlmaPulseIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaPulseIntents.swift; sourceTree = "<group>"; };
 		D1AA4400000000000000A001 /* NativeIntelligenceBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeIntelligenceBridge.swift; sourceTree = "<group>"; };
 		E1AA5500000000000000A001 /* NativeSpeechBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpeechBridge.swift; sourceTree = "<group>"; };
 		E2AA7700000000000000A001 /* AlmaNavBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlmaNavBridge.swift; sourceTree = "<group>"; };
@@ -359,6 +362,7 @@
 				C1AA3300000000000000A002 /* LiveActivityBridge.swift */,
 				C1AA3300000000000000A006 /* PulseRestore.swift */,
 				225EEE3482AE44E3828274DC /* PulseNativeSync.swift */,
+				98A853183508427ABE4D3B70 /* AlmaPulseIntents.swift */,
 				C1AA3300000000000000A003 /* AlmaBridgeViewController.swift */,
 				A3CC8800000000000000A001 /* AlmaVoiceActivityAttributes.swift */,
 				A3CC8800000000000000A002 /* VoiceLiveActivityController.swift */,
@@ -671,6 +675,7 @@
 				C1AA3300000000000000B002 /* LiveActivityBridge.swift in Sources */,
 				C1AA3300000000000000B006 /* PulseRestore.swift in Sources */,
 				3EA5184BE0944925A1354C73 /* PulseNativeSync.swift in Sources */,
+				2B6B2F8815A04035BB620761 /* AlmaPulseIntents.swift in Sources */,
 				C1AA3300000000000000B003 /* AlmaBridgeViewController.swift in Sources */,
 				A3CC8800000000000000B001 /* AlmaVoiceActivityAttributes.swift in Sources */,
 				A3CC8800000000000000B002 /* VoiceLiveActivityController.swift in Sources */,
@@ -767,6 +772,7 @@
 				B1AA2200000000000000B002 /* AlmaWidget.swift in Sources */,
 				B1AA2200000000000000B001 /* AlmaWidgetBundle.swift in Sources */,
 				C1AA3300000000000000B004 /* PulseLiveActivity.swift in Sources */,
+				F548794AB3AB4CA9983C0435 /* AlmaPulseIntents.swift in Sources */,
 				C1AA3300000000000000B005 /* PulseActivityAttributes.swift in Sources */,
 				A3CC8800000000000000B003 /* AlmaVoiceLiveActivity.swift in Sources */,
 				A3CC8800000000000000B004 /* AlmaVoiceActivityAttributes.swift in Sources */,
