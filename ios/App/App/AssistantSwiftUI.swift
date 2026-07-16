@@ -980,6 +980,11 @@ final class AssistantVM {
     var conversationTitle: String = "ALMA AI"
     var messages: [AgentChatMessage] = []
     var loadingHistory = false
+    // Awakening animation bridge (spec): bumped when a DIFFERENT conversation is
+    // opened from the drawer so the screen replays the session-opening character;
+    // readyTick fires once its history has loaded (success is gated on this).
+    private(set) var restoreTick = 0
+    private(set) var restoreReadyTick = 0
 
     // Streaming state
     var isStreaming = false
@@ -1969,6 +1974,7 @@ final class AssistantVM {
 
     func openConversation(_ id: String) async {
         guard id != conversationId else { return }
+        restoreTick += 1     // screen replays the session-opening awakening
         stopStreaming(cancelServer: false)
         conversationId = id
         modelId = conversations.first { $0.id == id }?.modelId   // pinned model follows the chat
@@ -1980,6 +1986,7 @@ final class AssistantVM {
         openTasks = []
         artifacts = []
         await loadMessages(showSpinner: true)
+        restoreReadyTick += 1   // history loaded → awakening may resolve to success
         await loadArtifacts()
         let _: OkResponse? = try? await AlmaAPI.shared.send("POST", "/api/assistant/active-conversation",
                                                             body: ["conversationId": id])
@@ -9390,6 +9397,11 @@ struct AssistantScreen: View {
         // the ZStack's frame already excludes the composer inset below and the
         // native header above, so neither is ever covered.
         .overlay { AgentAwakeningOverlay(model: awakening) }
+        // Opening a DIFFERENT existing conversation from the drawer replays the
+        // awakening (owner 2026-07-17: not only on app launch). Success stays
+        // gated on the real history load (restoreReadyTick).
+        .onChange(of: vm.restoreTick) { _, _ in awakening.restart(sessionNeedsRestore: true) }
+        .onChange(of: vm.restoreReadyTick) { _, _ in awakening.markReady(hasContent: !vm.messages.isEmpty) }
         .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             AgentComposerView(vm: vm, openWeb: openWeb)

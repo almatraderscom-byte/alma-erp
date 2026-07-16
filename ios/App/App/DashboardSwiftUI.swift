@@ -983,6 +983,10 @@ struct DashboardScreen: View {
     @State private var vm = DashboardVM()
     @State private var todoVM = OwnerTodoVM()
     @State private var todoOpen = false
+    // Premium hidden pull-to-refresh (spec) on the home tab — the branded agent
+    // character replaces the plain system spinner on iOS 18+; iOS 17 falls back
+    // to the system refresh inside the modifier. Exactly 0pt at idle.
+    @State private var dashPull = AgentPullState()
     let openWeb: (_ path: String, _ title: String) -> Void
 
     /// DEBUG self-test hook (never set on a real launch): ALMA_DASH_ANCHOR=top|charts|lists|end
@@ -1038,12 +1042,19 @@ struct DashboardScreen: View {
                     }
                 }
             }
+            // Custom hidden pull-to-refresh on the scroll container (iOS 18+ path;
+            // iOS 17 falls back to the system refresh inside the modifier).
+            .modifier(AgentPullToRefreshModifier(
+                state: dashPull, isEnabled: true,
+                refresh: { @MainActor in await vm.load(); await todoVM.load() }))
         }
         .background(DashAurora())
         // Custom UIKit nav-bar title (no SwiftUI .toolbar), so use the MANUAL masked-blur +
         // colour-dissolve fade — same as OrdersSwiftUI. The native iOS-26 edge effect only
         // paints under a real .toolbar, which is why the fade was invisible here before.
         .claudeTopFade(useNativeEdgeEffect: false)
+        // Pull-refresh stage ABOVE the top fade (under it the blur washes it out).
+        .overlay(alignment: .top) { AgentPullStage(state: dashPull) }
         // Dim backdrop UNDER the bar (added first → renders below the topTrailing overlay).
         .overlay {
             if todoVM.visible && todoOpen {
@@ -1060,7 +1071,7 @@ struct DashboardScreen: View {
                     .padding(.trailing, 14).padding(.top, 6)
             }
         }
-        .refreshable { await vm.load(); await todoVM.load() }
+        // (system .refreshable replaced by AgentPullToRefreshModifier above)
         .task { await vm.load() }
         .task {
             await todoVM.load()
@@ -1069,6 +1080,20 @@ struct DashboardScreen: View {
             if ProcessInfo.processInfo.environment["ALMA_DASH_TODO_OPEN"] == "1", todoVM.visible {
                 withAnimation(.spring(duration: 0.34, bounce: 0.16)) { todoOpen = true }
             }
+            #if DEBUG
+            // ALMA_DASH_PULLDEMO=1 — drive the REAL pull state machine + real
+            // vm.load() headlessly so the home-tab character refresh can be
+            // screenshotted without a finger (gesture feel = owner sim drag).
+            if ProcessInfo.processInfo.environment["ALMA_DASH_PULLDEMO"] == "1" {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                for step in stride(from: CGFloat(0), through: 195, by: 6.5) {
+                    dashPull.dragChanged(rawPull: step)
+                    try? await Task.sleep(nanoseconds: 90_000_000)
+                }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                dashPull.dragEnded { @MainActor in await vm.load(); await todoVM.load() }
+            }
+            #endif
         }
     }
 

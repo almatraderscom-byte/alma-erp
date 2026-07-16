@@ -347,6 +347,16 @@ final class AgentAwakeningModel {
         runner = Task { [weak self] in await self?.run() }
     }
 
+    /// Replay from scratch — used when a DIFFERENT existing conversation is opened
+    /// from the drawer (the app-launch path uses `begin`). Cancels any in-flight
+    /// run, resets to hidden, and starts the performance fresh.
+    func restart(sessionNeedsRestore: Bool) {
+        runner?.cancel(); runner = nil
+        ready = false
+        phase = .hidden
+        begin(sessionNeedsRestore: sessionNeedsRestore)
+    }
+
     /// Real readiness signal. `hasContent=false` (nothing to restore — fresh chat)
     /// dismisses quietly without the success celebration.
     func markReady(hasContent: Bool) {
@@ -843,10 +853,13 @@ struct AgentPullToRefreshModifier: ViewModifier {
                     }
                 }
                 // NOTE: the stage view itself is attached OUTSIDE .claudeTopFade
-                // (in AssistantSwiftUI) — attached here it renders UNDER the top
+                // (by the host screen) — attached here it renders UNDER the top
                 // fade's blur strip and washes out (sim-verified 2026-07-17).
         } else {
-            content
+            // iOS 17: the scroll-geometry/phase APIs are unavailable, so fall back
+            // to the system pull-refresh (no custom character). Keeps every host
+            // page refreshable; the premium animation is an iOS-18+ enhancement.
+            content.refreshable { try? await refresh() }
         }
     }
 }
