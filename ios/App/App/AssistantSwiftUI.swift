@@ -4869,7 +4869,13 @@ struct AgentBrandWordmark: View {
     }
 
     var body: some View {
-        if isCurrent { currentBody } else { staticBody }
+        // Fade the burst⇄static swap: it now also happens the moment a NEW turn
+        // starts (identity handoff to the active loader) — a hard structural
+        // cut there would flicker right as the owner hits send.
+        Group {
+            if isCurrent { currentBody } else { staticBody }
+        }
+        .animation(.easeInOut(duration: 0.3), value: isCurrent)
     }
 
     /// Idle/settled wordmark colours — the SAME loader aura (blue→violet→magenta→
@@ -4989,7 +4995,12 @@ struct AgentMessageActions: View {
             HStack(spacing: 8) {
                 AgentBrandWordmark(
                     animateReveal: vm.justSettledId == message.id,
-                    isCurrent: vm.messages.last(where: {
+                    // ONE starburst on screen, ever (owner iteration 2026-07-16):
+                    // while a new turn streams, the previous reply's burst hands
+                    // off to the active loader below — this row collapses to the
+                    // static text wordmark, so the identity reads as having MOVED
+                    // down to the working position instead of duplicating.
+                    isCurrent: !vm.isStreaming && vm.messages.last(where: {
                         $0.role == .assistant && !$0.isStreaming && !$0.text.isEmpty
                     })?.id == message.id,
                     vm: vm)
