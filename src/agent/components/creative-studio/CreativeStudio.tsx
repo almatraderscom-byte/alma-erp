@@ -729,6 +729,8 @@ function StudioWorkspace({
   // CS7 — FLUX Fill precision edit
   const [maskEditorOpen, setMaskEditorOpen] = useState(false)
   const [maskRunning, setMaskRunning] = useState(false)
+  // CS9 — family protected compositing opt-in (no face/garment regen merge)
+  const [protectedComposite, setProtectedComposite] = useState(false)
   // CS8 — pipeline mode (bounded spend, shown under Run)
   const [pipelineMode, setPipelineMode] = useState<'preview' | 'production'>('preview')
   useEffect(() => {
@@ -988,6 +990,7 @@ function StudioWorkspace({
         provider: isSingleTryOn ? (vtonEngine === 'gemini' ? 'gemini' : 'fashn') : provider,
         vtonEngine: isSingleTryOn ? vtonEngine : undefined,
         clothType: isSingleTryOn && clothType !== 'auto' ? clothType : undefined,
+        protectedComposite: isMultiPersonFamily ? protectedComposite : undefined,
         productImagePath: productPath ?? undefined,
         modelImagePath: modelPath ?? undefined,
         sourceImagePath: sourcePath ?? productPath ?? modelPath ?? undefined,
@@ -1342,6 +1345,22 @@ function StudioWorkspace({
               )}
             </div>
 
+            {/* CS9 — protected composite opt-in for multi-person family runs */}
+            {isMultiPersonFamily && (
+              <label className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-border bg-card/60 px-3 py-2">
+                <span className="text-[11px] leading-snug text-muted">
+                  🛡 প্রোটেক্টেড কম্পোজিট <span className="rounded bg-[#81B29A]/15 px-1 py-px text-[9px] font-bold text-[#2d6a4f]">নতুন</span>
+                  <br />
+                  <span className="text-[10px]">অনুমোদিত মুখ/গার্মেন্ট আর রিজেনারেট হয় না — কাটআউট বসিয়ে শুধু কিনারা+ছায়া মেলানো হয়</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={protectedComposite}
+                  onChange={(e) => setProtectedComposite(e.target.checked)}
+                  className="h-4 w-4 shrink-0 accent-[#E07A5F]"
+                />
+              </label>
+            )}
             {/* CS6 — research-only warning MUST be visible before Run (owner-locked) */}
             {isSingleTryOn && vtonEngine === 'fal_idm_vton' && (
               <div className="mb-2 rounded-xl border border-amber-400/50 bg-amber-50/10 px-3 py-2 text-[11px] leading-snug text-amber-700">
@@ -1883,8 +1902,8 @@ function GalleryView() {
                       item.status === 'executed' ? 'bg-[#81B29A]/90 text-white' : 'bg-black/50 text-white',
                     )}
                   >
-                    {/* CS6/CS7 — show the exact engine, not just the vendor */}
-                    {item.engine === 'fal_idm_vton' ? 'IDM ⚠' : item.engine === 'fal_fashn_v16' ? 'FAL FASHN' : item.engine === 'fal_flux_fill' ? 'FLUX FILL' : item.provider}
+                    {/* CS6/CS7/CS9 — show the exact engine, not just the vendor */}
+                    {item.engine === 'fal_idm_vton' ? 'IDM ⚠' : item.engine === 'fal_fashn_v16' ? 'FAL FASHN' : item.engine === 'fal_flux_fill' ? 'FLUX FILL' : item.provider === 'family_composite' ? '🛡 COMPOSITE' : item.provider}
                   </span>
                   {item.brandedUrl && (
                     <span className="absolute right-1.5 top-1.5 rounded-md bg-[#E07A5F]/90 px-1.5 py-0.5 text-[9px] font-bold uppercase text-white">

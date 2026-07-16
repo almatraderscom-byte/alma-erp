@@ -119,6 +119,8 @@ export type RunPayload = {
   vtonEngine?: StudioEngineId
   /** CS6 — owner override for garment placement when auto classification is uncertain */
   clothType?: 'auto' | 'overall' | 'upper' | 'lower' | 'outer'
+  /** CS9 — family protected compositing (approved people, no regen merge) */
+  protectedComposite?: boolean
   /** CS7 — FLUX Fill precision edit fields (Edit mode only) */
   maskPath?: string
   maskPreset?: string
