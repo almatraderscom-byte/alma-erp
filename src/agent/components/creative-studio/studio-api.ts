@@ -36,6 +36,10 @@ export type GalleryItem = {
   costUsd?: number | null
   researchOnly?: boolean
   qc?: { pass?: boolean; overall?: number; attempts?: number; flagged?: string } | null
+  /** CS10 — plain-Bangla QC/protection summary for the lightbox */
+  qcDetailsBn?: string | null
+  maskPreset?: string | null
+  memberCount?: number | null
   previewUrl: string | null
   /** small webp for the grid tile (falls back to previewUrl) */
   thumbUrl?: string | null
@@ -583,6 +587,35 @@ export async function saveStudioSettings(patch: {
 export async function deleteGarmentCache(key: string) {
   const res = await fetch(`/api/assistant/creative-studio/settings?key=${encodeURIComponent(key)}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('cache_delete_failed')
+}
+
+// ── CS10: golden evaluation helpers ─────────────────────────────────────────
+
+export type GoldenEvalSummary = {
+  cases: Array<{ id: string; garmentType: string; modelRole: string }>
+  runs: Array<{ runId: string; finishedAt: string; attempts: number; totalCostUsd: number }>
+  comparison: {
+    rankings: Array<{ engine: string; score: number; reasonBn: string }>
+    recommended: string | null
+    verdictBn: string
+  } | null
+}
+
+export async function fetchGoldenEval(): Promise<GoldenEvalSummary> {
+  const res = await fetch('/api/assistant/creative-studio/evaluations')
+  if (!res.ok) throw new Error('eval_fetch_failed')
+  return res.json()
+}
+
+export async function runGoldenEvalNow(): Promise<{ runId: string; estimatedCostUsd: number }> {
+  const res = await fetch('/api/assistant/creative-studio/evaluations', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'run' }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error ?? 'eval_run_failed')
+  return data
 }
 
 export async function generateBrandModel(role: string) {

@@ -70,6 +70,9 @@ import {
   saveStudioSettings,
   deleteGarmentCache,
   generateBrandModel,
+  fetchGoldenEval,
+  runGoldenEvalNow,
+  type GoldenEvalSummary,
   type StudioSettings,
   fetchAudioLabStatus,
   queueAudioJob,
@@ -2012,6 +2015,23 @@ function GalleryView() {
                 {selected.qc?.flagged && (
                   <span className="rounded-full bg-white/10 px-2 py-1 text-[10px] text-amber-300">{selected.qc.flagged}</span>
                 )}
+                {/* CS10 — plain-Bangla QC/protection summary */}
+                {selected.qcDetailsBn && (
+                  <span className="w-full rounded-lg bg-black/50 px-2.5 py-1 text-[10px] leading-snug text-white/85">
+                    {selected.qcDetailsBn}
+                  </span>
+                )}
+              </div>
+            )}
+            {/* CS9/CS10 — composites carry no engine field; still show details */}
+            {!selected.engine && selected.qcDetailsBn && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="absolute left-4 top-[calc(1rem+env(safe-area-inset-top))] max-w-[70vw]"
+              >
+                <span className="rounded-lg bg-black/50 px-2.5 py-1 text-[10px] leading-snug text-white/85">
+                  {selected.qcDetailsBn}
+                </span>
               </div>
             )}
 
@@ -2833,9 +2853,13 @@ function ModelCreatorCard({ models, onQueued }: { models: Array<{ role: string |
 function StudioSettingsCard() {
   const [settings, setSettings] = useState<StudioSettings | null>(null)
   const [config, setConfig] = useState<StudioConfig | null>(null)
+  // CS10 — golden evaluation summary + run trigger
+  const [goldenEval, setGoldenEval] = useState<GoldenEvalSummary | null>(null)
+  const [evalRunning, setEvalRunning] = useState(false)
   useEffect(() => {
     void fetchStudioSettings().then(setSettings).catch(() => {})
     void fetchStudioConfig().then(setConfig).catch(() => {})
+    void fetchGoldenEval().then(setGoldenEval).catch(() => {})
   }, [])
   if (!settings) return null
 
@@ -2970,6 +2994,40 @@ function StudioSettingsCard() {
           </select>
         </label>
       </div>
+      {/* CS10 — golden evaluation: measurable engine comparison, owner-triggered */}
+      <div className="border-t border-border-subtle pt-2.5">
+        <div className="flex items-center justify-between">
+          <p className="text-[12px] font-bold text-cream">🏅 গোল্ডেন টেস্ট (ইঞ্জিন তুলনা)</p>
+          <button
+            type="button"
+            disabled={evalRunning || !goldenEval?.cases?.length}
+            onClick={() => {
+              setEvalRunning(true)
+              void runGoldenEvalNow()
+                .then((r) => toast.success(`টেস্ট চলছে (${r.runId}) — আনুমানিক $${r.estimatedCostUsd} · কিছুক্ষণ পরে এখানে ফল আসবে`))
+                .catch((e) => toast.error(e instanceof Error ? e.message : 'হয়নি'))
+                .finally(() => setEvalRunning(false))
+            }}
+            className="rounded-full bg-[#E07A5F] px-3 py-1 text-[10px] font-bold text-white disabled:opacity-40"
+          >
+            {evalRunning ? 'পাঠানো হচ্ছে…' : 'টেস্ট চালাও'}
+          </button>
+        </div>
+        <p className="mt-0.5 text-[10px] text-muted">
+          {goldenEval?.cases?.length
+            ? `${goldenEval.cases.length}টি গোল্ডেন কেস — ৩ ইঞ্জিনে একই ছবি চালিয়ে সংখ্যায় তুলনা`
+            : 'গোল্ডেন কেস এখনো নেই — evaluations API দিয়ে case যোগ করুন'}
+        </p>
+        {goldenEval?.comparison && (
+          <div className="mt-1.5 space-y-1">
+            {goldenEval.comparison.rankings.map((r) => (
+              <p key={r.engine} className="text-[10px] leading-snug text-muted-hi">{r.reasonBn}</p>
+            ))}
+            <p className="text-[10.5px] font-semibold text-cream">{goldenEval.comparison.verdictBn}</p>
+          </div>
+        )}
+      </div>
+
       {settings.childGarments.length > 0 && (
         <div>
           <p className="mb-1 text-[11px] font-semibold text-muted">বাচ্চার গার্মেন্ট ক্যাশ (খারাপ হলে মুছুন — পরের রানে নতুন হবে)</p>

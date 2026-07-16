@@ -529,6 +529,35 @@ async function processImageGen(job) {
     return
   }
 
+  // CS10 — golden-set engine evaluation (owner-triggered, bounded, resumable).
+  if (payload.provider === 'golden_eval') {
+    try {
+      const { runGoldenEval } = await import('../scripts/run-creative-studio-golden-eval.mjs')
+      const { logCost } = await import('./cost-log.mjs')
+      const { getAppUrl, getInternalToken } = await import('./env.mjs')
+      const report = await runGoldenEval({
+        supabase,
+        pendingActionId,
+        payload,
+        logCost,
+        appUrl: getAppUrl(),
+        token: getInternalToken(),
+      })
+      await callJobResult(pendingActionId, 'success', {
+        goldenEval: true,
+        runId: report.runId,
+        attempts: report.attempts.length,
+        totalCostUsd: report.totalCostUsd,
+        creativeStudio: false,
+      })
+      console.log(`[worker] golden-eval ${report.runId} — done, ${report.attempts.length} attempts, $${report.totalCostUsd}`)
+    } catch (err) {
+      await callJobResult(pendingActionId, 'failed', undefined, err.message)
+      console.error(`[worker] golden-eval failed:`, err.message)
+    }
+    return
+  }
+
   // CS9 — protected family composite: local segmentation + deterministic
   // layout, NO face/garment regeneration; fal used only to harmonize seams.
   if (payload.provider === 'family_composite') {
